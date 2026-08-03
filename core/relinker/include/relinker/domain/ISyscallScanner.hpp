@@ -1,7 +1,7 @@
-#ifndef RELINKER_ISYSCALLSCANNER_HPP
-#define RELINKER_ISYSCALLSCANNER_HPP
+#ifndef RELINKER_DOMAIN_ISYSCALLSCANNER_HPP
+#define RELINKER_DOMAIN_ISYSCALLSCANNER_HPP
 
-#include <relinker/Types.hpp>
+#include <relinker/domain/Types.hpp>
 #include <vector>
 
 namespace Relinker {
@@ -19,4 +19,4 @@ public:
 
 }
 
-#endif // RELINKER_ISYSCALLSCANNER_HPP
+#endif

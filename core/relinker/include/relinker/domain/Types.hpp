@@ -1,5 +1,5 @@
-#ifndef RELINKER_TYPES_HPP
-#define RELINKER_TYPES_HPP
+#ifndef RELINKER_DOMAIN_TYPES_HPP
+#define RELINKER_DOMAIN_TYPES_HPP
 
 #include <cstdint>
 #include <string>
@@ -81,10 +81,10 @@ struct DynamicTag {
 struct RelinkerException : std::runtime_error {
     FileByteOffset FailureOffset;
 
-    explicit RelinkerException(const std::string& Message, const FileByteOffset failureOffset = 0)
-        : std::runtime_error(Message), FailureOffset(failureOffset) {}
+    explicit RelinkerException(const std::string& message, const FileByteOffset failureOffset = 0)
+        : std::runtime_error(message), FailureOffset(failureOffset) {}
 };
 
 }
 
-#endif // RELINKER_TYPES_HPP
+#endif

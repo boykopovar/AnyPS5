@@ -1,7 +1,7 @@
-#ifndef RELINKER_ISCEDYNLIBPARSER_HPP
-#define RELINKER_ISCEDYNLIBPARSER_HPP
+#ifndef RELINKER_DOMAIN_ISCEDYNLIBPARSER_HPP
+#define RELINKER_DOMAIN_ISCEDYNLIBPARSER_HPP
 
-#include <relinker/Types.hpp>
+#include <relinker/domain/Types.hpp>
 #include <vector>
 
 namespace Relinker {
@@ -32,4 +32,4 @@ public:
 
 }
 
-#endif // RELINKER_ISCEDYNLIBPARSER_HPP
+#endif

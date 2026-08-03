@@ -1,4 +1,4 @@
-#include <relinker/ISyscallScanner.hpp>
+#include <relinker/analysis/SyscallScanner.hpp>
 #include <memory>
 #include <sstream>
 

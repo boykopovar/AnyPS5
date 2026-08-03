@@ -1,7 +1,7 @@
-#ifndef RELINKER_ISYSVDYNAMICSECTIONBUILDER_HPP
-#define RELINKER_ISYSVDYNAMICSECTIONBUILDER_HPP
+#ifndef RELINKER_DOMAIN_ISYSVDYNAMICSECTIONBUILDER_HPP
+#define RELINKER_DOMAIN_ISYSVDYNAMICSECTIONBUILDER_HPP
 
-#include <relinker/Types.hpp>
+#include <relinker/domain/Types.hpp>
 #include <vector>
 
 namespace Relinker {
@@ -26,4 +26,4 @@ public:
 
 }
 
-#endif // RELINKER_ISYSVDYNAMICSECTIONBUILDER_HPP
+#endif

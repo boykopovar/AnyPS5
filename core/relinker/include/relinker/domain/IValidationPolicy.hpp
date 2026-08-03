@@ -1,7 +1,7 @@
-#ifndef RELINKER_IVALIDATIONPOLICY_HPP
-#define RELINKER_IVALIDATIONPOLICY_HPP
+#ifndef RELINKER_DOMAIN_IVALIDATIONPOLICY_HPP
+#define RELINKER_DOMAIN_IVALIDATIONPOLICY_HPP
 
-#include <relinker/Types.hpp>
+#include <relinker/domain/Types.hpp>
 
 namespace Relinker {
 
@@ -19,4 +19,4 @@ public:
 
 }
 
-#endif // RELINKER_IVALIDATIONPOLICY_HPP
+#endif

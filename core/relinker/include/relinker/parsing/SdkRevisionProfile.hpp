@@ -1,7 +1,7 @@
-#ifndef RELINKER_SDKREVISIONPROFILE_HPP
-#define RELINKER_SDKREVISIONPROFILE_HPP
+#ifndef RELINKER_PARSING_SDKREVISIONPROFILE_HPP
+#define RELINKER_PARSING_SDKREVISIONPROFILE_HPP
 
-#include <relinker/ISdkRevisionProfile.hpp>
+#include <relinker/domain/ISdkRevisionProfile.hpp>
 #include <map>
 
 namespace Relinker {

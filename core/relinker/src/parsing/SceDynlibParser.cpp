@@ -1,5 +1,5 @@
-#include <relinker/SceDynlibParser.hpp>
-#include <relinker/ISdkRevisionProfile.hpp>
+#include <relinker/parsing/SceDynlibParser.hpp>
+#include <relinker/domain/ISdkRevisionProfile.hpp>
 #include <cstring>
 #include <sstream>
 

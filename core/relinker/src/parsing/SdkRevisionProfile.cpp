@@ -1,4 +1,4 @@
-#include <relinker/SdkRevisionProfile.hpp>
+#include <relinker/parsing/SdkRevisionProfile.hpp>
 #include <cstring>
 
 namespace Relinker {

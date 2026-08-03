@@ -1,4 +1,4 @@
-#include <relinker/ICallSiteResolver.hpp>
+#include <relinker/analysis/CallSiteResolver.hpp>
 #include <memory>
 
 namespace Relinker {

@@ -1,7 +1,7 @@
-#ifndef RELINKER_IELFREADER_HPP
-#define RELINKER_IELFREADER_HPP
+#ifndef RELINKER_DOMAIN_IELFREADER_HPP
+#define RELINKER_DOMAIN_IELFREADER_HPP
 
-#include <relinker/Types.hpp>
+#include <relinker/domain/Types.hpp>
 #include <vector>
 #include <memory>
 
@@ -23,4 +23,4 @@ public:
 
 }
 
-#endif // RELINKER_IELFREADER_HPP
+#endif

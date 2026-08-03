@@ -1,7 +1,7 @@
-#ifndef RELINKER_ICALLSITERESOLVER_HPP
-#define RELINKER_ICALLSITERESOLVER_HPP
+#ifndef RELINKER_DOMAIN_ICALLSITERESOLVER_HPP
+#define RELINKER_DOMAIN_ICALLSITERESOLVER_HPP
 
-#include <relinker/Types.hpp>
+#include <relinker/domain/Types.hpp>
 #include <vector>
 
 namespace Relinker {
@@ -20,4 +20,4 @@ public:
 
 }
 
-#endif // RELINKER_ICALLSITERESOLVER_HPP
+#endif

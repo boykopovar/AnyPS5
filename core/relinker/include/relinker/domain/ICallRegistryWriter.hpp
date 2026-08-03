@@ -1,7 +1,7 @@
-#ifndef RELINKER_ICALLREGISTRYWRITER_HPP
-#define RELINKER_ICALLREGISTRYWRITER_HPP
+#ifndef RELINKER_DOMAIN_ICALLREGISTRYWRITER_HPP
+#define RELINKER_DOMAIN_ICALLREGISTRYWRITER_HPP
 
-#include <relinker/Types.hpp>
+#include <relinker/domain/Types.hpp>
 #include <string>
 #include <vector>
 
@@ -27,4 +27,4 @@ public:
 
 }
 
-#endif // RELINKER_ICALLREGISTRYWRITER_HPP
+#endif

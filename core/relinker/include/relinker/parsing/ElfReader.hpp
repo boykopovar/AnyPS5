@@ -1,8 +1,7 @@
-#ifndef RELINKER_ELFREADER_HPP
-#define RELINKER_ELFREADER_HPP
+#ifndef RELINKER_PARSING_ELFREADER_HPP
+#define RELINKER_PARSING_ELFREADER_HPP
 
-#include <relinker/IElfReader.hpp>
-#include <fstream>
+#include <relinker/domain/IElfReader.hpp>
 #include <vector>
 
 namespace Relinker {
@@ -10,7 +9,7 @@ namespace Relinker {
 class ElfReader : public IElfReader {
 public:
     explicit ElfReader(const std::string& filePath);
-    
+
     ElfHeader ReadHeader() const override;
     std::vector<ProgramHeader> ReadProgramHeaders() const override;
     std::vector<SectionHeader> ReadSectionHeaders() const override;
@@ -23,15 +22,15 @@ public:
 private:
     std::string _filePath;
     mutable std::vector<std::uint8_t> _fileBuffer;
-    
+
     void _loadFileIntoBuffer() const;
-    std::uint64_t _readU64At(FileByteOffset fileByteOffset) const;
-    std::uint32_t _readU32At(FileByteOffset fileByteOffset) const;
-    std::uint16_t _readU16At(FileByteOffset fileByteOffset) const;
-    std::uint8_t _readU8At(FileByteOffset fileByteOffset) const;
+    std::uint64_t _readU64At(FileByteOffset offset) const;
+    std::uint32_t _readU32At(FileByteOffset offset) const;
+    std::uint16_t _readU16At(FileByteOffset offset) const;
+    std::uint8_t _readU8At(FileByteOffset offset) const;
     std::string _resolveShdrName(std::uint32_t nameOffset, const ElfHeader& header) const;
 };
 
 }
 
-#endif // RELINKER_ELFREADER_HPP
+#endif

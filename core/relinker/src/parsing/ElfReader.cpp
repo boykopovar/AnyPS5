@@ -1,5 +1,5 @@
-#include <relinker/ElfReader.hpp>
-#include <relinker/Types.hpp>
+#include <relinker/parsing/ElfReader.hpp>
+#include <relinker/domain/Types.hpp>
 #include <fstream>
 #include <cstring>
 
