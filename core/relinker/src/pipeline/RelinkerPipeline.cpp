@@ -12,15 +12,13 @@ RelinkerPipeline::RelinkerPipeline(
     std::shared_ptr<ISyscallScanner> syscallScanner,
     std::shared_ptr<ICallSiteResolver> callSiteResolver,
     std::shared_ptr<IValidationPolicy> validationPolicy,
-    std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
-    std::shared_ptr<ICallRegistryWriter> callRegistryWriter)
+    std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder)
     : _elfReader(std::move(elfReader))
     , _dynlibParser(std::move(dynlibParser))
     , _syscallScanner(std::move(syscallScanner))
     , _callSiteResolver(std::move(callSiteResolver))
     , _validationPolicy(std::move(validationPolicy))
     , _dynamicSectionBuilder(std::move(dynamicSectionBuilder))
-    , _callRegistryWriter(std::move(callRegistryWriter))
 {}
 
 std::string RelinkerPipeline::_relocationTypeName(std::uint32_t type) {

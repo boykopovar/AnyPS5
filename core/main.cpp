@@ -13,16 +13,32 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <iostream>
 #include <memory>
+#include <string>
+#include <optional>
 
 int main(const int argc, char* argv[]) {
-    if (argc < 4) {
-        std::cerr << "Usage: relinker <input.elf> <output_registry.json> <output.elf>\n";
-        return 1;
+    bool skipSyscallCheck = false;
+    std::string inputPath;
+    std::string outputElfPath;
+    std::optional<std::string> registryPath;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--skip-syscall-check") {
+            skipSyscallCheck = true;
+        } else if (inputPath.empty()) {
+            inputPath = arg;
+        } else if (outputElfPath.empty()) {
+            outputElfPath = arg;
+        } else if (!registryPath.has_value()) {
+            registryPath = arg;
+        }
     }
 
-    const std::string inputPath = argv[1];
-    const std::string registryPath = argv[2];
-    const std::string outputElfPath = argv[3];
+    if (inputPath.empty() || outputElfPath.empty()) {
+        std::cerr << "Usage: relinker [--skip-syscall-check] <input.elf> <output.elf> [output_registry.json]\n";
+        return 1;
+    }
 
     try {
         Io::FileReader fileReader;
@@ -40,20 +56,25 @@ int main(const int argc, char* argv[]) {
 
         auto sdkProfile = std::make_shared<Relinker::SdkRevisionProfile>(sceDynlibData);
 
+        auto syscallScanner = skipSyscallCheck
+            ? Relinker::MakeNullSyscallScanner()
+            : Relinker::MakeSyscallScanner();
+
         const auto pipeline = std::make_shared<Relinker::RelinkerPipeline>(
             elfReader,
             std::make_shared<Relinker::SceDynlibParser>(sdkProfile),
-            Relinker::MakeSyscallScanner(),
+            std::move(syscallScanner),
             Relinker::MakeCallSiteResolver(),
             std::make_shared<Relinker::ValidationPolicy>(),
-            std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
-            std::make_shared<Relinker::CallRegistryWriter>()
+            std::make_shared<Relinker::SysVDynamicSectionBuilder>()
         );
 
         auto result = pipeline->Relink(sourceBytes);
 
-        auto callRegistryWriter = std::make_shared<Relinker::CallRegistryWriter>();
-        fileWriter.Write(registryPath, callRegistryWriter->WriteCallRegistry(result.RegistryEntries));
+        if (registryPath.has_value()) {
+            auto callRegistryWriter = std::make_shared<Relinker::CallRegistryWriter>();
+            fileWriter.Write(*registryPath, callRegistryWriter->WriteCallRegistry(result.RegistryEntries));
+        }
 
         Elfpatcher::ElfPatcher elfPatcher;
         auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection);

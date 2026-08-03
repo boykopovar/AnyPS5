@@ -9,7 +9,6 @@
 #include <relinker/domain/ICallSiteResolver.hpp>
 #include <relinker/domain/IValidationPolicy.hpp>
 #include <relinker/domain/ISysVDynamicSectionBuilder.hpp>
-#include <relinker/domain/ICallRegistryWriter.hpp>
 #include <memory>
 
 namespace Relinker {
@@ -22,8 +21,7 @@ public:
         std::shared_ptr<ISyscallScanner> syscallScanner,
         std::shared_ptr<ICallSiteResolver> callSiteResolver,
         std::shared_ptr<IValidationPolicy> validationPolicy,
-        std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
-        std::shared_ptr<ICallRegistryWriter> callRegistryWriter
+        std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder
     );
 
     RelinkResult Relink(const std::vector<std::uint8_t>& sourceElf) override;
@@ -35,7 +33,6 @@ private:
     std::shared_ptr<ICallSiteResolver> _callSiteResolver;
     std::shared_ptr<IValidationPolicy> _validationPolicy;
     std::shared_ptr<ISysVDynamicSectionBuilder> _dynamicSectionBuilder;
-    std::shared_ptr<ICallRegistryWriter> _callRegistryWriter;
 
     static constexpr std::uint32_t PT_LOAD = 1;
     static constexpr std::uint32_t PT_DYNAMIC = 2;

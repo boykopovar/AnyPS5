@@ -7,6 +7,7 @@
 namespace Relinker {
 
 std::unique_ptr<ISyscallScanner> MakeSyscallScanner();
+std::unique_ptr<ISyscallScanner> MakeNullSyscallScanner();
 
 }
 

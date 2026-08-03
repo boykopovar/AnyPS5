@@ -252,4 +252,17 @@ std::unique_ptr<ISyscallScanner> MakeSyscallScanner() {
     return std::make_unique<SyscallScanner>();
 }
 
+class NullSyscallScanner : public ISyscallScanner {
+public:
+    void ScanCodeSectionForSyscalls(
+        const std::vector<std::uint8_t>&,
+        FileByteOffset,
+        FileByteOffset
+    ) override {}
+};
+
+std::unique_ptr<ISyscallScanner> MakeNullSyscallScanner() {
+    return std::make_unique<NullSyscallScanner>();
+}
+
 }
