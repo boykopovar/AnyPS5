@@ -73,6 +73,11 @@ struct SymbolExport {
     CallSiteInfo CallSites;
 };
 
+struct DynamicTag {
+    std::int64_t Tag;
+    std::uint64_t Value;
+};
+
 struct RelinkerException : std::runtime_error {
     FileByteOffset FailureOffset;
 

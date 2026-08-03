@@ -26,7 +26,12 @@ std::shared_ptr<ICallRegistryWriter> MakeCallRegistryWriter();
 static constexpr std::uint32_t PT_LOAD = 1;
 static constexpr std::uint32_t PT_DYNAMIC = 2;
 static constexpr std::uint32_t PT_SCE_DYNLIBDATA = 0x61000000;
-static constexpr std::uint32_t SHT_NULL = 0;
+static constexpr std::uint32_t PF_X = 0x1;
+
+static constexpr std::int64_t DT_PLTGOT = 0x00000003;
+static constexpr std::int64_t DT_OS_PLTGOT = 0x61000027;
+static constexpr std::int64_t DT_PLTRELSZ = 0x00000002;
+static constexpr std::int64_t DT_OS_PLTRELSZ = 0x6100002d;
 
 static std::string _relocationTypeName(const std::uint32_t type) {
     switch (type) {
@@ -62,7 +67,6 @@ int main(int argc, char* argv[]) {
 
         auto header = elfReader->ReadHeader();
         auto programHeaders = elfReader->ReadProgramHeaders();
-        auto sectionHeaders = elfReader->ReadSectionHeaders();
 
         std::vector<std::uint8_t> sceDynlibData;
         std::vector<std::uint8_t> textSection;
@@ -75,14 +79,28 @@ int main(int argc, char* argv[]) {
                 sceDynlibData = elfReader->ReadSegment(ph);
         }
 
-        for (const auto& sh : sectionHeaders) {
-            if (sh.Name == ".text") {
-                textSection = elfReader->ReadSection(sh);
-                textVAddr   = sh.MappedAddress;
-            } else if (sh.Name == ".got" || sh.Name == ".got.plt") {
-                gotVAddr = sh.MappedAddress;
-                gotSize = sh.SectionSize;
+        for (const auto& ph : programHeaders) {
+            if (ph.Type == PT_LOAD && (ph.Flags & PF_X) != 0) {
+                textSection = elfReader->ReadSegment(ph);
+                textVAddr = ph.MappedAddress;
+                break;
             }
+        }
+
+        for (const auto& ph : programHeaders) {
+            if (ph.Type != PT_DYNAMIC)
+                continue;
+
+            auto dynTags = elfReader->ReadDynamicTags(ph);
+
+            for (const auto& tag : dynTags) {
+                if (tag.Tag == DT_PLTGOT || tag.Tag == DT_OS_PLTGOT)
+                    gotVAddr = tag.Value;
+                else if (tag.Tag == DT_PLTRELSZ || tag.Tag == DT_OS_PLTRELSZ)
+                    gotSize = tag.Value;
+            }
+
+            break;
         }
 
         if (sceDynlibData.empty())

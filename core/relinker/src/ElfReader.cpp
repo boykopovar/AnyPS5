@@ -168,6 +168,29 @@ std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeade
     return name;
 }
 
+std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicHeader) const {
+    _loadFileIntoBuffer();
+
+    std::vector<DynamicTag> tags;
+    FileByteOffset offset = dynamicHeader.Offset;
+    const FileByteOffset end = dynamicHeader.Offset + dynamicHeader.FileSize;
+
+    while (offset + 16 <= end && offset + 16 <= _fileBuffer.size()) {
+        DynamicTag tag;
+        tag.Tag = static_cast<std::int64_t>(_readU64At(offset));
+        tag.Value = _readU64At(offset + 0x08);
+
+        if (tag.Tag == 0) {
+            break;
+        }
+
+        tags.push_back(tag);
+        offset += 16;
+    }
+
+    return tags;
+}
+
 std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& header) const {
     _loadFileIntoBuffer();
     
