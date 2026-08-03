@@ -64,14 +64,39 @@ static void _writeFile(const std::string& path, const std::string& content) {
     f << content;
 }
 
+static void _writePatchedElf(const std::string& inputPath, const std::string& outputPath) {
+    std::ifstream in(inputPath, std::ios::binary | std::ios::ate);
+    if (!in) throw Relinker::RelinkerException("Cannot open input ELF: " + inputPath);
+    const std::streamsize fileSize = in.tellg();
+    in.seekg(0, std::ios::beg);
+    std::vector<std::uint8_t> buf(static_cast<std::size_t>(fileSize));
+    if (!in.read(reinterpret_cast<char*>(buf.data()), fileSize))
+        throw Relinker::RelinkerException("Cannot read input ELF: " + inputPath);
+
+    if (buf.size() < 0x40)
+        throw Relinker::RelinkerException("File too small to be a valid ELF64");
+
+    buf[7] = 0;
+    buf[8] = 0;
+
+    buf[0x10] = 0x03;
+    buf[0x11] = 0x00;
+
+    std::ofstream out(outputPath, std::ios::binary);
+    if (!out) throw Relinker::RelinkerException("Cannot open output ELF: " + outputPath);
+    out.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+    if (!out) throw Relinker::RelinkerException("Failed to write output ELF: " + outputPath);
+}
+
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: relinker <input.elf> <output_registry.json>\n";
+    if (argc < 4) {
+        std::cerr << "Usage: relinker <input.elf> <output_registry.json> <output.elf>\n";
         return 1;
     }
 
     const std::string inputPath = argv[1];
     const std::string registryPath = argv[2];
+    const std::string outputElfPath = argv[3];
 
     try {
         auto elfReader = std::make_unique<Relinker::ElfReader>(inputPath);
@@ -284,9 +309,11 @@ int main(int argc, char* argv[]) {
         }
 
         _writeFile(registryPath, regWriter->WriteCallRegistry(entries));
+        _writePatchedElf(inputPath, outputElfPath);
 
         std::cout << "OK: " << entries.size() << " NID references processed\n";
         std::cout << "Registry: " << registryPath << "\n";
+        std::cout << "Output ELF: " << outputElfPath << "\n";
 
     } catch (const Relinker::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();
