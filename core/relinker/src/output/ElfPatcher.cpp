@@ -49,6 +49,23 @@ void ElfPatcher::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t
     _writeU64(buf, offset + 48, ph.Alignment);
 }
 
+bool ElfPatcher::_isNullPageLoad(const ProgramHeader& ph) const {
+    return ph.Type == PT_LOAD && ph.MappedAddress == 0;
+}
+
+ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t size) const {
+    ProgramHeader ph{};
+    ph.Type = PT_LOAD;
+    ph.Flags = PF_R;
+    ph.Offset = offset;
+    ph.MappedAddress = offset;
+    ph.PhysicalAddress = offset;
+    ph.FileSize = size;
+    ph.MemorySize = size;
+    ph.Alignment = 0x1000;
+    return ph;
+}
+
 std::uint32_t ElfPatcher::_fixLoadFlags(std::uint32_t originalFlags) const {
     std::uint32_t flags = originalFlags;
     if ((flags & (PF_R | PF_W | PF_X)) == 0)
@@ -123,15 +140,8 @@ void ElfPatcher::PatchAndWrite(
     for (std::uint8_t b : dynSegBuf)
         buf.push_back(b);
 
-    std::uint16_t newPhNum = 0;
-    for (const auto& ph : originalHeaders) {
-        if (_isSceSpecificSegment(ph.Type))
-            continue;
-        if (ph.Type == PT_DYNAMIC)
-            continue;
-        newPhNum++;
-    }
-    newPhNum++;
+    const std::uint64_t extraBlockOff = dynStrOff;
+    const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
 
     std::uint16_t writtenPh = 0;
     for (const auto& ph : originalHeaders) {
@@ -149,6 +159,12 @@ void ElfPatcher::PatchAndWrite(
         } else {
             _writeProgramHeader(buf, phEntOff, ph);
         }
+        writtenPh++;
+    }
+
+    {
+        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
+        _writeProgramHeader(buf, phEntOff, _makeLoadHeader(extraBlockOff, extraBlockSize));
         writtenPh++;
     }
 

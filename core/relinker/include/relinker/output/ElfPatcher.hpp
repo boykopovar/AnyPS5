@@ -40,6 +40,8 @@ private:
     static constexpr std::int64_t DT_PLTREL = 20;
 
     [[nodiscard]] bool _isSceSpecificSegment(std::uint32_t type) const;
+    [[nodiscard]] bool _isNullPageLoad(const ProgramHeader& ph) const;
+    [[nodiscard]] ProgramHeader _makeLoadHeader(std::uint64_t offset, std::uint64_t size) const;
     void _writeU16(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint16_t v) const;
     void _writeU32(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint32_t v) const;
     void _writeU64(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint64_t v) const;
