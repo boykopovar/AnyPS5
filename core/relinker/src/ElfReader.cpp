@@ -85,22 +85,22 @@ ElfHeader ElfReader::ReadHeader() const {
     header.EntryPoint = _readU64At(0x18);
     header.ProgramHeaderOffset = _readU64At(0x20);
     header.SectionHeaderOffset = _readU64At(0x28);
-    header.ProgramHeaderEntrySize = _readU16At(0x32);
+    header.ProgramHeaderEntrySize = _readU16At(0x36);
     header.ProgramHeaderCount = _readU16At(0x38);
     header.SectionHeaderEntrySize = _readU16At(0x3a);
     header.SectionHeaderCount = _readU16At(0x3c);
     header.SectionHeaderStringIndex = _readU16At(0x3e);
-    
+
     return header;
 }
 
 std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     _loadFileIntoBuffer();
     const ElfHeader header = ReadHeader();
-    
+
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
-    
+
     for (std::uint16_t i = 0; i < header.ProgramHeaderCount; ++i) {
         ProgramHeader ph{};
         ph.Type = _readU32At(offset);
@@ -111,21 +111,21 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         ph.FileSize = _readU64At(offset + 0x20);
         ph.MemorySize = _readU64At(offset + 0x28);
         ph.Alignment = _readU64At(offset + 0x30);
-        
+
         headers.push_back(ph);
         offset += header.ProgramHeaderEntrySize;
     }
-    
+
     return headers;
 }
 
 std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
     _loadFileIntoBuffer();
     const ElfHeader header = ReadHeader();
-    
+
     std::vector<SectionHeader> headers;
     FileByteOffset offset = header.SectionHeaderOffset;
-    
+
     for (std::uint16_t i = 0; i < header.SectionHeaderCount; ++i) {
         SectionHeader sh;
         const std::uint32_t nameOffset = _readU32At(offset);
@@ -137,13 +137,13 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
         sh.Link = _readU32At(offset + 0x28);
         sh.Info = _readU32At(offset + 0x2c);
         sh.EntrySize = _readU64At(offset + 0x30);
-        
+
         sh.Name = _resolveShdrName(nameOffset, header);
-        
+
         headers.push_back(sh);
         offset += header.SectionHeaderEntrySize;
     }
-    
+
     return headers;
 }
 
@@ -151,20 +151,20 @@ std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeade
     if (header.SectionHeaderStringIndex == 0) {
         return "";
     }
-    
+
     FileByteOffset shstrOffset = header.SectionHeaderOffset +
                         (header.SectionHeaderStringIndex * header.SectionHeaderEntrySize);
 
     const FileByteOffset strTableOffset = _readU64At(shstrOffset + 0x18);
-    
+
     std::string name;
     FileByteOffset currentPos = strTableOffset + nameOffset;
-    
+
     while (currentPos < _fileBuffer.size() && _fileBuffer[currentPos] != '\0') {
         name += static_cast<char>(_fileBuffer[currentPos]);
         currentPos++;
     }
-    
+
     return name;
 }
 
@@ -191,24 +191,48 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
     return tags;
 }
 
+FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const {
+    _loadFileIntoBuffer();
+    const ElfHeader header = ReadHeader();
+
+    FileByteOffset offset = header.ProgramHeaderOffset;
+
+    for (std::uint16_t i = 0; i < header.ProgramHeaderCount; ++i) {
+        const std::uint32_t type = _readU32At(offset);
+        const FileByteOffset segOffset = _readU64At(offset + 0x08);
+        const VirtualAddress segVAddr = _readU64At(offset + 0x10);
+        const ByteCount segFileSize = _readU64At(offset + 0x20);
+
+        static constexpr std::uint32_t PT_LOAD = 1;
+
+        if (type == PT_LOAD && address >= segVAddr && address < segVAddr + segFileSize) {
+            return segOffset + (address - segVAddr);
+        }
+
+        offset += header.ProgramHeaderEntrySize;
+    }
+
+    throw RelinkerException("Virtual address not mapped by any PT_LOAD segment", address);
+}
+
 std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& header) const {
     _loadFileIntoBuffer();
-    
+
     if (header.Offset + header.SectionSize > _fileBuffer.size()) {
         throw RelinkerException("Section offset out of bounds", header.Offset);
     }
-    
+
     std::vector<std::uint8_t> data(_fileBuffer.begin() + header.Offset, _fileBuffer.begin() + header.Offset + header.SectionSize);
     return data;
 }
 
 std::vector<std::uint8_t> ElfReader::ReadSegment(const ProgramHeader& header) const {
     _loadFileIntoBuffer();
-    
+
     if (header.Offset + header.FileSize > _fileBuffer.size()) {
         throw RelinkerException("Segment offset out of bounds", header.Offset);
     }
-    
+
     std::vector<std::uint8_t> data(_fileBuffer.begin() + header.Offset, _fileBuffer.begin() + header.Offset + header.FileSize);
     return data;
 }
