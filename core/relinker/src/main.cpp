@@ -13,6 +13,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <cstring>
 
 namespace Relinker {
 
@@ -142,14 +143,19 @@ int main(int argc, char* argv[]) {
         std::vector<std::string> hybridNeededLibraries;
 
         if (sceDynlibData.empty() && dynStrTabOffset != 0) {
+            std::ifstream wholeFileStream(inputPath, std::ios::binary | std::ios::ate);
+            const std::streamsize wholeFileSize = wholeFileStream.tellg();
+            wholeFileStream.seekg(0, std::ios::beg);
+            std::vector<std::uint8_t> wholeFile(static_cast<std::size_t>(wholeFileSize));
+            wholeFileStream.read(reinterpret_cast<char*>(wholeFile.data()), wholeFileSize);
+
             auto readCString = [&](Relinker::FileByteOffset strOffset) -> std::string {
                 std::string result;
                 Relinker::FileByteOffset pos = dynStrTabOffset + strOffset;
-                std::ifstream f(inputPath, std::ios::binary);
-                f.seekg(static_cast<std::streamoff>(pos));
-                char c;
-                while (f.get(c) && c != '\0')
-                    result.push_back(c);
+                while (pos < wholeFile.size() && wholeFile[pos] != 0) {
+                    result.push_back(static_cast<char>(wholeFile[pos]));
+                    pos += 1;
+                }
                 return result;
             };
 
@@ -161,13 +167,16 @@ int main(int argc, char* argv[]) {
             auto extractRelaEntries = [&](Relinker::FileByteOffset relaOffset, Relinker::ByteCount relaSize) {
                 const std::size_t entrySize = 24;
                 for (Relinker::ByteCount off = 0; off + entrySize <= relaSize; off += entrySize) {
-                    std::ifstream f(inputPath, std::ios::binary);
-                    f.seekg(static_cast<std::streamoff>(relaOffset + off));
-                    std::uint64_t rOffset = 0, rInfo = 0;
-                    std::int64_t rAddend = 0;
-                    f.read(reinterpret_cast<char*>(&rOffset), 8);
-                    f.read(reinterpret_cast<char*>(&rInfo), 8);
-                    f.read(reinterpret_cast<char*>(&rAddend), 8);
+                    const Relinker::FileByteOffset entryPos = relaOffset + off;
+
+                    if (entryPos + entrySize > wholeFile.size())
+                        break;
+
+                    std::uint64_t rOffset = 0;
+                    std::uint64_t rInfo = 0;
+
+                    std::memcpy(&rOffset, wholeFile.data() + entryPos, 8);
+                    std::memcpy(&rInfo, wholeFile.data() + entryPos + 8, 8);
 
                     const std::uint32_t symIndex = static_cast<std::uint32_t>(rInfo >> 32);
                     const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
@@ -176,12 +185,13 @@ int main(int argc, char* argv[]) {
                         continue;
 
                     const std::size_t symEntrySize = 24;
-                    Relinker::FileByteOffset symOff = dynSymTabOffset + static_cast<Relinker::FileByteOffset>(symIndex) * symEntrySize;
+                    const Relinker::FileByteOffset symOff = dynSymTabOffset + static_cast<Relinker::FileByteOffset>(symIndex) * symEntrySize;
 
-                    std::ifstream fs(inputPath, std::ios::binary);
-                    fs.seekg(static_cast<std::streamoff>(symOff));
+                    if (symOff + 4 > wholeFile.size())
+                        continue;
+
                     std::uint32_t nameOffset = 0;
-                    fs.read(reinterpret_cast<char*>(&nameOffset), 4);
+                    std::memcpy(&nameOffset, wholeFile.data() + symOff, 4);
 
                     std::string symName = readCString(nameOffset);
 
@@ -189,7 +199,7 @@ int main(int argc, char* argv[]) {
                     ref.Nid = symName;
                     ref.Library = std::string();
                     ref.RelocationTypeValue = relType;
-                    ref.RelocationTableOffset = relaOffset + off;
+                    ref.RelocationTableOffset = entryPos;
                     ref.RelocationAddress = rOffset;
                     hybridNidRefs.push_back(ref);
                 }
@@ -251,16 +261,16 @@ int main(int argc, char* argv[]) {
         std::vector<Relinker::CallRegistryEntry> entries;
         entries.reserve(nidRefs.size());
 
+        std::vector<Relinker::FileByteOffset> sharedCallSites;
+        bool sharedCallSitesResolved = false;
+
+        if (!textSection.empty() && gotSize > 0) {
+            sharedCallSites = csResolver->ResolveCallSites(
+                textSection, textVAddr, gotVAddr, gotSize);
+            sharedCallSitesResolved = !sharedCallSites.empty();
+        }
+
         for (const auto& ref : nidRefs) {
-            std::vector<Relinker::FileByteOffset> callSites;
-            bool resolved = false;
-
-            if (!textSection.empty() && gotSize > 0) {
-                callSites = csResolver->ResolveCallSites(
-                    textSection, textVAddr, gotVAddr, gotSize);
-                resolved = !callSites.empty();
-            }
-
             Relinker::CallRegistryEntry entry;
             entry.Nid = ref.Nid;
             entry.Library = ref.Library;
@@ -268,8 +278,8 @@ int main(int argc, char* argv[]) {
             entry.RelocationOffset = ref.RelocationTableOffset;
             entry.TargetSection = ".got";
             entry.TargetOffset = ref.RelocationAddress;
-            entry.CallSites = std::move(callSites);
-            entry.CallSitesResolved = resolved;
+            entry.CallSites = sharedCallSites;
+            entry.CallSitesResolved = sharedCallSitesResolved;
             entries.push_back(std::move(entry));
         }
 
