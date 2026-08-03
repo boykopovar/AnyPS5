@@ -15,11 +15,11 @@ void ElfPatcher::_writeU16(std::vector<std::uint8_t>& buf, std::size_t offset, s
     std::memcpy(buf.data() + offset, &v, 2);
 }
 
-void ElfPatcher::_writeU32(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint32_t v) const {
+void ElfPatcher::_writeU32(std::vector<std::uint8_t>& buf, const std::size_t offset, std::uint32_t v) const {
     std::memcpy(buf.data() + offset, &v, 4);
 }
 
-void ElfPatcher::_writeU64(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint64_t v) const {
+void ElfPatcher::_writeU64(std::vector<std::uint8_t>& buf, const std::size_t offset, std::uint64_t v) const {
     std::memcpy(buf.data() + offset, &v, 8);
 }
 
@@ -56,7 +56,7 @@ bool ElfPatcher::_isNullPageLoad(const ProgramHeader& ph) const {
 ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t size) const {
     ProgramHeader ph{};
     ph.Type = PT_LOAD;
-    ph.Flags = PF_R;
+    ph.Flags = PF_R | PF_X;
     ph.Offset = offset;
     ph.MappedAddress = offset;
     ph.PhysicalAddress = offset;
@@ -64,6 +64,40 @@ ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t si
     ph.MemorySize = size;
     ph.Alignment = 0x1000;
     return ph;
+}
+
+void ElfPatcher::_writeInterp(std::vector<std::uint8_t>& buf, std::size_t phEntOff, std::uint64_t interpOff, std::uint64_t interpSize) const {
+    ProgramHeader ph{};
+    ph.Type = PT_INTERP;
+    ph.Flags = PF_R;
+    ph.Offset = interpOff;
+    ph.MappedAddress = interpOff;
+    ph.PhysicalAddress = interpOff;
+    ph.FileSize = interpSize;
+    ph.MemorySize = interpSize;
+    ph.Alignment = 1;
+    _writeProgramHeader(buf, phEntOff, ph);
+}
+
+std::vector<std::uint8_t> ElfPatcher::_buildEntryStub(std::uint64_t stubVaddr, std::uint64_t realEntryVaddr) const {
+    std::vector<std::uint8_t> s;
+    s.push_back(0x58);
+    s.push_back(0x48); s.push_back(0x89); s.push_back(0xe3);
+    s.push_back(0x48); s.push_back(0x83); s.push_back(0xec); s.push_back(0x30);
+    s.push_back(0x48); s.push_back(0x83); s.push_back(0xe4); s.push_back(0xf0);
+    s.push_back(0x89); s.push_back(0x04); s.push_back(0x24);
+    s.push_back(0x48); s.push_back(0x89); s.push_back(0x5c); s.push_back(0x24); s.push_back(0x08);
+    s.push_back(0x48); s.push_back(0x89); s.push_back(0xe7);
+    s.push_back(0x48); s.push_back(0x31); s.push_back(0xf6);
+    const std::uint64_t jmpInsnVaddr = stubVaddr + s.size();
+    const std::uint64_t jmpNextVaddr = jmpInsnVaddr + 5;
+    const std::int32_t rel32 = static_cast<std::int32_t>(realEntryVaddr - jmpNextVaddr);
+    s.push_back(0xe9);
+    s.push_back(static_cast<std::uint8_t>(rel32 & 0xff));
+    s.push_back(static_cast<std::uint8_t>((rel32 >> 8) & 0xff));
+    s.push_back(static_cast<std::uint8_t>((rel32 >> 16) & 0xff));
+    s.push_back(static_cast<std::uint8_t>((rel32 >> 24) & 0xff));
+    return s;
 }
 
 std::uint32_t ElfPatcher::_fixLoadFlags(std::uint32_t originalFlags) const {
@@ -140,8 +174,35 @@ void ElfPatcher::PatchAndWrite(
     for (std::uint8_t b : dynSegBuf)
         buf.push_back(b);
 
+    const std::uint64_t realEntryVaddr = *reinterpret_cast<const std::uint64_t*>(buf.data() + 24);
+    const std::uint64_t stubOff = static_cast<std::uint64_t>(buf.size());
+    const auto stubBytes = _buildEntryStub(stubOff, realEntryVaddr);
+    for (std::uint8_t b : stubBytes)
+        buf.push_back(b);
+    _writeU64(buf, 24, stubOff);
+
+    static constexpr char kInterp[] = "/lib64/ld-linux-x86-64.so.2";
+    const std::uint64_t interpOff = static_cast<std::uint64_t>(buf.size());
+    constexpr std::uint64_t interpSize = sizeof(kInterp);
+    for (std::size_t i = 0; i < interpSize; i++)
+        buf.push_back(static_cast<std::uint8_t>(kInterp[i]));
+
     const std::uint64_t extraBlockOff = dynStrOff;
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
+
+    std::uint16_t keptCount = 0;
+    for (const auto& ph : originalHeaders) {
+        if (_isSceSpecificSegment(ph.Type))
+            continue;
+        if (ph.Type == PT_DYNAMIC)
+            continue;
+        keptCount++;
+    }
+    const std::uint16_t neededPh = keptCount + 3;
+    if (neededPh > phNum)
+        throw RelinkerException(
+            "Not enough program header slots: need " + std::to_string(neededPh) +
+            ", available " + std::to_string(phNum));
 
     std::uint16_t writtenPh = 0;
     for (const auto& ph : originalHeaders) {
@@ -149,8 +210,6 @@ void ElfPatcher::PatchAndWrite(
             continue;
         if (ph.Type == PT_DYNAMIC)
             continue;
-        if (writtenPh >= phNum)
-            break;
         const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
         if (ph.Type == PT_LOAD) {
             ProgramHeader fixed = ph;
@@ -180,6 +239,12 @@ void ElfPatcher::PatchAndWrite(
         dynPh.MemorySize = dynSegBuf.size();
         dynPh.Alignment = 8;
         _writeProgramHeader(buf, phEntOff, dynPh);
+        writtenPh++;
+    }
+
+    {
+        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
+        _writeInterp(buf, phEntOff, interpOff, interpSize);
         writtenPh++;
     }
 
