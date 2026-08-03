@@ -9,13 +9,13 @@ namespace Relinker {
 
 class ElfReader : public IElfReader {
 public:
-    explicit ElfReader(const std::string& FilePath);
+    explicit ElfReader(const std::string& filePath);
     
     ElfHeader ReadHeader() const override;
     std::vector<ProgramHeader> ReadProgramHeaders() const override;
     std::vector<SectionHeader> ReadSectionHeaders() const override;
-    std::vector<std::uint8_t> ReadSection(const SectionHeader& Header) const override;
-    std::vector<std::uint8_t> ReadSegment(const ProgramHeader& Header) const override;
+    std::vector<std::uint8_t> ReadSection(const SectionHeader& header) const override;
+    std::vector<std::uint8_t> ReadSegment(const ProgramHeader& header) const override;
     std::uint64_t GetFileSize() const override;
 
 private:
@@ -23,11 +23,11 @@ private:
     mutable std::vector<std::uint8_t> _fileBuffer;
     
     void _loadFileIntoBuffer() const;
-    std::uint64_t _readU64At(FileByteOffset FileByteOffset) const;
-    std::uint32_t _readU32At(FileByteOffset FileByteOffset) const;
-    std::uint16_t _readU16At(FileByteOffset FileByteOffset) const;
-    std::uint8_t _readU8At(FileByteOffset FileByteOffset) const;
-    std::string _resolveShdrName(std::uint32_t NameOffset, const ElfHeader& Header) const;
+    std::uint64_t _readU64At(FileByteOffset fileByteOffset) const;
+    std::uint32_t _readU32At(FileByteOffset fileByteOffset) const;
+    std::uint16_t _readU16At(FileByteOffset fileByteOffset) const;
+    std::uint8_t _readU8At(FileByteOffset fileByteOffset) const;
+    std::string _resolveShdrName(std::uint32_t nameOffset, const ElfHeader& header) const;
 };
 
 }

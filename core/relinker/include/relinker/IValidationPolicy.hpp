@@ -10,11 +10,11 @@ public:
     virtual ~IValidationPolicy() = default;
 
     virtual void ValidateSyscallAbsence() = 0;
-    virtual void ValidateRelocationTypeSupported(std::uint32_t RelocationTypeValue, FileByteOffset FileByteOffset) = 0;
-    virtual void ValidateNidBelongsToLibrary(const std::string& Nid, const std::string& Library) = 0;
-    virtual void ValidateSceStructureSize(ByteCount ExpectedSize, ByteCount ActualSize, FileByteOffset FileByteOffset) = 0;
-    virtual void ValidateDynamicFieldInterpretable(const std::string& FieldName, FileByteOffset FileByteOffset) = 0;
-    virtual void ValidateNoSyscallInstructions(const std::vector<std::uint8_t>& CodeSection, FileByteOffset CodeOffset) = 0;
+    virtual void ValidateRelocationTypeSupported(std::uint32_t relocationTypeValue, FileByteOffset fileByteOffset) = 0;
+    virtual void ValidateNidBelongsToLibrary(const std::string& nid, const std::string& library) = 0;
+    virtual void ValidateSceStructureSize(ByteCount expectedSize, ByteCount actualSize, FileByteOffset fileByteOffset) = 0;
+    virtual void ValidateDynamicFieldInterpretable(const std::string& fieldName, FileByteOffset fileByteOffset) = 0;
+    virtual void ValidateNoSyscallInstructions(const std::vector<std::uint8_t>& codeSection, FileByteOffset codeOffset) = 0;
 };
 
 }

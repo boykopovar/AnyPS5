@@ -28,15 +28,15 @@ static std::string _hexOffset(FileByteOffset v) {
 
 class CallRegistryWriter : public ICallRegistryWriter {
 public:
-    std::string WriteCallRegistry(const std::vector<CallRegistryEntry>& Entries) override;
+    std::string WriteCallRegistry(const std::vector<CallRegistryEntry>& entries) override;
 };
 
-std::string CallRegistryWriter::WriteCallRegistry(const std::vector<CallRegistryEntry>& Entries) {
+std::string CallRegistryWriter::WriteCallRegistry(const std::vector<CallRegistryEntry>& entries) {
     std::ostringstream out;
     out << "[\n";
 
-    for (std::size_t i = 0; i < Entries.size(); ++i) {
-        const auto& e = Entries[i];
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto& e = entries[i];
 
         out << "  {\n";
         out << "    \"nid\": " << _jsonString(e.Nid) << ",\n";
@@ -56,7 +56,7 @@ std::string CallRegistryWriter::WriteCallRegistry(const std::vector<CallRegistry
         out << "    \"callSitesResolved\": " << (e.CallSitesResolved ? "true" : "false") << "\n";
         out << "  }";
 
-        if (i + 1 < Entries.size()) out << ",";
+        if (i + 1 < entries.size()) out << ",";
         out << "\n";
     }
 

@@ -63,8 +63,8 @@ static void _appendElfSym(
 
 static void _appendRela(
     std::vector<std::uint8_t>& rela,
-    std::uint64_t offset,
-    std::uint64_t info,
+    const std::uint64_t offset,
+    const std::uint64_t info,
     std::int64_t addend)
 {
     _appendU64(rela, offset);
@@ -75,34 +75,34 @@ static void _appendRela(
 class SysVDynamicSectionBuilder : public ISysVDynamicSectionBuilder {
 public:
     SysVDynamicSection BuildDynamicSection(
-        const std::vector<NidReference>& NidReferences,
-        const std::vector<std::string>& NeededLibraries) override;
+        const std::vector<NidReference>& nidReferences,
+        const std::vector<std::string>& neededLibraries) override;
 };
 
 SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
-    const std::vector<NidReference>& NidReferences,
-    const std::vector<std::string>& NeededLibraries)
+    const std::vector<NidReference>& nidReferences,
+    const std::vector<std::string>& neededLibraries)
 {
     SysVDynamicSection result;
 
     result.DynStrData.push_back(0);
 
     std::vector<std::uint32_t> neededOffsets;
-    for (const auto& lib : NeededLibraries)
+    for (const auto& lib : neededLibraries)
         neededOffsets.push_back(_appendStr(result.DynStrData, lib));
 
     _appendElfSym(result.DynSymData, 0, 0, 0, 0, 0, 0);
 
     std::uint32_t symIdx = 1;
-    for (const auto& ref : NidReferences) {
-        std::uint32_t nameOff = _appendStr(result.DynStrData, ref.Nid);
-        std::uint8_t info = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
+    for (const auto& ref : nidReferences) {
+        const std::uint32_t nameOff = _appendStr(result.DynStrData, ref.Nid);
+        const auto info = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
         _appendElfSym(result.DynSymData, nameOff, info, STV_DEFAULT, 0, 0, 0);
 
         std::uint32_t relType = ref.RelocationTypeValue;
         if (relType == 0) relType = R_X86_64_JUMP_SLOT;
 
-        std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | relType;
+        const std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | relType;
 
         if (relType == R_X86_64_JUMP_SLOT)
             _appendRela(result.RelaPltData, ref.RelocationAddress, relaInfo, 0);
@@ -114,7 +114,7 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
     std::uint64_t strsz = result.DynStrData.size();
 
-    for (std::uint32_t off : neededOffsets)
+    for (const std::uint32_t off : neededOffsets)
         _appendDynEntry(result.DynamicSegmentData, DT_NEEDED, off);
 
     _appendDynEntry(result.DynamicSegmentData, DT_STRTAB, 0);

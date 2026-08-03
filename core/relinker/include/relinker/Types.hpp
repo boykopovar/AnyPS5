@@ -76,8 +76,8 @@ struct SymbolExport {
 struct RelinkerException : std::runtime_error {
     FileByteOffset FailureOffset;
 
-    explicit RelinkerException(const std::string& Message, FileByteOffset FailureOffset = 0)
-        : std::runtime_error(Message), FailureOffset(FailureOffset) {}
+    explicit RelinkerException(const std::string& Message, const FileByteOffset failureOffset = 0)
+        : std::runtime_error(Message), FailureOffset(failureOffset) {}
 };
 
 }

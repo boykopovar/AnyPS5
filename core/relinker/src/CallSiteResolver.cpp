@@ -6,28 +6,28 @@ namespace Relinker {
 class CallSiteResolver : public ICallSiteResolver {
 public:
     std::vector<FileByteOffset> ResolveCallSites(
-        const std::vector<std::uint8_t>& TextSection,
-        FileByteOffset TextSectionVAddr,
-        VirtualAddress TargetGotOrPltAddress,
-        ByteCount TargetGotOrPltSize) override;
+        const std::vector<std::uint8_t>& textSection,
+        FileByteOffset textSectionVAddr,
+        VirtualAddress targetGotOrPltAddress,
+        ByteCount targetGotOrPltSize) override;
 };
 
 std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(
-    const std::vector<std::uint8_t>& TextSection,
-    FileByteOffset TextSectionVAddr,
-    VirtualAddress TargetGotOrPltAddress,
-    ByteCount TargetGotOrPltSize)
+    const std::vector<std::uint8_t>& textSection,
+    const FileByteOffset textSectionVAddr,
+    const VirtualAddress targetGotOrPltAddress,
+    const ByteCount targetGotOrPltSize)
 {
     std::vector<FileByteOffset> sites;
 
-    if (TextSection.size() < 6)
+    if (textSection.size() < 6)
         return sites;
 
-    const std::size_t limit = TextSection.size() - 5;
+    const std::size_t limit = textSection.size() - 5;
 
     for (std::size_t i = 0; i <= limit; ++i) {
-        std::uint8_t b0 = TextSection[i];
-        std::uint8_t b1 = TextSection[i + 1];
+        std::uint8_t b0 = textSection[i];
+        std::uint8_t b1 = textSection[i + 1];
 
         bool isRipRelative = false;
         std::size_t dispOffset = 0;
@@ -37,8 +37,8 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(
             isRipRelative = true;
             dispOffset = i + 2;
             instrSize = 6;
-        } else if (b0 == 0x48 && b1 == 0x8B && i + 6 < TextSection.size()) {
-            std::uint8_t modrm = TextSection[i + 2];
+        } else if (b0 == 0x48 && b1 == 0x8B && i + 6 < textSection.size()) {
+            std::uint8_t modrm = textSection[i + 2];
             if ((modrm & 0xC7) == 0x05) {
                 isRipRelative = true;
                 dispOffset = i + 3;
@@ -49,23 +49,23 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(
         if (!isRipRelative)
             continue;
 
-        if (dispOffset + 3 >= TextSection.size())
+        if (dispOffset + 3 >= textSection.size())
             continue;
 
-        std::int32_t disp =
+        const auto disp =
             static_cast<std::int32_t>(
-                static_cast<std::uint32_t>(TextSection[dispOffset]) |
-                (static_cast<std::uint32_t>(TextSection[dispOffset + 1]) << 8) |
-                (static_cast<std::uint32_t>(TextSection[dispOffset + 2]) << 16) |
-                (static_cast<std::uint32_t>(TextSection[dispOffset + 3]) << 24));
+                static_cast<std::uint32_t>(textSection[dispOffset]) |
+                (static_cast<std::uint32_t>(textSection[dispOffset + 1]) << 8) |
+                (static_cast<std::uint32_t>(textSection[dispOffset + 2]) << 16) |
+                (static_cast<std::uint32_t>(textSection[dispOffset + 3]) << 24));
 
-        VirtualAddress nextInstrVAddr = TextSectionVAddr + i + instrSize;
-        VirtualAddress resolvedAddr = static_cast<VirtualAddress>(static_cast<std::int64_t>(nextInstrVAddr) + disp);
+        const VirtualAddress nextInstrVAddr = textSectionVAddr + i + instrSize;
+        auto resolvedAddr = static_cast<VirtualAddress>(static_cast<std::int64_t>(nextInstrVAddr) + disp);
 
-        if (resolvedAddr >= TargetGotOrPltAddress &&
-            resolvedAddr < TargetGotOrPltAddress + TargetGotOrPltSize)
+        if (resolvedAddr >= targetGotOrPltAddress &&
+            resolvedAddr < targetGotOrPltAddress + targetGotOrPltSize)
         {
-            sites.push_back(TextSectionVAddr + i);
+            sites.push_back(textSectionVAddr + i);
         }
     }
 

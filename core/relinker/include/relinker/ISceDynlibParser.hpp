@@ -22,11 +22,11 @@ class ISceDynlibParser {
 public:
     virtual ~ISceDynlibParser() = default;
 
-    virtual std::vector<LibraryImport> ParseLibraryImports(const std::vector<std::uint8_t>& SceDynlibData) = 0;
-    virtual std::vector<RelocationEntry> ParseRelocationTable(const std::vector<std::uint8_t>& SceDynlibData) = 0;
+    virtual std::vector<LibraryImport> ParseLibraryImports(const std::vector<std::uint8_t>& sceDynlibData) = 0;
+    virtual std::vector<RelocationEntry> ParseRelocationTable(const std::vector<std::uint8_t>& sceDynlibData) = 0;
     virtual std::vector<NidReference> ExtractNidReferences(
-        const std::vector<RelocationEntry>& Relocations,
-        const std::vector<LibraryImport>& Imports
+        const std::vector<RelocationEntry>& relocations,
+        const std::vector<LibraryImport>& imports
     ) = 0;
 };
 

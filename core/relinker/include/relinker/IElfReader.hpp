@@ -11,12 +11,12 @@ class IElfReader {
 public:
     virtual ~IElfReader() = default;
 
-    virtual ElfHeader ReadHeader() const = 0;
-    virtual std::vector<ProgramHeader> ReadProgramHeaders() const = 0;
-    virtual std::vector<SectionHeader> ReadSectionHeaders() const = 0;
-    virtual std::vector<std::uint8_t> ReadSection(const SectionHeader& Header) const = 0;
-    virtual std::vector<std::uint8_t> ReadSegment(const ProgramHeader& Header) const = 0;
-    virtual std::uint64_t GetFileSize() const = 0;
+    [[nodiscard]] virtual ElfHeader ReadHeader() const = 0;
+    [[nodiscard]] virtual std::vector<ProgramHeader> ReadProgramHeaders() const = 0;
+    [[nodiscard]] virtual std::vector<SectionHeader> ReadSectionHeaders() const = 0;
+    [[nodiscard]] virtual std::vector<std::uint8_t> ReadSection(const SectionHeader& header) const = 0;
+    [[nodiscard]] virtual std::vector<std::uint8_t> ReadSegment(const ProgramHeader& header) const = 0;
+    [[nodiscard]] virtual std::uint64_t GetFileSize() const = 0;
 };
 
 }

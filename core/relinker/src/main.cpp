@@ -6,7 +6,7 @@
 #include <relinker/ICallRegistryWriter.hpp>
 #include <relinker/ISyscallScanner.hpp>
 #include <relinker/IValidationPolicy.hpp>
-#include "ValidationPolicy.hpp"
+#include "relinker/ValidationPolicy.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -28,7 +28,7 @@ static constexpr std::uint32_t PT_DYNAMIC = 2;
 static constexpr std::uint32_t PT_SCE_DYNLIBDATA = 0x61000000;
 static constexpr std::uint32_t SHT_NULL = 0;
 
-static std::string _relocationTypeName(std::uint32_t type) {
+static std::string _relocationTypeName(const std::uint32_t type) {
     switch (type) {
         case 1: return "R_X86_64_64";
         case 6: return "R_X86_64_GLOB_DAT";

@@ -11,10 +11,10 @@ public:
     virtual ~ICallSiteResolver() = default;
 
     virtual std::vector<FileByteOffset> ResolveCallSites(
-        const std::vector<std::uint8_t>& TextSection,
-        FileByteOffset TextSectionVAddr,
-        VirtualAddress TargetGotOrPltAddress,
-        ByteCount TargetGotOrPltSize
+        const std::vector<std::uint8_t>& textSection,
+        FileByteOffset textSectionVAddr,
+        VirtualAddress targetGotOrPltAddress,
+        ByteCount targetGotOrPltSize
     ) = 0;
 };
 

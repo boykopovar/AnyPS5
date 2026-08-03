@@ -22,7 +22,7 @@ class ICallRegistryWriter {
 public:
     virtual ~ICallRegistryWriter() = default;
 
-    virtual std::string WriteCallRegistry(const std::vector<CallRegistryEntry>& Entries) = 0;
+    virtual std::string WriteCallRegistry(const std::vector<CallRegistryEntry>& entries) = 0;
 };
 
 }

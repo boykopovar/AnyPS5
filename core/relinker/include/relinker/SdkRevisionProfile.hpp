@@ -8,23 +8,23 @@ namespace Relinker {
 
 class SdkRevisionProfile : public ISdkRevisionProfile {
 public:
-    explicit SdkRevisionProfile(const std::vector<std::uint8_t>& SceDynlibData);
+    explicit SdkRevisionProfile(const std::vector<std::uint8_t>& sceDynlibData);
     
-    std::uint32_t GetSceModuleParamHeaderSize() const override;
-    std::uint32_t GetSceModuleParamEntrySize() const override;
-    std::uint32_t GetSceDynlibDataHeaderSize() const override;
-    std::uint32_t GetSceDynlibDataEntrySize() const override;
-    std::uint32_t GetRelocationEntrySize() const override;
-    std::uint32_t GetImportsOffset() const override;
-    std::uint32_t GetImportsCount(const std::vector<std::uint8_t>& Data) const override;
-    std::uint32_t GetRelocationTableOffset() const override;
+    [[nodiscard]] std::uint32_t GetSceModuleParamHeaderSize() const override;
+    [[nodiscard]] std::uint32_t GetSceModuleParamEntrySize() const override;
+    [[nodiscard]] std::uint32_t GetSceDynlibDataHeaderSize() const override;
+    [[nodiscard]] std::uint32_t GetSceDynlibDataEntrySize() const override;
+    [[nodiscard]] std::uint32_t GetRelocationEntrySize() const override;
+    [[nodiscard]] std::uint32_t GetImportsOffset() const override;
+    [[nodiscard]] std::uint32_t GetImportsCount(const std::vector<std::uint8_t>& data) const override;
+    [[nodiscard]] std::uint32_t GetRelocationTableOffset() const override;
 
 private:
     std::uint32_t _sdkRevision;
     
-    void _detectSdkRevision(const std::vector<std::uint8_t>& Data);
-    std::uint32_t _readU32LittleEndian(const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const;
-    std::uint16_t _readU16LittleEndian(const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const;
+    void _detectSdkRevision(const std::vector<std::uint8_t>& data);
+    [[nodiscard]] std::uint32_t _readU32LittleEndian(const std::vector<std::uint8_t>& data, FileByteOffset fileByteOffset) const;
+    [[nodiscard]] std::uint16_t _readU16LittleEndian(const std::vector<std::uint8_t>& data, FileByteOffset fileByteOffset) const;
 };
 
 }

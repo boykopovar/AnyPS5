@@ -19,8 +19,8 @@ public:
     virtual ~ISysVDynamicSectionBuilder() = default;
 
     virtual SysVDynamicSection BuildDynamicSection(
-        const std::vector<NidReference>& NidReferences,
-        const std::vector<std::string>& NeededLibraries
+        const std::vector<NidReference>& nidReferences,
+        const std::vector<std::string>& neededLibraries
     ) = 0;
 };
 

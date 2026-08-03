@@ -9,15 +9,15 @@ class ISdkRevisionProfile {
 public:
     virtual ~ISdkRevisionProfile() = default;
 
-    virtual std::uint32_t GetSceModuleParamHeaderSize() const = 0;
-    virtual std::uint32_t GetSceModuleParamEntrySize() const = 0;
-    virtual std::uint32_t GetSceDynlibDataHeaderSize() const = 0;
-    virtual std::uint32_t GetSceDynlibDataEntrySize() const = 0;
-    virtual std::uint32_t GetRelocationEntrySize() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetSceModuleParamHeaderSize() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetSceModuleParamEntrySize() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetSceDynlibDataHeaderSize() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetSceDynlibDataEntrySize() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetRelocationEntrySize() const = 0;
 
-    virtual std::uint32_t GetImportsOffset() const = 0;
-    virtual std::uint32_t GetImportsCount(const std::vector<std::uint8_t>& Data) const = 0;
-    virtual std::uint32_t GetRelocationTableOffset() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetImportsOffset() const = 0;
+    [[nodiscard]] virtual std::uint32_t GetImportsCount(const std::vector<std::uint8_t>& data) const = 0;
+    [[nodiscard]] virtual std::uint32_t GetRelocationTableOffset() const = 0;
 };
 
 }

@@ -16,28 +16,28 @@ static constexpr std::uint8_t SYSRET_BYTE1 = 0x07;
 class SyscallScanner : public ISyscallScanner {
 public:
     void ScanCodeSectionForSyscalls(
-        const std::vector<std::uint8_t>& CodeSection,
-        FileByteOffset CodeSectionOffset,
-        FileByteOffset CodeSectionSize) override;
+        const std::vector<std::uint8_t>& codeSection,
+        FileByteOffset codeSectionOffset,
+        FileByteOffset codeSectionSize) override;
 };
 
 void SyscallScanner::ScanCodeSectionForSyscalls(
-    const std::vector<std::uint8_t>& CodeSection,
-    FileByteOffset CodeSectionOffset,
-    FileByteOffset CodeSectionSize) {
-    std::size_t limit = std::min(CodeSection.size(), static_cast<std::size_t>(CodeSectionSize));
+    const std::vector<std::uint8_t>& codeSection,
+    const FileByteOffset codeSectionOffset,
+    const FileByteOffset codeSectionSize) {
+    const std::size_t limit = std::min(codeSection.size(), static_cast<std::size_t>(codeSectionSize));
 
     for (std::size_t i = 0; i + 1 < limit; ++i) {
-        std::uint8_t b0 = CodeSection[i];
-        std::uint8_t b1 = CodeSection[i + 1];
+        std::uint8_t b0 = codeSection[i];
+        std::uint8_t b1 = codeSection[i + 1];
 
-        bool isSyscall = (b0 == SYSCALL_BYTE0 && b1 == SYSCALL_BYTE1);
-        bool isInt80 = (b0 == INT80_BYTE0 && b1 == INT80_BYTE1);
-        bool isSysenter = (b0 == SYSENTER_BYTE0 && b1 == SYSENTER_BYTE1);
+        const bool isSyscall = (b0 == SYSCALL_BYTE0 && b1 == SYSCALL_BYTE1);
+        const bool isInt80 = (b0 == INT80_BYTE0 && b1 == INT80_BYTE1);
+        const bool isSysenter = (b0 == SYSENTER_BYTE0 && b1 == SYSENTER_BYTE1);
         bool isSysret = (b0 == SYSRET_BYTE0 && b1 == SYSRET_BYTE1);
 
         if (isSyscall || isInt80 || isSysenter || isSysret) {
-            FileByteOffset instrOffset = CodeSectionOffset + i;
+            FileByteOffset instrOffset = codeSectionOffset + i;
             std::ostringstream msg;
             msg << "Forbidden syscall instruction at code offset 0x" << std::hex << instrOffset;
             throw RelinkerException(msg.str(), instrOffset);

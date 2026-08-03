@@ -1,4 +1,4 @@
-#include "ValidationPolicy.hpp"
+#include "relinker/ValidationPolicy.hpp"
 #include <sstream>
 
 namespace Relinker {
@@ -46,58 +46,58 @@ void ValidationPolicy::_initializeSupportedRelocationTypes() {
     };
 }
 
-void ValidationPolicy::RegisterLibraryImport(const std::string& Library) {
+void ValidationPolicy::RegisterLibraryImport(const std::string& library) {
     if (_supportedRelocationTypes.empty()) {
         _initializeSupportedRelocationTypes();
     }
-    _importedLibraries.insert(Library);
+    _importedLibraries.insert(library);
 }
 
 void ValidationPolicy::ValidateSyscallAbsence() {
 }
 
-void ValidationPolicy::ValidateRelocationTypeSupported(std::uint32_t RelocationTypeValue, FileByteOffset FileByteOffset) {
+void ValidationPolicy::ValidateRelocationTypeSupported(const std::uint32_t relocationTypeValue, const FileByteOffset fileByteOffset) {
     if (_supportedRelocationTypes.empty()) {
         _initializeSupportedRelocationTypes();
     }
-    if (_supportedRelocationTypes.find(RelocationTypeValue) == _supportedRelocationTypes.end()) {
+    if (_supportedRelocationTypes.find(relocationTypeValue) == _supportedRelocationTypes.end()) {
         std::ostringstream msg;
-        msg << "Unsupported relocation type 0x" << std::hex << RelocationTypeValue
-            << " at offset 0x" << FileByteOffset;
-        throw RelinkerException(msg.str(), FileByteOffset);
+        msg << "Unsupported relocation type 0x" << std::hex << relocationTypeValue
+            << " at offset 0x" << fileByteOffset;
+        throw RelinkerException(msg.str(), fileByteOffset);
     }
 }
 
-void ValidationPolicy::ValidateNidBelongsToLibrary(const std::string& Nid, const std::string& Library) {
-    if (_importedLibraries.find(Library) == _importedLibraries.end()) {
+void ValidationPolicy::ValidateNidBelongsToLibrary(const std::string& Nid, const std::string& library) {
+    if (_importedLibraries.find(library) == _importedLibraries.end()) {
         std::ostringstream msg;
-        msg << "NID \"" << Nid << "\" references library \"" << Library
+        msg << "NID \"" << Nid << "\" references library \"" << library
             << "\" which is not in the NEEDED list";
         throw RelinkerException(msg.str(), 0);
     }
 }
 
-void ValidationPolicy::ValidateSceStructureSize(ByteCount ExpectedSize, ByteCount ActualSize, FileByteOffset FileByteOffset) {
-    if (ActualSize != ExpectedSize) {
+void ValidationPolicy::ValidateSceStructureSize(const ByteCount expectedSize, const ByteCount actualSize, const FileByteOffset fileByteOffset) {
+    if (actualSize != expectedSize) {
         std::ostringstream msg;
-        msg << "SCE structure size mismatch at offset 0x" << std::hex << FileByteOffset
-            << ": expected " << std::dec << ExpectedSize << ", got " << ActualSize;
-        throw RelinkerException(msg.str(), FileByteOffset);
+        msg << "SCE structure size mismatch at offset 0x" << std::hex << fileByteOffset
+            << ": expected " << std::dec << expectedSize << ", got " << actualSize;
+        throw RelinkerException(msg.str(), fileByteOffset);
     }
 }
 
-void ValidationPolicy::ValidateDynamicFieldInterpretable(const std::string& FieldName, FileByteOffset FileByteOffset) {
+void ValidationPolicy::ValidateDynamicFieldInterpretable(const std::string& fieldName, const FileByteOffset fileByteOffset) {
     std::ostringstream msg;
-    msg << "Dynamic field \"" << FieldName
-        << "\" cannot be interpreted at offset 0x" << std::hex << FileByteOffset;
-    throw RelinkerException(msg.str(), FileByteOffset);
+    msg << "Dynamic field \"" << fieldName
+        << "\" cannot be interpreted at offset 0x" << std::hex << fileByteOffset;
+    throw RelinkerException(msg.str(), fileByteOffset);
 }
 
 void ValidationPolicy::ValidateNoSyscallInstructions(
-    const std::vector<std::uint8_t>& CodeSection, FileByteOffset CodeOffset) {
+    const std::vector<std::uint8_t>& CodeSection, const FileByteOffset codeOffset) {
     for (std::size_t i = 0; i + 1 < CodeSection.size(); ++i) {
-        std::uint8_t b0 = CodeSection[i];
-        std::uint8_t b1 = CodeSection[i + 1];
+        const std::uint8_t b0 = CodeSection[i];
+        const std::uint8_t b1 = CodeSection[i + 1];
 
         bool isSyscall = (b0 == SYSCALL_BYTE0 && b1 == SYSCALL_BYTE1);
         bool isInt80 = (b0 == INT80_BYTE0 && b1 == INT80_BYTE1);
@@ -105,7 +105,7 @@ void ValidationPolicy::ValidateNoSyscallInstructions(
         bool isSysret = (b0 == SYSRET_BYTE0 && b1 == SYSRET_BYTE1);
 
         if (isSyscall || isInt80 || isSysenter || isSysret) {
-            FileByteOffset instrOffset = CodeOffset + i;
+            FileByteOffset instrOffset = codeOffset + i;
             std::ostringstream msg;
             msg << "Forbidden syscall instruction at offset 0x" << std::hex << instrOffset;
             throw RelinkerException(msg.str(), instrOffset);
