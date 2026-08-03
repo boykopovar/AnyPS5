@@ -1,34 +1,19 @@
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/domain/Types.hpp>
-#include <fstream>
 #include <cstring>
 
 namespace Relinker {
 
-ElfReader::ElfReader(const std::string& filePath) : _filePath(filePath) {
+ElfReader::ElfReader(std::vector<std::uint8_t> fileBuffer)
+    : _fileBuffer(std::move(fileBuffer))
+{
 }
 
-void ElfReader::_loadFileIntoBuffer() const {
-    if (!_fileBuffer.empty()) {
-        return;
-    }
-    
-    std::ifstream file(_filePath, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        throw RelinkerException("Cannot open file: " + _filePath);
-    }
-    
-    std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    
-    _fileBuffer.resize(size);
-    if (!file.read(reinterpret_cast<char*>(_fileBuffer.data()), size)) {
-        throw RelinkerException("Cannot read file: " + _filePath);
-    }
+const std::vector<std::uint8_t>& ElfReader::GetRawBytes() const {
+    return _fileBuffer;
 }
 
 std::uint8_t ElfReader::_readU8At(FileByteOffset fileByteOffset) const {
-    _loadFileIntoBuffer();
     if (fileByteOffset >= _fileBuffer.size()) {
         throw RelinkerException("FileByteOffset out of bounds", fileByteOffset);
     }
@@ -36,7 +21,6 @@ std::uint8_t ElfReader::_readU8At(FileByteOffset fileByteOffset) const {
 }
 
 std::uint16_t ElfReader::_readU16At(FileByteOffset fileByteOffset) const {
-    _loadFileIntoBuffer();
     if (fileByteOffset + 2 > _fileBuffer.size()) {
         throw RelinkerException("FileByteOffset out of bounds", fileByteOffset);
     }
@@ -46,7 +30,6 @@ std::uint16_t ElfReader::_readU16At(FileByteOffset fileByteOffset) const {
 }
 
 std::uint32_t ElfReader::_readU32At(FileByteOffset fileByteOffset) const {
-    _loadFileIntoBuffer();
     if (fileByteOffset + 4 > _fileBuffer.size()) {
         throw RelinkerException("FileByteOffset out of bounds", fileByteOffset);
     }
@@ -56,7 +39,6 @@ std::uint32_t ElfReader::_readU32At(FileByteOffset fileByteOffset) const {
 }
 
 std::uint64_t ElfReader::_readU64At(FileByteOffset fileByteOffset) const {
-    _loadFileIntoBuffer();
     if (fileByteOffset + 8 > _fileBuffer.size()) {
         throw RelinkerException("FileByteOffset out of bounds", fileByteOffset);
     }
@@ -66,17 +48,15 @@ std::uint64_t ElfReader::_readU64At(FileByteOffset fileByteOffset) const {
 }
 
 ElfHeader ElfReader::ReadHeader() const {
-    _loadFileIntoBuffer();
-    
     if (_fileBuffer.size() < 20) {
         throw RelinkerException("File too small for ELF header");
     }
-    
-    if (_fileBuffer[0] != 0x7f || _fileBuffer[1] != 'E' || 
+
+    if (_fileBuffer[0] != 0x7f || _fileBuffer[1] != 'E' ||
         _fileBuffer[2] != 'L' || _fileBuffer[3] != 'F') {
         throw RelinkerException("Invalid ELF magic number");
     }
-    
+
     ElfHeader header{};
     header.Machine = _readU16At(0x12);
     header.Type = _readU16At(0x10);
@@ -95,7 +75,6 @@ ElfHeader ElfReader::ReadHeader() const {
 }
 
 std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
-    _loadFileIntoBuffer();
     const ElfHeader header = ReadHeader();
 
     std::vector<ProgramHeader> headers;
@@ -120,7 +99,6 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
 }
 
 std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
-    _loadFileIntoBuffer();
     const ElfHeader header = ReadHeader();
 
     std::vector<SectionHeader> headers;
@@ -169,8 +147,6 @@ std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeade
 }
 
 std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicHeader) const {
-    _loadFileIntoBuffer();
-
     std::vector<DynamicTag> tags;
     FileByteOffset offset = dynamicHeader.Offset;
     const FileByteOffset end = dynamicHeader.Offset + dynamicHeader.FileSize;
@@ -192,7 +168,6 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
 }
 
 FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const {
-    _loadFileIntoBuffer();
     const ElfHeader header = ReadHeader();
 
     FileByteOffset offset = header.ProgramHeaderOffset;
@@ -216,29 +191,26 @@ FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const 
 }
 
 std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& header) const {
-    _loadFileIntoBuffer();
-
     if (header.Offset + header.SectionSize > _fileBuffer.size()) {
         throw RelinkerException("Section offset out of bounds", header.Offset);
     }
 
-    std::vector<std::uint8_t> data(_fileBuffer.begin() + header.Offset, _fileBuffer.begin() + header.Offset + header.SectionSize);
-    return data;
+    return std::vector<std::uint8_t>(
+        _fileBuffer.begin() + header.Offset,
+        _fileBuffer.begin() + header.Offset + header.SectionSize);
 }
 
 std::vector<std::uint8_t> ElfReader::ReadSegment(const ProgramHeader& header) const {
-    _loadFileIntoBuffer();
-
     if (header.Offset + header.FileSize > _fileBuffer.size()) {
         throw RelinkerException("Segment offset out of bounds", header.Offset);
     }
 
-    std::vector<std::uint8_t> data(_fileBuffer.begin() + header.Offset, _fileBuffer.begin() + header.Offset + header.FileSize);
-    return data;
+    return std::vector<std::uint8_t>(
+        _fileBuffer.begin() + header.Offset,
+        _fileBuffer.begin() + header.Offset + header.FileSize);
 }
 
 std::uint64_t ElfReader::GetFileSize() const {
-    _loadFileIntoBuffer();
     return _fileBuffer.size();
 }
 

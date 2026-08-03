@@ -10,7 +10,6 @@
 #include <relinker/domain/IValidationPolicy.hpp>
 #include <relinker/domain/ISysVDynamicSectionBuilder.hpp>
 #include <relinker/domain/ICallRegistryWriter.hpp>
-#include <relinker/domain/IElfPatcher.hpp>
 #include <memory>
 
 namespace Relinker {
@@ -24,15 +23,10 @@ public:
         std::shared_ptr<ICallSiteResolver> callSiteResolver,
         std::shared_ptr<IValidationPolicy> validationPolicy,
         std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
-        std::shared_ptr<ICallRegistryWriter> callRegistryWriter,
-        std::shared_ptr<IElfPatcher> elfPatcher
+        std::shared_ptr<ICallRegistryWriter> callRegistryWriter
     );
 
-    void Run(
-        const std::string& inputElfPath,
-        const std::string& outputRegistryPath,
-        const std::string& outputElfPath
-    ) override;
+    RelinkResult Relink(const std::vector<std::uint8_t>& sourceElf) override;
 
 private:
     std::shared_ptr<IElfReader> _elfReader;
@@ -42,7 +36,6 @@ private:
     std::shared_ptr<IValidationPolicy> _validationPolicy;
     std::shared_ptr<ISysVDynamicSectionBuilder> _dynamicSectionBuilder;
     std::shared_ptr<ICallRegistryWriter> _callRegistryWriter;
-    std::shared_ptr<IElfPatcher> _elfPatcher;
 
     static constexpr std::uint32_t PT_LOAD = 1;
     static constexpr std::uint32_t PT_DYNAMIC = 2;
@@ -64,7 +57,6 @@ private:
     static constexpr std::int64_t DT_SYMTAB = 0x00000006;
 
     static std::string _relocationTypeName(std::uint32_t type);
-    void _writeFile(const std::string& path, const std::string& content) const;
 };
 
 }

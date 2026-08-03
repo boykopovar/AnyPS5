@@ -1,6 +1,5 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
-#include <fstream>
 #include <sstream>
 #include <iostream>
 #include <cstring>
@@ -14,8 +13,7 @@ RelinkerPipeline::RelinkerPipeline(
     std::shared_ptr<ICallSiteResolver> callSiteResolver,
     std::shared_ptr<IValidationPolicy> validationPolicy,
     std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
-    std::shared_ptr<ICallRegistryWriter> callRegistryWriter,
-    std::shared_ptr<IElfPatcher> elfPatcher)
+    std::shared_ptr<ICallRegistryWriter> callRegistryWriter)
     : _elfReader(std::move(elfReader))
     , _dynlibParser(std::move(dynlibParser))
     , _syscallScanner(std::move(syscallScanner))
@@ -23,7 +21,6 @@ RelinkerPipeline::RelinkerPipeline(
     , _validationPolicy(std::move(validationPolicy))
     , _dynamicSectionBuilder(std::move(dynamicSectionBuilder))
     , _callRegistryWriter(std::move(callRegistryWriter))
-    , _elfPatcher(std::move(elfPatcher))
 {}
 
 std::string RelinkerPipeline::_relocationTypeName(std::uint32_t type) {
@@ -40,18 +37,7 @@ std::string RelinkerPipeline::_relocationTypeName(std::uint32_t type) {
     }
 }
 
-void RelinkerPipeline::_writeFile(const std::string& path, const std::string& content) const {
-    std::ofstream f(path);
-    if (!f)
-        throw RelinkerException("Cannot open output file: " + path);
-    f << content;
-}
-
-void RelinkerPipeline::Run(
-    const std::string& inputElfPath,
-    const std::string& outputRegistryPath,
-    const std::string& outputElfPath)
-{
+RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf) {
     auto programHeaders = _elfReader->ReadProgramHeaders();
 
     std::vector<std::uint8_t> sceDynlibData;
@@ -128,11 +114,7 @@ void RelinkerPipeline::Run(
             _validationPolicy->ValidateNidBelongsToLibrary(ref.Nid, ref.Library);
         }
     } else if (dynStrTabOffset != 0) {
-        std::ifstream wholeFile(inputElfPath, std::ios::binary | std::ios::ate);
-        const std::streamsize wholeSize = wholeFile.tellg();
-        wholeFile.seekg(0);
-        std::vector<std::uint8_t> raw(static_cast<std::size_t>(wholeSize));
-        wholeFile.read(reinterpret_cast<char*>(raw.data()), wholeSize);
+        const std::vector<std::uint8_t>& raw = _elfReader->GetRawBytes();
 
         auto readCStr = [&](FileByteOffset strOff) -> std::string {
             std::string result;
@@ -142,7 +124,7 @@ void RelinkerPipeline::Run(
             return result;
         };
 
-        for (auto&[fst, snd] : neededLibraryNamesByStrOffset) {
+        for (auto& [fst, snd] : neededLibraryNamesByStrOffset) {
             snd = readCStr(fst);
             neededLibraries.push_back(snd);
             if (policy) policy->RegisterLibraryImport(snd);
@@ -220,12 +202,9 @@ void RelinkerPipeline::Run(
         entries.push_back(std::move(entry));
     }
 
-    _writeFile(outputRegistryPath, _callRegistryWriter->WriteCallRegistry(entries));
-    _elfPatcher->PatchAndWrite(inputElfPath, outputElfPath, programHeaders, dynSection);
-
     std::cout << "OK: " << entries.size() << " NID references processed\n";
-    std::cout << "Registry: " << outputRegistryPath << "\n";
-    std::cout << "Output ELF: " << outputElfPath << "\n";
+
+    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection)};
 }
 
 }

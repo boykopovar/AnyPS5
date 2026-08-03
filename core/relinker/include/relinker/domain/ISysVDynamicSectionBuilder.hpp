@@ -6,14 +6,6 @@
 
 namespace Relinker {
 
-struct SysVDynamicSection {
-    std::vector<std::uint8_t> DynamicSegmentData;
-    std::vector<std::uint8_t> DynSymData;
-    std::vector<std::uint8_t> DynStrData;
-    std::vector<std::uint8_t> RelaData;
-    std::vector<std::uint8_t> RelaPltData;
-};
-
 class ISysVDynamicSectionBuilder {
 public:
     virtual ~ISysVDynamicSectionBuilder() = default;

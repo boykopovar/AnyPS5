@@ -1,17 +1,16 @@
-#ifndef RELINKER_OUTPUT_ELFPATCHER_HPP
-#define RELINKER_OUTPUT_ELFPATCHER_HPP
+#ifndef ELFPATCHER_ELFPATCHER_HPP
+#define ELFPATCHER_ELFPATCHER_HPP
 
-#include <relinker/domain/IElfPatcher.hpp>
+#include <elfpatcher/IElfPatcher.hpp>
 
-namespace Relinker {
+namespace Elfpatcher {
 
 class ElfPatcher : public IElfPatcher {
 public:
-    void PatchAndWrite(
-        const std::string& inputPath,
-        const std::string& outputPath,
-        const std::vector<ProgramHeader>& originalHeaders,
-        const SysVDynamicSection& dynamicSection
+    std::vector<std::uint8_t> Patch(
+        const std::vector<std::uint8_t>& sourceElf,
+        const std::vector<Domain::ProgramHeader>& originalHeaders,
+        const Domain::SysVDynamicSection& dynamicSection
     ) override;
 
 private:
@@ -42,9 +41,9 @@ private:
     static constexpr std::int64_t DT_PLTREL = 20;
 
     [[nodiscard]] bool _isSceSpecificSegment(std::uint32_t type) const;
-    [[nodiscard]] bool _isNullPageLoad(const ProgramHeader& ph) const;
-    [[nodiscard]] bool _shouldSkip(const ProgramHeader& ph) const;
-    [[nodiscard]] ProgramHeader _makeLoadHeader(std::uint64_t offset, std::uint64_t size) const;
+    [[nodiscard]] bool _isNullPageLoad(const Domain::ProgramHeader& ph) const;
+    [[nodiscard]] bool _shouldSkip(const Domain::ProgramHeader& ph) const;
+    [[nodiscard]] Domain::ProgramHeader _makeLoadHeader(std::uint64_t offset, std::uint64_t size) const;
     [[nodiscard]] std::vector<std::uint8_t> _buildEntryStub(std::uint64_t stubVaddr, std::uint64_t realEntryVaddr) const;
     void _writeInterp(std::vector<std::uint8_t>& buf, std::size_t phEntOff, std::uint64_t interpOff, std::uint64_t interpSize) const;
     void _writeU16(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint16_t v) const;
@@ -53,7 +52,7 @@ private:
     void _appendU64(std::vector<std::uint8_t>& buf, std::uint64_t v) const;
     void _appendI64(std::vector<std::uint8_t>& buf, std::int64_t v) const;
     void _appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const;
-    void _writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset, const ProgramHeader& ph) const;
+    void _writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset, const Domain::ProgramHeader& ph) const;
     [[nodiscard]] std::uint32_t _fixLoadFlags(std::uint32_t originalFlags) const;
 };
 

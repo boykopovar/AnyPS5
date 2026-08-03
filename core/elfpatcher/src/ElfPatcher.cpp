@@ -1,8 +1,7 @@
-#include <relinker/output/ElfPatcher.hpp>
-#include <fstream>
+#include <elfpatcher/ElfPatcher.hpp>
 #include <cstring>
 
-namespace Relinker {
+namespace Elfpatcher {
 
 bool ElfPatcher::_isSceSpecificSegment(std::uint32_t type) const {
     return type == PT_SCE_DYNLIBDATA
@@ -11,7 +10,7 @@ bool ElfPatcher::_isSceSpecificSegment(std::uint32_t type) const {
         || (type >= 0x61000000 && type <= 0x6fffffff);
 }
 
-bool ElfPatcher::_isNullPageLoad(const ProgramHeader& ph) const {
+bool ElfPatcher::_isNullPageLoad(const Domain::ProgramHeader& ph) const {
     return ph.Type == PT_LOAD && ph.MappedAddress == 0;
 }
 
@@ -42,7 +41,7 @@ void ElfPatcher::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t ta
     _appendU64(buf, val);
 }
 
-void ElfPatcher::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset, const ProgramHeader& ph) const {
+void ElfPatcher::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset, const Domain::ProgramHeader& ph) const {
     _writeU32(buf, offset + 0, ph.Type);
     _writeU32(buf, offset + 4, ph.Flags);
     _writeU64(buf, offset + 8, ph.Offset);
@@ -53,8 +52,8 @@ void ElfPatcher::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t
     _writeU64(buf, offset + 48, ph.Alignment);
 }
 
-ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t size) const {
-    ProgramHeader ph{};
+Domain::ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t size) const {
+    Domain::ProgramHeader ph{};
     ph.Type = PT_LOAD;
     ph.Flags = PF_R;
     ph.Offset = offset;
@@ -67,7 +66,7 @@ ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t si
 }
 
 void ElfPatcher::_writeInterp(std::vector<std::uint8_t>& buf, std::size_t phEntOff, std::uint64_t interpOff, std::uint64_t interpSize) const {
-    ProgramHeader ph{};
+    Domain::ProgramHeader ph{};
     ph.Type = PT_INTERP;
     ph.Flags = PF_R;
     ph.Offset = interpOff;
@@ -79,7 +78,7 @@ void ElfPatcher::_writeInterp(std::vector<std::uint8_t>& buf, std::size_t phEntO
     _writeProgramHeader(buf, phEntOff, ph);
 }
 
-std::vector<std::uint8_t> ElfPatcher::_buildEntryStub(std::uint64_t stubVaddr, std::uint64_t realEntryVaddr) const {
+std::vector<std::uint8_t> ElfPatcher::_buildEntryStub(const std::uint64_t stubVaddr, const std::uint64_t realEntryVaddr) const {
     std::vector<std::uint8_t> s;
     s.push_back(0x58);
     s.push_back(0x48); s.push_back(0x89); s.push_back(0xe3);
@@ -104,7 +103,7 @@ std::uint32_t ElfPatcher::_fixLoadFlags(std::uint32_t originalFlags) const {
     return originalFlags | PF_R;
 }
 
-bool ElfPatcher::_shouldSkip(const ProgramHeader& ph) const {
+bool ElfPatcher::_shouldSkip(const Domain::ProgramHeader& ph) const {
     if (_isSceSpecificSegment(ph.Type)) return true;
     if (ph.Type == PT_DYNAMIC) return true;
     if (_isNullPageLoad(ph)) return true;
@@ -112,20 +111,12 @@ bool ElfPatcher::_shouldSkip(const ProgramHeader& ph) const {
     return false;
 }
 
-void ElfPatcher::PatchAndWrite(
-    const std::string& inputPath,
-    const std::string& outputPath,
-    const std::vector<ProgramHeader>& originalHeaders,
-    const SysVDynamicSection& dynSection)
+std::vector<std::uint8_t> ElfPatcher::Patch(
+    const std::vector<std::uint8_t>& sourceElf,
+    const std::vector<Domain::ProgramHeader>& originalHeaders,
+    const Domain::SysVDynamicSection& dynSection)
 {
-    std::ifstream in(inputPath, std::ios::binary | std::ios::ate);
-    if (!in)
-        throw RelinkerException("Cannot open input ELF: " + inputPath);
-    const std::streamsize fileSize = in.tellg();
-    in.seekg(0);
-    std::vector<std::uint8_t> buf(static_cast<std::size_t>(fileSize));
-    if (!in.read(reinterpret_cast<char*>(buf.data()), fileSize))
-        throw RelinkerException("Cannot read input ELF: " + inputPath);
+    std::vector<std::uint8_t> buf = sourceElf;
 
     buf[7] = 0;
     buf[8] = 0;
@@ -211,7 +202,7 @@ void ElfPatcher::PatchAndWrite(
     }
     const std::uint16_t neededPh = keptCount + 3;
     if (neededPh > phNum)
-        throw RelinkerException(
+        throw Domain::RelinkerException(
             "Not enough program header slots: need " + std::to_string(neededPh) +
             ", available " + std::to_string(phNum));
 
@@ -221,7 +212,7 @@ void ElfPatcher::PatchAndWrite(
             continue;
         const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
         if (ph.Type == PT_LOAD) {
-            ProgramHeader fixed = ph;
+            Domain::ProgramHeader fixed = ph;
             fixed.Flags = _fixLoadFlags(ph.Flags);
             _writeProgramHeader(buf, phEntOff, fixed);
         } else {
@@ -238,7 +229,7 @@ void ElfPatcher::PatchAndWrite(
 
     {
         const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
-        ProgramHeader dynPh{};
+        Domain::ProgramHeader dynPh{};
         dynPh.Type = PT_DYNAMIC;
         dynPh.Flags = PF_R | PF_W;
         dynPh.Offset = dynSegOff;
@@ -259,12 +250,7 @@ void ElfPatcher::PatchAndWrite(
 
     _writeU16(buf, 56, writtenPh);
 
-    std::ofstream out(outputPath, std::ios::binary);
-    if (!out)
-        throw RelinkerException("Cannot open output ELF: " + outputPath);
-    out.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
-    if (!out)
-        throw RelinkerException("Failed to write output ELF: " + outputPath);
+    return buf;
 }
 
 }

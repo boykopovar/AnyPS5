@@ -19,6 +19,7 @@ public:
     [[nodiscard]] virtual std::vector<std::uint8_t> ReadSection(const SectionHeader& header) const = 0;
     [[nodiscard]] virtual std::vector<std::uint8_t> ReadSegment(const ProgramHeader& header) const = 0;
     [[nodiscard]] virtual std::uint64_t GetFileSize() const = 0;
+    [[nodiscard]] virtual const std::vector<std::uint8_t>& GetRawBytes() const = 0;
 };
 
 }

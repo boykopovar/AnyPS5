@@ -7,17 +7,6 @@
 
 namespace Relinker {
 
-struct CallRegistryEntry {
-    std::string Nid;
-    std::string Library;
-    std::string RelocationTypeString;
-    FileByteOffset RelocationOffset;
-    std::string TargetSection;
-    FileByteOffset TargetOffset;
-    std::vector<FileByteOffset> CallSites;
-    bool CallSitesResolved;
-};
-
 class ICallRegistryWriter {
 public:
     virtual ~ICallRegistryWriter() = default;
