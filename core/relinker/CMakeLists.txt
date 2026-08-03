@@ -14,11 +14,15 @@ set(RELINKER_HEADERS
 )
 
 set(RELINKER_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/ValidationPolicy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ValidationPolicy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ElfReader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SdkRevisionProfile.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SceDynlibParser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/SyscallScanner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CallSiteResolver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SysVDynamicSectionBuilder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CallRegistryWriter.cpp
 )
 
 add_executable(relinker ${RELINKER_SOURCES} ${RELINKER_HEADERS})
