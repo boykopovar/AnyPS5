@@ -20,7 +20,7 @@ static std::string _jsonString(const std::string& s) {
     return out;
 }
 
-static std::string _hexOffset(Offset v) {
+static std::string _hexOffset(FileByteOffset v) {
     std::ostringstream oss;
     oss << "\"0x" << std::hex << std::uppercase << v << "\"";
     return oss.str();

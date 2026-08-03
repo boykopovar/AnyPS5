@@ -5,20 +5,20 @@ namespace Relinker {
 
 class CallSiteResolver : public ICallSiteResolver {
 public:
-    std::vector<Offset> ResolveCallSites(
+    std::vector<FileByteOffset> ResolveCallSites(
         const std::vector<std::uint8_t>& TextSection,
-        Offset TextSectionVAddr,
-        Address TargetGotOrPltAddress,
-        Size TargetGotOrPltSize) override;
+        FileByteOffset TextSectionVAddr,
+        VirtualAddress TargetGotOrPltAddress,
+        ByteCount TargetGotOrPltSize) override;
 };
 
-std::vector<Offset> CallSiteResolver::ResolveCallSites(
+std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(
     const std::vector<std::uint8_t>& TextSection,
-    Offset TextSectionVAddr,
-    Address TargetGotOrPltAddress,
-    Size TargetGotOrPltSize)
+    FileByteOffset TextSectionVAddr,
+    VirtualAddress TargetGotOrPltAddress,
+    ByteCount TargetGotOrPltSize)
 {
-    std::vector<Offset> sites;
+    std::vector<FileByteOffset> sites;
 
     if (TextSection.size() < 6)
         return sites;
@@ -59,8 +59,8 @@ std::vector<Offset> CallSiteResolver::ResolveCallSites(
                 (static_cast<std::uint32_t>(TextSection[dispOffset + 2]) << 16) |
                 (static_cast<std::uint32_t>(TextSection[dispOffset + 3]) << 24));
 
-        Address nextInstrVAddr = TextSectionVAddr + i + instrSize;
-        Address resolvedAddr = static_cast<Address>(static_cast<std::int64_t>(nextInstrVAddr) + disp);
+        VirtualAddress nextInstrVAddr = TextSectionVAddr + i + instrSize;
+        VirtualAddress resolvedAddr = static_cast<VirtualAddress>(static_cast<std::int64_t>(nextInstrVAddr) + disp);
 
         if (resolvedAddr >= TargetGotOrPltAddress &&
             resolvedAddr < TargetGotOrPltAddress + TargetGotOrPltSize)

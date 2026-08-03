@@ -13,7 +13,7 @@ struct LibraryImport {
 };
 
 struct RelocationEntry {
-    Offset Offset;
+    FileByteOffset EntryOffset;
     std::uint64_t Info;
     std::int64_t Addend;
 };

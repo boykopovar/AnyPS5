@@ -10,9 +10,9 @@
 
 namespace Relinker {
 
-using Offset = std::uint64_t;
-using Address = std::uint64_t;
-using Size = std::uint64_t;
+using FileByteOffset = std::uint64_t;
+using VirtualAddress = std::uint64_t;
+using ByteCount = std::uint64_t;
 
 struct ElfHeader {
     std::uint16_t Machine;
@@ -32,11 +32,11 @@ struct ElfHeader {
 struct ProgramHeader {
     std::uint32_t Type;
     std::uint32_t Flags;
-    Offset Offset;
-    Address VirtualAddress;
-    Address PhysicalAddress;
-    Size FileSize;
-    Size MemorySize;
+    FileByteOffset Offset;
+    VirtualAddress MappedAddress;
+    VirtualAddress PhysicalAddress;
+    ByteCount FileSize;
+    ByteCount MemorySize;
     std::uint64_t Alignment;
 };
 
@@ -44,9 +44,9 @@ struct SectionHeader {
     std::string Name;
     std::uint32_t Type;
     std::uint64_t Flags;
-    Address VirtualAddress;
-    Offset Offset;
-    Size Size;
+    VirtualAddress MappedAddress;
+    FileByteOffset Offset;
+    ByteCount SectionSize;
     std::uint32_t Link;
     std::uint32_t Info;
     std::uint64_t EntrySize;
@@ -56,28 +56,28 @@ struct NidReference {
     std::string Nid;
     std::string Library;
     std::uint32_t RelocationTypeValue;
-    Offset RelocationTableOffset;
-    Address RelocationAddress;
+    FileByteOffset RelocationTableOffset;
+    VirtualAddress RelocationAddress;
 };
 
 struct CallSiteInfo {
-    std::vector<Offset> Sites;
+    std::vector<FileByteOffset> Sites;
     bool Resolved;
 };
 
 struct SymbolExport {
     std::string Nid;
     std::string Library;
-    Offset GotOffset;
-    Offset PltOffset;
+    FileByteOffset GotOffset;
+    FileByteOffset PltOffset;
     CallSiteInfo CallSites;
 };
 
 struct RelinkerException : std::runtime_error {
-    Offset FailureOffset;
-    
-    explicit RelinkerException(const std::string& Message, Offset Offset = 0)
-        : std::runtime_error(Message), FailureOffset(Offset) {}
+    FileByteOffset FailureOffset;
+
+    explicit RelinkerException(const std::string& Message, FileByteOffset FailureOffset = 0)
+        : std::runtime_error(Message), FailureOffset(FailureOffset) {}
 };
 
 }

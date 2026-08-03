@@ -11,10 +11,10 @@ struct CallRegistryEntry {
     std::string Nid;
     std::string Library;
     std::string RelocationTypeString;
-    Offset RelocationOffset;
+    FileByteOffset RelocationOffset;
     std::string TargetSection;
-    Offset TargetOffset;
-    std::vector<Offset> CallSites;
+    FileByteOffset TargetOffset;
+    std::vector<FileByteOffset> CallSites;
     bool CallSitesResolved;
 };
 

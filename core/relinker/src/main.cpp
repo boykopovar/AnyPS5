@@ -66,9 +66,9 @@ int main(int argc, char* argv[]) {
 
         std::vector<std::uint8_t> sceDynlibData;
         std::vector<std::uint8_t> textSection;
-        Relinker::Address textVAddr = 0;
-        Relinker::Address gotVAddr = 0;
-        Relinker::Size gotSize = 0;
+        Relinker::VirtualAddress textVAddr = 0;
+        Relinker::VirtualAddress gotVAddr = 0;
+        Relinker::ByteCount gotSize = 0;
 
         for (const auto& ph : programHeaders) {
             if (ph.Type == PT_SCE_DYNLIBDATA)
@@ -78,10 +78,10 @@ int main(int argc, char* argv[]) {
         for (const auto& sh : sectionHeaders) {
             if (sh.Name == ".text") {
                 textSection = elfReader->ReadSection(sh);
-                textVAddr   = sh.VirtualAddress;
+                textVAddr   = sh.MappedAddress;
             } else if (sh.Name == ".got" || sh.Name == ".got.plt") {
-                gotVAddr = sh.VirtualAddress;
-                gotSize = sh.Size;
+                gotVAddr = sh.MappedAddress;
+                gotSize = sh.SectionSize;
             }
         }
 
@@ -123,7 +123,7 @@ int main(int argc, char* argv[]) {
         entries.reserve(nidRefs.size());
 
         for (const auto& ref : nidRefs) {
-            std::vector<Relinker::Offset> callSites;
+            std::vector<Relinker::FileByteOffset> callSites;
             bool resolved = false;
 
             if (!textSection.empty() && gotSize > 0) {

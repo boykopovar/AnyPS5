@@ -15,40 +15,40 @@ SceDynlibParser::SceDynlibParser(std::shared_ptr<ISdkRevisionProfile> SdkProfile
 }
 
 std::uint8_t SceDynlibParser::_readU8At(
-    const std::vector<std::uint8_t>& Data, Offset Offset) const {
-    if (Offset >= Data.size()) {
-        throw RelinkerException("SCE dynlib data offset out of bounds", Offset);
+    const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const {
+    if (FileByteOffset >= Data.size()) {
+        throw RelinkerException("SCE dynlib data offset out of bounds", FileByteOffset);
     }
-    return Data[Offset];
+    return Data[FileByteOffset];
 }
 
 std::uint16_t SceDynlibParser::_readU16At(
-    const std::vector<std::uint8_t>& Data, Offset Offset) const {
-    if (Offset + 2 > Data.size()) {
-        throw RelinkerException("SCE dynlib data offset out of bounds", Offset);
+    const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const {
+    if (FileByteOffset + 2 > Data.size()) {
+        throw RelinkerException("SCE dynlib data offset out of bounds", FileByteOffset);
     }
     std::uint16_t value;
-    std::memcpy(&value, Data.data() + Offset, 2);
+    std::memcpy(&value, Data.data() + FileByteOffset, 2);
     return value;
 }
 
 std::uint32_t SceDynlibParser::_readU32At(
-    const std::vector<std::uint8_t>& Data, Offset Offset) const {
-    if (Offset + 4 > Data.size()) {
-        throw RelinkerException("SCE dynlib data offset out of bounds", Offset);
+    const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const {
+    if (FileByteOffset + 4 > Data.size()) {
+        throw RelinkerException("SCE dynlib data offset out of bounds", FileByteOffset);
     }
     std::uint32_t value;
-    std::memcpy(&value, Data.data() + Offset, 4);
+    std::memcpy(&value, Data.data() + FileByteOffset, 4);
     return value;
 }
 
 std::uint64_t SceDynlibParser::_readU64At(
-    const std::vector<std::uint8_t>& Data, Offset Offset) const {
-    if (Offset + 8 > Data.size()) {
-        throw RelinkerException("SCE dynlib data offset out of bounds", Offset);
+    const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const {
+    if (FileByteOffset + 8 > Data.size()) {
+        throw RelinkerException("SCE dynlib data offset out of bounds", FileByteOffset);
     }
     std::uint64_t value;
-    std::memcpy(&value, Data.data() + Offset, 8);
+    std::memcpy(&value, Data.data() + FileByteOffset, 8);
     return value;
 }
 
@@ -61,7 +61,7 @@ std::vector<LibraryImport> SceDynlibParser::ParseLibraryImports(
     std::vector<LibraryImport> imports;
     imports.reserve(count);
 
-    Offset cursor = baseOff;
+    FileByteOffset cursor = baseOff;
     for (std::uint32_t i = 0; i < count; ++i) {
         if (cursor + entrySize > SceDynlibData.size()) {
             throw RelinkerException("Library import entry out of bounds", cursor);
@@ -72,7 +72,7 @@ std::vector<LibraryImport> SceDynlibParser::ParseLibraryImports(
         std::uint32_t version = _readU16At(SceDynlibData, cursor + 0x06);
 
         std::string name;
-        Offset namePos = nameOffset;
+        FileByteOffset namePos = nameOffset;
         while (namePos < SceDynlibData.size() && SceDynlibData[namePos] != '\0') {
             name += static_cast<char>(SceDynlibData[namePos]);
             ++namePos;
@@ -100,11 +100,11 @@ std::vector<RelocationEntry> SceDynlibParser::ParseRelocationTable(
     }
 
     std::vector<RelocationEntry> entries;
-    Offset cursor = tableOffset;
+    FileByteOffset cursor = tableOffset;
 
     while (cursor + entrySize <= SceDynlibData.size()) {
         RelocationEntry entry;
-        entry.Offset = _readU64At(SceDynlibData, cursor);
+        entry.EntryOffset = _readU64At(SceDynlibData, cursor);
         entry.Info = _readU64At(SceDynlibData, cursor + 0x08);
         entry.Addend = static_cast<std::int64_t>(_readU64At(SceDynlibData, cursor + 0x10));
         entries.push_back(entry);
@@ -147,8 +147,8 @@ std::vector<NidReference> SceDynlibParser::ExtractNidReferences(
         ref.Nid = std::move(nid);
         ref.Library = std::move(library);
         ref.RelocationTypeValue = relocType;
-        ref.RelocationTableOffset = static_cast<Offset>(i * _sdkProfile->GetRelocationEntrySize());
-        ref.RelocationAddress = reloc.Offset;
+        ref.RelocationTableOffset = static_cast<FileByteOffset>(i * _sdkProfile->GetRelocationEntrySize());
+        ref.RelocationAddress = reloc.EntryOffset;
         refs.push_back(std::move(ref));
     }
 

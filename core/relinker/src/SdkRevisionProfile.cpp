@@ -25,22 +25,22 @@ void SdkRevisionProfile::_detectSdkRevision(const std::vector<std::uint8_t>& Dat
 }
 
 std::uint32_t SdkRevisionProfile::_readU32LittleEndian(
-    const std::vector<std::uint8_t>& Data, Offset Offset) const {
-    if (Offset + 4 > Data.size()) {
-        throw RelinkerException("Offset out of bounds", Offset);
+    const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const {
+    if (FileByteOffset + 4 > Data.size()) {
+        throw RelinkerException("FileByteOffset out of bounds", FileByteOffset);
     }
     std::uint32_t value;
-    std::memcpy(&value, Data.data() + Offset, 4);
+    std::memcpy(&value, Data.data() + FileByteOffset, 4);
     return value;
 }
 
 std::uint16_t SdkRevisionProfile::_readU16LittleEndian(
-    const std::vector<std::uint8_t>& Data, Offset Offset) const {
-    if (Offset + 2 > Data.size()) {
-        throw RelinkerException("Offset out of bounds", Offset);
+    const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const {
+    if (FileByteOffset + 2 > Data.size()) {
+        throw RelinkerException("FileByteOffset out of bounds", FileByteOffset);
     }
     std::uint16_t value;
-    std::memcpy(&value, Data.data() + Offset, 2);
+    std::memcpy(&value, Data.data() + FileByteOffset, 2);
     return value;
 }
 

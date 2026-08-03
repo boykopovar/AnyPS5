@@ -17,14 +17,14 @@ class SyscallScanner : public ISyscallScanner {
 public:
     void ScanCodeSectionForSyscalls(
         const std::vector<std::uint8_t>& CodeSection,
-        Offset CodeSectionOffset,
-        Offset CodeSectionSize) override;
+        FileByteOffset CodeSectionOffset,
+        FileByteOffset CodeSectionSize) override;
 };
 
 void SyscallScanner::ScanCodeSectionForSyscalls(
     const std::vector<std::uint8_t>& CodeSection,
-    Offset CodeSectionOffset,
-    Offset CodeSectionSize) {
+    FileByteOffset CodeSectionOffset,
+    FileByteOffset CodeSectionSize) {
     std::size_t limit = std::min(CodeSection.size(), static_cast<std::size_t>(CodeSectionSize));
 
     for (std::size_t i = 0; i + 1 < limit; ++i) {
@@ -37,7 +37,7 @@ void SyscallScanner::ScanCodeSectionForSyscalls(
         bool isSysret = (b0 == SYSRET_BYTE0 && b1 == SYSRET_BYTE1);
 
         if (isSyscall || isInt80 || isSysenter || isSysret) {
-            Offset instrOffset = CodeSectionOffset + i;
+            FileByteOffset instrOffset = CodeSectionOffset + i;
             std::ostringstream msg;
             msg << "Forbidden syscall instruction at code offset 0x" << std::hex << instrOffset;
             throw RelinkerException(msg.str(), instrOffset);

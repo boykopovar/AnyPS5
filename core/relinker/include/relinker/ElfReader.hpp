@@ -23,10 +23,10 @@ private:
     mutable std::vector<std::uint8_t> _fileBuffer;
     
     void _loadFileIntoBuffer() const;
-    std::uint64_t _readU64At(Offset Offset) const;
-    std::uint32_t _readU32At(Offset Offset) const;
-    std::uint16_t _readU16At(Offset Offset) const;
-    std::uint8_t _readU8At(Offset Offset) const;
+    std::uint64_t _readU64At(FileByteOffset FileByteOffset) const;
+    std::uint32_t _readU32At(FileByteOffset FileByteOffset) const;
+    std::uint16_t _readU16At(FileByteOffset FileByteOffset) const;
+    std::uint8_t _readU8At(FileByteOffset FileByteOffset) const;
     std::string _resolveShdrName(std::uint32_t NameOffset, const ElfHeader& Header) const;
 };
 

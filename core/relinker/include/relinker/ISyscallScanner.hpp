@@ -12,8 +12,8 @@ public:
 
     virtual void ScanCodeSectionForSyscalls(
         const std::vector<std::uint8_t>& CodeSection,
-        Offset CodeSectionOffset,
-        Offset CodeSectionSize
+        FileByteOffset CodeSectionOffset,
+        FileByteOffset CodeSectionSize
     ) = 0;
 };
 

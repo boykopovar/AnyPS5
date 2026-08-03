@@ -27,41 +27,41 @@ void ElfReader::_loadFileIntoBuffer() const {
     }
 }
 
-std::uint8_t ElfReader::_readU8At(Offset Offset) const {
+std::uint8_t ElfReader::_readU8At(FileByteOffset FileByteOffset) const {
     _loadFileIntoBuffer();
-    if (Offset >= _fileBuffer.size()) {
-        throw RelinkerException("Offset out of bounds", Offset);
+    if (FileByteOffset >= _fileBuffer.size()) {
+        throw RelinkerException("FileByteOffset out of bounds", FileByteOffset);
     }
-    return _fileBuffer[Offset];
+    return _fileBuffer[FileByteOffset];
 }
 
-std::uint16_t ElfReader::_readU16At(Offset Offset) const {
+std::uint16_t ElfReader::_readU16At(FileByteOffset FileByteOffset) const {
     _loadFileIntoBuffer();
-    if (Offset + 2 > _fileBuffer.size()) {
-        throw RelinkerException("Offset out of bounds", Offset);
+    if (FileByteOffset + 2 > _fileBuffer.size()) {
+        throw RelinkerException("FileByteOffset out of bounds", FileByteOffset);
     }
     std::uint16_t value;
-    std::memcpy(&value, _fileBuffer.data() + Offset, 2);
+    std::memcpy(&value, _fileBuffer.data() + FileByteOffset, 2);
     return value;
 }
 
-std::uint32_t ElfReader::_readU32At(Offset Offset) const {
+std::uint32_t ElfReader::_readU32At(FileByteOffset FileByteOffset) const {
     _loadFileIntoBuffer();
-    if (Offset + 4 > _fileBuffer.size()) {
-        throw RelinkerException("Offset out of bounds", Offset);
+    if (FileByteOffset + 4 > _fileBuffer.size()) {
+        throw RelinkerException("FileByteOffset out of bounds", FileByteOffset);
     }
     std::uint32_t value;
-    std::memcpy(&value, _fileBuffer.data() + Offset, 4);
+    std::memcpy(&value, _fileBuffer.data() + FileByteOffset, 4);
     return value;
 }
 
-std::uint64_t ElfReader::_readU64At(Offset Offset) const {
+std::uint64_t ElfReader::_readU64At(FileByteOffset FileByteOffset) const {
     _loadFileIntoBuffer();
-    if (Offset + 8 > _fileBuffer.size()) {
-        throw RelinkerException("Offset out of bounds", Offset);
+    if (FileByteOffset + 8 > _fileBuffer.size()) {
+        throw RelinkerException("FileByteOffset out of bounds", FileByteOffset);
     }
     std::uint64_t value;
-    std::memcpy(&value, _fileBuffer.data() + Offset, 8);
+    std::memcpy(&value, _fileBuffer.data() + FileByteOffset, 8);
     return value;
 }
 
@@ -99,14 +99,14 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     ElfHeader header = ReadHeader();
     
     std::vector<ProgramHeader> headers;
-    Offset offset = header.ProgramHeaderOffset;
+    FileByteOffset offset = header.ProgramHeaderOffset;
     
     for (std::uint16_t i = 0; i < header.ProgramHeaderCount; ++i) {
         ProgramHeader ph;
         ph.Type = _readU32At(offset);
         ph.Flags = _readU32At(offset + 0x04);
         ph.Offset = _readU64At(offset + 0x08);
-        ph.VirtualAddress = _readU64At(offset + 0x10);
+        ph.MappedAddress = _readU64At(offset + 0x10);
         ph.PhysicalAddress = _readU64At(offset + 0x18);
         ph.FileSize = _readU64At(offset + 0x20);
         ph.MemorySize = _readU64At(offset + 0x28);
@@ -124,16 +124,16 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
     ElfHeader header = ReadHeader();
     
     std::vector<SectionHeader> headers;
-    Offset offset = header.SectionHeaderOffset;
+    FileByteOffset offset = header.SectionHeaderOffset;
     
     for (std::uint16_t i = 0; i < header.SectionHeaderCount; ++i) {
         SectionHeader sh;
         std::uint32_t nameOffset = _readU32At(offset);
         sh.Type = _readU32At(offset + 0x04);
         sh.Flags = _readU64At(offset + 0x08);
-        sh.VirtualAddress = _readU64At(offset + 0x10);
+        sh.MappedAddress = _readU64At(offset + 0x10);
         sh.Offset = _readU64At(offset + 0x18);
-        sh.Size = _readU64At(offset + 0x20);
+        sh.SectionSize = _readU64At(offset + 0x20);
         sh.Link = _readU32At(offset + 0x28);
         sh.Info = _readU32At(offset + 0x2c);
         sh.EntrySize = _readU64At(offset + 0x30);
@@ -152,13 +152,13 @@ std::string ElfReader::_resolveShdrName(std::uint32_t NameOffset, const ElfHeade
         return "";
     }
     
-    Offset shstrOffset = Header.SectionHeaderOffset + 
+    FileByteOffset shstrOffset = Header.SectionHeaderOffset + 
                         (Header.SectionHeaderStringIndex * Header.SectionHeaderEntrySize);
     
-    Offset strTableOffset = _readU64At(shstrOffset + 0x18);
+    FileByteOffset strTableOffset = _readU64At(shstrOffset + 0x18);
     
     std::string name;
-    Offset currentPos = strTableOffset + NameOffset;
+    FileByteOffset currentPos = strTableOffset + NameOffset;
     
     while (currentPos < _fileBuffer.size() && _fileBuffer[currentPos] != '\0') {
         name += static_cast<char>(_fileBuffer[currentPos]);
@@ -171,11 +171,11 @@ std::string ElfReader::_resolveShdrName(std::uint32_t NameOffset, const ElfHeade
 std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& Header) const {
     _loadFileIntoBuffer();
     
-    if (Header.Offset + Header.Size > _fileBuffer.size()) {
+    if (Header.Offset + Header.SectionSize > _fileBuffer.size()) {
         throw RelinkerException("Section offset out of bounds", Header.Offset);
     }
     
-    std::vector<std::uint8_t> data(_fileBuffer.begin() + Header.Offset, _fileBuffer.begin() + Header.Offset + Header.Size);
+    std::vector<std::uint8_t> data(_fileBuffer.begin() + Header.Offset, _fileBuffer.begin() + Header.Offset + Header.SectionSize);
     return data;
 }
 

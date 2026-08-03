@@ -23,8 +23,8 @@ private:
     std::uint32_t _sdkRevision;
     
     void _detectSdkRevision(const std::vector<std::uint8_t>& Data);
-    std::uint32_t _readU32LittleEndian(const std::vector<std::uint8_t>& Data, Offset Offset) const;
-    std::uint16_t _readU16LittleEndian(const std::vector<std::uint8_t>& Data, Offset Offset) const;
+    std::uint32_t _readU32LittleEndian(const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const;
+    std::uint16_t _readU16LittleEndian(const std::vector<std::uint8_t>& Data, FileByteOffset FileByteOffset) const;
 };
 
 }

@@ -11,11 +11,11 @@ public:
     ValidationPolicy() = default;
 
     void ValidateSyscallAbsence() override;
-    void ValidateRelocationTypeSupported(std::uint32_t RelocationTypeValue, Offset Offset) override;
+    void ValidateRelocationTypeSupported(std::uint32_t RelocationTypeValue, FileByteOffset FileByteOffset) override;
     void ValidateNidBelongsToLibrary(const std::string& Nid, const std::string& Library) override;
-    void ValidateSceStructureSize(Size ExpectedSize, Size ActualSize, Offset Offset) override;
-    void ValidateDynamicFieldInterpretable(const std::string& FieldName, Offset Offset) override;
-    void ValidateNoSyscallInstructions(const std::vector<std::uint8_t>& CodeSection, Offset CodeOffset) override;
+    void ValidateSceStructureSize(ByteCount ExpectedSize, ByteCount ActualSize, FileByteOffset FileByteOffset) override;
+    void ValidateDynamicFieldInterpretable(const std::string& FieldName, FileByteOffset FileByteOffset) override;
+    void ValidateNoSyscallInstructions(const std::vector<std::uint8_t>& CodeSection, FileByteOffset CodeOffset) override;
 
     void RegisterLibraryImport(const std::string& Library);
 
