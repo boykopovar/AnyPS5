@@ -103,6 +103,32 @@ std::uint32_t ElfPatcher::_fixLoadFlags(std::uint32_t originalFlags) const {
     return originalFlags | PF_R;
 }
 
+void ElfPatcher::_writeSectionHeader(
+    std::vector<std::uint8_t>& buf,
+    const std::size_t offset,
+    const std::uint32_t nameOff,
+    const std::uint32_t type,
+    const std::uint64_t flags,
+    const std::uint64_t addr,
+    const std::uint64_t fileOffset,
+    const std::uint64_t size,
+    const std::uint32_t link,
+    const std::uint32_t info,
+    const std::uint64_t align,
+    const std::uint64_t entSize
+) const {
+    _writeU32(buf, offset + 0, nameOff);
+    _writeU32(buf, offset + 4, type);
+    _writeU64(buf, offset + 8, flags);
+    _writeU64(buf, offset + 16, addr);
+    _writeU64(buf, offset + 24, fileOffset);
+    _writeU64(buf, offset + 32, size);
+    _writeU32(buf, offset + 40, link);
+    _writeU32(buf, offset + 44, info);
+    _writeU64(buf, offset + 48, align);
+    _writeU64(buf, offset + 56, entSize);
+}
+
 bool ElfPatcher::_shouldSkip(const Domain::ProgramHeader& ph) const {
     if (_isSceSpecificSegment(ph.Type)) return true;
     if (ph.Type == PT_DYNAMIC) return true;
@@ -249,6 +275,34 @@ std::vector<std::uint8_t> ElfPatcher::Patch(
     }
 
     _writeU16(buf, 56, writtenPh);
+
+    static constexpr char kShStrTab[] = "\0.shstrtab\0.dynstr\0.dynsym\0.dynamic\0.text";
+    constexpr std::uint32_t nameShStrTab = 1;
+    constexpr std::uint32_t nameDynStr = 11;
+    constexpr std::uint32_t nameDynSym = 19;
+    constexpr std::uint32_t nameDynamic = 27;
+    constexpr std::uint32_t nameText = 36;
+    const std::uint64_t shStrTabOff = static_cast<std::uint64_t>(buf.size());
+    constexpr std::uint64_t shStrTabSize = sizeof(kShStrTab);
+    for (std::size_t i = 0; i < shStrTabSize; i++)
+        buf.push_back(static_cast<std::uint8_t>(kShStrTab[i]));
+
+    const std::uint64_t shOff = static_cast<std::uint64_t>(buf.size());
+    constexpr std::size_t shEntSize = 64;
+    constexpr std::size_t shNum = 6;
+    buf.resize(buf.size() + shEntSize * shNum, 0);
+
+    _writeSectionHeader(buf, shOff + shEntSize * 0, 0, SHT_NULL, 0, 0, 0, 0, 0, 0, 0, 0);
+    _writeSectionHeader(buf, shOff + shEntSize * 1, nameShStrTab, SHT_STRTAB, 0, shStrTabOff, shStrTabOff, shStrTabSize, 0, 0, 1, 0);
+    _writeSectionHeader(buf, shOff + shEntSize * 2, nameDynStr, SHT_STRTAB, SHF_ALLOC, dynStrOff, dynStrOff, dynSection.DynStrData.size(), 0, 0, 1, 0);
+    _writeSectionHeader(buf, shOff + shEntSize * 3, nameDynSym, SHT_DYNSYM, SHF_ALLOC, dynSymOff, dynSymOff, dynSection.DynSymData.size(), 2, 1, 8, 24);
+    _writeSectionHeader(buf, shOff + shEntSize * 4, nameDynamic, SHT_DYNAMIC, SHF_ALLOC | SHF_WRITE, dynSegOff, dynSegOff, dynSegBuf.size(), 2, 0, 8, 16);
+    _writeSectionHeader(buf, shOff + shEntSize * 5, nameText, SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, stubOff, stubOff, stubBytes.size(), 0, 0, 1, 0);
+
+    _writeU64(buf, 40, shOff);
+    _writeU16(buf, 58, static_cast<std::uint16_t>(shEntSize));
+    _writeU16(buf, 60, static_cast<std::uint16_t>(shNum));
+    _writeU16(buf, 62, 1);
 
     return buf;
 }

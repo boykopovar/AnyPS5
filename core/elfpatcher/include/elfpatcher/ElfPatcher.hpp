@@ -39,7 +39,29 @@ private:
     static constexpr std::int64_t DT_JMPREL = 23;
     static constexpr std::int64_t DT_PLTRELSZ = 2;
     static constexpr std::int64_t DT_PLTREL = 20;
+    static constexpr std::uint32_t SHT_NULL = 0;
+    static constexpr std::uint32_t SHT_PROGBITS = 1;
+    static constexpr std::uint32_t SHT_DYNSYM = 11;
+    static constexpr std::uint32_t SHT_STRTAB = 3;
+    static constexpr std::uint32_t SHT_DYNAMIC = 6;
+    static constexpr std::uint32_t SHF_ALLOC = 0x2;
+    static constexpr std::uint32_t SHF_WRITE = 0x1;
+    static constexpr std::uint32_t SHF_EXECINSTR = 0x4;
 
+    void _writeSectionHeader(
+        std::vector<std::uint8_t>& buf,
+        std::size_t offset,
+        std::uint32_t nameOff,
+        std::uint32_t type,
+        std::uint64_t flags,
+        std::uint64_t addr,
+        std::uint64_t fileOffset,
+        std::uint64_t size,
+        std::uint32_t link,
+        std::uint32_t info,
+        std::uint64_t align,
+        std::uint64_t entSize
+    ) const;
     [[nodiscard]] bool _isSceSpecificSegment(std::uint32_t type) const;
     [[nodiscard]] bool _isNullPageLoad(const Domain::ProgramHeader& ph) const;
     [[nodiscard]] bool _shouldSkip(const Domain::ProgramHeader& ph) const;
