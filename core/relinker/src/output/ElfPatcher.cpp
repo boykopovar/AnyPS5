@@ -11,6 +11,10 @@ bool ElfPatcher::_isSceSpecificSegment(std::uint32_t type) const {
         || (type >= 0x61000000 && type <= 0x6fffffff);
 }
 
+bool ElfPatcher::_isNullPageLoad(const ProgramHeader& ph) const {
+    return ph.Type == PT_LOAD && ph.MappedAddress == 0;
+}
+
 void ElfPatcher::_writeU16(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint16_t v) const {
     std::memcpy(buf.data() + offset, &v, 2);
 }
@@ -49,14 +53,10 @@ void ElfPatcher::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t
     _writeU64(buf, offset + 48, ph.Alignment);
 }
 
-bool ElfPatcher::_isNullPageLoad(const ProgramHeader& ph) const {
-    return ph.Type == PT_LOAD && ph.MappedAddress == 0;
-}
-
 ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t size) const {
     ProgramHeader ph{};
     ph.Type = PT_LOAD;
-    ph.Flags = PF_R | PF_X;
+    ph.Flags = PF_R;
     ph.Offset = offset;
     ph.MappedAddress = offset;
     ph.PhysicalAddress = offset;
@@ -101,11 +101,15 @@ std::vector<std::uint8_t> ElfPatcher::_buildEntryStub(std::uint64_t stubVaddr, s
 }
 
 std::uint32_t ElfPatcher::_fixLoadFlags(std::uint32_t originalFlags) const {
-    std::uint32_t flags = originalFlags;
-    if ((flags & (PF_R | PF_W | PF_X)) == 0)
-        flags |= PF_R;
-    flags |= PF_R;
-    return flags;
+    return originalFlags | PF_R;
+}
+
+bool ElfPatcher::_shouldSkip(const ProgramHeader& ph) const {
+    if (_isSceSpecificSegment(ph.Type)) return true;
+    if (ph.Type == PT_DYNAMIC) return true;
+    if (_isNullPageLoad(ph)) return true;
+    if (ph.Type == PT_NOTE && ph.MappedAddress == 0 && ph.FileSize > 0) return true;
+    return false;
 }
 
 void ElfPatcher::PatchAndWrite(
@@ -127,33 +131,42 @@ void ElfPatcher::PatchAndWrite(
     buf[8] = 0;
     buf[0x10] = static_cast<std::uint8_t>(ET_DYN & 0xFF);
     buf[0x11] = static_cast<std::uint8_t>((ET_DYN >> 8) & 0xFF);
+    _writeU64(buf, 40, 0);
+    _writeU16(buf, 60, 0);
+    _writeU16(buf, 62, 0);
 
     const std::uint64_t phOff = *reinterpret_cast<const std::uint64_t*>(buf.data() + 32);
     const std::uint16_t phEntSize = *reinterpret_cast<const std::uint16_t*>(buf.data() + 54);
     const std::uint16_t phNum = *reinterpret_cast<const std::uint16_t*>(buf.data() + 56);
 
-    std::vector<ProgramHeader> loadSegs;
-    for (const auto& ph : originalHeaders)
-        if (ph.Type == PT_LOAD)
-            loadSegs.push_back(ph);
+    const auto alignBuf = [](std::vector<std::uint8_t>& b, std::size_t alignment) {
+        while (b.size() % alignment != 0)
+            b.push_back(0);
+    };
 
     const std::uint64_t dynStrOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.DynStrData)
         buf.push_back(b);
+    alignBuf(buf, 24);
 
     const std::uint64_t dynSymOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.DynSymData)
         buf.push_back(b);
+    alignBuf(buf, 24);
 
     const std::uint64_t relaOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.RelaData)
         buf.push_back(b);
+    alignBuf(buf, 24);
 
     const std::uint64_t relaPltOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.RelaPltData)
         buf.push_back(b);
+    alignBuf(buf, 8);
 
     std::vector<std::uint8_t> dynSegBuf;
+    for (std::uint8_t b : dynSection.DynamicSegmentData)
+        dynSegBuf.push_back(b);
     _appendDynEntry(dynSegBuf, DT_STRTAB, dynStrOff);
     _appendDynEntry(dynSegBuf, DT_STRSZ, dynSection.DynStrData.size());
     _appendDynEntry(dynSegBuf, DT_SYMTAB, dynSymOff);
@@ -192,9 +205,7 @@ void ElfPatcher::PatchAndWrite(
 
     std::uint16_t keptCount = 0;
     for (const auto& ph : originalHeaders) {
-        if (_isSceSpecificSegment(ph.Type))
-            continue;
-        if (ph.Type == PT_DYNAMIC)
+        if (_shouldSkip(ph))
             continue;
         keptCount++;
     }
@@ -206,9 +217,7 @@ void ElfPatcher::PatchAndWrite(
 
     std::uint16_t writtenPh = 0;
     for (const auto& ph : originalHeaders) {
-        if (_isSceSpecificSegment(ph.Type))
-            continue;
-        if (ph.Type == PT_DYNAMIC)
+        if (_shouldSkip(ph))
             continue;
         const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
         if (ph.Type == PT_LOAD) {
