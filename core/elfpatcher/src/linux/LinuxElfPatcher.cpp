@@ -1,7 +1,7 @@
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
-#include <elfpatcher/domain/ElfConstants.hpp>
-#include <elfpatcher/domain/ProgramHeaderLayoutRequest.hpp>
-#include <elfpatcher/domain/SectionHeaderTableRequest.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
+#include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
+#include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 
 namespace Elfpatcher::Linux {
 
@@ -30,17 +30,17 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 {
     std::vector<std::uint8_t> buf = sourceElf;
 
-    buf[7] = 0;
-    buf[8] = 0;
-    buf[0x10] = static_cast<std::uint8_t>(ET_DYN & 0xFF);
-    buf[0x11] = static_cast<std::uint8_t>((ET_DYN >> 8) & 0xFF);
-    _byteWriter->WriteU64(buf, 40, 0);
-    _byteWriter->WriteU16(buf, 60, 0);
-    _byteWriter->WriteU16(buf, 62, 0);
+    buf[kEhdrOsAbiOffset] = 0;
+    buf[kEhdrAbiVersionOffset] = 0;
+    buf[kEhdrTypeOffset] = static_cast<std::uint8_t>(ET_DYN & 0xFF);
+    buf[kEhdrTypeOffset + 1] = static_cast<std::uint8_t>((ET_DYN >> 8) & 0xFF);
+    _byteWriter->WriteU64(buf, kEhdrShOffOffset, 0);
+    _byteWriter->WriteU16(buf, kEhdrShNumOffset, 0);
+    _byteWriter->WriteU16(buf, kEhdrShStrNdxOffset, 0);
 
-    const std::uint64_t phOff = *reinterpret_cast<const std::uint64_t*>(buf.data() + 32);
-    const std::uint16_t phEntSize = *reinterpret_cast<const std::uint16_t*>(buf.data() + 54);
-    const std::uint16_t phNum = *reinterpret_cast<const std::uint16_t*>(buf.data() + 56);
+    const std::uint64_t phOff = *reinterpret_cast<const std::uint64_t*>(buf.data() + kEhdrPhOffOffset);
+    const std::uint16_t phEntSize = *reinterpret_cast<const std::uint16_t*>(buf.data() + kEhdrPhEntSizeOffset);
+    const std::uint16_t phNum = *reinterpret_cast<const std::uint16_t*>(buf.data() + kEhdrPhNumOffset);
 
     const auto alignBuf = [](std::vector<std::uint8_t>& b, std::size_t alignment) {
         while (b.size() % alignment != 0)
@@ -50,22 +50,22 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const auto dynStrOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.DynStrData)
         buf.push_back(b);
-    alignBuf(buf, 24);
+    alignBuf(buf, kDynStrAlignment);
 
     const auto dynSymOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.DynSymData)
         buf.push_back(b);
-    alignBuf(buf, 24);
+    alignBuf(buf, kDynSymAlignment);
 
     const auto relaOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.RelaData)
         buf.push_back(b);
-    alignBuf(buf, 24);
+    alignBuf(buf, kRelaAlignment);
 
     const auto relaPltOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.RelaPltData)
         buf.push_back(b);
-    alignBuf(buf, 8);
+    alignBuf(buf, kRelaPltAlignment);
 
     std::vector<std::uint8_t> dynSegBuf;
     for (std::uint8_t b : dynSection.DynamicSegmentData)
@@ -73,11 +73,11 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     _appendDynEntry(dynSegBuf, DT_STRTAB, dynStrOff);
     _appendDynEntry(dynSegBuf, DT_STRSZ, dynSection.DynStrData.size());
     _appendDynEntry(dynSegBuf, DT_SYMTAB, dynSymOff);
-    _appendDynEntry(dynSegBuf, DT_SYMENT, 24);
+    _appendDynEntry(dynSegBuf, DT_SYMENT, kSymEntrySize);
     if (!dynSection.RelaData.empty()) {
         _appendDynEntry(dynSegBuf, DT_RELA, relaOff);
         _appendDynEntry(dynSegBuf, DT_RELASZ, dynSection.RelaData.size());
-        _appendDynEntry(dynSegBuf, DT_RELAENT, 24);
+        _appendDynEntry(dynSegBuf, DT_RELAENT, kRelaEntrySize);
     }
     if (!dynSection.RelaPltData.empty()) {
         _appendDynEntry(dynSegBuf, DT_JMPREL, relaPltOff);
@@ -90,12 +90,12 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (std::uint8_t b : dynSegBuf)
         buf.push_back(b);
 
-    const std::uint64_t realEntryVaddr = *reinterpret_cast<const std::uint64_t*>(buf.data() + 24);
+    const std::uint64_t realEntryVaddr = *reinterpret_cast<const std::uint64_t*>(buf.data() + kEhdrEntryOffset);
     const auto stubOff = static_cast<std::uint64_t>(buf.size());
     const auto stubBytes = _entryStubBuilder->BuildEntryStub(stubOff, realEntryVaddr);
     for (std::uint8_t b : stubBytes)
         buf.push_back(b);
-    _byteWriter->WriteU64(buf, 24, stubOff);
+    _byteWriter->WriteU64(buf, kEhdrEntryOffset, stubOff);
 
     static constexpr char kInterp[] = "/lib64/ld-linux-x86-64.so.2";
     const auto interpOff = static_cast<std::uint64_t>(buf.size());
@@ -119,7 +119,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     layoutRequest.InterpSize = interpSize;
 
     const std::uint16_t writtenPh = _programHeaderLayoutBuilder->WriteLayout(buf, layoutRequest);
-    _byteWriter->WriteU16(buf, 56, writtenPh);
+    _byteWriter->WriteU16(buf, kEhdrPhNumOffset, writtenPh);
 
     SectionHeaderTableRequest sectionRequest{};
     sectionRequest.DynStrOffset = dynStrOff;

@@ -1,8 +1,8 @@
 #ifndef ELFPATCHER_LAYOUT_PROGRAMHEADERLAYOUTBUILDER_HPP
 #define ELFPATCHER_LAYOUT_PROGRAMHEADERLAYOUTBUILDER_HPP
 
-#include <elfpatcher/domain/IProgramHeaderLayoutBuilder.hpp>
-#include <elfpatcher/domain/ISegmentFilter.hpp>
+#include <elfpatcher/general/IProgramHeaderLayoutBuilder.hpp>
+#include <elfpatcher/general/ISegmentFilter.hpp>
 #include <io/IByteWriter.hpp>
 #include <memory>
 

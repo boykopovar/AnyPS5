@@ -2,10 +2,10 @@
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
-#include <elfpatcher/filtering/SegmentFilter.hpp>
-#include <elfpatcher/stub/EntryStubBuilder.hpp>
-#include <elfpatcher/layout/ProgramHeaderLayoutBuilder.hpp>
-#include <elfpatcher/sections/SectionHeaderTableBuilder.hpp>
+#include <elfpatcher/general/SegmentFilter.hpp>
+#include <elfpatcher/general/EntryStubBuilder.hpp>
+#include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
+#include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
 #include <io/ByteWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>

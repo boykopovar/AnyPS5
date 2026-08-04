@@ -1,10 +1,10 @@
 #ifndef ELFPATCHER_LINUX_LINUXELFPATCHER_HPP
 #define ELFPATCHER_LINUX_LINUXELFPATCHER_HPP
 
-#include <elfpatcher/IElfPatcher.hpp>
-#include <elfpatcher/domain/IEntryStubBuilder.hpp>
-#include <elfpatcher/domain/IProgramHeaderLayoutBuilder.hpp>
-#include <elfpatcher/domain/ISectionHeaderTableBuilder.hpp>
+#include <elfpatcher/general/IElfPatcher.hpp>
+#include <elfpatcher/general/IEntryStubBuilder.hpp>
+#include <elfpatcher/general/IProgramHeaderLayoutBuilder.hpp>
+#include <elfpatcher/general/ISectionHeaderTableBuilder.hpp>
 #include <io/IByteWriter.hpp>
 #include <memory>
 

@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_FILTERING_SEGMENTFILTER_HPP
 #define ELFPATCHER_FILTERING_SEGMENTFILTER_HPP
 
-#include <elfpatcher/domain/ISegmentFilter.hpp>
+#include <elfpatcher/general/ISegmentFilter.hpp>
 
 namespace Elfpatcher {
 

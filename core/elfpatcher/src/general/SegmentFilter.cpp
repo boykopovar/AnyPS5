@@ -1,5 +1,5 @@
-#include <elfpatcher/filtering/SegmentFilter.hpp>
-#include <elfpatcher/domain/ElfConstants.hpp>
+#include <elfpatcher/general/SegmentFilter.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 
 namespace Elfpatcher {
 
@@ -7,7 +7,7 @@ bool SegmentFilter::_isSceSpecificSegment(const std::uint32_t type) const {
     return type == PT_SCE_DYNLIBDATA
         || type == PT_OS_PROCPARAM
         || type == PT_OS_RELRO
-        || (type >= 0x61000000 && type <= 0x6fffffff);
+        || (type >= PT_LOOS && type <= PT_HIOS);
 }
 
 bool SegmentFilter::_isNullPageLoad(const Domain::ProgramHeader& ph) const {

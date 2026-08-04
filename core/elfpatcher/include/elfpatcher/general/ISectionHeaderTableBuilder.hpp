@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_DOMAIN_ISECTIONHEADERTABLEBUILDER_HPP
 #define ELFPATCHER_DOMAIN_ISECTIONHEADERTABLEBUILDER_HPP
 
-#include <elfpatcher/domain/SectionHeaderTableRequest.hpp>
+#include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <cstdint>
 #include <vector>
 

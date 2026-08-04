@@ -2,10 +2,10 @@ add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsElfPatcher.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/filtering/SegmentFilter.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/stub/EntryStubBuilder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/layout/ProgramHeaderLayoutBuilder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/sections/SectionHeaderTableBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/ProgramHeaderLayoutBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SectionHeaderTableBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp

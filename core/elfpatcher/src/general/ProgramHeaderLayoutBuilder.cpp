@@ -1,5 +1,5 @@
-#include <elfpatcher/layout/ProgramHeaderLayoutBuilder.hpp>
-#include <elfpatcher/domain/ElfConstants.hpp>
+#include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
 #include <string>
@@ -16,14 +16,14 @@ ProgramHeaderLayoutBuilder::ProgramHeaderLayoutBuilder(
 }
 
 void ProgramHeaderLayoutBuilder::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset, const Domain::ProgramHeader& ph) const {
-    _byteWriter->WriteU32(buf, offset + 0, ph.Type);
-    _byteWriter->WriteU32(buf, offset + 4, ph.Flags);
-    _byteWriter->WriteU64(buf, offset + 8, ph.Offset);
-    _byteWriter->WriteU64(buf, offset + 16, ph.MappedAddress);
-    _byteWriter->WriteU64(buf, offset + 24, ph.PhysicalAddress);
-    _byteWriter->WriteU64(buf, offset + 32, ph.FileSize);
-    _byteWriter->WriteU64(buf, offset + 40, ph.MemorySize);
-    _byteWriter->WriteU64(buf, offset + 48, ph.Alignment);
+    _byteWriter->WriteU32(buf, offset + kPhdrTypeOffset, ph.Type);
+    _byteWriter->WriteU32(buf, offset + kPhdrFlagsOffset, ph.Flags);
+    _byteWriter->WriteU64(buf, offset + kPhdrOffsetOffset, ph.Offset);
+    _byteWriter->WriteU64(buf, offset + kPhdrVaddrOffset, ph.MappedAddress);
+    _byteWriter->WriteU64(buf, offset + kPhdrPaddrOffset, ph.PhysicalAddress);
+    _byteWriter->WriteU64(buf, offset + kPhdrFileSizeOffset, ph.FileSize);
+    _byteWriter->WriteU64(buf, offset + kPhdrMemSizeOffset, ph.MemorySize);
+    _byteWriter->WriteU64(buf, offset + kPhdrAlignOffset, ph.Alignment);
 }
 
 Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeLoadHeader(std::uint64_t offset, std::uint64_t size) const {
@@ -35,7 +35,7 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeLoadHeader(std::uint64_t 
     ph.PhysicalAddress = offset;
     ph.FileSize = size;
     ph.MemorySize = size;
-    ph.Alignment = 0x1000;
+    ph.Alignment = kDefaultLoadAlignment;
     return ph;
 }
 
@@ -61,7 +61,7 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makePhdrHeader(std::uint64_t 
     ph.PhysicalAddress = vaddr;
     ph.FileSize = size;
     ph.MemorySize = size;
-    ph.Alignment = 8;
+    ph.Alignment = kPhdrHeaderAlignment;
     return ph;
 }
 
@@ -74,7 +74,7 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeDynamicHeader(std::uint64
     ph.PhysicalAddress = offset;
     ph.FileSize = size;
     ph.MemorySize = size;
-    ph.Alignment = 8;
+    ph.Alignment = kDynamicHeaderAlignment;
     return ph;
 }
 
@@ -87,7 +87,7 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeInterpHeader(std::uint64_
     ph.PhysicalAddress = offset;
     ph.FileSize = size;
     ph.MemorySize = size;
-    ph.Alignment = 1;
+    ph.Alignment = kInterpHeaderAlignment;
     return ph;
 }
 
@@ -101,7 +101,7 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
 ) const {
     std::uint16_t keptCount = 0;
     std::uint64_t keptMinVaddr = UINT64_MAX;
-    std::uint64_t keptMinVaddrAlign = 0x1000;
+    std::uint64_t keptMinVaddrAlign = kDefaultLoadAlignment;
     for (const auto& ph : request.OriginalHeaders) {
         if (_segmentFilter->ShouldSkip(ph))
             continue;
@@ -116,7 +116,7 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     if (keptMinVaddrAlign == 0)
         throw Domain::RelinkerException("Lowest kept PT_LOAD has zero alignment");
 
-    const std::uint16_t neededPh = keptCount + 4;
+    const std::uint16_t neededPh = keptCount + kSyntheticProgramHeaderCount;
     if (neededPh > request.PhNum)
         throw Domain::RelinkerException(
             "Not enough program header slots: need " + std::to_string(neededPh) +

@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_STUB_ENTRYSTUBBUILDER_HPP
 #define ELFPATCHER_STUB_ENTRYSTUBBUILDER_HPP
 
-#include <elfpatcher/domain/IEntryStubBuilder.hpp>
+#include <elfpatcher/general/IEntryStubBuilder.hpp>
 
 namespace Elfpatcher {
 

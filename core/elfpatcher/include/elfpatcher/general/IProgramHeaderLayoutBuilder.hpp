@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_DOMAIN_IPROGRAMHEADERLAYOUTBUILDER_HPP
 #define ELFPATCHER_DOMAIN_IPROGRAMHEADERLAYOUTBUILDER_HPP
 
-#include <elfpatcher/domain/ProgramHeaderLayoutRequest.hpp>
+#include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <cstdint>
 #include <vector>
 

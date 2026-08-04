@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_SECTIONS_SECTIONHEADERTABLEBUILDER_HPP
 #define ELFPATCHER_SECTIONS_SECTIONHEADERTABLEBUILDER_HPP
 
-#include <elfpatcher/domain/ISectionHeaderTableBuilder.hpp>
+#include <elfpatcher/general/ISectionHeaderTableBuilder.hpp>
 #include <io/IByteWriter.hpp>
 #include <memory>
 
