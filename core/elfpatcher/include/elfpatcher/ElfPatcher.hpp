@@ -67,7 +67,8 @@ private:
     [[nodiscard]] bool _isNullPageLoad(const Domain::ProgramHeader& ph) const;
     [[nodiscard]] bool _shouldSkip(const Domain::ProgramHeader& ph) const;
     [[nodiscard]] Domain::ProgramHeader _makeLoadHeader(std::uint64_t offset, std::uint64_t size) const;
-    [[nodiscard]] Domain::ProgramHeader _makePhdrHeader(std::uint64_t offset, std::uint64_t size) const;
+    [[nodiscard]] Domain::ProgramHeader _makeHeaderBlockLoad(std::uint64_t vaddr, std::uint64_t size, std::uint64_t align) const;
+    [[nodiscard]] Domain::ProgramHeader _makePhdrHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const;
     [[nodiscard]] std::vector<std::uint8_t> _buildEntryStub(std::uint64_t stubVaddr, std::uint64_t realEntryVaddr) const;
     void _writeU16(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint16_t v) const;
     void _writeU32(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint32_t v) const;
