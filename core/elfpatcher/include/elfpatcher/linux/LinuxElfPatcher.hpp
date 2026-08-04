@@ -1,5 +1,5 @@
-#ifndef ELFPATCHER_ELFPATCHER_HPP
-#define ELFPATCHER_ELFPATCHER_HPP
+#ifndef ELFPATCHER_LINUX_LINUXELFPATCHER_HPP
+#define ELFPATCHER_LINUX_LINUXELFPATCHER_HPP
 
 #include <elfpatcher/IElfPatcher.hpp>
 #include <elfpatcher/domain/IEntryStubBuilder.hpp>
@@ -8,11 +8,11 @@
 #include <io/IByteWriter.hpp>
 #include <memory>
 
-namespace Elfpatcher {
+namespace Elfpatcher::Linux {
 
-class ElfPatcher : public IElfPatcher {
+class LinuxElfPatcher : public IElfPatcher {
 public:
-    ElfPatcher(
+    LinuxElfPatcher(
         std::shared_ptr<IEntryStubBuilder> entryStubBuilder,
         std::shared_ptr<IProgramHeaderLayoutBuilder> programHeaderLayoutBuilder,
         std::shared_ptr<ISectionHeaderTableBuilder> sectionHeaderTableBuilder,

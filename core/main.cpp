@@ -1,7 +1,7 @@
 #include <domain/Types.hpp>
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
-#include <elfpatcher/ElfPatcher.hpp>
+#include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <elfpatcher/filtering/SegmentFilter.hpp>
 #include <elfpatcher/stub/EntryStubBuilder.hpp>
 #include <elfpatcher/layout/ProgramHeaderLayoutBuilder.hpp>
@@ -71,7 +71,7 @@ int main(const int argc, char* argv[]) {
         }
 
         auto byteWriter = std::make_shared<Io::ByteWriter>();
-        Elfpatcher::ElfPatcher elfPatcher(
+        Elfpatcher::Linux::LinuxElfPatcher elfPatcher(
             std::make_shared<Elfpatcher::EntryStubBuilder>(),
             std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
                 std::make_shared<Elfpatcher::SegmentFilter>(),

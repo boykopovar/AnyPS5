@@ -1,6 +1,7 @@
 add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/ElfPatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/filtering/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/stub/EntryStubBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/layout/ProgramHeaderLayoutBuilder.cpp

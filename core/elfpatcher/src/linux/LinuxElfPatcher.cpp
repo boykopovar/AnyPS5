@@ -1,11 +1,11 @@
-#include <elfpatcher/ElfPatcher.hpp>
+#include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <elfpatcher/domain/ElfConstants.hpp>
 #include <elfpatcher/domain/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/domain/SectionHeaderTableRequest.hpp>
 
-namespace Elfpatcher {
+namespace Elfpatcher::Linux {
 
-ElfPatcher::ElfPatcher(
+LinuxElfPatcher::LinuxElfPatcher(
     std::shared_ptr<IEntryStubBuilder> entryStubBuilder,
     std::shared_ptr<IProgramHeaderLayoutBuilder> programHeaderLayoutBuilder,
     std::shared_ptr<ISectionHeaderTableBuilder> sectionHeaderTableBuilder,
@@ -18,12 +18,12 @@ ElfPatcher::ElfPatcher(
 {
 }
 
-void ElfPatcher::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const {
+void LinuxElfPatcher::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const {
     _byteWriter->AppendI64(buf, tag);
     _byteWriter->AppendU64(buf, val);
 }
 
-std::vector<std::uint8_t> ElfPatcher::Patch(
+std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::vector<std::uint8_t>& sourceElf,
     const std::vector<Domain::ProgramHeader>& originalHeaders,
     const Domain::SysVDynamicSection& dynSection)
