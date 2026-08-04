@@ -55,7 +55,7 @@ void ElfPatcher::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t
 Domain::ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uint64_t size) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_LOAD;
-    ph.Flags = PF_R;
+    ph.Flags = PF_R | PF_W;
     ph.Offset = offset;
     ph.MappedAddress = offset;
     ph.PhysicalAddress = offset;
@@ -65,17 +65,17 @@ Domain::ProgramHeader ElfPatcher::_makeLoadHeader(std::uint64_t offset, std::uin
     return ph;
 }
 
-void ElfPatcher::_writeInterp(std::vector<std::uint8_t>& buf, std::size_t phEntOff, std::uint64_t interpOff, std::uint64_t interpSize) const {
+Domain::ProgramHeader ElfPatcher::_makePhdrHeader(std::uint64_t offset, std::uint64_t size) const {
     Domain::ProgramHeader ph{};
-    ph.Type = PT_INTERP;
+    ph.Type = PT_PHDR;
     ph.Flags = PF_R;
-    ph.Offset = interpOff;
-    ph.MappedAddress = interpOff;
-    ph.PhysicalAddress = interpOff;
-    ph.FileSize = interpSize;
-    ph.MemorySize = interpSize;
-    ph.Alignment = 1;
-    _writeProgramHeader(buf, phEntOff, ph);
+    ph.Offset = offset;
+    ph.MappedAddress = offset;
+    ph.PhysicalAddress = offset;
+    ph.FileSize = size;
+    ph.MemorySize = size;
+    ph.Alignment = 8;
+    return ph;
 }
 
 std::vector<std::uint8_t> ElfPatcher::_buildEntryStub(const std::uint64_t stubVaddr, const std::uint64_t realEntryVaddr) const {
@@ -217,44 +217,55 @@ std::vector<std::uint8_t> ElfPatcher::Patch(
     for (std::size_t i = 0; i < interpSize; i++)
         buf.push_back(static_cast<std::uint8_t>(kInterp[i]));
 
-    const std::uint64_t extraBlockOff = dynStrOff;
-    const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
-
     std::uint16_t keptCount = 0;
     for (const auto& ph : originalHeaders) {
         if (_shouldSkip(ph))
             continue;
         keptCount++;
     }
-    const std::uint16_t neededPh = keptCount + 3;
+    const std::uint16_t neededPh = keptCount + 4;
     if (neededPh > phNum)
         throw Domain::RelinkerException(
             "Not enough program header slots: need " + std::to_string(neededPh) +
             ", available " + std::to_string(phNum));
 
+    alignBuf(buf, 8);
+    const std::uint64_t phCopyOff = static_cast<std::uint64_t>(buf.size());
+    const std::uint64_t phCopySize = static_cast<std::uint64_t>(neededPh) * phEntSize;
+    buf.resize(buf.size() + phCopySize, 0);
+
+    const std::uint64_t extraBlockOff = dynStrOff;
+    const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
+
+    const auto writePhBoth = [&](std::uint16_t index, const Domain::ProgramHeader& ph) {
+        const std::size_t mainOff = static_cast<std::size_t>(phOff) + index * phEntSize;
+        const std::size_t copyOff = static_cast<std::size_t>(phCopyOff) + index * phEntSize;
+        _writeProgramHeader(buf, mainOff, ph);
+        _writeProgramHeader(buf, copyOff, ph);
+    };
+
     std::uint16_t writtenPh = 0;
+
+    writePhBoth(writtenPh, _makePhdrHeader(phCopyOff, phCopySize));
+    writtenPh++;
+
     for (const auto& ph : originalHeaders) {
         if (_shouldSkip(ph))
             continue;
-        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
         if (ph.Type == PT_LOAD) {
             Domain::ProgramHeader fixed = ph;
             fixed.Flags = _fixLoadFlags(ph.Flags);
-            _writeProgramHeader(buf, phEntOff, fixed);
+            writePhBoth(writtenPh, fixed);
         } else {
-            _writeProgramHeader(buf, phEntOff, ph);
+            writePhBoth(writtenPh, ph);
         }
         writtenPh++;
     }
 
-    {
-        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
-        _writeProgramHeader(buf, phEntOff, _makeLoadHeader(extraBlockOff, extraBlockSize));
-        writtenPh++;
-    }
+    writePhBoth(writtenPh, _makeLoadHeader(extraBlockOff, extraBlockSize));
+    writtenPh++;
 
     {
-        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
         Domain::ProgramHeader dynPh{};
         dynPh.Type = PT_DYNAMIC;
         dynPh.Flags = PF_R | PF_W;
@@ -264,17 +275,26 @@ std::vector<std::uint8_t> ElfPatcher::Patch(
         dynPh.FileSize = dynSegBuf.size();
         dynPh.MemorySize = dynSegBuf.size();
         dynPh.Alignment = 8;
-        _writeProgramHeader(buf, phEntOff, dynPh);
+        writePhBoth(writtenPh, dynPh);
         writtenPh++;
     }
 
     {
-        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * phEntSize;
-        _writeInterp(buf, phEntOff, interpOff, interpSize);
+        Domain::ProgramHeader interpPh{};
+        interpPh.Type = PT_INTERP;
+        interpPh.Flags = PF_R;
+        interpPh.Offset = interpOff;
+        interpPh.MappedAddress = interpOff;
+        interpPh.PhysicalAddress = interpOff;
+        interpPh.FileSize = interpSize;
+        interpPh.MemorySize = interpSize;
+        interpPh.Alignment = 1;
+        writePhBoth(writtenPh, interpPh);
         writtenPh++;
     }
 
     _writeU16(buf, 56, writtenPh);
+    _writeU64(buf, 32, phCopyOff);
 
     static constexpr char kShStrTab[] = "\0.shstrtab\0.dynstr\0.dynsym\0.dynamic\0.text";
     constexpr std::uint32_t nameShStrTab = 1;
