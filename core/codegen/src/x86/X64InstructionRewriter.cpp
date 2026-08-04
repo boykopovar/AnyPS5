@@ -1,11 +1,14 @@
 #include <codegen/x86/X64InstructionRewriter.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <cstdint>
 #include <limits>
 
 namespace Codegen {
+
+using namespace X64OpcodeConstants;
 
 X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstruction(
     const std::uint8_t* data,
@@ -15,10 +18,10 @@ X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstructio
 
     while (pos < length) {
         const std::uint8_t b = data[pos];
-        if (b == OpcodePrefixLock || b == OpcodePrefixRepne || b == OpcodePrefixRep ||
-            b == OpcodePrefixSegCs || b == OpcodePrefixSegSs || b == OpcodePrefixSegDs ||
-            b == OpcodePrefixSegEs || b == OpcodePrefixSegFs || b == OpcodePrefixSegGs ||
-            b == OpcodePrefixOperandSize || b == OpcodePrefixAddressSize) {
+        if (b == PrefixLock || b == PrefixRepne || b == PrefixRep ||
+            b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs ||
+            b == PrefixSegEs || b == PrefixSegFs || b == PrefixSegGs ||
+            b == PrefixOperandSize || b == PrefixAddressSize) {
             pos += 1;
             continue;
         }
@@ -48,22 +51,22 @@ X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstructio
     }
 
     if (!twoByteOpcode) {
-        if (opcode == OpcodeCallRel32 || opcode == OpcodeJmpRel32) {
+        if (opcode == OneByteCallRel32 || opcode == OneByteJmpRel32) {
             if (length >= opcodeOffset + Rel32InstructionLength) {
                 return {ReferenceKind::Rel32Branch, pos};
             }
             return {ReferenceKind::None, 0};
         }
 
-        if (opcode == OpcodeJmpRel8 || (opcode >= OpcodeJccRel8Min && opcode <= OpcodeJccRel8Max)) {
-            if (length >= pos + Rel8FieldSize) {
+        if (opcode == OneByteJmpRel8 || (opcode >= OneByteJccRel8Min && opcode <= OneByteJccRel8Max)) {
+            if (length >= pos + Disp8Size) {
                 return {ReferenceKind::Rel8Branch, pos};
             }
             return {ReferenceKind::None, 0};
         }
     } else {
-        if (opcode >= OpcodeJccRel32Min && opcode <= OpcodeJccRel32Max) {
-            if (length >= pos + Rel32FieldSize) {
+        if (opcode >= TwoByteJccRel32Min && opcode <= TwoByteJccRel32Max) {
+            if (length >= pos + Disp32Size) {
                 return {ReferenceKind::Rel32Branch, pos};
             }
             return {ReferenceKind::None, 0};
@@ -80,7 +83,7 @@ X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstructio
 
     if (mod == ModRmModIndirect && rm == ModRmRmRipRelative) {
         const std::size_t dispOffset = pos + 1;
-        if (length >= dispOffset + Disp32FieldSize) {
+        if (length >= dispOffset + Disp32Size) {
             return {ReferenceKind::RipRelativeDisp32, dispOffset};
         }
     }
