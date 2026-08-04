@@ -59,6 +59,8 @@ inline constexpr std::uint8_t OneByteIncDecRm8 = 0xFE;
 inline constexpr std::uint8_t OneByteGrp5Rm = 0xFF;
 inline constexpr std::uint8_t OneByteModRmRangeJMin = 0x88;
 inline constexpr std::uint8_t OneByteModRmRangeJMax = 0x8B;
+inline constexpr std::uint8_t OneByteImulRm32Imm32 = 0x69;
+inline constexpr std::uint8_t OneByteImulRm32Imm8 = 0x6B;
 
 inline constexpr std::uint8_t OneByteImm8AluOrGrp3 = 0xC6;
 inline constexpr std::uint8_t OneByteImm8AluCmp = 0x80;
@@ -122,6 +124,7 @@ inline constexpr std::uint8_t TwoByteModRmRangeGMax = 0x77;
 inline constexpr std::uint8_t TwoByteModRmRangeHMin = 0xD0;
 inline constexpr std::uint8_t TwoByteModRmRangeHMax = 0xFE;
 inline constexpr std::uint8_t TwoByteNopModRm = 0x1F;
+inline constexpr std::uint8_t TwoByteEndbr = 0x1E;
 
 inline constexpr std::size_t ImmSizeNone = 0;
 inline constexpr std::size_t ImmSize8 = 1;
@@ -131,6 +134,8 @@ inline constexpr std::size_t ImmSize64 = 8;
 
 inline constexpr std::uint8_t ModRmModShift = 6;
 inline constexpr std::uint8_t ModRmModMask = 0x03;
+inline constexpr std::uint8_t ModRmRegShift = 3;
+inline constexpr std::uint8_t ModRmRegMask = 0x07;
 inline constexpr std::uint8_t ModRmRmMask = 0x07;
 inline constexpr std::uint8_t ModRmModIndirect = 0x00;
 inline constexpr std::uint8_t ModRmModDisp8 = 0x01;
@@ -139,6 +144,7 @@ inline constexpr std::uint8_t ModRmModRegister = 0x03;
 inline constexpr std::uint8_t ModRmRmSibPresent = 0x04;
 inline constexpr std::uint8_t ModRmRmRipRelative = 0x05;
 
+inline constexpr std::uint8_t Grp3RegTestMax = 0x01;
 inline constexpr std::uint8_t SibBaseMask = 0x07;
 inline constexpr std::uint8_t SibBaseDisp32 = 0x05;
 
@@ -146,6 +152,11 @@ inline constexpr std::size_t Disp8Size = 1;
 inline constexpr std::size_t Disp32Size = 4;
 
 inline constexpr std::size_t Rel32InstructionLength = 5;
+
+inline constexpr std::size_t Vex2PrefixLength = 2;
+inline constexpr std::size_t Vex3PrefixLength = 3;
+inline constexpr std::uint8_t Vex3MapMask = 0x1F;
+inline constexpr std::uint8_t Vex3Map0F3A = 0x03;
 
 }
 

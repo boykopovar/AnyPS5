@@ -49,8 +49,28 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     std::uint8_t opcode = data[pos];
     pos += 1;
     bool twoByteOpcode = false;
+    bool vexPresent = false;
+    std::uint8_t vexMap = 0;
 
-    if (opcode == TwoByteOpcodeEscape) {
+    if (opcode == OneByteVex2) {
+        if (pos >= available) {
+            throw CodegenException("Instruction truncated after VEX2 prefix");
+        }
+        vexPresent = true;
+        vexMap = TwoByteOpcodeEscape;
+        pos += 1;
+    } else if (opcode == OneByteVex3) {
+        if (pos >= available) {
+            throw CodegenException("Instruction truncated after VEX3 prefix");
+        }
+        vexPresent = true;
+        vexMap = static_cast<std::uint8_t>(data[pos] & Vex3MapMask);
+        pos += 1;
+        if (pos >= available) {
+            throw CodegenException("Instruction truncated after VEX3 prefix");
+        }
+        pos += 1;
+    } else if (opcode == TwoByteOpcodeEscape) {
         if (pos >= available) {
             throw CodegenException("Instruction truncated after two-byte opcode escape");
         }
@@ -59,10 +79,23 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         pos += 1;
     }
 
+    if (vexPresent) {
+        if (pos >= available) {
+            throw CodegenException("Instruction truncated after VEX prefix");
+        }
+        opcode = data[pos];
+        pos += 1;
+    }
+
     bool hasModRm = false;
     std::size_t immediateSize = ImmSizeNone;
 
-    if (!twoByteOpcode) {
+    if (vexPresent) {
+        hasModRm = true;
+        if (vexMap == Vex3Map0F3A) {
+            immediateSize = ImmSize8;
+        }
+    } else if (!twoByteOpcode) {
         if ((opcode >= OneByteModRmRangeAMin && opcode <= OneByteModRmRangeAMax) ||
             (opcode >= OneByteModRmRangeBMin && opcode <= OneByteModRmRangeBMax) ||
             (opcode >= OneByteModRmRangeCMin && opcode <= OneByteModRmRangeCMax) ||
@@ -74,8 +107,10 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             opcode == OneByteArpl || opcode == OneByteMovsxd ||
             (opcode >= OneByteModRmRangeIMin && opcode <= OneByteModRmRangeIMax) ||
             opcode == OneByteGrp2Rm8Imm8 || opcode == OneByteGrp2RmImm8 ||
-            opcode == OneByteVex3 || opcode == OneByteVex2 ||
             opcode == OneByteMovImm8 || opcode == OneByteMovImm32 ||
+            opcode == OneByteImm32AluCmp || opcode == OneByteImm8Grp1 ||
+            opcode == OneByteImm8AluCmp ||
+            opcode == OneByteImulRm32Imm32 || opcode == OneByteImulRm32Imm8 ||
             opcode == OneByteShiftRm8By1 || opcode == OneByteShiftRmBy1 ||
             opcode == OneByteShiftRm8ByCl || opcode == OneByteShiftRmByCl ||
             opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm ||
@@ -93,7 +128,8 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             opcode == OneBytePushImm8 ||
             opcode == OneByteTestAlImm8) {
             immediateSize = ImmSize8;
-        } else if (opcode == OneByteImm32AluCmp ||
+        } else if (opcode == OneByteImm32AluCmp || opcode == OneByteMovImm32 ||
+                   opcode == OneByteImulRm32Imm32 ||
                    opcode == OneByteImm32AddEax || opcode == OneByteImm32OrEax ||
                    opcode == OneByteImm32AdcEax || opcode == OneByteImm32SbbEax ||
                    opcode == OneByteImm32AndEax || opcode == OneByteImm32SubEax ||
@@ -107,7 +143,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             } else {
                 immediateSize = operandSizeOverride ? ImmSize16 : ImmSize32;
             }
-        } else if (opcode == OneByteImm8Grp1) {
+        } else if (opcode == OneByteImm8Grp1 || opcode == OneByteImulRm32Imm8) {
             immediateSize = ImmSize8;
         }
 
@@ -139,7 +175,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
                    (opcode >= TwoByteModRmRangeFMin && opcode <= TwoByteModRmRangeFMax) ||
                    (opcode >= TwoByteModRmRangeGMin && opcode <= TwoByteModRmRangeGMax) ||
                    (opcode >= TwoByteModRmRangeHMin && opcode <= TwoByteModRmRangeHMax) ||
-                   opcode == TwoByteNopModRm) {
+                   opcode == TwoByteNopModRm || opcode == TwoByteEndbr) {
             hasModRm = true;
         }
     }
@@ -159,7 +195,16 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     pos += 1;
 
     const std::uint8_t mod = static_cast<std::uint8_t>((modrm >> ModRmModShift) & ModRmModMask);
+    const std::uint8_t reg = static_cast<std::uint8_t>((modrm >> ModRmRegShift) & ModRmRegMask);
     const std::uint8_t rm = static_cast<std::uint8_t>(modrm & ModRmRmMask);
+
+    if (!vexPresent && !twoByteOpcode &&
+        (opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm) &&
+        reg <= Grp3RegTestMax) {
+        immediateSize = (opcode == OneByteTestGrp3Rm8)
+            ? ImmSize8
+            : (operandSizeOverride ? ImmSize16 : ImmSize32);
+    }
 
     if (mod != ModRmModRegister && rm == ModRmRmSibPresent) {
         if (pos >= available) {
