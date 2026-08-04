@@ -2,6 +2,11 @@
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
 #include <elfpatcher/ElfPatcher.hpp>
+#include <elfpatcher/filtering/SegmentFilter.hpp>
+#include <elfpatcher/stub/EntryStubBuilder.hpp>
+#include <elfpatcher/layout/ProgramHeaderLayoutBuilder.hpp>
+#include <elfpatcher/sections/SectionHeaderTableBuilder.hpp>
+#include <io/ByteWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/SceDynlibParser.hpp>
 #include <relinker/parsing/SdkRevisionProfile.hpp>
@@ -76,7 +81,16 @@ int main(const int argc, char* argv[]) {
             fileWriter.Write(*registryPath, callRegistryWriter->WriteCallRegistry(result.RegistryEntries));
         }
 
-        Elfpatcher::ElfPatcher elfPatcher;
+        auto byteWriter = std::make_shared<Io::ByteWriter>();
+        Elfpatcher::ElfPatcher elfPatcher(
+            std::make_shared<Elfpatcher::EntryStubBuilder>(),
+            std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
+                std::make_shared<Elfpatcher::SegmentFilter>(),
+                byteWriter
+            ),
+            std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
+            byteWriter
+        );
         auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection);
         fileWriter.Write(outputElfPath, patchedElf);
 
