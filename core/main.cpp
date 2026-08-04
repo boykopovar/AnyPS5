@@ -8,8 +8,6 @@
 #include <elfpatcher/sections/SectionHeaderTableBuilder.hpp>
 #include <io/ByteWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
-#include <relinker/parsing/SceDynlibParser.hpp>
-#include <relinker/parsing/SdkRevisionProfile.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <relinker/analysis/CallSiteResolver.hpp>
@@ -52,14 +50,6 @@ int main(const int argc, char* argv[]) {
         auto sourceBytes = fileReader.Read(inputPath);
 
         auto elfReader = std::make_shared<Relinker::ElfReader>(sourceBytes);
-        auto programHeaders = elfReader->ReadProgramHeaders();
-
-        std::vector<std::uint8_t> sceDynlibData;
-        for (const auto& ph : programHeaders)
-            if (ph.Type == 0x61000000)
-                sceDynlibData = elfReader->ReadSegment(ph);
-
-        auto sdkProfile = std::make_shared<Relinker::SdkRevisionProfile>(sceDynlibData);
 
         auto syscallScanner = skipSyscallCheck
             ? Relinker::MakeNullSyscallScanner()
@@ -67,7 +57,6 @@ int main(const int argc, char* argv[]) {
 
         const auto pipeline = std::make_shared<Relinker::RelinkerPipeline>(
             elfReader,
-            std::make_shared<Relinker::SceDynlibParser>(sdkProfile),
             std::move(syscallScanner),
             Relinker::MakeCallSiteResolver(),
             std::make_shared<Relinker::ValidationPolicy>(),

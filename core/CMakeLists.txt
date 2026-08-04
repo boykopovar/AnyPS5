@@ -9,8 +9,6 @@ add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/SceDynlibParser.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/SdkRevisionProfile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CallSiteResolver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ValidationPolicy.cpp
