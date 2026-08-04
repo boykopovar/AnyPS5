@@ -49,50 +49,85 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         }
     }
 
-    FileByteOffset dynStrTabOffset = 0;
-    FileByteOffset dynSymTabOffset = 0;
-    FileByteOffset dynRelaOffset = 0;
-    ByteCount dynRelaSize = 0;
-    FileByteOffset dynJmpRelOffset = 0;
-    ByteCount dynJmpRelSize = 0;
+    std::vector<DynamicTag> dynTags;
     bool hasDynamicSegment = false;
-    std::vector<std::pair<std::uint64_t, std::string>> neededLibraryNamesByStrOffset;
 
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_DYNAMIC)
             continue;
 
         hasDynamicSegment = true;
-
-        for (const auto& tag : _elfReader->ReadDynamicTags(ph)) {
-            if (tag.Tag == DT_PLTGOT || tag.Tag == DT_OS_PLTGOT)
-                gotVAddr = tag.Value;
-            else if (tag.Tag == DT_PLTRELSZ || tag.Tag == DT_OS_PLTRELSZ)
-                gotSize = tag.Value;
-            else if (tag.Tag == DT_STRTAB)
-                dynStrTabOffset = _elfReader->TranslateVirtualAddress(tag.Value);
-            else if (tag.Tag == DT_SYMTAB)
-                dynSymTabOffset = _elfReader->TranslateVirtualAddress(tag.Value);
-            else if (tag.Tag == DT_RELA)
-                dynRelaOffset = _elfReader->TranslateVirtualAddress(tag.Value);
-            else if (tag.Tag == DT_RELASZ)
-                dynRelaSize = tag.Value;
-            else if (tag.Tag == DT_SYSV_JMPREL)
-                dynJmpRelOffset = _elfReader->TranslateVirtualAddress(tag.Value);
-            else if (tag.Tag == DT_PLTRELSZ_SYSV)
-                dynJmpRelSize = tag.Value;
-            else if (tag.Tag == DT_NEEDED)
-                neededLibraryNamesByStrOffset.emplace_back(tag.Value, std::string());
-        }
+        dynTags = _elfReader->ReadDynamicTags(ph);
         break;
     }
 
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
-    if (dynStrTabOffset == 0)
-        throw RelinkerException("DT_STRTAB not found in PT_DYNAMIC segment");
-    if (dynSymTabOffset == 0)
-        throw RelinkerException("DT_SYMTAB not found in PT_DYNAMIC segment");
+
+    auto hasTag = [&](const std::int64_t tag) {
+        for (const auto& t : dynTags)
+            if (t.Tag == tag)
+                return true;
+        return false;
+    };
+
+    auto getTagValue = [&](const std::int64_t tag) -> std::uint64_t {
+        for (const auto& t : dynTags)
+            if (t.Tag == tag)
+                return t.Value;
+        throw RelinkerException("DT tag not found");
+    };
+
+    auto requireExactlyOneOf = [&](const std::int64_t osTag, const std::int64_t sysvTag, const char* name) {
+        const bool hasOs = hasTag(osTag);
+        const bool hasSysv = hasTag(sysvTag);
+        if (hasOs && hasSysv)
+            throw RelinkerException(std::string("Both DT_OS_ and DT_ variants present for ") + name);
+        if (!hasOs && !hasSysv)
+            throw RelinkerException(std::string("Neither DT_OS_ nor DT_ variant present for ") + name);
+        return hasOs;
+    };
+
+    auto readAsOffset = [&](const std::int64_t osTag, const std::int64_t sysvTag, const char* name) -> FileByteOffset {
+        if (requireExactlyOneOf(osTag, sysvTag, name))
+            return getTagValue(osTag);
+        return _elfReader->TranslateVirtualAddress(getTagValue(sysvTag));
+    };
+
+    auto readAsSize = [&](const std::int64_t osTag, const std::int64_t sysvTag, const char* name) -> ByteCount {
+        requireExactlyOneOf(osTag, sysvTag, name);
+        return hasTag(osTag) ? getTagValue(osTag) : getTagValue(sysvTag);
+    };
+
+    if (requireExactlyOneOf(DT_OS_PLTGOT, DT_PLTGOT, "DT_PLTGOT"))
+        gotVAddr = getTagValue(DT_OS_PLTGOT);
+    else
+        gotVAddr = getTagValue(DT_PLTGOT);
+    gotSize = readAsSize(DT_OS_PLTRELSZ, DT_PLTRELSZ, "DT_PLTRELSZ");
+
+    const FileByteOffset dynStrTabOffset = readAsOffset(DT_OS_STRTAB, DT_STRTAB, "DT_STRTAB");
+    requireExactlyOneOf(DT_OS_STRSZ, DT_STRSZ, "DT_STRSZ");
+
+    const FileByteOffset dynSymTabOffset = readAsOffset(DT_OS_SYMTAB, DT_SYMTAB, "DT_SYMTAB");
+    requireExactlyOneOf(DT_OS_SYMENT, DT_SYMENT, "DT_SYMENT");
+
+    const std::int64_t jmprelType = requireExactlyOneOf(DT_OS_PLTREL, DT_PLTREL, "DT_PLTREL")
+        ? getTagValue(DT_OS_PLTREL)
+        : getTagValue(DT_PLTREL);
+    if (jmprelType != DT_RELA)
+        throw RelinkerException("Unsupported DT_PLTREL type");
+
+    const FileByteOffset dynJmpRelOffset = readAsOffset(DT_OS_JMPREL, DT_JMPREL, "DT_JMPREL");
+    const ByteCount dynJmpRelSize = gotSize;
+
+    const FileByteOffset dynRelaOffset = readAsOffset(DT_OS_RELA, DT_RELA, "DT_RELA");
+    const ByteCount dynRelaSize = readAsSize(DT_OS_RELASZ, DT_RELASZ, "DT_RELASZ");
+    requireExactlyOneOf(DT_OS_RELAENT, DT_RELAENT, "DT_RELAENT");
+
+    std::vector<std::pair<std::uint64_t, std::string>> neededLibraryNamesByStrOffset;
+    for (const auto& tag : dynTags)
+        if (tag.Tag == DT_NEEDED)
+            neededLibraryNamesByStrOffset.emplace_back(tag.Value, std::string());
 
     std::vector<NidReference> nidRefs;
     std::vector<std::string> neededLibraries;
@@ -145,8 +180,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         }
     };
 
-    if (dynRelaOffset != 0) extractRela(dynRelaOffset, dynRelaSize);
-    if (dynJmpRelOffset != 0) extractRela(dynJmpRelOffset, dynJmpRelSize);
+    extractRela(dynRelaOffset, dynRelaSize);
+    extractRela(dynJmpRelOffset, dynJmpRelSize);
 
     for (const auto& ref : nidRefs)
         _validationPolicy->ValidateRelocationTypeSupported(ref.RelocationTypeValue, ref.RelocationTableOffset);
