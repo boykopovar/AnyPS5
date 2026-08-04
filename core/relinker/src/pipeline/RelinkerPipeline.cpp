@@ -99,17 +99,18 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         return hasTag(osTag) ? getTagValue(osTag) : getTagValue(sysvTag);
     };
 
-    if (requireExactlyOneOf(DT_OS_PLTGOT, DT_PLTGOT, "DT_PLTGOT"))
-        gotVAddr = getTagValue(DT_OS_PLTGOT);
-    else
-        gotVAddr = getTagValue(DT_PLTGOT);
+    gotVAddr = requireExactlyOneOf(DT_OS_PLTGOT, DT_PLTGOT, "DT_PLTGOT")
+        ? getTagValue(DT_OS_PLTGOT)
+        : getTagValue(DT_PLTGOT);
     gotSize = readAsSize(DT_OS_PLTRELSZ, DT_PLTRELSZ, "DT_PLTRELSZ");
 
     const FileByteOffset dynStrTabOffset = readAsOffset(DT_OS_STRTAB, DT_STRTAB, "DT_STRTAB");
     requireExactlyOneOf(DT_OS_STRSZ, DT_STRSZ, "DT_STRSZ");
 
     const FileByteOffset dynSymTabOffset = readAsOffset(DT_OS_SYMTAB, DT_SYMTAB, "DT_SYMTAB");
-    requireExactlyOneOf(DT_OS_SYMENT, DT_SYMENT, "DT_SYMENT");
+    constexpr std::size_t symEntSize = 24;
+    if (readAsSize(DT_OS_SYMENT, DT_SYMENT, "DT_SYMENT") != symEntSize)
+        throw RelinkerException("Unsupported DT_SYMENT value");
 
     const std::int64_t jmprelType = requireExactlyOneOf(DT_OS_PLTREL, DT_PLTREL, "DT_PLTREL")
         ? getTagValue(DT_OS_PLTREL)
@@ -122,7 +123,9 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     const FileByteOffset dynRelaOffset = readAsOffset(DT_OS_RELA, DT_RELA, "DT_RELA");
     const ByteCount dynRelaSize = readAsSize(DT_OS_RELASZ, DT_RELASZ, "DT_RELASZ");
-    requireExactlyOneOf(DT_OS_RELAENT, DT_RELAENT, "DT_RELAENT");
+    constexpr std::size_t relaEntSize = 24;
+    if (readAsSize(DT_OS_RELAENT, DT_RELAENT, "DT_RELAENT") != relaEntSize)
+        throw RelinkerException("Unsupported DT_RELAENT value");
 
     std::vector<std::pair<std::uint64_t, std::string>> neededLibraryNamesByStrOffset;
     for (const auto& tag : dynTags)
@@ -150,10 +153,9 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     }
 
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
-        constexpr std::size_t entrySize = 24;
-        for (ByteCount off = 0; off + entrySize <= relaSize; off += entrySize) {
+        for (ByteCount off = 0; off + relaEntSize <= relaSize; off += relaEntSize) {
             const FileByteOffset pos = relaOff + off;
-            if (pos + entrySize > raw.size())
+            if (pos + relaEntSize > raw.size())
                 throw RelinkerException("Relocation entry out of bounds", pos);
 
             std::uint64_t rOffset = 0, rInfo = 0;
@@ -163,7 +165,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
-            const FileByteOffset symOff = dynSymTabOffset + static_cast<FileByteOffset>(symIdx) * 24;
+            const FileByteOffset symOff = dynSymTabOffset + static_cast<FileByteOffset>(symIdx) * symEntSize;
             if (symOff + 4 > raw.size())
                 throw RelinkerException("Symbol table entry out of bounds", symOff);
 
