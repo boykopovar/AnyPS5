@@ -1,8 +1,9 @@
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/CodegenException.hpp>
 
 namespace Codegen {
 
-DecodedInstruction X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t available) const {
+std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t available) const {
     std::size_t pos = 0;
     bool rexPresent = false;
     std::uint8_t rex = 0;
@@ -39,7 +40,7 @@ DecodedInstruction X64InstructionDecoder::Decode(const std::uint8_t* data, std::
     }
 
     if (pos >= available) {
-        return {1, false};
+        throw CodegenException("Instruction truncated after prefixes");
     }
 
     std::uint8_t opcode = data[pos];
@@ -48,7 +49,7 @@ DecodedInstruction X64InstructionDecoder::Decode(const std::uint8_t* data, std::
 
     if (opcode == 0x0F) {
         if (pos >= available) {
-            return {1, false};
+            throw CodegenException("Instruction truncated after two-byte opcode escape");
         }
         twoByteOpcode = true;
         opcode = data[pos];
@@ -135,13 +136,13 @@ DecodedInstruction X64InstructionDecoder::Decode(const std::uint8_t* data, std::
 
     if (!hasModRm) {
         if (pos + immediateSize > available) {
-            return {pos + immediateSize, false};
+            throw CodegenException("Instruction truncated in immediate operand");
         }
-        return {pos + immediateSize, true};
+        return pos + immediateSize;
     }
 
     if (pos >= available) {
-        return {pos, false};
+        throw CodegenException("Instruction truncated before ModRM byte");
     }
 
     const std::uint8_t modrm = data[pos];
@@ -152,7 +153,7 @@ DecodedInstruction X64InstructionDecoder::Decode(const std::uint8_t* data, std::
 
     if (mod != 0x03 && rm == 0x04) {
         if (pos >= available) {
-            return {pos, false};
+            throw CodegenException("Instruction truncated before SIB byte");
         }
         const std::uint8_t sib = data[pos];
         const std::uint8_t base = static_cast<std::uint8_t>(sib & 0x07);
@@ -174,10 +175,10 @@ DecodedInstruction X64InstructionDecoder::Decode(const std::uint8_t* data, std::
     pos += immediateSize;
 
     if (pos > available) {
-        return {pos, false};
+        throw CodegenException("Instruction truncated in displacement or immediate operand");
     }
 
-    return {pos, true};
+    return pos;
 }
 
 }

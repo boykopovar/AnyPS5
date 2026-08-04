@@ -10,7 +10,7 @@ class IInstructionDecoder {
 public:
     virtual ~IInstructionDecoder() = default;
 
-    [[nodiscard]] virtual DecodedInstruction Decode(
+    [[nodiscard]] virtual std::size_t Decode(
         const std::uint8_t* data,
         std::size_t available
     ) const = 0;

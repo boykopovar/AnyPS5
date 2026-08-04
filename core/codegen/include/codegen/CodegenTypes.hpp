@@ -7,11 +7,6 @@
 
 namespace Codegen {
 
-struct DecodedInstruction {
-    std::size_t Length;
-    bool Valid;
-};
-
 struct InstructionMatch {
     Domain::FileByteOffset Offset;
     std::size_t Length;

@@ -21,24 +21,19 @@ std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(
 ) const {
     const std::size_t limit = std::min(codeSection.size(), static_cast<std::size_t>(codeSectionSize));
 
+    const X64InstructionDecoder decoder;
     std::vector<InstructionMatch> matches;
     std::size_t i = 0;
 
     while (i < limit) {
-        X64InstructionDecoder decoder;
         const std::uint8_t* cursor = codeSection.data() + i;
         const std::size_t available = limit - i;
 
-        const auto decoded = decoder.Decode(cursor, available);
+        const std::size_t length = decoder.Decode(cursor, available);
 
-        if (!decoded.Valid || decoded.Length == 0) {
-            i += 1;
-            continue;
-        }
+        matches.push_back({codeSectionOffset + i, length});
 
-        matches.push_back({codeSectionOffset + i, decoded.Length});
-
-        i += decoded.Length;
+        i += length;
     }
 
     return matches;

@@ -131,13 +131,9 @@ RewriteResult X64InstructionRewriter::Rewrite(
     }
 
     const X64InstructionDecoder decoder;
-    const auto decoded = decoder.Decode(codeSection.data() + offset, codeSection.size() - offset);
+    const std::size_t decodedLength = decoder.Decode(codeSection.data() + offset, codeSection.size() - offset);
 
-    if (!decoded.Valid || decoded.Length == 0) {
-        throw CodegenException("Cannot decode instruction at rewrite offset", request.Offset);
-    }
-
-    const auto oldLength = static_cast<std::int64_t>(decoded.Length);
+    const auto oldLength = static_cast<std::int64_t>(decodedLength);
     const auto newLength = static_cast<std::int64_t>(request.NewBytes.size());
     const std::int64_t delta = newLength - oldLength;
 
@@ -148,7 +144,7 @@ RewriteResult X64InstructionRewriter::Rewrite(
     rewritten.reserve(codeSection.size() + static_cast<std::size_t>(delta > 0 ? delta : 0));
     rewritten.insert(rewritten.end(), codeSection.begin(), codeSection.begin() + offset);
     rewritten.insert(rewritten.end(), request.NewBytes.begin(), request.NewBytes.end());
-    rewritten.insert(rewritten.end(), codeSection.begin() + offset + decoded.Length, codeSection.end());
+    rewritten.insert(rewritten.end(), codeSection.begin() + offset + decodedLength, codeSection.end());
 
     const auto scanner = MakeInstructionScanner();
     const auto matches = scanner->ScanCodeSection(codeSection, 0, codeSection.size());

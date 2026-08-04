@@ -7,7 +7,7 @@ namespace Codegen {
 
 class X64InstructionDecoder : public IInstructionDecoder {
 public:
-    [[nodiscard]] DecodedInstruction Decode(
+    [[nodiscard]] std::size_t Decode(
         const std::uint8_t* data,
         std::size_t available
     ) const override;
