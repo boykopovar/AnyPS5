@@ -242,6 +242,11 @@ std::vector<std::uint8_t> ElfPatcher::Patch(
             keptMinVaddrAlign = ph.Alignment;
         }
     }
+    if (keptMinVaddr == UINT64_MAX)
+        throw Domain::RelinkerException("No kept PT_LOAD segment to anchor the header block against");
+    if (keptMinVaddrAlign == 0)
+        throw Domain::RelinkerException("Lowest kept PT_LOAD has zero alignment");
+
     const std::uint16_t neededPh = keptCount + 4;
     if (neededPh > phNum)
         throw Domain::RelinkerException(
@@ -249,7 +254,14 @@ std::vector<std::uint8_t> ElfPatcher::Patch(
             ", available " + std::to_string(phNum));
 
     const std::uint64_t headerBlockSize = phOff + static_cast<std::uint64_t>(neededPh) * phEntSize;
+    if (headerBlockSize >= keptMinVaddr)
+        throw Domain::RelinkerException(
+            "Header block does not fit below the lowest kept PT_LOAD: need " +
+            std::to_string(headerBlockSize) + " bytes, only " + std::to_string(keptMinVaddr) + " available");
+
     const std::uint64_t headerBlockVaddr = (keptMinVaddr - headerBlockSize) & ~(keptMinVaddrAlign - 1);
+    if (headerBlockVaddr + headerBlockSize > keptMinVaddr)
+        throw Domain::RelinkerException("Header block would overlap the lowest kept PT_LOAD after alignment");
 
     const std::uint64_t extraBlockOff = dynStrOff;
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
