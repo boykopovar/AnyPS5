@@ -10,7 +10,7 @@ namespace {
 
 class Amd64OnlyConverter : public IAmd64OnlyConverter {
 public:
-    [[nodiscard]] std::vector<std::uint8_t> Convert(
+    [[nodiscard]] ConvertResult Convert(
         std::vector<std::uint8_t> fileBytes,
         const std::vector<Domain::ProgramHeader>& codeSegments
     ) const override;
@@ -20,13 +20,13 @@ private:
     std::unique_ptr<IAmd64OnlyInstructionMatcher> _matcher = MakeAmd64OnlyInstructionMatcher();
     std::unique_ptr<IInstructionScanner> _scanner = MakeInstructionScanner();
 
-    void _convertSegment(
+    std::size_t _convertSegment(
         std::vector<std::uint8_t>& fileBytes,
         const Domain::ProgramHeader& ph
     ) const;
 };
 
-void Amd64OnlyConverter::_convertSegment(
+std::size_t Amd64OnlyConverter::_convertSegment(
     std::vector<std::uint8_t>& fileBytes,
     const Domain::ProgramHeader& ph
 ) const {
@@ -40,6 +40,7 @@ void Amd64OnlyConverter::_convertSegment(
 
     const auto matches = _scanner->ScanCodeSection(seg, 0, seg.size());
     std::int64_t shift = 0;
+    std::size_t count = 0;
 
     for (const auto& match : matches) {
         const auto shiftedOffset = static_cast<std::int64_t>(match.Offset) + shift;
@@ -56,20 +57,23 @@ void Amd64OnlyConverter::_convertSegment(
         shift += static_cast<std::int64_t>(result->ReplacementBytes.size()) -
                  static_cast<std::int64_t>(match.Length);
         seg = std::move(rewriteResult.Bytes);
+        ++count;
     }
 
     const auto copySize = std::min(seg.size(), segSize);
     std::copy(seg.begin(), seg.begin() + copySize, fileBytes.begin() + segOffset);
+    return count;
 }
 
-std::vector<std::uint8_t> Amd64OnlyConverter::Convert(
+ConvertResult Amd64OnlyConverter::Convert(
     std::vector<std::uint8_t> fileBytes,
     const std::vector<Domain::ProgramHeader>& codeSegments
 ) const {
+    std::size_t total = 0;
     for (const auto& ph : codeSegments) {
-        _convertSegment(fileBytes, ph);
+        total += _convertSegment(fileBytes, ph);
     }
-    return fileBytes;
+    return {std::move(fileBytes), total};
 }
 
 }

@@ -1,8 +1,8 @@
 #ifndef CODEGEN_IAMD64ONLYCONVERTER_HPP
 #define CODEGEN_IAMD64ONLYCONVERTER_HPP
 
+#include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -12,7 +12,7 @@ class IAmd64OnlyConverter {
 public:
     virtual ~IAmd64OnlyConverter() = default;
 
-    [[nodiscard]] virtual std::vector<std::uint8_t> Convert(
+    [[nodiscard]] virtual ConvertResult Convert(
         std::vector<std::uint8_t> fileBytes,
         const std::vector<Domain::ProgramHeader>& codeSegments
     ) const = 0;

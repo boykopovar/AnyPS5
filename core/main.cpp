@@ -56,7 +56,9 @@ int main(const int argc, char* argv[]) {
         if (toIntel) {
             const Relinker::ElfReader elfReader(sourceBytes);
             const auto converter = Codegen::MakeAmd64OnlyConverter();
-            fileWriter.Write(outputElfPath, converter->Convert(std::move(sourceBytes), elfReader.ReadCodeSegments()));
+            auto result = converter->Convert(std::move(sourceBytes), elfReader.ReadCodeSegments());
+            fileWriter.Write(outputElfPath, std::move(result.Bytes));
+            std::cout << "OK: " << result.ReplacedCount << " instructions replaced\n";
             return 0;
         }
 

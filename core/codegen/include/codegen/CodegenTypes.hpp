@@ -28,6 +28,11 @@ struct RewriteResult {
     std::vector<AddressAdjustment> Adjustments;
 };
 
+struct ConvertResult {
+    std::vector<std::uint8_t> Bytes;
+    std::size_t ReplacedCount;
+};
+
 }
 
 #endif
