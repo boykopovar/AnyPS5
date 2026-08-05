@@ -210,6 +210,18 @@ std::vector<std::uint8_t> ElfReader::ReadSegment(const ProgramHeader& header) co
         _fileBuffer.begin() + header.Offset + header.FileSize);
 }
 
+std::vector<ProgramHeader> ElfReader::ReadCodeSegments() const {
+    static constexpr std::uint32_t kPtLoad = 1;
+    static constexpr std::uint32_t kPfX = 0x1;
+    std::vector<ProgramHeader> result;
+    for (const auto& ph : ReadProgramHeaders()) {
+        if (ph.Type == kPtLoad && (ph.Flags & kPfX)) {
+            result.push_back(ph);
+        }
+    }
+    return result;
+}
+
 std::uint64_t ElfReader::GetFileSize() const {
     return _fileBuffer.size();
 }

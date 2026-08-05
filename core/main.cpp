@@ -14,6 +14,7 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <relinker/pipeline/RelinkerPipeline.hpp>
+#include <codegen/IAmd64OnlyConverter.hpp>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -21,6 +22,7 @@
 
 int main(const int argc, char* argv[]) {
     bool skipSyscallCheck = false;
+    bool toIntel = false;
     std::string inputPath;
     std::string outputElfPath;
     std::optional<std::string> registryPath;
@@ -29,6 +31,8 @@ int main(const int argc, char* argv[]) {
         const std::string arg = argv[i];
         if (arg == "--skip-syscall-check") {
             skipSyscallCheck = true;
+        } else if (arg == "--to-intel") {
+            toIntel = true;
         } else if (inputPath.empty()) {
             inputPath = arg;
         } else if (outputElfPath.empty()) {
@@ -39,7 +43,7 @@ int main(const int argc, char* argv[]) {
     }
 
     if (inputPath.empty() || outputElfPath.empty()) {
-        std::cerr << "Usage: relinker [--skip-syscall-check] <input.elf> <output.elf> [output_registry.json]\n";
+        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] <input.elf> <output.elf> [output_registry.json]\n";
         return 1;
     }
 
@@ -48,6 +52,13 @@ int main(const int argc, char* argv[]) {
         Io::FileWriter fileWriter;
 
         auto sourceBytes = fileReader.Read(inputPath);
+
+        if (toIntel) {
+            const Relinker::ElfReader elfReader(sourceBytes);
+            const auto converter = Codegen::MakeAmd64OnlyConverter();
+            fileWriter.Write(outputElfPath, converter->Convert(std::move(sourceBytes), elfReader.ReadCodeSegments()));
+            return 0;
+        }
 
         auto elfReader = std::make_shared<Relinker::ElfReader>(sourceBytes);
 

@@ -17,6 +17,7 @@ public:
     FileByteOffset TranslateVirtualAddress(VirtualAddress address) const override;
     std::vector<std::uint8_t> ReadSection(const SectionHeader& header) const override;
     std::vector<std::uint8_t> ReadSegment(const ProgramHeader& header) const override;
+    std::vector<ProgramHeader> ReadCodeSegments() const override;
     std::uint64_t GetFileSize() const override;
     const std::vector<std::uint8_t>& GetRawBytes() const override;
 
