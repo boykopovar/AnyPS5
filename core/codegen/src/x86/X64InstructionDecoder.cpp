@@ -50,7 +50,10 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     pos += 1;
     bool twoByteOpcode = false;
     bool vexPresent = false;
+    bool evexPresent = false;
     std::uint8_t vexMap = 0;
+    std::uint8_t threeByteMap = 0;
+    bool threeByteEscape = false;
 
     if (opcode == OneByteVex2) {
         if (pos >= available) {
@@ -70,6 +73,13 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             throw CodegenException("Instruction truncated after VEX3 prefix");
         }
         pos += 1;
+    } else if (opcode == EvexPrefix) {
+        if (pos + 2 >= available) {
+            throw CodegenException("Instruction truncated after EVEX prefix");
+        }
+        evexPresent = true;
+        vexMap = static_cast<std::uint8_t>(data[pos] & EvexMapMask);
+        pos += 3;
     } else if (opcode == TwoByteOpcodeEscape) {
         if (pos >= available) {
             throw CodegenException("Instruction truncated after two-byte opcode escape");
@@ -77,9 +87,18 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         twoByteOpcode = true;
         opcode = data[pos];
         pos += 1;
+        if (opcode == ThreeByteEscape38 || opcode == ThreeByteEscape3A) {
+            threeByteEscape = true;
+            threeByteMap = opcode;
+            if (pos >= available) {
+                throw CodegenException("Instruction truncated after three-byte opcode escape");
+            }
+            opcode = data[pos];
+            pos += 1;
+        }
     }
 
-    if (vexPresent) {
+    if (vexPresent || evexPresent) {
         if (pos >= available) {
             throw CodegenException("Instruction truncated after VEX prefix");
         }
@@ -91,8 +110,22 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     std::size_t immediateSize = ImmSizeNone;
 
     if (vexPresent) {
+        if (vexMap == TwoByteOpcodeEscape && opcode >= VexNoModRmMin && opcode <= VexNoModRmMax) {
+            hasModRm = false;
+        } else {
+            hasModRm = true;
+            if (vexMap == Vex3Map0F3A) {
+                immediateSize = ImmSize8;
+            }
+        }
+    } else if (evexPresent) {
         hasModRm = true;
-        if (vexMap == Vex3Map0F3A) {
+        if (vexMap == EvexMap0F3A) {
+            immediateSize = ImmSize8;
+        }
+    } else if (threeByteEscape) {
+        hasModRm = true;
+        if (threeByteMap == ThreeByteEscape3A) {
             immediateSize = ImmSize8;
         }
     } else if (!twoByteOpcode) {
@@ -115,7 +148,8 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             opcode == OneByteShiftRm8ByCl || opcode == OneByteShiftRmByCl ||
             opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm ||
             opcode == OneByteIncDecRm8 || opcode == OneByteGrp5Rm ||
-            (opcode >= OneByteModRmRangeJMin && opcode <= OneByteModRmRangeJMax)) {
+            (opcode >= OneByteModRmRangeJMin && opcode <= OneByteModRmRangeJMax) ||
+            (opcode >= OneByteX87Min && opcode <= OneByteX87Max)) {
             hasModRm = true;
         }
 
@@ -124,6 +158,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             opcode == OneByteImm8AdcAl || opcode == OneByteImm8SbbAl ||
             opcode == OneByteImm8AndAl || opcode == OneByteImm8SubAl ||
             opcode == OneByteImm8XorAl || opcode == OneByteImm8CmpAl ||
+            opcode == OneByteGrp2Rm8Imm8 || opcode == OneByteGrp2RmImm8 ||
             (opcode >= OneByteMovImm8RegMin && opcode <= OneByteMovImm8RegMax) ||
             opcode == OneBytePushImm8 ||
             opcode == OneByteTestAlImm8) {
@@ -155,7 +190,9 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             immediateSize = ImmSize32;
         }
 
-        if (opcode == OneByteJmpRel8) {
+        if (opcode == OneByteJmpRel8 || opcode == OneByteJrcxz ||
+            (opcode >= OneByteLoop && opcode <= OneByteLoopMax) ||
+            (opcode >= OneByteInOutImm8Min && opcode <= OneByteInOutImm8Max)) {
             immediateSize = ImmSize8;
         }
     } else {
@@ -164,17 +201,32 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         } else if (opcode == TwoByteMovImm8ModRm) {
             hasModRm = true;
             immediateSize = ImmSize8;
-        } else if (opcode == TwoByteStringOpMovs || opcode == TwoByteStringOpCmps) {
+        } else if (opcode >= TwoByteShiftImm8Min && opcode <= TwoByteShiftImm8Max) {
+            hasModRm = true;
             immediateSize = ImmSize8;
+        } else if (opcode == TwoByteShldImm8 || opcode == TwoByteShrdImm8 ||
+                   opcode == TwoByteShufpsImm8 || opcode == TwoByteShufpdImm8 ||
+                   opcode == TwoBytePextrw) {
+            hasModRm = true;
+            immediateSize = ImmSize8;
+        } else if (opcode == TwoByteShldCl || opcode == TwoByteShrdCl) {
+            hasModRm = true;
         } else if ((opcode >= TwoByteCmovRangeMin && opcode <= TwoByteCmovRangeMax) ||
                    (opcode >= TwoByteModRmRangeAMin && opcode <= TwoByteModRmRangeAMax) ||
                    (opcode >= TwoByteModRmRangeBMin && opcode <= TwoByteModRmRangeBMax) ||
                    (opcode >= TwoByteModRmRangeCMin && opcode <= TwoByteModRmRangeCMax) ||
                    (opcode >= TwoByteModRmRangeDMin && opcode <= TwoByteModRmRangeDMax) ||
                    (opcode >= TwoByteModRmRangeEMin && opcode <= TwoByteModRmRangeEMax) ||
-                   (opcode >= TwoByteModRmRangeFMin && opcode <= TwoByteModRmRangeFMax) ||
                    (opcode >= TwoByteModRmRangeGMin && opcode <= TwoByteModRmRangeGMax) ||
                    (opcode >= TwoByteModRmRangeHMin && opcode <= TwoByteModRmRangeHMax) ||
+                   (opcode >= TwoByteModRmRangeIMin && opcode <= TwoByteModRmRangeIMax) ||
+                   (opcode >= TwoBytePrefetchGrpMin && opcode <= TwoBytePrefetchGrpMax) ||
+                   (opcode >= TwoByteSetccMin && opcode <= TwoByteSetccMax) ||
+                   opcode == TwoByteImulRmModRm ||
+                   opcode == TwoByteGrp7 ||
+                   opcode == TwoByteGrp15 ||
+                   opcode == TwoByteXadd ||
+                   opcode == TwoByteGrp9 ||
                    opcode == TwoByteNopModRm || opcode == TwoByteEndbr) {
             hasModRm = true;
         }
@@ -194,9 +246,9 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     const std::uint8_t modrm = data[pos];
     pos += 1;
 
-    const std::uint8_t mod = static_cast<std::uint8_t>((modrm >> ModRmModShift) & ModRmModMask);
-    const std::uint8_t reg = static_cast<std::uint8_t>((modrm >> ModRmRegShift) & ModRmRegMask);
-    const std::uint8_t rm = static_cast<std::uint8_t>(modrm & ModRmRmMask);
+    const auto mod = static_cast<std::uint8_t>((modrm >> ModRmModShift) & ModRmModMask);
+    const auto reg = static_cast<std::uint8_t>((modrm >> ModRmRegShift) & ModRmRegMask);
+    const auto rm = static_cast<std::uint8_t>(modrm & ModRmRmMask);
 
     if (!vexPresent && !twoByteOpcode &&
         (opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm) &&
@@ -211,7 +263,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             throw CodegenException("Instruction truncated before SIB byte");
         }
         const std::uint8_t sib = data[pos];
-        const std::uint8_t base = static_cast<std::uint8_t>(sib & SibBaseMask);
+        const auto base = static_cast<std::uint8_t>(sib & SibBaseMask);
         pos += 1;
 
         if (mod == ModRmModIndirect && base == SibBaseDisp32) {
