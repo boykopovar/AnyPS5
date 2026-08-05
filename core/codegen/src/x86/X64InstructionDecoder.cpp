@@ -11,11 +11,18 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     bool rexPresent = false;
     std::uint8_t rex = 0;
     bool operandSizeOverride = false;
+    bool repnePrefix = false;
 
     while (pos < available) {
         const std::uint8_t b = data[pos];
 
-        if (b == PrefixLock || b == PrefixRepne || b == PrefixRep ||
+        if (b == PrefixRepne) {
+            repnePrefix = true;
+            pos += 1;
+            continue;
+        }
+
+        if (b == PrefixLock || b == PrefixRep ||
             b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs || b == PrefixSegEs ||
             b == PrefixSegFs || b == PrefixSegGs) {
             pos += 1;
@@ -196,7 +203,18 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             immediateSize = ImmSize8;
         }
     } else {
-        if (opcode >= TwoByteJccRel32Min && opcode <= TwoByteJccRel32Max) {
+        if (opcode == TwoByteExtrqInsertqImm8Imm8) {
+            if (!operandSizeOverride && !repnePrefix) {
+                throw CodegenException("Unsupported 0F 78 opcode without SSE4A prefix");
+            }
+            hasModRm = true;
+            immediateSize = ImmSize16;
+        } else if (opcode == TwoByteExtrqInsertqModRm) {
+            if (!operandSizeOverride && !repnePrefix) {
+                throw CodegenException("Unsupported 0F 79 opcode without SSE4A prefix");
+            }
+            hasModRm = true;
+        } else if (opcode >= TwoByteJccRel32Min && opcode <= TwoByteJccRel32Max) {
             immediateSize = ImmSize32;
         } else if (opcode == TwoByteMovImm8ModRm) {
             hasModRm = true;

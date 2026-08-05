@@ -156,6 +156,8 @@ inline constexpr std::uint8_t TwoBytePextrw = 0xC5;
 inline constexpr std::uint8_t TwoByteShufpsImm8 = 0xC2;
 inline constexpr std::uint8_t TwoByteShufpdImm8 = 0xC6;
 inline constexpr std::uint8_t TwoByteGrp9 = 0xC7;
+inline constexpr std::uint8_t TwoByteExtrqInsertqImm8Imm8 = 0x78;
+inline constexpr std::uint8_t TwoByteExtrqInsertqModRm = 0x79;
 
 inline constexpr std::uint8_t VexNoModRmMin = 0x77;
 inline constexpr std::uint8_t VexNoModRmMax = 0x77;
