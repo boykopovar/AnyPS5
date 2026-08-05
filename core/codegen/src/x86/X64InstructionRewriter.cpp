@@ -111,16 +111,18 @@ std::int64_t X64InstructionRewriter::AdjustedDelta(
     std::int64_t instrPosition,
     std::int64_t targetPosition,
     std::int64_t cutStart,
+    std::int64_t cutEnd,
+    std::int64_t sliceSize,
     std::int64_t delta
 ) {
-    const bool instrBeforeCut = instrPosition < cutStart;
-    const bool targetBeforeCut = targetPosition < cutStart;
+    const bool instrShifts = instrPosition >= cutEnd && instrPosition < sliceSize;
+    const bool targetShifts = targetPosition >= cutEnd && targetPosition < sliceSize;
 
-    if (instrBeforeCut == targetBeforeCut) {
+    if (instrShifts == targetShifts) {
         return 0;
     }
 
-    return instrBeforeCut ? delta : -delta;
+    return instrShifts ? -delta : delta;
 }
 
 RewriteResult X64InstructionRewriter::Rewrite(
@@ -170,7 +172,9 @@ RewriteResult X64InstructionRewriter::Rewrite(
             if (site.Kind == ReferenceKind::Rel8Branch) {
                 const auto disp = static_cast<std::int8_t>(codeSection[fieldPosition]);
                 const std::int64_t targetPosition = instrEnd + disp;
-                const std::int64_t adjust = AdjustedDelta(matchOffset, targetPosition, cutStart, delta);
+                const std::int64_t adjust = AdjustedDelta(
+                    matchOffset, targetPosition, cutStart, cutEnd,
+                    static_cast<std::int64_t>(codeSection.size()), delta);
 
                 if (adjust != 0) {
                     const std::int64_t newDisp = static_cast<std::int64_t>(disp) + adjust;
@@ -188,7 +192,9 @@ RewriteResult X64InstructionRewriter::Rewrite(
             } else {
                 const auto disp = ReadInt32(codeSection.data() + fieldPosition);
                 const std::int64_t targetPosition = instrEnd + disp;
-                const std::int64_t adjust = AdjustedDelta(matchOffset, targetPosition, cutStart, delta);
+                const std::int64_t adjust = AdjustedDelta(
+                    matchOffset, targetPosition, cutStart, cutEnd,
+                    static_cast<std::int64_t>(codeSection.size()), delta);
 
                 if (adjust != 0) {
                     const std::int64_t newDisp = static_cast<std::int64_t>(disp) + adjust;

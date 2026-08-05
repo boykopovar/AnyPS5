@@ -39,6 +39,8 @@ private:
         std::int64_t instrPosition,
         std::int64_t targetPosition,
         std::int64_t cutStart,
+        std::int64_t cutEnd,
+        std::int64_t sliceSize,
         std::int64_t delta
     );
 };
