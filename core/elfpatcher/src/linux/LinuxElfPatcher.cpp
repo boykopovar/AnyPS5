@@ -67,6 +67,11 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         buf.push_back(b);
     alignBuf(buf, kRelaPltAlignment);
 
+    alignBuf(buf, kGotAlignment);
+    const auto gotOff = static_cast<std::uint64_t>(buf.size());
+    for (std::size_t i = 0; i < kGotReservedSlots; ++i)
+        _byteWriter->AppendU64(buf, 0);
+
     std::vector<std::uint8_t> dynSegBuf;
     for (std::uint8_t b : dynSection.DynamicSegmentData)
         dynSegBuf.push_back(b);
@@ -83,6 +88,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         _appendDynEntry(dynSegBuf, DT_JMPREL, relaPltOff);
         _appendDynEntry(dynSegBuf, DT_PLTRELSZ, dynSection.RelaPltData.size());
         _appendDynEntry(dynSegBuf, DT_PLTREL, static_cast<std::uint64_t>(DT_RELA));
+        _appendDynEntry(dynSegBuf, DT_PLTGOT, gotOff);
     }
     _appendDynEntry(dynSegBuf, DT_NULL, 0);
 

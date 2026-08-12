@@ -58,6 +58,7 @@ struct NidReference {
     std::uint32_t RelocationTypeValue;
     FileByteOffset RelocationTableOffset;
     VirtualAddress RelocationAddress;
+    std::int64_t Addend;
 };
 
 struct CallSiteInfo {

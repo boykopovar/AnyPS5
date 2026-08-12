@@ -35,7 +35,10 @@ void SysVDynamicSectionBuilder::_appendElfSym(
     std::uint64_t value,
     std::uint64_t size) const
 {
-    _appendU64(dynsym, nameOff);
+    dynsym.push_back(nameOff & 0xFF);
+    dynsym.push_back((nameOff >> 8) & 0xFF);
+    dynsym.push_back((nameOff >> 16) & 0xFF);
+    dynsym.push_back((nameOff >> 24) & 0xFF);
     dynsym.push_back(info);
     dynsym.push_back(other);
     dynsym.push_back(shndx & 0xFF);
@@ -80,9 +83,9 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
         const std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | relType;
 
         if (relType == R_X86_64_JUMP_SLOT)
-            _appendRela(result.RelaPltData, ref.RelocationAddress, relaInfo, 0);
+            _appendRela(result.RelaPltData, ref.RelocationAddress, relaInfo, ref.Addend);
         else
-            _appendRela(result.RelaData, ref.RelocationAddress, relaInfo, 0);
+            _appendRela(result.RelaData, ref.RelocationAddress, relaInfo, ref.Addend);
 
         ++symIdx;
     }

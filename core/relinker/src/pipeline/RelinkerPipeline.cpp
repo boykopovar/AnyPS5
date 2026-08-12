@@ -159,8 +159,10 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
                 throw RelinkerException("Relocation entry out of bounds", pos);
 
             std::uint64_t rOffset = 0, rInfo = 0;
+            std::int64_t rAddend = 0;
             std::memcpy(&rOffset, raw.data() + pos, 8);
             std::memcpy(&rInfo, raw.data() + pos + 8, 8);
+            std::memcpy(&rAddend, raw.data() + pos + 16, 8);
 
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
@@ -172,13 +174,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             std::uint32_t nameOff = 0;
             std::memcpy(&nameOff, raw.data() + symOff, 4);
 
-            NidReference ref;
-            ref.Nid = readCStr(nameOff);
-            ref.Library = {};
-            ref.RelocationTypeValue = relType;
-            ref.RelocationTableOffset = pos;
-            ref.RelocationAddress = rOffset;
-            nidRefs.push_back(ref);
+            nidRefs.push_back({readCStr(nameOff), {}, relType, pos, rOffset, rAddend});
         }
     };
 

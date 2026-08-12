@@ -48,6 +48,8 @@ inline constexpr std::size_t kDynStrAlignment = 24;
 inline constexpr std::size_t kDynSymAlignment = 24;
 inline constexpr std::size_t kRelaAlignment = 24;
 inline constexpr std::size_t kRelaPltAlignment = 8;
+inline constexpr std::size_t kGotAlignment = 8;
+inline constexpr std::size_t kGotReservedSlots = 3;
 
 inline constexpr std::uint64_t kDefaultLoadAlignment = 0x1000;
 inline constexpr std::uint64_t kPhdrHeaderAlignment = 8;
@@ -75,6 +77,7 @@ inline constexpr std::uint32_t PT_HIOS = 0x6fffffff;
 inline constexpr std::int64_t DT_NULL = 0;
 inline constexpr std::int64_t DT_NEEDED = 1;
 inline constexpr std::int64_t DT_PLTRELSZ = 2;
+inline constexpr std::int64_t DT_PLTGOT = 3;
 inline constexpr std::int64_t DT_STRTAB = 5;
 inline constexpr std::int64_t DT_SYMTAB = 6;
 inline constexpr std::int64_t DT_RELA = 7;
