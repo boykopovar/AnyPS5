@@ -96,7 +96,8 @@ std::uint32_t ProgramHeaderLayoutBuilder::_fixLoadFlags(std::uint32_t originalFl
 }
 
 std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
-    const std::vector<Domain::ProgramHeader>& originalHeaders
+    const std::vector<Domain::ProgramHeader>& originalHeaders,
+    std::uint64_t extraBlockOffset
 ) const {
     bool foundLoad = false;
     std::uint64_t highestVaddrEnd = 0;
@@ -114,7 +115,11 @@ std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
         throw Domain::RelinkerException("No kept PT_LOAD segment to anchor the extra block against");
 
     const std::uint64_t align = kDefaultLoadAlignment;
-    const std::uint64_t vaddr = (highestVaddrEnd + align - 1) & ~(align - 1);
+    const std::uint64_t offsetRemainder = extraBlockOffset & (align - 1);
+    const std::uint64_t alignedFloor = highestVaddrEnd & ~(align - 1);
+    std::uint64_t vaddr = alignedFloor | offsetRemainder;
+    if (vaddr < highestVaddrEnd)
+        vaddr += align;
     if (vaddr < highestVaddrEnd)
         throw Domain::RelinkerException("Extra block vaddr computation overflowed");
     return vaddr;

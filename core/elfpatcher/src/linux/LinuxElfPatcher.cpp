@@ -73,7 +73,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         _byteWriter->AppendU64(buf, 0);
 
     const std::uint64_t extraBlockOff = dynStrOff;
-    const std::uint64_t extraBlockVaddr = _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders);
+    const std::uint64_t extraBlockVaddr = _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders, extraBlockOff);
 
     const auto vaddrOfExtraBlockOffset = [extraBlockOff, extraBlockVaddr](std::uint64_t fileOffset) -> std::uint64_t {
         if (fileOffset < extraBlockOff)

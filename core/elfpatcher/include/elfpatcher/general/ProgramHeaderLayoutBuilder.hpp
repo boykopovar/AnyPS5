@@ -15,7 +15,7 @@ namespace Elfpatcher {
             std::shared_ptr<Io::IByteWriter> byteWriter
         );
 
-        std::uint64_t ComputeExtraBlockVaddr(const std::vector<Domain::ProgramHeader>& originalHeaders) const override;
+        std::uint64_t ComputeExtraBlockVaddr(const std::vector<Domain::ProgramHeader>& originalHeaders, std::uint64_t extraBlockOffset) const override;
 
         std::uint16_t WriteLayout(
             std::vector<std::uint8_t>& buf,
