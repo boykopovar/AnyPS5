@@ -72,23 +72,32 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (std::size_t i = 0; i < kGotReservedSlots; ++i)
         _byteWriter->AppendU64(buf, 0);
 
+    const std::uint64_t extraBlockOff = dynStrOff;
+    const std::uint64_t extraBlockVaddr = _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders);
+
+    const auto vaddrOfExtraBlockOffset = [extraBlockOff, extraBlockVaddr](std::uint64_t fileOffset) -> std::uint64_t {
+        if (fileOffset < extraBlockOff)
+            throw Domain::RelinkerException("Extra block member offset lies before the extra block");
+        return extraBlockVaddr + (fileOffset - extraBlockOff);
+    };
+
     std::vector<std::uint8_t> dynSegBuf;
     for (std::uint8_t b : dynSection.DynamicSegmentData)
         dynSegBuf.push_back(b);
-    _appendDynEntry(dynSegBuf, DT_STRTAB, dynStrOff);
+    _appendDynEntry(dynSegBuf, DT_STRTAB, vaddrOfExtraBlockOffset(dynStrOff));
     _appendDynEntry(dynSegBuf, DT_STRSZ, dynSection.DynStrData.size());
-    _appendDynEntry(dynSegBuf, DT_SYMTAB, dynSymOff);
+    _appendDynEntry(dynSegBuf, DT_SYMTAB, vaddrOfExtraBlockOffset(dynSymOff));
     _appendDynEntry(dynSegBuf, DT_SYMENT, kSymEntrySize);
     if (!dynSection.RelaData.empty()) {
-        _appendDynEntry(dynSegBuf, DT_RELA, relaOff);
+        _appendDynEntry(dynSegBuf, DT_RELA, vaddrOfExtraBlockOffset(relaOff));
         _appendDynEntry(dynSegBuf, DT_RELASZ, dynSection.RelaData.size());
         _appendDynEntry(dynSegBuf, DT_RELAENT, kRelaEntrySize);
     }
     if (!dynSection.RelaPltData.empty()) {
-        _appendDynEntry(dynSegBuf, DT_JMPREL, relaPltOff);
+        _appendDynEntry(dynSegBuf, DT_JMPREL, vaddrOfExtraBlockOffset(relaPltOff));
         _appendDynEntry(dynSegBuf, DT_PLTRELSZ, dynSection.RelaPltData.size());
         _appendDynEntry(dynSegBuf, DT_PLTREL, static_cast<std::uint64_t>(DT_RELA));
-        _appendDynEntry(dynSegBuf, DT_PLTGOT, gotOff);
+        _appendDynEntry(dynSegBuf, DT_PLTGOT, vaddrOfExtraBlockOffset(gotOff));
     }
     _appendDynEntry(dynSegBuf, DT_NULL, 0);
 
@@ -109,7 +118,6 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (char i : kInterp)
         buf.push_back(static_cast<std::uint8_t>(i));
 
-    const std::uint64_t extraBlockOff = dynStrOff;
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
 
     ProgramHeaderLayoutRequest layoutRequest{};
@@ -118,6 +126,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     layoutRequest.PhNum = phNum;
     layoutRequest.OriginalHeaders = originalHeaders;
     layoutRequest.ExtraBlockOffset = extraBlockOff;
+    layoutRequest.ExtraBlockVaddr = extraBlockVaddr;
     layoutRequest.ExtraBlockSize = extraBlockSize;
     layoutRequest.DynamicSegmentOffset = dynSegOff;
     layoutRequest.DynamicSegmentSize = dynSegBuf.size();
