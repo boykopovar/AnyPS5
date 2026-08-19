@@ -107,10 +107,11 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 
     const std::uint64_t realEntryVaddr = *reinterpret_cast<const std::uint64_t*>(buf.data() + kEhdrEntryOffset);
     const auto stubOff = static_cast<std::uint64_t>(buf.size());
-    const auto stubBytes = _entryStubBuilder->BuildEntryStub(stubOff, realEntryVaddr);
+    const auto stubVaddr = vaddrOfExtraBlockOffset(stubOff);
+    const auto stubBytes = _entryStubBuilder->BuildEntryStub(stubVaddr, realEntryVaddr);
     for (std::uint8_t b : stubBytes)
         buf.push_back(b);
-    _byteWriter->WriteU64(buf, kEhdrEntryOffset, stubOff);
+    _byteWriter->WriteU64(buf, kEhdrEntryOffset, stubVaddr);
 
     static constexpr char kInterp[] = "/lib64/ld-linux-x86-64.so.2";
     const auto interpOff = static_cast<std::uint64_t>(buf.size());

@@ -11,7 +11,6 @@ public:
 
 private:
     [[nodiscard]] bool _isSceSpecificSegment(std::uint32_t type) const;
-    [[nodiscard]] bool _isNullPageLoad(const Domain::ProgramHeader& ph) const;
 };
 
 }

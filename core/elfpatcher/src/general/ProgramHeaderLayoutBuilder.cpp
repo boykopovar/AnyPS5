@@ -29,7 +29,7 @@ void ProgramHeaderLayoutBuilder::_writeProgramHeader(std::vector<std::uint8_t>& 
 Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeLoadHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_LOAD;
-    ph.Flags = PF_R | PF_W;
+    ph.Flags = PF_R | PF_W | PF_X;
     ph.Offset = offset;
     ph.MappedAddress = vaddr;
     ph.PhysicalAddress = vaddr;
@@ -130,21 +130,11 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     const ProgramHeaderLayoutRequest& request
 ) const {
     std::uint16_t keptCount = 0;
-    std::uint64_t keptMinVaddr = UINT64_MAX;
-    std::uint64_t keptMinVaddrAlign = kDefaultLoadAlignment;
     for (const auto& ph : request.OriginalHeaders) {
         if (_segmentFilter->ShouldSkip(ph))
             continue;
         keptCount++;
-        if (ph.Type == PT_LOAD && ph.MappedAddress < keptMinVaddr) {
-            keptMinVaddr = ph.MappedAddress;
-            keptMinVaddrAlign = ph.Alignment;
-        }
     }
-    if (keptMinVaddr == UINT64_MAX)
-        throw Domain::RelinkerException("No kept PT_LOAD segment to anchor the header block against");
-    if (keptMinVaddrAlign == 0)
-        throw Domain::RelinkerException("Lowest kept PT_LOAD has zero alignment");
 
     const std::uint16_t neededPh = keptCount + kSyntheticProgramHeaderCount;
     if (neededPh > request.PhNum)
@@ -153,14 +143,9 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
             ", available " + std::to_string(request.PhNum));
 
     const std::uint64_t headerBlockSize = request.PhOff + static_cast<std::uint64_t>(neededPh) * request.PhEntSize;
-    if (headerBlockSize >= keptMinVaddr)
-        throw Domain::RelinkerException(
-            "Header block does not fit below the lowest kept PT_LOAD: need " +
-            std::to_string(headerBlockSize) + " bytes, only " + std::to_string(keptMinVaddr) + " available");
-
-    const std::uint64_t headerBlockVaddr = (keptMinVaddr - headerBlockSize) & ~(keptMinVaddrAlign - 1);
-    if (headerBlockVaddr + headerBlockSize > keptMinVaddr)
-        throw Domain::RelinkerException("Header block would overlap the lowest kept PT_LOAD after alignment");
+    const std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
+    const std::uint64_t headerBlockVaddr =
+        (request.ExtraBlockVaddr + request.ExtraBlockSize + headerBlockAlign - 1) & ~(headerBlockAlign - 1);
 
     if (request.DynamicSegmentOffset < request.ExtraBlockOffset)
         throw Domain::RelinkerException("Dynamic segment offset lies before the extra block");
@@ -181,7 +166,7 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     writtenPh++;
 
     const std::size_t headerLoadEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-    _writeProgramHeader(buf, headerLoadEntOff, _makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, keptMinVaddrAlign));
+    _writeProgramHeader(buf, headerLoadEntOff, _makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, headerBlockAlign));
     writtenPh++;
 
     for (const auto& ph : request.OriginalHeaders) {
