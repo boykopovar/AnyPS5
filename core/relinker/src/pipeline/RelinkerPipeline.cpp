@@ -215,7 +215,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     std::cout << "OK: " << entries.size() << " NID references processed\n";
 
-    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection)};
+    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr};
 }
 
 }

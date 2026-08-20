@@ -26,7 +26,8 @@ void LinuxElfPatcher::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64
 std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::vector<std::uint8_t>& sourceElf,
     const std::vector<Domain::ProgramHeader>& originalHeaders,
-    const Domain::SysVDynamicSection& dynSection)
+    const Domain::SysVDynamicSection& dynSection,
+    const std::uint64_t originalPltGotVaddr)
 {
     std::vector<std::uint8_t> buf = sourceElf;
 
@@ -67,11 +68,6 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         buf.push_back(b);
     alignBuf(buf, kRelaPltAlignment);
 
-    alignBuf(buf, kGotAlignment);
-    const auto gotOff = static_cast<std::uint64_t>(buf.size());
-    for (std::size_t i = 0; i < kGotReservedSlots; ++i)
-        _byteWriter->AppendU64(buf, 0);
-
     const std::uint64_t extraBlockOff = dynStrOff;
     const std::uint64_t extraBlockVaddr = _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders, extraBlockOff);
 
@@ -97,7 +93,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         _appendDynEntry(dynSegBuf, DT_JMPREL, vaddrOfExtraBlockOffset(relaPltOff));
         _appendDynEntry(dynSegBuf, DT_PLTRELSZ, dynSection.RelaPltData.size());
         _appendDynEntry(dynSegBuf, DT_PLTREL, static_cast<std::uint64_t>(DT_RELA));
-        _appendDynEntry(dynSegBuf, DT_PLTGOT, vaddrOfExtraBlockOffset(gotOff));
+        _appendDynEntry(dynSegBuf, DT_PLTGOT, originalPltGotVaddr);
     }
     _appendDynEntry(dynSegBuf, DT_NULL, 0);
 

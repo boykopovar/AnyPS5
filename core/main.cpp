@@ -93,7 +93,7 @@ int main(const int argc, char* argv[]) {
             std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
             byteWriter
         );
-        auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection);
+        auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr);
         fileWriter.Write(outputElfPath, patchedElf);
 
     } catch (const Domain::RelinkerException& e) {

@@ -10,6 +10,7 @@ struct RelinkResult {
     std::vector<CallRegistryEntry> RegistryEntries;
     std::vector<ProgramHeader> OriginalHeaders;
     SysVDynamicSection DynamicSection;
+    VirtualAddress OriginalPltGotVaddr;
 };
 
 }
