@@ -52,6 +52,14 @@ struct Elf64_Sym {
 
 constexpr std::uint32_t SHT_DYNSYM = 11u;
 constexpr std::uint8_t STB_LOCAL = 0u;
+constexpr char kNidPostfix[] = "_nid_postfix";
+constexpr std::size_t kNidPostfixLen = sizeof(kNidPostfix) - 1u;
+
+std::string _stripNidPostfix(const std::string& name) {
+    if (name.size() < kNidPostfixLen) return name;
+    if (name.compare(name.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) != 0) return name;
+    return name.substr(0u, name.size() - kNidPostfixLen);
+}
 
 struct PeDataDirectory {
     std::uint32_t VirtualAddress;
@@ -194,7 +202,7 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
         const std::string symName = _readCStr(newDynStr, sym.st_name);
         if (symName.empty()) continue;
 
-        const std::string nid = Nid::ComputeNid(symName, libraryName);
+        const std::string nid = Nid::ComputeNid(_stripNidPostfix(symName), libraryName);
 
         const auto existingIt = [&]() {
             for (const auto& [orig, newIdx] : nameRemap)
@@ -315,7 +323,7 @@ void _patchNidsPe(std::vector<std::uint8_t>& pe, const std::string& libraryName)
         usedEnd = std::max(usedEnd, nameRvas[i] - edataSection.VirtualAddress + static_cast<std::uint32_t>(names[i].size()) + 1u);
 
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
-        const std::string nid = Nid::ComputeNid(names[i], libraryName);
+        const std::string nid = Nid::ComputeNid(_stripNidPostfix(names[i]), libraryName);
         const std::size_t oldNameOffset = _peRvaToOffset(pe, nameRvas[i], peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
 
         if (nid.size() <= names[i].size()) {

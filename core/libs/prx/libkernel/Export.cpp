@@ -11,14 +11,14 @@ int accept(int s, void* addr, uint32_t* addrlen) {
  return 0;
 }
 
-int bind(int s, const void* addr, uint32_t addrlen) {
+int bind_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
  return 0;
 }
 
-int chmod(const char* path, int mode) {
+int chmod_nid_postfix(const char* path, int mode) {
  (void)path;
  (void)mode;
  return 0;
@@ -36,7 +36,7 @@ int clock_gettime(int clock_id, KernelTimespec* time) {
  return 0;
 }
 
-int close(int d) {
+int close_nid_postfix(int d) {
  (void)d;
  return 0;
 }
@@ -48,17 +48,17 @@ int connect(int s, const void* addr, uint32_t addrlen) {
  return 0;
 }
 
-void exit(int code) {
+void exit_nid_postfix(int code) {
  (void)code;
 }
 
-int flock(int d, int operation) {
+int flock_nid_postfix(int d, int operation) {
  (void)d;
  (void)operation;
  return 0;
 }
 
-int64_t fstat(int d, FileStat* sb) {
+int64_t fstat_nid_postfix(int d, FileStat* sb) {
  (void)d;
  (void)sb;
  return 0;
@@ -148,14 +148,14 @@ int nanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
  return 0;
 }
 
-int open(const char* path, int flags, int mode) {
+int open_nid_postfix(const char* path, int flags, int mode) {
  (void)path;
  (void)flags;
  (void)mode;
  return 0;
 }
 
-int64_t pread(int d, void* buf, size_t nbytes, int64_t offset) {
+int64_t pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t offset) {
  (void)d;
  (void)buf;
  (void)nbytes;

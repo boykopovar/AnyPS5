@@ -26,10 +26,6 @@ foreach(LIB_DIR ${LIBS_DIRS})
         set(RPX_FILE ${CMAKE_CURRENT_BINARY_DIR}/libs/${LIB_NAME}.prx)
         set(STAMP_FILE ${CMAKE_CURRENT_BINARY_DIR}/libs/${LIB_NAME}.patched)
 
-        if(${LIB_NAME} STREQUAL "libSceLibcInternal")
-            target_link_options(${LIB_NAME} PRIVATE -nostartfiles -Wl,--allow-multiple-definition)
-        endif()
-
         add_custom_command(
                 OUTPUT ${STAMP_FILE}
                 COMMAND $<TARGET_FILE:nid_patcher> ${LIB_NAME} ${RPX_FILE}
