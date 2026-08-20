@@ -1,4 +1,5 @@
 #include <cstdint>
+#include "SceTypes.hpp"
 
 extern "C" {
 
