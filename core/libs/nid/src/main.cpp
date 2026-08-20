@@ -52,6 +52,7 @@ struct Elf64_Sym {
 
 constexpr std::uint32_t SHT_DYNSYM = 11u;
 constexpr std::uint8_t STB_LOCAL = 0u;
+constexpr std::uint16_t SHN_UNDEF = 0u;
 constexpr char kNidPostfix[] = "_nid_postfix";
 constexpr std::size_t kNidPostfixLen = sizeof(kNidPostfix) - 1u;
 
@@ -198,6 +199,7 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
         const std::uint8_t binding = sym.st_info >> 4u;
         if (binding == STB_LOCAL) continue;
         if (sym.st_name == 0u) continue;
+        if (sym.st_shndx == SHN_UNDEF) continue;
 
         const std::string symName = _readCStr(newDynStr, sym.st_name);
         if (symName.empty()) continue;
