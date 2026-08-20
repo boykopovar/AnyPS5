@@ -15,11 +15,12 @@ int sceSystemGestureClose(int32_t gesture_handle) {
  return 0;
 }
 
-int sceSystemGestureCreateTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer, int32_t, const SystemGestureRectangle*, const void*) {
+int sceSystemGestureCreateTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer, int32_t type, const SystemGestureRectangle* rectangle, const void* param) {
  (void)gesture_handle;
  (void)recognizer;
- (void)int32_t;
- (void)SystemGestureRectangle;
+ (void)type;
+ (void)rectangle;
+ (void)param;
  return 0;
 }
 
@@ -27,16 +28,16 @@ int sceSystemGestureFinalizePrimitiveTouchRecognizer(void) {
  return 0;
 }
 
-int sceSystemGestureGetPrimitiveTouchEventByIndex(int32_t gesture_handle, uint32_t, SystemGesturePrimitiveTouchEvent* event) {
+int sceSystemGestureGetPrimitiveTouchEventByIndex(int32_t gesture_handle, uint32_t index, SystemGesturePrimitiveTouchEvent* event) {
  (void)gesture_handle;
- (void)uint32_t;
+ (void)index;
  (void)event;
  return 0;
 }
 
-int sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(int32_t gesture_handle, uint16_t, SystemGesturePrimitiveTouchEvent* event) {
+int sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(int32_t gesture_handle, uint16_t primitiveId, SystemGesturePrimitiveTouchEvent* event) {
  (void)gesture_handle;
- (void)uint16_t;
+ (void)primitiveId;
  (void)event;
  return 0;
 }
@@ -54,18 +55,18 @@ int sceSystemGestureGetPrimitiveTouchEventsCount(int32_t gesture_handle) {
  return 0;
 }
 
-int sceSystemGestureGetTouchEventByEventID(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t, SystemGestureTouchEvent* event) {
+int sceSystemGestureGetTouchEventByEventID(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t eventId, SystemGestureTouchEvent* event) {
  (void)gesture_handle;
  (void)recognizer;
- (void)uint32_t;
+ (void)eventId;
  (void)event;
  return 0;
 }
 
-int sceSystemGestureGetTouchEventByIndex(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t, SystemGestureTouchEvent* event) {
+int sceSystemGestureGetTouchEventByIndex(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t index, SystemGestureTouchEvent* event) {
  (void)gesture_handle;
  (void)recognizer;
- (void)uint32_t;
+ (void)index;
  (void)event;
  return 0;
 }
@@ -92,12 +93,14 @@ int sceSystemGestureGetTouchRecognizerInformation(int32_t gesture_handle, const 
  return 0;
 }
 
-int sceSystemGestureInitializePrimitiveTouchRecognizer(const void*) {
+int sceSystemGestureInitializePrimitiveTouchRecognizer(const void* param) {
+ (void)param;
  return 0;
 }
 
-int32_t sceSystemGestureOpen(int32_t input_type, const void*) {
+int32_t sceSystemGestureOpen(int32_t input_type, const void* param) {
  (void)input_type;
+ (void)param;
  return 0;
 }
 
@@ -123,8 +126,9 @@ int sceSystemGestureUpdateAllTouchRecognizer(int32_t gesture_handle) {
  return 0;
 }
 
-int sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gesture_handle, const void*) {
+int sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gesture_handle, const void* param) {
  (void)gesture_handle;
+ (void)param;
  return 0;
 }
 

@@ -406,7 +406,7 @@ int pthread_mutexattr_settype(PthreadMutexattr* attr, int type) {
  return 0;
 }
 
-int pthread_once(void* once_control, void(KYTY_SYSV_ABI* init_routine)()) {
+int pthread_once(void* once_control, void (*init_routine)()) {
  (void)once_control;
  (void)init_routine;
  return 0;

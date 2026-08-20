@@ -2,6 +2,13 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 
+extern "C" int __stdcall DllMainCRTStartup(void* hinstDLL, unsigned long fdwReason, void* lpReserved) {
+ (void)hinstDLL;
+ (void)fdwReason;
+ (void)lpReserved;
+ return 1;
+}
+
 extern "C" {
 
 [[noreturn]] void abort(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {

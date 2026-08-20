@@ -163,6 +163,11 @@ using PthreadRwlockattr = PthreadRwlockattrPrivate*;
 using PthreadCond = PthreadCondPrivate*;
 using PthreadCondattr = PthreadCondattrPrivate*;
 using PthreadKey = int;
+using pthread_entry_func_t = void* (*)(void*);
+using pthread_key_destructor_func_t = void (*)(void*);
+using thread_dtors_func_t = void (*)();
+using get_thread_atexit_count_func_t = int (*)(KernelModule);
+using thread_atexit_report_func_t = void (*)(KernelModule);
 
 struct FileStat {
     std::uint32_t st_dev;
