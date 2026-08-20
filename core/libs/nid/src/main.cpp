@@ -1,4 +1,5 @@
 #include <nid/NidCompute.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -69,6 +70,19 @@ struct PeExportDirectory {
     std::uint32_t AddressOfFunctions;
     std::uint32_t AddressOfNames;
     std::uint32_t AddressOfNameOrdinals;
+};
+
+struct PeSectionHeader {
+    std::uint8_t Name[8];
+    std::uint32_t VirtualSize;
+    std::uint32_t VirtualAddress;
+    std::uint32_t SizeOfRawData;
+    std::uint32_t PointerToRawData;
+    std::uint32_t PointerToRelocations;
+    std::uint32_t PointerToLinenumbers;
+    std::uint16_t NumberOfRelocations;
+    std::uint16_t NumberOfLinenumbers;
+    std::uint32_t Characteristics;
 };
 
 template<typename T>
@@ -154,6 +168,16 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
 
     if (dynStrOffset == 0u) throw std::runtime_error("no .dynstr section");
 
+    constexpr std::uint32_t SHT_NOBITS = 8u;
+    std::size_t dynStrAvailable = elf.size() - dynStrOffset;
+    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
+        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
+        const auto shdr = _read<Elf64_Shdr>(elf, shOffset);
+        if (shdr.sh_type == SHT_NOBITS) continue;
+        const auto otherOffset = static_cast<std::size_t>(shdr.sh_offset);
+        if (otherOffset > dynStrOffset) dynStrAvailable = std::min(dynStrAvailable, otherOffset - dynStrOffset);
+    }
+
     std::vector<std::uint8_t> newDynStr(elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset),
                                         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize));
 
@@ -193,27 +217,41 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
         _write(elf, symOffset, sym);
     }
 
-    if (newDynStr.size() > dynStrSize) throw std::runtime_error("new .dynstr exceeds original size - rebuild with padding");
+    if (newDynStr.size() > dynStrAvailable) throw std::runtime_error("new .dynstr exceeds available padding - cannot patch in place");
 
     std::memcpy(elf.data() + dynStrOffset, newDynStr.data(), newDynStr.size());
-    for (std::size_t i = newDynStr.size(); i < dynStrSize; ++i)
+    for (std::size_t i = newDynStr.size(); i < dynStrAvailable; ++i)
         elf[dynStrOffset + i] = 0u;
+
+    if (newDynStr.size() > dynStrSize) {
+        const std::size_t dynStrShOffset = static_cast<std::size_t>(ehdr.e_shoff) + dynStrSectionLink * sizeof(Elf64_Shdr);
+        auto dynStrShdr = _read<Elf64_Shdr>(elf, dynStrShOffset);
+        dynStrShdr.sh_size = static_cast<std::uint64_t>(newDynStr.size());
+        _write(elf, dynStrShOffset, dynStrShdr);
+    }
+}
+
+std::size_t _peSectionTableOffset(std::uint32_t peHeaderOffset, std::uint32_t sizeOfOptionalHeader) {
+    return static_cast<std::size_t>(peHeaderOffset) + 4u + 20u + sizeOfOptionalHeader;
+}
+
+std::size_t _peFindSectionOffsetByRva(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
+    const std::size_t sectionTableOffset = _peSectionTableOffset(peHeaderOffset, sizeOfOptionalHeader);
+    for (std::uint16_t i = 0u; i < numberOfSections; ++i) {
+        const std::size_t sectionOffset = sectionTableOffset + i * sizeof(PeSectionHeader);
+        if (sectionOffset + sizeof(PeSectionHeader) > pe.size()) throw std::runtime_error("section header out of bounds");
+        const auto section = _read<PeSectionHeader>(pe, sectionOffset);
+        const std::uint32_t effectiveSize = section.VirtualSize != 0u ? section.VirtualSize : section.SizeOfRawData;
+        if (rva >= section.VirtualAddress && rva < section.VirtualAddress + effectiveSize)
+            return sectionOffset;
+    }
+    throw std::runtime_error("rva not mapped to any section");
 }
 
 std::size_t _peRvaToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
-    const std::size_t sectionTableOffset = static_cast<std::size_t>(peHeaderOffset) + 4u + 20u + sizeOfOptionalHeader;
-    for (std::uint16_t i = 0u; i < numberOfSections; ++i) {
-        const std::size_t sectionOffset = sectionTableOffset + i * 40u;
-        if (sectionOffset + 40u > pe.size()) throw std::runtime_error("section header out of bounds");
-        const auto virtualSize = _read<std::uint32_t>(pe, sectionOffset + 8u);
-        const auto virtualAddress = _read<std::uint32_t>(pe, sectionOffset + 12u);
-        const auto sizeOfRawData = _read<std::uint32_t>(pe, sectionOffset + 16u);
-        const auto pointerToRawData = _read<std::uint32_t>(pe, sectionOffset + 20u);
-        const std::uint32_t effectiveSize = virtualSize != 0u ? virtualSize : sizeOfRawData;
-        if (rva >= virtualAddress && rva < virtualAddress + effectiveSize)
-            return static_cast<std::size_t>(pointerToRawData) + (rva - virtualAddress);
-    }
-    throw std::runtime_error("rva not mapped to any section");
+    const std::size_t sectionOffset = _peFindSectionOffsetByRva(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const auto section = _read<PeSectionHeader>(pe, sectionOffset);
+    return static_cast<std::size_t>(section.PointerToRawData) + (rva - section.VirtualAddress);
 }
 
 void _patchNidsPe(std::vector<std::uint8_t>& pe, const std::string& libraryName) {
@@ -251,23 +289,55 @@ void _patchNidsPe(std::vector<std::uint8_t>& pe, const std::string& libraryName)
 
     const std::size_t namesArrayOffset = _peRvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
 
-    std::vector<std::pair<std::size_t, std::string>> nameOffsets;
+    std::vector<std::uint32_t> nameRvas(exportTable.NumberOfNames);
+    std::vector<std::string> names(exportTable.NumberOfNames);
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
         const auto nameRva = _read<std::uint32_t>(pe, namesArrayOffset + i * 4u);
         const std::size_t nameOffset = _peRvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         const std::string name = _readCStr(pe, nameOffset);
         if (name.empty()) throw std::runtime_error("empty exported name");
-        nameOffsets.emplace_back(nameOffset, name);
+        nameRvas[i] = nameRva;
+        names[i] = name;
     }
 
-    for (const auto& [nameOffset, name] : nameOffsets) {
-        const std::string nid = Nid::ComputeNid(name, libraryName);
-        if (nid.size() > name.size()) throw std::runtime_error("nid longer than original export name - cannot patch in place");
+    const std::size_t edataSectionOffset = _peFindSectionOffsetByRva(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const auto edataSection = _read<PeSectionHeader>(pe, edataSectionOffset);
 
-        std::memcpy(pe.data() + nameOffset, nid.data(), nid.size());
-        pe[nameOffset + nid.size()] = 0u;
-        for (std::size_t i = nid.size() + 1u; i < name.size() + 1u; ++i)
-            pe[nameOffset + i] = 0u;
+    const auto sectionAlignment = _read<std::uint32_t>(pe, optionalHeaderOffset + 32u);
+    const auto fileAlignment = _read<std::uint32_t>(pe, optionalHeaderOffset + 36u);
+    if (sectionAlignment == 0u || fileAlignment == 0u) throw std::runtime_error("invalid section/file alignment");
+
+    const std::uint32_t rawLimit = ((edataSection.SizeOfRawData + fileAlignment - 1u) / fileAlignment) * fileAlignment;
+    const std::uint32_t virtualLimit = ((edataSection.VirtualSize + sectionAlignment - 1u) / sectionAlignment) * sectionAlignment;
+
+    std::uint32_t usedEnd = 0u;
+    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i)
+        usedEnd = std::max(usedEnd, nameRvas[i] - edataSection.VirtualAddress + static_cast<std::uint32_t>(names[i].size()) + 1u);
+
+    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
+        const std::string nid = Nid::ComputeNid(names[i], libraryName);
+        const std::size_t oldNameOffset = _peRvaToOffset(pe, nameRvas[i], peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+
+        if (nid.size() <= names[i].size()) {
+            std::memcpy(pe.data() + oldNameOffset, nid.data(), nid.size());
+            pe[oldNameOffset + nid.size()] = 0u;
+            for (std::size_t j = nid.size() + 1u; j < names[i].size() + 1u; ++j)
+                pe[oldNameOffset + j] = 0u;
+            continue;
+        }
+
+        const std::uint32_t newSize = static_cast<std::uint32_t>(nid.size()) + 1u;
+        if (usedEnd + newSize > rawLimit || edataSection.VirtualAddress + usedEnd + newSize > edataSection.VirtualAddress + virtualLimit)
+            throw std::runtime_error("no free space left in edata section to relocate export name");
+
+        const std::uint32_t newNameRva = edataSection.VirtualAddress + usedEnd;
+        const std::size_t newNameOffset = static_cast<std::size_t>(edataSection.PointerToRawData) + usedEnd;
+
+        std::memcpy(pe.data() + newNameOffset, nid.data(), nid.size());
+        pe[newNameOffset + nid.size()] = 0u;
+        _write(pe, namesArrayOffset + i * 4u, newNameRva);
+
+        usedEnd += newSize;
     }
 }
 

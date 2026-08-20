@@ -18,7 +18,7 @@ foreach(LIB_DIR ${LIBS_DIRS})
         target_include_directories(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         set_target_properties(${LIB_NAME} PROPERTIES
                 PREFIX ""
-                SUFFIX .rpx
+                SUFFIX .prx
                 RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/libs
                 LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/libs
         )
