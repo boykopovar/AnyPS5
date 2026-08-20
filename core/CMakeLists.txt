@@ -30,3 +30,5 @@ target_include_directories(relinker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
 )
+
+add_subdirectory(libs)
