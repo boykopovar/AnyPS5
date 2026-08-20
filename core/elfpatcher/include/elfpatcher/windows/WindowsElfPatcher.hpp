@@ -7,6 +7,7 @@
 #include <elfpatcher/general/ISectionHeaderTableBuilder.hpp>
 #include <io/IByteWriter.hpp>
 #include <memory>
+#include <string>
 
 namespace Elfpatcher::Windows {
 
@@ -23,7 +24,8 @@ public:
         const std::vector<std::uint8_t>& sourceElf,
         const std::vector<Domain::ProgramHeader>& originalHeaders,
         const Domain::SysVDynamicSection& dynamicSection,
-        std::uint64_t originalPltGotVaddr
+        std::uint64_t originalPltGotVaddr,
+        const std::string& runPath
     ) override;
 
 private:

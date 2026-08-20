@@ -87,6 +87,7 @@ inline constexpr std::int64_t DT_STRSZ = 10;
 inline constexpr std::int64_t DT_SYMENT = 11;
 inline constexpr std::int64_t DT_PLTREL = 20;
 inline constexpr std::int64_t DT_JMPREL = 23;
+inline constexpr std::int64_t DT_RUNPATH = 29;
 
 inline constexpr std::uint32_t SHT_NULL = 0;
 inline constexpr std::uint32_t SHT_PROGBITS = 1;

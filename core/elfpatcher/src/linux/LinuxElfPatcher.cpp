@@ -2,6 +2,7 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
+#include <string>
 
 namespace Elfpatcher::Linux {
 
@@ -27,7 +28,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::vector<std::uint8_t>& sourceElf,
     const std::vector<Domain::ProgramHeader>& originalHeaders,
     const Domain::SysVDynamicSection& dynSection,
-    const std::uint64_t originalPltGotVaddr)
+    const std::uint64_t originalPltGotVaddr,
+    const std::string& runPath)
 {
     std::vector<std::uint8_t> buf = sourceElf;
 
@@ -51,6 +53,10 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const auto dynStrOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.DynStrData)
         buf.push_back(b);
+    const std::uint64_t runPathStrOff = static_cast<std::uint64_t>(buf.size()) - dynStrOff;
+    for (char c : runPath)
+        buf.push_back(static_cast<std::uint8_t>(c));
+    buf.push_back(0);
     alignBuf(buf, kDynStrAlignment);
 
     const auto dynSymOff = static_cast<std::uint64_t>(buf.size());
@@ -95,6 +101,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         _appendDynEntry(dynSegBuf, DT_PLTREL, static_cast<std::uint64_t>(DT_RELA));
         _appendDynEntry(dynSegBuf, DT_PLTGOT, originalPltGotVaddr);
     }
+    _appendDynEntry(dynSegBuf, DT_RUNPATH, runPathStrOff);
     _appendDynEntry(dynSegBuf, DT_NULL, 0);
 
     const auto dynSegOff = static_cast<std::uint64_t>(buf.size());

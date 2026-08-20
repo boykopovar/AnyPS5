@@ -15,6 +15,7 @@
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -26,6 +27,7 @@ int main(const int argc, char* argv[]) {
     std::string inputPath;
     std::string outputElfPath;
     std::optional<std::string> registryPath;
+    std::string runPath = "$ORIGIN/libs";
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -33,6 +35,12 @@ int main(const int argc, char* argv[]) {
             skipSyscallCheck = true;
         } else if (arg == "--to-intel") {
             toIntel = true;
+        } else if (arg == "--rpath") {
+            if (i + 1 >= argc) {
+                std::cerr << "FAIL: --rpath requires a value\n";
+                return 1;
+            }
+            runPath = argv[++i];
         } else if (inputPath.empty()) {
             inputPath = arg;
         } else if (outputElfPath.empty()) {
@@ -43,9 +51,16 @@ int main(const int argc, char* argv[]) {
     }
 
     if (inputPath.empty() || outputElfPath.empty()) {
-        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] <input.elf> <output.elf> [output_registry.json]\n";
+        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] [--rpath <path>] <input.elf> <output.elf> [output_registry.json]\n";
         return 1;
     }
+
+    const std::filesystem::path outputElfFsPath(outputElfPath);
+    const std::filesystem::path outputDir = outputElfFsPath.parent_path() / (outputElfFsPath.stem().string() + "_out");
+    std::filesystem::create_directories(outputDir);
+    outputElfPath = (outputDir / outputElfFsPath.filename()).string();
+    if (registryPath.has_value())
+        registryPath = (outputDir / std::filesystem::path(*registryPath).filename()).string();
 
     try {
         Io::FileReader fileReader;
@@ -93,7 +108,7 @@ int main(const int argc, char* argv[]) {
             std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
             byteWriter
         );
-        auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr);
+        auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath);
         fileWriter.Write(outputElfPath, patchedElf);
 
     } catch (const Domain::RelinkerException& e) {

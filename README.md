@@ -4,8 +4,7 @@ Converter for native execution of PlayStation 5 ELF binaries on Linux through bi
 
 ## Status
 
-Output ELF is accepted by the Linux kernel and handed to ld.so. Crashes during ld.so startup:
-e_entry contains a file offset instead of a virtual address, causing an invalid jump at loader handoff.
+Loader startup works: execution reaches `_start` and runs normally up to the first call into an external library function (from test `.prx` stubs).
 
 ## Disclaimer
 
