@@ -104,64 +104,68 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize)
     );
 
-    std::vector<std::uint32_t> nameOffsets;
-    for (std::size_t i = 1u; i < symCount; ++i) {
-        const auto sym = Read<Elf64_Sym>(elf, dynSymOffset + i * sizeof(Elf64_Sym));
-        if (sym.st_name != 0u) nameOffsets.push_back(sym.st_name);
-    }
-    std::sort(nameOffsets.begin(), nameOffsets.end());
-
-    struct PendingPatch {
-        std::uint32_t nameOffset;
-        std::string nid;
-        std::size_t originalLength;
+    struct SymbolNameUse {
+        std::size_t symIndex;
+        std::uint32_t oldNameOffset;
+        std::string newValue;
     };
 
-    std::vector<PendingPatch> pending;
-    std::vector<std::uint32_t> patchedOffsets;
-
+    std::vector<SymbolNameUse> uses;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
         const auto sym = Read<Elf64_Sym>(elf, symOffset);
 
-        const std::uint8_t binding = sym.st_info >> 4u;
-        if (binding == kStbLocal) continue;
         if (sym.st_name == 0u) continue;
-        if (sym.st_shndx == kShnUndef) continue;
 
-        if (std::find(patchedOffsets.begin(), patchedOffsets.end(), sym.st_name) != patchedOffsets.end()) continue;
+        const std::uint8_t binding = sym.st_info >> 4u;
+        const bool isPatchable = binding != kStbLocal && sym.st_shndx != kShnUndef;
 
         const std::string symName = ReadCStr(origDynStr, sym.st_name);
         if (symName.empty()) continue;
 
-        const std::string nid = ComputeNid(StripNidPostfix(symName), libraryName);
+        std::string newValue = symName;
+        if (isPatchable) newValue = ComputeNid(StripNidPostfix(symName), libraryName);
 
-        if (nid.size() > symName.size()) {
-            throw std::runtime_error(
-                "symbol '" + symName + "' (" + std::to_string(symName.size()) + " bytes, index " + std::to_string(i) + "): "
-                "attempted to write nid '" + nid + "' (" + std::to_string(nid.size()) + " bytes) - does not fit in place"
-            );
-        }
-
-        const auto nameEnd = static_cast<std::uint32_t>(sym.st_name + symName.size());
-        for (const auto otherOffset : nameOffsets) {
-            if (otherOffset > sym.st_name && otherOffset < nameEnd) {
-                throw std::runtime_error(
-                    "symbol '" + symName + "' (index " + std::to_string(i) + "): "
-                    "another symbol name starts at offset " + std::to_string(otherOffset) + " inside this string (suffix-merged) - cannot patch in place"
-                );
-            }
-        }
-
-        pending.push_back(PendingPatch{sym.st_name, nid, symName.size()});
-        patchedOffsets.push_back(sym.st_name);
+        uses.push_back(SymbolNameUse{i, sym.st_name, newValue});
     }
 
-    std::vector<std::uint8_t> newDynStr(origDynStr);
-    for (const auto& patch : pending) {
-        std::memcpy(newDynStr.data() + patch.nameOffset, patch.nid.data(), patch.nid.size());
-        for (std::size_t j = patch.nid.size(); j < patch.originalLength; ++j)
-            newDynStr[patch.nameOffset + j] = 0u;
+    std::vector<std::uint8_t> newDynStr;
+    newDynStr.push_back(0u);
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> oldToNewOffset;
+    for (const auto& use : uses) {
+        const auto existing = std::find_if(
+            oldToNewOffset.begin(), oldToNewOffset.end(),
+            [&](const auto& entry) { return entry.first == use.oldNameOffset; }
+        );
+        if (existing != oldToNewOffset.end()) continue;
+
+        const auto newOffset = static_cast<std::uint32_t>(newDynStr.size());
+        newDynStr.insert(newDynStr.end(), use.newValue.begin(), use.newValue.end());
+        newDynStr.push_back(0u);
+        oldToNewOffset.emplace_back(use.oldNameOffset, newOffset);
+    }
+
+    if (newDynStr.size() > dynStrSize) {
+        throw std::runtime_error(
+            "rebuilt .dynstr (" + std::to_string(newDynStr.size()) + " bytes) exceeds original section size (" +
+            std::to_string(dynStrSize) + " bytes) - relinking with a larger section is required"
+        );
+    }
+    newDynStr.resize(dynStrSize, 0u);
+
+    for (std::size_t i = 1u; i < symCount; ++i) {
+        const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
+        const auto sym = Read<Elf64_Sym>(elf, symOffset);
+        if (sym.st_name == 0u) continue;
+
+        const auto mapped = std::find_if(
+            oldToNewOffset.begin(), oldToNewOffset.end(),
+            [&](const auto& entry) { return entry.first == sym.st_name; }
+        );
+        if (mapped == oldToNewOffset.end()) continue;
+
+        Write(elf, symOffset + offsetof(Elf64_Sym, st_name), mapped->second);
     }
 
     std::memcpy(elf.data() + dynStrOffset, newDynStr.data(), newDynStr.size());
