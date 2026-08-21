@@ -1,6 +1,6 @@
 #include <nid/ElfPatcher.hpp>
 #include <nid/NidCompute.hpp>
-#include "NidPatcherUtils.hpp"
+#include "nid/NidPatcherUtils.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -57,7 +57,7 @@ constexpr std::uint16_t kShnUndef = 0u;
 
 }
 
-void ElfPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string& libraryName) const {
+void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string& libraryName) const {
     using namespace Internal;
 
     if (elf.size() < sizeof(Elf64_Ehdr)) throw std::runtime_error("file too small");

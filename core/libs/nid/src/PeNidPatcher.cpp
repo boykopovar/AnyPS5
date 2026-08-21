@@ -1,6 +1,6 @@
 #include <nid/PePatcher.hpp>
 #include <nid/NidCompute.hpp>
-#include "NidPatcherUtils.hpp"
+#include "nid/NidPatcherUtils.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -65,7 +65,7 @@ std::size_t _rvaToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva,
 
 }
 
-void PePatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& libraryName) const {
+void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& libraryName) const {
     using namespace Internal;
 
     if (pe.size() < 0x40) throw std::runtime_error("file too small");

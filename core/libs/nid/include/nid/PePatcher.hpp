@@ -5,7 +5,7 @@
 
 namespace Nid {
 
-class PePatcher final : public IBinaryPatcher {
+class PeNidPatcher final : public IBinaryPatcher {
 public:
     void PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName) const override;
 };
