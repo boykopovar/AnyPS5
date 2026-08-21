@@ -11,9 +11,9 @@
 
 namespace Elfpatcher::Windows {
 
-class WindowsElfPatcher : public IElfPatcher {
+class WindowsPePatcher : public IElfPatcher {
 public:
-    WindowsElfPatcher(
+    WindowsPePatcher(
         std::shared_ptr<IEntryStubBuilder> entryStubBuilder,
         std::shared_ptr<IProgramHeaderLayoutBuilder> programHeaderLayoutBuilder,
         std::shared_ptr<ISectionHeaderTableBuilder> sectionHeaderTableBuilder,

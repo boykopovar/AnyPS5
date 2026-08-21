@@ -1,6 +1,9 @@
 add_executable(nid_patcher
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/NidCompute.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/ElfPatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/PePatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/BinaryPatcherFactory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/main.cpp
 )
 target_include_directories(nid_patcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)

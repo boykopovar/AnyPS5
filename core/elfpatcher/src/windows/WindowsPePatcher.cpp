@@ -3,7 +3,7 @@
 
 namespace Elfpatcher::Windows {
 
-WindowsElfPatcher::WindowsElfPatcher(
+WindowsPePatcher::WindowsPePatcher(
     std::shared_ptr<IEntryStubBuilder> entryStubBuilder,
     std::shared_ptr<IProgramHeaderLayoutBuilder> programHeaderLayoutBuilder,
     std::shared_ptr<ISectionHeaderTableBuilder> sectionHeaderTableBuilder,
@@ -16,7 +16,7 @@ WindowsElfPatcher::WindowsElfPatcher(
 {
 }
 
-std::vector<std::uint8_t> WindowsElfPatcher::Patch(
+std::vector<std::uint8_t> WindowsPePatcher::Patch(
     const std::vector<std::uint8_t>& sourceElf,
     const std::vector<Domain::ProgramHeader>& originalHeaders,
     const Domain::SysVDynamicSection& dynamicSection,
