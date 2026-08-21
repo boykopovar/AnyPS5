@@ -177,16 +177,6 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
 
     if (dynStrOffset == 0u) throw std::runtime_error("no .dynstr section");
 
-    constexpr std::uint32_t SHT_NOBITS = 8u;
-    std::size_t dynStrAvailable = elf.size() - dynStrOffset;
-    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
-        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
-        const auto shdr = _read<Elf64_Shdr>(elf, shOffset);
-        if (shdr.sh_type == SHT_NOBITS) continue;
-        const auto otherOffset = static_cast<std::size_t>(shdr.sh_offset);
-        if (otherOffset > dynStrOffset) dynStrAvailable = std::min(dynStrAvailable, otherOffset - dynStrOffset);
-    }
-
     std::vector<std::uint8_t> newDynStr(elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset),
                                         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize));
 
@@ -218,27 +208,21 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
             continue;
         }
 
-        const auto newNameOffset = static_cast<std::uint32_t>(newDynStr.size());
-        for (char c : nid) newDynStr.push_back(static_cast<std::uint8_t>(c));
-        newDynStr.push_back(0u);
+        if (nid.size() > symName.size()) {
+            throw std::runtime_error(
+                "symbol '" + symName + "' (" + std::to_string(symName.size()) + " bytes, index " + std::to_string(i) + "): "
+                "attempted to write nid '" + nid + "' (" + std::to_string(nid.size()) + " bytes) - does not fit in place"
+            );
+        }
 
-        nameRemap.emplace_back(sym.st_name, newNameOffset);
-        sym.st_name = newNameOffset;
-        _write(elf, symOffset, sym);
+        std::memcpy(newDynStr.data() + sym.st_name, nid.data(), nid.size());
+        for (std::size_t j = nid.size(); j < symName.size(); ++j)
+            newDynStr[sym.st_name + j] = 0u;
+
+        nameRemap.emplace_back(sym.st_name, sym.st_name);
     }
-
-    if (newDynStr.size() > dynStrAvailable) throw std::runtime_error("new .dynstr exceeds available padding - cannot patch in place");
 
     std::memcpy(elf.data() + dynStrOffset, newDynStr.data(), newDynStr.size());
-    for (std::size_t i = newDynStr.size(); i < dynStrAvailable; ++i)
-        elf[dynStrOffset + i] = 0u;
-
-    if (newDynStr.size() > dynStrSize) {
-        const std::size_t dynStrShOffset = static_cast<std::size_t>(ehdr.e_shoff) + dynStrSectionLink * sizeof(Elf64_Shdr);
-        auto dynStrShdr = _read<Elf64_Shdr>(elf, dynStrShOffset);
-        dynStrShdr.sh_size = static_cast<std::uint64_t>(newDynStr.size());
-        _write(elf, dynStrShOffset, dynStrShdr);
-    }
 }
 
 std::size_t _peSectionTableOffset(std::uint32_t peHeaderOffset, std::uint32_t sizeOfOptionalHeader) {
