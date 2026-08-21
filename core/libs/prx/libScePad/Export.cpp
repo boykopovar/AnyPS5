@@ -4,7 +4,7 @@
 
 extern "C" {
 
-int scePadClose(int handle) {
+int scePadClose_nid_postfix(int handle) {
  (void)handle;
  return 0;
 }
@@ -41,11 +41,11 @@ int scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* in
  return 0;
 }
 
-int scePadInit(void) {
+int scePadInit_nid_postfix(void) {
  return 0;
 }
 
-int scePadOpen(int user_id, int type, int index, const void* param) {
+int scePadOpen_nid_postfix(int user_id, int type, int index, const void* param) {
  (void)user_id;
  (void)type;
  (void)index;
@@ -53,7 +53,7 @@ int scePadOpen(int user_id, int type, int index, const void* param) {
  return 0;
 }
 
-int scePadRead(int handle, PadData* data, int num) {
+int scePadRead_nid_postfix(int handle, PadData* data, int num) {
  (void)handle;
  (void)data;
  (void)num;

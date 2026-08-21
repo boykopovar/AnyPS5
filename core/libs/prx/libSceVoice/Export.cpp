@@ -27,7 +27,7 @@ int sceVoiceDisconnectIPortFromOPort(uint32_t input_port_id, uint32_t output_por
  return 0;
 }
 
-int sceVoiceEnd(void) {
+int sceVoiceEnd_nid_postfix(void) {
  return 0;
 }
 

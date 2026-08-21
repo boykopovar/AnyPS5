@@ -4,7 +4,7 @@
 
 extern "C" {
 
-int accept(int s, void* addr, uint32_t* addrlen) {
+int accept_nid_postfix(int s, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
@@ -41,7 +41,7 @@ int close_nid_postfix(int d) {
  return 0;
 }
 
-int connect(int s, const void* addr, uint32_t addrlen) {
+int connect_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
@@ -58,42 +58,42 @@ int flock_nid_postfix(int d, int operation) {
  return 0;
 }
 
-int64_t fstat_nid_postfix(int d, FileStat* sb) {
+int64_t fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
  (void)d;
  (void)sb;
  return 0;
 }
 
-int ftruncate(int d, int64_t length) {
+int ftruncate_nid_postfix(int d, int64_t length) {
  (void)d;
  (void)length;
  return 0;
 }
 
-int getargc(void) {
+int getargc_nid_postfix(void) {
  return 0;
 }
 
-const char** getargv(void) {
+const char** getargv_nid_postfix(void) {
  return nullptr;
 }
 
-int getpagesize(void) {
+int getpagesize_nid_postfix(void) {
  return 0;
 }
 
-int getpid(void) {
+int getpid_nid_postfix(void) {
  return 0;
 }
 
-int getsockname(int s, void* addr, uint32_t* addrlen) {
+int getsockname_nid_postfix(int s, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
  return 0;
 }
 
-int getsockopt(int s, int level, int optname, void* optval, uint32_t* optlen) {
+int getsockopt_nid_postfix(int s, int level, int optname, void* optval, uint32_t* optlen) {
  (void)s;
  (void)level;
  (void)optname;
@@ -108,7 +108,7 @@ int gettimeofday(KernelTimeval* time, KernelTimezone* timezone) {
  return 0;
 }
 
-const char* inet_ntop(int af, const void* src, char* dst, uint32_t size) {
+const char* inet_ntop_nid_postfix(int af, const void* src, char* dst, uint32_t size) {
  (void)af;
  (void)src;
  (void)dst;
@@ -116,33 +116,33 @@ const char* inet_ntop(int af, const void* src, char* dst, uint32_t size) {
  return nullptr;
 }
 
-int inet_pton(int af, const char* src, void* dst) {
+int inet_pton_nid_postfix(int af, const char* src, void* dst) {
  (void)af;
  (void)src;
  (void)dst;
  return 0;
 }
 
-int listen(int s, int backlog) {
+int listen_nid_postfix(int s, int backlog) {
  (void)s;
  (void)backlog;
  return 0;
 }
 
-int64_t lseek(int d, int64_t offset, int whence) {
+int64_t lseek_nid_postfix(int d, int64_t offset, int whence) {
  (void)d;
  (void)offset;
  (void)whence;
  return 0;
 }
 
-int mkdir(const char* path, uint16_t mode) {
+int mkdir_nid_postfix(const char* path, uint16_t mode) {
  (void)path;
  (void)mode;
  return 0;
 }
 
-int nanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+int nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
  (void)rqtp;
  (void)rmtp;
  return 0;
@@ -155,7 +155,7 @@ int open_nid_postfix(const char* path, int flags, int mode) {
  return 0;
 }
 
-int64_t pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t offset) {
+int64_t pread_nid_disambig1_nid_postfix(int d, void* buf, size_t nbytes, int64_t offset) {
  (void)d;
  (void)buf;
  (void)nbytes;
@@ -466,7 +466,7 @@ int pthread_setspecific(PthreadKey key, void* value) {
 void pthread_yield(void) {
 }
 
-int64_t pwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
+int64_t pwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_t nbytes, int64_t offset) {
  (void)d;
  (void)buf;
  (void)nbytes;
@@ -474,14 +474,14 @@ int64_t pwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
  return 0;
 }
 
-int64_t read(int d, void* buf, uint64_t nbytes) {
+int64_t read_nid_postfix(int d, void* buf, uint64_t nbytes) {
  (void)d;
  (void)buf;
  (void)nbytes;
  return 0;
 }
 
-int64_t recv(int s, void* buf, uint64_t len, int flags) {
+int64_t recv_nid_postfix(int s, void* buf, uint64_t len, int flags) {
  (void)s;
  (void)buf;
  (void)len;
@@ -489,7 +489,7 @@ int64_t recv(int s, void* buf, uint64_t len, int flags) {
  return 0;
 }
 
-int64_t recvfrom(int s, void* buf, uint64_t len, int flags, void* addr, uint32_t* addrlen) {
+int64_t recvfrom_nid_postfix(int s, void* buf, uint64_t len, int flags, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)buf;
  (void)len;
@@ -1765,7 +1765,7 @@ int sched_get_priority_min(int policy) {
  return 0;
 }
 
-int select(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
+int select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
  (void)nfds;
  (void)readfds;
  (void)writefds;
@@ -1774,7 +1774,7 @@ int select(int nfds, void* readfds, void* writefds, void* exceptfds, const void*
  return 0;
 }
 
-int sem_destroy(void* sem) {
+int sem_destroy_nid_postfix(void* sem) {
  (void)sem;
  return 0;
 }
@@ -1785,14 +1785,14 @@ int sem_getvalue(void* sem, int* value) {
  return 0;
 }
 
-int sem_init(void* sem, int pshared, unsigned int value) {
+int sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
  (void)sem;
  (void)pshared;
  (void)value;
  return 0;
 }
 
-int sem_post(void* sem) {
+int sem_post_nid_postfix(void* sem) {
  (void)sem;
  return 0;
 }
@@ -1809,17 +1809,17 @@ int sem_timedwait(void* sem, const KernelTimespec* abstime) {
  return 0;
 }
 
-int sem_trywait(void* sem) {
+int sem_trywait_nid_postfix(void* sem) {
  (void)sem;
  return 0;
 }
 
-int sem_wait(void* sem) {
+int sem_wait_nid_postfix(void* sem) {
  (void)sem;
  return 0;
 }
 
-int64_t send(int s, const void* buf, uint64_t len, int flags) {
+int64_t send_nid_postfix(int s, const void* buf, uint64_t len, int flags) {
  (void)s;
  (void)buf;
  (void)len;
@@ -1827,7 +1827,7 @@ int64_t send(int s, const void* buf, uint64_t len, int flags) {
  return 0;
 }
 
-int64_t sendto(int s, const void* buf, uint64_t len, int flags, const void* addr, uint32_t addrlen) {
+int64_t sendto_nid_postfix(int s, const void* buf, uint64_t len, int flags, const void* addr, uint32_t addrlen) {
  (void)s;
  (void)buf;
  (void)len;
@@ -1837,7 +1837,7 @@ int64_t sendto(int s, const void* buf, uint64_t len, int flags, const void* addr
  return 0;
 }
 
-int setsockopt(int s, int level, int optname, const void* optval, uint32_t optlen) {
+int setsockopt_nid_postfix(int s, int level, int optname, const void* optval, uint32_t optlen) {
  (void)s;
  (void)level;
  (void)optname;
@@ -1846,27 +1846,27 @@ int setsockopt(int s, int level, int optname, const void* optval, uint32_t optle
  return 0;
 }
 
-int sigprocmask(int how, const void* set, void* oset) {
+int sigprocmask_nid_postfix(int how, const void* set, void* oset) {
  (void)how;
  (void)set;
  (void)oset;
  return 0;
 }
 
-int socket(int family, int type, int protocol) {
+int socket_nid_postfix(int family, int type, int protocol) {
  (void)family;
  (void)type;
  (void)protocol;
  return 0;
 }
 
-int stat(const char* path, FileStat* sb) {
+int stat_nid_postfix(const char* path, FileStat* sb) {
  (void)path;
  (void)sb;
  return 0;
 }
 
-int64_t write(int d, const char* str, int64_t size) {
+int64_t write_nid_postfix(int d, const char* str, int64_t size) {
  (void)d;
  (void)str;
  (void)size;

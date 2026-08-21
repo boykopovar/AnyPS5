@@ -4,7 +4,7 @@
 
 extern "C" {
 
-int sceImeClose(void) {
+int sceImeClose_nid_postfix(void) {
  return 0;
 }
 
@@ -44,7 +44,7 @@ int sceImeKeyboardSetMode(int32_t user_id, uint32_t mode) {
  return 0;
 }
 
-int sceImeOpen(const Param* param, const ExtendedParam* extended) {
+int sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended) {
  (void)param;
  (void)extended;
  return 0;

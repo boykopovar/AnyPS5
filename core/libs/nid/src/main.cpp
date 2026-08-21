@@ -1,5 +1,6 @@
 #include <nid/NidCompute.hpp>
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -55,11 +56,25 @@ constexpr std::uint8_t STB_LOCAL = 0u;
 constexpr std::uint16_t SHN_UNDEF = 0u;
 constexpr char kNidPostfix[] = "_nid_postfix";
 constexpr std::size_t kNidPostfixLen = sizeof(kNidPostfix) - 1u;
+constexpr char kNidDisambigMarker[] = "_nid_disambig";
+constexpr std::size_t kNidDisambigMarkerLen = sizeof(kNidDisambigMarker) - 1u;
 
 std::string _stripNidPostfix(const std::string& name) {
-    if (name.size() < kNidPostfixLen) return name;
-    if (name.compare(name.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) != 0) return name;
-    return name.substr(0u, name.size() - kNidPostfixLen);
+    std::string result = name;
+    if (result.size() >= kNidPostfixLen &&
+        result.compare(result.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) == 0) {
+        result = result.substr(0u, result.size() - kNidPostfixLen);
+    }
+    const auto disambigPos = result.rfind(kNidDisambigMarker);
+    if (disambigPos != std::string::npos) {
+        const auto suffixStart = disambigPos + kNidDisambigMarkerLen;
+        const bool allDigits = std::all_of(result.begin() + static_cast<std::ptrdiff_t>(suffixStart), result.end(),
+                                            [](unsigned char c) { return std::isdigit(c) != 0; });
+        if (allDigits && suffixStart < result.size()) {
+            result = result.substr(0u, disambigPos);
+        }
+    }
+    return result;
 }
 
 struct PeDataDirectory {
@@ -177,36 +192,42 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
 
     if (dynStrOffset == 0u) throw std::runtime_error("no .dynstr section");
 
-    std::vector<std::uint8_t> newDynStr(elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset),
-                                        elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize));
+    const std::vector<std::uint8_t> origDynStr(elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset),
+                                                elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize));
 
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> nameRemap;
+    std::vector<std::uint32_t> nameOffsets;
+    for (std::size_t i = 1u; i < symCount; ++i) {
+        const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
+        const auto sym = _read<Elf64_Sym>(elf, symOffset);
+        if (sym.st_name != 0u) nameOffsets.push_back(sym.st_name);
+    }
+    std::sort(nameOffsets.begin(), nameOffsets.end());
+
+    struct PendingPatch {
+        std::uint32_t nameOffset;
+        std::string nid;
+        std::size_t originalLength;
+    };
+
+    std::vector<PendingPatch> pending;
+    std::vector<std::uint32_t> patchedOffsets;
 
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
-        auto sym = _read<Elf64_Sym>(elf, symOffset);
+        const auto sym = _read<Elf64_Sym>(elf, symOffset);
 
         const std::uint8_t binding = sym.st_info >> 4u;
         if (binding == STB_LOCAL) continue;
         if (sym.st_name == 0u) continue;
         if (sym.st_shndx == SHN_UNDEF) continue;
 
-        const std::string symName = _readCStr(newDynStr, sym.st_name);
+        const bool alreadyPatched = std::find(patchedOffsets.begin(), patchedOffsets.end(), sym.st_name) != patchedOffsets.end();
+        if (alreadyPatched) continue;
+
+        const std::string symName = _readCStr(origDynStr, sym.st_name);
         if (symName.empty()) continue;
 
         const std::string nid = Nid::ComputeNid(_stripNidPostfix(symName), libraryName);
-
-        const auto existingIt = [&]() {
-            for (const auto& [orig, newIdx] : nameRemap)
-                if (orig == sym.st_name) return newIdx;
-            return std::numeric_limits<std::uint32_t>::max();
-        }();
-
-        if (existingIt != std::numeric_limits<std::uint32_t>::max()) {
-            sym.st_name = existingIt;
-            _write(elf, symOffset, sym);
-            continue;
-        }
 
         if (nid.size() > symName.size()) {
             throw std::runtime_error(
@@ -215,11 +236,25 @@ void _patchNidsElf(std::vector<std::uint8_t>& elf, const std::string& libraryNam
             );
         }
 
-        std::memcpy(newDynStr.data() + sym.st_name, nid.data(), nid.size());
-        for (std::size_t j = nid.size(); j < symName.size(); ++j)
-            newDynStr[sym.st_name + j] = 0u;
+        const auto nameEnd = static_cast<std::uint32_t>(sym.st_name + symName.size());
+        for (const auto otherOffset : nameOffsets) {
+            if (otherOffset > sym.st_name && otherOffset < nameEnd) {
+                throw std::runtime_error(
+                    "symbol '" + symName + "' (index " + std::to_string(i) + "): "
+                    "another symbol name starts at offset " + std::to_string(otherOffset) + " inside this string (suffix-merged) - cannot patch in place"
+                );
+            }
+        }
 
-        nameRemap.emplace_back(sym.st_name, sym.st_name);
+        pending.push_back(PendingPatch{sym.st_name, nid, symName.size()});
+        patchedOffsets.push_back(sym.st_name);
+    }
+
+    std::vector<std::uint8_t> newDynStr(origDynStr);
+    for (const auto& patch : pending) {
+        std::memcpy(newDynStr.data() + patch.nameOffset, patch.nid.data(), patch.nid.size());
+        for (std::size_t j = patch.nid.size(); j < patch.originalLength; ++j)
+            newDynStr[patch.nameOffset + j] = 0u;
     }
 
     std::memcpy(elf.data() + dynStrOffset, newDynStr.data(), newDynStr.size());

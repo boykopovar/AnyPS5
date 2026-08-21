@@ -10,7 +10,7 @@ int sceRudpEnableInternalIOThread(uint32_t stack_size, uint32_t priority) {
  return 0;
 }
 
-int sceRudpInit(void* mem_pool, int mem_pool_size) {
+int sceRudpInit_nid_postfix(void* mem_pool, int mem_pool_size) {
  (void)mem_pool;
  (void)mem_pool_size;
  return 0;

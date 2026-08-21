@@ -14,7 +14,7 @@ extern "C" {
  __builtin_unreachable();
 }
 
-int atexit_nid_postfix(atexit_func_t func) {
+int atexit_nid_disambig1_nid_postfix(atexit_func_t func) {
  (void)func;
  return 0;
 }
@@ -105,19 +105,19 @@ double sin_nid_postfix(double x) {
  return 0;
 }
 
-void Sincos_nid_postfix(double x, double* sinp, double* cosp) {
+void Sincos_nid_disambig1_nid_postfix(double x, double* sinp, double* cosp) {
  (void)x;
  (void)sinp;
  (void)cosp;
 }
 
-void sincos_nid_postfix(double x, double* sinp, double* cosp) {
+void sincos_nid_disambig1_nid_postfix(double x, double* sinp, double* cosp) {
  (void)x;
  (void)sinp;
  (void)cosp;
 }
 
-void sincosf_nid_postfix(float x, float* sinp, float* cosp) {
+void sincosf_nid_disambig1_nid_postfix(float x, float* sinp, float* cosp) {
  (void)x;
  (void)sinp;
  (void)cosp;

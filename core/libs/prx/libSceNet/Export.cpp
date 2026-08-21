@@ -11,7 +11,7 @@ int sceNetAccept(int s, void* addr, uint32_t* addrlen) {
  return 0;
 }
 
-int sceNetBind(int s, const void* addr, uint32_t addrlen) {
+int sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
@@ -73,12 +73,12 @@ int sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
  return 0;
 }
 
-uint32_t sceNetHtonl(uint32_t host32) {
+uint32_t sceNetHtonl_nid_postfix(uint32_t host32) {
  (void)host32;
  return 0;
 }
 
-uint16_t sceNetHtons(uint16_t host16) {
+uint16_t sceNetHtons_nid_postfix(uint16_t host16) {
  (void)host16;
  return 0;
 }
@@ -98,7 +98,7 @@ int sceNetInetPton(int af, const char* src, void* dst) {
  return 0;
 }
 
-int sceNetInit(void) {
+int sceNetInit_nid_postfix(void) {
  return 0;
 }
 
@@ -108,12 +108,12 @@ int sceNetListen(int s, int backlog) {
  return 0;
 }
 
-uint32_t sceNetNtohl(uint32_t net32) {
+uint32_t sceNetNtohl_nid_postfix(uint32_t net32) {
  (void)net32;
  return 0;
 }
 
-uint16_t sceNetNtohs(uint16_t net16) {
+uint16_t sceNetNtohs_nid_postfix(uint16_t net16) {
  (void)net16;
  return 0;
 }

@@ -104,7 +104,7 @@ int sceHttpGetStatusCode(int request_id, int* status_code) {
  return 0;
 }
 
-int sceHttpInit(int memid, int ssl_ctx_id, uint64_t pool_size) {
+int sceHttpInit_nid_postfix(int memid, int ssl_ctx_id, uint64_t pool_size) {
  (void)memid;
  (void)ssl_ctx_id;
  (void)pool_size;
@@ -198,7 +198,7 @@ int sceHttpsSetSslCallback(int id, HttpsCallback cbfunc, void* user_arg) {
  return 0;
 }
 
-int sceHttpTerm(int http_ctx_id) {
+int sceHttpTerm_nid_postfix(int http_ctx_id) {
  (void)http_ctx_id;
  return 0;
 }

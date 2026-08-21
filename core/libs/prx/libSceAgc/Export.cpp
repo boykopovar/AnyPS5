@@ -151,7 +151,7 @@ uint32_t sceAgcCbDispatchGetSize(void) {
  return 0;
 }
 
-uint32_t* sceAgcCbNop(CommandBuffer* buf, uint32_t size_in_dwords) {
+uint32_t* sceAgcCbNop_nid_postfix(CommandBuffer* buf, uint32_t size_in_dwords) {
  (void)buf;
  (void)size_in_dwords;
  return nullptr;
@@ -654,7 +654,7 @@ void* sceAgcGetRegisterDefaults2Internal(uint32_t ver) {
  return nullptr;
 }
 
-int sceAgcInit(uint32_t* state, uint32_t ver) {
+int sceAgcInit_nid_postfix(uint32_t* state, uint32_t ver) {
  (void)state;
  (void)ver;
  return 0;

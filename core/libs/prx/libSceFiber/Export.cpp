@@ -42,7 +42,7 @@ int32_t sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_on_run) {
  return 0;
 }
 
-int32_t sceFiberRun(FiberObject* fiber, uint64_t arg_on_run, uint64_t* arg_on_return) {
+int32_t sceFiberRun_nid_postfix(FiberObject* fiber, uint64_t arg_on_run, uint64_t* arg_on_return) {
  (void)fiber;
  (void)arg_on_run;
  (void)arg_on_return;
