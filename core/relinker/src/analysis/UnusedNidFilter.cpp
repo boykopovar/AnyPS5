@@ -101,10 +101,7 @@ public:
         std::vector<NidReference> result;
         for (const auto& ref : nidRefs) {
             if (ref.RelocationTypeValue == 7) {
-                auto stubIt = ripTargetToInstrVAddr.find(ref.RelocationAddress);
-                if (stubIt == ripTargetToInstrVAddr.end()) continue;
-                if (callTargetToInstrVAddr.count(stubIt->second) > 0)
-                    result.push_back(ref);
+                result.push_back(ref);
             } else {
                 if (ripTargetToInstrVAddr.count(ref.RelocationAddress) > 0)
                     result.push_back(ref);

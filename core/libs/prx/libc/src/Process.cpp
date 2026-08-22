@@ -34,6 +34,8 @@ int* __error_nid_postfix() {
 }
 
 int atexit_nid_postfix(atexit_func_t func) {
+    if (func == nullptr)
+        return 0;
     return std::atexit(func);
 }
 
