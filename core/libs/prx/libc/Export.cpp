@@ -4,7 +4,7 @@
 #include <ctime>
 #include "SceTypes.hpp"
 
-uint32_t g_need_flag = 1;
+uint32_t Need_sceLibc = 1;
 
 extern "C" {
 

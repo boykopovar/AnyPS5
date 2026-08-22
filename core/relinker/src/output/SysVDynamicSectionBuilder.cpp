@@ -71,9 +71,15 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
     _appendElfSym(result.DynSymData, 0, 0, 0, 0, 0, 0);
 
+    auto stripHashSuffix = [](const std::string& value) -> std::string {
+        const auto hashPos = value.find('#');
+        if (hashPos == std::string::npos) return value;
+        return value.substr(0, hashPos);
+    };
+
     std::uint32_t symIdx = 1;
     for (const auto& ref : nidReferences) {
-        const std::uint32_t nameOff = _appendStr(result.DynStrData, ref.Nid);
+        const std::uint32_t nameOff = _appendStr(result.DynStrData, stripHashSuffix(ref.Nid));
         const auto info = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
         _appendElfSym(result.DynSymData, nameOff, info, STV_DEFAULT, 0, 0, 0);
 
