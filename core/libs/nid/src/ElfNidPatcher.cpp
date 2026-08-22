@@ -57,6 +57,33 @@ struct Elf64_Rela {
     std::int64_t r_addend;
 };
 
+struct Elf64_Dyn {
+    std::int64_t d_tag;
+    std::uint64_t d_val;
+};
+
+struct Elf64_Verneed {
+    std::uint16_t vn_version;
+    std::uint16_t vn_cnt;
+    std::uint32_t vn_file;
+    std::uint32_t vn_aux;
+    std::uint32_t vn_next;
+};
+
+struct Elf64_Vernaux {
+    std::uint32_t vna_hash;
+    std::uint16_t vna_flags;
+    std::uint16_t vna_other;
+    std::uint32_t vna_name;
+    std::uint32_t vna_next;
+};
+
+constexpr std::int64_t kDtNeeded = 1;
+constexpr std::int64_t kDtSoname = 14;
+constexpr std::int64_t kDtNull = 0;
+constexpr std::uint32_t kShtDynamic = 6u;
+constexpr std::uint32_t kShtGnuVerneed = 0x6ffffffeu;
+
 constexpr std::uint32_t kShtDynsym = 11u;
 constexpr std::uint32_t kShtGnuHash = 0x6ffffff6u;
 constexpr std::uint32_t kShtRela = 4u;
@@ -230,6 +257,147 @@ void RebuildGnuHash(
         std::memset(elf.data() + sectionOffset + requiredSize, 0, sectionSize - requiredSize);
 }
 
+void RemapDynamicNeededOffsets(
+    std::vector<std::uint8_t>& elf,
+    const Elf64_Ehdr& ehdr,
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>>& oldToNewOffset
+) {
+    using namespace Internal;
+
+    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
+        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
+        const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
+        if (shdr.sh_type != kShtDynamic) continue;
+
+        const std::size_t dynOffset = static_cast<std::size_t>(shdr.sh_offset);
+        const std::size_t dynCount = static_cast<std::size_t>(shdr.sh_size) / sizeof(Elf64_Dyn);
+
+        for (std::size_t d = 0u; d < dynCount; ++d) {
+            const std::size_t entryOffset = dynOffset + d * sizeof(Elf64_Dyn);
+            const auto dyn = Read<Elf64_Dyn>(elf, entryOffset);
+            if (dyn.d_tag != kDtNeeded && dyn.d_tag != kDtSoname) continue;
+
+            const auto oldNameOffset = static_cast<std::uint32_t>(dyn.d_val);
+            const auto mapped = std::find_if(
+                oldToNewOffset.begin(), oldToNewOffset.end(),
+                [&](const auto& entry) { return entry.first == oldNameOffset; }
+            );
+            if (mapped == oldToNewOffset.end()) continue;
+
+            Write(elf, entryOffset + offsetof(Elf64_Dyn, d_val), static_cast<std::uint64_t>(mapped->second));
+        }
+    }
+}
+
+void RemapVerneedOffsets(
+    std::vector<std::uint8_t>& elf,
+    const Elf64_Ehdr& ehdr,
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>>& oldToNewOffset
+) {
+    using namespace Internal;
+
+    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
+        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
+        const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
+        if (shdr.sh_type != kShtGnuVerneed) continue;
+
+        const std::size_t verneedOffset = static_cast<std::size_t>(shdr.sh_offset);
+        std::size_t entryOffset = verneedOffset;
+
+        while (true) {
+            const auto verneed = Read<Elf64_Verneed>(elf, entryOffset);
+
+            const auto mappedFile = std::find_if(
+                oldToNewOffset.begin(), oldToNewOffset.end(),
+                [&](const auto& entry) { return entry.first == verneed.vn_file; }
+            );
+            if (mappedFile != oldToNewOffset.end())
+                Write(elf, entryOffset + offsetof(Elf64_Verneed, vn_file), mappedFile->second);
+
+            std::size_t auxOffset = entryOffset + verneed.vn_aux;
+            for (std::uint16_t a = 0u; a < verneed.vn_cnt; ++a) {
+                const auto vernaux = Read<Elf64_Vernaux>(elf, auxOffset);
+
+                const auto mappedName = std::find_if(
+                    oldToNewOffset.begin(), oldToNewOffset.end(),
+                    [&](const auto& entry) { return entry.first == vernaux.vna_name; }
+                );
+                if (mappedName != oldToNewOffset.end())
+                    Write(elf, auxOffset + offsetof(Elf64_Vernaux, vna_name), mappedName->second);
+
+                if (vernaux.vna_next == 0u) break;
+                auxOffset += vernaux.vna_next;
+            }
+
+            if (verneed.vn_next == 0u) break;
+            entryOffset += verneed.vn_next;
+        }
+    }
+}
+
+std::vector<std::uint32_t> CollectDynamicNameOffsets(
+    const std::vector<std::uint8_t>& elf,
+    const Elf64_Ehdr& ehdr
+) {
+    using namespace Internal;
+
+    std::vector<std::uint32_t> offsets;
+
+    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
+        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
+        const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
+        if (shdr.sh_type != kShtDynamic) continue;
+
+        const std::size_t dynOffset = static_cast<std::size_t>(shdr.sh_offset);
+        const std::size_t dynCount = static_cast<std::size_t>(shdr.sh_size) / sizeof(Elf64_Dyn);
+
+        for (std::size_t d = 0u; d < dynCount; ++d) {
+            const auto dyn = Read<Elf64_Dyn>(elf, dynOffset + d * sizeof(Elf64_Dyn));
+            if (dyn.d_tag == kDtNull) break;
+            if (dyn.d_tag != kDtNeeded && dyn.d_tag != kDtSoname) continue;
+            offsets.push_back(static_cast<std::uint32_t>(dyn.d_val));
+        }
+    }
+
+    return offsets;
+}
+
+std::vector<std::uint32_t> CollectVerneedNameOffsets(
+    const std::vector<std::uint8_t>& elf,
+    const Elf64_Ehdr& ehdr
+) {
+    using namespace Internal;
+
+    std::vector<std::uint32_t> offsets;
+
+    for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
+        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
+        const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
+        if (shdr.sh_type != kShtGnuVerneed) continue;
+
+        std::size_t entryOffset = static_cast<std::size_t>(shdr.sh_offset);
+
+        while (true) {
+            const auto verneed = Read<Elf64_Verneed>(elf, entryOffset);
+            offsets.push_back(verneed.vn_file);
+
+            std::size_t auxOffset = entryOffset + verneed.vn_aux;
+            for (std::uint16_t a = 0u; a < verneed.vn_cnt; ++a) {
+                const auto vernaux = Read<Elf64_Vernaux>(elf, auxOffset);
+                offsets.push_back(vernaux.vna_name);
+
+                if (vernaux.vna_next == 0u) break;
+                auxOffset += vernaux.vna_next;
+            }
+
+            if (verneed.vn_next == 0u) break;
+            entryOffset += verneed.vn_next;
+        }
+    }
+
+    return offsets;
+}
+
 }
 
 void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string& libraryName) const {
@@ -330,6 +498,25 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         oldToNewOffset.emplace_back(use.oldNameOffset, newOffset);
     }
 
+    std::vector<std::uint32_t> preservedOffsets = CollectDynamicNameOffsets(elf, ehdr);
+    const std::vector<std::uint32_t> verneedOffsets = CollectVerneedNameOffsets(elf, ehdr);
+    preservedOffsets.insert(preservedOffsets.end(), verneedOffsets.begin(), verneedOffsets.end());
+
+    for (const auto oldOffset : preservedOffsets) {
+        const auto existing = std::find_if(
+            oldToNewOffset.begin(), oldToNewOffset.end(),
+            [&](const auto& entry) { return entry.first == oldOffset; }
+        );
+        if (existing != oldToNewOffset.end()) continue;
+
+        const std::string preservedValue = ReadCStr(origDynStr, oldOffset);
+
+        const auto newOffset = static_cast<std::uint32_t>(newDynStr.size());
+        newDynStr.insert(newDynStr.end(), preservedValue.begin(), preservedValue.end());
+        newDynStr.push_back(0u);
+        oldToNewOffset.emplace_back(oldOffset, newOffset);
+    }
+
     if (newDynStr.size() > dynStrSize) {
         throw std::runtime_error(
             "rebuilt .dynstr (" + std::to_string(newDynStr.size()) + " bytes) exceeds original section size (" +
@@ -355,6 +542,9 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     }
 
     std::memcpy(elf.data() + dynStrOffset, newDynStr.data(), newDynStr.size());
+
+    RemapDynamicNeededOffsets(elf, ehdr, oldToNewOffset);
+    RemapVerneedOffsets(elf, ehdr, oldToNewOffset);
 
     if (gnuHashOffset != 0u) {
         const auto bucketCount = Read<std::uint32_t>(elf, gnuHashOffset);
