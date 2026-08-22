@@ -25,15 +25,27 @@ std::string ComputeNid(const std::string& symbolName, const std::string& library
         input.push_back(b);
 
     const auto digest = Sha1(input);
-    uint64_t v = 0;
 
+    uint8_t reversed[8];
     for (int i = 0; i < 8; i++)
-        v = (v << 8) | digest[7 - i];
+        reversed[i] = digest[7 - i];
+
     char nid[12];
-    for (int i = 10; i >= 0; i--) {
-        nid[i] = kBase64S[v & 0x3F];
-        v >>= 6;
+    int nidIndex = 0;
+    for (int i = 0; i < 6; i += 3) {
+        const uint32_t triple = (static_cast<uint32_t>(reversed[i]) << 16) |
+                                 (static_cast<uint32_t>(reversed[i + 1]) << 8) |
+                                 static_cast<uint32_t>(reversed[i + 2]);
+        nid[nidIndex++] = kBase64S[(triple >> 18) & 0x3F];
+        nid[nidIndex++] = kBase64S[(triple >> 12) & 0x3F];
+        nid[nidIndex++] = kBase64S[(triple >> 6) & 0x3F];
+        nid[nidIndex++] = kBase64S[triple & 0x3F];
     }
+    const uint32_t tail = (static_cast<uint32_t>(reversed[6]) << 16) |
+                           (static_cast<uint32_t>(reversed[7]) << 8);
+    nid[nidIndex++] = kBase64S[(tail >> 18) & 0x3F];
+    nid[nidIndex++] = kBase64S[(tail >> 12) & 0x3F];
+    nid[nidIndex++] = kBase64S[(tail >> 6) & 0x3F];
     nid[11] = '\0';
 
     return std::string(nid, 11);
