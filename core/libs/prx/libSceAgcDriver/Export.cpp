@@ -116,4 +116,21 @@ int sceAgcDriverUnregisterResource(void) {
  return 0;
 }
 
+
+// signature from name
+bool sceAgcDriverIsTraceInProgress(void) {
+ return false;
+}
+
+ // signature from name
+bool sceAgcDriverIsSubmitValidationEnabled(void) {
+ return false;
+}
+
+ // signature from name
+int sceAgcDriverAgrSubmitDcb(const Packet* packet) {
+ (void)packet;
+ return 0;
+}
+
 }

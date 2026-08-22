@@ -83,4 +83,9 @@ int sceUserServiceInitialize2(void) {
  return 0;
 }
 
+// signature from name
+int sceUserServiceTerminate(void) {
+ return 0;
+}
+
 }

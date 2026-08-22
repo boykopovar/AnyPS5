@@ -79,3 +79,8 @@ extern "C" void __anyps5_libc_touch_cxx_abi(int selector) {
         default: break;
     }
 }
+
+extern "C" [[noreturn]] void _Unwind_Resume_nid_postfix(void*) {
+    throw;
+}
+
