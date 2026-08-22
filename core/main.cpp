@@ -11,6 +11,7 @@
 #include <relinker/analysis/ValidationPolicy.hpp>
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <relinker/analysis/CallSiteResolver.hpp>
+#include <relinker/analysis/UnusedNidFilter.hpp>
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <relinker/pipeline/RelinkerPipeline.hpp>
@@ -24,6 +25,7 @@
 int main(const int argc, char* argv[]) {
     bool skipSyscallCheck = false;
     bool toIntel = false;
+    bool skipUnusedNidFilter = false;
     std::string inputPath;
     std::string outputElfPath;
     std::optional<std::string> registryPath;
@@ -35,6 +37,8 @@ int main(const int argc, char* argv[]) {
             skipSyscallCheck = true;
         } else if (arg == "--to-intel") {
             toIntel = true;
+        } else if (arg == "--skip-unused-nid-filter") {
+            skipUnusedNidFilter = true;
         } else if (arg == "--rpath") {
             if (i + 1 >= argc) {
                 std::cerr << "FAIL: --rpath requires a value\n";
@@ -51,7 +55,7 @@ int main(const int argc, char* argv[]) {
     }
 
     if (inputPath.empty() || outputElfPath.empty()) {
-        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] [--rpath <path>] <input.elf> <output.elf> [output_registry.json]\n";
+        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] [--skip-unused-nid-filter] [--rpath <path>] <input.elf> <output.elf> [output_registry.json]\n";
         return 1;
     }
 
@@ -88,7 +92,9 @@ int main(const int argc, char* argv[]) {
             std::move(syscallScanner),
             Relinker::MakeCallSiteResolver(),
             std::make_shared<Relinker::ValidationPolicy>(),
-            std::make_shared<Relinker::SysVDynamicSectionBuilder>()
+            std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
+            Relinker::MakeUnusedNidFilter(),
+            !skipUnusedNidFilter
         );
 
         auto result = pipeline->Relink(sourceBytes);

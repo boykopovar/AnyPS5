@@ -11,12 +11,16 @@ RelinkerPipeline::RelinkerPipeline(
     std::shared_ptr<ISyscallScanner> syscallScanner,
     std::shared_ptr<ICallSiteResolver> callSiteResolver,
     std::shared_ptr<IValidationPolicy> validationPolicy,
-    std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder)
+    std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
+    std::shared_ptr<IUnusedNidFilter> unusedNidFilter,
+    bool filterUnusedNids)
     : _elfReader(std::move(elfReader))
     , _syscallScanner(std::move(syscallScanner))
     , _callSiteResolver(std::move(callSiteResolver))
     , _validationPolicy(std::move(validationPolicy))
     , _dynamicSectionBuilder(std::move(dynamicSectionBuilder))
+    , _unusedNidFilter(std::move(unusedNidFilter))
+    , _filterUnusedNids(filterUnusedNids)
 {}
 
 std::string RelinkerPipeline::_relocationTypeName(std::uint32_t type) {
@@ -189,18 +193,20 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     _validationPolicy->ValidateSyscallAbsence();
 
-    auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(nidRefs, neededLibraries);
+    if (_filterUnusedNids)
+        nidRefs = _unusedNidFilter->Filter(nidRefs, textSection, textVAddr);
 
-    std::vector<FileByteOffset> callSites;
-    bool callSitesResolved = false;
-    if (!textSection.empty() && gotSize > 0) {
-        callSites = _callSiteResolver->ResolveCallSites(textSection, textVAddr, gotVAddr, gotSize);
-        callSitesResolved = !callSites.empty();
-    }
+    auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(nidRefs, neededLibraries);
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());
     for (const auto& ref : nidRefs) {
+        std::vector<FileByteOffset> callSites;
+        bool callSitesResolved = false;
+        if (!textSection.empty() && gotSize > 0) {
+            callSites = _callSiteResolver->ResolveCallSites(textSection, textVAddr, ref.RelocationAddress, 8);
+            callSitesResolved = !callSites.empty();
+        }
         CallRegistryEntry entry;
         entry.Nid = ref.Nid;
         entry.Library = ref.Library;
