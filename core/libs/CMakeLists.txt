@@ -19,6 +19,7 @@ foreach(LIB_DIR ${LIBS_DIRS})
 
         add_library(${LIB_NAME} SHARED EXCLUDE_FROM_ALL ${LIB_DIR}/Export.cpp)
         target_include_directories(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_options(${LIB_NAME} PRIVATE -static-libgcc -static-libstdc++)
         set_target_properties(${LIB_NAME} PROPERTIES
                 PREFIX ""
                 SUFFIX .prx
