@@ -8,6 +8,7 @@
 #include "src/FileAndHeap.cpp"
 #include "src/JumpBuffer.cpp"
 #include "src/Formatting.cpp"
+#include "src/RuntimeSupport.cpp"
 #include "src/Process.cpp"
 #include "src/CxxAbiSupport.cpp"
 
