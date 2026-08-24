@@ -2,11 +2,13 @@
 #include <cstring>
 #include <cstdlib>
 #include <cwchar>
+#include <stdexcept>
 #include <strings.h>
 
 extern "C" {
 
 void* memset_nid_postfix(void* s, int c, size_t n) {
+    throw std::runtime_error("libc memset not implemented");
     return std::memset(s, c, n);
 }
 
