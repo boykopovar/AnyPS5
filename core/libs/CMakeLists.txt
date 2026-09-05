@@ -12,7 +12,7 @@ target_compile_features(nid_patcher PRIVATE cxx_std_20)
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL ${LIBC_DIR}/Export.cpp)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_options(libc PRIVATE -static-libgcc -static-libstdc++)
+
 set_target_properties(libc PROPERTIES
         PREFIX ""
         SUFFIX .prx
