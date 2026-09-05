@@ -3,6 +3,7 @@
 #include "StandardExceptions.cpp"
 #include "ArraySupport.cpp"
 #include "GuardSupport.cpp"
+#include "Personality.cpp"
 
 extern "C" [[noreturn]] __attribute__((visibility("hidden"))) void LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
 

@@ -12,6 +12,7 @@
 #include "src/LocaleSupport.cpp"
 #include "src/Process.cpp"
 #include "src/CxxAbiSupport.cpp"
+#include "src/exception/Exports.cpp"
 
 uint32_t Need_sceLibc = 1;
 
