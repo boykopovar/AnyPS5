@@ -1,3 +1,5 @@
+#include <cstddef>
+#include <cxxabi.h>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +14,19 @@
 #include <unwind.h>
 
 extern "C" {
+
+void* __dynamic_cast_nid_postfix(
+    const void* source,
+    const __cxxabiv1::__class_type_info* sourceType,
+    const __cxxabiv1::__class_type_info* destinationType,
+    std::ptrdiff_t sourceToDestinationOffset
+) {
+    (void)source;
+    (void)sourceType;
+    (void)destinationType;
+    (void)sourceToDestinationOffset;
+    return nullptr;
+}
 
 void* __cxa_allocate_exception_nid_postfix(std::size_t thrownSize) {
     return std::malloc(thrownSize + 128);
@@ -187,6 +202,15 @@ const char* _ZNKSt9exception4whatEv_nid_postfix() { return ""; }
 bool _ZSt18uncaught_exceptionv_nid_postfix() { return false; }
 
 const std::error_category* _ZSt17iostream_categoryv_nid_postfix() { return &std::iostream_category(); }
+
+std::uintptr_t _ZTVSt13runtime_error_nid_postfix[5] {};
+std::uintptr_t _ZTVSt12system_error_nid_postfix[5] {};
+std::uintptr_t _ZTVSt9exception_nid_postfix[5] {};
+std::uintptr_t _ZTVSt16invalid_argument_nid_postfix[5] {};
+std::uintptr_t _ZTVSt12out_of_range_nid_postfix[5] {};
+std::uintptr_t _ZTVSt12domain_error_nid_postfix[5] {};
+std::uintptr_t _ZTVSt8bad_cast_nid_postfix[5] {};
+std::uintptr_t _ZTVSt11logic_error_nid_postfix[5] {};
 
 void* _ZTVNSt8ios_base7failureE_nid_postfix = nullptr;
 void* _ZTISt8bad_cast_nid_postfix = nullptr;

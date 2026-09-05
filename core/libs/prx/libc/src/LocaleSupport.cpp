@@ -26,6 +26,12 @@ const std::locale& ClassicLocaleInstance() {
 
 extern "C" {
 
+std::locale::id _ZNSt5ctypeIcE2idE_nid_postfix {};
+std::locale::id _ZNSt5ctypeIwE2idE_nid_postfix {};
+std::locale::id _ZNSt7collateIwE2idE_nid_postfix {};
+std::locale::id _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix {};
+std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[12] {};
+
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};
 long _ZNSt6locale2id7_Id_cntE_nid_postfix = 0;
