@@ -303,6 +303,7 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
                 if (result != _URC_NO_REASON) return result;
             } else if (context.cfa == exception->private_2) actions = _Unwind_Action(actions | _UA_HANDLER_FRAME);
             if (frame.personality) {
+                if (frame.personality != reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix)) return _URC_FATAL_PHASE2_ERROR;
                 auto result = __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, &context);
                 if (result == _URC_INSTALL_CONTEXT) LibcRestoreRegisters(context.registers);
                 if (result != _URC_CONTINUE_UNWIND) return _URC_FATAL_PHASE2_ERROR;
@@ -331,6 +332,7 @@ _Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception* except
         LibcUnwind::Frame frame; LibcUnwind::Rules rules;
         if (!LibcUnwind::GetRules(context, frame, rules)) return _URC_END_OF_STACK;
         if (frame.personality) {
+            if (frame.personality != reinterpret_cast<std::uintptr_t>(__gxx_personality_v0_nid_postfix)) return _URC_FATAL_PHASE1_ERROR;
             auto result = __gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, exception->exception_class, exception, &context);
             if (result == _URC_HANDLER_FOUND) {
                 exception->private_2 = context.cfa;

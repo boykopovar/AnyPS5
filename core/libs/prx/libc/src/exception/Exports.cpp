@@ -1,10 +1,13 @@
 #include "Unwind.cpp"
 #include "Runtime.cpp"
-#include "Personality.cpp"
 #include "StandardExceptions.cpp"
 #include "ArraySupport.cpp"
+#include "GuardSupport.cpp"
+
+extern "C" [[noreturn]] __attribute__((visibility("hidden"))) void LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
 
 asm(
+".local _ZSt21__glibcxx_assert_failPKciS0_S0_\n.set _ZSt21__glibcxx_assert_failPKciS0_S0_,LibcRuntimeAssertion\n"
 ".local __cxa_allocate_exception\n.set __cxa_allocate_exception,__cxa_allocate_exception_nid_postfix\n"
 ".local __cxa_free_exception\n.set __cxa_free_exception,__cxa_free_exception_nid_postfix\n"
 ".local __cxa_throw\n.set __cxa_throw,__cxa_throw_nid_postfix\n"

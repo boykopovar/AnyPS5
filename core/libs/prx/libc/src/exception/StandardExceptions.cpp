@@ -72,9 +72,16 @@ void DeletePlain(ExceptionObject* object) { std::free(object); }
 void DestroyMessage(ExceptionObject* object) { ReleaseMessage(object->message); object->message = nullptr; }
 void DeleteMessage(ExceptionObject* object) { DestroyMessage(object); std::free(object); }
 const char* PlainWhat(const ExceptionObject* object) {
-    auto* table = static_cast<const ExceptionVtable*>(object->vtable) - 0;
+    auto* table = static_cast<const ExceptionVtable*>(object->vtable);
     auto* complete = reinterpret_cast<const ExceptionVtable*>(reinterpret_cast<const unsigned char*>(table) - offsetof(ExceptionVtable, destroy));
-    return complete->type->name;
+    const char* name = complete->type->name;
+    if (std::strcmp(name, "St9exception") == 0) return "std::exception";
+    if (std::strcmp(name, "St8bad_cast") == 0) return "std::bad_cast";
+    if (std::strcmp(name, "St10bad_typeid") == 0) return "std::bad_typeid";
+    if (std::strcmp(name, "St9bad_alloc") == 0) return "std::bad_alloc";
+    if (std::strcmp(name, "St20bad_array_new_length") == 0) return "std::bad_array_new_length";
+    if (std::strcmp(name, "St17bad_function_call") == 0) return "std::bad_function_call";
+    return name;
 }
 const char* MessageWhat(const ExceptionObject* object) { return object->message ? object->message : ""; }
 void Construct(ExceptionObject* object, const ExceptionVtable& table, const char* message) {
@@ -235,8 +242,6 @@ void _ZNSt12system_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) {
 void _ZNSt12system_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void _ZNSt12system_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
 const char* _ZNKSt12system_error4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::MessageWhat(self); }
-void _ZNSt12system_errorC1EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message) { LibcException::Construct(self, _ZTVSt12system_error_nid_postfix, message); }
-void _ZNSt12system_errorC2EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message) { LibcException::Construct(self, _ZTVSt12system_error_nid_postfix, message); }
 void _ZNSt12system_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt12system_error_nid_postfix); }
 void _ZNSt12system_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt12system_error_nid_postfix); }
 LibcException::ExceptionObject* _ZNSt12system_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
@@ -247,8 +252,6 @@ void _ZNSt11regex_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { 
 void _ZNSt11regex_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void _ZNSt11regex_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
 const char* _ZNKSt11regex_error4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::MessageWhat(self); }
-void _ZNSt11regex_errorC1EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message) { LibcException::Construct(self, _ZTVSt11regex_error_nid_postfix, message); }
-void _ZNSt11regex_errorC2EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message) { LibcException::Construct(self, _ZTVSt11regex_error_nid_postfix, message); }
 void _ZNSt11regex_errorC1ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt11regex_error_nid_postfix); }
 void _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt11regex_error_nid_postfix); }
 LibcException::ExceptionObject* _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
@@ -259,8 +262,6 @@ void _ZNSt8ios_base7failureD1Ev_nid_postfix(LibcException::ExceptionObject* self
 void _ZNSt8ios_base7failureD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void _ZNSt8ios_base7failureD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
 const char* _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::MessageWhat(self); }
-void _ZNSt8ios_base7failureC1EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message) { LibcException::Construct(self, _ZTVNSt8ios_base7failureE_nid_postfix, message); }
-void _ZNSt8ios_base7failureC2EPKc_nid_postfix(LibcException::ExceptionObject* self, const char* message) { LibcException::Construct(self, _ZTVNSt8ios_base7failureE_nid_postfix, message); }
 
 [[noreturn]] void __cxa_bad_cast_nid_postfix() { LibcException::ThrowPlain(_ZTVSt8bad_cast_nid_postfix); }
 [[noreturn]] void __cxa_bad_typeid_nid_postfix() { LibcException::ThrowPlain(_ZTVSt10bad_typeid_nid_postfix); }
