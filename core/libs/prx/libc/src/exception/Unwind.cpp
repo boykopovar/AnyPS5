@@ -284,8 +284,7 @@ bool Step(_Unwind_Context& context) {
     return true;
 }
 
-_Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* exception, bool resume) {
-    bool skip = resume;
+_Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* exception) {
     for (unsigned depth = 0; depth < 65536; ++depth) {
         Frame frame; Rules rules;
         if (!GetRules(context, frame, rules)) {
@@ -295,10 +294,7 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
             }
             return _URC_END_OF_STACK;
         }
-        if (skip) {
-            if (context.cfa == exception->private_2 && !exception->private_1) skip = false;
-            else if (exception->private_1 && context.cfa == context.registers[0]) skip = false;
-        } else {
+        {
             auto actions = _UA_CLEANUP_PHASE;
             if (exception->private_1) {
                 actions = _Unwind_Action(actions | _UA_FORCE_UNWIND);
@@ -312,7 +308,13 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
                 if (result != _URC_CONTINUE_UNWIND) return _URC_FATAL_PHASE2_ERROR;
             }
         }
-        if (!Step(context)) return _URC_END_OF_STACK;
+        if (!Step(context)) {
+            if (exception->private_1) {
+                auto stop = reinterpret_cast<_Unwind_Stop_Fn>(exception->private_1);
+                return stop(1, _Unwind_Action(_UA_FORCE_UNWIND | _UA_CLEANUP_PHASE | _UA_END_OF_STACK), exception->exception_class, exception, &context, reinterpret_cast<void*>(exception->private_2));
+            }
+            return _URC_FATAL_PHASE2_ERROR;
+        }
     }
     return _URC_FATAL_PHASE2_ERROR;
 }
@@ -332,7 +334,7 @@ _Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception* except
             auto result = __gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, exception->exception_class, exception, &context);
             if (result == _URC_HANDLER_FOUND) {
                 exception->private_2 = context.cfa;
-                return LibcUnwind::PhaseTwo(start, exception, false);
+                return LibcUnwind::PhaseTwo(start, exception);
             }
             if (result != _URC_CONTINUE_UNWIND) return _URC_FATAL_PHASE1_ERROR;
         }
@@ -344,8 +346,8 @@ _Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception* except
 [[noreturn]] void _Unwind_Resume_nid_postfix(_Unwind_Exception* exception) {
     _Unwind_Context context;
     LibcCaptureRegisters(context.registers);
-    if (!LibcUnwind::Step(context) || !LibcUnwind::Step(context)) std::abort();
-    LibcUnwind::PhaseTwo(context, exception, false);
+    if (!LibcUnwind::Step(context)) std::abort();
+    LibcUnwind::PhaseTwo(context, exception);
     std::abort();
 }
 
@@ -382,7 +384,7 @@ _Unwind_Reason_Code _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exceptio
     if (!LibcUnwind::Step(context)) return _URC_FATAL_PHASE2_ERROR;
     exception->private_1 = reinterpret_cast<std::uintptr_t>(stop);
     exception->private_2 = reinterpret_cast<std::uintptr_t>(argument);
-    return LibcUnwind::PhaseTwo(context, exception, false);
+    return LibcUnwind::PhaseTwo(context, exception);
 }
 
 _Unwind_Reason_Code _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* argument) {

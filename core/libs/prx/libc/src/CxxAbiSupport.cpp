@@ -1,7 +1,5 @@
-#include "exception/Unwind.cpp"
-#include "exception/Runtime.cpp"
-#include "exception/Personality.cpp"
-#include "exception/StandardExceptions.cpp"
+#include "exception/Runtime.hpp"
+#include <thread>
 #include <cstddef>
 #include <cxxabi.h>
 #include <cstdint>
@@ -17,57 +15,44 @@
 #include <functional>
 #include <unwind.h>
 
+namespace LibcGuard {
+thread_local std::uint64_t* active[64] {};
+thread_local std::size_t depth {};
+}
+
 extern "C" {
 
 int __cxa_guard_acquire_nid_postfix(std::uint64_t* guardObject) {
-    (void)guardObject;
-    return 0;
+    auto* bytes = reinterpret_cast<unsigned char*>(guardObject);
+    std::atomic_ref<unsigned char> initialized(bytes[0]);
+    std::atomic_ref<unsigned char> lock(bytes[1]);
+    if (initialized.load(std::memory_order_acquire)) return 0;
+    for (std::size_t i = 0; i < LibcGuard::depth; ++i)
+        if (LibcGuard::active[i] == guardObject) LibcException::Terminate();
+    for (;;) {
+        unsigned char expected = 0;
+        if (lock.compare_exchange_weak(expected, 1, std::memory_order_acquire)) break;
+        if (initialized.load(std::memory_order_acquire)) return 0;
+        std::this_thread::yield();
+    }
+    if (initialized.load(std::memory_order_acquire)) { lock.store(0, std::memory_order_release); return 0; }
+    if (LibcGuard::depth == 64) LibcException::Terminate();
+    LibcGuard::active[LibcGuard::depth++] = guardObject;
+    return 1;
 }
 
-void __cxa_guard_release_nid_postfix(std::uint64_t* guardObject) { (void)guardObject; }
-void __cxa_guard_abort_nid_postfix(std::uint64_t* guardObject) { (void)guardObject; }
-
-void* __cxa_vec_new_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*)) {
-    (void)n; (void)s; (void)p; (void)ctor; (void)dtor;
-    return nullptr;
+void __cxa_guard_release_nid_postfix(std::uint64_t* guardObject) {
+    if (!LibcGuard::depth || LibcGuard::active[LibcGuard::depth - 1] != guardObject) LibcException::Terminate();
+    --LibcGuard::depth;
+    auto* bytes = reinterpret_cast<unsigned char*>(guardObject);
+    std::atomic_ref<unsigned char>(bytes[0]).store(1, std::memory_order_release);
+    std::atomic_ref<unsigned char>(bytes[1]).store(0, std::memory_order_release);
 }
-
-void* __cxa_vec_new2_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*), void* (*alloc)(std::size_t), void (*dealloc)(void*)) {
-    (void)n; (void)s; (void)p; (void)ctor; (void)dtor; (void)alloc; (void)dealloc;
-    return nullptr;
-}
-
-void* __cxa_vec_new3_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*), void* (*alloc)(std::size_t), void (*dealloc)(void*, std::size_t)) {
-    (void)n; (void)s; (void)p; (void)ctor; (void)dtor; (void)alloc; (void)dealloc;
-    return nullptr;
-}
-
-void __cxa_vec_ctor_nid_postfix(void* arr, std::size_t n, std::size_t s, void (*ctor)(void*), void (*dtor)(void*)) {
-    (void)arr; (void)n; (void)s; (void)ctor; (void)dtor;
-}
-
-void __cxa_vec_dtor_nid_postfix(void* arr, std::size_t n, std::size_t s, void (*dtor)(void*)) {
-    (void)arr; (void)n; (void)s; (void)dtor;
-}
-
-void __cxa_vec_cleanup_nid_postfix(void* arr, std::size_t n, std::size_t s, void (*dtor)(void*)) {
-    (void)arr; (void)n; (void)s; (void)dtor;
-}
-
-void __cxa_vec_delete_nid_postfix(void* arr, std::size_t s, std::size_t p, void (*dtor)(void*)) {
-    (void)arr; (void)s; (void)p; (void)dtor;
-}
-
-void __cxa_vec_delete2_nid_postfix(void* arr, std::size_t s, std::size_t p, void (*dtor)(void*), void (*dealloc)(void*)) {
-    (void)arr; (void)s; (void)p; (void)dtor; (void)dealloc;
-}
-
-void __cxa_vec_delete3_nid_postfix(void* arr, std::size_t s, std::size_t p, void (*dtor)(void*), void (*dealloc)(void*, std::size_t)) {
-    (void)arr; (void)s; (void)p; (void)dtor; (void)dealloc;
-}
-
-void __cxa_vec_cctor_nid_postfix(void* dst, void* src, std::size_t n, std::size_t s, void (*cctor)(void*, void*), void (*dtor)(void*)) {
-    (void)dst; (void)src; (void)n; (void)s; (void)cctor; (void)dtor;
+void __cxa_guard_abort_nid_postfix(std::uint64_t* guardObject) {
+    if (!LibcGuard::depth || LibcGuard::active[LibcGuard::depth - 1] != guardObject) LibcException::Terminate();
+    --LibcGuard::depth;
+    auto* bytes = reinterpret_cast<unsigned char*>(guardObject);
+    std::atomic_ref<unsigned char>(bytes[1]).store(0, std::memory_order_release);
 }
 
 void* __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::size_t* len, int* status) {

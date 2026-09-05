@@ -5,7 +5,7 @@ namespace LibcException {
 inline std::atomic<void(*)()> terminateHandler {std::abort};
 [[noreturn]] void Terminate() {
     auto handler = terminateHandler.load(std::memory_order_acquire);
-    if (handler) handler();
+    try { if (handler) handler(); } catch (...) {}
     std::abort();
 }
 
@@ -14,13 +14,15 @@ void Release(void* object) {
     auto* header = FromObject(object);
     auto* allocation = AllocationOf(header);
     if (allocation->references.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        if (header->destructor) header->destructor(object);
+        try { if (header->destructor) header->destructor(object); }
+        catch (...) { Terminate(); }
         allocation->~Allocation();
         std::free(allocation);
     }
 }
 
-void Cleanup(_Unwind_Reason_Code, _Unwind_Exception* exception) {
+void Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
+    if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT) Terminate();
     auto* header = FromUnwind(exception);
     if (exception->exception_class == DependentClass) {
         Release(reinterpret_cast<void*>(header->type));
@@ -233,6 +235,10 @@ void* __dynamic_cast_nid_postfix(const void* source, const __cxxabiv1::__class_t
     return publicSource.count == 1 && publicSource.found == source ? target.found : nullptr;
 }
 
+[[noreturn]] void __cxa_call_terminate_nid_postfix(void* exception) {
+    __cxa_begin_catch_nid_postfix(exception);
+    LibcException::Terminate();
+}
 [[noreturn]] void __cxa_pure_virtual_nid_postfix() { LibcException::Terminate(); }
 [[noreturn]] void __cxa_deleted_virtual_nid_postfix() { LibcException::Terminate(); }
 }
