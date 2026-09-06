@@ -6,6 +6,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace Nid {
@@ -462,6 +463,21 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         std::string newValue;
     };
 
+    std::unordered_set<std::string> exportedBaseNames;
+    std::unordered_set<std::string> seenRawNames;
+    for (std::size_t i = 1u; i < symCount; ++i) {
+        const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
+        const auto sym = Read<Elf64_Sym>(elf, symOffset);
+        if (sym.st_name == 0u) continue;
+        const std::uint8_t binding = sym.st_info >> 4u;
+        if (binding == kStbLocal || sym.st_shndx == kShnUndef) continue;
+        const std::string symName = ReadCStr(origDynStr, sym.st_name);
+        if (symName.empty()) continue;
+        if (!seenRawNames.insert(symName).second)
+            throw std::runtime_error("duplicate exported symbol \"" + symName + "\" in library \"" + libraryName + "\"");
+        exportedBaseNames.insert(StripNidPostfix(symName));
+    }
+
     std::vector<SymbolNameUse> uses;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
@@ -476,7 +492,14 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (symName.empty()) continue;
 
         std::string newValue = symName;
-        if (isPatchable) newValue = ComputeNid(StripNidPostfix(symName), libraryName);
+        if (isPatchable) {
+            const std::string stripped = StripNidPostfix(symName);
+            const bool hasPostfix = stripped != symName;
+            if (!hasPostfix && exportedBaseNames.count(symName))
+                newValue = symName;
+            else
+                newValue = ComputeNid(stripped, libraryName);
+        }
 
         uses.push_back(SymbolNameUse{i, sym.st_name, newValue});
     }
