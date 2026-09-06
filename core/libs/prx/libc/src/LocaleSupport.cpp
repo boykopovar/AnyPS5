@@ -47,6 +47,7 @@ void _ZNSt6locale5_InitEv_nid_postfix() {
 }
 
 void _ZNSt6locale5facet9_RegisterEv_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 const std::locale* _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {

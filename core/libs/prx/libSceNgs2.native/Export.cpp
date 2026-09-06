@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
@@ -9,6 +10,7 @@ int sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_p
  (void)sample_pos;
  (void)num_samples;
  (void)block;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -17,6 +19,7 @@ int sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceP
  (void)source;
  (void)out_attrib;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -24,16 +27,19 @@ int sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListener
  (void)param;
  (void)out_work;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param) {
  (void)out_listener_param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param) {
  (void)out_source_param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -43,6 +49,7 @@ int sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uin
  (void)num_params;
  (void)matrix_format;
  (void)out_volume_matrix;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -51,6 +58,7 @@ int sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_an
  (void)speaker_angles;
  (void)unit_angle;
  (void)num_speakers;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -58,6 +66,7 @@ int sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2WaveformInf
  (void)data;
  (void)data_size;
  (void)info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -67,6 +76,7 @@ int sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackO
  (void)option;
  (void)buffer_info;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -76,12 +86,14 @@ int sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t rack_id, co
  (void)option;
  (void)allocator;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2RackDestroy(uintptr_t rack_handle, Ngs2ContextBufferInfo* buffer_info) {
  (void)rack_handle;
  (void)buffer_info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -89,11 +101,13 @@ int sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id, uintptr_
  (void)rack_handle;
  (void)voice_id;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2RackLock(uintptr_t rack_handle) {
  (void)rack_handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -101,11 +115,13 @@ int sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption* option, N
  (void)rack_id;
  (void)option;
  (void)buffer_info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2RackUnlock(uintptr_t rack_handle) {
  (void)rack_handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -113,6 +129,7 @@ int sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2ContextBufferI
  (void)option;
  (void)buffer_info;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -120,12 +137,14 @@ int sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2B
  (void)option;
  (void)allocator;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2SystemDestroy(uintptr_t system_handle, Ngs2ContextBufferInfo* buffer_info) {
  (void)system_handle;
  (void)buffer_info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -133,12 +152,14 @@ int sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info, size_t i
  (void)system_handle;
  (void)info;
  (void)info_size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2ContextBufferInfo* buffer_info) {
  (void)option;
  (void)buffer_info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -146,23 +167,27 @@ int sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBufferInfo* buf
  (void)system_handle;
  (void)buffer_info;
  (void)num_buffer_info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2SystemResetOption(Ngs2SystemOption* option) {
  (void)option;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2SystemSetGrainSamples(uintptr_t system_handle, uint32_t num_samples) {
  (void)system_handle;
  (void)num_samples;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHeader* param_list) {
  (void)voice_handle;
  (void)param_list;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -170,12 +195,14 @@ int sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state, size_t s
  (void)voice_handle;
  (void)state;
  (void)state_size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_flags) {
  (void)voice_handle;
  (void)state_flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -184,6 +211,7 @@ int sceNgs2VoiceRunCommands(uintptr_t voice_handle, const void* commands, uint32
  (void)commands;
  (void)num_commands;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

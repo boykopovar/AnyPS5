@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
@@ -8,6 +9,7 @@ int sceVideoOutAddFlipEvent(KernelEqueue eq, int handle, void* udata) {
  (void)eq;
  (void)handle;
  (void)udata;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -15,6 +17,7 @@ int sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata) {
  (void)eq;
  (void)handle;
  (void)udata;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -22,6 +25,7 @@ int sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, void* udata) 
  (void)eq;
  (void)handle;
  (void)udata;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -29,11 +33,13 @@ int sceVideoOutAddVblankEvent(KernelEqueue eq, int handle, void* udata) {
  (void)eq;
  (void)handle;
  (void)udata;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutClose(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -43,68 +49,80 @@ int sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoOutOutputOp
  (void)options;
  (void)reserved_ptr;
  (void)reserved;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutDeleteFlipEvent(KernelEqueue eq, int handle) {
  (void)eq;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutDeletePreVblankStartEvent(KernelEqueue eq, int handle) {
  (void)eq;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutDeleteVblankEvent(KernelEqueue eq, int handle) {
  (void)eq;
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutGetEventCount(const KernelEvent* ev) {
  (void)ev;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data) {
  (void)ev;
  (void)data;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutGetEventId(const KernelEvent* ev) {
  (void)ev;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status) {
  (void)handle;
  (void)status;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* status) {
  (void)handle;
  (void)status;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutGetVblankStatus(int handle, VideoOutVblankStatus* status) {
  (void)handle;
  (void)status;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options) {
  (void)options;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutIsFlipPending(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -114,6 +132,7 @@ int sceVideoOutIsOutputSupported(int handle, uint64_t mode, const VideoOutOutput
  (void)options;
  (void)reserved_ptr;
  (void)reserved;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -122,6 +141,7 @@ int sceVideoOutOpen(int user_id, int bus_type, int index, const void* param) {
  (void)bus_type;
  (void)index;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -134,6 +154,7 @@ int sceVideoOutRegisterBuffers2(int handle, int set_index, int buffer_index_star
  (void)attribute;
  (void)category;
  (void)option;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -146,11 +167,13 @@ void sceVideoOutSetBufferAttribute2(VideoOutBufferAttribute2* attribute, uint64_
  (void)option;
  (void)dcc_control;
  (void)dcc_cb_register_clear_color;
+ NotImplemented_nid_no_patch(__func__);
 }
 
 int sceVideoOutSetFlipRate(int handle, int rate) {
  (void)handle;
  (void)rate;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -158,6 +181,7 @@ int sceVideoOutSetWindowModeMargins(int handle, int top, int bottom) {
  (void)handle;
  (void)top;
  (void)bottom;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -166,6 +190,7 @@ int sceVideoOutSubmitChangeBufferAttribute2(int handle, int set_index, const Vid
  (void)set_index;
  (void)attribute;
  (void)option;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -174,17 +199,20 @@ int sceVideoOutSubmitFlip(int handle, int index, int flip_mode, int64_t flip_arg
  (void)index;
  (void)flip_mode;
  (void)flip_arg;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutUnregisterBuffers(int handle, int set_index) {
  (void)handle;
  (void)set_index;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceVideoOutWaitVblank(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

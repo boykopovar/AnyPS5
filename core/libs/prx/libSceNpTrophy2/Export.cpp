@@ -1,11 +1,13 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int sceNpTrophy2AbortHandle(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -14,21 +16,25 @@ int sceNpTrophy2CreateContext(int* context, int user_id, uint32_t service_label,
  (void)user_id;
  (void)service_label;
  (void)options;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpTrophy2CreateHandle(int* handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpTrophy2DestroyContext(int context) {
  (void)context;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpTrophy2DestroyHandle(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -37,6 +43,7 @@ int sceNpTrophy2GetGameIcon(int context, int handle, void* buffer, size_t* size)
  (void)handle;
  (void)buffer;
  (void)size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -45,6 +52,7 @@ int sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDetails* detai
  (void)handle;
  (void)details;
  (void)data;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -54,6 +62,7 @@ int sceNpTrophy2GetGroupIcon(int context, int handle, int group_id, void* buffer
  (void)group_id;
  (void)buffer;
  (void)size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -63,6 +72,7 @@ int sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, NpTrophy2Gro
  (void)group_id;
  (void)details;
  (void)data;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -74,6 +84,7 @@ int sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t offset, uint
  (void)details_array;
  (void)data_array;
  (void)count;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -83,6 +94,7 @@ int sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, void* buff
  (void)trophy_id;
  (void)buffer;
  (void)size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -92,6 +104,7 @@ int sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, NpTrophy2D
  (void)trophy_id;
  (void)details;
  (void)data;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -103,6 +116,7 @@ int sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t offset, uin
  (void)details_array;
  (void)data_array;
  (void)count;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -110,12 +124,14 @@ int sceNpTrophy2RegisterContext(int context, int handle, uint64_t options) {
  (void)context;
  (void)handle;
  (void)options;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpTrophy2RegisterUnlockCallback(void* callback, void* userdata) {
  (void)callback;
  (void)userdata;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

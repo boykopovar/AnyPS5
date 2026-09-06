@@ -1,20 +1,24 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 void sceAudio3dGetDefaultOpenParameters(Audio3dOpenParameters* p) {
  (void)p;
+ NotImplemented_nid_no_patch(__func__);
 }
 
 int sceAudio3dInitialize(int64_t reserved) {
  (void)reserved;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAudio3dPortAdvance(uint32_t port_id) {
  (void)port_id;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -22,6 +26,7 @@ int sceAudio3dPortGetQueueLevel(uint32_t port_id, uint32_t* queue_level, uint32_
  (void)port_id;
  (void)queue_level;
  (void)queue_available;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -29,12 +34,14 @@ int sceAudio3dPortOpen(int user_id, const Audio3dOpenParameters* parameters, uin
  (void)user_id;
  (void)parameters;
  (void)id;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAudio3dPortPush(uint32_t port_id, uint32_t blocking) {
  (void)port_id;
  (void)blocking;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -43,6 +50,7 @@ int sceAudio3dPortSetAttribute(uint32_t port_id, uint32_t attribute_id, const vo
  (void)attribute_id;
  (void)attribute;
  (void)attribute_size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

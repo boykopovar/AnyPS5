@@ -1,17 +1,20 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int scePadClose_nid_postfix(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) {
  (void)handle;
  (void)info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -19,12 +22,14 @@ int scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassDa
  (void)handle;
  (void)data;
  (void)class_data;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadGetControllerInformation(int handle, PadControllerInformation* info) {
  (void)handle;
  (void)info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -32,16 +37,19 @@ int scePadGetHandle(int user_id, int type, int index) {
  (void)user_id;
  (void)type;
  (void)index;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
  (void)handle;
  (void)info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadInit_nid_postfix(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -50,6 +58,7 @@ int scePadOpen_nid_postfix(int user_id, int type, int index, const void* param) 
  (void)type;
  (void)index;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -57,69 +66,81 @@ int scePadRead_nid_postfix(int handle, PadData* data, int num) {
  (void)handle;
  (void)data;
  (void)num;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadReadState(int handle, PadData* data) {
  (void)handle;
  (void)data;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadResetLightBar(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadResetOrientation(int handle) {
  (void)handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
  (void)handle;
  (void)enable;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetLightBar(int handle, const PadLightBarParam* param) {
  (void)handle;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetMotionSensorState(int handle, bool enable) {
  (void)handle;
  (void)enable;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetTiltCorrectionState(int handle, bool enabled) {
  (void)handle;
  (void)enabled;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetTriggerEffect(int handle, const void* param) {
  (void)handle;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetVibration(int handle, const PadVibrationParam* param) {
  (void)handle;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetVibrationMode(int handle, int mode) {
  (void)handle;
  (void)mode;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool enabled) {
  (void)enabled;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

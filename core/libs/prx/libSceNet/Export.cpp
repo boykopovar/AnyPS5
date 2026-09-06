@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
@@ -8,6 +9,7 @@ int sceNetAccept(int s, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -15,6 +17,7 @@ int sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -23,17 +26,20 @@ int sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event) {
  (void)op;
  (void)id;
  (void)event;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetEpollCreate(const char* name, int flags) {
  (void)name;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetEpollDestroy(int eid) {
  (void)eid;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -42,6 +48,7 @@ int sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout) 
  (void)events;
  (void)maxevents;
  (void)timeout;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -49,12 +56,14 @@ int sceNetEtherNtostr(const NetEtherAddr* n, char* str, size_t len) {
  (void)n;
  (void)str;
  (void)len;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
  (void)addr;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -63,6 +72,7 @@ int sceNetGetSockInfo(int s, void* info, int n, int flags) {
  (void)info;
  (void)n;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -70,16 +80,19 @@ int sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t sceNetHtonl_nid_postfix(uint32_t host32) {
  (void)host32;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint16_t sceNetHtons_nid_postfix(uint16_t host16) {
  (void)host16;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -88,6 +101,7 @@ const char* sceNetInetNtop(int af, const void* src, char* dst, uint32_t size) {
  (void)src;
  (void)dst;
  (void)size;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -95,26 +109,31 @@ int sceNetInetPton(int af, const char* src, void* dst) {
  (void)af;
  (void)src;
  (void)dst;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetInit_nid_postfix(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetListen(int s, int backlog) {
  (void)s;
  (void)backlog;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t sceNetNtohl_nid_postfix(uint32_t net32) {
  (void)net32;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint16_t sceNetNtohs_nid_postfix(uint16_t net16) {
  (void)net16;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -122,11 +141,13 @@ int sceNetPoolCreate(const char* name, int size, int flags) {
  (void)name;
  (void)size;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetPoolDestroy(int memid) {
  (void)memid;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -134,6 +155,7 @@ int sceNetResolverCreate(const char* name, int memid, int flags) {
  (void)name;
  (void)memid;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -144,6 +166,7 @@ int sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeo
  (void)timeout;
  (void)retry;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -153,12 +176,14 @@ int sceNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t
  (void)optname;
  (void)optval;
  (void)optlen;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetShutdown(int s, int how) {
  (void)s;
  (void)how;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -167,11 +192,13 @@ int sceNetSocket(const char* name, int family, int type, int protocol) {
  (void)family;
  (void)type;
  (void)protocol;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNetSocketClose(int s) {
  (void)s;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

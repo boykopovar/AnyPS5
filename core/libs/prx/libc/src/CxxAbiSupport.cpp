@@ -17,14 +17,11 @@
 extern "C" {
 
 void* __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::size_t* len, int* status) {
-    (void)mangled; (void)buf; (void)len;
-    if (status) *status = -2;
-    return nullptr;
+    return abi::__cxa_demangle(mangled, buf, len, status);
 }
 
 int __cxa_thread_atexit_impl_nid_postfix(void (*func)(void*), void* arg, void* dso) {
-    (void)func; (void)arg; (void)dso;
-    return 0;
+    return __cxxabiv1::__cxa_thread_atexit(func, arg, dso);
 }
 
 void _ZNSt8ios_baseD2Ev_nid_postfix(std::ios_base* self) { self->~ios_base(); }

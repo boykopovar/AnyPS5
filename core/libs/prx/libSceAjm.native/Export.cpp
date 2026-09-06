@@ -1,18 +1,21 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int sceAjmBatchCancel(uint32_t context, uint32_t batch) {
  (void)context;
  (void)batch;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) {
  (void)info;
  (void)error;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -20,6 +23,7 @@ int sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* info) {
  (void)buffer;
  (void)size;
  (void)info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -27,6 +31,7 @@ int sceAjmBatchJobClearContext(AjmBatchInfo* info, uint32_t instance, void* resu
  (void)info;
  (void)instance;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -38,6 +43,7 @@ int sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint64_t flags,
  (void)sideband_input_size;
  (void)sideband_output;
  (void)sideband_output_size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -49,6 +55,7 @@ int sceAjmBatchJobDecode(AjmBatchInfo* info, uint32_t instance, const void* bits
  (void)pcm_output;
  (void)pcm_output_size;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -60,6 +67,7 @@ int sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, const void
  (void)pcm_output;
  (void)pcm_output_size;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -71,6 +79,7 @@ int sceAjmBatchJobDecodeSplit(AjmBatchInfo* info, uint32_t instance, const AjmBu
  (void)output_buffers;
  (void)output_buffers_num;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -82,6 +91,7 @@ int sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const void* pcm_
  (void)bitstream_output;
  (void)bitstream_output_size;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -90,6 +100,7 @@ int sceAjmBatchJobGetCodecInfo(AjmBatchInfo* info, uint32_t instance, void* resu
  (void)instance;
  (void)result;
  (void)result_size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -97,6 +108,7 @@ int sceAjmBatchJobGetGaplessDecode(AjmBatchInfo* info, uint32_t instance, void* 
  (void)info;
  (void)instance;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -104,6 +116,7 @@ int sceAjmBatchJobGetInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
  (void)info;
  (void)instance;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -111,6 +124,7 @@ int sceAjmBatchJobGetResampleInfo(AjmBatchInfo* info, uint32_t instance, void* r
  (void)info;
  (void)instance;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -118,6 +132,7 @@ int sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, void* result
  (void)info;
  (void)interval;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -127,6 +142,7 @@ int sceAjmBatchJobInitialize(AjmBatchInfo* info, uint32_t instance, const void* 
  (void)codec_parameters;
  (void)codec_parameters_size;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -140,6 +156,7 @@ int sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t flags, con
  (void)data_output_size;
  (void)sideband_output;
  (void)sideband_output_size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -153,6 +170,7 @@ int sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags
  (void)output_buffers_num;
  (void)sideband_output;
  (void)sideband_output_size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -162,6 +180,7 @@ int sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instance, const 
  (void)gapless_decode;
  (void)reset;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -171,6 +190,7 @@ int sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t instance, f
  (void)ratio;
  (void)flags;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -181,6 +201,7 @@ int sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t instance,
  (void)ratio_change_per_sample;
  (void)flags;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -190,6 +211,7 @@ int sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, A
  (void)priority;
  (void)error;
  (void)batch;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -198,23 +220,27 @@ int sceAjmBatchWait(uint32_t context, uint32_t batch, uint32_t timeout, AjmBatch
  (void)batch;
  (void)timeout;
  (void)error;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) {
  (void)config_data;
  (void)config_info;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAjmFinalize(uint32_t context) {
  (void)context;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAjmInitialize(int64_t reserved, uint32_t* context) {
  (void)reserved;
  (void)context;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -223,12 +249,14 @@ int sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint3
  (void)codec;
  (void)flags;
  (void)instance;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAjmInstanceDestroy(uint32_t context, uint32_t instance) {
  (void)context;
  (void)instance;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -236,12 +264,14 @@ int sceAjmMemoryRegister(uint32_t context, void* ptr, size_t pages) {
  (void)context;
  (void)ptr;
  (void)pages;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAjmMemoryUnregister(uint32_t context, void* ptr) {
  (void)context;
  (void)ptr;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -249,17 +279,20 @@ int sceAjmModuleRegister(uint32_t context, uint32_t codec, int64_t reserved) {
  (void)context;
  (void)codec;
  (void)reserved;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAjmModuleUnregister(uint32_t context, uint32_t codec) {
  (void)context;
  (void)codec;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 const char* sceAjmStrError(int error) {
  (void)error;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 

@@ -1,17 +1,20 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int sceSystemGestureAppendTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureClose(int32_t gesture_handle) {
  (void)gesture_handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -21,10 +24,12 @@ int sceSystemGestureCreateTouchRecognizer(int32_t gesture_handle, SystemGestureT
  (void)type;
  (void)rectangle;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureFinalizePrimitiveTouchRecognizer(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -32,6 +37,7 @@ int sceSystemGestureGetPrimitiveTouchEventByIndex(int32_t gesture_handle, uint32
  (void)gesture_handle;
  (void)index;
  (void)event;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -39,6 +45,7 @@ int sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(int32_t gesture_handle, 
  (void)gesture_handle;
  (void)primitiveId;
  (void)event;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -47,11 +54,13 @@ int sceSystemGestureGetPrimitiveTouchEvents(int32_t gesture_handle, SystemGestur
  (void)event_buffer;
  (void)capacity_of_buffer;
  (void)number_of_event;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureGetPrimitiveTouchEventsCount(int32_t gesture_handle) {
  (void)gesture_handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -60,6 +69,7 @@ int sceSystemGestureGetTouchEventByEventID(int32_t gesture_handle, const SystemG
  (void)recognizer;
  (void)eventId;
  (void)event;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -68,6 +78,7 @@ int sceSystemGestureGetTouchEventByIndex(int32_t gesture_handle, const SystemGes
  (void)recognizer;
  (void)index;
  (void)event;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -77,12 +88,14 @@ int sceSystemGestureGetTouchEvents(int32_t gesture_handle, const SystemGestureTo
  (void)event_buffer;
  (void)capacity_of_buffer;
  (void)number_of_event;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureGetTouchEventsCount(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -90,51 +103,60 @@ int sceSystemGestureGetTouchRecognizerInformation(int32_t gesture_handle, const 
  (void)gesture_handle;
  (void)recognizer;
  (void)information;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureInitializePrimitiveTouchRecognizer(const void* param) {
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int32_t sceSystemGestureOpen(int32_t input_type, const void* param) {
  (void)input_type;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureRemoveTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureResetPrimitiveTouchRecognizer(int32_t gesture_handle) {
  (void)gesture_handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureResetTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureUpdateAllTouchRecognizer(int32_t gesture_handle) {
  (void)gesture_handle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gesture_handle, const void* param) {
  (void)gesture_handle;
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceSystemGestureUpdateTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -142,6 +164,7 @@ int sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gesture_handle, Syste
  (void)gesture_handle;
  (void)recognizer;
  (void)rectangle;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

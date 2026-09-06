@@ -1,25 +1,30 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int sceNpAuthAbortRequest(int req_id) {
  (void)req_id;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpAuthCreateAsyncRequest(const void* param) {
  (void)param;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpAuthCreateRequest(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpAuthDeleteRequest(int req_id) {
  (void)req_id;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -28,6 +33,7 @@ int sceNpAuthGetAuthorizationCodeV3(int req_id, const void* param, void* auth_co
  (void)param;
  (void)auth_code;
  (void)issuer_id;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -35,18 +41,21 @@ int sceNpAuthGetIdTokenV3(int req_id, const void* param, void* id_token) {
  (void)req_id;
  (void)param;
  (void)id_token;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpAuthPollAsync(int req_id, int* result) {
  (void)req_id;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceNpAuthWaitAsync(int req_id, int* result) {
  (void)req_id;
  (void)result;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

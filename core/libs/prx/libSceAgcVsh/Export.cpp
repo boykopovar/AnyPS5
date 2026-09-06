@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
@@ -10,10 +11,12 @@ uint32_t* sceAgcAcbAcquireMem(CommandBuffer* buf, uint32_t gcr_cntl, const volat
  (void)base;
  (void)size_bytes;
  (void)poll_cycles;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcAcbAcquireMemGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -21,10 +24,12 @@ uint32_t* sceAgcAcbCondExec(CommandBuffer* buf, const volatile uint32_t* address
  (void)buf;
  (void)address;
  (void)num_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcAcbCondExecGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -38,6 +43,7 @@ uint32_t* sceAgcAcbCopyData(CommandBuffer* buf, uint8_t dst, uint8_t dst_cache_p
  (void)src_address_or_immediate;
  (void)item_size;
  (void)write_confirm;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -45,6 +51,7 @@ uint32_t* sceAgcAcbDispatchIndirect(CommandBuffer* buf, const volatile void* ind
  (void)buf;
  (void)indirect_args;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -59,6 +66,7 @@ uint32_t* sceAgcAcbDmaData(CommandBuffer* buf, uint8_t dst, uint8_t dst_cache_po
  (void)num_bytes;
  (void)wait_for_previous;
  (void)write_confirm;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -66,15 +74,18 @@ uint32_t* sceAgcAcbEventWrite(CommandBuffer* buf, uint8_t event_type, const vola
  (void)buf;
  (void)event_type;
  (void)address;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcAcbJumpGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t* sceAgcAcbPopMarker(CommandBuffer* buf) {
  (void)buf;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -82,12 +93,14 @@ uint32_t* sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, uint32_t colo
  (void)buf;
  (void)str;
  (void)color;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op) {
  (void)buf;
  (void)op;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -95,6 +108,7 @@ uint32_t* sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color
  (void)buf;
  (void)str;
  (void)color;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -107,6 +121,7 @@ uint32_t* sceAgcAcbWaitRegMem(CommandBuffer* buf, uint8_t size, uint8_t compare_
  (void)reference;
  (void)mask;
  (void)poll_cycles;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -119,6 +134,7 @@ uint32_t* sceAgcAcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_poli
  (void)num_dwords;
  (void)increment;
  (void)write_confirm;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -135,6 +151,7 @@ uint32_t* sceAgcCbBranch(CommandBuffer* buf, uint8_t mode, uint8_t compare_funct
  (void)cache_policy2;
  (void)buffer2;
  (void)size_in_dwords2;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -144,25 +161,30 @@ uint32_t* sceAgcCbDispatch(CommandBuffer* buf, uint32_t thread_group_x, uint32_t
  (void)thread_group_y;
  (void)thread_group_z;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcCbDispatchGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t* sceAgcCbNop_nid_postfix(CommandBuffer* buf, uint32_t size_in_dwords) {
  (void)buf;
  (void)size_in_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcCbNopGetSize(uint32_t size_in_dwords) {
  (void)size_in_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t sceAgcCbQueueEndOfPipeActionGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -179,6 +201,7 @@ uint32_t* sceAgcCbReleaseMem(CommandBuffer* buf, uint8_t action, uint16_t gcr_cn
  (void)gds_size;
  (void)interrupt;
  (void)interrupt_ctx_id;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -187,11 +210,13 @@ uint32_t* sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, uint32_t offset, 
  (void)offset;
  (void)values;
  (void)num_values;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcCbSetShRegisterRangeDirectGetSize(uint32_t num_values) {
  (void)num_values;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -199,18 +224,21 @@ uint32_t* sceAgcCbSetShRegistersDirect(CommandBuffer* buf, const volatile Shader
  (void)buf;
  (void)regs;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 int sceAgcCondExecPatchSetCommandAddress(uint32_t* cmd, const volatile uint32_t* command) {
  (void)cmd;
  (void)command;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcCondExecPatchSetEnd(uint32_t* cmd, const volatile uint32_t* buffer) {
  (void)cmd;
  (void)buffer;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -218,6 +246,7 @@ int sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const
  (void)regs;
  (void)gs;
  (void)ps;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -227,6 +256,7 @@ int sceAgcCreatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, cons
  (void)hs;
  (void)gs;
  (void)prim_type;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -234,6 +264,7 @@ int sceAgcCreateShader(Shader** dst, void* header, const volatile void* code) {
  (void)dst;
  (void)header;
  (void)code;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -245,10 +276,12 @@ uint32_t* sceAgcDcbAcquireMem(CommandBuffer* buf, uint8_t engine, uint32_t cb_db
  (void)base;
  (void)size_bytes;
  (void)poll_cycles;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbAcquireMemGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -256,21 +289,25 @@ uint32_t* sceAgcDcbCondExec(CommandBuffer* buf, const volatile uint32_t* address
  (void)buf;
  (void)address;
  (void)num_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbCondExecGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t* sceAgcDcbContextStateOp(CommandBuffer* buf, uint32_t operation) {
  (void)buf;
  (void)operation;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint64_t sceAgcDcbContextStateOpGetSize(uint32_t operation) {
  (void)operation;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -284,6 +321,7 @@ uint32_t* sceAgcDcbCopyData(CommandBuffer* buf, uint8_t dst, uint8_t dst_cache_p
  (void)src_address_or_immediate;
  (void)item_size;
  (void)write_confirm;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -291,10 +329,12 @@ uint32_t* sceAgcDcbDispatchIndirect(CommandBuffer* buf, uint32_t data_offset_in_
  (void)buf;
  (void)data_offset_in_bytes;
  (void)flags;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbDispatchIndirectGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -311,6 +351,7 @@ uint32_t* sceAgcDcbDmaData(CommandBuffer* buf, uint8_t engine, uint8_t dst, uint
  (void)wait_for_previous;
  (void)write_confirm;
  (void)block_engine;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -319,6 +360,7 @@ uint32_t* sceAgcDcbDrawIndex(CommandBuffer* buf, uint32_t index_count, const vol
  (void)index_count;
  (void)index_addr;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -326,14 +368,17 @@ uint32_t* sceAgcDcbDrawIndexAuto(CommandBuffer* buf, uint32_t index_count, uint6
  (void)buf;
  (void)index_count;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbDrawIndexAutoGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t sceAgcDcbDrawIndexGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -341,6 +386,7 @@ uint32_t* sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, uint32_t data_offset_in
  (void)buf;
  (void)data_offset_in_bytes;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -352,6 +398,7 @@ uint32_t* sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, uint32_t data_offs
  (void)count_addr;
  (void)stride_in_bytes;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -362,10 +409,12 @@ uint32_t* sceAgcDcbDrawIndexMultiInstanced(CommandBuffer* buf, uint32_t index_co
  (void)object_ids;
  (void)instance_count;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbDrawIndexMultiInstancedGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -374,10 +423,12 @@ uint32_t* sceAgcDcbDrawIndexOffset(CommandBuffer* buf, uint32_t index_offset, ui
  (void)index_offset;
  (void)index_count;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbDrawIndexOffsetGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -385,10 +436,12 @@ uint32_t* sceAgcDcbDrawIndirect(CommandBuffer* buf, uint32_t data_offset_in_byte
  (void)buf;
  (void)data_offset_in_bytes;
  (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbDrawIndirectGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -396,6 +449,7 @@ uint32_t* sceAgcDcbEventWrite(CommandBuffer* buf, uint8_t event_type, const vola
  (void)buf;
  (void)event_type;
  (void)address;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -408,6 +462,7 @@ uint32_t* sceAgcDcbGetLodStats(CommandBuffer* buf, uint8_t cache_policy, const v
  (void)force_reset;
  (void)report_and_reset;
  (void)reporting_interval_in_100k_clocks;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -417,15 +472,18 @@ uint32_t* sceAgcDcbJump(CommandBuffer* buf, uint8_t mode, uint8_t cache_policy, 
  (void)cache_policy;
  (void)target;
  (void)size_in_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbJumpGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t* sceAgcDcbPopMarker(CommandBuffer* buf) {
  (void)buf;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -433,6 +491,7 @@ uint32_t* sceAgcDcbPushMarker(CommandBuffer* buf, const char* str, uint32_t colo
  (void)buf;
  (void)str;
  (void)color;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -440,16 +499,19 @@ uint32_t* sceAgcDcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t state) {
  (void)buf;
  (void)op;
  (void)state;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbRewind(CommandBuffer* buf, uint32_t initial_state) {
  (void)buf;
  (void)initial_state;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbRewindGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -457,16 +519,19 @@ uint32_t* sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t shader_type,
  (void)buf;
  (void)shader_type;
  (void)indirect_base_addr;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbSetCxRegisterDirect(CommandBuffer* buf, ShaderRegister reg) {
  (void)buf;
  (void)reg;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbSetCxRegisterDirectGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -474,6 +539,7 @@ uint32_t* sceAgcDcbSetCxRegistersIndirect(CommandBuffer* buf, const volatile Sha
  (void)buf;
  (void)regs;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -483,18 +549,21 @@ uint32_t* sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_handle, int32_
  (void)display_buffer_index;
  (void)flip_mode;
  (void)flip_arg;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbSetIndexBuffer(CommandBuffer* buf, uint64_t index_addr) {
  (void)buf;
  (void)index_addr;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbSetIndexCount(CommandBuffer* buf, uint32_t index_count) {
  (void)buf;
  (void)index_count;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -502,6 +571,7 @@ uint32_t* sceAgcDcbSetIndexSize(CommandBuffer* buf, uint8_t index_size, uint8_t 
  (void)buf;
  (void)index_size;
  (void)cache_policy;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -509,16 +579,19 @@ uint32_t* sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color
  (void)buf;
  (void)str;
  (void)color;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbSetNumInstances(CommandBuffer* buf, uint32_t num_instances) {
  (void)buf;
  (void)num_instances;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbSetNumInstancesGetSize(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -529,12 +602,14 @@ uint32_t* sceAgcDcbSetPredication(CommandBuffer* buf, uint8_t condition, uint8_t
  (void)wait_op;
  (void)address;
  (void)count_in_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbSetShRegisterDirect(CommandBuffer* buf, ShaderRegister reg) {
  (void)buf;
  (void)reg;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -542,12 +617,14 @@ uint32_t* sceAgcDcbSetShRegistersIndirect(CommandBuffer* buf, const volatile Sha
  (void)buf;
  (void)regs;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbSetUcRegisterDirect(CommandBuffer* buf, ShaderRegister reg) {
  (void)buf;
  (void)reg;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -555,6 +632,7 @@ uint32_t* sceAgcDcbSetUcRegistersIndirect(CommandBuffer* buf, const volatile Sha
  (void)buf;
  (void)regs;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -562,6 +640,7 @@ uint32_t* sceAgcDcbSetWorkloadComplete(CommandBuffer* buf, uint32_t stream_id, u
  (void)buf;
  (void)stream_id;
  (void)workload_id;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -570,16 +649,19 @@ uint32_t* sceAgcDcbSetWorkloadsActive(CommandBuffer* buf, uint32_t stream_id, co
  (void)stream_id;
  (void)workload_ids;
  (void)workload_count;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t* sceAgcDcbStallCommandBufferParser(CommandBuffer* buf) {
  (void)buf;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbWaitOnAddressGetSize(uint32_t size) {
  (void)size;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -593,6 +675,7 @@ uint32_t* sceAgcDcbWaitRegMem(CommandBuffer* buf, uint8_t size, uint8_t compare_
  (void)reference;
  (void)mask;
  (void)poll_cycles;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -600,6 +683,7 @@ uint32_t* sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint32_t video_
  (void)buf;
  (void)video_out_handle;
  (void)display_buffer_index;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
@@ -612,23 +696,27 @@ uint32_t* sceAgcDcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_poli
  (void)num_dwords;
  (void)increment;
  (void)write_confirm;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 uint32_t sceAgcDcbWriteDataGetSize(uint32_t num_dwords) {
  (void)num_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcDmaDataPatchSetDstAddressOrOffset(uint32_t* cmd, uint64_t dst_address_or_offset) {
  (void)cmd;
  (void)dst_address_or_offset;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(uint32_t* cmd, uint64_t src_address_or_offset_or_immediate) {
  (void)cmd;
  (void)src_address_or_offset_or_immediate;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -636,27 +724,32 @@ int sceAgcGetDataPacketPayloadAddress(uint32_t** addr, uint32_t* cmd, int type) 
  (void)addr;
  (void)cmd;
  (void)type;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 uint32_t sceAgcGetPacketSize(uint32_t* packet) {
  (void)packet;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 void* sceAgcGetRegisterDefaults2(uint32_t ver) {
  (void)ver;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 void* sceAgcGetRegisterDefaults2Internal(uint32_t ver) {
  (void)ver;
+ NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
 int sceAgcInit_nid_postfix(uint32_t* state, uint32_t ver) {
  (void)state;
  (void)ver;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -664,12 +757,14 @@ int sceAgcJumpPatchSetTarget(uint32_t* cmd, const volatile uint32_t* target, uin
  (void)cmd;
  (void)target;
  (void)size_in_dwords;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcQueueEndOfPipeActionPatchAddress(uint32_t* cmd, const volatile Label* address) {
  (void)cmd;
  (void)address;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -678,36 +773,42 @@ int sceAgcQueueEndOfPipeActionPatchData(uint32_t* cmd, uint32_t context_id, uint
  (void)context_id;
  (void)data_sel;
  (void)data;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcRewindPatchSetRewindState(uint32_t* cmd, uint8_t state) {
  (void)cmd;
  (void)state;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetCxRegIndirectPatchAddRegisters(uint32_t* cmd, uint32_t num_regs) {
  (void)cmd;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetCxRegIndirectPatchSetAddress(uint32_t* cmd, const volatile ShaderRegister* regs) {
  (void)cmd;
  (void)regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetCxRegIndirectPatchSetNumRegisters(uint32_t* cmd, uint32_t num_regs) {
  (void)cmd;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetPacketPredication(uint32_t* packet, uint32_t predication) {
  (void)packet;
  (void)predication;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -715,46 +816,54 @@ int sceAgcSetRangePredication(uint32_t* start, const volatile uint32_t* end, uin
  (void)start;
  (void)end;
  (void)predication;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetShRegIndirectPatchAddRegisters(uint32_t* cmd, uint32_t num_regs) {
  (void)cmd;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetShRegIndirectPatchSetAddress(uint32_t* cmd, const volatile ShaderRegister* regs) {
  (void)cmd;
  (void)regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetShRegIndirectPatchSetNumRegisters(uint32_t* cmd, uint32_t num_regs) {
  (void)cmd;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetUcRegIndirectPatchAddRegisters(uint32_t* cmd, uint32_t num_regs) {
  (void)cmd;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetUcRegIndirectPatchSetAddress(uint32_t* cmd, const volatile ShaderRegister* regs) {
  (void)cmd;
  (void)regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSetUcRegIndirectPatchSetNumRegisters(uint32_t* cmd, uint32_t num_regs) {
  (void)cmd;
  (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcSuspendPoint(void) {
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -762,18 +871,21 @@ int sceAgcUpdatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, uint
  (void)cx_regs;
  (void)uc_regs;
  (void)prim_type;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcWaitRegMemPatchAddress(uint32_t* cmd, const volatile void* address) {
  (void)cmd;
  (void)address;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int sceAgcWaitRegMemPatchReference(uint32_t* cmd, uint64_t reference) {
  (void)cmd;
  (void)reference;
+ NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

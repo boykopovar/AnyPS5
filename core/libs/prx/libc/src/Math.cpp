@@ -2,14 +2,14 @@
 
 extern "C" {
 
-double cbrt_nid_postfix(double x) { (void)x; return 0.0; }
-double asin_nid_postfix(double x) { (void)x; return 0.0; }
-double acos_nid_postfix(double x) { (void)x; return 0.0; }
-double exp_nid_postfix(double x) { (void)x; return 0.0; }
-double atan_nid_postfix(double x) { (void)x; return 0.0; }
-double tan_nid_postfix(double x) { (void)x; return 0.0; }
-double log2_nid_postfix(double x) { (void)x; return 0.0; }
-double log_nid_postfix(double x) { (void)x; return 0.0; }
+double cbrt_nid_postfix(double x) { return std::cbrt(x); }
+double asin_nid_postfix(double x) { return std::asin(x); }
+double acos_nid_postfix(double x) { return std::acos(x); }
+double exp_nid_postfix(double x) { return std::exp(x); }
+double atan_nid_postfix(double x) { return std::atan(x); }
+double tan_nid_postfix(double x) { return std::tan(x); }
+double log2_nid_postfix(double x) { return std::log2(x); }
+double log_nid_postfix(double x) { return std::log(x); }
 
 float sinf_nid_postfix(float x) { return std::sin(x); }
 float cosf_nid_postfix(float x) { return std::cos(x); }
