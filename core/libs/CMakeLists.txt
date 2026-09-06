@@ -40,9 +40,16 @@ foreach(LIB_DIR ${LIBS_DIRS})
     if(IS_DIRECTORY ${LIB_DIR})
         get_filename_component(LIB_NAME ${LIB_DIR} NAME)
 
-        add_library(${LIB_NAME} SHARED EXCLUDE_FROM_ALL ${LIB_DIR}/Export.cpp)
-        target_include_directories(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        if(EXISTS ${LIB_DIR}/CMakeLists.txt)
+            set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+            add_subdirectory(${LIB_DIR} ${CMAKE_CURRENT_BINARY_DIR}/prx/${LIB_NAME})
+        else()
+            add_library(${LIB_NAME} SHARED EXCLUDE_FROM_ALL ${LIB_DIR}/Export.cpp)
+            target_include_directories(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        endif()
+
         target_link_libraries(${LIB_NAME} PRIVATE libc)
+
         set_target_properties(${LIB_NAME} PROPERTIES
                 PREFIX ""
                 SUFFIX .prx

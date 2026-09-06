@@ -1,7 +1,9 @@
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "DirectMemory.hpp"
 
 extern "C" {
 
@@ -673,32 +675,26 @@ int sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec) {
 }
 
 int sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
- (void)search_start;
- (void)search_end;
- (void)len;
- (void)alignment;
  (void)memory_type;
- (void)phys_addr_out;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (search_start < 0 || search_end <= search_start || len == 0
+  || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
+  || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
+  return SCE_KERNEL_ERROR_EINVAL;
+ return DirectMemoryAlloc(search_start, search_end, len, alignment, phys_addr_out);
 }
 
 int sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
- (void)len;
- (void)alignment;
- (void)memory_type;
- (void)phys_addr_out;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DIRECT_MEMORY_SIZE), len, alignment, memory_type, phys_addr_out);
 }
 
 int sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
- (void)search_start;
- (void)search_end;
- (void)alignment;
- (void)phys_addr_out;
- (void)size_out;
- NotImplemented_nid_no_patch(__func__);
+ if (!phys_addr_out || !size_out) return SCE_KERNEL_ERROR_EINVAL;
+ int64_t tmpPhys = 0;
+ int ret = DirectMemoryAlloc(search_start, search_end, PS5_PAGE_SIZE, alignment, &tmpPhys);
+ if (ret != 0) { *phys_addr_out = 0; *size_out = 0; return ret; }
+ DirectMemoryFree(tmpPhys, PS5_PAGE_SIZE);
+ *phys_addr_out = tmpPhys;
+ *size_out = static_cast<size_t>(search_end) - static_cast<size_t>(tmpPhys);
  return 0;
 }
 
@@ -886,11 +882,14 @@ int sceKernelDeleteUserEvent(KernelEqueue eq, int id) {
 }
 
 int sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t info_size) {
- (void)offset;
  (void)flags;
- (void)info;
- (void)info_size;
- NotImplemented_nid_no_patch(__func__);
+ if (!info || offset < 0) return SCE_KERNEL_ERROR_EINVAL;
+ struct DirectMemoryQueryInfo { int64_t start; int64_t end; int memory_type; };
+ if (info_size < sizeof(DirectMemoryQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
+ auto* q = static_cast<DirectMemoryQueryInfo*>(info);
+ q->start = offset & ~static_cast<int64_t>(PS5_PAGE_SIZE - 1);
+ q->end = q->start + PS5_PAGE_SIZE;
+ q->memory_type = 3;
  return 0;
 }
 
@@ -929,8 +928,7 @@ int sceKernelGetdents(int fd, char* buf, int nbytes) {
 }
 
 size_t sceKernelGetDirectMemorySize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return 13824ULL * 1024 * 1024;
 }
 
 int sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
@@ -1109,57 +1107,27 @@ int64_t sceKernelLseek(int d, int64_t offset, int whence) {
 }
 
 int sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
- (void)addr;
- (void)len;
- (void)prot;
- (void)flags;
- (void)direct_memory_start;
  (void)alignment;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
 int sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
- (void)addr;
- (void)len;
  (void)type;
- (void)prot;
- (void)flags;
- (void)direct_memory_start;
- (void)alignment;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
 int sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
- (void)addr_in_out;
- (void)len;
- (void)prot;
- (void)flags;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return DoMapAnon(addr_in_out, len, prot, flags);
 }
 
 int sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
- (void)addr;
- (void)len;
- (void)prot;
- (void)flags;
- (void)direct_memory_start;
- (void)alignment;
  (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
 int32_t sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
- (void)addr_in_out;
- (void)len;
- (void)prot;
- (void)flags;
  (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return sceKernelMapFlexibleMemory(addr_in_out, len, prot, flags);
 }
 
 int sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries, int num_entries, int* num_entries_out, int flags) {
@@ -1224,11 +1192,7 @@ int sceKernelMkdir(const char* path, uint16_t mode) {
 }
 
 int sceKernelMprotect(const void* addr, size_t len, int prot) {
- (void)addr;
- (void)len;
- (void)prot;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return DoMprotect(addr, len, prot);
 }
 
 int sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
@@ -1241,10 +1205,7 @@ int sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
 }
 
 int sceKernelMunmap(uint64_t vaddr, size_t len) {
- (void)vaddr;
- (void)len;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return DoMunmap(reinterpret_cast<void*>(vaddr), len);
 }
 
 int sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
@@ -1326,9 +1287,8 @@ uint64_t sceKernelReadTsc(void) {
 }
 
 int sceKernelReleaseDirectMemory(int64_t start, size_t len) {
- (void)start;
- (void)len;
- NotImplemented_nid_no_patch(__func__);
+ if (start < 0 || len == 0) return SCE_KERNEL_ERROR_EINVAL;
+ DirectMemoryFree(start, len);
  return 0;
 }
 
@@ -1346,12 +1306,8 @@ int sceKernelRename(const char* from, const char* to) {
 }
 
 int sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment) {
- (void)addr;
- (void)len;
  (void)flags;
- (void)alignment;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return DoReserveVirtual(addr, len, alignment);
 }
 
 int sceKernelRmdir(const char* path) {
@@ -1482,11 +1438,14 @@ int sceKernelUuidCreate(uint32_t* uuid) {
 }
 
 int sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
- (void)addr;
  (void)flags;
- (void)info;
- (void)info_size;
- NotImplemented_nid_no_patch(__func__);
+ if (!info || info_size < sizeof(VirtualQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
+ memset(info, 0, sizeof(VirtualQueryInfo));
+ uintptr_t ptr = reinterpret_cast<uintptr_t>(addr);
+ info->start = ptr & ~static_cast<uintptr_t>(PS5_PAGE_SIZE - 1);
+ info->end = info->start + PS5_PAGE_SIZE;
+ info->is_direct = 1;
+ info->protection = 3;
  return 0;
 }
 
