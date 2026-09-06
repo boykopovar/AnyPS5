@@ -26,9 +26,9 @@ int main(const int argc, char* argv[]) {
     bool skipSyscallCheck = false;
     bool toIntel = false;
     bool skipUnusedNidFilter = false;
+    bool writeRegistry = false;
     std::string inputPath;
-    std::string outputElfPath;
-    std::optional<std::string> registryPath;
+    std::string outputPath;
     std::string runPath = "$ORIGIN/libs";
 
     for (int i = 1; i < argc; ++i) {
@@ -39,6 +39,8 @@ int main(const int argc, char* argv[]) {
             toIntel = true;
         } else if (arg == "--skip-unused-nid-filter") {
             skipUnusedNidFilter = true;
+        } else if (arg == "--registry") {
+            writeRegistry = true;
         } else if (arg == "--rpath") {
             if (i + 1 >= argc) {
                 std::cerr << "FAIL: --rpath requires a value\n";
@@ -47,24 +49,19 @@ int main(const int argc, char* argv[]) {
             runPath = argv[++i];
         } else if (inputPath.empty()) {
             inputPath = arg;
-        } else if (outputElfPath.empty()) {
-            outputElfPath = arg;
-        } else if (!registryPath.has_value()) {
-            registryPath = arg;
+        } else if (outputPath.empty()) {
+            outputPath = arg;
+        } else {
+            std::cerr << "FAIL: unexpected argument: " << arg << "\n";
+            return 1;
         }
     }
 
-    if (inputPath.empty() || outputElfPath.empty()) {
-        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] [--skip-unused-nid-filter] [--rpath <path>] <input.elf> <output.elf> [output_registry.json]\n";
+    if (inputPath.empty() || outputPath.empty()) {
+        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] [--skip-unused-nid-filter] [--registry] [--rpath <path>] <input.elf> <output.elf>\n"
+             "Example: relinker input.elf output.elf\n";
         return 1;
     }
-
-    const std::filesystem::path outputElfFsPath(outputElfPath);
-    const std::filesystem::path outputDir = outputElfFsPath.parent_path() / (outputElfFsPath.stem().string() + "_out");
-    std::filesystem::create_directories(outputDir);
-    outputElfPath = (outputDir / outputElfFsPath.filename()).string();
-    if (registryPath.has_value())
-        registryPath = (outputDir / std::filesystem::path(*registryPath).filename()).string();
 
     try {
         Io::FileReader fileReader;
@@ -76,7 +73,7 @@ int main(const int argc, char* argv[]) {
             const Relinker::ElfReader elfReader(sourceBytes);
             const auto converter = Codegen::MakeAmd64OnlyConverter();
             auto result = converter->Convert(std::move(sourceBytes), elfReader.ReadCodeSegments());
-            fileWriter.Write(outputElfPath, std::move(result.Bytes));
+            fileWriter.Write(outputPath, std::move(result.Bytes));
             std::cout << "OK: " << result.ReplacedCount << " instructions replaced\n";
             return 0;
         }
@@ -99,9 +96,11 @@ int main(const int argc, char* argv[]) {
 
         auto result = pipeline->Relink(sourceBytes);
 
-        if (registryPath.has_value()) {
+        if (writeRegistry) {
+            const std::filesystem::path outFsPath(outputPath);
+            const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
             auto callRegistryWriter = std::make_shared<Relinker::CallRegistryWriter>();
-            fileWriter.Write(*registryPath, callRegistryWriter->WriteCallRegistry(result.RegistryEntries));
+            fileWriter.Write(registryPath, callRegistryWriter->WriteCallRegistry(result.RegistryEntries));
         }
 
         auto byteWriter = std::make_shared<Io::ByteWriter>();
@@ -115,7 +114,7 @@ int main(const int argc, char* argv[]) {
             byteWriter
         );
         auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath);
-        fileWriter.Write(outputElfPath, patchedElf);
+        fileWriter.Write(outputPath, patchedElf);
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();
