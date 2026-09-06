@@ -23,14 +23,15 @@ std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
     _appendBytes(s, kStubOpMovQwordPtrRsp8Rbx, sizeof(kStubOpMovQwordPtrRsp8Rbx));
     _appendBytes(s, kStubOpMovRdiRsp, sizeof(kStubOpMovRdiRsp));
     _appendBytes(s, kStubOpXorRsiRsi, sizeof(kStubOpXorRsiRsi));
-    const std::uint64_t jmpInsnVaddr = stubVaddr + s.size();
-    const std::uint64_t jmpNextVaddr = jmpInsnVaddr + kStubJmpInstructionSize;
-    const auto rel32 = static_cast<std::int32_t>(realEntryVaddr - jmpNextVaddr);
-    s.push_back(kStubOpJmpRel32);
+    const std::uint64_t callInsnVaddr = stubVaddr + s.size();
+    const std::uint64_t callNextVaddr = callInsnVaddr + kStubCallInstructionSize;
+    const auto rel32 = static_cast<std::int32_t>(realEntryVaddr - callNextVaddr);
+    s.push_back(kStubOpCallRel32);
     s.push_back(static_cast<std::uint8_t>(rel32 & 0xff));
     s.push_back(static_cast<std::uint8_t>((rel32 >> 8) & 0xff));
     s.push_back(static_cast<std::uint8_t>((rel32 >> 16) & 0xff));
     s.push_back(static_cast<std::uint8_t>((rel32 >> 24) & 0xff));
+    _appendBytes(s, kStubOpUd2, sizeof(kStubOpUd2));
     return s;
 }
 

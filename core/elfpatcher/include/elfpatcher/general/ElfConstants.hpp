@@ -121,8 +121,9 @@ inline constexpr std::uint8_t kStubOpMovDwordPtrRsp[] = {0x89, 0x04, 0x24};
 inline constexpr std::uint8_t kStubOpMovQwordPtrRsp8Rbx[] = {0x48, 0x89, 0x5c, 0x24, 0x08};
 inline constexpr std::uint8_t kStubOpMovRdiRsp[] = {0x48, 0x89, 0xe7};
 inline constexpr std::uint8_t kStubOpXorRsiRsi[] = {0x48, 0x31, 0xf6};
-inline constexpr std::uint8_t kStubOpJmpRel32 = 0xe9;
-inline constexpr std::size_t kStubJmpInstructionSize = 5;
+inline constexpr std::uint8_t kStubOpCallRel32 = 0xe8;
+inline constexpr std::size_t kStubCallInstructionSize = 5;
+inline constexpr std::uint8_t kStubOpUd2[] = {0x0f, 0x0b};
 
 }
 
