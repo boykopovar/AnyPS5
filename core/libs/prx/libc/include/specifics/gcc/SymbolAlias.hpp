@@ -4,6 +4,6 @@
 #define GCC_LOCAL_ALIAS(alias, target) \
     asm(".local " #alias "\n.set " #alias "," #target "\n")
 
-#define GCC_HIDDEN_FN __attribute__((visibility("hidden")))
+#define GCC_HIDDEN_FN
 
 #endif

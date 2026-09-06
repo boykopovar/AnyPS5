@@ -34,8 +34,8 @@ struct Other { virtual ~Other() = default; int padding = 9; };
 struct Derived : Other, Base {};
 struct Virtual : virtual Base {};
 
-__attribute__((noinline)) void ThrowInt() { Guard guard; throw 42; }
-__attribute__((noinline)) void ThrowClass() { Guard guard; throw Derived(); }
+[[gnu::noinline]] void ThrowInt() { Guard guard; throw 42; }
+[[gnu::noinline]] void ThrowClass() { Guard guard; throw Derived(); }
 
 struct Left : Base {};
 struct Right : Base {};
@@ -47,8 +47,8 @@ struct PrivateDerived : private Derived {
     Base* source() { return this; }
     Derived* target() { return this; }
 };
-__attribute__((noinline)) Derived* ToDerived(Base* p) { return dynamic_cast<Derived*>(p); }
-__attribute__((noinline)) Repeated* ToRepeated(Base* p) { return dynamic_cast<Repeated*>(p); }
+[[gnu::noinline]] Derived* ToDerived(Base* p) { return dynamic_cast<Derived*>(p); }
+[[gnu::noinline]] Repeated* ToRepeated(Base* p) { return dynamic_cast<Repeated*>(p); }
 void CheckRtti() {
     Repeated repeated;
     Base* left = static_cast<Left*>(&repeated);
@@ -85,7 +85,7 @@ void CheckForeign() {
 }
 
 int staticAttempts = 0;
-__attribute__((noinline)) int StaticValue() {
+[[gnu::noinline]] int StaticValue() {
     static int value = [] { if (++staticAttempts == 1) throw 91; return 37; }();
     return value;
 }
@@ -135,8 +135,8 @@ void CheckThreads() {
     for (auto& thread : threads) assert(pthread_create(&thread, nullptr, ThreadTest, nullptr) == 0);
     for (auto& thread : threads) assert(pthread_join(thread, nullptr) == 0);
 }
-__attribute__((noinline)) void UncaughtThrow() { throw 19; }
-__attribute__((noinline)) void NoexceptThrow() noexcept { UncaughtThrow(); }
+[[gnu::noinline]] void UncaughtThrow() { throw 19; }
+[[gnu::noinline]] void NoexceptThrow() noexcept { UncaughtThrow(); }
 void CheckTerminate(void (*function)()) {
     pid_t child = fork();
     assert(child >= 0);
@@ -150,7 +150,7 @@ void CheckTerminate(void (*function)()) {
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 61);
 }
 struct ForcedGuard { ~ForcedGuard() { ++destroyed; } };
-__attribute__((noinline)) void ForceUnwind() {
+[[gnu::noinline]] void ForceUnwind() {
     ForcedGuard guard;
     auto* exception = new _Unwind_Exception {};
     _Unwind_ForcedUnwind_nid_postfix(exception,

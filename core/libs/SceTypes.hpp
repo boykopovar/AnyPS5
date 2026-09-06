@@ -5,7 +5,13 @@
 #include <cstdint>
 #include <cstdio>
 
+#if defined(__GNUC__) || defined(__clang__)
 typedef float __m128 __attribute__((__vector_size__(16), __aligned__(16)));
+#elif defined(_MSC_VER)
+#include <xmmintrin.h>
+#else
+struct alignas(16) __m128 { float v[4]; };
+#endif
 
 using Bool = std::uint8_t;
 

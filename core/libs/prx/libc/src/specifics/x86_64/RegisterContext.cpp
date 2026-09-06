@@ -4,8 +4,8 @@
 
 #include <cstdint>
 
-extern "C" void LibcCaptureRegisters(std::uintptr_t*) __attribute__((visibility("hidden")));
-extern "C" [[noreturn]] void LibcRestoreRegisters(const std::uintptr_t*) __attribute__((visibility("hidden")));
+extern "C" void LibcCaptureRegisters(std::uintptr_t*);
+extern "C" [[noreturn]] void LibcRestoreRegisters(const std::uintptr_t*);
 
 asm(
 ".text\n"
