@@ -490,7 +490,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (symName.empty()) continue;
 
         std::string newValue = symName;
-        if (isPatchable) {
+        if (isPatchable && !IsNidNoPatch(symName)) {
             const std::string stripped = StripNidPostfix(symName);
             const bool hasPostfix = stripped != symName;
             if (!hasPostfix && seenRawNames.count(symName + "_nid_postfix"))
