@@ -485,11 +485,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
         if (sym.st_name == 0u) continue;
 
-        const std::uint8_t binding = sym.st_info >> 4u;
-        const bool isPatchable = binding != kStbLocal && sym.st_shndx != kShnUndef;
-
         const std::string symName = ReadCStr(origDynStr, sym.st_name);
         if (symName.empty()) continue;
+
+        const std::uint8_t binding = sym.st_info >> 4u;
+        const bool isPatchable = binding != kStbLocal && sym.st_shndx != kShnUndef && !IsNidNoPatch(symName);
 
         std::string newValue = symName;
         if (isPatchable) {
