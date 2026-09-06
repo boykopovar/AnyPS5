@@ -463,7 +463,6 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         std::string newValue;
     };
 
-    std::unordered_set<std::string> exportedBaseNames;
     std::unordered_set<std::string> seenRawNames;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
@@ -475,7 +474,6 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (symName.empty()) continue;
         if (!seenRawNames.insert(symName).second)
             throw std::runtime_error("duplicate exported symbol \"" + symName + "\" in library \"" + libraryName + "\"");
-        exportedBaseNames.insert(StripNidPostfix(symName));
     }
 
     std::vector<SymbolNameUse> uses;
@@ -485,17 +483,17 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
         if (sym.st_name == 0u) continue;
 
+        const std::uint8_t binding = sym.st_info >> 4u;
+        const bool isPatchable = binding != kStbLocal && sym.st_shndx != kShnUndef;
+
         const std::string symName = ReadCStr(origDynStr, sym.st_name);
         if (symName.empty()) continue;
-
-        const std::uint8_t binding = sym.st_info >> 4u;
-        const bool isPatchable = binding != kStbLocal && sym.st_shndx != kShnUndef && !IsNidNoPatch(symName);
 
         std::string newValue = symName;
         if (isPatchable) {
             const std::string stripped = StripNidPostfix(symName);
             const bool hasPostfix = stripped != symName;
-            if (!hasPostfix && exportedBaseNames.count(symName))
+            if (!hasPostfix && seenRawNames.count(symName + "_nid_postfix"))
                 newValue = symName;
             else
                 newValue = ComputeNid(stripped, libraryName);
