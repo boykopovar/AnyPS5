@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include "SceTypes.hpp"
-#include "VarArgsAbi.hpp"
+#include "prx/libc/include/VarArgsAbi.hpp"
 
 extern "C" {
 

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_UNWIND_HPP
+#define CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_UNWIND_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -98,3 +99,5 @@ _Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception*);
 _Unwind_Reason_Code _Unwind_Resume_or_Rethrow_nid_postfix(_Unwind_Exception*);
 void _Unwind_DeleteException_nid_postfix(_Unwind_Exception*);
 }
+
+#endif

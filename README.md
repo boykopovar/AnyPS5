@@ -4,7 +4,7 @@ Converter for native execution of PlayStation 5 ELF binaries on Linux through bi
 
 ## Status
 
-Loader startup works: execution reaches `_start` and runs normally up to the first call into an external library function (from test `.prx` stubs).
+Execution reaches `_start`, stack unwinding and exception handling tables are built - an unhandled exception from the `memset` implementation (`libc memset not implemented`) is printed to stderr and terminates the process.
 
 ## Disclaimer
 

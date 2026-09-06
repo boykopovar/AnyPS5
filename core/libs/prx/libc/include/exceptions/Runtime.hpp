@@ -1,4 +1,6 @@
-#pragma once
+#ifndef CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
+#define CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
+
 #include "Unwind.hpp"
 #include <atomic>
 #include <typeinfo>
@@ -53,3 +55,5 @@ void __cxa_free_exception_nid_postfix(void*);
 void* __cxa_begin_catch_nid_postfix(void*);
 void __cxa_end_catch_nid_postfix();
 }
+
+#endif

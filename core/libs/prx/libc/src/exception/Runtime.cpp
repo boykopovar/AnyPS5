@@ -1,8 +1,35 @@
-#include "Runtime.hpp"
+#include "prx/libc/include/exceptions/Runtime.hpp"
+#include <cstdio>
 #include <limits>
 
 namespace LibcException {
-inline std::atomic<void(*)()> terminateHandler {std::abort};
+
+[[noreturn]] static void DefaultTerminate() {
+    if (globals.caught && Native(globals.caught->unwind.exception_class)) {
+        Header* primary = Primary(globals.caught);
+        const char* typeName = primary->type ? primary->type->name() : nullptr;
+        const char* what = nullptr;
+        if (primary->adjusted) {
+            struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
+            const void* vtable = *static_cast<const void* const*>(primary->adjusted);
+            auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
+            what = layout->whatFn(primary->adjusted);
+        }
+        int status = 0;
+        char* demangled = abi::__cxa_demangle(typeName, nullptr, nullptr, &status);
+        const char* displayName = (status == 0 && demangled) ? demangled : typeName;
+        if (what)
+            std::fprintf(stderr, "terminate called after throwing an instance of '%s'\n  what():  %s\n", displayName, what);
+        else
+            std::fprintf(stderr, "terminate called after throwing an instance of '%s'\n", displayName);
+        std::free(demangled);
+    } else {
+        std::fprintf(stderr, "terminate called without an active exception\n");
+    }
+    std::abort();
+}
+
+inline std::atomic<void(*)()> terminateHandler {DefaultTerminate};
 [[noreturn]] void InvokeTerminate(void (*handler)()) {
     try { if (handler) handler(); } catch (...) {}
     std::abort();
