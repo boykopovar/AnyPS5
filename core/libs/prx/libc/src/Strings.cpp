@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <cwchar>
 #include <stdexcept>
 
@@ -115,4 +116,36 @@ wchar_t* wmemmove_nid_postfix(wchar_t* dest, const wchar_t* src, size_t n) {
 
 }
 
-#include "prx/libc/src/specifics/linux/PosixStrings.cpp"
+
+extern "C" {
+
+int strcasecmp_nid_postfix(const char* s1, const char* s2) {
+    while (*s1 && *s2) {
+        unsigned char a = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(*s1)));
+        unsigned char b = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(*s2)));
+        if (a != b) return a - b;
+        ++s1; ++s2;
+    }
+    return static_cast<unsigned char>(*s1) - static_cast<unsigned char>(*s2);
+}
+
+int strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) {
+    while (n && *s1 && *s2) {
+        unsigned char a = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(*s1)));
+        unsigned char b = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(*s2)));
+        if (a != b) return a - b;
+        ++s1; ++s2; --n;
+    }
+    if (!n) return 0;
+    return static_cast<unsigned char>(*s1) - static_cast<unsigned char>(*s2);
+}
+
+char* strdup_nid_postfix(const char* s) {
+    std::size_t len = std::strlen(s) + 1;
+    char* copy = static_cast<char*>(std::malloc(len));
+    if (!copy) return nullptr;
+    std::memcpy(copy, s, len);
+    return copy;
+}
+
+}
