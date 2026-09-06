@@ -4,12 +4,13 @@
 #include <cstdarg>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libc/include/specifics/x86_64/SimdTypes.hpp"
 
 namespace LibcDetail {
 
 struct RegSaveArea {
     std::uint64_t gp[6];
-    __m128 fp[8];
+    X86_64::Xmm fp[8];
 };
 
 struct VaListLayout {
@@ -23,8 +24,8 @@ inline void FillRegSaveArea(
     RegSaveArea& regs,
     std::uint64_t gp0, std::uint64_t gp1, std::uint64_t gp2,
     std::uint64_t gp3, std::uint64_t gp4, std::uint64_t gp5,
-    __m128 fp0, __m128 fp1, __m128 fp2, __m128 fp3,
-    __m128 fp4, __m128 fp5, __m128 fp6, __m128 fp7
+    X86_64::Xmm fp0, X86_64::Xmm fp1, X86_64::Xmm fp2, X86_64::Xmm fp3,
+    X86_64::Xmm fp4, X86_64::Xmm fp5, X86_64::Xmm fp6, X86_64::Xmm fp7
 ) {
     regs.gp[0] = gp0;
     regs.gp[1] = gp1;

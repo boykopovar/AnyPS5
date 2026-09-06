@@ -3,7 +3,6 @@
 #include <cstdlib>
 #include <cwchar>
 #include <stdexcept>
-#include <strings.h>
 
 extern "C" {
 
@@ -36,14 +35,6 @@ int strncmp_nid_postfix(const char* s1, const char* s2, size_t n) {
     return std::strncmp(s1, s2, n);
 }
 
-int strcasecmp_nid_postfix(const char* s1, const char* s2) {
-    return ::strcasecmp(s1, s2);
-}
-
-int strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) {
-    return ::strncasecmp(s1, s2, n);
-}
-
 size_t strlen_nid_postfix(const char* s) {
     return std::strlen(s);
 }
@@ -70,10 +61,6 @@ char* strrchr_nid_postfix(const char* s, int c) {
 
 char* strstr_nid_postfix(const char* haystack, const char* needle) {
     return std::strstr(const_cast<char*>(haystack), needle);
-}
-
-char* strdup_nid_postfix(const char* s) {
-    return ::strdup(s);
 }
 
 size_t strlcpy_nid_postfix(char* dest, const char* src, size_t size) {
@@ -127,3 +114,5 @@ wchar_t* wmemmove_nid_postfix(wchar_t* dest, const wchar_t* src, size_t n) {
 }
 
 }
+
+#include "prx/libc/src/specifics/linux/PosixStrings.cpp"

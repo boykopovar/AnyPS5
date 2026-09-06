@@ -2,6 +2,8 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 
+#include "src/specifics/gcc/StackGuard.cpp"
+#include "src/specifics/linux/DlIteratePhdr.cpp"
 #include "src/Strings.cpp"
 #include "src/Math.cpp"
 #include "src/Time.cpp"

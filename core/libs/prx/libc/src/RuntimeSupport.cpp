@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 #include <utility>
+#include "prx/libc/include/specifics/gcc/AtomicOps.hpp"
 
 namespace {
 
@@ -41,12 +42,12 @@ int __cxa_atexit_nid_postfix(void (*func)(void*), void* arg, void* dsoHandle) {
 
 unsigned int _Atomic_fetch_add_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
     (void)memoryOrder;
-    return __atomic_fetch_add(target, value, __ATOMIC_SEQ_CST);
+    return GccAtomicFetchAdd(target, value);
 }
 
 unsigned int _Atomic_fetch_sub_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
     (void)memoryOrder;
-    return __atomic_fetch_sub(target, value, __ATOMIC_SEQ_CST);
+    return GccAtomicFetchSub(target, value);
 }
 
 unsigned long _Stoul_nid_postfix(const char* str, char** endptr, int base) {

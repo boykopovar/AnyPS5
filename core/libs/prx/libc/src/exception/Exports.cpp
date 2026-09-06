@@ -5,18 +5,18 @@
 #include "GuardSupport.cpp"
 #include "Personality.cpp"
 
-extern "C" [[noreturn]] __attribute__((visibility("hidden"))) void LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
+#include "prx/libc/include/specifics/gcc/SymbolAlias.hpp"
 
-asm(
-".local _ZSt21__glibcxx_assert_failPKciS0_S0_\n.set _ZSt21__glibcxx_assert_failPKciS0_S0_,LibcRuntimeAssertion\n"
-".local __cxa_allocate_exception\n.set __cxa_allocate_exception,__cxa_allocate_exception_nid_postfix\n"
-".local __cxa_free_exception\n.set __cxa_free_exception,__cxa_free_exception_nid_postfix\n"
-".local __cxa_throw\n.set __cxa_throw,__cxa_throw_nid_postfix\n"
-".local __cxa_begin_catch\n.set __cxa_begin_catch,__cxa_begin_catch_nid_postfix\n"
-".local __cxa_end_catch\n.set __cxa_end_catch,__cxa_end_catch_nid_postfix\n"
-".local __cxa_rethrow\n.set __cxa_rethrow,__cxa_rethrow_nid_postfix\n"
-".local __gxx_personality_v0\n.set __gxx_personality_v0,__gxx_personality_v0_nid_postfix\n"
-".local _Unwind_Resume\n.set _Unwind_Resume,_Unwind_Resume_nid_postfix\n"
-".local _ZSt9terminatev\n.set _ZSt9terminatev,_ZSt9terminatev_nid_postfix\n"
-".local __cxa_call_terminate\n.set __cxa_call_terminate,__cxa_call_terminate_nid_postfix\n"
-);
+extern "C" [[noreturn]] GCC_HIDDEN_FN void LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
+
+GCC_LOCAL_ALIAS(_ZSt21__glibcxx_assert_failPKciS0_S0_, LibcRuntimeAssertion);
+GCC_LOCAL_ALIAS(__cxa_allocate_exception, __cxa_allocate_exception_nid_postfix);
+GCC_LOCAL_ALIAS(__cxa_free_exception, __cxa_free_exception_nid_postfix);
+GCC_LOCAL_ALIAS(__cxa_throw, __cxa_throw_nid_postfix);
+GCC_LOCAL_ALIAS(__cxa_begin_catch, __cxa_begin_catch_nid_postfix);
+GCC_LOCAL_ALIAS(__cxa_end_catch, __cxa_end_catch_nid_postfix);
+GCC_LOCAL_ALIAS(__cxa_rethrow, __cxa_rethrow_nid_postfix);
+GCC_LOCAL_ALIAS(__gxx_personality_v0, __gxx_personality_v0_nid_postfix);
+GCC_LOCAL_ALIAS(_Unwind_Resume, _Unwind_Resume_nid_postfix);
+GCC_LOCAL_ALIAS(_ZSt9terminatev, _ZSt9terminatev_nid_postfix);
+GCC_LOCAL_ALIAS(__cxa_call_terminate, __cxa_call_terminate_nid_postfix);

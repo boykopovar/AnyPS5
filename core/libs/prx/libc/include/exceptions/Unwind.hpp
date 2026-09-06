@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <unwind.h>
+#include "prx/libc/include/specifics/itanium/UnwindAbi.hpp"
 
 struct _Unwind_Context {
     std::uintptr_t registers[17] {};

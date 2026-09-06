@@ -1,10 +1,10 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
 
-#include "Unwind.hpp"
+#include "prx/libc/include/exceptions/Unwind.hpp"
 #include <atomic>
 #include <typeinfo>
-#include <cxxabi.h>
+#include "prx/libc/include/specifics/itanium/CxxAbi.hpp"
 
 namespace LibcException {
 struct Header {
