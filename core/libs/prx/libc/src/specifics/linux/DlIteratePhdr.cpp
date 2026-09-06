@@ -1,4 +1,4 @@
-#include <link.h>
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include <cstddef>
 
 extern "C" {

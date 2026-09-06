@@ -1,6 +1,6 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
-#include <link.h>
 
 namespace LibcUnwind {
 struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; };
