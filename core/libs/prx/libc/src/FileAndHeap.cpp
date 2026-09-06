@@ -2,9 +2,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <new>
 
 extern "C" {
+
+[[noreturn]] void _ZSt11_Xbad_allocv_nid_postfix();
 
 FILE* fopen_nid_postfix(const char* filename, const char* mode) {
     return std::fopen(filename, mode);
@@ -44,7 +45,7 @@ void* malloc_nid_postfix(size_t size) {
     const size_t headerSize = sizeof(std::uintptr_t);
     void* rawPtr = std::malloc(size + headerSize);
     if (rawPtr == nullptr) {
-        throw std::bad_alloc();
+        _ZSt11_Xbad_allocv_nid_postfix();
     }
     *reinterpret_cast<std::uintptr_t*>(rawPtr) = 0;
     return static_cast<char*>(rawPtr) + headerSize;
@@ -70,7 +71,7 @@ void* realloc_nid_postfix(void* ptr, size_t newSize) {
     void* rawPtr = static_cast<char*>(ptr) - headerSize;
     void* newRawPtr = std::realloc(rawPtr, newSize + headerSize);
     if (newRawPtr == nullptr) {
-        throw std::bad_alloc();
+        _ZSt11_Xbad_allocv_nid_postfix();
     }
     return static_cast<char*>(newRawPtr) + headerSize;
 }
@@ -80,7 +81,7 @@ void* memalign_nid_postfix(size_t alignment, size_t size) {
     const size_t worstCaseSize = size + alignment + headerSize;
     void* rawPtr = std::malloc(worstCaseSize);
     if (rawPtr == nullptr) {
-        throw std::bad_alloc();
+        _ZSt11_Xbad_allocv_nid_postfix();
     }
     const std::uintptr_t rawAddress = reinterpret_cast<std::uintptr_t>(rawPtr) + headerSize;
     const std::uintptr_t alignedAddress = (rawAddress + alignment - 1) & ~(alignment - 1);
