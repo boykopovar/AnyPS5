@@ -198,6 +198,34 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(nidRefs, neededLibraries);
 
+    static constexpr std::uint32_t R_X86_64_RELATIVE = 8;
+
+    auto appendRela = [&](std::vector<std::uint8_t>& buf, std::uint64_t offset, std::uint64_t info, std::int64_t addend) {
+        std::size_t pos = buf.size();
+        buf.resize(pos + 24);
+        std::memcpy(buf.data() + pos, &offset, 8);
+        std::memcpy(buf.data() + pos + 8, &info, 8);
+        std::memcpy(buf.data() + pos + 16, &addend, 8);
+    };
+
+    auto extractRelative = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
+        for (ByteCount off = 0; off + relaEntSize <= relaSize; off += relaEntSize) {
+            const FileByteOffset pos = relaOff + off;
+            std::uint64_t rOffset = 0, rInfo = 0;
+            std::int64_t rAddend = 0;
+            std::memcpy(&rOffset, raw.data() + pos, 8);
+            std::memcpy(&rInfo, raw.data() + pos + 8, 8);
+            std::memcpy(&rAddend, raw.data() + pos + 16, 8);
+            const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
+            const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
+            if (symIdx == 0 && relType == R_X86_64_RELATIVE)
+                appendRela(dynSection.RelaData, rOffset, static_cast<std::uint64_t>(R_X86_64_RELATIVE), rAddend);
+        }
+    };
+
+    extractRelative(dynRelaOffset, dynRelaSize);
+    extractRelative(dynJmpRelOffset, dynJmpRelSize);
+
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());
     for (const auto& ref : nidRefs) {
