@@ -4,7 +4,8 @@ Converter for native execution of PlayStation 5 ELF binaries on Linux through bi
 
 ## Status
 
-Execution reaches `_start`, stack unwinding and exception handling tables are built. All unimplemented stub functions throw std::runtime_error. `what()` is printed to stderr and the process terminates. Now: `sceSystemServiceHideSplashScreen not implemented`
+Execution reaches `_start`, stack unwinding and exception handling tables are built. All unimplemented stub functions throw std::runtime_error. `what()` is printed to stderr and the process terminates.
+Now: `sceUserServiceInitialize not implemented`
 
 ## Disclaimer
 

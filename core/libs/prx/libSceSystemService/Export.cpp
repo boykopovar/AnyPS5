@@ -1,7 +1,9 @@
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceSystemService/SystemService.hpp"
 
 extern "C" {
 
@@ -29,21 +31,32 @@ int sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
 }
 
 int sceSystemServiceGetStatus(SystemServiceStatus* status) {
- (void)status;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (status == nullptr) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ *status = SystemServiceStatus{};
+ return SYSTEM_SERVICE_OK;
 }
 
 int sceSystemServiceHideSplashScreen(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
-int sceSystemServiceParamGetInt(int param_id, int* value) {
- (void)param_id;
- (void)value;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int sceSystemServiceParamGetInt(int paramId, int* value) {
+ if (value == nullptr) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ switch (paramId) {
+  case SYSTEM_SERVICE_PARAM_ID_LANG: *value = SYSTEM_SERVICE_PARAM_LANG_ENGLISH_US; break;
+  case SYSTEM_SERVICE_PARAM_ID_DATE_FORMAT: *value = SYSTEM_SERVICE_PARAM_DATE_FORMAT_DDMMYYYY; break;
+  case SYSTEM_SERVICE_PARAM_ID_TIME_FORMAT: *value = SYSTEM_SERVICE_PARAM_TIME_FORMAT_24HOUR; break;
+  case SYSTEM_SERVICE_PARAM_ID_TIME_ZONE: *value = 0; break;
+  case SYSTEM_SERVICE_PARAM_ID_SUMMERTIME: *value = 0; break;
+  case SYSTEM_SERVICE_PARAM_ID_GAME_PARENTAL_LEVEL: *value = SYSTEM_SERVICE_PARAM_GAME_PARENTAL_OFF; break;
+  case SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN: *value = SYSTEM_SERVICE_PARAM_ENTER_BUTTON_CROSS; break;
+  default: *value = 0; break;
+ }
+ return SYSTEM_SERVICE_OK;
 }
 
 int sceSystemServiceParamGetString(int param_id, char* buf, size_t buf_size) {
@@ -60,9 +73,12 @@ int sceSystemServicePowerTick(void) {
 }
 
 int sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
- (void)event;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (event == nullptr) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ event->event_type = -1;
+ std::memset(event->data, 0, sizeof(event->data));
+ return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
 int sceSystemServiceReportAbnormalTermination(const void* info) {
