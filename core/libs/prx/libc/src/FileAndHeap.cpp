@@ -12,8 +12,13 @@ extern "C" {
 FileStream* fopen_nid_postfix(const char* filename, const char* mode) {
     if (!filename || !mode) throw std::runtime_error("fopen: null argument");
     std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
-    if (!handle) throw std::runtime_error(std::string("fopen: open failed: ") + filename);
-
+    if (!handle) {
+        std::string msg = "fopen: open failed: \"";
+        msg += filename;
+        msg += "\": ";
+        msg += std::strerror(errno);
+        throw std::runtime_error(msg);
+    }
     auto stream = std::make_unique<FileStream>(handle.get(), true);
     handle.release();
     return stream.release();
