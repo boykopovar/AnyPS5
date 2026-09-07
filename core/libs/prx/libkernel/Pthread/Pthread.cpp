@@ -4,8 +4,11 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <future>
+#include <memory>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -35,10 +38,10 @@ struct ThreadArgs {
     PthreadPrivate* self;
 };
 
-static void RunThread(ThreadArgs* args) {
+static void RunThread(std::unique_ptr<ThreadArgs> args) {
     void* retval = args->entry(args->arg);
     PthreadPrivate* self = args->self;
-    delete args;
+    args.reset();
     {
         std::unique_lock<std::mutex> lk(self->_join_mtx);
         self->_retval = retval;
@@ -250,15 +253,24 @@ int scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
 
 int scePthreadCreate(Pthread* thread, const PthreadAttr* attr, void* (*entry)(void*), void* arg, const char*) {
     if (!thread || !entry) throw std::runtime_error("scePthreadCreate: null arg");
-    auto* p = new (std::nothrow) PthreadPrivate{};
-    if (!p) return SCE_KERNEL_ERROR_ENOMEM;
+    auto p = std::make_unique<PthreadPrivate>();
     bool detached = false;
     if (attr && *attr) detached = ((*attr)->_detachstate == DETACH_DETACHED);
     p->_detached = detached;
-    auto* targs = new ThreadArgs{entry, arg, p};
-    p->_thr = std::thread([targs]() { RunThread(targs); });
-    if (detached) p->_thr.detach();
-    *thread = p;
+    std::promise<bool> start;
+    auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
+    p->_thr = std::thread([args = std::move(args), ready = start.get_future()]() mutable {
+        if (ready.get()) RunThread(std::move(args));
+    });
+    try {
+        if (detached) p->_thr.detach();
+    } catch (...) {
+        start.set_value(false);
+        p->_thr.join();
+        throw;
+    }
+    *thread = p.release();
+    start.set_value(true);
     return SCE_OK;
 }
 
