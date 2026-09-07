@@ -1,7 +1,8 @@
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 
 extern "C" {
 
@@ -61,15 +62,22 @@ int sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
 }
 
 int sceUserServiceGetInitialUser(int* user_id) {
- (void)user_id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (user_id == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ *user_id = USER_SERVICE_INITIAL_USER_ID;
+ return USER_SERVICE_OK;
 }
 
 int sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_id_list) {
- (void)user_id_list;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (user_id_list == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ user_id_list->user_id[0] = USER_SERVICE_INITIAL_USER_ID;
+ user_id_list->user_id[1] = USER_SERVICE_USER_ID_INVALID;
+ user_id_list->user_id[2] = USER_SERVICE_USER_ID_INVALID;
+ user_id_list->user_id[3] = USER_SERVICE_USER_ID_INVALID;
+ return USER_SERVICE_OK;
 }
 
 int sceUserServiceGetUserName(int user_id, char* name, size_t size) {
@@ -89,19 +97,15 @@ int sceUserServiceGetUserNumber(int user_id, int32_t* number) {
 
 int sceUserServiceInitialize(const void* params) {
  (void)params;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return USER_SERVICE_OK;
 }
 
 int sceUserServiceInitialize2(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return USER_SERVICE_OK;
 }
 
-// signature from name
 int sceUserServiceTerminate(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return USER_SERVICE_OK;
 }
 
 }
