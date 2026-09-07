@@ -1,6 +1,6 @@
 #include <nid/PePatcher.hpp>
-#include <nid/NidCompute.hpp>
-#include "nid/NidPatcherUtils.hpp"
+#include <nid/NidResolver.hpp>
+#include <nid/NidPatcherUtils.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -44,7 +44,7 @@ struct PeSectionHeader {
     std::uint32_t Characteristics;
 };
 
-std::size_t _findSectionOffsetByRva(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
+std::size_t FindSectionOffsetByRva(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
     const std::size_t sectionTableOffset = static_cast<std::size_t>(peHeaderOffset) + 4u + 20u + sizeOfOptionalHeader;
     for (std::uint16_t i = 0u; i < numberOfSections; ++i) {
         const std::size_t sectionOffset = sectionTableOffset + i * sizeof(PeSectionHeader);
@@ -57,8 +57,8 @@ std::size_t _findSectionOffsetByRva(const std::vector<std::uint8_t>& pe, std::ui
     throw std::runtime_error("rva not mapped to any section");
 }
 
-std::size_t _rvaToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
-    const std::size_t sectionOffset = _findSectionOffsetByRva(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+std::size_t RvaToOffset(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
+    const std::size_t sectionOffset = FindSectionOffsetByRva(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     const auto section = Internal::Read<PeSectionHeader>(pe, sectionOffset);
     return static_cast<std::size_t>(section.PointerToRawData) + (rva - section.VirtualAddress);
 }
@@ -95,25 +95,27 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     const auto exportDir = Read<PeDataDirectory>(pe, dataDirectoryOffset);
     if (exportDir.VirtualAddress == 0u) throw std::runtime_error("no export directory");
 
-    const std::size_t exportDirOffset = _rvaToOffset(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const std::size_t exportDirOffset = RvaToOffset(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     const auto exportTable = Read<PeExportDirectory>(pe, exportDirOffset);
 
     if (exportTable.NumberOfNames == 0u) throw std::runtime_error("no exported names");
 
-    const std::size_t namesArrayOffset = _rvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const std::size_t namesArrayOffset = RvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
 
     std::vector<std::uint32_t> nameRvas(exportTable.NumberOfNames);
     std::vector<std::string> names(exportTable.NumberOfNames);
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
         const auto nameRva = Read<std::uint32_t>(pe, namesArrayOffset + i * 4u);
-        const std::size_t nameOffset = _rvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const std::size_t nameOffset = RvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         const std::string name = ReadCStr(pe, nameOffset);
         if (name.empty()) throw std::runtime_error("empty exported name");
         nameRvas[i] = nameRva;
         names[i] = name;
     }
 
-    const std::size_t edataSectionOffset = _findSectionOffsetByRva(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const auto nidMap = ResolveNids(names, libraryName);
+
+    const std::size_t edataSectionOffset = FindSectionOffsetByRva(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     const auto edataSection = Read<PeSectionHeader>(pe, edataSectionOffset);
 
     const auto sectionAlignment = Read<std::uint32_t>(pe, optionalHeaderOffset + 32u);
@@ -128,8 +130,11 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         usedEnd = std::max(usedEnd, nameRvas[i] - edataSection.VirtualAddress + static_cast<std::uint32_t>(names[i].size()) + 1u);
 
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
-        const std::string nid = ComputeNid(StripNidPostfix(names[i]), libraryName);
-        const std::size_t oldNameOffset = _rvaToOffset(pe, nameRvas[i], peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        const auto it = nidMap.find(names[i]);
+        if (it == nidMap.end()) throw std::runtime_error("symbol not in nid map: " + names[i]);
+        const std::string& nid = it->second;
+
+        const std::size_t oldNameOffset = RvaToOffset(pe, nameRvas[i], peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
 
         if (nid.size() <= names[i].size()) {
             std::memcpy(pe.data() + oldNameOffset, nid.data(), nid.size());

@@ -1,95 +1,17 @@
 #include <nid/ElfPatcher.hpp>
-#include <nid/NidCompute.hpp>
-#include "nid/NidPatcherUtils.hpp"
+#include <nid/NidResolver.hpp>
+#include <nid/NidPatcherUtils.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 namespace Nid {
 
 namespace {
 
-struct Elf64_Ehdr {
-    std::uint8_t e_ident[16];
-    std::uint16_t e_type;
-    std::uint16_t e_machine;
-    std::uint32_t e_version;
-    std::uint64_t e_entry;
-    std::uint64_t e_phoff;
-    std::uint64_t e_shoff;
-    std::uint32_t e_flags;
-    std::uint16_t e_ehsize;
-    std::uint16_t e_phentsize;
-    std::uint16_t e_phnum;
-    std::uint16_t e_shentsize;
-    std::uint16_t e_shnum;
-    std::uint16_t e_shstrndx;
-};
-
-struct Elf64_Shdr {
-    std::uint32_t sh_name;
-    std::uint32_t sh_type;
-    std::uint64_t sh_flags;
-    std::uint64_t sh_addr;
-    std::uint64_t sh_offset;
-    std::uint64_t sh_size;
-    std::uint32_t sh_link;
-    std::uint32_t sh_info;
-    std::uint64_t sh_addralign;
-    std::uint64_t sh_entsize;
-};
-
-struct Elf64_Sym {
-    std::uint32_t st_name;
-    std::uint8_t st_info;
-    std::uint8_t st_other;
-    std::uint16_t st_shndx;
-    std::uint64_t st_value;
-    std::uint64_t st_size;
-};
-
-struct Elf64_Rela {
-    std::uint64_t r_offset;
-    std::uint64_t r_info;
-    std::int64_t r_addend;
-};
-
-struct Elf64_Dyn {
-    std::int64_t d_tag;
-    std::uint64_t d_val;
-};
-
-struct Elf64_Verneed {
-    std::uint16_t vn_version;
-    std::uint16_t vn_cnt;
-    std::uint32_t vn_file;
-    std::uint32_t vn_aux;
-    std::uint32_t vn_next;
-};
-
-struct Elf64_Vernaux {
-    std::uint32_t vna_hash;
-    std::uint16_t vna_flags;
-    std::uint16_t vna_other;
-    std::uint32_t vna_name;
-    std::uint32_t vna_next;
-};
-
-constexpr std::int64_t kDtNeeded = 1;
-constexpr std::int64_t kDtSoname = 14;
-constexpr std::int64_t kDtNull = 0;
-constexpr std::uint32_t kShtDynamic = 6u;
-constexpr std::uint32_t kShtGnuVerneed = 0x6ffffffeu;
-
-constexpr std::uint32_t kShtDynsym = 11u;
-constexpr std::uint32_t kShtGnuHash = 0x6ffffff6u;
-constexpr std::uint32_t kShtRela = 4u;
-constexpr std::uint8_t kStbLocal = 0u;
-constexpr std::uint16_t kShnUndef = 0u;
 
 std::uint32_t GnuHash(const std::string& name) {
     std::uint32_t h = 5381u;
@@ -98,19 +20,9 @@ std::uint32_t GnuHash(const std::string& name) {
     return h;
 }
 
-struct GnuHashLayout {
-    std::uint32_t NBuckets;
-    std::uint32_t SymOffset;
-    std::uint32_t BloomSize;
-    std::uint32_t BloomShift;
-    std::size_t BloomOffset;
-    std::size_t BucketsOffset;
-    std::size_t ChainOffset;
-};
 
 GnuHashLayout ReadGnuHashLayout(const std::vector<std::uint8_t>& elf, std::size_t sectionOffset) {
     using namespace Internal;
-
     GnuHashLayout layout{};
     layout.NBuckets = Read<std::uint32_t>(elf, sectionOffset + 0u);
     layout.SymOffset = Read<std::uint32_t>(elf, sectionOffset + 4u);
@@ -336,10 +248,7 @@ void RemapVerneedOffsets(
     }
 }
 
-std::vector<std::uint32_t> CollectDynamicNameOffsets(
-    const std::vector<std::uint8_t>& elf,
-    const Elf64_Ehdr& ehdr
-) {
+std::vector<std::uint32_t> CollectDynamicNameOffsets(const std::vector<std::uint8_t>& elf, const Elf64_Ehdr& ehdr) {
     using namespace Internal;
 
     std::vector<std::uint32_t> offsets;
@@ -363,10 +272,7 @@ std::vector<std::uint32_t> CollectDynamicNameOffsets(
     return offsets;
 }
 
-std::vector<std::uint32_t> CollectVerneedNameOffsets(
-    const std::vector<std::uint8_t>& elf,
-    const Elf64_Ehdr& ehdr
-) {
+std::vector<std::uint32_t> CollectVerneedNameOffsets(const std::vector<std::uint8_t>& elf, const Elf64_Ehdr& ehdr) {
     using namespace Internal;
 
     std::vector<std::uint32_t> offsets;
@@ -457,13 +363,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize)
     );
 
-    struct SymbolNameUse {
-        std::size_t symIndex;
-        std::uint32_t oldNameOffset;
-        std::string newValue;
-    };
-
-    std::unordered_set<std::string> seenRawNames;
+    std::vector<std::string> exportedNames;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
         const auto sym = Read<Elf64_Sym>(elf, symOffset);
@@ -472,15 +372,21 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (binding == kStbLocal || sym.st_shndx == kShnUndef) continue;
         const std::string symName = ReadCStr(origDynStr, sym.st_name);
         if (symName.empty()) continue;
-        if (!seenRawNames.insert(symName).second)
-            throw std::runtime_error("duplicate exported symbol \"" + symName + "\" in library \"" + libraryName + "\"");
+        exportedNames.push_back(symName);
     }
+
+    const auto nidMap = ResolveNids(exportedNames, libraryName);
+
+    struct SymbolNameUse {
+        std::size_t symIndex;
+        std::uint32_t oldNameOffset;
+        std::string newValue;
+    };
 
     std::vector<SymbolNameUse> uses;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
         const auto sym = Read<Elf64_Sym>(elf, symOffset);
-
         if (sym.st_name == 0u) continue;
 
         const std::uint8_t binding = sym.st_info >> 4u;
@@ -490,13 +396,10 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (symName.empty()) continue;
 
         std::string newValue = symName;
-        if (isPatchable && !IsNidNoPatch(symName)) {
-            const std::string stripped = StripNidPostfix(symName);
-            const bool hasPostfix = stripped != symName;
-            if (!hasPostfix && seenRawNames.count(symName + "_nid_postfix"))
-                newValue = symName;
-            else
-                newValue = ComputeNid(stripped, libraryName);
+        if (isPatchable) {
+            const auto it = nidMap.find(symName);
+            if (it != nidMap.end())
+                newValue = it->second;
         }
 
         uses.push_back(SymbolNameUse{i, sym.st_name, newValue});
