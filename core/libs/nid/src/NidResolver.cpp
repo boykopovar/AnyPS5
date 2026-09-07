@@ -25,6 +25,10 @@ std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::
     result.reserve(exportedNames.size());
 
     for (const std::string& name : exportedNames) {
+        if (IsNidNoPatchCut(name)) {
+            result[name] = StripNidNoPatchCut(name);
+            continue;
+        }
         if (IsNidNoPatch(name)) {
             result[name] = name;
             continue;

@@ -15,12 +15,23 @@ constexpr char kNidPostfix[] = "_nid_postfix";
 constexpr std::size_t kNidPostfixLen = sizeof(kNidPostfix) - 1u;
 constexpr char kNidNoPatch[] = "_nid_no_patch";
 constexpr std::size_t kNidNoPatchLen = sizeof(kNidNoPatch) - 1u;
+constexpr char kNidNoPatchCut[] = "_nid_no_patch_cut";
+constexpr std::size_t kNidNoPatchCutLen = sizeof(kNidNoPatchCut) - 1u;
 constexpr char kNidDisambigMarker[] = "_nid_disambig";
 constexpr std::size_t kNidDisambigMarkerLen = sizeof(kNidDisambigMarker) - 1u;
 
 inline bool IsNidNoPatch(const std::string& name) {
     return name.size() >= kNidNoPatchLen &&
         name.compare(name.size() - kNidNoPatchLen, kNidNoPatchLen, kNidNoPatch) == 0;
+}
+
+inline bool IsNidNoPatchCut(const std::string& name) {
+    return name.size() >= kNidNoPatchCutLen &&
+        name.compare(name.size() - kNidNoPatchCutLen, kNidNoPatchCutLen, kNidNoPatchCut) == 0;
+}
+
+inline std::string StripNidNoPatchCut(const std::string& name) {
+    return name.substr(0u, name.size() - kNidNoPatchCutLen);
 }
 
 inline std::string StripNidPostfix(const std::string& name) {
