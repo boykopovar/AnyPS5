@@ -3,7 +3,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include "DirectMemory.hpp"
+#include "DirectMemory/DirectMemory.hpp"
 
 extern "C" {
 
