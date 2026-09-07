@@ -125,9 +125,10 @@ int scePadSetLightBar(int handle, const PadLightBarParam* param) {
 
 int scePadSetMotionSensorState(int handle, bool enable) {
  (void)handle;
- if (enable) {
-  throw std::runtime_error("scePadSetMotionSensorState: motion sensor not supported");
- }
+ (void)enable;
+ // if (enable) {
+ //  throw std::runtime_error("scePadSetMotionSensorState: motion sensor not supported");
+ // }
  return PAD_OK;
 }
 
