@@ -1,10 +1,16 @@
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#else
+#include <fstream>
+#endif
 
 #include "SceTypes.hpp"
 #include "ModuleTable.hpp"
@@ -20,12 +26,25 @@ const char* findModuleName(const std::uint32_t id) {
 std::mutex gMutex;
 std::unordered_map<std::uint32_t, std::int32_t> gLoadCount;
 
-}
-
-extern "C" {
-
-int sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
-    (void)flags;
+bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))) {
+        return false;
+    }
+    info->st_size = sizeof(ModuleInfoForUnwind);
+    info->eh_frame_hdr_addr = 0;
+    info->eh_frame_addr = 0;
+    info->eh_frame_size = 0;
+    info->seg0_addr = reinterpret_cast<std::uint64_t>(mbi.BaseAddress);
+    info->seg0_size = mbi.RegionSize;
+    char path[4096] = {};
+    DWORD len = GetMappedFileNameA(GetCurrentProcess(), mbi.BaseAddress, path, sizeof(path) - 1);
+    path[len] = '\0';
+    std::strncpy(info->name, path, sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+    return true;
+#else
     std::ifstream maps("/proc/self/maps");
     if (!maps) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: failed to open /proc/self/maps");
@@ -63,9 +82,22 @@ int sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfo
         info->eh_frame_size = 0;
         info->seg0_addr = start;
         info->seg0_size = end - start;
-        return 0;
+        return true;
     }
-    throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found in maps");
+    return false;
+#endif
+}
+
+}
+
+extern "C" {
+
+int sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
+    (void)flags;
+    if (!fillModuleInfoForUnwind(addr, info)) {
+        throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
+    }
+    return 0;
 }
 
 int sceSysmoduleIsLoaded(std::uint16_t id) {
