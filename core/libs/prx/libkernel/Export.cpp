@@ -30,14 +30,14 @@ int chmod_nid_postfix(const char* path, int mode) {
  return 0;
 }
 
-int clock_getres(int clock_id, KernelTimespec* res) {
+int clock_getres_nid_postfix(int clock_id, KernelTimespec* res) {
  (void)clock_id;
  (void)res;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int clock_gettime(int clock_id, KernelTimespec* time) {
+int clock_gettime_nid_postfix(int clock_id, KernelTimespec* time) {
  (void)clock_id;
  (void)time;
  NotImplemented_nid_no_patch(__func__);
@@ -122,7 +122,7 @@ int getsockopt_nid_postfix(int s, int level, int optname, void* optval, uint32_t
  return 0;
 }
 
-int gettimeofday(KernelTimeval* time, KernelTimezone* timezone) {
+int gettimeofday_nid_postfix(KernelTimeval* time, KernelTimezone* timezone) {
  (void)time;
  (void)timezone;
  NotImplemented_nid_no_patch(__func__);
@@ -192,48 +192,48 @@ int64_t pread_nid_disambig1_nid_postfix(int d, void* buf, size_t nbytes, int64_t
  return 0;
 }
 
-int pthread_attr_destroy(PthreadAttr* attr) {
+int pthread_attr_destroy_nid_postfix(PthreadAttr* attr) {
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_get_np(Pthread thread, PthreadAttr* attr) {
+int pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr) {
  (void)thread;
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_getdetachstate(const PthreadAttr* attr, int* state) {
+int pthread_attr_getdetachstate_nid_postfix(const PthreadAttr* attr, int* state) {
  (void)attr;
  (void)state;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_getguardsize(const PthreadAttr* attr, size_t* guard_size) {
+int pthread_attr_getguardsize_nid_postfix(const PthreadAttr* attr, size_t* guard_size) {
  (void)attr;
  (void)guard_size;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_getschedparam(const PthreadAttr* attr, KernelSchedParam* param) {
+int pthread_attr_getschedparam_nid_postfix(const PthreadAttr* attr, KernelSchedParam* param) {
  (void)attr;
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_getschedpolicy(const PthreadAttr* attr, int* policy) {
+int pthread_attr_getschedpolicy_nid_postfix(const PthreadAttr* attr, int* policy) {
  (void)attr;
  (void)policy;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_getstack(const PthreadAttr* __restrict attr, void** __restrict stack_addr, size_t* __restrict stack_size) {
+int pthread_attr_getstack_nid_postfix(const PthreadAttr* __restrict attr, void** __restrict stack_addr, size_t* __restrict stack_size) {
  (void)attr;
  (void)stack_addr;
  (void)stack_size;
@@ -241,81 +241,81 @@ int pthread_attr_getstack(const PthreadAttr* __restrict attr, void** __restrict 
  return 0;
 }
 
-int pthread_attr_getstacksize(const PthreadAttr* attr, size_t* stack_size) {
+int pthread_attr_getstacksize_nid_postfix(const PthreadAttr* attr, size_t* stack_size) {
  (void)attr;
  (void)stack_size;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_init(PthreadAttr* attr) {
+int pthread_attr_init_nid_postfix(PthreadAttr* attr) {
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_setdetachstate(PthreadAttr* attr, int state) {
+int pthread_attr_setdetachstate_nid_postfix(PthreadAttr* attr, int state) {
  (void)attr;
  (void)state;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_setguardsize(PthreadAttr* attr, size_t guard_size) {
+int pthread_attr_setguardsize_nid_postfix(PthreadAttr* attr, size_t guard_size) {
  (void)attr;
  (void)guard_size;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_setinheritsched(PthreadAttr* attr, int inherit_sched) {
+int pthread_attr_setinheritsched_nid_postfix(PthreadAttr* attr, int inherit_sched) {
  (void)attr;
  (void)inherit_sched;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_setschedparam(PthreadAttr* attr, const KernelSchedParam* param) {
+int pthread_attr_setschedparam_nid_postfix(PthreadAttr* attr, const KernelSchedParam* param) {
  (void)attr;
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_setschedpolicy(PthreadAttr* attr, int policy) {
+int pthread_attr_setschedpolicy_nid_postfix(PthreadAttr* attr, int policy) {
  (void)attr;
  (void)policy;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_attr_setstacksize(PthreadAttr* attr, size_t stack_size) {
+int pthread_attr_setstacksize_nid_postfix(PthreadAttr* attr, size_t stack_size) {
  (void)attr;
  (void)stack_size;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_cond_broadcast(PthreadCond* cond) {
+int pthread_cond_broadcast_nid_postfix(PthreadCond* cond) {
  (void)cond;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_cond_init(PthreadCond* cond, const PthreadCondattr* attr) {
+int pthread_cond_init_nid_postfix(PthreadCond* cond, const PthreadCondattr* attr) {
  (void)cond;
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_cond_signal(PthreadCond* cond) {
+int pthread_cond_signal_nid_postfix(PthreadCond* cond) {
  (void)cond;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_cond_timedwait(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
+int pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
  (void)cond;
  (void)mutex;
  (void)abstime;
@@ -323,33 +323,33 @@ int pthread_cond_timedwait(PthreadCond* cond, PthreadMutex* mutex, const KernelT
  return 0;
 }
 
-int pthread_cond_wait(PthreadCond* cond, PthreadMutex* mutex) {
+int pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex) {
  (void)cond;
  (void)mutex;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_condattr_destroy(PthreadCondattr* attr) {
+int pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr) {
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_condattr_init(PthreadCondattr* attr) {
+int pthread_condattr_init_nid_postfix(PthreadCondattr* attr) {
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_condattr_setclock(PthreadCondattr* attr, KernelClockid clock_id) {
+int pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, KernelClockid clock_id) {
  (void)attr;
  (void)clock_id;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_create(Pthread* thread, const PthreadAttr* attr, pthread_entry_func_t entry, void* arg) {
+int pthread_create_nid_postfix(Pthread* thread, const PthreadAttr* attr, pthread_entry_func_t entry, void* arg) {
  (void)thread;
  (void)attr;
  (void)entry;
@@ -358,7 +358,7 @@ int pthread_create(Pthread* thread, const PthreadAttr* attr, pthread_entry_func_
  return 0;
 }
 
-int pthread_create_name_np(Pthread* thread, const PthreadAttr* attr, pthread_entry_func_t entry, void* arg, const char* name) {
+int pthread_create_name_np_nid_postfix(Pthread* thread, const PthreadAttr* attr, pthread_entry_func_t entry, void* arg, const char* name) {
  (void)thread;
  (void)attr;
  (void)entry;
@@ -368,18 +368,18 @@ int pthread_create_name_np(Pthread* thread, const PthreadAttr* attr, pthread_ent
  return 0;
 }
 
-int pthread_detach(Pthread thread) {
+int pthread_detach_nid_postfix(Pthread thread) {
  (void)thread;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-void pthread_exit(void* value) {
+void pthread_exit_nid_postfix(void* value) {
  (void)value;
  NotImplemented_nid_no_patch(__func__);
 }
 
-int pthread_getschedparam(Pthread thread, int* policy, KernelSchedParam* param) {
+int pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
  (void)thread;
  (void)policy;
  (void)param;
@@ -387,149 +387,149 @@ int pthread_getschedparam(Pthread thread, int* policy, KernelSchedParam* param) 
  return 0;
 }
 
-void* pthread_getspecific(PthreadKey key) {
+void* pthread_getspecific_nid_postfix(PthreadKey key) {
  (void)key;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-int pthread_join(Pthread thread, void** value) {
+int pthread_join_nid_postfix(Pthread thread, void** value) {
  (void)thread;
  (void)value;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_key_create(PthreadKey* key, pthread_key_destructor_func_t destructor) {
+int pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor) {
  (void)key;
  (void)destructor;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_key_delete(PthreadKey key) {
+int pthread_key_delete_nid_postfix(PthreadKey key) {
  (void)key;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutex_destroy(PthreadMutex* mutex) {
+int pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
  (void)mutex;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutex_init(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+int pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
  (void)mutex;
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutex_lock(PthreadMutex* mutex) {
+int pthread_mutex_lock_nid_postfix(PthreadMutex* mutex) {
  (void)mutex;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutex_timedlock(PthreadMutex* mutex, const KernelTimespec* abstime) {
+int pthread_mutex_timedlock_nid_postfix(PthreadMutex* mutex, const KernelTimespec* abstime) {
  (void)mutex;
  (void)abstime;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutex_trylock(PthreadMutex* mutex) {
+int pthread_mutex_trylock_nid_postfix(PthreadMutex* mutex) {
  (void)mutex;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutex_unlock(PthreadMutex* mutex) {
+int pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex) {
  (void)mutex;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutexattr_destroy(PthreadMutexattr* attr) {
+int pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr) {
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutexattr_init(PthreadMutexattr* attr) {
+int pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr) {
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutexattr_setprotocol(PthreadMutexattr* attr, int protocol) {
+int pthread_mutexattr_setprotocol_nid_postfix(PthreadMutexattr* attr, int protocol) {
  (void)attr;
  (void)protocol;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_mutexattr_settype(PthreadMutexattr* attr, int type) {
+int pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int type) {
  (void)attr;
  (void)type;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_once(void* once_control, void (*init_routine)()) {
+int pthread_once_nid_postfix(void* once_control, void (*init_routine)()) {
  (void)once_control;
  (void)init_routine;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_rename_np(Pthread thread, const char* name) {
+int pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
  (void)thread;
  (void)name;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_rwlock_destroy(PthreadRwlock* rwlock) {
+int pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) {
  (void)rwlock;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_rwlock_init(PthreadRwlock* rwlock, const PthreadRwlockattr* attr) {
+int pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr) {
  (void)rwlock;
  (void)attr;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_rwlock_wrlock(PthreadRwlock* rwlock) {
+int pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock) {
  (void)rwlock;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-Pthread pthread_self(void) {
+Pthread pthread_self_nid_postfix(void) {
  NotImplemented_nid_no_patch(__func__);
  return {};
 }
 
-int pthread_setcancelstate(int state, int* old_state) {
+int pthread_setcancelstate_nid_postfix(int state, int* old_state) {
  (void)state;
  (void)old_state;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_setprio(Pthread thread, int prio) {
+int pthread_setprio_nid_postfix(Pthread thread, int prio) {
  (void)thread;
  (void)prio;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int pthread_setschedparam(Pthread thread, int policy, const KernelSchedParam* param) {
+int pthread_setschedparam_nid_postfix(Pthread thread, int policy, const KernelSchedParam* param) {
  (void)thread;
  (void)policy;
  (void)param;
@@ -537,14 +537,14 @@ int pthread_setschedparam(Pthread thread, int policy, const KernelSchedParam* pa
  return 0;
 }
 
-int pthread_setspecific(PthreadKey key, void* value) {
+int pthread_setspecific_nid_postfix(PthreadKey key, void* value) {
  (void)key;
  (void)value;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-void pthread_yield(void) {
+void pthread_yield_nid_postfix(void) {
  NotImplemented_nid_no_patch(__func__);
 }
 
@@ -674,29 +674,8 @@ int sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec) {
  return 0;
 }
 
-int sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
- (void)memory_type;
- if (search_start < 0 || search_end <= search_start || len == 0
-  || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
-  || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
-  return SCE_KERNEL_ERROR_EINVAL;
- return DirectMemoryAlloc(search_start, search_end, len, alignment, phys_addr_out);
-}
 
-int sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
- return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DIRECT_MEMORY_SIZE), len, alignment, memory_type, phys_addr_out);
-}
 
-int sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
- if (!phys_addr_out || !size_out) return SCE_KERNEL_ERROR_EINVAL;
- int64_t tmpPhys = 0;
- int ret = DirectMemoryAlloc(search_start, search_end, PS5_PAGE_SIZE, alignment, &tmpPhys);
- if (ret != 0) { *phys_addr_out = 0; *size_out = 0; return ret; }
- DirectMemoryFree(tmpPhys, PS5_PAGE_SIZE);
- *phys_addr_out = tmpPhys;
- *size_out = static_cast<size_t>(search_end) - static_cast<size_t>(tmpPhys);
- return 0;
-}
 
 int sceKernelAvailableFlexibleMemorySize(size_t* size) {
  (void)size;
@@ -881,17 +860,6 @@ int sceKernelDeleteUserEvent(KernelEqueue eq, int id) {
  return 0;
 }
 
-int sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t info_size) {
- (void)flags;
- if (!info || offset < 0) return SCE_KERNEL_ERROR_EINVAL;
- struct DirectMemoryQueryInfo { int64_t start; int64_t end; int memory_type; };
- if (info_size < sizeof(DirectMemoryQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
- auto* q = static_cast<DirectMemoryQueryInfo*>(info);
- q->start = offset & ~static_cast<int64_t>(PS5_PAGE_SIZE - 1);
- q->end = q->start + PS5_PAGE_SIZE;
- q->memory_type = 3;
- return 0;
-}
 
 int sceKernelDlsym(KernelModule handle, const char* symbol, void** addr) {
  (void)handle;
@@ -927,9 +895,6 @@ int sceKernelGetdents(int fd, char* buf, int nbytes) {
  return 0;
 }
 
-size_t sceKernelGetDirectMemorySize(void) {
- return 13824ULL * 1024 * 1024;
-}
 
 int sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
  (void)fd;
@@ -1106,29 +1071,10 @@ int64_t sceKernelLseek(int d, int64_t offset, int whence) {
  return 0;
 }
 
-int sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
- (void)alignment;
- return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
-}
 
-int sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
- (void)type;
- return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
-}
 
-int sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
- return DoMapAnon(addr_in_out, len, prot, flags);
-}
 
-int sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
- (void)name;
- return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
-}
 
-int32_t sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
- (void)name;
- return sceKernelMapFlexibleMemory(addr_in_out, len, prot, flags);
-}
 
 int sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries, int num_entries, int* num_entries_out, int flags) {
  (void)entries;
@@ -1191,9 +1137,6 @@ int sceKernelMkdir(const char* path, uint16_t mode) {
  return 0;
 }
 
-int sceKernelMprotect(const void* addr, size_t len, int prot) {
- return DoMprotect(addr, len, prot);
-}
 
 int sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
  (void)addr;
@@ -1204,9 +1147,6 @@ int sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
  return 0;
 }
 
-int sceKernelMunmap(uint64_t vaddr, size_t len) {
- return DoMunmap(reinterpret_cast<void*>(vaddr), len);
-}
 
 int sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
  (void)rqtp;
@@ -1286,11 +1226,6 @@ uint64_t sceKernelReadTsc(void) {
  return 0;
 }
 
-int sceKernelReleaseDirectMemory(int64_t start, size_t len) {
- if (start < 0 || len == 0) return SCE_KERNEL_ERROR_EINVAL;
- DirectMemoryFree(start, len);
- return 0;
-}
 
 int sceKernelRemoveExceptionHandler(int signum) {
  (void)signum;
@@ -1305,10 +1240,6 @@ int sceKernelRename(const char* from, const char* to) {
  return 0;
 }
 
-int sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment) {
- (void)flags;
- return DoReserveVirtual(addr, len, alignment);
-}
 
 int sceKernelRmdir(const char* path) {
  (void)path;
@@ -1437,17 +1368,6 @@ int sceKernelUuidCreate(uint32_t* uuid) {
  return 0;
 }
 
-int sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
- (void)flags;
- if (!info || info_size < sizeof(VirtualQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
- memset(info, 0, sizeof(VirtualQueryInfo));
- uintptr_t ptr = reinterpret_cast<uintptr_t>(addr);
- info->start = ptr & ~static_cast<uintptr_t>(PS5_PAGE_SIZE - 1);
- info->end = info->start + PS5_PAGE_SIZE;
- info->is_direct = 1;
- info->protection = 3;
- return 0;
-}
 
 int sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
  (void)eq;
@@ -1485,532 +1405,91 @@ int64_t sceKernelWrite(int d, const void* buf, size_t nbytes) {
  return 0;
 }
 
-int scePthreadAttrDestroy(PthreadAttr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
- (void)thread;
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask) {
- (void)attr;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state) {
- (void)attr;
- (void)state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetguardsize(const PthreadAttr* attr, size_t* guard_size) {
- (void)attr;
- (void)guard_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param) {
- (void)attr;
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched) {
- (void)attr;
- (void)solosched;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetstack(const PthreadAttr* __restrict attr, void** __restrict stack_addr, size_t* __restrict stack_size) {
- (void)attr;
- (void)stack_addr;
- (void)stack_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stack_addr) {
- (void)attr;
- (void)stack_addr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_size) {
- (void)attr;
- (void)stack_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrInit(PthreadAttr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask) {
- (void)attr;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrSetdetachstate(PthreadAttr* attr, int state) {
- (void)attr;
- (void)state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrSetguardsize(PthreadAttr* attr, size_t guard_size) {
- (void)attr;
- (void)guard_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrSetinheritsched(PthreadAttr* attr, int inherit_sched) {
- (void)attr;
- (void)inherit_sched;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param) {
- (void)attr;
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy) {
- (void)attr;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+int sched_get_priority_max_nid_postfix(int policy) {
  (void)policy;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched) {
- (void)attr;
- (void)solosched;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadAttrSetstack(PthreadAttr* attr, void* addr, size_t size) {
- (void)attr;
- (void)addr;
- (void)size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadAttrSetstackaddr(PthreadAttr* attr, void* addr) {
- (void)attr;
- (void)addr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadAttrSetstacksize(PthreadAttr* attr, size_t stack_size) {
- (void)attr;
- (void)stack_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCancel(Pthread thread) {
- (void)thread;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondattrDestroy(PthreadCondattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondattrInit(PthreadCondattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondBroadcast(PthreadCond* cond) {
- (void)cond;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondDestroy(PthreadCond* cond) {
- (void)cond;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name) {
- (void)cond;
- (void)attr;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondSignal(PthreadCond* cond) {
- (void)cond;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
- (void)cond;
- (void)thread;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
- (void)cond;
- (void)mutex;
- (void)usec;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) {
- (void)cond;
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadCreate(Pthread* thread, const PthreadAttr* attr, pthread_entry_func_t entry, void* arg, const char* name) {
- (void)thread;
- (void)attr;
- (void)entry;
- (void)arg;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadDetach(Pthread thread) {
- (void)thread;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadEqual(Pthread thread1, Pthread thread2) {
- (void)thread1;
- (void)thread2;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-void scePthreadExit(void* value) {
- (void)value;
- NotImplemented_nid_no_patch(__func__);
-}
-
-int scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) {
- (void)thread;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadGetname(Pthread thread, char* name) {
- (void)thread;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadGetprio(Pthread thread, int* prio) {
- (void)thread;
- (void)prio;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-void* scePthreadGetspecific(PthreadKey key) {
- (void)key;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
-}
-
-int scePthreadGetthreadid(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadJoin(Pthread thread, void** value) {
- (void)thread;
- (void)value;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor) {
- (void)key;
- (void)destructor;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadKeyDelete(PthreadKey key) {
- (void)key;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexattrDestroy(PthreadMutexattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexattrInit(PthreadMutexattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) {
- (void)attr;
- (void)protocol;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
- (void)attr;
- (void)type;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexDestroy(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name) {
- (void)mutex;
- (void)attr;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexLock(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) {
- (void)mutex;
- (void)usec;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexTrylock(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadMutexUnlock(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRename(Pthread thread, const char* name) {
- (void)thread;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockattrDestroy(PthreadRwlockattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockattrInit(PthreadRwlockattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
- (void)attr;
- (void)type;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockDestroy(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name) {
- (void)rwlock;
- (void)attr;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockRdlock(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockUnlock(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadRwlockWrlock(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-Pthread scePthreadSelf(void) {
- NotImplemented_nid_no_patch(__func__);
- return {};
-}
-
-int scePthreadSemDestroy(void* sem) {
- (void)sem;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSemGetvalue(void* sem, int* value) {
- (void)sem;
- (void)value;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSemInit(void* sem, int flag, unsigned int value, const char* name) {
- (void)sem;
- (void)flag;
- (void)value;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSemPost(void* sem) {
- (void)sem;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSemTimedwait(void* sem, KernelUseconds usec) {
- (void)sem;
- (void)usec;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSemTrywait(void* sem) {
- (void)sem;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSemWait(void* sem) {
- (void)sem;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
- (void)thread;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSetcancelstate(int state, int* old_state) {
- (void)state;
- (void)old_state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSetcanceltype(int type, int* old_type) {
- (void)type;
- (void)old_type;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSetprio(Pthread thread, int prio) {
- (void)thread;
- (void)prio;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int scePthreadSetspecific(PthreadKey key, void* value) {
- (void)key;
- (void)value;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-void scePthreadYield(void) {
- NotImplemented_nid_no_patch(__func__);
-}
-
-int sched_get_priority_max(int policy) {
- (void)policy;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int sched_get_priority_min(int policy) {
+int sched_get_priority_min_nid_postfix(int policy) {
  (void)policy;
  NotImplemented_nid_no_patch(__func__);
  return 0;
@@ -2032,7 +1511,7 @@ int sem_destroy_nid_postfix(void* sem) {
  return 0;
 }
 
-int sem_getvalue(void* sem, int* value) {
+int sem_getvalue_nid_postfix(void* sem, int* value) {
  (void)sem;
  (void)value;
  NotImplemented_nid_no_patch(__func__);
@@ -2053,14 +1532,14 @@ int sem_post_nid_postfix(void* sem) {
  return 0;
 }
 
-int sem_reltimedwait_np(void* sem, uint32_t usec) {
+int sem_reltimedwait_np_nid_postfix(void* sem, uint32_t usec) {
  (void)sem;
  (void)usec;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sem_timedwait(void* sem, const KernelTimespec* abstime) {
+int sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime) {
  (void)sem;
  (void)abstime;
  NotImplemented_nid_no_patch(__func__);
@@ -2139,5 +1618,7 @@ int64_t write_nid_postfix(int d, const char* str, int64_t size) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
+
+#include "DirectMemory/Export.cpp"
 
 }
