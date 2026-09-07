@@ -8,7 +8,6 @@
 extern "C" {
 
 void* memset_nid_postfix(void* s, int c, size_t n) {
-    NotImplemented_nid_no_patch(__func__);
     fprintf(stderr, "memset_nid_postfix: s=%p c=%d n=%zu\n", s, c, n);
     return std::memset(s, c, n);
 }

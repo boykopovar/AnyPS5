@@ -8,6 +8,7 @@ static int LinuxProtFromSce(int prot) {
     if (prot & 1) result |= PROT_READ;
     if (prot & 2) result |= PROT_WRITE;
     if (prot & 4) result |= PROT_EXEC;
+    if (prot & ~7) result |= PROT_EXEC;
     return result;
 }
 
@@ -25,6 +26,18 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     void* result = mmap(hint, len, LinuxProtFromSce(prot), mmapFlags, -1, 0);
     if (result == MAP_FAILED) return SCE_KERNEL_ERROR_ENOMEM;
     fprintf(stderr, "DoMapDirect: mmap result=%p linuxProt=%d\n", result, LinuxProtFromSce(prot));
+    FILE* f = fopen("/proc/self/maps", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            uintptr_t start, end;
+            if (sscanf(line, "%lx-%lx", &start, &end) == 2) {
+                uintptr_t r = reinterpret_cast<uintptr_t>(result);
+                if (r >= start && r < end) { fprintf(stderr, "maps: %s", line); break; }
+            }
+        }
+        fclose(f);
+    }
     *addr = result;
     return 0;
 }

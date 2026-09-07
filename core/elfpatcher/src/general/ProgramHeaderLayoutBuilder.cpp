@@ -92,6 +92,7 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeInterpHeader(std::uint64_
 }
 
 std::uint32_t ProgramHeaderLayoutBuilder::_fixLoadFlags(std::uint32_t originalFlags) const {
+    if (originalFlags == 0) return PF_R | PF_W | PF_X;
     return originalFlags | PF_R;
 }
 
