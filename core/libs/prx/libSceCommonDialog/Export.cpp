@@ -1,17 +1,21 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
+
+static bool g_initialized = false;
 
 extern "C" {
 
 int sceCommonDialogInitialize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (g_initialized) {
+  return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+ }
+ g_initialized = true;
+ return COMMON_DIALOG_OK;
 }
 
 bool sceCommonDialogIsUsed(void) {
- NotImplemented_nid_no_patch(__func__);
  return false;
 }
 

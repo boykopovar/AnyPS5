@@ -5,7 +5,7 @@ Converter for native execution of PlayStation 5 ELF binaries on Linux through bi
 ## Status
 
 Execution reaches `_start`, stack unwinding and exception handling tables are built. All unimplemented stub functions throw std::runtime_error. `what()` is printed to stderr and the process terminates.
-Now: `fopen: open failed: "/app0/save_data_icon.png": No such file or directory`
+Now: `ValidateLength: std::invalid_argument: Memory length must be a positive multiple of the guest page size`
 
 ## Disclaimer
 
