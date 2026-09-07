@@ -108,9 +108,9 @@ void ValidateOutput(void** addr) {
 
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
     ValidateOutput(addr);
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     if (physStart < 0 || (static_cast<std::uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)) != 0 || static_cast<std::uint64_t>(physStart) >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - static_cast<std::uint64_t>(physStart)) {
-        // return SCE_KERNEL_ERROR_EINVAL;
-        throw std::invalid_argument("Invalid direct memory physical range");
+        return SCE_KERNEL_ERROR_EINVAL;
     }
     *addr = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
     return 0;
@@ -118,27 +118,26 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
 
 int DoMapAnon(void** addr, size_t len, int prot, int flags) {
     ValidateOutput(addr);
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     *addr = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, PS5_PAGE_SIZE);
     return 0;
 }
 
 int DoMprotect(const void* addr, size_t len, int prot) {
-    ValidateRange(addr, len, PS5_PAGE_SIZE);
-    if (mprotect(const_cast<void*>(addr), len, LinuxProtFromSce(prot)) != 0) {
-        // return SCE_KERNEL_ERROR_EINVAL;
-        throw std::system_error(errno, std::generic_category(), "mprotect failed");
-    }
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
+    if (mprotect(const_cast<void*>(addr), len, LinuxProtFromSce(prot)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     return 0;
 }
 
 int DoMunmap(void* addr, size_t len) {
-    ValidateRange(addr, len, PS5_PAGE_SIZE);
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
     Unmap(addr, len);
     return 0;
 }
 
 int DoReserveVirtual(void** addr, size_t len, size_t alignment) {
     ValidateOutput(addr);
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     *addr = MapAligned(nullptr, len, PROT_NONE, 0, alignment);
     return 0;
 }
