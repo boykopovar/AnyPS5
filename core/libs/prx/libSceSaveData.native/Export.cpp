@@ -164,7 +164,7 @@ int sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
 
 int sceSaveDataInitialize3(const void* init) {
     (void)init;
-    NotImplemented_nid_no_patch(__func__);
+    // NotImplemented_nid_no_patch(__func__);
     if (g_initialized) {
         return SAVE_DATA_ERROR_ALREADY_INITIALIZED;
     }

@@ -2,41 +2,70 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include "prx/libc/include/FileStream.hpp"
 
 extern "C" {
 
 [[noreturn]] void _ZSt11_Xbad_allocv_nid_postfix();
 
-FILE* fopen_nid_postfix(const char* filename, const char* mode) {
-    return std::fopen(filename, mode);
+FileStream* fopen_nid_postfix(const char* filename, const char* mode) {
+    if (!filename || !mode) throw std::runtime_error("fopen: null argument");
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
+    if (!handle) throw std::runtime_error(std::string("fopen: open failed: ") + filename);
+
+    auto stream = std::make_unique<FileStream>(handle.get(), true);
+    handle.release();
+    return stream.release();
 }
 
-int fclose_nid_postfix(FILE* stream) {
-    return std::fclose(stream);
+int fclose_nid_postfix(FileStream* stream) {
+    GetNativeStream(stream);
+    std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
+    stream->Close();
+    return 0;
 }
 
-size_t fread_nid_postfix(void* buffer, size_t size, size_t count, FILE* stream) {
-    return std::fread(buffer, size, count, stream);
+size_t fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
+    auto* handle = GetNativeStream(stream);
+    if (size == 0 || count == 0) return 0;
+    if (!buffer) throw std::runtime_error("fread: null buffer");
+    const auto result = std::fread(buffer, size, count, handle);
+    if (std::ferror(handle)) throw std::runtime_error("fread: read failed");
+    return result;
 }
 
-size_t fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FILE* stream) {
-    return std::fwrite(buffer, size, count, stream);
+size_t fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
+    auto* handle = GetNativeStream(stream);
+    if (size == 0 || count == 0) return 0;
+    if (!buffer) throw std::runtime_error("fwrite: null buffer");
+    const auto result = std::fwrite(buffer, size, count, handle);
+    if (result != count || std::ferror(handle)) throw std::runtime_error("fwrite: write failed");
+    return result;
 }
 
-int fseek_nid_postfix(FILE* stream, long offset, int origin) {
-    return std::fseek(stream, offset, origin);
+int fseek_nid_postfix(FileStream* stream, long offset, int origin) {
+    if (origin != SEEK_SET && origin != SEEK_CUR && origin != SEEK_END) throw std::runtime_error("fseek: invalid origin");
+    if (std::fseek(GetNativeStream(stream), offset, origin) != 0) throw std::runtime_error("fseek: seek failed");
+    return 0;
 }
 
-long ftell_nid_postfix(FILE* stream) {
-    return std::ftell(stream);
+long ftell_nid_postfix(FileStream* stream) {
+    const auto result = std::ftell(GetNativeStream(stream));
+    if (result == -1L) throw std::runtime_error("ftell: position query failed");
+    return result;
 }
 
-int fputs_nid_postfix(const char* str, FILE* stream) {
-    return std::fputs(str, stream);
+int fputs_nid_postfix(const char* str, FileStream* stream) {
+    if (!str) throw std::runtime_error("fputs: null string");
+    const int result = std::fputs(str, GetNativeStream(stream));
+    if (result == EOF) throw std::runtime_error("fputs: write failed");
+    return result;
 }
 
-int fflush_nid_postfix(FILE* stream) {
-    return std::fflush(stream);
+int fflush_nid_postfix(FileStream* stream) {
+    if (std::fflush(stream ? GetNativeStream(stream) : nullptr) != 0) throw std::runtime_error("fflush: flush failed");
+    return 0;
 }
 
 constexpr std::uintptr_t AlignedBlockTag = 1;

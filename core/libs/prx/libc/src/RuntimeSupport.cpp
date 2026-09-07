@@ -7,6 +7,7 @@
 #include <vector>
 #include <utility>
 #include "prx/libc/include/specifics/gcc/AtomicOps.hpp"
+#include "prx/libc/include/FileStream.hpp"
 
 namespace {
 
@@ -16,13 +17,8 @@ std::mutex g_sysLock;
 
 extern "C" {
 
-FILE* _Stderr_nid_postfix() {
-    return stderr;
-}
-
-FILE* _Stdout_nid_postfix() {
-    return stdout;
-}
+FileStream _Stderr_nid_postfix{stderr};
+FileStream _Stdout_nid_postfix{stdout};
 
 int __cxa_atexit_nid_postfix(void (*func)(void*), void* arg, void* dsoHandle) {
     (void)dsoHandle;
