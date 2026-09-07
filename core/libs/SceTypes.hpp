@@ -494,11 +494,89 @@ struct VoiceStartParam {
     std::uint8_t reserved[32 - sizeof(void*) - sizeof(std::uint32_t)];
 };
 
-struct PadControllerInformation { std::uint8_t opaque[136]; };
+struct PadTouchPadInformation {
+ float pixelDensity;
+ struct { std::uint16_t x; std::uint16_t y; } resolution;
+};
+
+struct PadStickInformation {
+ std::uint8_t deadZoneLeft;
+ std::uint8_t deadZoneRight;
+};
+
+struct PadControllerInformation {
+ PadTouchPadInformation touchPadInfo;
+ PadStickInformation stickInfo;
+ std::uint8_t connectionType;
+ std::uint8_t connectedCount;
+ bool connected;
+ std::uint8_t pad[3];
+ std::int32_t deviceClass;
+ std::uint8_t reserve[8];
+};
+
 struct PadVibrationParam { std::uint8_t large_motor; std::uint8_t small_motor; };
 struct PadLightBarParam { std::uint8_t r; std::uint8_t g; std::uint8_t b; };
-struct PadDeviceClassData { std::uint8_t opaque[64]; };
-struct PadDeviceClassExtendedInformation { std::uint8_t opaque[64]; };
+
+struct PadDeviceClassData {
+ std::int32_t deviceClass;
+ bool dataValid;
+ std::uint8_t pad[3];
+ union {
+  struct {
+   float angle;
+   std::uint16_t wheel;
+   std::uint16_t accelerator;
+   std::uint16_t brake;
+   std::uint16_t clutch;
+   std::uint16_t handBrake;
+   std::uint8_t gear;
+   std::uint8_t reserved[1];
+  } steeringWheel;
+  struct {
+   std::uint8_t toneNumber;
+   std::uint8_t whammyBar;
+   std::uint8_t tilt;
+   std::uint8_t fret;
+   std::uint8_t fretSolo;
+   std::uint8_t reserved[11];
+  } guitar;
+  struct {
+   std::uint8_t snare;
+   std::uint8_t tom1;
+   std::uint8_t tom2;
+   std::uint8_t floorTom;
+   std::uint8_t hihatCymbal;
+   std::uint8_t rideCymbal;
+   std::uint8_t crashCymbal;
+   std::uint8_t reserved[9];
+  } drum;
+  std::uint8_t data[16];
+ } classData;
+};
+
+struct PadDeviceClassExtendedInformation {
+ std::int32_t deviceClass;
+ std::uint8_t reserved[4];
+ union {
+  struct {
+   std::uint8_t capability;
+   std::uint8_t reserved1[1];
+   std::uint16_t maxPhysicalWheelAngle;
+   std::uint8_t reserved2[8];
+  } steeringWheel;
+  struct {
+   std::uint8_t capability;
+   std::uint8_t quantityOfSelectorSwitch;
+   std::uint8_t reserved[10];
+  } guitar;
+  struct {
+   std::uint8_t capability;
+   std::uint8_t reserved[11];
+  } drum;
+  std::uint8_t data[12];
+ } classData;
+};
 struct PadTriggerEffectStateInformation { std::uint8_t opaque[64]; };
 
 struct PadData {
