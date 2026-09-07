@@ -1,85 +1,144 @@
 #include "DirectMemory.hpp"
-#include "MemoryPool.hpp"
 #include <sys/mman.h>
-#include <cstdio>
+#include <cerrno>
+#include <limits>
+#include <stdexcept>
+#include <system_error>
 
-static int LinuxProtFromSce(int prot) {
+namespace {
+
+void ValidateLength(size_t len) {
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Memory length must be a positive multiple of the guest page size");
+    }
+}
+
+size_t ValidateAlignment(size_t alignment) {
+    if (alignment == 0) return PS5_PAGE_SIZE;
+    if (alignment < PS5_PAGE_SIZE || (alignment & (alignment - 1)) != 0) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Memory alignment must be a power of two no smaller than the guest page size");
+    }
+    return alignment;
+}
+
+void ValidateRange(const void* addr, size_t len, size_t alignment) {
+    ValidateLength(len);
+    const auto start = reinterpret_cast<std::uintptr_t>(addr);
+    if (!addr || (start & (alignment - 1)) != 0 || len > std::numeric_limits<std::uintptr_t>::max() - start) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Invalid memory address, alignment or range");
+    }
+}
+
+int LinuxProtFromSce(int prot) {
+    if ((prot & ~0x37) != 0) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Unsupported memory protection bits");
+    }
     int result = PROT_NONE;
     if (prot & 1) result |= PROT_READ;
     if (prot & 2) result |= PROT_WRITE;
     if (prot & 4) result |= PROT_EXEC;
-    if (prot & ~7) result |= PROT_EXEC;
     return result;
 }
 
-int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
-    fprintf(stderr, "DoMapDirect: addr=%p len=%zu prot=%d flags=%d physStart=%ld\n", addr ? *addr : nullptr, len, prot, flags, physStart);
-    (void)alignment;
-    if (!addr || len == 0 || (len & (PS5_PAGE_SIZE - 1)) || physStart < 0
-        || (static_cast<uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)))
-        return SCE_KERNEL_ERROR_EINVAL;
-    constexpr int GUEST_MAP_FIXED = 0x10;
-    bool fixed = (flags & GUEST_MAP_FIXED) != 0;
-    int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
-    void* hint = fixed ? *addr : nullptr;
-    if (fixed) mmapFlags |= MAP_FIXED;
-    void* result = mmap(hint, len, LinuxProtFromSce(prot), mmapFlags, -1, 0);
-    if (result == MAP_FAILED) return SCE_KERNEL_ERROR_ENOMEM;
-    fprintf(stderr, "DoMapDirect: mmap result=%p linuxProt=%d\n", result, LinuxProtFromSce(prot));
-    FILE* f = fopen("/proc/self/maps", "r");
-    if (f) {
-        char line[256];
-        while (fgets(line, sizeof(line), f)) {
-            uintptr_t start, end;
-            if (sscanf(line, "%lx-%lx", &start, &end) == 2) {
-                uintptr_t r = reinterpret_cast<uintptr_t>(result);
-                if (r >= start && r < end) { fprintf(stderr, "maps: %s", line); break; }
-            }
-        }
-        fclose(f);
+void Unmap(void* addr, size_t len) {
+    if (munmap(addr, len) != 0) throw std::system_error(errno, std::generic_category(), "munmap failed");
+}
+
+void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment) {
+    ValidateLength(len);
+    alignment = ValidateAlignment(alignment);
+    constexpr int GuestMapFixed = 0x10;
+    constexpr int GuestMapNoCoalesce = 0x400000;
+    if ((flags & ~(GuestMapFixed | GuestMapNoCoalesce)) != 0) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Unsupported memory mapping flags");
     }
-    *addr = result;
+    if ((flags & GuestMapFixed) != 0) {
+        ValidateRange(addr, len, alignment);
+        void* result = mmap(addr, len, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        if (result == MAP_FAILED) {
+            // return SCE_KERNEL_ERROR_ENOMEM;
+            throw std::system_error(errno, std::generic_category(), "Fixed mmap failed");
+        }
+        return result;
+    }
+    if (addr) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Non-fixed mapping address hints are not implemented");
+    }
+    if (len > std::numeric_limits<size_t>::max() - alignment) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::overflow_error("Aligned mapping size overflow");
+    }
+    const size_t allocLen = len + alignment;
+    void* result = mmap(nullptr, allocLen, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (result == MAP_FAILED) {
+        // return SCE_KERNEL_ERROR_ENOMEM;
+        throw std::system_error(errno, std::generic_category(), "Aligned mmap failed");
+    }
+    const auto raw = reinterpret_cast<std::uintptr_t>(result);
+    const size_t prefix = (alignment - (raw & (alignment - 1))) & (alignment - 1);
+    void* aligned = reinterpret_cast<void*>(raw + prefix);
+    const size_t suffix = allocLen - prefix - len;
+    if (prefix != 0 && munmap(result, prefix) != 0) {
+        const int error = errno;
+        Unmap(result, allocLen);
+        throw std::system_error(error, std::generic_category(), "Mapping prefix munmap failed");
+    }
+    if (suffix != 0 && munmap(reinterpret_cast<void*>(raw + prefix + len), suffix) != 0) {
+        const int error = errno;
+        Unmap(aligned, allocLen - prefix);
+        throw std::system_error(error, std::generic_category(), "Mapping suffix munmap failed");
+    }
+    return aligned;
+}
+
+void ValidateOutput(void** addr) {
+    if (!addr) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Null memory mapping output");
+    }
+}
+
+}
+
+int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
+    ValidateOutput(addr);
+    if (physStart < 0 || (static_cast<std::uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)) != 0 || static_cast<std::uint64_t>(physStart) >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - static_cast<std::uint64_t>(physStart)) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::invalid_argument("Invalid direct memory physical range");
+    }
+    *addr = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
     return 0;
 }
 
 int DoMapAnon(void** addr, size_t len, int prot, int flags) {
-    fprintf(stderr, "DoMapAnon: addr=%p len=%zu prot=%d flags=%d\n", addr ? *addr : nullptr, len, prot, flags);
-    if (!addr || len == 0 || (len & (PS5_PAGE_SIZE - 1))) return SCE_KERNEL_ERROR_EINVAL;
-    constexpr int GUEST_MAP_FIXED = 0x10;
-    bool fixed = (flags & GUEST_MAP_FIXED) != 0;
-    int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
-    void* hint = fixed ? *addr : nullptr;
-    if (fixed) mmapFlags |= MAP_FIXED;
-    void* result = mmap(hint, len, LinuxProtFromSce(prot), mmapFlags, -1, 0);
-    if (result == MAP_FAILED) return SCE_KERNEL_ERROR_ENOMEM;
-    *addr = result;
+    ValidateOutput(addr);
+    *addr = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, PS5_PAGE_SIZE);
     return 0;
 }
 
 int DoMprotect(const void* addr, size_t len, int prot) {
-    if (mprotect(const_cast<void*>(addr), len, LinuxProtFromSce(prot)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    ValidateRange(addr, len, PS5_PAGE_SIZE);
+    if (mprotect(const_cast<void*>(addr), len, LinuxProtFromSce(prot)) != 0) {
+        // return SCE_KERNEL_ERROR_EINVAL;
+        throw std::system_error(errno, std::generic_category(), "mprotect failed");
+    }
     return 0;
 }
 
 int DoMunmap(void* addr, size_t len) {
-    munmap(addr, len);
+    ValidateRange(addr, len, PS5_PAGE_SIZE);
+    Unmap(addr, len);
     return 0;
 }
 
 int DoReserveVirtual(void** addr, size_t len, size_t alignment) {
-    if (!addr || len == 0) return SCE_KERNEL_ERROR_EINVAL;
-    size_t allocLen = alignment ? len + alignment : len;
-    void* result = mmap(nullptr, allocLen, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (result == MAP_FAILED) return SCE_KERNEL_ERROR_ENOMEM;
-    if (alignment) {
-        uintptr_t raw = reinterpret_cast<uintptr_t>(result);
-        uintptr_t aligned = (raw + alignment - 1) & ~(alignment - 1);
-        if (aligned != raw) munmap(result, aligned - raw);
-        uintptr_t end = aligned + len;
-        uintptr_t rawEnd = raw + allocLen;
-        if (end < rawEnd) munmap(reinterpret_cast<void*>(end), rawEnd - end);
-        result = reinterpret_cast<void*>(aligned);
-    }
-    *addr = result;
+    ValidateOutput(addr);
+    *addr = MapAligned(nullptr, len, PROT_NONE, 0, alignment);
     return 0;
 }
