@@ -1,4 +1,6 @@
-#pragma once
+#ifndef CORE_LIBS_PRX_LIBKERNEL_DIRECTMEMORY_DIRECTMEMORY_HPP
+#define CORE_LIBS_PRX_LIBKERNEL_DIRECTMEMORY_DIRECTMEMORY_HPP
+
 #include <cstdint>
 #include <cstddef>
 
@@ -18,3 +20,5 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags);
 int DoMprotect(const void* addr, size_t len, int prot);
 int DoMunmap(void* addr, size_t len);
 int DoReserveVirtual(void** addr, size_t len, size_t alignment);
+
+#endif

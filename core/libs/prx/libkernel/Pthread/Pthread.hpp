@@ -1,4 +1,6 @@
-#pragma once
+#ifndef CORE_LIBS_PRX_LIBKERNEL_PTHREAD_PTHREAD_HPP
+#define CORE_LIBS_PRX_LIBKERNEL_PTHREAD_PTHREAD_HPP
+
 #include <sched.h>
 #include "SceTypes.hpp"
 #include <atomic>
@@ -55,3 +57,5 @@ struct PthreadPrivate {
 
     PthreadPrivate() : _finished(false), _retval(nullptr), _detached(false) {}
 };
+
+#endif

@@ -1,3 +1,11 @@
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
+#include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
+#include "DirectMemory.hpp"
+
+extern "C" {
 
 int sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
  (void)memory_type;
@@ -92,4 +100,6 @@ int sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, u
  info->is_direct = 1;
  info->protection = 3;
  return 0;
+}
+
 }
