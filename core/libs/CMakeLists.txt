@@ -14,28 +14,31 @@ set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL ${LIBC_DIR}/Export.cpp)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+set(UNPATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs/unpatched)
+set(PATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs)
+
 set_target_properties(libc PROPERTIES
         PREFIX ""
         SUFFIX .prx
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/libs
-        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/libs
+        RUNTIME_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
+        LIBRARY_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
 )
 
-set(LIBC_PRX_FILE ${CMAKE_CURRENT_BINARY_DIR}/libs/libc.prx)
-set(LIBC_STAMP_FILE ${CMAKE_CURRENT_BINARY_DIR}/libs/libc.patched)
+set(LIBC_UNPATCHED ${UNPATCHED_DIR}/libc.prx)
+set(LIBC_PATCHED ${PATCHED_DIR}/libc.prx)
 
 add_custom_command(
-        OUTPUT ${LIBC_STAMP_FILE}
-        COMMAND $<TARGET_FILE:nid_patcher> libc ${LIBC_PRX_FILE}
-        COMMAND ${CMAKE_COMMAND} -E touch ${LIBC_STAMP_FILE}
-        DEPENDS nid_patcher libc
+        OUTPUT ${LIBC_PATCHED}
+        COMMAND ${CMAKE_COMMAND} -E copy ${LIBC_UNPATCHED} ${LIBC_PATCHED}
+        COMMAND $<TARGET_FILE:nid_patcher> libc ${LIBC_PATCHED}
+        DEPENDS nid_patcher libc ${LIBC_UNPATCHED}
         COMMENT "Patching NIDs for libc"
 )
 
 file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
 list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
 
-set(PATCHED_STAMPS ${LIBC_STAMP_FILE})
+set(PATCHED_OUTPUTS ${LIBC_PATCHED})
 
 foreach(LIB_DIR ${LIBS_DIRS})
     if(IS_DIRECTORY ${LIB_DIR})
@@ -54,23 +57,23 @@ foreach(LIB_DIR ${LIBS_DIRS})
         set_target_properties(${LIB_NAME} PROPERTIES
                 PREFIX ""
                 SUFFIX .prx
-                RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/libs
-                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/libs
+                RUNTIME_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
+                LIBRARY_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
         )
 
-        set(RPX_FILE ${CMAKE_CURRENT_BINARY_DIR}/libs/${LIB_NAME}.prx)
-        set(STAMP_FILE ${CMAKE_CURRENT_BINARY_DIR}/libs/${LIB_NAME}.patched)
+        set(UNPATCHED_FILE ${UNPATCHED_DIR}/${LIB_NAME}.prx)
+        set(PATCHED_FILE ${PATCHED_DIR}/${LIB_NAME}.prx)
 
         add_custom_command(
-                OUTPUT ${STAMP_FILE}
-                COMMAND $<TARGET_FILE:nid_patcher> ${LIB_NAME} ${RPX_FILE}
-                COMMAND ${CMAKE_COMMAND} -E touch ${STAMP_FILE}
-                DEPENDS nid_patcher ${LIB_NAME}
+                OUTPUT ${PATCHED_FILE}
+                COMMAND ${CMAKE_COMMAND} -E copy ${UNPATCHED_FILE} ${PATCHED_FILE}
+                COMMAND $<TARGET_FILE:nid_patcher> ${LIB_NAME} ${PATCHED_FILE}
+                DEPENDS nid_patcher ${LIB_NAME} ${UNPATCHED_FILE}
                 COMMENT "Patching NIDs for ${LIB_NAME}"
         )
 
-        list(APPEND PATCHED_STAMPS ${STAMP_FILE})
+        list(APPEND PATCHED_OUTPUTS ${PATCHED_FILE})
     endif()
 endforeach()
 
-add_custom_target(libs DEPENDS ${PATCHED_STAMPS})
+add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})

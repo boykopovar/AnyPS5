@@ -1,6 +1,7 @@
 #include "DirectMemory.hpp"
 #include "MemoryPool.hpp"
 #include <sys/mman.h>
+#include <cstdio>
 
 static int LinuxProtFromSce(int prot) {
     int result = PROT_NONE;
@@ -11,6 +12,7 @@ static int LinuxProtFromSce(int prot) {
 }
 
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
+    fprintf(stderr, "DoMapDirect: addr=%p len=%zu prot=%d flags=%d physStart=%ld\n", addr ? *addr : nullptr, len, prot, flags, physStart);
     (void)alignment;
     if (!addr || len == 0 || (len & (PS5_PAGE_SIZE - 1)) || physStart < 0
         || (static_cast<uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)))
@@ -22,11 +24,13 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     if (fixed) mmapFlags |= MAP_FIXED;
     void* result = mmap(hint, len, LinuxProtFromSce(prot), mmapFlags, -1, 0);
     if (result == MAP_FAILED) return SCE_KERNEL_ERROR_ENOMEM;
+    fprintf(stderr, "DoMapDirect: mmap result=%p linuxProt=%d\n", result, LinuxProtFromSce(prot));
     *addr = result;
     return 0;
 }
 
 int DoMapAnon(void** addr, size_t len, int prot, int flags) {
+    fprintf(stderr, "DoMapAnon: addr=%p len=%zu prot=%d flags=%d\n", addr ? *addr : nullptr, len, prot, flags);
     if (!addr || len == 0 || (len & (PS5_PAGE_SIZE - 1))) return SCE_KERNEL_ERROR_EINVAL;
     constexpr int GUEST_MAP_FIXED = 0x10;
     bool fixed = (flags & GUEST_MAP_FIXED) != 0;

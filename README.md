@@ -1,10 +1,10 @@
 # About
 
-Converter for native execution of PlayStation 5 ELF binaries on Linux through binary format conversion and ABI compatibility. The relinker implementation uses only the C++20 standard library and performs deterministic binary transformation without heuristics or interpretation.
+Converter for native execution of PlayStation 5 ELF binaries on Linux through binary format conversion and ABI compatibility. The relinker implementation uses only the C++20 standard library and performs deterministic binary transformation.
 
 ## Status
 
-Execution reaches `_start`, stack unwinding and exception handling tables are built. All unimplemented stub functions throw std::runtime_error. `what()` is printed to stderr and the process terminates. Now: `pthread_mutex_lock not implemented`
+Execution reaches `_start`, stack unwinding and exception handling tables are built. All unimplemented stub functions throw std::runtime_error. `what()` is printed to stderr and the process terminates. Now: `memset_nid_postfix not implemented`
 
 ## Disclaimer
 
