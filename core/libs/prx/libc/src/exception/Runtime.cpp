@@ -179,8 +179,8 @@ void* __cxa_allocate_exception_nid_postfix(std::size_t size) {
     if (size > std::numeric_limits<std::size_t>::max() - sizeof(Allocation)) Terminate();
     void* storage = std::malloc(sizeof(Allocation) + size);
     if (!storage) Terminate();
-    auto* allocation = new (storage) Allocation;
     static_assert(offsetof(Allocation, header) + sizeof(Header) == sizeof(Allocation));
+    auto* allocation = new (storage) Allocation;
     return &allocation->header + 1;
 }
 void __cxa_free_exception_nid_postfix(void* object) {

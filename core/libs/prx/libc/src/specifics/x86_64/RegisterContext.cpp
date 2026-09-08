@@ -1,12 +1,10 @@
-#if !defined(__linux__) || !defined(__x86_64__)
-#error "This file is x86_64 Linux only"
-#endif
-
 #include <cstdint>
+#include <cstdlib>
 
 extern "C" void LibcCaptureRegisters(std::uintptr_t*);
 extern "C" [[noreturn]] void LibcRestoreRegisters(const std::uintptr_t*);
 
+#if defined(__linux__) && defined(__x86_64__)
 asm(
 ".text\n"
 ".hidden LibcCaptureRegisters\n"
@@ -28,3 +26,7 @@ asm(
 "movq 104(%r10),%r13\nmovq 112(%r10),%r14\nmovq 120(%r10),%r15\njmp *%r11\n"
 ".size LibcRestoreRegisters,.-LibcRestoreRegisters\n"
 );
+#else
+void LibcCaptureRegisters(std::uintptr_t*) { std::abort(); }
+[[noreturn]] void LibcRestoreRegisters(const std::uintptr_t*) { std::abort(); }
+#endif

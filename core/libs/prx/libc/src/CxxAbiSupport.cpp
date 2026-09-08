@@ -1,5 +1,8 @@
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include <cstddef>
+#ifndef _UNWIND_H
+#define _UNWIND_H
+#endif
 #include <cxxabi.h>
 #include <cstdint>
 #include <cstdlib>
@@ -12,8 +15,6 @@
 #include <locale>
 #include <regex>
 #include <functional>
-#include <unwind.h>
-
 extern "C" {
 
 void* __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::size_t* len, int* status) {

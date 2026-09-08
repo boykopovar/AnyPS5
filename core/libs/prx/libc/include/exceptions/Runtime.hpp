@@ -15,6 +15,8 @@ struct Header {
     Header* next {};
     int handlers {};
     int selector {};
+    std::uint32_t _pad {};
+    std::uint32_t _pad2 {};
     const unsigned char* action {};
     const unsigned char* lsda {};
     std::uintptr_t landing {};
