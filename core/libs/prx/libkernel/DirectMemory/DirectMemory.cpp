@@ -1,9 +1,63 @@
 #include "DirectMemory.hpp"
-#include <sys/mman.h>
 #include <cerrno>
 #include <limits>
 #include <stdexcept>
 #include <system_error>
+
+#if defined(__linux__)
+#include <sys/mman.h>
+#else
+#include <windows.h>
+
+static constexpr int PROT_NONE = 0;
+static constexpr int PROT_READ = 1;
+static constexpr int PROT_WRITE = 2;
+static constexpr int PROT_EXEC = 4;
+static constexpr int MAP_PRIVATE = 0x02;
+static constexpr int MAP_ANONYMOUS = 0x20;
+static constexpr int MAP_FIXED = 0x10;
+static void* const MAP_FAILED = reinterpret_cast<void*>(-1);
+
+static DWORD WinProtFromPosix(int prot) {
+    if (prot == PROT_NONE) return PAGE_NOACCESS;
+    if ((prot & PROT_EXEC) && (prot & PROT_WRITE)) return PAGE_EXECUTE_READWRITE;
+    if ((prot & PROT_EXEC) && (prot & PROT_READ)) return PAGE_EXECUTE_READ;
+    if (prot & PROT_EXEC) return PAGE_EXECUTE;
+    if (prot & PROT_WRITE) return PAGE_READWRITE;
+    return PAGE_READONLY;
+}
+
+static void* mmap(void* addr, size_t len, int prot, int flags, int, int) {
+    DWORD winProt = WinProtFromPosix(prot);
+    if (flags & MAP_FIXED) {
+        void* result = VirtualAlloc(addr, len, MEM_RESERVE | MEM_COMMIT, winProt);
+        if (!result) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualAlloc fixed failed");
+        return result;
+    }
+    void* result = VirtualAlloc(nullptr, len, MEM_RESERVE | MEM_COMMIT, winProt);
+    if (!result) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualAlloc failed");
+    return result;
+}
+
+static int munmap(void* addr, size_t len) {
+    if (!VirtualFree(addr, len, MEM_DECOMMIT))
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualFree decommit failed");
+    return 0;
+}
+
+static int munmap_release(void* addr) {
+    if (!VirtualFree(addr, 0, MEM_RELEASE))
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualFree release failed");
+    return 0;
+}
+
+static int mprotect(void* addr, size_t len, int prot) {
+    DWORD old;
+    if (!VirtualProtect(addr, len, WinProtFromPosix(prot), &old))
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualProtect failed");
+    return 0;
+}
+#endif
 
 namespace {
 
@@ -45,7 +99,11 @@ int LinuxProtFromSce(int prot) {
 }
 
 void Unmap(void* addr, size_t len) {
+#if defined(__linux__)
     if (munmap(addr, len) != 0) throw std::system_error(errno, std::generic_category(), "munmap failed");
+#else
+    munmap_release(addr);
+#endif
 }
 
 void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment) {
@@ -131,7 +189,11 @@ int DoMprotect(const void* addr, size_t len, int prot) {
 
 int DoMunmap(void* addr, size_t len) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
+#if defined(__linux__)
     Unmap(addr, len);
+#else
+    munmap_release(addr);
+#endif
     return 0;
 }
 

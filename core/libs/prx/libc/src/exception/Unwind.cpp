@@ -2,6 +2,8 @@
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
 
+#if defined(__linux__)
+
 namespace LibcUnwind {
 struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; };
 
@@ -375,3 +377,26 @@ _Unwind_Reason_Code _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* 
     return _URC_FATAL_PHASE1_ERROR;
 }
 }
+
+#else
+
+extern "C" {
+_Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception*) { std::abort(); }
+[[noreturn]] void _Unwind_Resume_nid_postfix(_Unwind_Exception*) { std::abort(); }
+_Unwind_Reason_Code _Unwind_Resume_or_Rethrow_nid_postfix(_Unwind_Exception*) { std::abort(); }
+void _Unwind_DeleteException_nid_postfix(_Unwind_Exception* e) { if (e && e->exception_cleanup) e->exception_cleanup(_URC_FOREIGN_EXCEPTION_CAUGHT, e); }
+_Unwind_Word _Unwind_GetGR_nid_postfix(_Unwind_Context*, int) { std::abort(); }
+void _Unwind_SetGR_nid_postfix(_Unwind_Context*, int, _Unwind_Word) { std::abort(); }
+_Unwind_Ptr _Unwind_GetIP_nid_postfix(_Unwind_Context*) { std::abort(); }
+void _Unwind_SetIP_nid_postfix(_Unwind_Context*, _Unwind_Ptr) { std::abort(); }
+_Unwind_Ptr _Unwind_GetIPInfo_nid_postfix(_Unwind_Context*, int*) { std::abort(); }
+_Unwind_Word _Unwind_GetCFA_nid_postfix(_Unwind_Context*) { std::abort(); }
+_Unwind_Ptr _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Context*) { std::abort(); }
+_Unwind_Ptr _Unwind_GetRegionStart_nid_postfix(_Unwind_Context*) { std::abort(); }
+_Unwind_Ptr _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context*) { std::abort(); }
+_Unwind_Ptr _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context*) { std::abort(); }
+_Unwind_Reason_Code _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception*, _Unwind_Stop_Fn, void*) { std::abort(); }
+_Unwind_Reason_Code _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*) { std::abort(); }
+}
+
+#endif
