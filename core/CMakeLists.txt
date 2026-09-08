@@ -7,6 +7,8 @@ add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/ProgramHeaderLayoutBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SectionHeaderTableBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/Amd64OnlyConverter.cpp

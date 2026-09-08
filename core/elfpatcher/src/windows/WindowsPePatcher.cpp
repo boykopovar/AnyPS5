@@ -1,6 +1,7 @@
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
+#include <io/BufferUtils.hpp>
 #include <cstring>
 #include <cstdint>
 #include <vector>
@@ -8,7 +9,6 @@
 #include <map>
 #include <algorithm>
 #include "WindowsPeFormat.hpp"
-#include "io/ByteWriter.hpp"
 
 namespace Elfpatcher::Windows {
 
@@ -24,15 +24,15 @@ MzHeader buildMzStub(std::uint32_t peOffset) {
 
 void writeSectionHeader(std::vector<std::uint8_t>& buf, std::size_t off, const PeSection& sec) {
     std::memcpy(buf.data() + off, sec.name, 8);
-    WriteU32(buf, off + 8, sec.virtualSize);
-    WriteU32(buf, off + 12, sec.virtualAddress);
-    WriteU32(buf, off + 16, sec.rawSize);
-    WriteU32(buf, off + 20, sec.rawOffset);
-    WriteU32(buf, off + 24, 0);
-    WriteU32(buf, off + 28, 0);
-    WriteU16(buf, off + 32, 0);
-    WriteU16(buf, off + 34, 0);
-    WriteU32(buf, off + 36, sec.characteristics);
+    Io::WriteU32(buf, off + 8, sec.virtualSize);
+    Io::WriteU32(buf, off + 12, sec.virtualAddress);
+    Io::WriteU32(buf, off + 16, sec.rawSize);
+    Io::WriteU32(buf, off + 20, sec.rawOffset);
+    Io::WriteU32(buf, off + 24, 0);
+    Io::WriteU32(buf, off + 28, 0);
+    Io::WriteU16(buf, off + 32, 0);
+    Io::WriteU16(buf, off + 34, 0);
+    Io::WriteU32(buf, off + 36, sec.characteristics);
 }
 
 std::vector<std::uint8_t> buildRelocSection(
@@ -83,11 +83,11 @@ std::vector<std::uint8_t> buildRelocSection(
             entryCount++;
         }
         const std::uint32_t blockSize = kRelocBlockHeaderSize + entryCount * kRelocEntrySize;
-        appendU32(buf, page);
-        appendU32(buf, blockSize);
+        Io::AppendU32(buf, page);
+        Io::AppendU32(buf, blockSize);
         for (const std::uint32_t off : offsets) {
             const auto entry = static_cast<std::uint16_t>((kRelTypeDir64 << 12) | (off & 0xFFF));
-            appendU16(buf, entry);
+            Io::AppendU16(buf, entry);
         }
     }
     return buf;
@@ -111,43 +111,43 @@ std::vector<std::uint8_t> buildImportSection(
 
     for (const auto& dll : dlls) {
         const std::uint32_t dllNameRva = dataBase + static_cast<std::uint32_t>(dataBuf.size());
-        appendStr(dataBuf, dll.dllName);
-        alignBuf(dataBuf, 2);
+        Io::AppendString(dataBuf, dll.dllName);
+        Io::AlignBuffer(dataBuf, 2);
 
         const std::uint32_t iltRva = dataBase + static_cast<std::uint32_t>(dataBuf.size());
         for (const auto& thunk : dll.thunks) {
             const std::uint32_t hintNameRva = dataBase + static_cast<std::uint32_t>(dataBuf.size())
                 + static_cast<std::uint32_t>((dll.thunks.size() + 1) * 8);
-            appendU64(dataBuf, hintNameRva);
+            Io::AppendU64(dataBuf, hintNameRva);
         }
-        appendU64(dataBuf, 0);
+        Io::AppendU64(dataBuf, 0);
 
         for (const auto& thunk : dll.thunks) {
-            appendU16(dataBuf, 0);
-            appendStr(dataBuf, thunk.symbolName);
-            alignBuf(dataBuf, 2);
+            Io::AppendU16(dataBuf, 0);
+            Io::AppendString(dataBuf, thunk.symbolName);
+            Io::AlignBuffer(dataBuf, 2);
         }
 
         const std::uint32_t iatRva = dataBase + static_cast<std::uint32_t>(dataBuf.size());
         for (std::size_t i = 0; i < dll.thunks.size(); ++i) {
             const std::uint32_t iatEntryRva = iatRva + static_cast<std::uint32_t>(i * 8);
             outGotPatches.emplace_back(dll.thunks[i].gotRva, iatEntryRva);
-            appendU64(dataBuf, 0);
+            Io::AppendU64(dataBuf, 0);
         }
-        appendU64(dataBuf, 0);
+        Io::AppendU64(dataBuf, 0);
 
-        appendU32(descriptorBuf, iltRva);
-        appendU32(descriptorBuf, 0);
-        appendU32(descriptorBuf, 0);
-        appendU32(descriptorBuf, dllNameRva);
-        appendU32(descriptorBuf, iatRva);
+        Io::AppendU32(descriptorBuf, iltRva);
+        Io::AppendU32(descriptorBuf, 0);
+        Io::AppendU32(descriptorBuf, 0);
+        Io::AppendU32(descriptorBuf, dllNameRva);
+        Io::AppendU32(descriptorBuf, iatRva);
     }
 
-    appendU32(descriptorBuf, 0);
-    appendU32(descriptorBuf, 0);
-    appendU32(descriptorBuf, 0);
-    appendU32(descriptorBuf, 0);
-    appendU32(descriptorBuf, 0);
+    Io::AppendU32(descriptorBuf, 0);
+    Io::AppendU32(descriptorBuf, 0);
+    Io::AppendU32(descriptorBuf, 0);
+    Io::AppendU32(descriptorBuf, 0);
+    Io::AppendU32(descriptorBuf, 0);
 
     std::vector<std::uint8_t> result;
     result.insert(result.end(), descriptorBuf.begin(), descriptorBuf.end());
@@ -237,7 +237,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(
         seg.flags = ph.Flags;
         loadSegs.push_back(seg);
         if (seg.vaddr < imageBase) imageBase = seg.vaddr;
-        const std::uint64_t top = alignUp64(seg.vaddr + seg.memSize, kSectionAlignment);
+        const std::uint64_t top = Io::AlignUp64(seg.vaddr + seg.memSize, kSectionAlignment);
         if (top > imageTop) imageTop = top;
     }
 
@@ -390,10 +390,10 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(
     }
 
     const auto loadImageSize = static_cast<std::uint32_t>(imageBuf.size());
-    const std::uint32_t importSectionRva = alignUp(loadImageRva + loadImageSize, kSectionAlignment);
+    const std::uint32_t importSectionRva = Io::AlignUp(loadImageRva + loadImageSize, kSectionAlignment);
 
     std::vector<std::uint8_t> importSectionData = buildImportSection(importDlls, importSectionRva, gotPatches);
-    alignBuf(importSectionData, kFileAlignment);
+    Io::AlignBuffer(importSectionData, kFileAlignment);
 
     for (const auto& [gotRva_, iatRva] : gotPatches) {
         const auto destInImage = static_cast<std::uint64_t>(gotRva_);
@@ -403,14 +403,14 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(
         std::memcpy(imageBuf.data() + destInImage, &iatVa, 8);
     }
 
-    const std::uint32_t relocSectionRva = alignUp(importSectionRva + static_cast<std::uint32_t>(importSectionData.size()), kSectionAlignment);
+    const std::uint32_t relocSectionRva = Io::AlignUp(importSectionRva + static_cast<std::uint32_t>(importSectionData.size()), kSectionAlignment);
     std::vector<std::uint8_t> relocSectionData = buildRelocSection(dynamicSection.RelaData, imageBase);
-    alignBuf(relocSectionData, kFileAlignment);
+    Io::AlignBuffer(relocSectionData, kFileAlignment);
 
-    const std::uint32_t stubSectionRva = alignUp(relocSectionRva + static_cast<std::uint32_t>(relocSectionData.size()), kSectionAlignment);
+    const std::uint32_t stubSectionRva = Io::AlignUp(relocSectionRva + static_cast<std::uint32_t>(relocSectionData.size()), kSectionAlignment);
     const std::uint64_t stubVaddr = adjustedBase + stubSectionRva;
     std::vector<std::uint8_t> stubData = buildEntryStub(elfEntryVaddr, stubVaddr);
-    alignBuf(stubData, kFileAlignment);
+    Io::AlignBuffer(stubData, kFileAlignment);
 
     const std::uint32_t entryPointRva = stubSectionRva;
 
@@ -419,75 +419,75 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(
     if (!relocSectionData.empty()) numSections++;
     numSections++;
 
-    const std::uint32_t sizeOfHeaders = alignUp(
+    const std::uint32_t sizeOfHeaders = Io::AlignUp(
         0x40 + 4 + 20 + 240 + static_cast<std::uint32_t>(numSections) * 40,
         kFileAlignment);
 
     if (sizeOfHeaders > kSizeOfPeHeaders)
         throw Domain::RelinkerException("PE headers exceed reserved header block size");
 
-    const std::uint32_t sizeOfImage = alignUp(stubSectionRva + static_cast<std::uint32_t>(stubData.size()), kSectionAlignment);
+    const std::uint32_t sizeOfImage = Io::AlignUp(stubSectionRva + static_cast<std::uint32_t>(stubData.size()), kSectionAlignment);
 
     const std::uint32_t mzPeOffset = 0x40;
     std::vector<std::uint8_t> result(kSizeOfPeHeaders, 0);
 
-    WriteU16(result, 0, kMzMagic);
-    WriteU32(result, 0x3c, mzPeOffset);
+    Io::WriteU16(result, 0, kMzMagic);
+    Io::WriteU32(result, 0x3c, mzPeOffset);
 
     std::size_t off = mzPeOffset;
-    WriteU32(result, off, kPeSignature); off += 4;
+    Io::WriteU32(result, off, kPeSignature); off += 4;
 
-    WriteU16(result, off, kMachinAmd64); off += 2;
-    WriteU16(result, off, numSections); off += 2;
-    WriteU32(result, off, 0); off += 4;
-    WriteU32(result, off, 0); off += 4;
-    WriteU32(result, off, 0); off += 4;
-    WriteU16(result, off, 240); off += 2;
-    WriteU16(result, off, kCharsExe | kCharsLargeAddressAware); off += 2;
+    Io::WriteU16(result, off, kMachinAmd64); off += 2;
+    Io::WriteU16(result, off, numSections); off += 2;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU16(result, off, 240); off += 2;
+    Io::WriteU16(result, off, kCharsExe | kCharsLargeAddressAware); off += 2;
 
-    WriteU16(result, off, kOptMagicPe32Plus); off += 2;
-    writeU8(result, off, 0); off += 1;
-    writeU8(result, off, 0); off += 1;
-    WriteU32(result, off, 0); off += 4;
-    WriteU32(result, off, 0); off += 4;
-    WriteU32(result, off, 0); off += 4;
-    WriteU32(result, off, entryPointRva); off += 4;
-    WriteU32(result, off, loadImageRva); off += 4;
+    Io::WriteU16(result, off, kOptMagicPe32Plus); off += 2;
+    Io::WriteU8(result, off, 0); off += 1;
+    Io::WriteU8(result, off, 0); off += 1;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU32(result, off, entryPointRva); off += 4;
+    Io::WriteU32(result, off, loadImageRva); off += 4;
 
-    writeU64(result, off, adjustedBase); off += 8;
-    WriteU32(result, off, kSectionAlignment); off += 4;
-    WriteU32(result, off, kFileAlignment); off += 4;
-    WriteU16(result, off, static_cast<std::uint16_t>(kOsVersion)); off += 2;
-    WriteU16(result, off, static_cast<std::uint16_t>(kOsVersionMinor)); off += 2;
-    WriteU16(result, off, 0); off += 2;
-    WriteU16(result, off, 0); off += 2;
-    WriteU16(result, off, static_cast<std::uint16_t>(kOsVersion)); off += 2;
-    WriteU16(result, off, static_cast<std::uint16_t>(kOsVersionMinor)); off += 2;
-    WriteU32(result, off, 0); off += 4;
-    WriteU32(result, off, sizeOfImage); off += 4;
-    WriteU32(result, off, kSizeOfPeHeaders); off += 4;
-    WriteU32(result, off, 0); off += 4;
-    WriteU16(result, off, static_cast<std::uint16_t>(kSubsystemConsole)); off += 2;
-    WriteU16(result, off, 0); off += 2;
-    writeU64(result, off, 0); off += 8;
-    writeU64(result, off, 0); off += 8;
-    writeU64(result, off, 0); off += 8;
-    writeU64(result, off, 0); off += 8;
-    WriteU32(result, off, 0); off += 4;
-    WriteU32(result, off, kNumberOfRvaAndSizes); off += 4;
+    Io::WriteU64(result, off, adjustedBase); off += 8;
+    Io::WriteU32(result, off, kSectionAlignment); off += 4;
+    Io::WriteU32(result, off, kFileAlignment); off += 4;
+    Io::WriteU16(result, off, static_cast<std::uint16_t>(kOsVersion)); off += 2;
+    Io::WriteU16(result, off, static_cast<std::uint16_t>(kOsVersionMinor)); off += 2;
+    Io::WriteU16(result, off, 0); off += 2;
+    Io::WriteU16(result, off, 0); off += 2;
+    Io::WriteU16(result, off, static_cast<std::uint16_t>(kOsVersion)); off += 2;
+    Io::WriteU16(result, off, static_cast<std::uint16_t>(kOsVersionMinor)); off += 2;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU32(result, off, sizeOfImage); off += 4;
+    Io::WriteU32(result, off, kSizeOfPeHeaders); off += 4;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU16(result, off, static_cast<std::uint16_t>(kSubsystemConsole)); off += 2;
+    Io::WriteU16(result, off, 0); off += 2;
+    Io::WriteU64(result, off, 0); off += 8;
+    Io::WriteU64(result, off, 0); off += 8;
+    Io::WriteU64(result, off, 0); off += 8;
+    Io::WriteU64(result, off, 0); off += 8;
+    Io::WriteU32(result, off, 0); off += 4;
+    Io::WriteU32(result, off, kNumberOfRvaAndSizes); off += 4;
 
     for (std::uint32_t i = 0; i < kNumberOfRvaAndSizes; ++i) {
-        WriteU32(result, off, 0); off += 4;
-        WriteU32(result, off, 0); off += 4;
+        Io::WriteU32(result, off, 0); off += 4;
+        Io::WriteU32(result, off, 0); off += 4;
     }
 
     if (!importSectionData.empty()) {
-        WriteU32(result, mzPeOffset + 4 + 20 + 104, importSectionRva);
-        WriteU32(result, mzPeOffset + 4 + 20 + 108, static_cast<std::uint32_t>(importDlls.size() * 20));
+        Io::WriteU32(result, mzPeOffset + 4 + 20 + 104, importSectionRva);
+        Io::WriteU32(result, mzPeOffset + 4 + 20 + 108, static_cast<std::uint32_t>(importDlls.size() * 20));
     }
     if (!relocSectionData.empty()) {
-        WriteU32(result, mzPeOffset + 4 + 20 + 168, relocSectionRva);
-        WriteU32(result, mzPeOffset + 4 + 20 + 172, static_cast<std::uint32_t>(relocSectionData.size()));
+        Io::WriteU32(result, mzPeOffset + 4 + 20 + 168, relocSectionRva);
+        Io::WriteU32(result, mzPeOffset + 4 + 20 + 172, static_cast<std::uint32_t>(relocSectionData.size()));
     }
 
     std::size_t shdrsOff = mzPeOffset + 4 + 20 + 240;
@@ -496,24 +496,19 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(
         char n[8]{};
         std::memcpy(n, name, std::min(std::strlen(name), std::size_t(8)));
         std::memcpy(result.data() + shdrsOff, n, 8);
-        WriteU32(result, shdrsOff + 8, virtualSize);
-        WriteU32(result, shdrsOff + 12, rva);
-        WriteU32(result, shdrsOff + 16, rawSize);
-        WriteU32(result, shdrsOff + 20, rawOff);
-        WriteU32(result, shdrsOff + 24, 0);
-        WriteU32(result, shdrsOff + 28, 0);
-        WriteU16(result, shdrsOff + 32, 0);
-        WriteU16(result, shdrsOff + 34, 0);
-        WriteU32(result, shdrsOff + 36, chars);
+        Io::WriteU32(result, shdrsOff + 8, virtualSize);
+        Io::WriteU32(result, shdrsOff + 12, rva);
+        Io::WriteU32(result, shdrsOff + 16, rawSize);
+        Io::WriteU32(result, shdrsOff + 20, rawOff);
+        Io::WriteU32(result, shdrsOff + 24, 0);
+        Io::WriteU32(result, shdrsOff + 28, 0);
+        Io::WriteU16(result, shdrsOff + 32, 0);
+        Io::WriteU16(result, shdrsOff + 34, 0);
+        Io::WriteU32(result, shdrsOff + 36, chars);
         shdrsOff += 40;
     };
 
-    constexpr std::uint32_t kSecExec = 0x60000020;
-    constexpr std::uint32_t kSecRW = 0xC0000040;
-    constexpr std::uint32_t kSecRO = 0x40000040;
-    constexpr std::uint32_t kSecDiscard = 0x02000000;
-
-    const std::uint32_t loadRawSize = alignUp(loadImageSize, kFileAlignment);
+    const std::uint32_t loadRawSize = Io::AlignUp(loadImageSize, kFileAlignment);
     std::uint32_t curRawOff = kSizeOfPeHeaders;
 
     writeSec(".load", loadImageSize, loadImageRva, loadRawSize, curRawOff, kSecExec | kSecRW);
@@ -539,7 +534,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(
     writeSec(".entry", static_cast<std::uint32_t>(stubData.size()), stubSectionRva,
         static_cast<std::uint32_t>(stubData.size()), stubRawOff, kSecExec);
 
-    alignBuf(result, kFileAlignment);
+    Io::AlignBuffer(result, kFileAlignment);
 
     {
         std::vector<std::uint8_t> loadRaw(imageBuf.begin(), imageBuf.end());

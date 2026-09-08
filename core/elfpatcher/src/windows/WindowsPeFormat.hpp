@@ -21,6 +21,11 @@ constexpr std::uint32_t kRelTypeAbsolute = 0;
 constexpr std::uint32_t kRelocBlockHeaderSize = 8;
 constexpr std::uint32_t kRelocEntrySize = 2;
 
+constexpr std::uint32_t kSecExec = 0x60000020;
+constexpr std::uint32_t kSecRW = 0xC0000040;
+constexpr std::uint32_t kSecRO = 0x40000040;
+constexpr std::uint32_t kSecDiscard = 0x02000000;
+
 struct MzHeader {
     std::uint8_t data[0x40];
 };
