@@ -21,12 +21,15 @@
 #include <memory>
 #include <string>
 #include <optional>
+#include <elfpatcher/windows/WindowsElfPatcher.hpp>
 
 int main(const int argc, char* argv[]) {
     bool skipSyscallCheck = false;
     bool toIntel = false;
     bool skipUnusedNidFilter = false;
     bool writeRegistry = false;
+    bool toWindows = false;
+
     std::string inputPath;
     std::string outputPath;
     std::string runPath = "$ORIGIN/libs";
@@ -47,6 +50,8 @@ int main(const int argc, char* argv[]) {
                 return 1;
             }
             runPath = argv[++i];
+        } else if (arg == "--windows") {
+            toWindows = true;
         } else if (inputPath.empty()) {
             inputPath = arg;
         } else if (outputPath.empty()) {
@@ -58,7 +63,7 @@ int main(const int argc, char* argv[]) {
     }
 
     if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "Usage: relinker [--skip-syscall-check] [--to-intel] [--skip-unused-nid-filter] [--registry] [--rpath <path>] <input.elf> <output.elf>\n"
+        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [--skip-unused-nid-filter] [--registry] [--rpath <path>] <input.elf> <output.elf>\n"
              "Example: relinker input.elf output.elf\n";
         return 1;
     }
@@ -104,17 +109,31 @@ int main(const int argc, char* argv[]) {
         }
 
         auto byteWriter = std::make_shared<Io::ByteWriter>();
-        Elfpatcher::Linux::LinuxElfPatcher elfPatcher(
-            std::make_shared<Elfpatcher::EntryStubBuilder>(),
-            std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
-                std::make_shared<Elfpatcher::SegmentFilter>(),
+
+        std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
+        if (toWindows) {
+            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(
+                std::make_shared<Elfpatcher::EntryStubBuilder>(),
+                std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
+                    std::make_shared<Elfpatcher::SegmentFilter>(),
+                    byteWriter
+                ),
+                std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
                 byteWriter
-            ),
-            std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
-            byteWriter
-        );
-        auto patchedElf = elfPatcher.Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath);
-        fileWriter.Write(outputPath, patchedElf);
+            );
+        } else {
+            patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
+                std::make_shared<Elfpatcher::EntryStubBuilder>(),
+                std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
+                    std::make_shared<Elfpatcher::SegmentFilter>(),
+                    byteWriter
+                ),
+                std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
+                byteWriter
+            );
+        }
+        auto patched = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath);
+        fileWriter.Write(outputPath, patched);
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();
