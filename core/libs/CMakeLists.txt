@@ -52,7 +52,11 @@ foreach(LIB_DIR ${LIBS_DIRS})
             target_include_directories(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         endif()
 
-        target_link_libraries(${LIB_NAME} PRIVATE libc)
+        if(LIB_NAME STREQUAL "libkernel")
+            target_link_libraries(${LIB_NAME} PRIVATE libc)
+        else()
+            target_link_libraries(${LIB_NAME} PRIVATE libkernel libc)
+        endif()
 
         set_target_properties(${LIB_NAME} PROPERTIES
                 PREFIX ""
