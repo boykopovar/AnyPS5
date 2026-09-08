@@ -1,66 +1,48 @@
-#ifndef CORE_ELFPATCHER_SRC_WINDOWS_WINDOWSPEFORMAT_HPP
-#define CORE_ELFPATCHER_SRC_WINDOWS_WINDOWSPEFORMAT_HPP
+#ifndef ELFPATCHER_WINDOWS_PEFORMAT_HPP
+#define ELFPATCHER_WINDOWS_PEFORMAT_HPP
 
-constexpr std::uint16_t kMzMagic = 0x5A4D;
-constexpr std::uint32_t kPeSignature = 0x00004550;
-constexpr std::uint16_t kMachinAmd64 = 0x8664;
-constexpr std::uint16_t kOptMagicPe32Plus = 0x020B;
-constexpr std::uint16_t kCharsDll = 0x2000;
-constexpr std::uint16_t kCharsExe = 0x0002;
-constexpr std::uint16_t kCharsLargeAddressAware = 0x0020;
-constexpr std::uint32_t kSectionAlignment = 0x1000;
-constexpr std::uint32_t kFileAlignment = 0x200;
-constexpr std::uint32_t kOsVersion = 6;
-constexpr std::uint32_t kOsVersionMinor = 0;
-constexpr std::uint32_t kSubsystemConsole = 3;
-constexpr std::uint32_t kNumberOfRvaAndSizes = 16;
-constexpr std::uint32_t kSizeOfPeHeaders = 0x400;
+#include <array>
+#include <cstdint>
+#include <string>
+#include <vector>
 
-constexpr std::uint32_t kRelTypeDir64 = 10;
-constexpr std::uint32_t kRelTypeAbsolute = 0;
-constexpr std::uint32_t kRelocBlockHeaderSize = 8;
-constexpr std::uint32_t kRelocEntrySize = 2;
+namespace Elfpatcher::Windows {
 
-constexpr std::uint32_t kSecExec = 0x60000020;
-constexpr std::uint32_t kSecRW = 0xC0000040;
-constexpr std::uint32_t kSecRO = 0x40000040;
-constexpr std::uint32_t kSecDiscard = 0x02000000;
-
-struct MzHeader {
-    std::uint8_t data[0x40];
-};
+inline constexpr std::uint32_t SectionAlignment = 0x1000;
+inline constexpr std::uint32_t FileAlignment = 0x200;
+inline constexpr std::uint32_t LoadRva = 0x10000;
+inline constexpr std::uint64_t ImageBase = 0x140000000;
+inline constexpr std::uint32_t SectionRead = 0x40000000;
+inline constexpr std::uint32_t SectionWrite = 0x80000000;
+inline constexpr std::uint32_t SectionExecute = 0x20000000;
 
 struct PeSection {
-    char name[8];
-    std::uint32_t virtualSize;
-    std::uint32_t virtualAddress;
-    std::uint32_t rawSize;
-    std::uint32_t rawOffset;
-    std::uint32_t characteristics;
-    std::vector<std::uint8_t> data;
+    std::string Name;
+    std::uint32_t Rva;
+    std::uint32_t Characteristics;
+    std::vector<std::uint8_t> Data;
 };
 
-struct DataDirectory {
-    std::uint32_t rva;
-    std::uint32_t size;
+struct PeDirectory {
+    std::uint32_t Rva = 0;
+    std::uint32_t Size = 0;
 };
 
-struct LoadSegment {
-    std::uint64_t vaddr;
-    std::uint64_t memSize;
-    std::uint64_t fileOffset;
-    std::uint64_t fileSize;
-    std::uint32_t flags;
+struct PeImport {
+    std::string Name;
+    std::uint32_t TargetRva;
+    std::uint64_t Addend;
 };
 
-struct ImportThunkEntry {
-    std::string symbolName;
-    std::uint32_t gotRva;
+struct PeRelocations {
+    std::vector<std::uint32_t> BaseRelocations;
+    std::vector<PeImport> Imports;
 };
 
-struct ImportDllBlock {
-    std::string dllName;
-    std::vector<ImportThunkEntry> thunks;
-};
+std::uint32_t CheckedRva(std::uint64_t value);
+std::uint32_t AlignRva(std::uint64_t value);
+std::string ReadString(const std::vector<std::uint8_t>& bytes, std::size_t offset);
+
+}
 
 #endif

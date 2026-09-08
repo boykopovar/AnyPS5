@@ -96,7 +96,7 @@ int main(const int argc, char* argv[]) {
             std::make_shared<Relinker::ValidationPolicy>(),
             std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
             Relinker::MakeUnusedNidFilter(),
-            !skipUnusedNidFilter
+            !skipUnusedNidFilter && !toWindows
         );
 
         auto result = pipeline->Relink(sourceBytes);
@@ -112,15 +112,7 @@ int main(const int argc, char* argv[]) {
 
         std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
         if (toWindows) {
-            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(
-                std::make_shared<Elfpatcher::EntryStubBuilder>(),
-                std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
-                    std::make_shared<Elfpatcher::SegmentFilter>(),
-                    byteWriter
-                ),
-                std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
-                byteWriter
-            );
+            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>();
         } else {
             patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
                 std::make_shared<Elfpatcher::EntryStubBuilder>(),

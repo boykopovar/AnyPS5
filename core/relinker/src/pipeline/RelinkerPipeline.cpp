@@ -171,6 +171,12 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
+            if (relType == 8) {
+                if (symIdx != 0)
+                    throw RelinkerException("RELATIVE relocation has a nonzero symbol index", pos);
+                continue;
+            }
+
             const FileByteOffset symOff = dynSymTabOffset + static_cast<FileByteOffset>(symIdx) * symEntSize;
             if (symOff + 4 > raw.size())
                 throw RelinkerException("Symbol table entry out of bounds", symOff);
