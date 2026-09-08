@@ -23,20 +23,24 @@ extern "C" {
 
     void init_env_nid_postfix(const InitEnvParams* params) {
         (void)params;
+        NotImplemented_nid_no_patch(__func__);
     }
 
     void catchReturnFromMain_nid_postfix(int status) {
         (void)status;
+        NotImplemented_nid_no_patch(__func__);
     }
 
     int cxa_atexit_nid_postfix(void (*func)(void*), void* arg, void* d) {
         (void)func;
         (void)arg;
         (void)d;
+        NotImplemented_nid_no_patch(__func__);
         return 0;
     }
 
     void cxa_finalize_nid_postfix(void* d) {
+        NotImplemented_nid_no_patch(__func__);
         (void)d;
     }
 
@@ -44,17 +48,20 @@ extern "C" {
         (void)flag;
         (void)func;
         (void)arg;
+        NotImplemented_nid_no_patch(__func__);
         return 0;
     }
 
     void LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info) {
         (void)info;
+        NotImplemented_nid_no_patch(__func__);
     }
 
     int LibcInternalExtCxaThreadAtexit_nid_postfix(void (*destructor)(void*), void* object, void* module_id) {
         (void)destructor;
         (void)object;
         (void)module_id;
+        NotImplemented_nid_no_patch(__func__);
         return 0;
     }
 
@@ -64,6 +71,7 @@ extern "C" {
     ) {
         (void)msp; (void)ptr; (void)error;
         (void)arg3; (void)arg4; (void)arg5;
+        NotImplemented_nid_no_patch(__func__);
         return 0;
     }
 

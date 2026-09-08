@@ -23,7 +23,7 @@ FileStream* fopen_nid_postfix(const char* filename, const char* mode) {
     auto stream = std::make_unique<FileStream>(handle.get(), true);
     handle.release();
 
-    std::fprintf(stderr, "fopen success: \"%s\"\n", filename);
+    APS5_LOG_OUT("success: \"%s\"", filename);
     return stream.release();
 }
 

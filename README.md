@@ -7,6 +7,7 @@ Implementations of system prx libraries suitable for dynamic linking: [core/libs
 
 Execution reaches `_start`, stack unwinding and exception handling tables are built. All unimplemented functions throw std::runtime_error. `what()` is printed to stderr and the process terminates.
 Shader initialization via `sceAgcCreate*` passes.
+
 Now: `sceVideoOutOpen not implemented`.
 
 ## Disclaimer

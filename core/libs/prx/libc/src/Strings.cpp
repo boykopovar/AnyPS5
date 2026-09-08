@@ -8,7 +8,7 @@
 extern "C" {
 
 void* memset_nid_postfix(void* s, int c, size_t n) {
-    fprintf(stderr, "memset_nid_postfix: s=%p c=%d n=%zu\n", s, c, n);
+    APS5_LOG_OUT("s=%p c=%d n=%zu", s, c, n);
     return std::memset(s, c, n);
 }
 
