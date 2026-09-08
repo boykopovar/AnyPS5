@@ -96,7 +96,7 @@ int main(const int argc, char* argv[]) {
             std::make_shared<Relinker::ValidationPolicy>(),
             std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
             Relinker::MakeUnusedNidFilter(),
-            !skipUnusedNidFilter && !toWindows
+            !skipUnusedNidFilter
         );
 
         auto result = pipeline->Relink(sourceBytes);
