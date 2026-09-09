@@ -94,4 +94,12 @@ uint32_t* sceAgcCbSetShRegistersDirect(CommandBuffer* buf, const volatile Shader
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
+std::uint32_t* sceAgcCbSetUcRegistersDirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs) {
+    (void)buf;
+    (void)regs;
+    (void)numRegs;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

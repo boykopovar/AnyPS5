@@ -174,4 +174,15 @@ uint32_t sceAgcDcbWriteDataGetSize(uint32_t num_dwords){
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
+std::uint64_t sceAgcDcbEventWriteGetSize(std::uint8_t eventType) {
+    (void)eventType;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::uint64_t sceAgcDcbCopyDataGetSize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

@@ -140,4 +140,18 @@ int sceAgcSetUcRegIndirectPatchSetNumRegisters(uint32_t* cmd, uint32_t num_regs)
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
+int sceAgcAsyncCondExecPatchSetCommandAddress(std::uint32_t* cmd, const volatile std::uint32_t* command) {
+    (void)cmd;
+    (void)command;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int sceAgcAsyncCondExecPatchSetEnd(std::uint32_t* cmd, const volatile std::uint32_t* buffer) {
+    (void)cmd;
+    (void)buffer;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

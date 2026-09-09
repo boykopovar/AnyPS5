@@ -149,4 +149,16 @@ uint32_t* sceAgcDcbGetLodStats(CommandBuffer* buf, uint8_t cache_policy, const v
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
+std::uint32_t* sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddr, std::uint32_t strideInBytes, std::uint64_t modifier) {
+    (void)buf;
+    (void)dataOffsetInBytes;
+    (void)countIndirect;
+    (void)maxCountOrCount;
+    (void)countAddr;
+    (void)strideInBytes;
+    (void)modifier;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

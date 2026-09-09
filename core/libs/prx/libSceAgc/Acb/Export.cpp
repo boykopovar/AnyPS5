@@ -137,4 +137,24 @@ uint32_t* sceAgcAcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_poli
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
+std::uint64_t sceAgcAcbCopyDataGetSize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::uint32_t* sceAgcAcbJump(CommandBuffer* buf, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords) {
+    (void)buf;
+    (void)cachePolicy;
+    (void)target;
+    (void)sizeInDwords;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+std::uint64_t sceAgcAcbWaitOnAddressGetSize(std::uint8_t size) {
+    (void)size;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
