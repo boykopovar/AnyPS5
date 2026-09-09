@@ -6,11 +6,17 @@
 
 namespace Relinker {
 
+struct RelinkPatch {
+    FileByteOffset Offset;
+    std::vector<std::uint8_t> Bytes;
+};
+
 struct RelinkResult {
     std::vector<CallRegistryEntry> RegistryEntries;
     std::vector<ProgramHeader> OriginalHeaders;
     SysVDynamicSection DynamicSection;
     VirtualAddress OriginalPltGotVaddr;
+    std::vector<RelinkPatch> Patches;
 };
 
 }

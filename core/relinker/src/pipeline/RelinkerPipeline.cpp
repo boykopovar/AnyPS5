@@ -1,5 +1,6 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
+#include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <sstream>
 #include <iostream>
 #include <cstring>
@@ -197,9 +198,14 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     static constexpr std::uint32_t R_X86_64_JUMP_SLOT = 7;
 
     const std::size_t originalNidCount = nidRefs.size();
+    const auto originalNidRefs = nidRefs;
     std::cout << "NID input: " << originalNidCount << " references\n";
 
-    if (unusedFilterLevel != 0) {
+    if (unusedFilterLevel == 2) {
+        nidRefs = _unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr);
+        if (nidRefs.size() > originalNidCount) throw RelinkerException("Strict NID filter increased the reference count");
+        std::cout << "Strict filtering total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
+    } else if (unusedFilterLevel == 1) {
         std::vector<NidReference> pltRefs;
         std::vector<NidReference> nonPltRefs;
         for (const auto& ref : nidRefs) {
@@ -215,9 +221,6 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         if (nonPltRefs.size() > nonPltCount) throw RelinkerException("Unused NID filter increased the reference count");
         std::cout << "CFG/GOT filtering: " << nonPltCount << " -> " << nonPltRefs.size() << "; filtered=" << nonPltCount - nonPltRefs.size() << "\n";
 
-        if (unusedFilterLevel == 2)
-            std::cout << "Strict filtering: " << nonPltRefs.size() << " -> " << nonPltRefs.size() << "; filtered=0 (reserved; currently identical to level 1)\n";
-
         nidRefs.clear();
         nidRefs.reserve(pltRefs.size() + nonPltRefs.size());
         for (auto& ref : pltRefs) nidRefs.push_back(std::move(ref));
@@ -228,8 +231,17 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     std::cout << "NID total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
 
-    auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(
-        nidRefs, neededLibraries, dynJmpRelOffset, static_cast<std::uint32_t>(dynJmpRelSize / relaEntSize));
+    auto dynamicRefs = nidRefs;
+    std::vector<RelinkPatch> patches;
+    auto pltCount = static_cast<std::uint32_t>(dynJmpRelSize / relaEntSize);
+    if (unusedFilterLevel == 2) {
+        auto compacted = UnusedNidFilter::CompactPlt(originalNidRefs, nidRefs, textSection, textVAddr, _elfReader->TranslateVirtualAddress(textVAddr), dynJmpRelOffset);
+        dynamicRefs = std::move(compacted.References);
+        patches = std::move(compacted.Patches);
+        std::cout << "PLT compaction: " << pltCount << " -> " << compacted.SlotCount << "; lazy binding preserved\n";
+        pltCount = compacted.SlotCount;
+    }
+    auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
 
     static constexpr std::uint32_t R_X86_64_RELATIVE = 8;
 
@@ -280,7 +292,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         entries.push_back(std::move(entry));
     }
 
-    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr};
+    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr, std::move(patches)};
 }
 
 }

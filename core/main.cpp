@@ -106,12 +106,17 @@ int main(const int argc, char* argv[]) {
             Relinker::MakeCallSiteResolver(),
             std::make_shared<Relinker::ValidationPolicy>(),
             std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
-            Relinker::MakeUnusedNidFilter(),
+            unusedFilterLevel == 2 ? Relinker::MakeStrictUnusedNidFilter() : Relinker::MakeUnusedNidFilter(),
             unusedFilterLevel
         );
 
         std::cout << "System: " << (toWindows ? "Windows" : "Linux") << "; unused-filter=" << unusedFilterLevel << "\n";
         auto result = pipeline->Relink(sourceBytes);
+        for (const auto& patch : result.Patches) {
+            if (patch.Offset > sourceBytes.size() || patch.Bytes.size() > sourceBytes.size() - patch.Offset)
+                throw Domain::RelinkerException("Relinker patch exceeds source image", patch.Offset);
+            for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
+        }
 
         if (writeRegistry) {
             const std::filesystem::path outFsPath(outputPath);

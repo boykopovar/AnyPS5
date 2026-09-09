@@ -68,7 +68,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             throw CodegenException("Instruction truncated after VEX2 prefix");
         }
         vexPresent = true;
-        vexMap = TwoByteOpcodeEscape;
+        vexMap = 1;
         pos += 1;
     } else if (opcode == OneByteVex3) {
         if (pos >= available) {
@@ -117,18 +117,20 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     bool hasModRm = false;
     std::size_t immediateSize = ImmSizeNone;
 
+    const bool vectorImmediate = vexMap == 1 && ((opcode >= 0x70 && opcode <= 0x73) || opcode == 0xC2 || opcode == 0xC4 || opcode == 0xC5 || opcode == 0xC6);
+
     if (vexPresent) {
-        if (vexMap == TwoByteOpcodeEscape && opcode >= VexNoModRmMin && opcode <= VexNoModRmMax) {
+        if (vexMap == 1 && opcode >= VexNoModRmMin && opcode <= VexNoModRmMax) {
             hasModRm = false;
         } else {
             hasModRm = true;
-            if (vexMap == Vex3Map0F3A) {
+            if (vexMap == Vex3Map0F3A || vectorImmediate) {
                 immediateSize = ImmSize8;
             }
         }
     } else if (evexPresent) {
         hasModRm = true;
-        if (vexMap == EvexMap0F3A) {
+        if (vexMap == EvexMap0F3A || vectorImmediate) {
             immediateSize = ImmSize8;
         }
     } else if (threeByteEscape) {

@@ -7,6 +7,7 @@
 namespace Relinker {
 
 std::shared_ptr<IUnusedNidFilter> MakeUnusedNidFilter();
+std::shared_ptr<IUnusedNidFilter> MakeStrictUnusedNidFilter();
 
 }
 
