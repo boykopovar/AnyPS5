@@ -1,6 +1,6 @@
 #include <nid/BinaryPatcherFactory.hpp>
 #include <nid/ElfPatcher.hpp>
-#include <nid/PePatcher.hpp>
+#include <nid/PeNidPatcher.hpp>
 #include <stdexcept>
 
 namespace Nid {

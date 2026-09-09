@@ -1,11 +1,23 @@
 #include <nid/NidResolver.hpp>
 #include <nid/NidCompute.hpp>
-#include <cstdint>
 #include <nid/NidPatcherUtils.hpp>
+#include <cstdint>
 #include <stdexcept>
 #include <unordered_set>
+#include <vector>
 
 namespace Nid {
+
+std::string ResolveOneName(const std::string& funcName) {
+    using namespace Internal;
+
+    if (IsNidNoPatchCut(funcName))
+        return StripNidNoPatchCut(funcName);
+    if (IsNidNoPatch(funcName))
+        return funcName;
+
+    return ComputeNid(StripNidPostfix(funcName), "");
+}
 
 std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::string>& exportedNames, const std::string& libraryName) {
     using namespace Internal;

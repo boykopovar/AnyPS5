@@ -89,6 +89,7 @@ constexpr std::uint32_t kShtGnuVerneed = 0x6ffffffeu;
 constexpr std::uint32_t kShtDynsym = 11u;
 constexpr std::uint32_t kShtGnuHash = 0x6ffffff6u;
 constexpr std::uint32_t kShtRela = 4u;
+constexpr std::uint32_t kShtGnuVersym = 0x6fffffffu;
 constexpr std::uint8_t kStbLocal = 0u;
 constexpr std::uint16_t kShnUndef = 0u;
 

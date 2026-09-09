@@ -1,6 +1,7 @@
-#include <nid/PePatcher.hpp>
+#include <nid/PeNidPatcher.hpp>
 #include <nid/NidResolver.hpp>
 #include <nid/NidPatcherUtils.hpp>
+#include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -11,38 +12,6 @@
 namespace Nid {
 
 namespace {
-
-struct PeDataDirectory {
-    std::uint32_t VirtualAddress;
-    std::uint32_t Size;
-};
-
-struct PeExportDirectory {
-    std::uint32_t Characteristics;
-    std::uint32_t TimeDateStamp;
-    std::uint16_t MajorVersion;
-    std::uint16_t MinorVersion;
-    std::uint32_t Name;
-    std::uint32_t Base;
-    std::uint32_t NumberOfFunctions;
-    std::uint32_t NumberOfNames;
-    std::uint32_t AddressOfFunctions;
-    std::uint32_t AddressOfNames;
-    std::uint32_t AddressOfNameOrdinals;
-};
-
-struct PeSectionHeader {
-    std::uint8_t Name[8];
-    std::uint32_t VirtualSize;
-    std::uint32_t VirtualAddress;
-    std::uint32_t SizeOfRawData;
-    std::uint32_t PointerToRawData;
-    std::uint32_t PointerToRelocations;
-    std::uint32_t PointerToLinenumbers;
-    std::uint16_t NumberOfRelocations;
-    std::uint16_t NumberOfLinenumbers;
-    std::uint32_t Characteristics;
-};
 
 std::size_t FindSectionOffsetByRva(const std::vector<std::uint8_t>& pe, std::uint32_t rva, std::uint32_t peHeaderOffset, std::uint16_t numberOfSections, std::uint32_t sizeOfOptionalHeader) {
     const std::size_t sectionTableOffset = static_cast<std::size_t>(peHeaderOffset) + 4u + 20u + sizeOfOptionalHeader;
@@ -156,6 +125,85 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         Write(pe, namesArrayOffset + i * 4u, newNameRva);
 
         usedEnd += newSize;
+    }
+
+    constexpr std::size_t kImportDirIndex = 1u;
+    if (dataDirectoryOffset + (kImportDirIndex + 1u) * sizeof(PeDataDirectory) > pe.size())
+        return;
+
+    const auto importDir = Read<PeDataDirectory>(pe, dataDirectoryOffset + kImportDirIndex * sizeof(PeDataDirectory));
+    if (importDir.VirtualAddress == 0u || importDir.Size == 0u)
+        return;
+
+    struct PeImportDescriptor {
+        std::uint32_t OriginalFirstThunk;
+        std::uint32_t TimeDateStamp;
+        std::uint32_t ForwarderChain;
+        std::uint32_t Name;
+        std::uint32_t FirstThunk;
+    };
+
+    struct PeImportByName {
+        std::uint16_t Hint;
+        char Name[1];
+    };
+
+    std::size_t importDescOffset = RvaToOffset(pe, importDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+
+    while (true) {
+        if (importDescOffset + sizeof(PeImportDescriptor) > pe.size())
+            throw std::runtime_error("import descriptor out of bounds");
+
+        const auto desc = Read<PeImportDescriptor>(pe, importDescOffset);
+        if (desc.OriginalFirstThunk == 0u && desc.FirstThunk == 0u)
+            break;
+
+        const std::uint32_t thunkRva = desc.OriginalFirstThunk != 0u ? desc.OriginalFirstThunk : desc.FirstThunk;
+        std::size_t thunkOffset = RvaToOffset(pe, thunkRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+
+        const bool is64 = magic == 0x20bu;
+        const std::size_t thunkEntrySize = is64 ? 8u : 4u;
+        const std::uint64_t ordinalFlag = is64 ? (std::uint64_t{1} << 63u) : (std::uint64_t{1} << 31u);
+
+        while (true) {
+            if (thunkOffset + thunkEntrySize > pe.size())
+                throw std::runtime_error("thunk entry out of bounds");
+
+            const std::uint64_t thunk = is64
+                ? Read<std::uint64_t>(pe, thunkOffset)
+                : static_cast<std::uint64_t>(Read<std::uint32_t>(pe, thunkOffset));
+
+            if (thunk == 0u)
+                break;
+
+            if (!(thunk & ordinalFlag)) {
+                const auto hintNameRva = static_cast<std::uint32_t>(thunk & 0x7fffffffffffffffu);
+                const std::size_t hintNameOffset = RvaToOffset(pe, hintNameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+                if (hintNameOffset + 2u >= pe.size())
+                    throw std::runtime_error("import by name out of bounds");
+
+                const std::string funcName = ReadCStr(pe, hintNameOffset + 2u);
+                if (!funcName.empty()) {
+                    const bool hasNidPostfix = funcName.size() >= kNidPostfixLen &&
+                        funcName.compare(funcName.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) == 0;
+                    const bool hasScePrefix = funcName.size() >= 3u &&
+                        std::tolower(static_cast<unsigned char>(funcName[0])) == 's' &&
+                        std::tolower(static_cast<unsigned char>(funcName[1])) == 'c' &&
+                        std::tolower(static_cast<unsigned char>(funcName[2])) == 'e';
+                    if (hasNidPostfix || hasScePrefix) {
+                        const std::string nid = ResolveOneName(funcName);
+                        if (nid.size() > funcName.size())
+                            throw std::runtime_error("import NID longer than original name: " + funcName);
+                        std::memcpy(pe.data() + hintNameOffset + 2u, nid.data(), nid.size());
+                        pe[hintNameOffset + 2u + nid.size()] = 0u;
+                    }
+                }
+            }
+
+            thunkOffset += thunkEntrySize;
+        }
+
+        importDescOffset += sizeof(PeImportDescriptor);
     }
 }
 

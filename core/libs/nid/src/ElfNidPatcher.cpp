@@ -1,6 +1,7 @@
 #include <nid/ElfPatcher.hpp>
 #include <nid/NidResolver.hpp>
 #include <nid/NidPatcherUtils.hpp>
+#include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -317,6 +318,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     std::size_t dynSymOffset = 0u, dynSymSize = 0u;
     std::size_t gnuHashOffset = 0u, gnuHashSize = 0u;
+    std::size_t versymOffset = 0u;
     std::uint32_t dynSymSectionIndex = 0u;
     std::uint32_t gnuHashSymOffset = 0u;
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
@@ -332,6 +334,8 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             gnuHashSize = static_cast<std::size_t>(shdr.sh_size);
             gnuHashSymOffset = Read<std::uint32_t>(elf, gnuHashOffset + 4u);
         }
+        if (shdr.sh_type == kShtGnuVersym)
+            versymOffset = static_cast<std::size_t>(shdr.sh_offset);
     }
 
     if (dynSymOffset == 0u) throw std::runtime_error("no .dynsym section");
@@ -400,6 +404,17 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             const auto it = nidMap.find(symName);
             if (it != nidMap.end())
                 newValue = it->second;
+        } else if (binding != kStbLocal && sym.st_shndx == kShnUndef) {
+            const bool isUnversioned = versymOffset == 0u ||
+                (Read<std::uint16_t>(elf, versymOffset + i * sizeof(std::uint16_t)) <= 1u);
+            const bool hasNidPostfix = symName.size() >= kNidPostfixLen &&
+                symName.compare(symName.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) == 0;
+            const bool hasScePrefix = symName.size() >= 3u &&
+                std::tolower(static_cast<unsigned char>(symName[0])) == 's' &&
+                std::tolower(static_cast<unsigned char>(symName[1])) == 'c' &&
+                std::tolower(static_cast<unsigned char>(symName[2])) == 'e';
+            if (isUnversioned && (hasNidPostfix || hasScePrefix))
+                newValue = ResolveOneName(symName);
         }
 
         uses.push_back(SymbolNameUse{i, sym.st_name, newValue});
