@@ -431,7 +431,11 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
                 return info;
             }
             if (reg == 3) {
-                info.FlowKind = ControlFlowKind::Return;
+                info.FlowKind = ControlFlowKind::IndirectCall;
+                return info;
+            }
+            if (reg == 5) {
+                info.FlowKind = ControlFlowKind::IndirectJump;
                 return info;
             }
         }
