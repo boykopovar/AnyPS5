@@ -11,6 +11,11 @@ public:
         const std::uint8_t* data,
         std::size_t available
     ) const override;
+
+    [[nodiscard]] DecodedInstructionInfo DecodeInstruction(
+        const std::uint8_t* data,
+        std::size_t available
+    ) const override;
 };
 
 }

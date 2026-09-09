@@ -200,7 +200,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     _validationPolicy->ValidateSyscallAbsence();
 
     if (_filterUnusedNids)
-        nidRefs = _unusedNidFilter->Filter(nidRefs, textSection, textVAddr);
+        nidRefs = _unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr);
 
     auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(nidRefs, neededLibraries);
 

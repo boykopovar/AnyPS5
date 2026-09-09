@@ -14,6 +14,11 @@ public:
         const std::uint8_t* data,
         std::size_t available
     ) const = 0;
+
+    [[nodiscard]] virtual DecodedInstructionInfo DecodeInstruction(
+        const std::uint8_t* data,
+        std::size_t available
+    ) const = 0;
 };
 
 }

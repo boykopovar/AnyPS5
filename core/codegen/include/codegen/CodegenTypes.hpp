@@ -33,6 +33,27 @@ struct ConvertResult {
     std::size_t ReplacedCount;
 };
 
+enum class ControlFlowKind : std::uint8_t {
+    Sequential,
+    ConditionalBranch,
+    UnconditionalJump,
+    Call,
+    Return,
+    IndirectJump,
+    IndirectCall,
+};
+
+struct DecodedInstructionInfo {
+    std::size_t Length;
+    ControlFlowKind FlowKind;
+    bool HasRipRelativeDisp;
+    std::size_t RipRelativeDispOffset;
+    bool HasModRm;
+    std::uint8_t ModRmByte;
+    bool HasBranchTarget;
+    std::int64_t BranchDisp;
+};
+
 }
 
 #endif
