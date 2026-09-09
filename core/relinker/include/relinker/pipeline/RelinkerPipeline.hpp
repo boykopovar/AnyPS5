@@ -14,15 +14,7 @@ namespace Relinker {
 
 class RelinkerPipeline : public IRelinkerPipeline {
 public:
-    RelinkerPipeline(
-        std::shared_ptr<IElfReader> elfReader,
-        std::shared_ptr<ISyscallScanner> syscallScanner,
-        std::shared_ptr<ICallSiteResolver> callSiteResolver,
-        std::shared_ptr<IValidationPolicy> validationPolicy,
-        std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
-        std::shared_ptr<IUnusedNidFilter> unusedNidFilter,
-        bool filterUnusedNids
-    );
+    RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel);
 
     RelinkResult Relink(const std::vector<std::uint8_t>& sourceElf) override;
 
@@ -33,7 +25,7 @@ private:
     std::shared_ptr<IValidationPolicy> _validationPolicy;
     std::shared_ptr<ISysVDynamicSectionBuilder> _dynamicSectionBuilder;
     std::shared_ptr<IUnusedNidFilter> _unusedNidFilter;
-    bool _filterUnusedNids;
+    std::uint32_t unusedFilterLevel;
 
     static constexpr std::uint32_t PT_LOAD = 1;
     static constexpr std::uint32_t PT_DYNAMIC = 2;

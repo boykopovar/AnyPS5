@@ -26,7 +26,8 @@
 int main(const int argc, char* argv[]) {
     bool skipSyscallCheck = false;
     bool toIntel = false;
-    bool skipUnusedNidFilter = false;
+    std::uint32_t unusedFilterLevel = 1;
+    bool unusedFilterSpecified = false;
     bool writeRegistry = false;
     bool toWindows = false;
 
@@ -40,8 +41,14 @@ int main(const int argc, char* argv[]) {
             skipSyscallCheck = true;
         } else if (arg == "--to-intel") {
             toIntel = true;
-        } else if (arg == "--skip-unused-nid-filter") {
-            skipUnusedNidFilter = true;
+        } else if (arg.rfind("unused-filter=", 0) == 0) {
+            const std::string value = arg.substr(14);
+            if (unusedFilterSpecified || value.size() != 1 || value[0] < '0' || value[0] > '2') {
+                std::cerr << "FAIL: unused-filter must be specified once with a value of 0, 1 or 2\n";
+                return 1;
+            }
+            unusedFilterLevel = static_cast<std::uint32_t>(value[0] - '0');
+            unusedFilterSpecified = true;
         } else if (arg == "--registry") {
             writeRegistry = true;
         } else if (arg == "--rpath") {
@@ -52,6 +59,9 @@ int main(const int argc, char* argv[]) {
             runPath = argv[++i];
         } else if (arg == "--windows") {
             toWindows = true;
+        } else if (arg.rfind("--", 0) == 0 || arg == "unused-filter") {
+            std::cerr << "FAIL: unknown option: " << arg << "\n";
+            return 1;
         } else if (inputPath.empty()) {
             inputPath = arg;
         } else if (outputPath.empty()) {
@@ -63,7 +73,7 @@ int main(const int argc, char* argv[]) {
     }
 
     if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [--skip-unused-nid-filter] [--registry] [--rpath <path>] <input.elf> <output.elf>\n"
+        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] <input.elf> <output.elf>\n"
              "Example: relinker input.elf output.elf\n";
         return 1;
     }
@@ -75,6 +85,7 @@ int main(const int argc, char* argv[]) {
         auto sourceBytes = fileReader.Read(inputPath);
 
         if (toIntel) {
+            std::cout << "Mode: Intel instruction conversion; system unchanged; unused-filter=" << unusedFilterLevel << " (not applied)\n";
             const Relinker::ElfReader elfReader(sourceBytes);
             const auto converter = Codegen::MakeAmd64OnlyConverter();
             auto result = converter->Convert(std::move(sourceBytes), elfReader.ReadCodeSegments());
@@ -96,9 +107,10 @@ int main(const int argc, char* argv[]) {
             std::make_shared<Relinker::ValidationPolicy>(),
             std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
             Relinker::MakeUnusedNidFilter(),
-            !skipUnusedNidFilter
+            unusedFilterLevel
         );
 
+        std::cout << "System: " << (toWindows ? "Windows" : "Linux") << "; unused-filter=" << unusedFilterLevel << "\n";
         auto result = pipeline->Relink(sourceBytes);
 
         if (writeRegistry) {
@@ -126,6 +138,7 @@ int main(const int argc, char* argv[]) {
         }
         auto patched = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath);
         fileWriter.Write(outputPath, patched);
+        std::cout << "OK: " << result.RegistryEntries.size() << " NID references processed; output written\n";
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();

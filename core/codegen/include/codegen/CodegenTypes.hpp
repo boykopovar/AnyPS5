@@ -41,6 +41,7 @@ enum class ControlFlowKind : std::uint8_t {
     Return,
     IndirectJump,
     IndirectCall,
+    Trap,
 };
 
 struct DecodedInstructionInfo {

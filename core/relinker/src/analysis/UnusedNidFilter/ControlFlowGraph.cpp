@@ -98,6 +98,7 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
                 break;
             case Return:
             case IndirectJump:
+            case Trap:
                 break;
         }
     }

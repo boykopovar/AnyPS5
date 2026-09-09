@@ -440,6 +440,10 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             }
         }
     } else {
+        if (op == 0x0B) {
+            info.FlowKind = ControlFlowKind::Trap;
+            return info;
+        }
         if (op >= TwoByteJccRel32Min && op <= TwoByteJccRel32Max) {
             std::int32_t disp = 0;
             std::memcpy(&disp, data + pos, 4);

@@ -6,22 +6,17 @@
 
 namespace Relinker {
 
-RelinkerPipeline::RelinkerPipeline(
-    std::shared_ptr<IElfReader> elfReader,
-    std::shared_ptr<ISyscallScanner> syscallScanner,
-    std::shared_ptr<ICallSiteResolver> callSiteResolver,
-    std::shared_ptr<IValidationPolicy> validationPolicy,
-    std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
-    std::shared_ptr<IUnusedNidFilter> unusedNidFilter,
-    bool filterUnusedNids)
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel)
     : _elfReader(std::move(elfReader))
     , _syscallScanner(std::move(syscallScanner))
     , _callSiteResolver(std::move(callSiteResolver))
     , _validationPolicy(std::move(validationPolicy))
     , _dynamicSectionBuilder(std::move(dynamicSectionBuilder))
     , _unusedNidFilter(std::move(unusedNidFilter))
-    , _filterUnusedNids(filterUnusedNids)
-{}
+    , unusedFilterLevel(unusedFilterLevel)
+{
+    if (unusedFilterLevel > 2) throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
+}
 
 std::string RelinkerPipeline::_relocationTypeName(std::uint32_t type) {
     switch (type) {
@@ -201,7 +196,10 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     static constexpr std::uint32_t R_X86_64_JUMP_SLOT = 7;
 
-    if (_filterUnusedNids) {
+    const std::size_t originalNidCount = nidRefs.size();
+    std::cout << "NID input: " << originalNidCount << " references\n";
+
+    if (unusedFilterLevel != 0) {
         std::vector<NidReference> pltRefs;
         std::vector<NidReference> nonPltRefs;
         for (const auto& ref : nidRefs) {
@@ -211,13 +209,24 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
                 nonPltRefs.push_back(ref);
         }
 
+        std::cout << "PLT preservation: " << pltRefs.size() << " -> " << pltRefs.size() << "; filtered=0\n";
+        const std::size_t nonPltCount = nonPltRefs.size();
         nonPltRefs = _unusedNidFilter->Filter(nonPltRefs, raw, textSection, textVAddr);
+        if (nonPltRefs.size() > nonPltCount) throw RelinkerException("Unused NID filter increased the reference count");
+        std::cout << "CFG/GOT filtering: " << nonPltCount << " -> " << nonPltRefs.size() << "; filtered=" << nonPltCount - nonPltRefs.size() << "\n";
+
+        if (unusedFilterLevel == 2)
+            std::cout << "Strict filtering: " << nonPltRefs.size() << " -> " << nonPltRefs.size() << "; filtered=0 (reserved; currently identical to level 1)\n";
 
         nidRefs.clear();
         nidRefs.reserve(pltRefs.size() + nonPltRefs.size());
         for (auto& ref : pltRefs) nidRefs.push_back(std::move(ref));
         for (auto& ref : nonPltRefs) nidRefs.push_back(std::move(ref));
+    } else {
+        std::cout << "Unused NID filtering: disabled; filtered=0\n";
     }
+
+    std::cout << "NID total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
 
     auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(
         nidRefs, neededLibraries, dynJmpRelOffset, static_cast<std::uint32_t>(dynJmpRelSize / relaEntSize));
@@ -270,8 +279,6 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         entry.CallSitesResolved = callSitesResolved;
         entries.push_back(std::move(entry));
     }
-
-    std::cout << "OK: " << entries.size() << " NID references processed\n";
 
     return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr};
 }
