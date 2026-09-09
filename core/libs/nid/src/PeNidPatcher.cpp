@@ -127,6 +127,35 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         usedEnd += newSize;
     }
 
+    auto patchedSection = edataSection;
+    patchedSection.VirtualSize = std::max(patchedSection.VirtualSize, usedEnd);
+    Write(pe, edataSectionOffset, patchedSection);
+
+    struct ExportName {
+        std::string Name;
+        std::uint32_t Rva;
+        std::uint16_t Ordinal;
+    };
+
+    const std::size_t ordinalsArrayOffset = RvaToOffset(pe, exportTable.AddressOfNameOrdinals, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    std::vector<ExportName> exportNames;
+    exportNames.reserve(exportTable.NumberOfNames);
+    for (std::size_t i = 0; i < exportTable.NumberOfNames; ++i) {
+        const auto nameRva = Read<std::uint32_t>(pe, namesArrayOffset + i * sizeof(std::uint32_t));
+        const auto ordinal = Read<std::uint16_t>(pe, ordinalsArrayOffset + i * sizeof(std::uint16_t));
+        if (ordinal >= exportTable.NumberOfFunctions)
+            throw std::runtime_error("export name ordinal out of bounds");
+        const auto nameOffset = RvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        exportNames.push_back({ReadCStr(pe, nameOffset), nameRva, ordinal});
+    }
+    std::sort(exportNames.begin(), exportNames.end(), [](const ExportName& left, const ExportName& right) { return left.Name < right.Name; });
+    for (std::size_t i = 0; i < exportNames.size(); ++i) {
+        if (i != 0 && exportNames[i - 1].Name == exportNames[i].Name)
+            throw std::runtime_error("duplicate patched export name: " + exportNames[i].Name);
+        Write(pe, namesArrayOffset + i * sizeof(std::uint32_t), exportNames[i].Rva);
+        Write(pe, ordinalsArrayOffset + i * sizeof(std::uint16_t), exportNames[i].Ordinal);
+    }
+
     constexpr std::size_t kImportDirIndex = 1u;
     if (dataDirectoryOffset + (kImportDirIndex + 1u) * sizeof(PeDataDirectory) > pe.size())
         return;
