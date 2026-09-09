@@ -12,7 +12,9 @@ public:
 
     virtual SysVDynamicSection BuildDynamicSection(
         const std::vector<NidReference>& nidReferences,
-        const std::vector<std::string>& neededLibraries
+        const std::vector<std::string>& neededLibraries,
+        FileByteOffset originalJmprelOffset,
+        std::uint32_t originalJmprelCount
     ) = 0;
 };
 

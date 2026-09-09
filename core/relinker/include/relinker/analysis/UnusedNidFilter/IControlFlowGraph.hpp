@@ -2,6 +2,7 @@
 #define RELINKER_ANALYSIS_UNUSED_NID_FILTER_ICONTROLFLOWGRAPH_HPP
 
 #include <relinker/domain/Types.hpp>
+#include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <unordered_set>
 #include <memory>
 #include <vector>
@@ -19,7 +20,8 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
     const std::vector<std::uint8_t>& text,
     VirtualAddress textVaddr,
     VirtualAddress entryVaddr,
-    const std::vector<VirtualAddress>& extraEntries
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations
 );
 
 }

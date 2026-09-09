@@ -27,20 +27,6 @@ bool inText(VirtualAddress va, VirtualAddress textVaddr, std::size_t textSize) {
     return va >= textVaddr && va < textVaddr + static_cast<VirtualAddress>(textSize);
 }
 
-struct LoadSegment {
-    VirtualAddress vaddr;
-    std::uint64_t fileOffset;
-    std::uint64_t fileSize;
-};
-
-std::uint64_t vaddrToFileOffset(const std::vector<LoadSegment>& loads, VirtualAddress va) {
-    for (const auto& seg : loads) {
-        if (va >= seg.vaddr && va < seg.vaddr + seg.fileSize)
-            return seg.fileOffset + (va - seg.vaddr);
-    }
-    throw RelinkerException("Cannot translate virtual address to file offset", va);
-}
-
 }
 
 class EntryPointCollector : public IEntryPointCollector {
@@ -73,20 +59,6 @@ public:
 
         if (phEntSize < 56) throw RelinkerException("ELF program header entry too small");
 
-        std::vector<LoadSegment> loads;
-        for (std::uint16_t i = 0; i < phCount; ++i) {
-            std::size_t phPos = static_cast<std::size_t>(phOff) + i * phEntSize;
-            if (phPos + 56 > elfBytes.size()) throw RelinkerException("Program header out of bounds");
-            std::uint32_t type = read32(elfBytes, phPos);
-            constexpr std::uint32_t PT_LOAD = 1;
-            if (type != PT_LOAD) continue;
-            LoadSegment seg;
-            seg.fileOffset = read64(elfBytes, phPos + 8);
-            seg.vaddr = read64(elfBytes, phPos + 16);
-            seg.fileSize = read64(elfBytes, phPos + 32);
-            loads.push_back(seg);
-        }
-
         for (std::uint16_t i = 0; i < phCount; ++i) {
             std::size_t phPos = static_cast<std::size_t>(phOff) + i * phEntSize;
             if (phPos + 56 > elfBytes.size()) throw RelinkerException("Program header out of bounds");
@@ -108,10 +80,6 @@ public:
             constexpr std::int64_t DT_INIT_ARRAYSZ = 27;
             constexpr std::int64_t DT_FINI_ARRAY = 26;
             constexpr std::int64_t DT_FINI_ARRAYSZ = 28;
-            constexpr std::int64_t DT_JMPREL = 0x17;
-            constexpr std::int64_t DT_PLTRELSZ = 2;
-            constexpr std::int64_t DT_SYMTAB = 6;
-            constexpr std::int64_t DT_SYMENT = 11;
             constexpr std::int64_t DT_OS_INIT_ARRAY = 0x60000019;
             constexpr std::int64_t DT_OS_INIT_ARRAYSZ = 0x6000001b;
             constexpr std::int64_t DT_OS_FINI_ARRAY = 0x6000001a;
@@ -123,10 +91,6 @@ public:
             std::uint64_t initArraySz = 0;
             VirtualAddress finiArrayVa = 0;
             std::uint64_t finiArraySz = 0;
-            VirtualAddress jmprelVa = 0;
-            std::uint64_t pltrelsz = 0;
-            VirtualAddress symtabVa = 0;
-            std::uint64_t syment = 24;
 
             for (std::uint64_t off = 0; off + 16 <= segSz; off += 16) {
                 std::size_t pos = static_cast<std::size_t>(segOff + off);
@@ -140,10 +104,6 @@ public:
                 if (tag == DT_INIT_ARRAYSZ || tag == DT_OS_INIT_ARRAYSZ) initArraySz = val;
                 if (tag == DT_FINI_ARRAY || tag == DT_OS_FINI_ARRAY) finiArrayVa = val;
                 if (tag == DT_FINI_ARRAYSZ || tag == DT_OS_FINI_ARRAYSZ) finiArraySz = val;
-                if (tag == DT_JMPREL) jmprelVa = val;
-                if (tag == DT_PLTRELSZ) pltrelsz = val;
-                if (tag == DT_SYMTAB) symtabVa = val;
-                if (tag == DT_SYMENT) syment = val;
             }
 
             auto collectArray = [&](VirtualAddress arrayVa, std::uint64_t arraySz) {
@@ -162,25 +122,6 @@ public:
 
             collectArray(initArrayVa, initArraySz);
             collectArray(finiArrayVa, finiArraySz);
-
-            if (jmprelVa != 0 && pltrelsz != 0 && symtabVa != 0 && syment != 0) {
-                constexpr std::uint32_t R_X86_64_JUMP_SLOT = 7;
-                constexpr std::size_t relaEntSize = 24;
-                std::uint64_t jmprelFileOff = vaddrToFileOffset(loads, jmprelVa);
-                std::uint64_t symtabFileOff = vaddrToFileOffset(loads, symtabVa);
-
-                for (std::uint64_t off = 0; off + relaEntSize <= pltrelsz; off += relaEntSize) {
-                    std::size_t pos = static_cast<std::size_t>(jmprelFileOff + off);
-                    if (pos + relaEntSize > elfBytes.size()) break;
-                    std::uint64_t rOffset = read64(elfBytes, pos);
-                    std::uint64_t rInfo = read64(elfBytes, pos + 8);
-                    std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
-                    if (relType != R_X86_64_JUMP_SLOT) continue;
-
-                    collectPltThunkForGotSlot(elfBytes, textVaddr, textSize, rOffset, entries);
-                    (void)symtabFileOff;
-                }
-            }
 
             break;
         }
@@ -246,53 +187,6 @@ public:
 
         if (entries.empty()) throw RelinkerException("No entry points found in text segment");
         return entries;
-    }
-
-private:
-    void collectPltThunkForGotSlot(
-        const std::vector<std::uint8_t>& elfBytes,
-        VirtualAddress textVaddr,
-        std::size_t textSize,
-        VirtualAddress gotSlotVaddr,
-        std::vector<VirtualAddress>& entries
-    ) const {
-        const std::uint8_t* text = elfBytes.data();
-        std::size_t textFileOff = 0;
-
-        std::uint64_t phOff = read64(elfBytes, 32);
-        std::uint16_t phEntSize = read16(elfBytes, 54);
-        std::uint16_t phCount = read16(elfBytes, 56);
-
-        for (std::uint16_t i = 0; i < phCount; ++i) {
-            std::size_t phPos = static_cast<std::size_t>(phOff) + i * phEntSize;
-            if (phPos + 56 > elfBytes.size()) break;
-            std::uint32_t type = read32(elfBytes, phPos);
-            constexpr std::uint32_t PT_LOAD = 1;
-            constexpr std::uint32_t PF_X = 1;
-            if (type != PT_LOAD) continue;
-            std::uint32_t flags = read32(elfBytes, phPos + 4);
-            if ((flags & PF_X) == 0) continue;
-            std::uint64_t pFileOff = read64(elfBytes, phPos + 8);
-            std::uint64_t pVaddr = read64(elfBytes, phPos + 16);
-            std::uint64_t pFileSz = read64(elfBytes, phPos + 32);
-            if (pVaddr != textVaddr) continue;
-            textFileOff = static_cast<std::size_t>(pFileOff);
-            (void)pFileSz;
-            break;
-        }
-
-        for (std::size_t off = 0; off + 6 <= textSize; ++off) {
-            const std::uint8_t* p = text + textFileOff + off;
-            if (p[0] != 0xFF || p[1] != 0x25) continue;
-            std::int32_t disp = 0;
-            std::memcpy(&disp, p + 2, 4);
-            VirtualAddress instrEnd = textVaddr + off + 6;
-            VirtualAddress target = static_cast<VirtualAddress>(
-                static_cast<std::int64_t>(instrEnd) + disp
-            );
-            if (target == gotSlotVaddr)
-                entries.push_back(textVaddr + off);
-        }
     }
 };
 

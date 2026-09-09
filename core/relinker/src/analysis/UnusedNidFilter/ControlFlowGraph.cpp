@@ -22,7 +22,8 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
     const std::vector<std::uint8_t>& text,
     VirtualAddress textVaddr,
     VirtualAddress entryVaddr,
-    const std::vector<VirtualAddress>& extraEntries
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations
 ) {
     const Codegen::X64InstructionDecoder decoder;
     std::unordered_set<VirtualAddress> reachable;
@@ -67,17 +68,29 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
                 if (info.HasRipRelativeDisp) {
                     std::int32_t disp = 0;
                     std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
-                    VirtualAddress target = static_cast<VirtualAddress>(
+                    VirtualAddress slotVaddr = static_cast<VirtualAddress>(
                         static_cast<std::int64_t>(nextVaddr) + disp
                     );
-                    enqueue(target);
+                    auto resolved = relativeRelocations.TargetOfSlot(slotVaddr);
+                    if (resolved.has_value())
+                        enqueue(*resolved);
                 } else if (info.HasBranchTarget) {
                     enqueue(static_cast<VirtualAddress>(static_cast<std::int64_t>(nextVaddr) + info.BranchDisp));
                 }
                 break;
             case Call:
-                if (info.HasBranchTarget)
+                if (info.HasRipRelativeDisp) {
+                    std::int32_t disp = 0;
+                    std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
+                    VirtualAddress slotVaddr = static_cast<VirtualAddress>(
+                        static_cast<std::int64_t>(nextVaddr) + disp
+                    );
+                    auto resolved = relativeRelocations.TargetOfSlot(slotVaddr);
+                    if (resolved.has_value())
+                        enqueue(*resolved);
+                } else if (info.HasBranchTarget) {
                     enqueue(static_cast<VirtualAddress>(static_cast<std::int64_t>(nextVaddr) + info.BranchDisp));
+                }
                 enqueue(nextVaddr);
                 break;
             case IndirectCall:

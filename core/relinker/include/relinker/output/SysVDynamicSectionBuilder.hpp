@@ -9,7 +9,9 @@ class SysVDynamicSectionBuilder : public ISysVDynamicSectionBuilder {
 public:
     SysVDynamicSection BuildDynamicSection(
         const std::vector<NidReference>& nidReferences,
-        const std::vector<std::string>& neededLibraries
+        const std::vector<std::string>& neededLibraries,
+        FileByteOffset originalJmprelOffset,
+        std::uint32_t originalJmprelCount
     ) override;
 
 private:

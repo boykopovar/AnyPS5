@@ -2,6 +2,7 @@
 #include <relinker/analysis/UnusedNidFilter/IEntryPointCollector.hpp>
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <relinker/analysis/UnusedNidFilter/IGotAccessIndex.hpp>
+#include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 
 namespace Relinker {
 
@@ -23,7 +24,8 @@ public:
         VirtualAddress primary = entries[0];
         std::vector<VirtualAddress> extra(entries.begin() + 1, entries.end());
 
-        auto cfg = UnusedNidFilter::BuildControlFlowGraph(textSection, textVAddr, primary, extra);
+        auto relativeRelocations = UnusedNidFilter::BuildRelativeRelocationIndex(elfBytes);
+        auto cfg = UnusedNidFilter::BuildControlFlowGraph(textSection, textVAddr, primary, extra, *relativeRelocations);
         auto index = UnusedNidFilter::BuildGotAccessIndex(*cfg, textSection, textVAddr);
 
         std::vector<NidReference> result;

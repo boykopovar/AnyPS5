@@ -199,10 +199,28 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     _validationPolicy->ValidateSyscallAbsence();
 
-    if (_filterUnusedNids)
-        nidRefs = _unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr);
+    static constexpr std::uint32_t R_X86_64_JUMP_SLOT = 7;
 
-    auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(nidRefs, neededLibraries);
+    if (_filterUnusedNids) {
+        std::vector<NidReference> pltRefs;
+        std::vector<NidReference> nonPltRefs;
+        for (const auto& ref : nidRefs) {
+            if (ref.RelocationTypeValue == R_X86_64_JUMP_SLOT)
+                pltRefs.push_back(ref);
+            else
+                nonPltRefs.push_back(ref);
+        }
+
+        nonPltRefs = _unusedNidFilter->Filter(nonPltRefs, raw, textSection, textVAddr);
+
+        nidRefs.clear();
+        nidRefs.reserve(pltRefs.size() + nonPltRefs.size());
+        for (auto& ref : pltRefs) nidRefs.push_back(std::move(ref));
+        for (auto& ref : nonPltRefs) nidRefs.push_back(std::move(ref));
+    }
+
+    auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(
+        nidRefs, neededLibraries, dynJmpRelOffset, static_cast<std::uint32_t>(dynJmpRelSize / relaEntSize));
 
     static constexpr std::uint32_t R_X86_64_RELATIVE = 8;
 

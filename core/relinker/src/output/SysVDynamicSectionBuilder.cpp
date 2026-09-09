@@ -60,7 +60,9 @@ void SysVDynamicSectionBuilder::_appendRela(
 
 SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
     const std::vector<NidReference>& nidReferences,
-    const std::vector<std::string>& neededLibraries)
+    const std::vector<std::string>& neededLibraries,
+    FileByteOffset originalJmprelOffset,
+    std::uint32_t originalJmprelCount)
 {
     SysVDynamicSection result;
     result.DynStrData.push_back(0);
@@ -77,22 +79,71 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
         return value.substr(0, hashPos);
     };
 
-    std::uint32_t symIdx = 1;
+    static constexpr std::size_t kRelaEntSize = 24;
+
+    std::vector<const NidReference*> pltSlots(originalJmprelCount, nullptr);
+    std::vector<const NidReference*> nonPltRefs;
+
     for (const auto& ref : nidReferences) {
+        std::uint32_t relType = ref.RelocationTypeValue;
+        if (relType == 0) relType = R_X86_64_JUMP_SLOT;
+
+        if (relType != R_X86_64_JUMP_SLOT) {
+            nonPltRefs.push_back(&ref);
+            continue;
+        }
+
+        if (ref.RelocationTableOffset < originalJmprelOffset)
+            throw RelinkerException(
+                "JUMP_SLOT relocation lies before the original .rela.plt table",
+                ref.RelocationTableOffset);
+
+        const std::uint64_t byteDelta = ref.RelocationTableOffset - originalJmprelOffset;
+        if (byteDelta % kRelaEntSize != 0)
+            throw RelinkerException(
+                "JUMP_SLOT relocation is not aligned to the original .rela.plt entry size",
+                ref.RelocationTableOffset);
+
+        const std::uint64_t slotIndex = byteDelta / kRelaEntSize;
+        if (slotIndex >= originalJmprelCount)
+            throw RelinkerException(
+                "JUMP_SLOT relocation index exceeds the original .rela.plt table size",
+                ref.RelocationTableOffset);
+
+        if (pltSlots[slotIndex] != nullptr)
+            throw RelinkerException(
+                "Duplicate JUMP_SLOT relocation for the same original .rela.plt slot",
+                ref.RelocationTableOffset);
+
+        pltSlots[slotIndex] = &ref;
+    }
+
+    std::uint32_t symIdx = 1;
+
+    for (const NidReference* slot : pltSlots) {
+        if (slot == nullptr)
+            throw RelinkerException(
+                "Original .rela.plt slot has no corresponding JUMP_SLOT relocation; "
+                "PLT thunks cannot be filtered without patching their hard-coded reloc index");
+
+        const NidReference& ref = *slot;
         const std::uint32_t nameOff = _appendStr(result.DynStrData, stripHashSuffix(ref.Nid));
         const auto info = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
         _appendElfSym(result.DynSymData, nameOff, info, STV_DEFAULT, 0, 0, 0);
 
-        std::uint32_t relType = ref.RelocationTypeValue;
-        if (relType == 0) relType = R_X86_64_JUMP_SLOT;
+        const std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | R_X86_64_JUMP_SLOT;
+        _appendRela(result.RelaPltData, ref.RelocationAddress, relaInfo, ref.Addend);
+        ++symIdx;
+    }
 
-        const std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | relType;
+    for (const NidReference* slotPtr : nonPltRefs) {
+        const NidReference& ref = *slotPtr;
+        const std::uint32_t nameOff = _appendStr(result.DynStrData, stripHashSuffix(ref.Nid));
+        const auto info = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
+        _appendElfSym(result.DynSymData, nameOff, info, STV_DEFAULT, 0, 0, 0);
 
-        if (relType == R_X86_64_JUMP_SLOT)
-            _appendRela(result.RelaPltData, ref.RelocationAddress, relaInfo, ref.Addend);
-        else
-            _appendRela(result.RelaData, ref.RelocationAddress, relaInfo, ref.Addend);
-
+        const std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | ref.RelocationTypeValue;
+        _appendRela(result.RelaData, ref.RelocationAddress, relaInfo, ref.Addend);
         ++symIdx;
     }
 
