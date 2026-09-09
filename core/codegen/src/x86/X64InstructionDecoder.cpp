@@ -356,6 +356,9 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
         op = data[pos++];
     }
 
+    info.Opcode = op;
+    info.IsTwoByteOpcode = twoByteOpcode;
+
     if (!twoByteOpcode) {
         if (op == OneByteCallRel32) {
             std::int32_t disp = 0;
@@ -400,6 +403,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             info.HasModRm = true;
             info.ModRmByte = modrm;
             std::uint8_t reg = (modrm >> ModRmRegShift) & ModRmRegMask;
+            info.ModRmRegField = reg;
             std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
             std::uint8_t rm = modrm & ModRmRmMask;
             if (reg == 2) {
@@ -493,6 +497,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
         std::uint8_t modrm = data[pos];
         info.HasModRm = true;
         info.ModRmByte = modrm;
+        info.ModRmRegField = (modrm >> ModRmRegShift) & ModRmRegMask;
         std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
         std::uint8_t rm = modrm & ModRmRmMask;
         if (mod == ModRmModIndirect && rm == ModRmRmRipRelative) {

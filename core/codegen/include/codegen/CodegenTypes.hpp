@@ -52,6 +52,9 @@ struct DecodedInstructionInfo {
     std::uint8_t ModRmByte;
     bool HasBranchTarget;
     std::int64_t BranchDisp;
+    bool IsTwoByteOpcode;
+    std::uint8_t Opcode;
+    std::uint8_t ModRmRegField;
 };
 
 }

@@ -1,9 +1,27 @@
 #include <relinker/analysis/UnusedNidFilter/IGotAccessIndex.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/x86/X64OpcodeConstants.hpp>
 #include <unordered_set>
 #include <cstring>
 
 namespace Relinker::UnusedNidFilter {
+
+namespace {
+
+constexpr std::uint8_t OneByteMovLoadRm8 = 0x8A;
+constexpr std::uint8_t OneByteMovLoadRm = 0x8B;
+constexpr std::uint8_t Grp5RegCallIndirect = 2;
+constexpr std::uint8_t Grp5RegJmpIndirect = 4;
+
+bool ReadsMemoryOperandAsPointer(const Codegen::DecodedInstructionInfo& info) {
+    if (info.IsTwoByteOpcode) return false;
+    if (info.Opcode == OneByteMovLoadRm8 || info.Opcode == OneByteMovLoadRm) return true;
+    if (info.Opcode == Codegen::X64OpcodeConstants::OneByteGrp5Rm)
+        return info.ModRmRegField == Grp5RegCallIndirect || info.ModRmRegField == Grp5RegJmpIndirect;
+    return false;
+}
+
+}
 
 class GotAccessIndex : public IGotAccessIndex {
 public:
@@ -35,6 +53,7 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
 
         Codegen::DecodedInstructionInfo info = decoder.DecodeInstruction(text.data() + bufOff, available);
         if (!info.HasRipRelativeDisp) continue;
+        if (!ReadsMemoryOperandAsPointer(info)) continue;
 
         VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
         std::int32_t disp = 0;
