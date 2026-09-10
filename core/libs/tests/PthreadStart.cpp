@@ -3,18 +3,18 @@
 #include <iostream>
 #include <stdexcept>
 
-extern "C" int scePthreadCreate(Pthread* thread, const PthreadAttr* attr, void* (*entry)(void*), void* arg, const char* name);
-extern "C" int scePthreadJoin(Pthread thread, void** retval);
-extern "C" int scePthreadAttrInit(PthreadAttr* attr);
-extern "C" int scePthreadAttrDestroy(PthreadAttr* attr);
-extern "C" int scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
+extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
+extern "C" int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
+extern "C" int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
+extern "C" int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
 
 struct ThreadContext {
     Pthread thread = nullptr;
     std::promise<void> checked;
 };
 
-static void* CheckThread(void* arg) {
+static void* APS5_VABI CheckThread(void* arg) {
     auto& context = *static_cast<ThreadContext*>(arg);
     if (!context.thread) throw std::runtime_error("Thread handle was not published");
     if (context.thread->_thr.get_id() != std::this_thread::get_id()) throw std::runtime_error("Thread object was not initialized");

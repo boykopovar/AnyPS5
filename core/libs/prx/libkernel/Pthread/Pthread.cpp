@@ -33,7 +33,7 @@ static constexpr int DETACH_DETACHED = 1;
 static constexpr int SCHED_FIFO_PS5 = 1;
 
 struct ThreadArgs {
-    void* (*entry)(void*);
+    PthreadEntry entry;
     void* arg;
     PthreadPrivate* self;
 };
@@ -253,7 +253,7 @@ int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
     return SCE_OK;
 }
 
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, void* (*entry)(void*), void* arg, const char*) {
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char*) {
     if (!thread || !entry) throw std::runtime_error("scePthreadCreate: null arg");
     auto p = std::make_unique<PthreadPrivate>();
     bool detached = false;

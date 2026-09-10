@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include "prx/libc/include/general/VabiMacros.hpp"
 
 #if defined(__GNUC__) || defined(__clang__)
 typedef float __m128 __attribute__((__vector_size__(16), __aligned__(16)));
@@ -161,6 +162,7 @@ struct PthreadCondPrivate;
 using KernelSema = KernelSemaPrivate*;
 using KernelEventFlag = KernelEventFlagPrivate*;
 using Pthread = PthreadPrivate*;
+using PthreadEntry = void* (APS5_VABI *)(void*);
 using PthreadAttr = PthreadAttrPrivate*;
 using PthreadMutex = PthreadMutexPrivate*;
 using PthreadMutexattr = PthreadMutexattrPrivate*;
@@ -1882,7 +1884,7 @@ struct UltMutexOptParam {
 
 struct UltUlthreadRuntimeOptParam { std::uint8_t bytes[128]; };
 
-using UltUlthreadEntry = std::int32_t (*)(std::uint64_t);
+using UltUlthreadEntry = std::int32_t (APS5_VABI *)(std::uint64_t);
 
 struct VideoOutBufferAttribute2 {
     std::uint32_t reserved0;

@@ -13,8 +13,8 @@
 #include "prx/libc/include/General.hpp"
 #include "SceUltTypes.hpp"
 
-extern "C" int scePthreadCreate(Pthread* thread, const PthreadAttr* attr, void* (*entry)(void*), void* arg, const char* name);
-extern "C" int scePthreadJoin(Pthread thread, void** retval);
+extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 
 namespace {
 
@@ -52,7 +52,7 @@ int queueGetState(void* queue, std::shared_ptr<UltQueueState>* out) {
     return ULT_OK;
 }
 
-void* ulthreadRunner(void* arg) {
+void* APS5_VABI ulthreadRunner(void* arg) {
     auto* state = static_cast<UltUlthreadState*>(arg);
     return reinterpret_cast<void*>(static_cast<std::intptr_t>(state->_entry(state->_arg)));
 }
