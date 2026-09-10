@@ -10,6 +10,10 @@ add_executable(nid_patcher
 target_include_directories(nid_patcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
 target_compile_features(nid_patcher PRIVATE cxx_std_20)
 
+if(MINGW)
+    add_compile_options(-fno-asynchronous-unwind-tables)
+endif()
+
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL ${LIBC_DIR}/Export.cpp)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

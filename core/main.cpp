@@ -26,7 +26,7 @@
 int main(const int argc, char* argv[]) {
     bool skipSyscallCheck = false;
     bool toIntel = false;
-    std::uint32_t unusedFilterLevel = 1;
+    std::uint32_t unusedFilterLevel = 2;
     bool unusedFilterSpecified = false;
     bool writeRegistry = false;
     bool toWindows = false;
