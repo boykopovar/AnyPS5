@@ -6,7 +6,7 @@
 extern "C" {
 
 
-void sceLibcHeapGetTraceInfo_nid_postfix(Info* info) {
+void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info) {
  (void)info;
  NotImplemented_nid_no_patch(__func__);
 }

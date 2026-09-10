@@ -2,13 +2,13 @@
 #include <limits>
 
 extern "C" {
-void __cxa_vec_cleanup_nid_postfix(void* array, std::size_t count, std::size_t size, void (*destroy)(void*)) {
+void APS5_VABI __cxa_vec_cleanup_nid_postfix(void* array, std::size_t count, std::size_t size, void (*destroy)(void*)) {
     if (!destroy) return;
     try {
         while (count) destroy(static_cast<unsigned char*>(array) + --count * size);
     } catch (...) { LibcException::Terminate(); }
 }
-void __cxa_vec_ctor_nid_postfix(void* array, std::size_t count, std::size_t size, void (*construct)(void*), void (*destroy)(void*)) {
+void APS5_VABI __cxa_vec_ctor_nid_postfix(void* array, std::size_t count, std::size_t size, void (*construct)(void*), void (*destroy)(void*)) {
     if (!construct) return;
     std::size_t complete = 0;
     try {
@@ -18,7 +18,7 @@ void __cxa_vec_ctor_nid_postfix(void* array, std::size_t count, std::size_t size
         throw;
     }
 }
-void __cxa_vec_cctor_nid_postfix(void* destination, void* source, std::size_t count, std::size_t size, void (*copy)(void*, void*), void (*destroy)(void*)) {
+void APS5_VABI __cxa_vec_cctor_nid_postfix(void* destination, void* source, std::size_t count, std::size_t size, void (*copy)(void*, void*), void (*destroy)(void*)) {
     if (!copy) return;
     std::size_t complete = 0;
     try {
@@ -29,7 +29,7 @@ void __cxa_vec_cctor_nid_postfix(void* destination, void* source, std::size_t co
         throw;
     }
 }
-void __cxa_vec_dtor_nid_postfix(void* array, std::size_t count, std::size_t size, void (*destroy)(void*)) {
+void APS5_VABI __cxa_vec_dtor_nid_postfix(void* array, std::size_t count, std::size_t size, void (*destroy)(void*)) {
     if (!destroy) return;
     bool unwinding = LibcException::globals.uncaught != 0;
     try {
@@ -81,22 +81,22 @@ void DeleteArray(void* array, std::size_t size, std::size_t padding, void (*dest
 }
 
 extern "C" {
-void* __cxa_vec_new_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*)) {
+void* APS5_VABI __cxa_vec_new_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*)) {
     return LibcException::NewArray(n, s, p, ctor, dtor, LibcException::ArrayAllocate, [](void* ptr, std::size_t) { std::free(ptr); });
 }
-void* __cxa_vec_new2_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*), void* (*alloc)(std::size_t), void (*dealloc)(void*)) {
+void* APS5_VABI __cxa_vec_new2_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*), void* (*alloc)(std::size_t), void (*dealloc)(void*)) {
     return LibcException::NewArray(n, s, p, ctor, dtor, alloc, [dealloc](void* ptr, std::size_t) { dealloc(ptr); });
 }
-void* __cxa_vec_new3_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*), void* (*alloc)(std::size_t), void (*dealloc)(void*, std::size_t)) {
+void* APS5_VABI __cxa_vec_new3_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (*ctor)(void*), void (*dtor)(void*), void* (*alloc)(std::size_t), void (*dealloc)(void*, std::size_t)) {
     return LibcException::NewArray(n, s, p, ctor, dtor, alloc, dealloc);
 }
-void __cxa_vec_delete_nid_postfix(void* array, std::size_t s, std::size_t p, void (*dtor)(void*)) {
+void APS5_VABI __cxa_vec_delete_nid_postfix(void* array, std::size_t s, std::size_t p, void (*dtor)(void*)) {
     LibcException::DeleteArray(array, s, p, dtor, [](void* ptr, std::size_t) { std::free(ptr); });
 }
-void __cxa_vec_delete2_nid_postfix(void* array, std::size_t s, std::size_t p, void (*dtor)(void*), void (*dealloc)(void*)) {
+void APS5_VABI __cxa_vec_delete2_nid_postfix(void* array, std::size_t s, std::size_t p, void (*dtor)(void*), void (*dealloc)(void*)) {
     LibcException::DeleteArray(array, s, p, dtor, [dealloc](void* ptr, std::size_t) { dealloc(ptr); });
 }
-void __cxa_vec_delete3_nid_postfix(void* array, std::size_t s, std::size_t p, void (*dtor)(void*), void (*dealloc)(void*, std::size_t)) {
+void APS5_VABI __cxa_vec_delete3_nid_postfix(void* array, std::size_t s, std::size_t p, void (*dtor)(void*), void (*dealloc)(void*, std::size_t)) {
     LibcException::DeleteArray(array, s, p, dtor, dealloc);
 }
 }

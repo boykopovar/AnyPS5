@@ -14,7 +14,7 @@ double log_nid_postfix(double x) { return std::log(x); }
 float sinf_nid_postfix(float x) { return std::sin(x); }
 float cosf_nid_postfix(float x) { return std::cos(x); }
 
-void sincosf_nid_postfix(float x, float* sinp, float* cosp) {
+void APS5_VABI sincosf_nid_postfix(float x, float* sinp, float* cosp) {
     *sinp = std::sin(x);
     *cosp = std::cos(x);
 }
@@ -22,7 +22,7 @@ void sincosf_nid_postfix(float x, float* sinp, float* cosp) {
 double sin_nid_postfix(double x) { return std::sin(x); }
 double cos_nid_postfix(double x) { return std::cos(x); }
 
-void sincos_nid_postfix(double x, double* sinp, double* cosp) {
+void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
     *sinp = std::sin(x);
     *cosp = std::cos(x);
 }

@@ -7,7 +7,7 @@
 
 #include "prx/libc/include/specifics/gcc/SymbolAlias.hpp"
 
-extern "C" [[noreturn]] GCC_HIDDEN_FN void LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
+extern "C" [[noreturn]] GCC_HIDDEN_FN void APS5_VABI LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
 
 GCC_LOCAL_ALIAS(_ZSt21__glibcxx_assert_failPKciS0_S0_, LibcRuntimeAssertion);
 GCC_GLOBAL_ALIAS(__cxa_allocate_exception_nid_no_patch_cut, __cxa_allocate_exception_nid_postfix);

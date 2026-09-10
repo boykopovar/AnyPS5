@@ -174,7 +174,7 @@ bool Match(const std::type_info* caught, const std::type_info* thrown, void*& ob
 }
 
 extern "C" {
-void* __cxa_allocate_exception_nid_postfix(std::size_t size) {
+void* APS5_VABI __cxa_allocate_exception_nid_postfix(std::size_t size) {
     using namespace LibcException;
     if (size > std::numeric_limits<std::size_t>::max() - sizeof(Allocation)) Terminate();
     void* storage = std::malloc(sizeof(Allocation) + size);
@@ -183,7 +183,7 @@ void* __cxa_allocate_exception_nid_postfix(std::size_t size) {
     auto* allocation = new (storage) Allocation;
     return &allocation->header + 1;
 }
-void __cxa_free_exception_nid_postfix(void* object) {
+void APS5_VABI __cxa_free_exception_nid_postfix(void* object) {
     if (!object) return;
     auto* allocation = LibcException::AllocationOf(LibcException::FromObject(object));
     allocation->~Allocation();
@@ -205,7 +205,7 @@ void __cxa_free_exception_nid_postfix(void* object) {
     InvokeTerminate(header->terminate);
 }
 
-void* __cxa_begin_catch_nid_postfix(void* exception) {
+void* APS5_VABI __cxa_begin_catch_nid_postfix(void* exception) {
     using namespace LibcException;
     auto* unwind = static_cast<_Unwind_Exception*>(exception);
     if (!unwind) Terminate();
@@ -228,7 +228,7 @@ void* __cxa_begin_catch_nid_postfix(void* exception) {
     return header->adjusted;
 }
 
-void __cxa_end_catch_nid_postfix() {
+void APS5_VABI __cxa_end_catch_nid_postfix() {
     using namespace LibcException;
     auto* header = globals.caught;
     if (!header) return;
@@ -256,11 +256,11 @@ void __cxa_end_catch_nid_postfix() {
     InvokeTerminate(header->terminate ? header->terminate : terminateHandler.load());
 }
 
-void* __cxa_get_exception_ptr_nid_postfix(void* exception) {
+void* APS5_VABI __cxa_get_exception_ptr_nid_postfix(void* exception) {
     auto* unwind = static_cast<_Unwind_Exception*>(exception);
     return LibcException::Native(unwind->exception_class) ? LibcException::FromUnwind(unwind)->adjusted : unwind + 1;
 }
-std::type_info* __cxa_current_exception_type_nid_postfix() {
+std::type_info* APS5_VABI __cxa_current_exception_type_nid_postfix() {
     using namespace LibcException;
     return globals.caught && Native(globals.caught->unwind.exception_class) ? Primary(globals.caught)->type : nullptr;
 }
@@ -272,33 +272,33 @@ bool _ZSt18uncaught_exceptionv_nid_postfix() { return __cxa_uncaught_exception_n
 int _ZSt19uncaught_exceptionsv_nid_postfix() { return static_cast<int>(__cxa_uncaught_exceptions_nid_postfix()); }
 [[noreturn]] void _ZSt9terminatev_nid_postfix() { LibcException::Terminate(); }
 using LibcTerminateHandler = void(*)();
-LibcTerminateHandler _ZSt13set_terminatePFvvE_nid_postfix(LibcTerminateHandler handler) {
+LibcTerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(LibcTerminateHandler handler) {
     return LibcException::terminateHandler.exchange(handler ? handler : std::abort);
 }
 LibcTerminateHandler _ZSt13get_terminatev_nid_postfix() { return LibcException::terminateHandler.load(); }
 
-void __cxa_increment_exception_refcount_nid_postfix(void* object) {
+void APS5_VABI __cxa_increment_exception_refcount_nid_postfix(void* object) {
     if (object) LibcException::AllocationOf(LibcException::FromObject(object))->references.fetch_add(1, std::memory_order_relaxed);
 }
 void __cxa_decrement_exception_refcount_nid_postfix(void* object) { LibcException::Release(object); }
-void* __cxa_current_primary_exception_nid_postfix() {
+void* APS5_VABI __cxa_current_primary_exception_nid_postfix() {
     using namespace LibcException;
     if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
     void* object = Primary(globals.caught) + 1;
     __cxa_increment_exception_refcount_nid_postfix(object);
     return object;
 }
-void* __cxa_allocate_dependent_exception_nid_postfix() {
+void* APS5_VABI __cxa_allocate_dependent_exception_nid_postfix() {
     void* storage = std::malloc(sizeof(LibcException::Header));
     if (!storage) LibcException::Terminate();
     return new (storage) LibcException::Header;
 }
-void __cxa_free_dependent_exception_nid_postfix(void* storage) {
+void APS5_VABI __cxa_free_dependent_exception_nid_postfix(void* storage) {
     if (!storage) return;
     static_cast<LibcException::Header*>(storage)->~Header();
     std::free(storage);
 }
-void __cxa_rethrow_primary_exception_nid_postfix(void* object) {
+void APS5_VABI __cxa_rethrow_primary_exception_nid_postfix(void* object) {
     using namespace LibcException;
     if (!object) return;
     auto* header = static_cast<Header*>(__cxa_allocate_dependent_exception_nid_postfix());

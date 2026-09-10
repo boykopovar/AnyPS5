@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_pos, uint32_t num_samples, Ngs2WaveformBlock* block) {
+int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_pos, uint32_t num_samples, Ngs2WaveformBlock* block) {
  (void)format;
  (void)sample_pos;
  (void)num_samples;
@@ -14,7 +14,7 @@ int sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_p
  return 0;
 }
 
-int sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* out_attrib, uint32_t flags) {
+int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* out_attrib, uint32_t flags) {
  (void)listener;
  (void)source;
  (void)out_attrib;
@@ -23,7 +23,7 @@ int sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceP
  return 0;
 }
 
-int sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* out_work, uint32_t flags) {
+int APS5_VABI sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* out_work, uint32_t flags) {
  (void)param;
  (void)out_work;
  (void)flags;
@@ -31,19 +31,19 @@ int sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListener
  return 0;
 }
 
-int sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param) {
+int APS5_VABI sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param) {
  (void)out_listener_param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param) {
+int APS5_VABI sceNgs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param) {
  (void)out_source_param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
+int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
  (void)work;
  (void)params;
  (void)num_params;
@@ -53,7 +53,7 @@ int sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uin
  return 0;
 }
 
-int sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers) {
+int APS5_VABI sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers) {
  (void)work;
  (void)speaker_angles;
  (void)unit_angle;
@@ -62,7 +62,7 @@ int sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_an
  return 0;
 }
 
-int sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2WaveformInfo* info) {
+int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2WaveformInfo* info) {
  (void)data;
  (void)data_size;
  (void)info;
@@ -70,7 +70,7 @@ int sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2WaveformInf
  return 0;
 }
 
-int sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
+int APS5_VABI sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
  (void)system_handle;
  (void)rack_id;
  (void)option;
@@ -80,7 +80,7 @@ int sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackO
  return 0;
 }
 
-int sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
+int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
  (void)system_handle;
  (void)rack_id;
  (void)option;
@@ -90,14 +90,14 @@ int sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t rack_id, co
  return 0;
 }
 
-int sceNgs2RackDestroy(uintptr_t rack_handle, Ngs2ContextBufferInfo* buffer_info) {
+int APS5_VABI sceNgs2RackDestroy(uintptr_t rack_handle, Ngs2ContextBufferInfo* buffer_info) {
  (void)rack_handle;
  (void)buffer_info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id, uintptr_t* handle) {
+int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id, uintptr_t* handle) {
  (void)rack_handle;
  (void)voice_id;
  (void)handle;
@@ -105,13 +105,13 @@ int sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id, uintptr_
  return 0;
 }
 
-int sceNgs2RackLock(uintptr_t rack_handle) {
+int APS5_VABI sceNgs2RackLock(uintptr_t rack_handle) {
  (void)rack_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption* option, Ngs2ContextBufferInfo* buffer_info) {
+int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption* option, Ngs2ContextBufferInfo* buffer_info) {
  (void)rack_id;
  (void)option;
  (void)buffer_info;
@@ -119,13 +119,13 @@ int sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption* option, N
  return 0;
 }
 
-int sceNgs2RackUnlock(uintptr_t rack_handle) {
+int APS5_VABI sceNgs2RackUnlock(uintptr_t rack_handle) {
  (void)rack_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
+int APS5_VABI sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
  (void)option;
  (void)buffer_info;
  (void)handle;
@@ -133,7 +133,7 @@ int sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2ContextBufferI
  return 0;
 }
 
-int sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
+int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
  (void)option;
  (void)allocator;
  (void)handle;
@@ -141,14 +141,14 @@ int sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2B
  return 0;
 }
 
-int sceNgs2SystemDestroy(uintptr_t system_handle, Ngs2ContextBufferInfo* buffer_info) {
+int APS5_VABI sceNgs2SystemDestroy(uintptr_t system_handle, Ngs2ContextBufferInfo* buffer_info) {
  (void)system_handle;
  (void)buffer_info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info, size_t info_size) {
+int APS5_VABI sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info, size_t info_size) {
  (void)system_handle;
  (void)info;
  (void)info_size;
@@ -156,14 +156,14 @@ int sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info, size_t i
  return 0;
 }
 
-int sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2ContextBufferInfo* buffer_info) {
+int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2ContextBufferInfo* buffer_info) {
  (void)option;
  (void)buffer_info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBufferInfo* buffer_info, uint32_t num_buffer_info) {
+int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBufferInfo* buffer_info, uint32_t num_buffer_info) {
  (void)system_handle;
  (void)buffer_info;
  (void)num_buffer_info;
@@ -171,27 +171,27 @@ int sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBufferInfo* buf
  return 0;
 }
 
-int sceNgs2SystemResetOption(Ngs2SystemOption* option) {
+int APS5_VABI sceNgs2SystemResetOption(Ngs2SystemOption* option) {
  (void)option;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2SystemSetGrainSamples(uintptr_t system_handle, uint32_t num_samples) {
+int APS5_VABI sceNgs2SystemSetGrainSamples(uintptr_t system_handle, uint32_t num_samples) {
  (void)system_handle;
  (void)num_samples;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHeader* param_list) {
+int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHeader* param_list) {
  (void)voice_handle;
  (void)param_list;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state, size_t state_size) {
+int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state, size_t state_size) {
  (void)voice_handle;
  (void)state;
  (void)state_size;
@@ -199,14 +199,14 @@ int sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state, size_t s
  return 0;
 }
 
-int sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_flags) {
+int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_flags) {
  (void)voice_handle;
  (void)state_flags;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNgs2VoiceRunCommands(uintptr_t voice_handle, const void* commands, uint32_t num_commands, uint32_t flags) {
+int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const void* commands, uint32_t num_commands, uint32_t flags) {
  (void)voice_handle;
  (void)commands;
  (void)num_commands;

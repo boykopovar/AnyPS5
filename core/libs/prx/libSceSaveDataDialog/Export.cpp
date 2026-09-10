@@ -5,49 +5,49 @@
 
 extern "C" {
 
- int sceSaveDataDialogClose(const void* close_param) {
+ int APS5_VABI sceSaveDataDialogClose(const void* close_param) {
   (void)close_param;
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }
 
- int sceSaveDataDialogGetResult(void* result) {
+ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
   (void)result;
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }
 
- int sceSaveDataDialogInitialize(void) {
+ int APS5_VABI sceSaveDataDialogInitialize(void) {
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }
 
- int sceSaveDataDialogIsReadyToDisplay(void) {
+ int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) {
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }
 
- int sceSaveDataDialogOpen(const void* param) {
+ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
   (void)param;
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }
 
- int sceSaveDataDialogProgressBarInc(int target, uint32_t delta) {
+ int APS5_VABI sceSaveDataDialogProgressBarInc(int target, uint32_t delta) {
   (void)target;
   (void)delta;
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }
 
- int sceSaveDataDialogProgressBarSetValue(int target, uint32_t rate) {
+ int APS5_VABI sceSaveDataDialogProgressBarSetValue(int target, uint32_t rate) {
   (void)target;
   (void)rate;
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }
 
- int sceSaveDataDialogTerminate(void) {
+ int APS5_VABI sceSaveDataDialogTerminate(void) {
   NotImplemented_nid_no_patch(__func__);
   return 0;
  }

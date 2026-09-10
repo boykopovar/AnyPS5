@@ -6,62 +6,62 @@
 
 extern "C" {
 
-int sceUserServiceGetAccessibilityChatTranscription(int user_id, int32_t* chat_transcription) {
+int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, int32_t* chat_transcription) {
  (void)user_id;
  (void)chat_transcription;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetAccessibilityPressAndHoldDelay(int user_id, int32_t* press_and_hold_delay) {
+int APS5_VABI sceUserServiceGetAccessibilityPressAndHoldDelay(int user_id, int32_t* press_and_hold_delay) {
  (void)user_id;
  (void)press_and_hold_delay;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetAccessibilityTriggerEffect(int user_id, int32_t* trigger_effect) {
+int APS5_VABI sceUserServiceGetAccessibilityTriggerEffect(int user_id, int32_t* trigger_effect) {
  (void)user_id;
  (void)trigger_effect;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibration) {
+int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibration) {
  (void)user_id;
  (void)vibration;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetAccessibilityZoomEnabled(int user_id, int32_t* zoom_enabled) {
+int APS5_VABI sceUserServiceGetAccessibilityZoomEnabled(int user_id, int32_t* zoom_enabled) {
  (void)user_id;
  (void)zoom_enabled;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
+int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
  (void)user_id;
  (void)age_level;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetEvent(SceUserServiceEvent* event) {
+int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
  (void)event;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
+int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
  (void)user_id;
  (void)presets;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceGetInitialUser(int* user_id) {
+int APS5_VABI sceUserServiceGetInitialUser(int* user_id) {
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -69,7 +69,7 @@ int sceUserServiceGetInitialUser(int* user_id) {
  return USER_SERVICE_OK;
 }
 
-int sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_id_list) {
+int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_id_list) {
  if (user_id_list == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -80,7 +80,7 @@ int sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_id_list) {
  return USER_SERVICE_OK;
 }
 
-int sceUserServiceGetUserName(int user_id, char* name, size_t size) {
+int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
  (void)user_id;
  (void)name;
  (void)size;
@@ -88,23 +88,23 @@ int sceUserServiceGetUserName(int user_id, char* name, size_t size) {
  return 0;
 }
 
-int sceUserServiceGetUserNumber(int user_id, int32_t* number) {
+int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number) {
  (void)user_id;
  (void)number;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceUserServiceInitialize(const void* params) {
+int APS5_VABI sceUserServiceInitialize(const void* params) {
  (void)params;
  return USER_SERVICE_OK;
 }
 
-int sceUserServiceInitialize2(void) {
+int APS5_VABI sceUserServiceInitialize2(void) {
  return USER_SERVICE_OK;
 }
 
-int sceUserServiceTerminate(void) {
+int APS5_VABI sceUserServiceTerminate(void) {
  return USER_SERVICE_OK;
 }
 

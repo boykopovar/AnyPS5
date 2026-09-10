@@ -5,20 +5,20 @@
 
 extern "C" {
 
-int sceSystemGestureAppendTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
+int APS5_VABI sceSystemGestureAppendTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureClose(int32_t gesture_handle) {
+int APS5_VABI sceSystemGestureClose(int32_t gesture_handle) {
  (void)gesture_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureCreateTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer, int32_t type, const SystemGestureRectangle* rectangle, const void* param) {
+int APS5_VABI sceSystemGestureCreateTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer, int32_t type, const SystemGestureRectangle* rectangle, const void* param) {
  (void)gesture_handle;
  (void)recognizer;
  (void)type;
@@ -28,12 +28,12 @@ int sceSystemGestureCreateTouchRecognizer(int32_t gesture_handle, SystemGestureT
  return 0;
 }
 
-int sceSystemGestureFinalizePrimitiveTouchRecognizer(void) {
+int APS5_VABI sceSystemGestureFinalizePrimitiveTouchRecognizer(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureGetPrimitiveTouchEventByIndex(int32_t gesture_handle, uint32_t index, SystemGesturePrimitiveTouchEvent* event) {
+int APS5_VABI sceSystemGestureGetPrimitiveTouchEventByIndex(int32_t gesture_handle, uint32_t index, SystemGesturePrimitiveTouchEvent* event) {
  (void)gesture_handle;
  (void)index;
  (void)event;
@@ -41,7 +41,7 @@ int sceSystemGestureGetPrimitiveTouchEventByIndex(int32_t gesture_handle, uint32
  return 0;
 }
 
-int sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(int32_t gesture_handle, uint16_t primitiveId, SystemGesturePrimitiveTouchEvent* event) {
+int APS5_VABI sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(int32_t gesture_handle, uint16_t primitiveId, SystemGesturePrimitiveTouchEvent* event) {
  (void)gesture_handle;
  (void)primitiveId;
  (void)event;
@@ -49,7 +49,7 @@ int sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(int32_t gesture_handle, 
  return 0;
 }
 
-int sceSystemGestureGetPrimitiveTouchEvents(int32_t gesture_handle, SystemGesturePrimitiveTouchEvent* event_buffer, uint32_t capacity_of_buffer, uint32_t* number_of_event) {
+int APS5_VABI sceSystemGestureGetPrimitiveTouchEvents(int32_t gesture_handle, SystemGesturePrimitiveTouchEvent* event_buffer, uint32_t capacity_of_buffer, uint32_t* number_of_event) {
  (void)gesture_handle;
  (void)event_buffer;
  (void)capacity_of_buffer;
@@ -58,13 +58,13 @@ int sceSystemGestureGetPrimitiveTouchEvents(int32_t gesture_handle, SystemGestur
  return 0;
 }
 
-int sceSystemGestureGetPrimitiveTouchEventsCount(int32_t gesture_handle) {
+int APS5_VABI sceSystemGestureGetPrimitiveTouchEventsCount(int32_t gesture_handle) {
  (void)gesture_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureGetTouchEventByEventID(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t eventId, SystemGestureTouchEvent* event) {
+int APS5_VABI sceSystemGestureGetTouchEventByEventID(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t eventId, SystemGestureTouchEvent* event) {
  (void)gesture_handle;
  (void)recognizer;
  (void)eventId;
@@ -73,7 +73,7 @@ int sceSystemGestureGetTouchEventByEventID(int32_t gesture_handle, const SystemG
  return 0;
 }
 
-int sceSystemGestureGetTouchEventByIndex(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t index, SystemGestureTouchEvent* event) {
+int APS5_VABI sceSystemGestureGetTouchEventByIndex(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, uint32_t index, SystemGestureTouchEvent* event) {
  (void)gesture_handle;
  (void)recognizer;
  (void)index;
@@ -82,7 +82,7 @@ int sceSystemGestureGetTouchEventByIndex(int32_t gesture_handle, const SystemGes
  return 0;
 }
 
-int sceSystemGestureGetTouchEvents(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, SystemGestureTouchEvent* event_buffer, uint32_t capacity_of_buffer, uint32_t* number_of_event) {
+int APS5_VABI sceSystemGestureGetTouchEvents(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, SystemGestureTouchEvent* event_buffer, uint32_t capacity_of_buffer, uint32_t* number_of_event) {
  (void)gesture_handle;
  (void)recognizer;
  (void)event_buffer;
@@ -92,14 +92,14 @@ int sceSystemGestureGetTouchEvents(int32_t gesture_handle, const SystemGestureTo
  return 0;
 }
 
-int sceSystemGestureGetTouchEventsCount(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer) {
+int APS5_VABI sceSystemGestureGetTouchEventsCount(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureGetTouchRecognizerInformation(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, SystemGestureTouchRecognizerInformation* information) {
+int APS5_VABI sceSystemGestureGetTouchRecognizerInformation(int32_t gesture_handle, const SystemGestureTouchRecognizer* recognizer, SystemGestureTouchRecognizerInformation* information) {
  (void)gesture_handle;
  (void)recognizer;
  (void)information;
@@ -107,60 +107,60 @@ int sceSystemGestureGetTouchRecognizerInformation(int32_t gesture_handle, const 
  return 0;
 }
 
-int sceSystemGestureInitializePrimitiveTouchRecognizer(const void* param) {
+int APS5_VABI sceSystemGestureInitializePrimitiveTouchRecognizer(const void* param) {
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int32_t sceSystemGestureOpen(int32_t input_type, const void* param) {
+int32_t APS5_VABI sceSystemGestureOpen(int32_t input_type, const void* param) {
  (void)input_type;
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureRemoveTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
+int APS5_VABI sceSystemGestureRemoveTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureResetPrimitiveTouchRecognizer(int32_t gesture_handle) {
+int APS5_VABI sceSystemGestureResetPrimitiveTouchRecognizer(int32_t gesture_handle) {
  (void)gesture_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureResetTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
+int APS5_VABI sceSystemGestureResetTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureUpdateAllTouchRecognizer(int32_t gesture_handle) {
+int APS5_VABI sceSystemGestureUpdateAllTouchRecognizer(int32_t gesture_handle) {
  (void)gesture_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gesture_handle, const void* param) {
+int APS5_VABI sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gesture_handle, const void* param) {
  (void)gesture_handle;
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureUpdateTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
+int APS5_VABI sceSystemGestureUpdateTouchRecognizer(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer) {
  (void)gesture_handle;
  (void)recognizer;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer, const SystemGestureRectangle* rectangle) {
+int APS5_VABI sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gesture_handle, SystemGestureTouchRecognizer* recognizer, const SystemGestureRectangle* rectangle) {
  (void)gesture_handle;
  (void)recognizer;
  (void)rectangle;

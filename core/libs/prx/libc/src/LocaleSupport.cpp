@@ -38,7 +38,7 @@ long _ZNSt6locale2id7_Id_cntE_nid_postfix = 0;
 
 const std::locale* _ZSt21_sceLibcClassicLocale_nid_postfix = &ClassicLocaleInstance();
 
-void _ZNSt6locale5_InitEv_nid_postfix() {
+void APS5_VABI _ZNSt6locale5_InitEv_nid_postfix() {
     std::lock_guard<std::mutex> lock(g_localeInitMutex);
     if (!g_localeInitialized) {
         ClassicLocaleInstance();
@@ -46,11 +46,11 @@ void _ZNSt6locale5_InitEv_nid_postfix() {
     }
 }
 
-void _ZNSt6locale5facet9_RegisterEv_nid_postfix() {
+void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-const std::locale* _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {
+const std::locale* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {
     return &ClassicLocaleInstance();
 }
 
@@ -61,16 +61,16 @@ void _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(
     *targetFacet = &std::use_facet<std::collate<wchar_t>>(effectiveLocale);
 }
 
-void _ZNSt8_LocinfoC1EPKc_nid_postfix(LocinfoStorage* self, const char* localeName) {
+void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(LocinfoStorage* self, const char* localeName) {
     (void)localeName;
     new (self) LocinfoStorage {};
 }
 
-void _ZNSt8_LocinfoD1Ev_nid_postfix(LocinfoStorage* self) {
+void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(LocinfoStorage* self) {
     (void)self;
 }
 
-wchar_t* _Mbtowcx_nid_postfix(wchar_t* dst, const char* src, std::size_t count, mbstate_t* st) {
+wchar_t* APS5_VABI _Mbtowcx_nid_postfix(wchar_t* dst, const char* src, std::size_t count, mbstate_t* st) {
     while (count > 0) {
         std::size_t result = std::mbrtowc(dst, src, count, st);
         if (result == static_cast<std::size_t>(-1) || result == static_cast<std::size_t>(-2))
@@ -84,19 +84,19 @@ wchar_t* _Mbtowcx_nid_postfix(wchar_t* dst, const char* src, std::size_t count, 
     return dst;
 }
 
-char* _Wctombx_nid_postfix(char* dst, wchar_t src, mbstate_t* st) {
+char* APS5_VABI _Wctombx_nid_postfix(char* dst, wchar_t src, mbstate_t* st) {
     std::size_t result = std::wcrtomb(dst, src, st);
     if (result == static_cast<std::size_t>(-1))
         return nullptr;
     return dst + result;
 }
 
-const short* _Getpctype_nid_postfix() {
+const short* APS5_VABI _Getpctype_nid_postfix() {
     const auto& facet = std::use_facet<std::ctype<char>>(ClassicLocaleInstance());
     return reinterpret_cast<const short*>(facet.table());
 }
 
-const short* _Getptolower_nid_postfix() {
+const short* APS5_VABI _Getptolower_nid_postfix() {
     static short table[std::ctype<char>::table_size];
     static std::once_flag flag;
     std::call_once(flag, []() {
@@ -107,7 +107,7 @@ const short* _Getptolower_nid_postfix() {
     return table;
 }
 
-const short* _Getptoupper_nid_postfix() {
+const short* APS5_VABI _Getptoupper_nid_postfix() {
     static short table[std::ctype<char>::table_size];
     static std::once_flag flag;
     std::call_once(flag, []() {
@@ -118,21 +118,21 @@ const short* _Getptoupper_nid_postfix() {
     return table;
 }
 
-mbstate_t* _Getpmbstate_nid_postfix() {
+mbstate_t* APS5_VABI _Getpmbstate_nid_postfix() {
     thread_local mbstate_t state {};
     return &state;
 }
 
-mbstate_t* _Getpwcstate_nid_postfix() {
+mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
     thread_local mbstate_t state {};
     return &state;
 }
 
-wint_t _Towctrans_nid_postfix(wint_t c, wctrans_t desc) {
+wint_t APS5_VABI _Towctrans_nid_postfix(wint_t c, wctrans_t desc) {
     return std::towctrans(c, desc);
 }
 
-void _init_env_nid_postfix() {
+void APS5_VABI _init_env_nid_postfix() {
 }
 
 }

@@ -5,39 +5,39 @@
 
 extern "C" {
 
-int sceSigninDialogClose(void) {
+int APS5_VABI sceSigninDialogClose(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSigninDialogGetResult(void* result) {
+int APS5_VABI sceSigninDialogGetResult(void* result) {
  (void)result;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSigninDialogGetStatus(void) {
+int APS5_VABI sceSigninDialogGetStatus(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSigninDialogInitialize(void) {
+int APS5_VABI sceSigninDialogInitialize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSigninDialogOpen(const void* param) {
+int APS5_VABI sceSigninDialogOpen(const void* param) {
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSigninDialogTerminate(void) {
+int APS5_VABI sceSigninDialogTerminate(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSigninDialogUpdateStatus(void) {
+int APS5_VABI sceSigninDialogUpdateStatus(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

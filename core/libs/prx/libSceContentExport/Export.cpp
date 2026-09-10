@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceContentExportInit2(const ContentExportInitParam2* init_param) {
+int APS5_VABI sceContentExportInit2(const ContentExportInitParam2* init_param) {
  (void)init_param;
  NotImplemented_nid_no_patch(__func__);
  return 0;

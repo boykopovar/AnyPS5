@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceRandomGetRandomNumber(void* buf, size_t size) {
+int APS5_VABI sceRandomGetRandomNumber(void* buf, size_t size) {
  (void)buf;
  (void)size;
  NotImplemented_nid_no_patch(__func__);

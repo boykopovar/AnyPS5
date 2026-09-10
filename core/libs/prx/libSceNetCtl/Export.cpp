@@ -5,49 +5,49 @@
 
 extern "C" {
 
-int sceNetCtlCheckCallback(void) {
+int APS5_VABI sceNetCtlCheckCallback(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetCtlGetInfo(int code, NetCtlInfo* info) {
+int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
  (void)code;
  (void)info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetCtlGetNatInfo(NetCtlNatInfo* nat_info) {
+int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* nat_info) {
  (void)nat_info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetCtlGetResult(int event_type, int* error_code) {
+int APS5_VABI sceNetCtlGetResult(int event_type, int* error_code) {
  (void)event_type;
  (void)error_code;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetCtlGetState(int* state) {
+int APS5_VABI sceNetCtlGetState(int* state) {
  (void)state;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetCtlGetStateV6(int* state) {
+int APS5_VABI sceNetCtlGetStateV6(int* state) {
  (void)state;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetCtlInit(void) {
+int APS5_VABI sceNetCtlInit(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetCtlRegisterCallback(NetCtlCallback func, void* arg, int* cid) {
+int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback func, void* arg, int* cid) {
  (void)func;
  (void)arg;
  (void)cid;
@@ -55,11 +55,11 @@ int sceNetCtlRegisterCallback(NetCtlCallback func, void* arg, int* cid) {
  return 0;
 }
 
-void sceNetCtlTerm(void) {
+void APS5_VABI sceNetCtlTerm(void) {
  NotImplemented_nid_no_patch(__func__);
 }
 
-int sceNetCtlUnregisterCallback(int cid) {
+int APS5_VABI sceNetCtlUnregisterCallback(int cid) {
  (void)cid;
  NotImplemented_nid_no_patch(__func__);
  return 0;

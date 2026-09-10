@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceNpSessionSignalingInitialize(void* param) {
+int APS5_VABI sceNpSessionSignalingInitialize(void* param) {
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;

@@ -5,39 +5,39 @@
 
 extern "C" {
 
-int sceLoginDialogClose(void) {
+int APS5_VABI sceLoginDialogClose(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceLoginDialogGetResult(void* result) {
+int APS5_VABI sceLoginDialogGetResult(void* result) {
  (void)result;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceLoginDialogGetStatus(void) {
+int APS5_VABI sceLoginDialogGetStatus(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceLoginDialogInitialize(void) {
+int APS5_VABI sceLoginDialogInitialize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceLoginDialogOpen(const void* param) {
+int APS5_VABI sceLoginDialogOpen(const void* param) {
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceLoginDialogTerminate(void) {
+int APS5_VABI sceLoginDialogTerminate(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceLoginDialogUpdateStatus(void) {
+int APS5_VABI sceLoginDialogUpdateStatus(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

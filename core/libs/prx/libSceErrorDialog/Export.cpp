@@ -5,33 +5,33 @@
 
 extern "C" {
 
-int sceErrorDialogClose(void) {
+int APS5_VABI sceErrorDialogClose(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceErrorDialogGetStatus(void) {
+int APS5_VABI sceErrorDialogGetStatus(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceErrorDialogInitialize(void) {
+int APS5_VABI sceErrorDialogInitialize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceErrorDialogOpen(const void* param) {
+int APS5_VABI sceErrorDialogOpen(const void* param) {
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceErrorDialogTerminate(void) {
+int APS5_VABI sceErrorDialogTerminate(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceErrorDialogUpdateStatus(void) {
+int APS5_VABI sceErrorDialogUpdateStatus(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

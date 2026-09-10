@@ -5,18 +5,18 @@
 
 extern "C" {
 
-int sceImeDialogAbort(void) {
+int APS5_VABI sceImeDialogAbort(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
+int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm* form) {
  (void)form;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
+int APS5_VABI sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
  (void)param;
  (void)width;
  (void)height;
@@ -24,7 +24,7 @@ int sceImeDialogGetPanelSize(const Param* param, uint32_t* width, uint32_t* heig
  return 0;
 }
 
-int sceImeDialogGetPanelSizeExtended(const Param* param, const ExtendedParam* extended, uint32_t* width, uint32_t* height) {
+int APS5_VABI sceImeDialogGetPanelSizeExtended(const Param* param, const ExtendedParam* extended, uint32_t* width, uint32_t* height) {
  (void)param;
  (void)extended;
  (void)width;
@@ -33,25 +33,25 @@ int sceImeDialogGetPanelSizeExtended(const Param* param, const ExtendedParam* ex
  return 0;
 }
 
-int sceImeDialogGetResult(Result* result) {
+int APS5_VABI sceImeDialogGetResult(Result* result) {
  (void)result;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceImeDialogGetStatus(void) {
+int APS5_VABI sceImeDialogGetStatus(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceImeDialogInit(const Param* param, const ExtendedParam* extended) {
+int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended) {
  (void)param;
  (void)extended;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceImeDialogTerm(void) {
+int APS5_VABI sceImeDialogTerm(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

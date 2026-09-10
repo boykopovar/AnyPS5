@@ -5,7 +5,7 @@
 
 extern "C" {
 
-uint32_t* sceAgcDcbDrawIndex(CommandBuffer* buf, uint32_t index_count, const volatile void* index_addr, uint64_t modifier){
+uint32_t* APS5_VABI sceAgcDcbDrawIndex(CommandBuffer* buf, uint32_t index_count, const volatile void* index_addr, uint64_t modifier) {
  (void)buf;
  (void)index_count;
  (void)index_addr;
@@ -14,12 +14,12 @@ uint32_t* sceAgcDcbDrawIndex(CommandBuffer* buf, uint32_t index_count, const vol
  return nullptr;
 }
 
-uint32_t sceAgcDcbDrawIndexGetSize(void){
+uint32_t APS5_VABI sceAgcDcbDrawIndexGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbDrawIndexAuto(CommandBuffer* buf, uint32_t index_count, uint64_t modifier){
+uint32_t* APS5_VABI sceAgcDcbDrawIndexAuto(CommandBuffer* buf, uint32_t index_count, uint64_t modifier) {
  (void)buf;
  (void)index_count;
  (void)modifier;
@@ -27,12 +27,12 @@ uint32_t* sceAgcDcbDrawIndexAuto(CommandBuffer* buf, uint32_t index_count, uint6
  return nullptr;
 }
 
-uint32_t sceAgcDcbDrawIndexAutoGetSize(void){
+uint32_t APS5_VABI sceAgcDcbDrawIndexAutoGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint64_t modifier){
+uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint64_t modifier) {
  (void)buf;
  (void)data_offset_in_bytes;
  (void)modifier;
@@ -40,7 +40,7 @@ uint32_t* sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, uint32_t data_offset_in
  return nullptr;
 }
 
-uint32_t* sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint32_t count_indirect, uint32_t max_count_or_count, const volatile void* count_addr, uint32_t stride_in_bytes, uint64_t modifier){
+uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint32_t count_indirect, uint32_t max_count_or_count, const volatile void* count_addr, uint32_t stride_in_bytes, uint64_t modifier) {
  (void)buf;
  (void)data_offset_in_bytes;
  (void)count_indirect;
@@ -52,7 +52,7 @@ uint32_t* sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, uint32_t data_offs
  return nullptr;
 }
 
-uint32_t* sceAgcDcbDrawIndexMultiInstanced(CommandBuffer* buf, uint32_t index_count, const volatile void* index_addr, const volatile void* object_ids, uint32_t instance_count, uint64_t modifier){
+uint32_t* APS5_VABI sceAgcDcbDrawIndexMultiInstanced(CommandBuffer* buf, uint32_t index_count, const volatile void* index_addr, const volatile void* object_ids, uint32_t instance_count, uint64_t modifier) {
  (void)buf;
  (void)index_count;
  (void)index_addr;
@@ -63,12 +63,12 @@ uint32_t* sceAgcDcbDrawIndexMultiInstanced(CommandBuffer* buf, uint32_t index_co
  return nullptr;
 }
 
-uint32_t sceAgcDcbDrawIndexMultiInstancedGetSize(void){
+uint32_t APS5_VABI sceAgcDcbDrawIndexMultiInstancedGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbDrawIndexOffset(CommandBuffer* buf, uint32_t index_offset, uint32_t index_count, uint64_t modifier){
+uint32_t* APS5_VABI sceAgcDcbDrawIndexOffset(CommandBuffer* buf, uint32_t index_offset, uint32_t index_count, uint64_t modifier) {
  (void)buf;
  (void)index_offset;
  (void)index_count;
@@ -77,12 +77,12 @@ uint32_t* sceAgcDcbDrawIndexOffset(CommandBuffer* buf, uint32_t index_offset, ui
  return nullptr;
 }
 
-uint32_t sceAgcDcbDrawIndexOffsetGetSize(void){
+uint32_t APS5_VABI sceAgcDcbDrawIndexOffsetGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbDrawIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint64_t modifier){
+uint32_t* APS5_VABI sceAgcDcbDrawIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint64_t modifier) {
  (void)buf;
  (void)data_offset_in_bytes;
  (void)modifier;
@@ -90,26 +90,26 @@ uint32_t* sceAgcDcbDrawIndirect(CommandBuffer* buf, uint32_t data_offset_in_byte
  return nullptr;
 }
 
-uint32_t sceAgcDcbDrawIndirectGetSize(void){
+uint32_t APS5_VABI sceAgcDcbDrawIndirectGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbSetIndexBuffer(CommandBuffer* buf, uint64_t index_addr){
+uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, uint64_t index_addr) {
  (void)buf;
  (void)index_addr;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-uint32_t* sceAgcDcbSetIndexCount(CommandBuffer* buf, uint32_t index_count){
+uint32_t* APS5_VABI sceAgcDcbSetIndexCount(CommandBuffer* buf, uint32_t index_count) {
  (void)buf;
  (void)index_count;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-uint32_t* sceAgcDcbSetIndexSize(CommandBuffer* buf, uint8_t index_size, uint8_t cache_policy){
+uint32_t* APS5_VABI sceAgcDcbSetIndexSize(CommandBuffer* buf, uint8_t index_size, uint8_t cache_policy) {
  (void)buf;
  (void)index_size;
  (void)cache_policy;
@@ -117,19 +117,19 @@ uint32_t* sceAgcDcbSetIndexSize(CommandBuffer* buf, uint8_t index_size, uint8_t 
  return nullptr;
 }
 
-uint32_t* sceAgcDcbSetNumInstances(CommandBuffer* buf, uint32_t num_instances){
+uint32_t* APS5_VABI sceAgcDcbSetNumInstances(CommandBuffer* buf, uint32_t num_instances) {
  (void)buf;
  (void)num_instances;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-uint32_t sceAgcDcbSetNumInstancesGetSize(void){
+uint32_t APS5_VABI sceAgcDcbSetNumInstancesGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t shader_type, const volatile void* indirect_base_addr){
+uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t shader_type, const volatile void* indirect_base_addr) {
  (void)buf;
  (void)shader_type;
  (void)indirect_base_addr;
@@ -137,7 +137,7 @@ uint32_t* sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t shader_type,
  return nullptr;
 }
 
-uint32_t* sceAgcDcbGetLodStats(CommandBuffer* buf, uint8_t cache_policy, const volatile void* buffer, uint32_t buffer_size_in_bytes, uint32_t reset_count, uint8_t force_reset, uint8_t report_and_reset, uint32_t reporting_interval_in_100k_clocks){
+uint32_t* APS5_VABI sceAgcDcbGetLodStats(CommandBuffer* buf, uint8_t cache_policy, const volatile void* buffer, uint32_t buffer_size_in_bytes, uint32_t reset_count, uint8_t force_reset, uint8_t report_and_reset, uint32_t reporting_interval_in_100k_clocks) {
  (void)buf;
  (void)cache_policy;
  (void)buffer;
@@ -149,7 +149,7 @@ uint32_t* sceAgcDcbGetLodStats(CommandBuffer* buf, uint8_t cache_policy, const v
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
-std::uint32_t* sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddr, std::uint32_t strideInBytes, std::uint64_t modifier) {
+std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddr, std::uint32_t strideInBytes, std::uint64_t modifier) {
     (void)buf;
     (void)dataOffsetInBytes;
     (void)countIndirect;

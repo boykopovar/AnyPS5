@@ -5,7 +5,7 @@
 
 extern "C" {
 
-uint32_t* sceAgcDcbAcquireMem(CommandBuffer* buf, uint8_t engine, uint32_t cb_db_op, uint32_t gcr_cntl, const volatile void* base, uint64_t size_bytes, uint32_t poll_cycles){
+uint32_t* APS5_VABI sceAgcDcbAcquireMem(CommandBuffer* buf, uint8_t engine, uint32_t cb_db_op, uint32_t gcr_cntl, const volatile void* base, uint64_t size_bytes, uint32_t poll_cycles) {
  (void)buf;
  (void)engine;
  (void)cb_db_op;
@@ -17,12 +17,12 @@ uint32_t* sceAgcDcbAcquireMem(CommandBuffer* buf, uint8_t engine, uint32_t cb_db
  return nullptr;
 }
 
-uint32_t sceAgcDcbAcquireMemGetSize(void){
+uint32_t APS5_VABI sceAgcDcbAcquireMemGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbCondExec(CommandBuffer* buf, const volatile uint32_t* address, uint32_t num_dwords){
+uint32_t* APS5_VABI sceAgcDcbCondExec(CommandBuffer* buf, const volatile uint32_t* address, uint32_t num_dwords) {
  (void)buf;
  (void)address;
  (void)num_dwords;
@@ -30,12 +30,12 @@ uint32_t* sceAgcDcbCondExec(CommandBuffer* buf, const volatile uint32_t* address
  return nullptr;
 }
 
-uint32_t sceAgcDcbCondExecGetSize(void){
+uint32_t APS5_VABI sceAgcDcbCondExecGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbCopyData(CommandBuffer* buf, uint8_t dst, uint8_t dst_cache_policy, uint64_t dst_address, uint8_t src, uint8_t src_cache_policy, uint64_t src_address_or_immediate, uint8_t item_size, uint8_t write_confirm){
+uint32_t* APS5_VABI sceAgcDcbCopyData(CommandBuffer* buf, uint8_t dst, uint8_t dst_cache_policy, uint64_t dst_address, uint8_t src, uint8_t src_cache_policy, uint64_t src_address_or_immediate, uint8_t item_size, uint8_t write_confirm) {
  (void)buf;
  (void)dst;
  (void)dst_cache_policy;
@@ -49,7 +49,7 @@ uint32_t* sceAgcDcbCopyData(CommandBuffer* buf, uint8_t dst, uint8_t dst_cache_p
  return nullptr;
 }
 
-uint32_t* sceAgcDcbDmaData(CommandBuffer* buf, uint8_t engine, uint8_t dst, uint8_t dst_cache_policy, uint64_t dst_address_or_offset, uint8_t src, uint8_t src_cache_policy, uint64_t src_address_or_offset_or_immediate, uint32_t num_bytes, uint8_t wait_for_previous, uint8_t write_confirm, uint8_t block_engine){
+uint32_t* APS5_VABI sceAgcDcbDmaData(CommandBuffer* buf, uint8_t engine, uint8_t dst, uint8_t dst_cache_policy, uint64_t dst_address_or_offset, uint8_t src, uint8_t src_cache_policy, uint64_t src_address_or_offset_or_immediate, uint32_t num_bytes, uint8_t wait_for_previous, uint8_t write_confirm, uint8_t block_engine) {
  (void)buf;
  (void)engine;
  (void)dst;
@@ -66,7 +66,7 @@ uint32_t* sceAgcDcbDmaData(CommandBuffer* buf, uint8_t engine, uint8_t dst, uint
  return nullptr;
 }
 
-uint32_t* sceAgcDcbDispatchIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint32_t flags){
+uint32_t* APS5_VABI sceAgcDcbDispatchIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint32_t flags) {
  (void)buf;
  (void)data_offset_in_bytes;
  (void)flags;
@@ -74,12 +74,12 @@ uint32_t* sceAgcDcbDispatchIndirect(CommandBuffer* buf, uint32_t data_offset_in_
  return nullptr;
 }
 
-uint32_t sceAgcDcbDispatchIndirectGetSize(void){
+uint32_t APS5_VABI sceAgcDcbDispatchIndirectGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbEventWrite(CommandBuffer* buf, uint8_t event_type, const volatile void* address){
+uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, uint8_t event_type, const volatile void* address) {
  (void)buf;
  (void)event_type;
  (void)address;
@@ -87,7 +87,7 @@ uint32_t* sceAgcDcbEventWrite(CommandBuffer* buf, uint8_t event_type, const vola
  return nullptr;
 }
 
-uint32_t* sceAgcDcbJump(CommandBuffer* buf, uint8_t mode, uint8_t cache_policy, const uint32_t* target, uint32_t size_in_dwords){
+uint32_t* APS5_VABI sceAgcDcbJump(CommandBuffer* buf, uint8_t mode, uint8_t cache_policy, const uint32_t* target, uint32_t size_in_dwords) {
  (void)buf;
  (void)mode;
  (void)cache_policy;
@@ -97,12 +97,12 @@ uint32_t* sceAgcDcbJump(CommandBuffer* buf, uint8_t mode, uint8_t cache_policy, 
  return nullptr;
 }
 
-uint32_t sceAgcDcbJumpGetSize(void){
+uint32_t APS5_VABI sceAgcDcbJumpGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t state){
+uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t state) {
  (void)buf;
  (void)op;
  (void)state;
@@ -110,25 +110,25 @@ uint32_t* sceAgcDcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t state){
  return nullptr;
 }
 
-uint32_t* sceAgcDcbRewind(CommandBuffer* buf, uint32_t initial_state){
+uint32_t* APS5_VABI sceAgcDcbRewind(CommandBuffer* buf, uint32_t initial_state) {
  (void)buf;
  (void)initial_state;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-uint32_t sceAgcDcbRewindGetSize(void){
+uint32_t APS5_VABI sceAgcDcbRewindGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbStallCommandBufferParser(CommandBuffer* buf){
+uint32_t* APS5_VABI sceAgcDcbStallCommandBufferParser(CommandBuffer* buf) {
  (void)buf;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-uint32_t* sceAgcDcbWaitRegMem(CommandBuffer* buf, uint8_t size, uint8_t compare_function, uint8_t op, uint8_t cache_policy, const volatile void* address, uint64_t reference, uint64_t mask, uint32_t poll_cycles){
+uint32_t* APS5_VABI sceAgcDcbWaitRegMem(CommandBuffer* buf, uint8_t size, uint8_t compare_function, uint8_t op, uint8_t cache_policy, const volatile void* address, uint64_t reference, uint64_t mask, uint32_t poll_cycles) {
  (void)buf;
  (void)size;
  (void)compare_function;
@@ -142,13 +142,13 @@ uint32_t* sceAgcDcbWaitRegMem(CommandBuffer* buf, uint8_t size, uint8_t compare_
  return nullptr;
 }
 
-uint32_t sceAgcDcbWaitOnAddressGetSize(uint32_t size){
+uint32_t APS5_VABI sceAgcDcbWaitOnAddressGetSize(uint32_t size) {
  (void)size;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t* sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint32_t video_out_handle, uint32_t display_buffer_index){
+uint32_t* APS5_VABI sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint32_t video_out_handle, uint32_t display_buffer_index) {
  (void)buf;
  (void)video_out_handle;
  (void)display_buffer_index;
@@ -156,7 +156,7 @@ uint32_t* sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint32_t video_
  return nullptr;
 }
 
-uint32_t* sceAgcDcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_policy, uint64_t address_or_offset, const void* data, uint32_t num_dwords, uint8_t increment, uint8_t write_confirm){
+uint32_t* APS5_VABI sceAgcDcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_policy, uint64_t address_or_offset, const void* data, uint32_t num_dwords, uint8_t increment, uint8_t write_confirm) {
  (void)buf;
  (void)dst;
  (void)cache_policy;
@@ -169,18 +169,18 @@ uint32_t* sceAgcDcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_poli
  return nullptr;
 }
 
-uint32_t sceAgcDcbWriteDataGetSize(uint32_t num_dwords){
+uint32_t APS5_VABI sceAgcDcbWriteDataGetSize(uint32_t num_dwords) {
  (void)num_dwords;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-std::uint64_t sceAgcDcbEventWriteGetSize(std::uint8_t eventType) {
+std::uint64_t APS5_VABI sceAgcDcbEventWriteGetSize(std::uint8_t eventType) {
     (void)eventType;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-std::uint64_t sceAgcDcbCopyDataGetSize() {
+std::uint64_t APS5_VABI sceAgcDcbCopyDataGetSize() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

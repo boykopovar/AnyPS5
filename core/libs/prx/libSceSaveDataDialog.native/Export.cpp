@@ -4,6 +4,7 @@
 #include <cstdio>
 #include "SceTypes.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
+#include "prx/libc/include/General.hpp"
 
 static int g_status = SAVE_DATA_DIALOG_STATUS_NONE;
 static int g_mode = 0;
@@ -12,7 +13,7 @@ static char g_dir_name[32] = {};
 
 extern "C" {
 
-int sceSaveDataDialogInitialize(void) {
+int APS5_VABI sceSaveDataDialogInitialize(void) {
  if (g_status != SAVE_DATA_DIALOG_STATUS_NONE) {
   return SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED;
  }
@@ -23,15 +24,15 @@ int sceSaveDataDialogInitialize(void) {
  return SAVE_DATA_DIALOG_OK;
 }
 
-int sceSaveDataDialogGetStatus(void) {
+int APS5_VABI sceSaveDataDialogGetStatus(void) {
  return g_status;
 }
 
-int sceSaveDataDialogUpdateStatus(void) {
+int APS5_VABI sceSaveDataDialogUpdateStatus(void) {
  return g_status;
 }
 
-int sceSaveDataDialogGetResult(void* result) {
+int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  if (result == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
@@ -47,7 +48,7 @@ int sceSaveDataDialogGetResult(void* result) {
  return SAVE_DATA_DIALOG_OK;
 }
 
-int sceSaveDataDialogOpen(const void* param) {
+int APS5_VABI sceSaveDataDialogOpen(const void* param) {
  if (g_status != SAVE_DATA_DIALOG_STATUS_INITIALIZED && g_status != SAVE_DATA_DIALOG_STATUS_FINISHED) {
   return SAVE_DATA_DIALOG_ERROR_INVALID_STATE;
  }
@@ -72,17 +73,17 @@ int sceSaveDataDialogOpen(const void* param) {
  return SAVE_DATA_DIALOG_OK;
 }
 
-int sceSaveDataDialogClose(const void* closeParam) {
+int APS5_VABI sceSaveDataDialogClose(const void* closeParam) {
  (void)closeParam;
  g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;
 }
 
-int sceSaveDataDialogIsReadyToDisplay(void) {
+int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) {
  return 1;
 }
 
-int sceSaveDataDialogTerminate(void) {
+int APS5_VABI sceSaveDataDialogTerminate(void) {
  g_status = SAVE_DATA_DIALOG_STATUS_NONE;
  g_mode = 0;
  g_user_data = nullptr;
@@ -90,13 +91,13 @@ int sceSaveDataDialogTerminate(void) {
  return SAVE_DATA_DIALOG_OK;
 }
 
-int sceSaveDataDialogProgressBarInc(int target, std::uint32_t delta) {
+int APS5_VABI sceSaveDataDialogProgressBarInc(int target, std::uint32_t delta) {
  (void)target;
  (void)delta;
  return SAVE_DATA_DIALOG_OK;
 }
 
-int sceSaveDataDialogProgressBarSetValue(int target, std::uint32_t rate) {
+int APS5_VABI sceSaveDataDialogProgressBarSetValue(int target, std::uint32_t rate) {
  (void)target;
  (void)rate;
  return SAVE_DATA_DIALOG_OK;

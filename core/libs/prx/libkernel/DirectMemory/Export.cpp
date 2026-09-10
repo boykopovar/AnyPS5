@@ -7,7 +7,7 @@
 
 extern "C" {
 
-int sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
+int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
  (void)memory_type;
  if (search_start < 0 || search_end <= search_start || len == 0
   || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
@@ -16,11 +16,11 @@ int sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size
  return DirectMemoryAlloc(search_start, search_end, len, alignment, phys_addr_out);
 }
 
-int sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
+int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
  return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DIRECT_MEMORY_SIZE), len, alignment, memory_type, phys_addr_out);
 }
 
-int sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
+int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
  if (!phys_addr_out || !size_out) return SCE_KERNEL_ERROR_EINVAL;
  int64_t tmpPhys = 0;
  int ret = DirectMemoryAlloc(search_start, search_end, PS5_PAGE_SIZE, alignment, &tmpPhys);
@@ -31,7 +31,7 @@ int sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end,
  return 0;
 }
 
-int sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t info_size) {
+int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t info_size) {
  (void)flags;
  if (!info || offset < 0) return SCE_KERNEL_ERROR_EINVAL;
  struct DirectMemoryQueryInfo { int64_t start; int64_t end; int memory_type; };
@@ -43,54 +43,54 @@ int sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t inf
  return 0;
 }
 
-size_t sceKernelGetDirectMemorySize(void) {
+size_t APS5_VABI sceKernelGetDirectMemorySize(void) {
  return DIRECT_MEMORY_SIZE;
 }
 
-int sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
+int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  (void)alignment;
  return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
-int sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
+int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  (void)type;
  return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
-int sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
+int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
  return DoMapAnon(addr_in_out, len, prot, flags);
 }
 
-int sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
+int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
  (void)name;
  return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
-int32_t sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
+int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
  (void)name;
  return DoMapAnon(addr_in_out, len, prot, flags);
 }
 
-int sceKernelMprotect(const void* addr, size_t len, int prot) {
+int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot) {
  return DoMprotect(addr, len, prot);
 }
 
-int sceKernelMunmap(uint64_t vaddr, size_t len) {
+int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
  return DoMunmap(reinterpret_cast<void*>(vaddr), len);
 }
 
-int sceKernelReleaseDirectMemory(int64_t start, size_t len) {
+int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || len == 0) return SCE_KERNEL_ERROR_EINVAL;
  DirectMemoryFree(start, len);
  return 0;
 }
 
-int sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment) {
+int APS5_VABI sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment) {
  (void)flags;
  return DoReserveVirtual(addr, len, alignment);
 }
 
-int sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
+int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
  (void)flags;
  if (!info || info_size < sizeof(VirtualQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
  memset(info, 0, sizeof(VirtualQueryInfo));

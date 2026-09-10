@@ -2,12 +2,13 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "prx/libc/include/General.hpp"
 
 static bool g_initialized = false;
 
 extern "C" {
 
-int sceCommonDialogInitialize(void) {
+int APS5_VABI sceCommonDialogInitialize(void) {
  if (g_initialized) {
   return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
  }
@@ -15,7 +16,7 @@ int sceCommonDialogInitialize(void) {
  return COMMON_DIALOG_OK;
 }
 
-bool sceCommonDialogIsUsed(void) {
+bool APS5_VABI sceCommonDialogIsUsed(void) {
  return false;
 }
 

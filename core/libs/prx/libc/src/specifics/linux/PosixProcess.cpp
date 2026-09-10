@@ -4,7 +4,7 @@
 
 extern "C" {
 
-int setenv_nid_postfix(const char* name, const char* value, int overwrite) {
+int APS5_VABI setenv_nid_postfix(const char* name, const char* value, int overwrite) {
     if (overwrite == 0 && std::getenv(name) != nullptr) {
         return 0;
     }

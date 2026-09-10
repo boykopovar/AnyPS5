@@ -5,7 +5,7 @@
 
 extern "C" {
 
-uint32_t sceRazorCpuIsCapturing(void) {
+uint32_t APS5_VABI sceRazorCpuIsCapturing(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

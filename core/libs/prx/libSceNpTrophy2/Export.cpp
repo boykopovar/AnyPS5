@@ -5,13 +5,13 @@
 
 extern "C" {
 
-int sceNpTrophy2AbortHandle(int handle) {
+int APS5_VABI sceNpTrophy2AbortHandle(int handle) {
  (void)handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNpTrophy2CreateContext(int* context, int user_id, uint32_t service_label, uint64_t options) {
+int APS5_VABI sceNpTrophy2CreateContext(int* context, int user_id, uint32_t service_label, uint64_t options) {
  (void)context;
  (void)user_id;
  (void)service_label;
@@ -20,25 +20,25 @@ int sceNpTrophy2CreateContext(int* context, int user_id, uint32_t service_label,
  return 0;
 }
 
-int sceNpTrophy2CreateHandle(int* handle) {
+int APS5_VABI sceNpTrophy2CreateHandle(int* handle) {
  (void)handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNpTrophy2DestroyContext(int context) {
+int APS5_VABI sceNpTrophy2DestroyContext(int context) {
  (void)context;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNpTrophy2DestroyHandle(int handle) {
+int APS5_VABI sceNpTrophy2DestroyHandle(int handle) {
  (void)handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNpTrophy2GetGameIcon(int context, int handle, void* buffer, size_t* size) {
+int APS5_VABI sceNpTrophy2GetGameIcon(int context, int handle, void* buffer, size_t* size) {
  (void)context;
  (void)handle;
  (void)buffer;
@@ -47,7 +47,7 @@ int sceNpTrophy2GetGameIcon(int context, int handle, void* buffer, size_t* size)
  return 0;
 }
 
-int sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDetails* details, NpTrophy2GameData* data) {
+int APS5_VABI sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDetails* details, NpTrophy2GameData* data) {
  (void)context;
  (void)handle;
  (void)details;
@@ -56,7 +56,7 @@ int sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDetails* detai
  return 0;
 }
 
-int sceNpTrophy2GetGroupIcon(int context, int handle, int group_id, void* buffer, size_t* size) {
+int APS5_VABI sceNpTrophy2GetGroupIcon(int context, int handle, int group_id, void* buffer, size_t* size) {
  (void)context;
  (void)handle;
  (void)group_id;
@@ -66,7 +66,7 @@ int sceNpTrophy2GetGroupIcon(int context, int handle, int group_id, void* buffer
  return 0;
 }
 
-int sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, NpTrophy2GroupDetails* details, NpTrophy2GroupData* data) {
+int APS5_VABI sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, NpTrophy2GroupDetails* details, NpTrophy2GroupData* data) {
  (void)context;
  (void)handle;
  (void)group_id;
@@ -76,7 +76,7 @@ int sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, NpTrophy2Gro
  return 0;
 }
 
-int sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t offset, uint32_t limit, NpTrophy2GroupDetails* details_array, NpTrophy2GroupData* data_array, uint32_t* count) {
+int APS5_VABI sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t offset, uint32_t limit, NpTrophy2GroupDetails* details_array, NpTrophy2GroupData* data_array, uint32_t* count) {
  (void)context;
  (void)handle;
  (void)offset;
@@ -88,7 +88,7 @@ int sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t offset, uint
  return 0;
 }
 
-int sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, void* buffer, size_t* size) {
+int APS5_VABI sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, void* buffer, size_t* size) {
  (void)context;
  (void)handle;
  (void)trophy_id;
@@ -98,7 +98,7 @@ int sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, void* buff
  return 0;
 }
 
-int sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, NpTrophy2Details* details, NpTrophy2Data* data) {
+int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, NpTrophy2Details* details, NpTrophy2Data* data) {
  (void)context;
  (void)handle;
  (void)trophy_id;
@@ -108,7 +108,7 @@ int sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, NpTrophy2D
  return 0;
 }
 
-int sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t offset, uint32_t limit, NpTrophy2Details* details_array, NpTrophy2Data* data_array, uint32_t* count) {
+int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t offset, uint32_t limit, NpTrophy2Details* details_array, NpTrophy2Data* data_array, uint32_t* count) {
  (void)context;
  (void)handle;
  (void)offset;
@@ -120,7 +120,7 @@ int sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t offset, uin
  return 0;
 }
 
-int sceNpTrophy2RegisterContext(int context, int handle, uint64_t options) {
+int APS5_VABI sceNpTrophy2RegisterContext(int context, int handle, uint64_t options) {
  (void)context;
  (void)handle;
  (void)options;
@@ -128,7 +128,7 @@ int sceNpTrophy2RegisterContext(int context, int handle, uint64_t options) {
  return 0;
 }
 
-int sceNpTrophy2RegisterUnlockCallback(void* callback, void* userdata) {
+int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void* callback, void* userdata) {
  (void)callback;
  (void)userdata;
  NotImplemented_nid_no_patch(__func__);

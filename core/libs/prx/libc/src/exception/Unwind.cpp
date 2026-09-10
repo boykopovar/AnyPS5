@@ -296,7 +296,7 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
 }
 
 extern "C" {
-_Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception* exception) {
+_Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Exception* exception) {
     _Unwind_Context start;
     LibcCaptureRegisters(start.registers);
     if (!LibcUnwind::Step(start)) return _URC_FATAL_PHASE1_ERROR;
@@ -327,20 +327,20 @@ _Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception* except
     std::abort();
 }
 
-_Unwind_Reason_Code _Unwind_Resume_or_Rethrow_nid_postfix(_Unwind_Exception* exception) {
+_Unwind_Reason_Code APS5_VABI _Unwind_Resume_or_Rethrow_nid_postfix(_Unwind_Exception* exception) {
     if (exception->private_1) _Unwind_Resume_nid_postfix(exception);
     return _Unwind_RaiseException_nid_postfix(exception);
 }
 
-void _Unwind_DeleteException_nid_postfix(_Unwind_Exception* exception) {
+void APS5_VABI _Unwind_DeleteException_nid_postfix(_Unwind_Exception* exception) {
     if (exception && exception->exception_cleanup) exception->exception_cleanup(_URC_FOREIGN_EXCEPTION_CAUGHT, exception);
 }
 
-_Unwind_Word _Unwind_GetGR_nid_postfix(_Unwind_Context* context, int index) {
+_Unwind_Word APS5_VABI _Unwind_GetGR_nid_postfix(_Unwind_Context* context, int index) {
     if (index < 0 || index >= 17) std::abort();
     return context->registers[index];
 }
-void _Unwind_SetGR_nid_postfix(_Unwind_Context* context, int index, _Unwind_Word value) {
+void APS5_VABI _Unwind_SetGR_nid_postfix(_Unwind_Context* context, int index, _Unwind_Word value) {
     if (index < 0 || index >= 17) std::abort();
     context->registers[index] = value;
 }
@@ -353,7 +353,7 @@ _Unwind_Ptr _Unwind_GetRegionStart_nid_postfix(_Unwind_Context* context) { retur
 _Unwind_Ptr _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context* context) { return context->dataBase; }
 _Unwind_Ptr _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context* context) { return context->textBase; }
 
-_Unwind_Reason_Code _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument) {
+_Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument) {
     if (!stop) return _URC_FATAL_PHASE2_ERROR;
     _Unwind_Context context;
     LibcCaptureRegisters(context.registers);
@@ -363,7 +363,7 @@ _Unwind_Reason_Code _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exceptio
     return LibcUnwind::PhaseTwo(context, exception);
 }
 
-_Unwind_Reason_Code _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* argument) {
+_Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* argument) {
     _Unwind_Context context;
     LibcCaptureRegisters(context.registers);
     if (!LibcUnwind::Step(context)) return _URC_END_OF_STACK;

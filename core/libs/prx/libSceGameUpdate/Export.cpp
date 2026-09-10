@@ -5,13 +5,13 @@
 
 extern "C" {
 
-int sceGameUpdateAbortRequest(int request_id) {
+int APS5_VABI sceGameUpdateAbortRequest(int request_id) {
  (void)request_id;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceGameUpdateCheck(int request_id, const GameUpdateCheckParam* param, GameUpdateCheckResult* result) {
+int APS5_VABI sceGameUpdateCheck(int request_id, const GameUpdateCheckParam* param, GameUpdateCheckResult* result) {
  (void)request_id;
  (void)param;
  (void)result;
@@ -19,18 +19,18 @@ int sceGameUpdateCheck(int request_id, const GameUpdateCheckParam* param, GameUp
  return 0;
 }
 
-int sceGameUpdateCreateRequest(void) {
+int APS5_VABI sceGameUpdateCreateRequest(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceGameUpdateDeleteRequest(int request_id) {
+int APS5_VABI sceGameUpdateDeleteRequest(int request_id) {
  (void)request_id;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceGameUpdateGetAddcontLatestVersion(uint32_t service_label, const void* entitlement_label, GameUpdateAddcontVersionInfo* info) {
+int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t service_label, const void* entitlement_label, GameUpdateAddcontVersionInfo* info) {
  (void)service_label;
  (void)entitlement_label;
  (void)info;
@@ -38,12 +38,12 @@ int sceGameUpdateGetAddcontLatestVersion(uint32_t service_label, const void* ent
  return 0;
 }
 
-int sceGameUpdateInitialize(void) {
+int APS5_VABI sceGameUpdateInitialize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceGameUpdateTerminate(void) {
+int APS5_VABI sceGameUpdateTerminate(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceContentSearchInit(const ContentSearchInitParam* init_param) {
+int APS5_VABI sceContentSearchInit(const ContentSearchInitParam* init_param) {
  (void)init_param;
  NotImplemented_nid_no_patch(__func__);
  return 0;

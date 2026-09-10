@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceAcmBatchStartBuffer(AcmContextId context, const void* batch_commands, size_t batch_size, AcmBatchError* batch_error, AcmBatchId* batch) {
+int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_commands, size_t batch_size, AcmBatchError* batch_error, AcmBatchId* batch) {
  (void)context;
  (void)batch_commands;
  (void)batch_size;
@@ -15,7 +15,7 @@ int sceAcmBatchStartBuffer(AcmContextId context, const void* batch_commands, siz
  return 0;
 }
 
-int sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_count, const AcmBatchInfo* const batch_info[], AcmBatchError* batch_error, AcmBatchId* batch) {
+int APS5_VABI sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_count, const AcmBatchInfo* const batch_info[], AcmBatchError* batch_error, AcmBatchId* batch) {
  (void)context;
  (void)batch_info_count;
  (void)batch_info;
@@ -25,7 +25,7 @@ int sceAcmBatchStartBuffers(AcmContextId context, uint32_t batch_info_count, con
  return 0;
 }
 
-int sceAcmBatchWait(AcmContextId context, AcmBatchId batch, uint32_t timeout) {
+int APS5_VABI sceAcmBatchWait(AcmContextId context, AcmBatchId batch, uint32_t timeout) {
  (void)context;
  (void)batch;
  (void)timeout;
@@ -33,13 +33,13 @@ int sceAcmBatchWait(AcmContextId context, AcmBatchId batch, uint32_t timeout) {
  return 0;
 }
 
-int sceAcmContextCreate(AcmContextId* context) {
+int APS5_VABI sceAcmContextCreate(AcmContextId* context) {
  (void)context;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceAcmContextDestroy(AcmContextId context) {
+int APS5_VABI sceAcmContextDestroy(AcmContextId context) {
  (void)context;
  NotImplemented_nid_no_patch(__func__);
  return 0;

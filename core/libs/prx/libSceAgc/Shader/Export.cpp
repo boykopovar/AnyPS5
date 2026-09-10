@@ -8,7 +8,7 @@
 
 extern "C" {
 
-int sceAgcCreateShader(Shader** dst, void* header, const volatile void* code) {
+int APS5_VABI sceAgcCreateShader(Shader** dst, void* header, const volatile void* code) {
     constexpr auto fn = __func__;
     if (dst == nullptr) {
         throw std::runtime_error(std::string(fn) + ": dst is null");
@@ -62,7 +62,7 @@ int sceAgcCreateShader(Shader** dst, void* header, const volatile void* code) {
     return 0;
 }
 
-int sceAgcCreatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, const Shader* hs, const Shader* gs, std::uint32_t prim_type) {
+int APS5_VABI sceAgcCreatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, const Shader* hs, const Shader* gs, std::uint32_t prim_type) {
     if (cx_regs == nullptr && uc_regs == nullptr) {
         return 0;
     }
@@ -102,7 +102,7 @@ int sceAgcCreatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, cons
     return 0;
 }
 
-int sceAgcUpdatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, std::uint32_t prim_type) {
+int APS5_VABI sceAgcUpdatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, std::uint32_t prim_type) {
     if (cx_regs != nullptr && (cx_regs[0].value & (ShaderRegs::VGT_SHADER_STAGES_GS_BIT | ShaderRegs::VGT_SHADER_STAGES_NGG_BIT)) == 0) {
         cx_regs[1].value &= ~0x7u;
         cx_regs[1].value |= GraphicsPrimTypeToGsOut(prim_type);
@@ -117,7 +117,7 @@ int sceAgcUpdatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, std:
     return 0;
 }
 
-int sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
     constexpr auto fn = __func__;
     if (regs == nullptr) {
         throw std::runtime_error(std::string(fn) + ": regs is null");

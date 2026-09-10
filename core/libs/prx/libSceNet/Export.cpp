@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceNetAccept(int s, void* addr, uint32_t* addrlen) {
+int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
@@ -13,7 +13,7 @@ int sceNetAccept(int s, void* addr, uint32_t* addrlen) {
  return 0;
 }
 
-int sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) {
+int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
@@ -21,7 +21,7 @@ int sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  return 0;
 }
 
-int sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event) {
+int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event) {
  (void)eid;
  (void)op;
  (void)id;
@@ -30,20 +30,20 @@ int sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event) {
  return 0;
 }
 
-int sceNetEpollCreate(const char* name, int flags) {
+int APS5_VABI sceNetEpollCreate(const char* name, int flags) {
  (void)name;
  (void)flags;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetEpollDestroy(int eid) {
+int APS5_VABI sceNetEpollDestroy(int eid) {
  (void)eid;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout) {
+int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout) {
  (void)eid;
  (void)events;
  (void)maxevents;
@@ -52,7 +52,7 @@ int sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout) 
  return 0;
 }
 
-int sceNetEtherNtostr(const NetEtherAddr* n, char* str, size_t len) {
+int APS5_VABI sceNetEtherNtostr(const NetEtherAddr* n, char* str, size_t len) {
  (void)n;
  (void)str;
  (void)len;
@@ -60,14 +60,14 @@ int sceNetEtherNtostr(const NetEtherAddr* n, char* str, size_t len) {
  return 0;
 }
 
-int sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
+int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
  (void)addr;
  (void)flags;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetGetSockInfo(int s, void* info, int n, int flags) {
+int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
  (void)s;
  (void)info;
  (void)n;
@@ -76,7 +76,7 @@ int sceNetGetSockInfo(int s, void* info, int n, int flags) {
  return 0;
 }
 
-int sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
+int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)addr;
  (void)addrlen;
@@ -84,13 +84,13 @@ int sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
  return 0;
 }
 
-uint32_t sceNetHtonl_nid_postfix(uint32_t host32) {
+uint32_t APS5_VABI sceNetHtonl_nid_postfix(uint32_t host32) {
  (void)host32;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint16_t sceNetHtons_nid_postfix(uint16_t host16) {
+uint16_t APS5_VABI sceNetHtons_nid_postfix(uint16_t host16) {
  (void)host16;
  NotImplemented_nid_no_patch(__func__);
  return 0;
@@ -105,7 +105,7 @@ const char* sceNetInetNtop(int af, const void* src, char* dst, uint32_t size) {
  return nullptr;
 }
 
-int sceNetInetPton(int af, const char* src, void* dst) {
+int APS5_VABI sceNetInetPton(int af, const char* src, void* dst) {
  (void)af;
  (void)src;
  (void)dst;
@@ -113,31 +113,31 @@ int sceNetInetPton(int af, const char* src, void* dst) {
  return 0;
 }
 
-int sceNetInit_nid_postfix(void) {
+int APS5_VABI sceNetInit_nid_postfix(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetListen(int s, int backlog) {
+int APS5_VABI sceNetListen(int s, int backlog) {
  (void)s;
  (void)backlog;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t sceNetNtohl_nid_postfix(uint32_t net32) {
+uint32_t APS5_VABI sceNetNtohl_nid_postfix(uint32_t net32) {
  (void)net32;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint16_t sceNetNtohs_nid_postfix(uint16_t net16) {
+uint16_t APS5_VABI sceNetNtohs_nid_postfix(uint16_t net16) {
  (void)net16;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetPoolCreate(const char* name, int size, int flags) {
+int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags) {
  (void)name;
  (void)size;
  (void)flags;
@@ -145,13 +145,13 @@ int sceNetPoolCreate(const char* name, int size, int flags) {
  return 0;
 }
 
-int sceNetPoolDestroy(int memid) {
+int APS5_VABI sceNetPoolDestroy(int memid) {
  (void)memid;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetResolverCreate(const char* name, int memid, int flags) {
+int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
  (void)name;
  (void)memid;
  (void)flags;
@@ -159,7 +159,7 @@ int sceNetResolverCreate(const char* name, int memid, int flags) {
  return 0;
 }
 
-int sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
+int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
  (void)rid;
  (void)hostname;
  (void)addr;
@@ -170,7 +170,7 @@ int sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeo
  return 0;
 }
 
-int sceNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t optlen) {
+int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t optlen) {
  (void)s;
  (void)level;
  (void)optname;
@@ -180,14 +180,14 @@ int sceNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t
  return 0;
 }
 
-int sceNetShutdown(int s, int how) {
+int APS5_VABI sceNetShutdown(int s, int how) {
  (void)s;
  (void)how;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNetSocket(const char* name, int family, int type, int protocol) {
+int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol) {
  (void)name;
  (void)family;
  (void)type;
@@ -196,7 +196,7 @@ int sceNetSocket(const char* name, int family, int type, int protocol) {
  return 0;
 }
 
-int sceNetSocketClose(int s) {
+int APS5_VABI sceNetSocketClose(int s) {
  (void)s;
  NotImplemented_nid_no_patch(__func__);
  return 0;

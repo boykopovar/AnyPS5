@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intent_data, const char* key, char* value_buf, size_t buf_size) {
+int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intent_data, const char* key, char* value_buf, size_t buf_size) {
  (void)intent_data;
  (void)key;
  (void)value_buf;
@@ -14,19 +14,19 @@ int sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intent_data, c
  return 0;
 }
 
-int sceNpGameIntentInitialize(const void* init_param) {
+int APS5_VABI sceNpGameIntentInitialize(const void* init_param) {
  (void)init_param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNpGameIntentReceiveIntent(NpGameIntentInfo* intent_info) {
+int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intent_info) {
  (void)intent_info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceNpGameIntentTerminate(void) {
+int APS5_VABI sceNpGameIntentTerminate(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

@@ -10,7 +10,7 @@ extern "C" {
 
 [[noreturn]] void _ZSt11_Xbad_allocv_nid_postfix();
 
-FileStream* fopen_nid_postfix(const char* filename, const char* mode) {
+FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
     if (!filename || !mode) throw std::runtime_error("fopen: null argument");
     std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
     if (!handle) {
@@ -27,14 +27,14 @@ FileStream* fopen_nid_postfix(const char* filename, const char* mode) {
     return stream.release();
 }
 
-int fclose_nid_postfix(FileStream* stream) {
+int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     GetNativeStream(stream);
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
     stream->Close();
     return 0;
 }
 
-size_t fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
+size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
     auto* handle = GetNativeStream(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fread: null buffer");
@@ -43,7 +43,7 @@ size_t fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* st
     return result;
 }
 
-size_t fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
+size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream) {
     auto* handle = GetNativeStream(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fwrite: null buffer");
@@ -52,33 +52,33 @@ size_t fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStr
     return result;
 }
 
-int fseek_nid_postfix(FileStream* stream, long offset, int origin) {
+int APS5_VABI fseek_nid_postfix(FileStream* stream, long offset, int origin) {
     if (origin != SEEK_SET && origin != SEEK_CUR && origin != SEEK_END) throw std::runtime_error("fseek: invalid origin");
     if (std::fseek(GetNativeStream(stream), offset, origin) != 0) throw std::runtime_error("fseek: seek failed");
     return 0;
 }
 
-long ftell_nid_postfix(FileStream* stream) {
+long APS5_VABI ftell_nid_postfix(FileStream* stream) {
     const auto result = std::ftell(GetNativeStream(stream));
     if (result == -1L) throw std::runtime_error("ftell: position query failed");
     return result;
 }
 
-int fputs_nid_postfix(const char* str, FileStream* stream) {
+int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
     const int result = std::fputs(str, GetNativeStream(stream));
     if (result == EOF) throw std::runtime_error("fputs: write failed");
     return result;
 }
 
-int fflush_nid_postfix(FileStream* stream) {
+int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     if (std::fflush(stream ? GetNativeStream(stream) : nullptr) != 0) throw std::runtime_error("fflush: flush failed");
     return 0;
 }
 
 constexpr std::uintptr_t AlignedBlockTag = 1;
 
-void* malloc_nid_postfix(size_t size) {
+void* APS5_VABI malloc_nid_postfix(size_t size) {
     const size_t headerSize = sizeof(std::uintptr_t);
     void* rawPtr = std::malloc(size + headerSize);
     if (rawPtr == nullptr) {
@@ -88,7 +88,7 @@ void* malloc_nid_postfix(size_t size) {
     return static_cast<char*>(rawPtr) + headerSize;
 }
 
-void free_nid_postfix(void* ptr) {
+void APS5_VABI free_nid_postfix(void* ptr) {
     if (ptr == nullptr) {
         return;
     }
@@ -100,7 +100,7 @@ void free_nid_postfix(void* ptr) {
     }
 }
 
-void* realloc_nid_postfix(void* ptr, size_t newSize) {
+void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize) {
     if (ptr == nullptr) {
         return malloc_nid_postfix(newSize);
     }
@@ -113,7 +113,7 @@ void* realloc_nid_postfix(void* ptr, size_t newSize) {
     return static_cast<char*>(newRawPtr) + headerSize;
 }
 
-void* memalign_nid_postfix(size_t alignment, size_t size) {
+void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {
     const size_t headerSize = sizeof(void*) * 2;
     const size_t worstCaseSize = size + alignment + headerSize;
     void* rawPtr = std::malloc(worstCaseSize);
@@ -128,7 +128,7 @@ void* memalign_nid_postfix(size_t alignment, size_t size) {
     return alignedPtr;
 }
 
-void qsort_nid_postfix(void* base, size_t count, size_t size, int (*compare)(const void*, const void*)) {
+void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (*compare)(const void*, const void*)) {
     std::qsort(base, count, size, compare);
 }
 

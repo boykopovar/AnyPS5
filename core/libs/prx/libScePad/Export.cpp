@@ -8,21 +8,21 @@
 
 extern "C" {
 
-int scePadClose_nid_postfix(int handle) {
+int APS5_VABI scePadClose_nid_postfix(int handle) {
  if (handle != PAD_HANDLE) {
   return PAD_ERROR_INVALID_HANDLE;
  }
  return PAD_OK;
 }
 
-int scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) {
+int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) {
  (void)handle;
  (void)info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* class_data) {
+int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* class_data) {
  (void)handle;
  (void)data;
  (void)class_data;
@@ -30,7 +30,7 @@ int scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassDa
  return 0;
 }
 
-int scePadGetControllerInformation(int handle, PadControllerInformation* info) {
+int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformation* info) {
  if (handle != PAD_HANDLE) {
   return PAD_ERROR_INVALID_HANDLE;
  }
@@ -50,7 +50,7 @@ int scePadGetControllerInformation(int handle, PadControllerInformation* info) {
  return PAD_OK;
 }
 
-int scePadGetHandle(int user_id, int type, int index) {
+int APS5_VABI scePadGetHandle(int user_id, int type, int index) {
  (void)user_id;
  (void)type;
  (void)index;
@@ -58,18 +58,18 @@ int scePadGetHandle(int user_id, int type, int index) {
  return 0;
 }
 
-int scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
+int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
  (void)handle;
  (void)info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadInit_nid_postfix(void) {
+int APS5_VABI scePadInit_nid_postfix(void) {
  return PAD_OK;
 }
 
-int scePadOpen_nid_postfix(int userId, int type, int index, const void* param) {
+int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param) {
  (void)param;
  if (index != 0) {
   return PAD_ERROR_INVALID_ARG;
@@ -82,7 +82,7 @@ int scePadOpen_nid_postfix(int userId, int type, int index, const void* param) {
  return PAD_HANDLE;
 }
 
-int scePadRead_nid_postfix(int handle, PadData* data, int num) {
+int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
  (void)handle;
  (void)data;
  (void)num;
@@ -90,40 +90,40 @@ int scePadRead_nid_postfix(int handle, PadData* data, int num) {
  return 0;
 }
 
-int scePadReadState(int handle, PadData* data) {
+int APS5_VABI scePadReadState(int handle, PadData* data) {
  (void)handle;
  (void)data;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadResetLightBar(int handle) {
+int APS5_VABI scePadResetLightBar(int handle) {
  (void)handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadResetOrientation(int handle) {
+int APS5_VABI scePadResetOrientation(int handle) {
  (void)handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
+int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
  (void)handle;
  (void)enable;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadSetLightBar(int handle, const PadLightBarParam* param) {
+int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
  (void)handle;
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadSetMotionSensorState(int handle, bool enable) {
+int APS5_VABI scePadSetMotionSensorState(int handle, bool enable) {
  (void)handle;
  (void)enable;
  // if (enable) {
@@ -132,35 +132,35 @@ int scePadSetMotionSensorState(int handle, bool enable) {
  return PAD_OK;
 }
 
-int scePadSetTiltCorrectionState(int handle, bool enabled) {
+int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) {
  (void)handle;
  (void)enabled;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadSetTriggerEffect(int handle, const void* param) {
+int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
  (void)handle;
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadSetVibration(int handle, const PadVibrationParam* param) {
+int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) {
  (void)handle;
  (void)param;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadSetVibrationMode(int handle, int mode) {
+int APS5_VABI scePadSetVibrationMode(int handle, int mode) {
  (void)handle;
  (void)mode;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool enabled) {
+int APS5_VABI scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool enabled) {
  (void)enabled;
  NotImplemented_nid_no_patch(__func__);
  return 0;

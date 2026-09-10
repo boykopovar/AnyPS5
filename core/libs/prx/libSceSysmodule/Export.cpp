@@ -92,7 +92,7 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
 
 extern "C" {
 
-int sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
+int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
     (void)flags;
     if (!fillModuleInfoForUnwind(addr, info)) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: address not found");
@@ -100,7 +100,7 @@ int sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfo
     return 0;
 }
 
-int sceSysmoduleIsLoaded(std::uint16_t id) {
+int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleIsLoaded: invalid id 0");
     }
@@ -115,7 +115,7 @@ int sceSysmoduleIsLoaded(std::uint16_t id) {
     return 0;
 }
 
-int sceSysmoduleLoadModule(std::uint16_t id) {
+int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleLoadModule: invalid id 0");
     }
@@ -127,7 +127,7 @@ int sceSysmoduleLoadModule(std::uint16_t id) {
     return 0;
 }
 
-int sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret) {
+int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret) {
     (void)argc;
     (void)argv;
     (void)unk;
@@ -145,7 +145,7 @@ int sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv
     return 0;
 }
 
-int sceSysmoduleUnloadModule(std::uint16_t id) {
+int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleUnloadModule: invalid id 0");
     }

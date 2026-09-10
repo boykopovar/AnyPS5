@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, uint32_t size) {
+int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, uint32_t size) {
  (void)library;
  (void)buffer;
  (void)size;
@@ -13,28 +13,28 @@ int sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, uint32_t s
  return 0;
 }
 
-int sceFontBindRenderer(FontHandle font_handle, FontRenderer renderer) {
+int APS5_VABI sceFontBindRenderer(FontHandle font_handle, FontRenderer renderer) {
  (void)font_handle;
  (void)renderer;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontCharacterGetBidiLevel(FontTextCharacter text_character, int* bidi_level) {
+int APS5_VABI sceFontCharacterGetBidiLevel(FontTextCharacter text_character, int* bidi_level) {
  (void)text_character;
  (void)bidi_level;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontCharacterGetSyllableStringState(FontTextCharacter text_character, int* syllable_string_state) {
+int APS5_VABI sceFontCharacterGetSyllableStringState(FontTextCharacter text_character, int* syllable_string_state) {
  (void)text_character;
  (void)syllable_string_state;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontCharacterGetTextFontCode(FontTextCharacter text_character, FontHandle* font_handle, uint32_t* text_code) {
+int APS5_VABI sceFontCharacterGetTextFontCode(FontTextCharacter text_character, FontHandle* font_handle, uint32_t* text_code) {
  (void)text_character;
  (void)font_handle;
  (void)text_code;
@@ -42,38 +42,38 @@ int sceFontCharacterGetTextFontCode(FontTextCharacter text_character, FontHandle
  return 0;
 }
 
-int sceFontCharacterGetTextOrder(FontTextCharacter text_character, void** text_order) {
+int APS5_VABI sceFontCharacterGetTextOrder(FontTextCharacter text_character, void** text_order) {
  (void)text_character;
  (void)text_order;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t sceFontCharacterLooksFormatCharacters(FontTextCharacter text_character) {
+uint32_t APS5_VABI sceFontCharacterLooksFormatCharacters(FontTextCharacter text_character) {
  (void)text_character;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-uint32_t sceFontCharacterLooksWhiteSpace(FontTextCharacter text_character) {
+uint32_t APS5_VABI sceFontCharacterLooksWhiteSpace(FontTextCharacter text_character) {
  (void)text_character;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-FontTextCharacter sceFontCharacterRefersTextBack(FontTextCharacter text_character) {
+FontTextCharacter APS5_VABI sceFontCharacterRefersTextBack(FontTextCharacter text_character) {
  (void)text_character;
  NotImplemented_nid_no_patch(__func__);
  return {};
 }
 
-FontTextCharacter sceFontCharacterRefersTextNext(FontTextCharacter text_character) {
+FontTextCharacter APS5_VABI sceFontCharacterRefersTextNext(FontTextCharacter text_character) {
  (void)text_character;
  NotImplemented_nid_no_patch(__func__);
  return {};
 }
 
-FontTextCodes* sceFontCharactersRefersTextCodes(FontTextCharacter text_character, FontTextCharacter term_character, FontTextCodes* text_codes) {
+FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(FontTextCharacter text_character, FontTextCharacter term_character, FontTextCodes* text_codes) {
  (void)text_character;
  (void)term_character;
  (void)text_codes;
@@ -81,13 +81,13 @@ FontTextCodes* sceFontCharactersRefersTextCodes(FontTextCharacter text_character
  return nullptr;
 }
 
-int sceFontCloseFont(FontHandle font_handle) {
+int APS5_VABI sceFontCloseFont(FontHandle font_handle) {
  (void)font_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontCreateLibrary(const FontMemory* memory, FontLibrarySelection selection, FontLibrary* library) {
+int APS5_VABI sceFontCreateLibrary(const FontMemory* memory, FontLibrarySelection selection, FontLibrary* library) {
  (void)memory;
  (void)selection;
  (void)library;
@@ -95,7 +95,7 @@ int sceFontCreateLibrary(const FontMemory* memory, FontLibrarySelection selectio
  return 0;
 }
 
-int sceFontCreateLibraryWithEdition(const FontMemory* memory, FontLibrarySelection selection, uint64_t edition, FontLibrary* library) {
+int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, FontLibrarySelection selection, uint64_t edition, FontLibrary* library) {
  (void)memory;
  (void)selection;
  (void)edition;
@@ -104,7 +104,7 @@ int sceFontCreateLibraryWithEdition(const FontMemory* memory, FontLibrarySelecti
  return 0;
 }
 
-int sceFontCreateRendererWithEdition(const FontMemory* memory, FontRendererSelection selection, uint64_t edition, FontRenderer* renderer) {
+int APS5_VABI sceFontCreateRendererWithEdition(const FontMemory* memory, FontRendererSelection selection, uint64_t edition, FontRenderer* renderer) {
  (void)memory;
  (void)selection;
  (void)edition;
@@ -113,7 +113,7 @@ int sceFontCreateRendererWithEdition(const FontMemory* memory, FontRendererSelec
  return 0;
 }
 
-int sceFontCreateString(const FontMemory* memory, FontTextSource* font_text_source, const FontCreateStringDetail* string_detail, FontString* font_string) {
+int APS5_VABI sceFontCreateString(const FontMemory* memory, FontTextSource* font_text_source, const FontCreateStringDetail* string_detail, FontString* font_string) {
  (void)memory;
  (void)font_text_source;
  (void)string_detail;
@@ -122,7 +122,7 @@ int sceFontCreateString(const FontMemory* memory, FontTextSource* font_text_sour
  return 0;
 }
 
-int sceFontCreateWritingLine(const FontMemory* memory, int writing_form, const void* writing_line_detail, FontWritingLine* writing_line) {
+int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, int writing_form, const void* writing_line_detail, FontWritingLine* writing_line) {
  (void)memory;
  (void)writing_form;
  (void)writing_line_detail;
@@ -131,7 +131,7 @@ int sceFontCreateWritingLine(const FontMemory* memory, int writing_form, const v
  return 0;
 }
 
-int sceFontDefineAttribute(FontHandle font_handle, int attribute, int* old_attribute) {
+int APS5_VABI sceFontDefineAttribute(FontHandle font_handle, int attribute, int* old_attribute) {
  (void)font_handle;
  (void)attribute;
  (void)old_attribute;
@@ -139,38 +139,38 @@ int sceFontDefineAttribute(FontHandle font_handle, int attribute, int* old_attri
  return 0;
 }
 
-int sceFontDeleteGlyph(const FontMemory* memory, void** font_glyph) {
+int APS5_VABI sceFontDeleteGlyph(const FontMemory* memory, void** font_glyph) {
  (void)memory;
  (void)font_glyph;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontDestroyLibrary(FontLibrary* library) {
+int APS5_VABI sceFontDestroyLibrary(FontLibrary* library) {
  (void)library;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontDestroyRenderer(FontRenderer* renderer) {
+int APS5_VABI sceFontDestroyRenderer(FontRenderer* renderer) {
  (void)renderer;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontDestroyString(FontString* font_string) {
+int APS5_VABI sceFontDestroyString(FontString* font_string) {
  (void)font_string;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontDestroyWritingLine(FontWritingLine* writing_line) {
+int APS5_VABI sceFontDestroyWritingLine(FontWritingLine* writing_line) {
  (void)writing_line;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontGenerateCharGlyph(FontHandle font_handle, uint32_t code, const FontGenerateGlyphDetail* detail, void** font_glyph) {
+int APS5_VABI sceFontGenerateCharGlyph(FontHandle font_handle, uint32_t code, const FontGenerateGlyphDetail* detail, void** font_glyph) {
  (void)font_handle;
  (void)code;
  (void)detail;
@@ -179,7 +179,7 @@ int sceFontGenerateCharGlyph(FontHandle font_handle, uint32_t code, const FontGe
  return 0;
 }
 
-int sceFontGetCharGlyphMetrics(FontHandle font_handle, uint32_t code, FontGlyphMetrics* metrics) {
+int APS5_VABI sceFontGetCharGlyphMetrics(FontHandle font_handle, uint32_t code, FontGlyphMetrics* metrics) {
  (void)font_handle;
  (void)code;
  (void)metrics;
@@ -187,14 +187,14 @@ int sceFontGetCharGlyphMetrics(FontHandle font_handle, uint32_t code, FontGlyphM
  return 0;
 }
 
-int sceFontGetHorizontalLayout(FontHandle font_handle, FontHorizontalLayout* layout) {
+int APS5_VABI sceFontGetHorizontalLayout(FontHandle font_handle, FontHorizontalLayout* layout) {
  (void)font_handle;
  (void)layout;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontGetRenderCharGlyphMetrics(FontHandle font_handle, uint32_t code, FontGlyphMetrics* metrics) {
+int APS5_VABI sceFontGetRenderCharGlyphMetrics(FontHandle font_handle, uint32_t code, FontGlyphMetrics* metrics) {
  (void)font_handle;
  (void)code;
  (void)metrics;
@@ -202,14 +202,14 @@ int sceFontGetRenderCharGlyphMetrics(FontHandle font_handle, uint32_t code, Font
  return 0;
 }
 
-int sceFontGetVerticalLayout(FontHandle font_handle, FontVerticalLayout* layout) {
+int APS5_VABI sceFontGetVerticalLayout(FontHandle font_handle, FontVerticalLayout* layout) {
  (void)font_handle;
  (void)layout;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontGlyphDefineAttribute(void* font_glyph, int attribute, int* old_attribute) {
+int APS5_VABI sceFontGlyphDefineAttribute(void* font_glyph, int attribute, int* old_attribute) {
  (void)font_glyph;
  (void)attribute;
  (void)old_attribute;
@@ -217,7 +217,7 @@ int sceFontGlyphDefineAttribute(void* font_glyph, int attribute, int* old_attrib
  return 0;
 }
 
-int sceFontMemoryInit(FontMemory* font_memory, void* address, uint32_t size_byte, const FontMemoryInterface* mem_interface, void* mspace_object, FontMemoryDestroyCallback destroy_callback, void* destroy_object) {
+int APS5_VABI sceFontMemoryInit(FontMemory* font_memory, void* address, uint32_t size_byte, const FontMemoryInterface* mem_interface, void* mspace_object, FontMemoryDestroyCallback destroy_callback, void* destroy_object) {
  (void)font_memory;
  (void)address;
  (void)size_byte;
@@ -229,13 +229,13 @@ int sceFontMemoryInit(FontMemory* font_memory, void* address, uint32_t size_byte
  return 0;
 }
 
-int sceFontMemoryTerm(FontMemory* font_memory) {
+int APS5_VABI sceFontMemoryTerm(FontMemory* font_memory) {
  (void)font_memory;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontOpenFontInstance(FontHandle font_handle, void* setup_font, FontHandle* out_font_handle) {
+int APS5_VABI sceFontOpenFontInstance(FontHandle font_handle, void* setup_font, FontHandle* out_font_handle) {
  (void)font_handle;
  (void)setup_font;
  (void)out_font_handle;
@@ -243,7 +243,7 @@ int sceFontOpenFontInstance(FontHandle font_handle, void* setup_font, FontHandle
  return 0;
 }
 
-int sceFontOpenFontMemory(FontLibrary library, const void* font_address, uint32_t font_size, const FontOpenDetail* detail, FontHandle* handle) {
+int APS5_VABI sceFontOpenFontMemory(FontLibrary library, const void* font_address, uint32_t font_size, const FontOpenDetail* detail, FontHandle* handle) {
  (void)library;
  (void)font_address;
  (void)font_size;
@@ -253,7 +253,7 @@ int sceFontOpenFontMemory(FontLibrary library, const void* font_address, uint32_
  return 0;
 }
 
-int sceFontOpenFontSet(FontLibrary library, uint32_t font_set_type, uint32_t open_mode, const FontOpenDetail* detail, FontHandle* handle) {
+int APS5_VABI sceFontOpenFontSet(FontLibrary library, uint32_t font_set_type, uint32_t open_mode, const FontOpenDetail* detail, FontHandle* handle) {
  (void)library;
  (void)font_set_type;
  (void)open_mode;
@@ -263,13 +263,13 @@ int sceFontOpenFontSet(FontLibrary library, uint32_t font_set_type, uint32_t ope
  return 0;
 }
 
-int sceFontRebindRenderer(FontHandle font_handle) {
+int APS5_VABI sceFontRebindRenderer(FontHandle font_handle) {
  (void)font_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontRenderCharGlyphImageHorizontal(FontHandle font_handle, uint32_t code, FontRenderSurface* surf, float x, float y, FontGlyphMetrics* metrics, FontRenderResult* result) {
+int APS5_VABI sceFontRenderCharGlyphImageHorizontal(FontHandle font_handle, uint32_t code, FontRenderSurface* surf, float x, float y, FontGlyphMetrics* metrics, FontRenderResult* result) {
  (void)font_handle;
  (void)code;
  (void)surf;
@@ -281,7 +281,7 @@ int sceFontRenderCharGlyphImageHorizontal(FontHandle font_handle, uint32_t code,
  return 0;
 }
 
-void sceFontRenderSurfaceInit(FontRenderSurface* surf, void* buffer, int buf_width_byte, int pixel_size_byte, int width, int height) {
+void APS5_VABI sceFontRenderSurfaceInit(FontRenderSurface* surf, void* buffer, int buf_width_byte, int pixel_size_byte, int width, int height) {
  (void)surf;
  (void)buffer;
  (void)buf_width_byte;
@@ -291,7 +291,7 @@ void sceFontRenderSurfaceInit(FontRenderSurface* surf, void* buffer, int buf_wid
  NotImplemented_nid_no_patch(__func__);
 }
 
-void sceFontRenderSurfaceSetScissor(FontRenderSurface* surf, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1) {
+void APS5_VABI sceFontRenderSurfaceSetScissor(FontRenderSurface* surf, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1) {
  (void)surf;
  (void)x0;
  (void)y0;
@@ -300,14 +300,14 @@ void sceFontRenderSurfaceSetScissor(FontRenderSurface* surf, uint32_t x0, uint32
  NotImplemented_nid_no_patch(__func__);
 }
 
-int sceFontSetEffectSlant(FontHandle font_handle, float slant_ratio) {
+int APS5_VABI sceFontSetEffectSlant(FontHandle font_handle, float slant_ratio) {
  (void)font_handle;
  (void)slant_ratio;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontSetEffectWeight(FontHandle font_handle, float weight_x_scale, float weight_y_scale, uint32_t mode) {
+int APS5_VABI sceFontSetEffectWeight(FontHandle font_handle, float weight_x_scale, float weight_y_scale, uint32_t mode) {
  (void)font_handle;
  (void)weight_x_scale;
  (void)weight_y_scale;
@@ -316,7 +316,7 @@ int sceFontSetEffectWeight(FontHandle font_handle, float weight_x_scale, float w
  return 0;
 }
 
-int sceFontSetScalePixel(FontHandle font_handle, float w, float h) {
+int APS5_VABI sceFontSetScalePixel(FontHandle font_handle, float w, float h) {
  (void)font_handle;
  (void)w;
  (void)h;
@@ -324,14 +324,14 @@ int sceFontSetScalePixel(FontHandle font_handle, float w, float h) {
  return 0;
 }
 
-int sceFontSetupRenderEffectSlant(FontHandle font_handle, float slant_ratio) {
+int APS5_VABI sceFontSetupRenderEffectSlant(FontHandle font_handle, float slant_ratio) {
  (void)font_handle;
  (void)slant_ratio;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontSetupRenderEffectWeight(FontHandle font_handle, float weight_x_scale, float weight_y_scale, uint32_t mode) {
+int APS5_VABI sceFontSetupRenderEffectWeight(FontHandle font_handle, float weight_x_scale, float weight_y_scale, uint32_t mode) {
  (void)font_handle;
  (void)weight_x_scale;
  (void)weight_y_scale;
@@ -340,7 +340,7 @@ int sceFontSetupRenderEffectWeight(FontHandle font_handle, float weight_x_scale,
  return 0;
 }
 
-int sceFontSetupRenderScalePixel(FontHandle font_handle, float w, float h) {
+int APS5_VABI sceFontSetupRenderScalePixel(FontHandle font_handle, float w, float h) {
  (void)font_handle;
  (void)w;
  (void)h;
@@ -348,25 +348,25 @@ int sceFontSetupRenderScalePixel(FontHandle font_handle, float w, float h) {
  return 0;
 }
 
-uint32_t sceFontStringGetTerminateCode(FontString font_string) {
+uint32_t APS5_VABI sceFontStringGetTerminateCode(FontString font_string) {
  (void)font_string;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-void* sceFontStringGetTerminateOrder(FontString font_string) {
+void* APS5_VABI sceFontStringGetTerminateOrder(FontString font_string) {
  (void)font_string;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-int sceFontStringGetWritingForm(FontString font_string) {
+int APS5_VABI sceFontStringGetWritingForm(FontString font_string) {
  (void)font_string;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-FontRenderCharacter sceFontStringRefersRenderCharacters(FontString font_string, FontTextCharacter start_character, FontTextCharacter last_character, uint32_t* character_count) {
+FontRenderCharacter APS5_VABI sceFontStringRefersRenderCharacters(FontString font_string, FontTextCharacter start_character, FontTextCharacter last_character, uint32_t* character_count) {
  (void)font_string;
  (void)start_character;
  (void)last_character;
@@ -375,14 +375,14 @@ FontRenderCharacter sceFontStringRefersRenderCharacters(FontString font_string, 
  return {};
 }
 
-FontTextCharacter sceFontStringRefersTextCharacters(FontString font_string, uint32_t* character_count) {
+FontTextCharacter APS5_VABI sceFontStringRefersTextCharacters(FontString font_string, uint32_t* character_count) {
  (void)font_string;
  (void)character_count;
  NotImplemented_nid_no_patch(__func__);
  return {};
 }
 
-int sceFontSupportExternalFonts(FontLibrary library, uint32_t font_max, uint32_t formats) {
+int APS5_VABI sceFontSupportExternalFonts(FontLibrary library, uint32_t font_max, uint32_t formats) {
  (void)library;
  (void)font_max;
  (void)formats;
@@ -390,25 +390,25 @@ int sceFontSupportExternalFonts(FontLibrary library, uint32_t font_max, uint32_t
  return 0;
 }
 
-int sceFontSupportSystemFonts(FontLibrary library) {
+int APS5_VABI sceFontSupportSystemFonts(FontLibrary library) {
  (void)library;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-FontTextCodes* sceFontTextCodesStepBack(FontTextCodes* text_codes_step) {
+FontTextCodes* APS5_VABI sceFontTextCodesStepBack(FontTextCodes* text_codes_step) {
  (void)text_codes_step;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-FontTextCodes* sceFontTextCodesStepNext(FontTextCodes* text_codes_step) {
+FontTextCodes* APS5_VABI sceFontTextCodesStepNext(FontTextCodes* text_codes_step) {
  (void)text_codes_step;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-int sceFontTextSourceInit(FontTextSource* font_text_source, const void* text_address, uint32_t text_size_byte, FontTextParseFunction text_parser, void* text_object) {
+int APS5_VABI sceFontTextSourceInit(FontTextSource* font_text_source, const void* text_address, uint32_t text_size_byte, FontTextParseFunction text_parser, void* text_object) {
  (void)font_text_source;
  (void)text_address;
  (void)text_size_byte;
@@ -418,40 +418,40 @@ int sceFontTextSourceInit(FontTextSource* font_text_source, const void* text_add
  return 0;
 }
 
-int sceFontTextSourceRewind(FontTextSource* font_text_source) {
+int APS5_VABI sceFontTextSourceRewind(FontTextSource* font_text_source) {
  (void)font_text_source;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontTextSourceSetDefaultFont(FontTextSource* font_text_source, FontHandle default_font) {
+int APS5_VABI sceFontTextSourceSetDefaultFont(FontTextSource* font_text_source, FontHandle default_font) {
  (void)font_text_source;
  (void)default_font;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontTextSourceSetWritingForm(FontTextSource* font_text_source, int writing_form) {
+int APS5_VABI sceFontTextSourceSetWritingForm(FontTextSource* font_text_source, int writing_form) {
  (void)font_text_source;
  (void)writing_form;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontUnbindRenderer(FontHandle font_handle) {
+int APS5_VABI sceFontUnbindRenderer(FontHandle font_handle) {
  (void)font_handle;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontWritingGetRenderMetrics(FontWriting* font_writing, FontWritingMetrics* writing_metrics) {
+int APS5_VABI sceFontWritingGetRenderMetrics(FontWriting* font_writing, FontWritingMetrics* writing_metrics) {
  (void)font_writing;
  (void)writing_metrics;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontWritingInit(FontWriting* font_writing, FontString font_string, FontRenderCharacter font_character) {
+int APS5_VABI sceFontWritingInit(FontWriting* font_writing, FontString font_string, FontRenderCharacter font_character) {
  (void)font_writing;
  (void)font_string;
  (void)font_character;
@@ -459,13 +459,13 @@ int sceFontWritingInit(FontWriting* font_writing, FontString font_string, FontRe
  return 0;
 }
 
-int sceFontWritingLineClear(FontWritingLine writing_line) {
+int APS5_VABI sceFontWritingLineClear(FontWritingLine writing_line) {
  (void)writing_line;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceFontWritingLineGetOrderingSpace(FontWritingLine writing_line, float* head_space, float* inline_space, float* tail_space, float* advance_space) {
+int APS5_VABI sceFontWritingLineGetOrderingSpace(FontWritingLine writing_line, float* head_space, float* inline_space, float* tail_space, float* advance_space) {
  (void)writing_line;
  (void)head_space;
  (void)inline_space;
@@ -475,20 +475,20 @@ int sceFontWritingLineGetOrderingSpace(FontWritingLine writing_line, float* head
  return 0;
 }
 
-int sceFontWritingLineGetRenderMetrics(FontWritingLine writing_line, FontWritingMetrics* writing_metrics) {
+int APS5_VABI sceFontWritingLineGetRenderMetrics(FontWritingLine writing_line, FontWritingMetrics* writing_metrics) {
  (void)writing_line;
  (void)writing_metrics;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-FontWritingLineStep* sceFontWritingLineRefersRenderStep(FontWritingLine writing_line) {
+FontWritingLineStep* APS5_VABI sceFontWritingLineRefersRenderStep(FontWritingLine writing_line) {
  (void)writing_line;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
 
-int sceFontWritingLineWritesOrder(FontWritingLine writing_line, uint64_t writing_attribute, const FontWritingMetrics* writing_metrics, void* writing_orderer) {
+int APS5_VABI sceFontWritingLineWritesOrder(FontWritingLine writing_line, uint64_t writing_attribute, const FontWritingMetrics* writing_metrics, void* writing_orderer) {
  (void)writing_line;
  (void)writing_attribute;
  (void)writing_metrics;
@@ -503,14 +503,14 @@ const FontWritingStep* sceFontWritingRefersRenderStep(FontWriting* font_writing)
  return nullptr;
 }
 
-FontTextCharacter sceFontWritingRefersRenderStepCharacter(FontWriting* font_writing, const void** letter_step) {
+FontTextCharacter APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting* font_writing, const void** letter_step) {
  (void)font_writing;
  (void)letter_step;
  NotImplemented_nid_no_patch(__func__);
  return {};
 }
 
-int sceFontWritingSetMaskInvisible(FontWriting* font_writing, int mask) {
+int APS5_VABI sceFontWritingSetMaskInvisible(FontWriting* font_writing, int mask) {
  (void)font_writing;
  (void)mask;
  NotImplemented_nid_no_patch(__func__);

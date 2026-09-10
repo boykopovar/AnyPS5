@@ -6,7 +6,7 @@
 
 extern "C" {
 
-void exit_nid_postfix(int code) {
+void APS5_VABI exit_nid_postfix(int code) {
     std::exit(code);
 }
 
@@ -19,11 +19,11 @@ void exit_nid_postfix(int code) {
     std::abort();
 }
 
-int* libc_error_nid_postfix() {
+int* APS5_VABI libc_error_nid_postfix() {
     return &errno;
 }
 
-int* __error_nid_postfix() {
+int* APS5_VABI __error_nid_postfix() {
     return &errno;
 }
 
@@ -31,7 +31,7 @@ int* __error_nid_postfix() {
     std::abort();
 }
 
-int atexit_nid_postfix(atexit_func_t func) {
+int APS5_VABI atexit_nid_postfix(atexit_func_t func) {
     if (func == nullptr)
         return 0;
     return std::atexit(func);

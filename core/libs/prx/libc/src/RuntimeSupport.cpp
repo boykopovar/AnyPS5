@@ -20,7 +20,7 @@ extern "C" {
 FileStream _Stderr_nid_postfix{stderr};
 FileStream _Stdout_nid_postfix{stdout};
 
-int __cxa_atexit_nid_postfix(void (*func)(void*), void* arg, void* dsoHandle) {
+int APS5_VABI __cxa_atexit_nid_postfix(void (*func)(void*), void* arg, void* dsoHandle) {
     (void)dsoHandle;
     static std::vector<std::pair<void (*)(void*), void*>> destructors;
     static bool runnerRegistered = false;
@@ -36,25 +36,25 @@ int __cxa_atexit_nid_postfix(void (*func)(void*), void* arg, void* dsoHandle) {
     return 0;
 }
 
-unsigned int _Atomic_fetch_add_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
+unsigned int APS5_VABI _Atomic_fetch_add_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
     (void)memoryOrder;
     return GccAtomicFetchAdd(target, value);
 }
 
-unsigned int _Atomic_fetch_sub_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
+unsigned int APS5_VABI _Atomic_fetch_sub_4_nid_postfix(volatile unsigned int* target, unsigned int value, int memoryOrder) {
     (void)memoryOrder;
     return GccAtomicFetchSub(target, value);
 }
 
-unsigned long _Stoul_nid_postfix(const char* str, char** endptr, int base) {
+unsigned long APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
     return std::strtoul(str, endptr, base);
 }
 
-void _Locksyslock_nid_postfix() {
+void APS5_VABI _Locksyslock_nid_postfix() {
     g_sysLock.lock();
 }
 
-void _Unlocksyslock_nid_postfix() {
+void APS5_VABI _Unlocksyslock_nid_postfix() {
     g_sysLock.unlock();
 }
 

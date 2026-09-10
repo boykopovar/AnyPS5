@@ -7,30 +7,30 @@
 
 extern "C" {
 
-int sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void) {
+int APS5_VABI sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo* info) {
+int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo* info) {
  (void)info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance) {
+int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance) {
  (void)luminance;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
+int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  (void)value;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemServiceGetStatus(SystemServiceStatus* status) {
+int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
@@ -38,11 +38,11 @@ int sceSystemServiceGetStatus(SystemServiceStatus* status) {
  return SYSTEM_SERVICE_OK;
 }
 
-int sceSystemServiceHideSplashScreen(void) {
+int APS5_VABI sceSystemServiceHideSplashScreen(void) {
  return SYSTEM_SERVICE_OK;
 }
 
-int sceSystemServiceParamGetInt(int paramId, int* value) {
+int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
@@ -59,7 +59,7 @@ int sceSystemServiceParamGetInt(int paramId, int* value) {
  return SYSTEM_SERVICE_OK;
 }
 
-int sceSystemServiceParamGetString(int param_id, char* buf, size_t buf_size) {
+int APS5_VABI sceSystemServiceParamGetString(int param_id, char* buf, size_t buf_size) {
  (void)param_id;
  (void)buf;
  (void)buf_size;
@@ -67,12 +67,12 @@ int sceSystemServiceParamGetString(int param_id, char* buf, size_t buf_size) {
  return 0;
 }
 
-int sceSystemServicePowerTick(void) {
+int APS5_VABI sceSystemServicePowerTick(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
+int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
  if (event == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
@@ -81,13 +81,13 @@ int sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
-int sceSystemServiceReportAbnormalTermination(const void* info) {
+int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
  (void)info;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-int sceSystemServiceSetNoticeScreenSkipFlag(void) {
+int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

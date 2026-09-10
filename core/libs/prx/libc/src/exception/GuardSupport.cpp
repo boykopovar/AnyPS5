@@ -8,7 +8,7 @@ thread_local std::size_t depth {};
 
 extern "C" {
 
-int __cxa_guard_acquire_nid_postfix(std::uint64_t* guardObject) {
+int APS5_VABI __cxa_guard_acquire_nid_postfix(std::uint64_t* guardObject) {
     auto* bytes = reinterpret_cast<unsigned char*>(guardObject);
     std::atomic_ref<unsigned char> initialized(bytes[0]);
     std::atomic_ref<unsigned char> lock(bytes[1]);
@@ -27,14 +27,14 @@ int __cxa_guard_acquire_nid_postfix(std::uint64_t* guardObject) {
     return 1;
 }
 
-void __cxa_guard_release_nid_postfix(std::uint64_t* guardObject) {
+void APS5_VABI __cxa_guard_release_nid_postfix(std::uint64_t* guardObject) {
     if (!LibcGuard::depth || LibcGuard::active[LibcGuard::depth - 1] != guardObject) LibcException::Terminate();
     --LibcGuard::depth;
     auto* bytes = reinterpret_cast<unsigned char*>(guardObject);
     std::atomic_ref<unsigned char>(bytes[0]).store(1, std::memory_order_release);
     std::atomic_ref<unsigned char>(bytes[1]).store(0, std::memory_order_release);
 }
-void __cxa_guard_abort_nid_postfix(std::uint64_t* guardObject) {
+void APS5_VABI __cxa_guard_abort_nid_postfix(std::uint64_t* guardObject) {
     if (!LibcGuard::depth || LibcGuard::active[LibcGuard::depth - 1] != guardObject) LibcException::Terminate();
     --LibcGuard::depth;
     auto* bytes = reinterpret_cast<unsigned char*>(guardObject);
