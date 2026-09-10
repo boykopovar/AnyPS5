@@ -46,6 +46,9 @@ enum class ControlFlowKind : std::uint8_t {
 
 struct DecodedInstructionInfo {
     std::size_t Length;
+    std::size_t OpcodeOffset;
+    std::uint8_t SegmentPrefix;
+    std::uint8_t RexPrefix;
     ControlFlowKind FlowKind;
     bool HasRipRelativeDisp;
     std::size_t RipRelativeDispOffset;

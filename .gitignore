@@ -29,6 +29,7 @@
 *.app
 
 build/
+b/
 Build/
 build-*/
 cmake-build-debug/

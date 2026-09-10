@@ -147,7 +147,7 @@ int main(const int argc, char* argv[]) {
         auto patched = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath, lazyBinding);
         fileWriter.Write(outputPath, patched);
         std::cout << "External prx references: " << result.RegistryEntries.size()
-            << "Output file: " << outputPath << '\n';
+            << "\nOutput file: " << outputPath << '\n';
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();

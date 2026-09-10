@@ -3,6 +3,7 @@
 #include "WindowsLoadImage.hpp"
 #include "WindowsPeWriter.hpp"
 #include "WindowsRelocationBuilder.hpp"
+#include "WindowsTlsBuilder.hpp"
 #include <io/BufferUtils.hpp>
 #include <utility>
 
@@ -27,10 +28,11 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
     const WindowsRelocationBuilder relocationBuilder;
-    const auto relocations = relocationBuilder.Apply(image, dynamicSection);
+    auto relocations = relocationBuilder.Apply(image, dynamicSection);
     auto sections = image.BuildSections();
     std::array<PeDirectory, 16> directories{};
     auto nextRva = image.GetEndRva();
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva);
     auto relocationData = relocationBuilder.BuildBaseRelocations(relocations.BaseRelocations);
     if (!relocationData.empty()) {
         directories[5] = {nextRva, CheckedRva(relocationData.size())};

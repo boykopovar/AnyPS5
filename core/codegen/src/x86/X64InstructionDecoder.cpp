@@ -330,6 +330,8 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs ||
             b == PrefixSegEs || b == PrefixSegFs || b == PrefixSegGs ||
             b == PrefixOperandSize || b == PrefixAddressSize) {
+            if (b >= PrefixSegFs && b <= PrefixSegGs)
+                info.SegmentPrefix = b;
             ++pos;
             continue;
         }
@@ -337,7 +339,9 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
     }
 
     if (pos < info.Length && data[pos] >= RexMin && data[pos] <= RexMax)
-        ++pos;
+        info.RexPrefix = data[pos++];
+
+    info.OpcodeOffset = pos;
 
     if (pos >= info.Length)
         return info;
