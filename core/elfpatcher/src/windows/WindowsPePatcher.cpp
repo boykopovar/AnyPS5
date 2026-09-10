@@ -3,11 +3,26 @@
 #include "WindowsLoadImage.hpp"
 #include "WindowsPeWriter.hpp"
 #include "WindowsRelocationBuilder.hpp"
+#include <io/BufferUtils.hpp>
 #include <utility>
 
 namespace Elfpatcher::Windows {
 
-std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t>& sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath) {
+namespace {
+
+void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRva, const std::uint32_t stubRva) {
+    for (auto& section : sections) {
+        if (targetRva < section.Rva || targetRva - section.Rva > section.Data.size() - 4)
+            continue;
+        Io::WriteU32(section.Data, targetRva - section.Rva, stubRva);
+        return;
+    }
+    throw Domain::RelinkerException("Lazy import GOT slot is not contained in any section", targetRva);
+}
+
+}
+
+std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t>& sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding) {
     WindowsLoadImage image(sourceElf, originalHeaders);
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
@@ -28,12 +43,14 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     directories[12] = nativeImports.AddressTable;
     nextRva = AlignRva(nextRva + nativeImports.Section.Data.size());
     const auto libraries = importBuilder.ReadLibraries(dynamicSection);
-    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath);
+    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;
     sections.push_back(std::move(nativeImports.Section));
     sections.push_back(std::move(entry.Data));
     sections.push_back(std::move(entry.Code));
+    for (const auto& lazyStub : entry.LazyStubs)
+        writeGotStub(sections, lazyStub.TargetRva, lazyStub.StubRva);
     return WindowsPeWriter().Write(sections, entryRva, directories);
 }
 

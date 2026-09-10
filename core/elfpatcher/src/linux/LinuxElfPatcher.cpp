@@ -29,7 +29,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::vector<Domain::ProgramHeader>& originalHeaders,
     const Domain::SysVDynamicSection& dynSection,
     const std::uint64_t originalPltGotVaddr,
-    const std::string& runPath)
+    const std::string& runPath,
+    const bool lazyBinding)
 {
     std::vector<std::uint8_t> buf = sourceElf;
 
@@ -101,6 +102,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         _appendDynEntry(dynSegBuf, DT_PLTREL, static_cast<std::uint64_t>(DT_RELA));
         _appendDynEntry(dynSegBuf, DT_PLTGOT, originalPltGotVaddr);
     }
+    if (!lazyBinding)
+        _appendDynEntry(dynSegBuf, DT_FLAGS, DF_BIND_NOW);
     _appendDynEntry(dynSegBuf, DT_RUNPATH, runPathStrOff);
     _appendDynEntry(dynSegBuf, DT_NULL, 0);
 

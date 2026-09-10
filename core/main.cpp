@@ -30,6 +30,7 @@ int main(const int argc, char* argv[]) {
     bool unusedFilterSpecified = false;
     bool writeRegistry = false;
     bool toWindows = false;
+    bool lazyBinding = false;
 
     std::string inputPath;
     std::string outputPath;
@@ -59,6 +60,8 @@ int main(const int argc, char* argv[]) {
             runPath = argv[++i];
         } else if (arg == "--windows") {
             toWindows = true;
+        } else if (arg == "--lazy-binding") {
+            lazyBinding = true;
         } else if (arg.rfind("--", 0) == 0 || arg == "unused-filter") {
             std::cerr << "FAIL: unknown option: " << arg << "\n";
             return 1;
@@ -73,7 +76,7 @@ int main(const int argc, char* argv[]) {
     }
 
     if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] <input.elf> <output.elf>\n"
+        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] <input.elf> <output.elf>\n"
              "Example: relinker input.elf output.elf\n";
         return 1;
     }
@@ -141,9 +144,10 @@ int main(const int argc, char* argv[]) {
                 byteWriter
             );
         }
-        auto patched = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath);
+        auto patched = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath, lazyBinding);
         fileWriter.Write(outputPath, patched);
-        std::cout << "OK: " << result.RegistryEntries.size() << " NID references processed; output written\n";
+        std::cout << "External prx references: " << result.RegistryEntries.size()
+            << "Output file: " << outputPath << '\n';
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();

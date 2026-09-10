@@ -88,6 +88,8 @@ inline constexpr std::int64_t DT_SYMENT = 11;
 inline constexpr std::int64_t DT_PLTREL = 20;
 inline constexpr std::int64_t DT_JMPREL = 23;
 inline constexpr std::int64_t DT_RUNPATH = 29;
+inline constexpr std::int64_t DT_FLAGS = 30;
+inline constexpr std::uint64_t DF_BIND_NOW = 0x8;
 
 inline constexpr std::uint32_t SHT_NULL = 0;
 inline constexpr std::uint32_t SHT_PROGBITS = 1;

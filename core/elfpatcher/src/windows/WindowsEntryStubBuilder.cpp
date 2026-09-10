@@ -27,7 +27,7 @@ std::string normalizeRunPath(std::string path) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -232,6 +232,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         writeString(loaded);
     }
     std::vector<std::size_t> unresolvedBranches;
+    std::vector<std::size_t> lazyUnresolvedImports;
     for (std::size_t index = 0; index < imports.size(); ++index) {
         code.Rip({0x48, 0x8d, 0x1d}, handles);
         code.Rip({0x48, 0x8d, 0x35}, symbolNames[index]);
@@ -244,6 +245,19 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         const auto resolved = code.Branch({0x0f, 0x85});
         code.Emit({0x48, 0x83, 0xc3, 8, 0xff, 0xcd});
         code.Rip({0x0f, 0x85}, search);
+        if (lazyBinding) {
+            lazyUnresolvedImports.push_back(index);
+            const auto skipGotWrite = code.Branch({0xe9});
+            code.PatchBranch(resolved, code.GetRva());
+            if (imports[index].Addend != 0) {
+                code.Emit({0x48, 0xba});
+                code.U64(imports[index].Addend);
+                code.Emit({0x48, 0x01, 0xd0});
+            }
+            code.Rip({0x48, 0x89, 0x05}, imports[index].TargetRva);
+            code.PatchBranch(skipGotWrite, code.GetRva());
+            continue;
+        }
         captureLastError();
         writeString(errorRvas.at(3 + index));
         unresolvedBranches.push_back(code.Branch({0xe9}));
@@ -279,6 +293,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto functionEnd = code.GetRva();
     code.PatchBranch(exitCallback, functionEnd);
     code.Emit({0xc3});
+    for (const auto index : lazyUnresolvedImports) {
+        const auto stubRva = code.GetRva();
+        writeString(errorRvas.at(3 + index));
+        raise(0xc0000139u);
+        result.LazyStubs.push_back({imports[index].TargetRva, stubRva});
+    }
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
     Io::WriteU32(data, functionTable - dataRva + 4, functionEnd);
     Io::WriteU32(data, functionTable - dataRva + 8, unwindRva);

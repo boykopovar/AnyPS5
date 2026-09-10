@@ -25,7 +25,8 @@ public:
         const std::vector<Domain::ProgramHeader>& originalHeaders,
         const Domain::SysVDynamicSection& dynamicSection,
         std::uint64_t originalPltGotVaddr,
-        const std::string& runPath
+        const std::string& runPath,
+        bool lazyBinding
     ) override;
 
 private:

@@ -238,7 +238,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         auto compacted = UnusedNidFilter::CompactPlt(originalNidRefs, nidRefs, textSection, textVAddr, _elfReader->TranslateVirtualAddress(textVAddr), dynJmpRelOffset);
         dynamicRefs = std::move(compacted.References);
         patches = std::move(compacted.Patches);
-        std::cout << "PLT compaction: " << pltCount << " -> " << compacted.SlotCount << "; lazy binding preserved\n";
+        std::cout << "PLT compaction: " << pltCount << " -> " << compacted.SlotCount << "\n";
         pltCount = compacted.SlotCount;
     }
     auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
