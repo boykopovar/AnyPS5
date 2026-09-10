@@ -50,6 +50,15 @@ int APS5_VABI sceAgcGetDataPacketPayloadAnotherAddress(uint32_t** addr, uint32_t
     return 0;
 }
 
+APS5_EXPORT("k0E7vkgqAuE", sceAgcCreateInterpolantMappingVsPs);
+int APS5_VABI sceAgcCreateInterpolantMappingVsPs(ShaderRegister* regs, const Shader* vs, const Shader* ps) {
+    (void)regs;
+    (void)vs;
+    (void)ps;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 void* APS5_VABI sceAgcGetRegisterDefaults2Internal(uint32_t ver) {
  (void)ver;
  NotImplemented_nid_no_patch(__func__);

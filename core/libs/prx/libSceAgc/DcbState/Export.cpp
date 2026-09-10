@@ -121,6 +121,14 @@ uint32_t* APS5_VABI sceAgcDcbContextStateAnotherOp(CommandBuffer* buf, uint32_t 
     return nullptr;
 }
 
+// unconfirmed signature
+uint32_t* APS5_VABI sceAgcDcbPrimeUtcl2(CommandBuffer* buf, const volatile void* address, uint32_t size_in_bytes) {
+    (void)buf;
+    (void)address;
+    (void)size_in_bytes;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
 
 uint32_t* APS5_VABI sceAgcDcbSetPredication(CommandBuffer* buf, uint8_t condition, uint8_t op, uint8_t wait_op, const volatile void* address, uint32_t count_in_dwords) {
  (void)buf;

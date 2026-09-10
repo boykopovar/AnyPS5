@@ -3,11 +3,11 @@
 
 #if defined(__GNUC__) || defined(__clang__)
     #define APS5_EXPORT(exportName, funcName) \
-    __asm__(".globl \"" exportName "\"\n\t" \
-    ".set \"" exportName "\", " #funcName "_nid_no_patch_cut")
+    __asm__(".globl \"" exportName "_nid_no_patch_cut\"\n\t" \
+    ".set \"" exportName "_nid_no_patch_cut\", " #funcName)
 #elif defined(_MSC_VER)
     #define APS5_EXPORT(exportName, funcName) \
-    __pragma(comment(linker, "/export:" exportName "=" #funcName "_nid_no_patch_cut"))
+    __pragma(comment(linker, "/export:" exportName "_nid_no_patch_cut=" #funcName))
 #else
     #define APS5_EXPORT(exportName, funcName)
 #endif

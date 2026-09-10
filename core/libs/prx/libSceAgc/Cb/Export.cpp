@@ -31,6 +31,16 @@ uint32_t* APS5_VABI sceAgcCbSetUcRegisterRangeDirect(CommandBuffer* buf, uint32_
  return nullptr;
 }
 
+uint32_t* APS5_VABI sceAgcCbCondWrite(CommandBuffer* buf, uint32_t cond, uint32_t a, uint32_t b, uint32_t c) {
+    (void)buf;
+    (void)cond;
+    (void)a;
+    (void)b;
+    (void)c;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
 uint32_t APS5_VABI sceAgcCbBranchGetSize() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
