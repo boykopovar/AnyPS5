@@ -8,3 +8,6 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
 
 target_include_directories(libkernel PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libkernel PRIVATE libc)
+if(WIN32)
+    target_compile_definitions(libkernel PRIVATE _WIN32_WINNT=0x0602)
+endif()

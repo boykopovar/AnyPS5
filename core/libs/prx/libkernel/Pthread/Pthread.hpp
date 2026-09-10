@@ -40,6 +40,7 @@ struct PthreadCondPrivate {
 };
 
 struct PthreadAttrPrivate {
+    void* stackAddress = nullptr;
     std::size_t _stacksize;
     int _detachstate;
     int _schedpriority;
@@ -48,7 +49,15 @@ struct PthreadAttrPrivate {
 };
 
 struct PthreadPrivate {
+#ifdef _WIN32
+    void* nativeHandle = nullptr;
+    std::thread::id threadId;
+    std::atomic<unsigned> references{2};
+#else
     std::thread _thr;
+#endif
+    void* stackAddress = nullptr;
+    std::size_t stackSize = 0;
     std::atomic<bool> _finished;
     void* _retval;
     bool _detached;
