@@ -3,6 +3,7 @@
 
 #include "general/LogMacros.hpp"
 #include "general/VabiMacros.hpp"
+#include "general/ExportMacros.hpp"
 
 extern "C" void NotImplemented_nid_no_patch(const char* funcName);
 
