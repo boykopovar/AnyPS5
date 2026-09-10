@@ -8,7 +8,7 @@
 
 extern "C" {
 
-[[noreturn]] void _ZSt11_Xbad_allocv_nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
 
 FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
     if (!filename || !mode) throw std::runtime_error("fopen: null argument");

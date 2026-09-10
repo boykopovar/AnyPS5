@@ -1,6 +1,10 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_GENERALMACROS_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_GENERALMACROS_HPP
 
+#ifdef _WIN32
+#define APS5_VABI __attribute__((sysv_abi))
+#else
 #define APS5_VABI
+#endif
 
 #endif

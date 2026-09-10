@@ -39,6 +39,8 @@ struct ThreadArgs {
 };
 
 static void RunThread(std::unique_ptr<ThreadArgs> args) {
+    fprintf(stderr, "RunThread started\n");
+    fprintf(stdout, "RunThread started stdout\n");
     void* retval = args->entry(args->arg);
     PthreadPrivate* self = args->self;
     args.reset();

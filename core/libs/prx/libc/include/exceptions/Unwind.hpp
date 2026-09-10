@@ -93,11 +93,11 @@ inline unsigned EncodingSize(Byte encoding) {
 }
 
 extern "C" {
-_Unwind_Reason_Code __gxx_personality_v0_nid_postfix(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
-_Unwind_Reason_Code _Unwind_RaiseException_nid_postfix(_Unwind_Exception*);
-[[noreturn]] void _Unwind_Resume_nid_postfix(_Unwind_Exception*);
-_Unwind_Reason_Code _Unwind_Resume_or_Rethrow_nid_postfix(_Unwind_Exception*);
-void _Unwind_DeleteException_nid_postfix(_Unwind_Exception*);
+    _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
+    _Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Exception*);
+    [[noreturn]] void APS5_VABI _Unwind_Resume_nid_postfix(_Unwind_Exception*);
+    _Unwind_Reason_Code APS5_VABI _Unwind_Resume_or_Rethrow_nid_postfix(_Unwind_Exception*);
+    void APS5_VABI _Unwind_DeleteException_nid_postfix(_Unwind_Exception*);
 }
 
 #endif
