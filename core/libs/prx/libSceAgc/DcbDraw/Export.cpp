@@ -14,6 +14,33 @@ uint32_t* APS5_VABI sceAgcDcbDrawIndex(CommandBuffer* buf, uint32_t index_count,
  return nullptr;
 }
 
+uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint32_t count_indirect, uint32_t max_count_or_count, const volatile void* count_addr, uint32_t stride_in_bytes, uint64_t modifier) {
+ (void)buf;
+ (void)data_offset_in_bytes;
+ (void)count_indirect;
+ (void)max_count_or_count;
+ (void)count_addr;
+ (void)stride_in_bytes;
+ (void)modifier;
+ NotImplemented_nid_no_patch(__func__);
+ return nullptr;
+}
+
+uint32_t APS5_VABI sceAgcDcbDrawIndirectMultiGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+uint32_t APS5_VABI sceAgcDcbDrawIndexIndirectMultiGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+uint32_t APS5_VABI sceAgcDcbDrawIndexIndirectGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 uint32_t APS5_VABI sceAgcDcbDrawIndexGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
@@ -148,17 +175,6 @@ uint32_t* APS5_VABI sceAgcDcbGetLodStats(CommandBuffer* buf, uint8_t cache_polic
  (void)reporting_interval_in_100k_clocks;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
-}
-std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddr, std::uint32_t strideInBytes, std::uint64_t modifier) {
-    (void)buf;
-    (void)dataOffsetInBytes;
-    (void)countIndirect;
-    (void)maxCountOrCount;
-    (void)countAddr;
-    (void)strideInBytes;
-    (void)modifier;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 }

@@ -22,6 +22,20 @@ uint32_t* APS5_VABI sceAgcCbBranch(CommandBuffer* buf, uint8_t mode, uint8_t com
  return nullptr;
 }
 
+uint32_t* APS5_VABI sceAgcCbSetUcRegisterRangeDirect(CommandBuffer* buf, uint32_t offset, const uint32_t* values, uint32_t num) {
+ (void)buf;
+ (void)offset;
+ (void)values;
+ (void)num;
+ NotImplemented_nid_no_patch(__func__);
+ return nullptr;
+}
+
+uint32_t APS5_VABI sceAgcCbBranchGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 uint32_t* APS5_VABI sceAgcCbDispatch(CommandBuffer* buf, uint32_t thread_group_x, uint32_t thread_group_y, uint32_t thread_group_z, uint32_t modifier) {
  (void)buf;
  (void)thread_group_x;

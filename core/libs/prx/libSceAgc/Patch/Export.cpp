@@ -34,6 +34,13 @@ int APS5_VABI sceAgcQueueEndOfPipeActionPatchAddress(uint32_t* cmd, const volati
  return 0;
 }
 
+uint32_t* APS5_VABI sceAgcSetNop(CommandBuffer* buf, uint32_t size_dw) {
+ (void)buf;
+ (void)size_dw;
+ NotImplemented_nid_no_patch(__func__);
+ return nullptr;
+}
+
 int APS5_VABI sceAgcQueueEndOfPipeActionPatchData(uint32_t* cmd, uint32_t context_id, uint32_t data_sel, uint64_t data) {
  (void)cmd;
  (void)context_id;

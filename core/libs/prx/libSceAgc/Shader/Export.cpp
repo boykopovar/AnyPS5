@@ -117,6 +117,7 @@ int APS5_VABI sceAgcUpdatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_
     return 0;
 }
 
+APS5_EXPORT("HV4j+E0MBHE", sceAgcCreateInterpolantMapping);
 int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
     constexpr auto fn = __func__;
     if (regs == nullptr) {

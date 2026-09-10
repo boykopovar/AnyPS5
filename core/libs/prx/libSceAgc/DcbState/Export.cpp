@@ -12,6 +12,38 @@ uint32_t* APS5_VABI sceAgcDcbSetCxRegisterDirect(CommandBuffer* buf, ShaderRegis
  return nullptr;
 }
 
+uint32_t APS5_VABI sceAgcDcbSetBaseDispatchIndirectArgsGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+uint32_t APS5_VABI sceAgcDcbQueueEndOfShaderActionGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+uint32_t APS5_VABI sceAgcDcbGetLodStatsGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+uint32_t APS5_VABI sceAgcDcbSetShRegistersIndirectGetSize(uint32_t num_regs) {
+ (void)num_regs;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+uint32_t APS5_VABI sceAgcDcbSetBaseDrawIndirectArgsGetSize() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(uint32_t operation) {
+ (void)operation;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 uint32_t APS5_VABI sceAgcDcbSetCxRegisterDirectGetSize(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
@@ -62,12 +94,6 @@ uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, uint32_t operati
  return nullptr;
 }
 
-uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(uint32_t operation) {
- (void)operation;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_handle, int32_t display_buffer_index, uint32_t flip_mode, int64_t flip_arg) {
  (void)buf;
  (void)video_out_handle;
@@ -77,6 +103,24 @@ uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_hand
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
+
+APS5_EXPORT("23LRUSvYu1M", sceAgcInit);
+int APS5_VABI sceAgcInit(uint32_t* state, uint32_t ver) {
+    (void)state;
+    (void)ver;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+
+APS5_EXPORT("qj7QZpgr9Uw", sceAgcDcbContextStateAnotherOp);
+uint32_t* APS5_VABI sceAgcDcbContextStateAnotherOp(CommandBuffer* buf, uint32_t operation) {
+    (void)buf;
+    (void)operation;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
 
 uint32_t* APS5_VABI sceAgcDcbSetPredication(CommandBuffer* buf, uint8_t condition, uint8_t op, uint8_t wait_op, const volatile void* address, uint32_t count_in_dwords) {
  (void)buf;
