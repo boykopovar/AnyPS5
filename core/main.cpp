@@ -1,3 +1,4 @@
+#include <Cli.hpp>
 #include <domain/Types.hpp>
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
@@ -6,6 +7,7 @@
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
+#include <elfpatcher/windows/WindowsElfPatcher.hpp>
 #include <io/ByteWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
@@ -20,69 +22,13 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <optional>
-#include <cstdlib>
-#include <limits>
-#include <elfpatcher/windows/WindowsElfPatcher.hpp>
 
 int main(const int argc, char* argv[]) {
-    bool skipSyscallCheck = false;
-    bool toIntel = false;
-    std::uint32_t unusedFilterLevel = 2;
-    bool unusedFilterSpecified = false;
-    bool writeRegistry = false;
-    bool toWindows = false;
-    bool lazyBinding = false;
-    bool autorun = false;
-
-    std::string inputPath;
-    std::string outputPath;
-    std::string runPath = "$ORIGIN/libs";
-
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--skip-syscall-check") {
-            skipSyscallCheck = true;
-        } else if (arg == "--to-intel") {
-            toIntel = true;
-        } else if (arg.rfind("unused-filter=", 0) == 0) {
-            const std::string value = arg.substr(14);
-            if (unusedFilterSpecified || value.size() != 1 || value[0] < '0' || value[0] > '2') {
-                std::cerr << "FAIL: unused-filter must be specified once with a value of 0, 1 or 2\n";
-                return 1;
-            }
-            unusedFilterLevel = static_cast<std::uint32_t>(value[0] - '0');
-            unusedFilterSpecified = true;
-        } else if (arg == "--registry") {
-            writeRegistry = true;
-        } else if (arg == "--rpath") {
-            if (i + 1 >= argc) {
-                std::cerr << "FAIL: --rpath requires a value\n";
-                return 1;
-            }
-            runPath = argv[++i];
-        } else if (arg == "--windows") {
-            toWindows = true;
-        } else if (arg == "--lazy-binding") {
-            lazyBinding = true;
-        } else if (arg == "--autorun") {
-            autorun = true;
-        } else if (arg.rfind("--", 0) == 0 || arg == "unused-filter") {
-            std::cerr << "FAIL: unknown option: " << arg << "\n";
-            return 1;
-        } else if (inputPath.empty()) {
-            inputPath = arg;
-        } else if (outputPath.empty()) {
-            outputPath = arg;
-        } else {
-            std::cerr << "FAIL: unexpected argument: " << arg << "\n";
-            return 1;
-        }
-    }
-
-    if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
-             "Example: relinker input.elf output.elf\n";
+    Cli::Args args;
+    try {
+        args = Cli::ParseArgs(argc, argv);
+    } catch (const std::exception& e) {
+        std::cerr << "FAIL: " << e.what() << "\n";
         return 1;
     }
 
@@ -90,50 +36,33 @@ int main(const int argc, char* argv[]) {
         Io::FileReader fileReader;
         Io::FileWriter fileWriter;
 
-        auto sourceBytes = fileReader.Read(inputPath);
+        auto sourceBytes = fileReader.Read(args.inputPath);
+        const std::string absPath = std::filesystem::absolute(args.outputPath).string();
 
-        if (toIntel) {
-            std::cout << "Mode: Intel instruction conversion; system unchanged; unused-filter=" << unusedFilterLevel << " (not applied)\n";
+        if (args.toIntel) {
+            std::cout << "Mode: Intel instruction conversion; system unchanged; unused-filter=" << args.unusedFilterLevel << " (not applied)\n";
             const Relinker::ElfReader elfReader(sourceBytes);
             const auto converter = Codegen::MakeAmd64OnlyConverter();
             auto result = converter->Convert(std::move(sourceBytes), elfReader.ReadCodeSegments());
-            fileWriter.Write(outputPath, std::move(result.Bytes));
+            fileWriter.Write(absPath, std::move(result.Bytes));
             std::cout << "OK: " << result.ReplacedCount << " instructions replaced\n";
-            if (autorun) {
-                if (!toWindows) {
-                    std::filesystem::permissions(outputPath,
-                        std::filesystem::perms::owner_exec |
-                        std::filesystem::perms::group_exec |
-                        std::filesystem::perms::others_exec,
-                        std::filesystem::perm_options::add);
-                }
-                const std::string absPath = std::filesystem::absolute(outputPath).string();
-                const std::string cmd = "\"" + absPath + "\"";
-                std::system(cmd.c_str());
-                std::cout << "\nPress Enter to exit...\n";
-                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-                std::cin.get();
-            }
+            if (args.autorun) Cli::Autorun(absPath, args.toWindows);
             return 0;
         }
 
         auto elfReader = std::make_shared<Relinker::ElfReader>(sourceBytes);
 
-        auto syscallScanner = skipSyscallCheck
-            ? Relinker::MakeNullSyscallScanner()
-            : Relinker::MakeSyscallScanner();
-
         const auto pipeline = std::make_shared<Relinker::RelinkerPipeline>(
             elfReader,
-            std::move(syscallScanner),
+            args.skipSyscallCheck ? Relinker::MakeNullSyscallScanner() : Relinker::MakeSyscallScanner(),
             Relinker::MakeCallSiteResolver(),
             std::make_shared<Relinker::ValidationPolicy>(),
             std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
-            unusedFilterLevel == 2 ? Relinker::MakeStrictUnusedNidFilter() : Relinker::MakeUnusedNidFilter(),
-            unusedFilterLevel
+            args.unusedFilterLevel == 2 ? Relinker::MakeStrictUnusedNidFilter() : Relinker::MakeUnusedNidFilter(),
+            args.unusedFilterLevel
         );
 
-        std::cout << "System: " << (toWindows ? "Windows" : "Linux") << "; unused-filter=" << unusedFilterLevel << "\n";
+        std::cout << "System: " << (args.toWindows ? "Windows" : "Linux") << "; unused-filter=" << args.unusedFilterLevel << "\n";
         auto result = pipeline->Relink(sourceBytes);
         for (const auto& patch : result.Patches) {
             if (patch.Offset > sourceBytes.size() || patch.Bytes.size() > sourceBytes.size() - patch.Offset)
@@ -141,18 +70,16 @@ int main(const int argc, char* argv[]) {
             for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
         }
 
-        if (writeRegistry) {
-            const std::filesystem::path outFsPath(outputPath);
+        if (args.writeRegistry) {
+            const std::filesystem::path outFsPath(absPath);
             const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
-            auto callRegistryWriter = std::make_shared<Relinker::CallRegistryWriter>();
-            fileWriter.Write(registryPath, callRegistryWriter->WriteCallRegistry(result.RegistryEntries));
+            fileWriter.Write(registryPath, std::make_shared<Relinker::CallRegistryWriter>()->WriteCallRegistry(result.RegistryEntries));
         }
 
         auto byteWriter = std::make_shared<Io::ByteWriter>();
-        const std::string absPath = std::filesystem::absolute(outputPath).string();
 
         std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
-        if (toWindows) {
+        if (args.toWindows) {
             patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>();
         } else {
             patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
@@ -165,40 +92,15 @@ int main(const int argc, char* argv[]) {
                 byteWriter
             );
         }
-        auto patched = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath, lazyBinding);
-        fileWriter.Write(absPath, patched);
-        std::cout << "External prx references: " << result.RegistryEntries.size()
-            << "\nOutput file: " << absPath << '\n';
 
-        if (autorun) {
-            if (!toWindows) {
-                std::filesystem::permissions(outputPath,
-                    std::filesystem::perms::owner_exec |
-                    std::filesystem::perms::group_exec |
-                    std::filesystem::perms::others_exec,
-                    std::filesystem::perm_options::add);
-            }
+        fileWriter.Write(absPath, patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding));
+        std::cout << "External prx references: " << result.RegistryEntries.size() << "\nOutput file: " << absPath << '\n';
 
-            const std::string cmd = "\"" + absPath + "\"";
-            const int rawCode = std::system(cmd.c_str());
-
-            if (toWindows) {
-                std::cout << "Exit code: " << rawCode << '\n';
-            }
-            else {
-                std::cout << "Raw exit code: " << rawCode
-                    << "; Unpacked: " << (rawCode >> 8) << '\n';
-            }
-            std::cout << "\nPress Enter to exit...\n";
-
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            std::cin.get();
-        }
+        if (args.autorun) Cli::Autorun(absPath, args.toWindows);
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();
-        if (e.FailureOffset != 0)
-            std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
+        if (e.FailureOffset != 0) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
         std::cerr << "\n";
         return 2;
     } catch (const std::exception& e) {
