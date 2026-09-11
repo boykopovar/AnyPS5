@@ -53,7 +53,6 @@ target_include_directories(relinker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
 )
 
-add_subdirectory(libs)
 
 if(BUILD_TESTING)
     add_executable(strict_nid_filter_tests
@@ -80,3 +79,4 @@ if(BUILD_TESTING)
     )
     add_test(NAME strict_nid_filter COMMAND strict_nid_filter_tests)
 endif()
+
