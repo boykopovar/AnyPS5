@@ -2,11 +2,35 @@
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
 
-#if defined(__linux__)
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#if defined(__linux__) || defined(_WIN32)
+
+#ifdef _WIN32
+extern "C" _Unwind_Reason_Code __gxx_personality_v0(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
+#endif
 
 namespace LibcUnwind {
+bool OwnPersonality(Word personality) {
+#ifdef _WIN32
+    const auto* code = reinterpret_cast<const Byte*>(personality);
+    if (code[0] == 0xff && code[1] == 0x25) {
+        std::int32_t displacement;
+        std::memcpy(&displacement, code + 2, 4);
+        std::memcpy(&personality, code + 6 + displacement, sizeof(personality));
+    }
+#endif
+    if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix)) return true;
+#ifdef _WIN32
+    if (personality == reinterpret_cast<Word>(__gxx_personality_v0)) return true;
+#endif
+    return false;
+}
 struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; };
 
+#ifdef __linux__
 int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
     auto& query = *static_cast<Lookup*>(argument);
     const Byte* header = nullptr;
@@ -40,6 +64,8 @@ int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
     return 1;
 }
 
+#endif
+
 struct Frame {
     const Byte* cieBegin {};
     const Byte* cieEnd {};
@@ -52,9 +78,7 @@ struct Frame {
     bool signal {};
 };
 
-bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
-    Lookup query {context.registers[16] - !context.signalFrame};
-    dl_iterate_phdr(FindFrame, &query);
+bool DecodeCandidate(_Unwind_Context& context, Frame& frame, const Lookup& query) {
     if (!query.fde) return false;
     const Byte* p = query.fde;
     auto length = Read<std::uint32_t>(p);
@@ -75,7 +99,11 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     frame.codeAlign = Uleb(c);
     frame.dataAlign = Sleb(c);
     frame.returnRegister = version == 1 ? *c++ : Uleb(c);
+#ifdef _WIN32
+    if (frame.returnRegister >= 17 && frame.returnRegister != 32) return false;
+#else
     if (frame.returnRegister >= 17) return false;
+#endif
     Byte pointerEncoding = 0, lsdaEncoding = 255;
     if (*augmentation == 'z') {
         Word size = Uleb(c);
@@ -110,8 +138,73 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     return true;
 }
 
+bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
+    Lookup query {context.registers[16] - !context.signalFrame};
+#ifdef __linux__
+    dl_iterate_phdr(FindFrame, &query);
+    return DecodeCandidate(context, frame, query);
+#else
+    MEMORY_BASIC_INFORMATION memory{};
+    if (!VirtualQuery(reinterpret_cast<void*>(query.pc), &memory, sizeof(memory)) || memory.Type != MEM_IMAGE)
+        return false;
+    const auto* base = static_cast<const Byte*>(memory.AllocationBase);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        const auto& section = sections[i];
+        if (std::memcmp(section.Name, ".ehmeta", 8) == 0) {
+            const Byte* metadata = base + section.VirtualAddress;
+            const Byte* header = base + Read<std::uint32_t>(metadata);
+            if (header[0] != 1 || header[3] == 255) return false;
+            const Byte* p = header + 4;
+            Encoded(p, header[1], Word(header));
+            const Word count = Encoded(p, header[2]);
+            const auto width = EncodingSize(header[3]);
+            const Byte* table = p;
+            Word lo = 0, hi = count;
+            while (lo < hi) {
+                const Word mid = lo + (hi - lo) / 2;
+                p = table + mid * width * 2;
+                if (Encoded(p, header[3], Word(header)) <= query.pc) lo = mid + 1;
+                else hi = mid;
+            }
+            if (!lo) return false;
+            p = table + (lo - 1) * width * 2 + width;
+            query.fde = reinterpret_cast<const Byte*>(Encoded(p, header[3], Word(header)));
+            return DecodeCandidate(context, frame, query);
+        }
+        if (std::memcmp(section.Name, ".ehfram", 8) != 0) continue;
+        const Byte* p = base + section.VirtualAddress;
+        const Byte* end = p + section.Misc.VirtualSize;
+        while (end - p >= 8) {
+            const Byte* record = p;
+            const auto length = Read<std::uint32_t>(p);
+            if (!length) break;
+            if (length == 0xffffffff || length < 4 || Word(end - p) < length) return false;
+            const Byte* next = p + length;
+            if (Read<std::uint32_t>(p)) {
+                query.fde = record;
+                frame = {};
+                if (DecodeCandidate(context, frame, query)) return true;
+            }
+            p = next;
+        }
+    }
+    return false;
+#endif
+}
+
 struct Rule { unsigned kind {}; std::intptr_t value {}; const Byte* expression {}; };
-struct Rules { Rule registers[17] {}; unsigned cfaRegister {7}; std::intptr_t cfaOffset {}; const Byte* cfaExpression {}; };
+#ifdef _WIN32
+constexpr unsigned RuleCount = 33;
+#else
+constexpr unsigned RuleCount = 17;
+#endif
+
+struct Rules { Rule registers[RuleCount] {}; unsigned cfaRegister {7}; std::intptr_t cfaOffset {}; const Byte* cfaExpression {}; };
 
 bool Instructions(const Byte* p, const Byte* end, const Frame& frame, Word target, Rules& state, const Rules& initial) {
     Word location = frame.start;
@@ -124,12 +217,12 @@ bool Instructions(const Byte* p, const Byte* end, const Frame& frame, Word targe
         if ((opcode & 192) == 128) {
             reg = opcode & 63;
             auto offset = Uleb(p) * frame.dataAlign;
-            if (reg < 17) state.registers[reg] = {1, static_cast<std::intptr_t>(offset)};
+            if (reg < RuleCount) state.registers[reg] = {1, static_cast<std::intptr_t>(offset)};
             continue;
         }
         if ((opcode & 192) == 192) {
             reg = opcode & 63;
-            if (reg < 17) state.registers[reg] = initial.registers[reg];
+            if (reg < RuleCount) state.registers[reg] = initial.registers[reg];
             continue;
         }
         switch (opcode) {
@@ -141,12 +234,12 @@ bool Instructions(const Byte* p, const Byte* end, const Frame& frame, Word targe
         case 5: case 17: case 20: case 21: {
             reg = Uleb(p);
             auto offset = (opcode == 17 || opcode == 21 ? Sleb(p) : std::intptr_t(Uleb(p))) * frame.dataAlign;
-            if (reg < 17) state.registers[reg] = {unsigned(opcode >= 20 ? 4 : 1), offset};
+            if (reg < RuleCount) state.registers[reg] = {unsigned(opcode >= 20 ? 4 : 1), offset};
             break;
         }
-        case 6: reg = Uleb(p); if (reg < 17) state.registers[reg] = initial.registers[reg]; break;
-        case 7: case 8: reg = Uleb(p); if (reg < 17) state.registers[reg] = {unsigned(opcode == 7 ? 5 : 0)}; break;
-        case 9: { reg = Uleb(p); auto other = Uleb(p); if (reg < 17) state.registers[reg] = {2, std::intptr_t(other)}; break; }
+        case 6: reg = Uleb(p); if (reg < RuleCount) state.registers[reg] = initial.registers[reg]; break;
+        case 7: case 8: reg = Uleb(p); if (reg < RuleCount) state.registers[reg] = {unsigned(opcode == 7 ? 5 : 0)}; break;
+        case 9: { reg = Uleb(p); auto other = Uleb(p); if (reg < RuleCount) state.registers[reg] = {2, std::intptr_t(other)}; break; }
         case 10: if (depth == 16) return false; saved[depth++] = state; break;
         case 11: if (!depth) return false; state = saved[--depth]; break;
         case 12: case 18:
@@ -157,7 +250,7 @@ bool Instructions(const Byte* p, const Byte* end, const Frame& frame, Word targe
         case 15: { state.cfaExpression = p; auto size = Uleb(p); p += size; break; }
         case 16: case 22: {
             reg = Uleb(p); const Byte* expr = p; auto size = Uleb(p); p += size;
-            if (reg < 17) state.registers[reg] = {unsigned(opcode == 16 ? 3 : 6), 0, expr};
+            if (reg < RuleCount) state.registers[reg] = {unsigned(opcode == 16 ? 3 : 6), 0, expr};
             break;
         }
         case 46: Uleb(p); break;
@@ -223,6 +316,13 @@ bool GetRules(_Unwind_Context& context, Frame& frame, Rules& rules) {
     if (!DecodeFrame(context, frame)) return false;
     Rules initial;
     if (!Instructions(frame.cieBegin, frame.cieEnd, frame, ~Word(0), initial, {})) return false;
+#ifdef _WIN32
+    if (frame.returnRegister == 32) {
+        initial.registers[16] = initial.registers[32];
+        initial.registers[32] = {};
+        frame.returnRegister = 16;
+    }
+#endif
     rules = initial;
     if (!Instructions(frame.begin, frame.end, frame, context.registers[16] - !context.signalFrame, rules, initial)) return false;
     if (rules.cfaExpression) return Expression(rules.cfaExpression, context, 0, context.cfa);
@@ -250,6 +350,17 @@ bool Step(_Unwind_Context& context) {
         case 5: next.registers[i] = 0; break;
         }
     }
+#ifdef _WIN32
+    for (unsigned i = 17; i < RuleCount; ++i) {
+        const auto& rule = rules.registers[i];
+        auto* destination = next.vectorRegisters[i - 17];
+        if (rule.kind == 1) std::memcpy(destination, reinterpret_cast<void*>(context.cfa + rule.value), 16);
+        else if (rule.kind == 2 && rule.value >= 17 && rule.value < RuleCount)
+            std::memcpy(destination, context.vectorRegisters[rule.value - 17], 16);
+        else if (rule.kind == 5) std::memset(destination, 0, 16);
+        else if (rule.kind != 0) return false;
+    }
+#endif
     next.registers[7] = context.cfa;
     next.registers[16] = next.registers[frame.returnRegister];
     next.signalFrame = frame.signal;
@@ -277,7 +388,7 @@ _Unwind_Reason_Code PhaseTwo(_Unwind_Context context, _Unwind_Exception* excepti
                 if (result != _URC_NO_REASON) return result;
             } else if (context.cfa == exception->private_2) actions = _Unwind_Action(actions | _UA_HANDLER_FRAME);
             if (frame.personality) {
-                if (frame.personality != reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix)) return _URC_FATAL_PHASE2_ERROR;
+                if (!OwnPersonality(frame.personality)) return _URC_FATAL_PHASE2_ERROR;
                 auto result = __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, &context);
                 if (result == _URC_INSTALL_CONTEXT) LibcRestoreRegisters(context.registers);
                 if (result != _URC_CONTINUE_UNWIND) return _URC_FATAL_PHASE2_ERROR;
@@ -306,7 +417,7 @@ _Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Excepti
         LibcUnwind::Frame frame; LibcUnwind::Rules rules;
         if (!LibcUnwind::GetRules(context, frame, rules)) return _URC_END_OF_STACK;
         if (frame.personality) {
-            if (frame.personality != reinterpret_cast<std::uintptr_t>(__gxx_personality_v0_nid_postfix)) return _URC_FATAL_PHASE1_ERROR;
+            if (!LibcUnwind::OwnPersonality(frame.personality)) return _URC_FATAL_PHASE1_ERROR;
             auto result = __gxx_personality_v0_nid_postfix(1, _UA_SEARCH_PHASE, exception->exception_class, exception, &context);
             if (result == _URC_HANDLER_FOUND) {
                 exception->private_2 = context.cfa;

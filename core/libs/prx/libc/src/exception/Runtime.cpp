@@ -13,6 +13,12 @@ namespace LibcException {
             struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
             const void* vtable = *static_cast<const void* const*>(primary->adjusted);
             auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
+#ifdef _WIN32
+            if (!primary->_pad) {
+                using GuestWhat = const char* (__attribute__((sysv_abi)) *)(const void*);
+                what = reinterpret_cast<GuestWhat>(layout->whatFn)(primary->adjusted);
+            } else
+#endif
             what = layout->whatFn(primary->adjusted);
         }
         int status = 0;
@@ -46,7 +52,17 @@ void Release(void* object) {
     auto* header = FromObject(object);
     auto* allocation = AllocationOf(header);
     if (allocation->references.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        try { if (header->destructor) header->destructor(object); }
+        try {
+            if (header->destructor) {
+#ifdef _WIN32
+                if (!header->_pad) {
+                    using GuestDestructor = void (__attribute__((sysv_abi)) *)(void*);
+                    reinterpret_cast<GuestDestructor>(header->destructor)(object);
+                } else
+#endif
+                header->destructor(object);
+            }
+        }
         catch (...) { Terminate(); }
         allocation->~Allocation();
         std::free(allocation);

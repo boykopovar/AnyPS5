@@ -32,6 +32,13 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     auto sections = image.BuildSections();
     std::array<PeDirectory, 16> directories{};
     auto nextRva = image.GetEndRva();
+    for (const auto& header : originalHeaders) {
+        if (header.Type != 0x6474e550) continue;
+        std::vector<std::uint8_t> metadata(4);
+        Io::WriteU32(metadata, 0, image.GetRva(header.MappedAddress, header.FileSize));
+        sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
+        nextRva = AlignRva(nextRva + sections.back().Data.size());
+    }
     directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva);
     auto relocationData = relocationBuilder.BuildBaseRelocations(relocations.BaseRelocations);
     if (!relocationData.empty()) {

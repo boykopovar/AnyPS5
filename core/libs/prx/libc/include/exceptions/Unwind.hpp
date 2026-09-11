@@ -9,6 +9,9 @@
 
 struct _Unwind_Context {
     std::uintptr_t registers[17] {};
+#ifdef _WIN32
+    std::uintptr_t vectorRegisters[16][2] {};
+#endif
     std::uintptr_t cfa {};
     std::uintptr_t region {};
     std::uintptr_t lsda {};

@@ -49,6 +49,22 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     const auto sizeOfOptionalHeader = Read<std::uint16_t>(pe, coffHeaderOffset + 16u);
     if (sizeOfOptionalHeader == 0u) throw std::runtime_error("no optional header");
 
+    const std::size_t sectionTableOffset = coffHeaderOffset + 20u + sizeOfOptionalHeader;
+    const auto symbolTable = Read<std::uint32_t>(pe, coffHeaderOffset + 8u);
+    const auto symbolCount = Read<std::uint32_t>(pe, coffHeaderOffset + 12u);
+    for (std::uint16_t i = 0; i < numberOfSections; ++i) {
+        const auto offset = sectionTableOffset + i * sizeof(PeSectionHeader);
+        auto section = Read<PeSectionHeader>(pe, offset);
+        if (pe[offset] != '/' || !symbolTable) continue;
+        const std::string reference(reinterpret_cast<const char*>(pe.data() + offset), 8);
+        const auto stringOffset = std::stoul(reference.substr(1));
+        const auto name = ReadCStr(pe, static_cast<std::size_t>(symbolTable) + static_cast<std::size_t>(symbolCount) * 18 + stringOffset);
+        if (name == ".eh_frame") {
+            const char shortName[8] = ".ehfram";
+            std::memcpy(pe.data() + offset, shortName, 8);
+        }
+    }
+
     const std::size_t optionalHeaderOffset = coffHeaderOffset + 20u;
     const auto magic = Read<std::uint16_t>(pe, optionalHeaderOffset);
 
