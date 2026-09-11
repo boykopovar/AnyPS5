@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -86,6 +87,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     if (exportTable.NumberOfNames == 0u) throw std::runtime_error("no exported names");
 
     const std::size_t namesArrayOffset = RvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    const std::size_t ordinalsArrayOffset = RvaToOffset(pe, exportTable.AddressOfNameOrdinals, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
 
     std::vector<std::uint32_t> nameRvas(exportTable.NumberOfNames);
     std::vector<std::string> names(exportTable.NumberOfNames);
@@ -103,48 +105,50 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     const std::size_t edataSectionOffset = FindSectionOffsetByRva(pe, exportDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     const auto edataSection = Read<PeSectionHeader>(pe, edataSectionOffset);
 
-    const auto sectionAlignment = Read<std::uint32_t>(pe, optionalHeaderOffset + 32u);
     const auto fileAlignment = Read<std::uint32_t>(pe, optionalHeaderOffset + 36u);
-    if (sectionAlignment == 0u || fileAlignment == 0u) throw std::runtime_error("invalid section/file alignment");
+    if (fileAlignment == 0u) throw std::runtime_error("invalid file alignment");
+
+    std::uint32_t stringsRegionStart = std::numeric_limits<std::uint32_t>::max();
+    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
+        const std::uint32_t rvaFromSection = nameRvas[i] - edataSection.VirtualAddress;
+        if (rvaFromSection < stringsRegionStart) stringsRegionStart = rvaFromSection;
+    }
+    if (stringsRegionStart == std::numeric_limits<std::uint32_t>::max())
+        throw std::runtime_error("could not determine strings region start");
 
     const std::uint32_t rawLimit = ((edataSection.SizeOfRawData + fileAlignment - 1u) / fileAlignment) * fileAlignment;
-    const std::uint32_t virtualLimit = ((edataSection.VirtualSize + sectionAlignment - 1u) / sectionAlignment) * sectionAlignment;
 
-    std::uint32_t usedEnd = 0u;
-    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i)
-        usedEnd = std::max(usedEnd, nameRvas[i] - edataSection.VirtualAddress + static_cast<std::uint32_t>(names[i].size()) + 1u);
-
+    std::vector<std::string> finalNames(exportTable.NumberOfNames);
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
         const auto it = nidMap.find(names[i]);
         if (it == nidMap.end()) throw std::runtime_error("symbol not in nid map: " + names[i]);
-        const std::string& nid = it->second;
-
-        const std::size_t oldNameOffset = RvaToOffset(pe, nameRvas[i], peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-
-        if (nid.size() <= names[i].size()) {
-            std::memcpy(pe.data() + oldNameOffset, nid.data(), nid.size());
-            pe[oldNameOffset + nid.size()] = 0u;
-            for (std::size_t j = nid.size() + 1u; j < names[i].size() + 1u; ++j)
-                pe[oldNameOffset + j] = 0u;
-            continue;
-        }
-
-        const std::uint32_t newSize = static_cast<std::uint32_t>(nid.size()) + 1u;
-        if (usedEnd + newSize > rawLimit || edataSection.VirtualAddress + usedEnd + newSize > edataSection.VirtualAddress + virtualLimit)
-            throw std::runtime_error("no free space left in edata section to relocate export name");
-
-        const std::uint32_t newNameRva = edataSection.VirtualAddress + usedEnd;
-        const std::size_t newNameOffset = static_cast<std::size_t>(edataSection.PointerToRawData) + usedEnd;
-
-        std::memcpy(pe.data() + newNameOffset, nid.data(), nid.size());
-        pe[newNameOffset + nid.size()] = 0u;
-        Write(pe, namesArrayOffset + i * 4u, newNameRva);
-
-        usedEnd += newSize;
+        finalNames[i] = it->second;
     }
 
+    std::uint32_t requiredSize = stringsRegionStart;
+    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i)
+        requiredSize += static_cast<std::uint32_t>(finalNames[i].size()) + 1u;
+
+    if (requiredSize > rawLimit)
+        throw std::runtime_error("not enough raw space in edata section to repack export names");
+
+    std::uint32_t writeOffset = stringsRegionStart;
+    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
+        const std::uint32_t newNameRva = edataSection.VirtualAddress + writeOffset;
+        const std::size_t newNameFileOffset = static_cast<std::size_t>(edataSection.PointerToRawData) + writeOffset;
+
+        if (newNameFileOffset + finalNames[i].size() + 1u > pe.size())
+            throw std::runtime_error("repack write out of file bounds");
+
+        std::memcpy(pe.data() + newNameFileOffset, finalNames[i].data(), finalNames[i].size());
+        pe[newNameFileOffset + finalNames[i].size()] = 0u;
+        Write(pe, namesArrayOffset + i * 4u, newNameRva);
+        writeOffset += static_cast<std::uint32_t>(finalNames[i].size()) + 1u;
+    }
+
+    const std::uint32_t newVirtualSize = std::max(edataSection.VirtualSize, writeOffset);
     auto patchedSection = edataSection;
-    patchedSection.VirtualSize = std::max(patchedSection.VirtualSize, usedEnd);
+    patchedSection.VirtualSize = newVirtualSize;
     Write(pe, edataSectionOffset, patchedSection);
 
     struct ExportName {
@@ -153,7 +157,6 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         std::uint16_t Ordinal;
     };
 
-    const std::size_t ordinalsArrayOffset = RvaToOffset(pe, exportTable.AddressOfNameOrdinals, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     std::vector<ExportName> exportNames;
     exportNames.reserve(exportTable.NumberOfNames);
     for (std::size_t i = 0; i < exportTable.NumberOfNames; ++i) {
@@ -186,11 +189,6 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         std::uint32_t ForwarderChain;
         std::uint32_t Name;
         std::uint32_t FirstThunk;
-    };
-
-    struct PeImportByName {
-        std::uint16_t Hint;
-        char Name[1];
     };
 
     std::size_t importDescOffset = RvaToOffset(pe, importDir.VirtualAddress, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
