@@ -1,0 +1,21 @@
+[submodule "3rdparty/SDL2"]
+	path = 3rdparty/SDL2
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "3rdparty/Vulkan-Headers"]
+	path = 3rdparty/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "3rdparty/SPIRV-Headers"]
+	path = 3rdparty/SPIRV-Headers
+	url = https://github.com/KhronosGroup/SPIRV-Headers.git
+[submodule "3rdparty/SPIRV-Tools"]
+	path = 3rdparty/SPIRV-Tools
+	url = https://github.com/KhronosGroup/SPIRV-Tools.git
+[submodule "3rdparty/glslang"]
+	path = 3rdparty/glslang
+	url = https://github.com/KhronosGroup/glslang.git
+[submodule "3rdparty/VulkanMemoryAllocator"]
+	path = 3rdparty/VulkanMemoryAllocator
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "3rdparty/LibAtrac9"]
+	path = 3rdparty/LibAtrac9
+	url = https://github.com/shadps4-emu/ext-LibAtrac9.git
