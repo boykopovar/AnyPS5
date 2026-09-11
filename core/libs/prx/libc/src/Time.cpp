@@ -3,6 +3,8 @@
 #include <ctime>
 #include <cstring>
 
+#include "prx/libc/include/General.hpp"
+
 extern "C" {
 
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {

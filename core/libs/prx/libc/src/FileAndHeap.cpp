@@ -3,29 +3,31 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
-#include "prx/libc/include/FileStream.hpp"
+#include <filesystem>
 
+#include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
 
-FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
-    if (!filename || !mode) throw std::runtime_error("fopen: null argument");
-    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
-    if (!handle) {
-        std::string msg = "fopen: open failed: \"";
-        msg += filename;
-        msg += "\": ";
-        msg += std::strerror(errno);
-        throw std::runtime_error(msg);
-    }
-    auto stream = std::make_unique<FileStream>(handle.get(), true);
-    handle.release();
+    FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
+        if (!filename || !mode) throw std::runtime_error("fopen: null argument");
+        std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
+        if (!handle) {
+            std::string msg = "fopen: open failed: \"";
+            msg += std::filesystem::absolute(filename).string();
+            msg += "\": ";
+            msg += std::strerror(errno);
+            throw std::runtime_error(msg);
+        }
+        auto stream = std::make_unique<FileStream>(handle.get(), true);
+        handle.release();
 
-    APS5_LOG_OUT("success: \"%s\"", filename);
-    return stream.release();
-}
+        APS5_LOG_OUT("success: \"%s\"", filename);
+        return stream.release();
+    }
 
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     GetNativeStream(stream);

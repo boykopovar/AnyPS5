@@ -6,6 +6,8 @@
 #include <mutex>
 #include <vector>
 #include <utility>
+
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/specifics/gcc/AtomicOps.hpp"
 #include "prx/libc/include/FileStream.hpp"
 

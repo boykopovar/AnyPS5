@@ -3,21 +3,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include "src/General.cpp"
-#include "src/specifics/gcc/StackGuard.cpp"
-#include "src/specifics/linux/DlIteratePhdr.cpp"
-#include "src/Strings.cpp"
-#include "src/Math.cpp"
-#include "src/Time.cpp"
-#include "src/FileAndHeap.cpp"
-#include "src/JumpBuffer.cpp"
-#include "src/Formatting.cpp"
-#include "src/RuntimeSupport.cpp"
-#include "src/LocaleSupport.cpp"
-#include "src/Process.cpp"
-#include "src/CxxAbiSupport.cpp"
-#include "src/exception/Exports.cpp"
-
 uint32_t Need_sceLibc = 1;
 
 extern "C" {

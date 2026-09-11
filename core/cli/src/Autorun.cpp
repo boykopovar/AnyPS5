@@ -20,9 +20,9 @@ void Autorun(const std::string& absPath, bool toWindows) {
     const int rawCode = std::system(cmd.c_str());
 
     if (toWindows) {
-        std::cout << "Exit code: " << rawCode << '\n';
+        std::cout << "\nExit code: " << rawCode << '\n';
     } else {
-        std::cout << "Raw exit code: " << rawCode << "; Unpacked: " << (rawCode >> 8) << '\n';
+        std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << (rawCode >> 8) << '\n';
     }
 
     std::cout << "\nPress Enter to exit...\n";

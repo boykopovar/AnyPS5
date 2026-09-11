@@ -1,5 +1,7 @@
 #include <csetjmp>
 
+#include "prx/libc/include/General.hpp"
+
 extern "C" {
 
 int APS5_VABI setjmp_nid_postfix(std::jmp_buf env) {

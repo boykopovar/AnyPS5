@@ -15,7 +15,9 @@ if(MINGW)
 endif()
 
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
-add_library(libc SHARED EXCLUDE_FROM_ALL ${LIBC_DIR}/Export.cpp)
+add_library(libc SHARED EXCLUDE_FROM_ALL)
+set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+add_subdirectory(${LIBC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/prx/libc)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 set(UNPATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs/unpatched)

@@ -5,6 +5,7 @@
 #include "GuardSupport.cpp"
 #include "Personality.cpp"
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/specifics/gcc/SymbolAlias.hpp"
 
 extern "C" [[noreturn]] GCC_HIDDEN_FN void APS5_VABI LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }

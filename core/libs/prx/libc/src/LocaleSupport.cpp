@@ -6,6 +6,8 @@
 #include <locale>
 #include <mutex>
 
+#include "prx/libc/include/General.hpp"
+
 namespace {
 
 std::mutex g_localeInitMutex;

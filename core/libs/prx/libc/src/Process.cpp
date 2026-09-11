@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
+
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {

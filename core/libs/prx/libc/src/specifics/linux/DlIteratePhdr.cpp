@@ -1,6 +1,8 @@
-#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include <cstddef>
 #include <stdexcept>
+
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 

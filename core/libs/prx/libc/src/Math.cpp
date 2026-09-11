@@ -1,5 +1,7 @@
 #include <cmath>
 
+#include "prx/libc/include/General.hpp"
+
 extern "C" {
 
 double cbrt_nid_postfix(double x) { return std::cbrt(x); }

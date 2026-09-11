@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/specifics/itanium/UnwindAbi.hpp"
 
 struct _Unwind_Context {

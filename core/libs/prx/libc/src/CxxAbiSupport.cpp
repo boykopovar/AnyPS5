@@ -3,6 +3,7 @@
 #ifndef _UNWIND_H
 #define _UNWIND_H
 #endif
+
 #include <cxxabi.h>
 #include <cstdint>
 #include <cstdlib>
@@ -15,6 +16,9 @@
 #include <locale>
 #include <regex>
 #include <functional>
+
+#include "prx/libc/include/General.hpp"
+
 extern "C" {
 
 void* APS5_VABI __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::size_t* len, int* status) {

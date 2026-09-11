@@ -1,9 +1,11 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_EXCEPTIONS_RUNTIME_HPP
 
-#include "prx/libc/include/exceptions/Unwind.hpp"
 #include <atomic>
 #include <typeinfo>
+
+#include "prx/libc/include/exceptions/Unwind.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/specifics/itanium/CxxAbi.hpp"
 
 namespace LibcException {

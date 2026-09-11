@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <cctype>
 #include <cwchar>
+#include <cstdio>
+
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
