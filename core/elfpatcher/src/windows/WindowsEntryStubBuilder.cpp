@@ -34,8 +34,10 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const bool absolutePath = path.starts_with("\\\\") || (path.size() >= 3 && path[1] == ':' && path[2] == '\\');
     if (!absolutePath && (path.front() == '\\' || path.find(':') != std::string::npos))
         throw Domain::RelinkerException("Ambiguous Windows run path: " + path);
+
     WindowsEntryStub result{{".startup", dataRva, SectionRead | SectionWrite | 0x40u, {}}, {".entry", 0, SectionRead | SectionExecute | 0x20u, {}}, {}};
     auto& data = result.Data.Data;
+
     const auto reserve = [&](const std::size_t size) {
         const auto rva = CheckedRva(dataRva + data.size());
         data.resize(data.size() + size);
@@ -46,12 +48,14 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         Io::AppendString(data, value);
         return rva;
     };
+
     const auto programPath = reserve(PathCapacity);
     const auto modulePath = reserve(PathCapacity);
     const auto handles = reserve(libraries.size() * 8);
     const auto functionTable = reserve(12);
     const auto unwindRva = CheckedRva(dataRva + data.size());
     data.insert(data.end(), {1, 10, 6, 0, 10, 0xb2, 6, 0xc0, 4, 0x70, 3, 0x60, 2, 0x50, 1, 0x30});
+
     std::vector<std::uint32_t> libraryPaths;
     std::vector<std::string> libraryNames;
     for (const auto& library : libraries) {
@@ -61,9 +65,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         libraryPaths.push_back(addString(name));
         libraryNames.push_back(std::move(name));
     }
+
     std::vector<std::uint32_t> symbolNames;
     for (const auto& import : imports)
         symbolNames.push_back(addString(import.Name));
+
     const auto lastError = reserve(4);
     const auto errorDigits = reserve(11);
     const auto errorMessage = reserve(ErrorMessageCapacity);
@@ -76,9 +82,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto searched = addString("Searched libraries:\n");
     const auto indent = addString("  ");
     const auto enteringElf = addString("Transferring control to ELF entry point\n");
+
     std::vector<std::uint32_t> resolvedPaths;
     for (std::size_t index = 0; index < libraries.size(); ++index)
         resolvedPaths.push_back(reserve(PathCapacity));
+
     const auto diagnosticsOffset = data.size();
     std::vector<std::string> errors = {"FAIL: cannot obtain executable path\n", "FAIL: executable or library path is too long\n", "FAIL: executable path has no directory\n"};
     for (const auto& import : imports)
@@ -88,9 +96,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         errorRvas.push_back(addString(error));
     if (data.size() <= diagnosticsOffset)
         throw Domain::RelinkerException("Empty startup diagnostics");
+
     result.Code.Rva = AlignRva(dataRva + data.size());
     WindowsStubEmitter code(result.Code.Rva);
+
     const auto call = [&](const std::string& name) { code.Rip({0xff, 0x15}, nativeImports.Functions.at(name)); };
+
     const auto raise = [&](const std::uint32_t status) {
         code.Emit({0xb9});
         code.U32(status);
@@ -98,17 +109,19 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         call("RaiseException");
         code.Emit({0x0f, 0x0b});
     };
+
     const auto requireDiagnosticSuccess = [&] {
         code.Emit({0x48, 0x85, 0xc0});
         const auto success = code.Branch({0x0f, 0x85});
         raise(0xc0000001u);
         code.PatchBranch(success, code.GetRva());
     };
-    const auto writeString = [&](const std::uint32_t stringRva) {
+
+    const auto writeString = [&](const std::uint32_t stringRva, const bool isError = false) {
         code.Rip({0x48, 0x8d, 0x0d}, stringRva);
         call("lstrlenA");
         code.Emit({0x89, 0x44, 0x24, 0x3c, 0xb9});
-        code.U32(0xfffffff4u);
+        code.U32(isError ? 0xfffffff4u : 0xfffffff5u);
         call("GetStdHandle");
         requireDiagnosticSuccess();
         code.Emit({0x48, 0x83, 0xf8, 0xff});
@@ -125,8 +138,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         raise(0xc0000001u);
         code.PatchBranch(complete, code.GetRva());
     };
+
     const auto writeLastError = [&] {
-        writeString(errorPrefix);
+        writeString(errorPrefix, true);
         code.Rip({0x8b, 0x05}, lastError);
         code.Rip({0x48, 0x8d, 0x3d}, errorDigits + 10);
         code.Emit({0xc6, 0x07, 0, 0x41, 0xb8, 10, 0, 0, 0});
@@ -138,8 +152,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x48, 0x29, 0xf9});
         code.Rip({0x48, 0x8d, 0x3d}, errorDigits);
         code.Emit({0xf3, 0xa4});
-        writeString(errorDigits);
-        writeString(messageSeparator);
+        writeString(errorDigits, true);
+        writeString(messageSeparator, true);
         code.Emit({0xb9, 0, 0x12, 0, 0, 0x31, 0xd2});
         code.Rip({0x44, 0x8b, 0x05}, lastError);
         code.Emit({0x41, 0xb9, 9, 4, 0, 0});
@@ -149,25 +163,29 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x48, 0xc7, 0x44, 0x24, 0x30, 0, 0, 0, 0});
         call("FormatMessageA");
         requireDiagnosticSuccess();
-        writeString(errorMessage);
+        writeString(errorMessage, true);
     };
+
     const auto captureLastError = [&] {
         call("GetLastError");
         code.Rip({0x89, 0x05}, lastError);
     };
+
     const auto fail = [&](const std::size_t error, const std::uint32_t status) {
-        writeString(errorRvas.at(error));
+        writeString(errorRvas.at(error), true);
         raise(status);
     };
+
     const auto requireNonzero = [&](const std::size_t error, const std::uint32_t status) {
         code.Emit({0x48, 0x85, 0xc0});
         const auto success = code.Branch({0x0f, 0x85});
         captureLastError();
-        writeString(errorRvas.at(error));
+        writeString(errorRvas.at(error), true);
         writeLastError();
         raise(status);
         code.PatchBranch(success, code.GetRva());
     };
+
     code.Emit({0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x48, 0x83, 0xec, 0x60});
     code.Emit({0x31, 0xc9});
     code.Rip({0x48, 0x8d, 0x15}, programPath);
@@ -193,6 +211,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Emit({0x49, 0xff, 0xcc, 0x41, 0x80, 0x3c, 0x24, 0x5c});
     code.Rip({0x0f, 0x85}, findSeparator);
     code.Emit({0x49, 0xff, 0xc4});
+
     for (std::size_t index = 0; index < libraries.size(); ++index) {
         if (absolutePath) {
             code.Rip({0x48, 0x8d, 0x0d}, libraryPaths[index]);
@@ -224,13 +243,14 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x48, 0x85, 0xc0});
         const auto loadSucceeded = code.Branch({0x0f, 0x85});
         captureLastError();
-        writeString(loadFailed);
+        writeString(loadFailed, true);
         writeLastError();
         raise(0xc0000135u);
         code.PatchBranch(loadSucceeded, code.GetRva());
         code.Rip({0x48, 0x89, 0x05}, CheckedRva(handles + index * 8));
         writeString(loaded);
     }
+
     std::vector<std::size_t> unresolvedBranches;
     std::vector<std::size_t> lazyUnresolvedImports;
     for (std::size_t index = 0; index < imports.size(); ++index) {
@@ -259,7 +279,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             continue;
         }
         captureLastError();
-        writeString(errorRvas.at(3 + index));
+        writeString(errorRvas.at(3 + index), true);
         unresolvedBranches.push_back(code.Branch({0xe9}));
         code.PatchBranch(resolved, code.GetRva());
         if (imports[index].Addend != 0) {
@@ -269,6 +289,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         }
         code.Rip({0x48, 0x89, 0x05}, imports[index].TargetRva);
     }
+
     writeString(enteringElf);
     code.Emit({0x48, 0xc7, 0x44, 0x24, 0x40, 1, 0, 0, 0});
     code.Rip({0x48, 0x8d, 0x05}, programPath);
@@ -278,27 +299,31 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Emit({0x89, 0xc1});
     call("ExitProcess");
     code.Emit({0x0f, 0x0b});
+
     if (!unresolvedBranches.empty()) {
         for (const auto branch : unresolvedBranches)
             code.PatchBranch(branch, code.GetRva());
-        writeString(searched);
+        writeString(searched, true);
         for (const auto resolvedPath : resolvedPaths) {
-            writeString(indent);
-            writeString(resolvedPath);
-            writeString(newline);
+            writeString(indent, true);
+            writeString(resolvedPath, true);
+            writeString(newline, true);
         }
         writeLastError();
         raise(0xc0000139u);
     }
+
     const auto functionEnd = code.GetRva();
     code.PatchBranch(exitCallback, functionEnd);
     code.Emit({0xc3});
+
     for (const auto index : lazyUnresolvedImports) {
         const auto stubRva = code.GetRva();
-        writeString(errorRvas.at(3 + index));
+        writeString(errorRvas.at(3 + index), true);
         raise(0xc0000139u);
         result.LazyStubs.push_back({imports[index].TargetRva, stubRva});
     }
+
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
     Io::WriteU32(data, functionTable - dataRva + 4, functionEnd);
     Io::WriteU32(data, functionTable - dataRva + 8, unwindRva);

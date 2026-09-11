@@ -21,6 +21,8 @@
 #include <memory>
 #include <string>
 #include <optional>
+#include <cstdlib>
+#include <limits>
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
 
 int main(const int argc, char* argv[]) {
@@ -31,6 +33,7 @@ int main(const int argc, char* argv[]) {
     bool writeRegistry = false;
     bool toWindows = false;
     bool lazyBinding = false;
+    bool autorun = false;
 
     std::string inputPath;
     std::string outputPath;
@@ -62,6 +65,8 @@ int main(const int argc, char* argv[]) {
             toWindows = true;
         } else if (arg == "--lazy-binding") {
             lazyBinding = true;
+        } else if (arg == "--autorun") {
+            autorun = true;
         } else if (arg.rfind("--", 0) == 0 || arg == "unused-filter") {
             std::cerr << "FAIL: unknown option: " << arg << "\n";
             return 1;
@@ -76,7 +81,7 @@ int main(const int argc, char* argv[]) {
     }
 
     if (inputPath.empty() || outputPath.empty()) {
-        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] <input.elf> <output.elf>\n"
+        std::cerr << "Usage: relinker [--windows] [--skip-syscall-check] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
              "Example: relinker input.elf output.elf\n";
         return 1;
     }
@@ -94,6 +99,21 @@ int main(const int argc, char* argv[]) {
             auto result = converter->Convert(std::move(sourceBytes), elfReader.ReadCodeSegments());
             fileWriter.Write(outputPath, std::move(result.Bytes));
             std::cout << "OK: " << result.ReplacedCount << " instructions replaced\n";
+            if (autorun) {
+                if (!toWindows) {
+                    std::filesystem::permissions(outputPath,
+                        std::filesystem::perms::owner_exec |
+                        std::filesystem::perms::group_exec |
+                        std::filesystem::perms::others_exec,
+                        std::filesystem::perm_options::add);
+                }
+                const std::string absPath = std::filesystem::absolute(outputPath).string();
+                const std::string cmd = "\"" + absPath + "\"";
+                std::system(cmd.c_str());
+                std::cout << "\nPress Enter to exit...\n";
+                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                std::cin.get();
+            }
             return 0;
         }
 
@@ -129,6 +149,7 @@ int main(const int argc, char* argv[]) {
         }
 
         auto byteWriter = std::make_shared<Io::ByteWriter>();
+        const std::string absPath = std::filesystem::absolute(outputPath).string();
 
         std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
         if (toWindows) {
@@ -145,9 +166,34 @@ int main(const int argc, char* argv[]) {
             );
         }
         auto patched = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, runPath, lazyBinding);
-        fileWriter.Write(outputPath, patched);
+        fileWriter.Write(absPath, patched);
         std::cout << "External prx references: " << result.RegistryEntries.size()
-            << "\nOutput file: " << outputPath << '\n';
+            << "\nOutput file: " << absPath << '\n';
+
+        if (autorun) {
+            if (!toWindows) {
+                std::filesystem::permissions(outputPath,
+                    std::filesystem::perms::owner_exec |
+                    std::filesystem::perms::group_exec |
+                    std::filesystem::perms::others_exec,
+                    std::filesystem::perm_options::add);
+            }
+
+            const std::string cmd = "\"" + absPath + "\"";
+            const int rawCode = std::system(cmd.c_str());
+
+            if (toWindows) {
+                std::cout << "Exit code: " << rawCode << '\n';
+            }
+            else {
+                std::cout << "Raw exit code: " << rawCode
+                    << "; Unpacked: " << (rawCode >> 8) << '\n';
+            }
+            std::cout << "\nPress Enter to exit...\n";
+
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cin.get();
+        }
 
     } catch (const Domain::RelinkerException& e) {
         std::cerr << "FAIL: " << e.what();
