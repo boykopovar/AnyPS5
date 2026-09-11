@@ -1,4 +1,4 @@
-#include "WindowsPeWriter.hpp"
+#include <elfpatcher/windows/WindowsPeWriter.hpp>
 #include <domain/Types.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>

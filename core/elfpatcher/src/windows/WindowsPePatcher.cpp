@@ -1,9 +1,9 @@
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
-#include "WindowsEntryStubBuilder.hpp"
-#include "WindowsLoadImage.hpp"
-#include "WindowsPeWriter.hpp"
-#include "WindowsRelocationBuilder.hpp"
-#include "WindowsTlsBuilder.hpp"
+#include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
+#include <elfpatcher/windows/WindowsLoadImage.hpp>
+#include <elfpatcher/windows/WindowsPeWriter.hpp>
+#include <elfpatcher/windows/WindowsRelocationBuilder.hpp>
+#include <elfpatcher/windows/WindowsTlsBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <utility>
 

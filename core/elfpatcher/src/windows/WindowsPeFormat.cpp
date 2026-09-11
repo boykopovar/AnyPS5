@@ -1,4 +1,4 @@
-#include "WindowsPeFormat.hpp"
+#include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <domain/Types.hpp>
 #include <algorithm>
 #include <limits>

@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_WINDOWS_LOADIMAGE_HPP
 #define ELFPATCHER_WINDOWS_LOADIMAGE_HPP
 
-#include "WindowsPeFormat.hpp"
+#include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <domain/Types.hpp>
 
 namespace Elfpatcher::Windows {

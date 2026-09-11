@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_WINDOWS_WINDOWSTLSBUILDER_HPP
 #define ELFPATCHER_WINDOWS_WINDOWSTLSBUILDER_HPP
 
-#include "WindowsLoadImage.hpp"
+#include <elfpatcher/windows/WindowsLoadImage.hpp>
 
 namespace Elfpatcher::Windows {
 

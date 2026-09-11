@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_WINDOWS_IMPORTBUILDER_HPP
 #define ELFPATCHER_WINDOWS_IMPORTBUILDER_HPP
 
-#include "WindowsPeFormat.hpp"
+#include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <domain/Types.hpp>
 #include <map>
 

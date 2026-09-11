@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_WINDOWS_ENTRYSTUBBUILDER_HPP
 #define ELFPATCHER_WINDOWS_ENTRYSTUBBUILDER_HPP
 
-#include "WindowsImportBuilder.hpp"
+#include <elfpatcher/windows/WindowsImportBuilder.hpp>
 
 namespace Elfpatcher::Windows {
 

@@ -1,4 +1,4 @@
-#include "WindowsLoadImage.hpp"
+#include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>

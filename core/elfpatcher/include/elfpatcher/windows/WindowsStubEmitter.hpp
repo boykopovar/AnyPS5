@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_WINDOWS_STUBEMITTER_HPP
 #define ELFPATCHER_WINDOWS_STUBEMITTER_HPP
 
-#include "WindowsPeFormat.hpp"
+#include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <initializer_list>
 
 namespace Elfpatcher::Windows {

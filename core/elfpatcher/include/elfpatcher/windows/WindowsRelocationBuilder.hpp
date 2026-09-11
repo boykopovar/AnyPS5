@@ -1,7 +1,7 @@
 #ifndef ELFPATCHER_WINDOWS_RELOCATIONBUILDER_HPP
 #define ELFPATCHER_WINDOWS_RELOCATIONBUILDER_HPP
 
-#include "WindowsLoadImage.hpp"
+#include <elfpatcher/windows/WindowsLoadImage.hpp>
 
 namespace Elfpatcher::Windows {
 

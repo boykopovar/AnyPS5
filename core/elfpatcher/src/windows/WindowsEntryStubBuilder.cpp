@@ -1,5 +1,5 @@
-#include "WindowsEntryStubBuilder.hpp"
-#include "WindowsStubEmitter.hpp"
+#include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
+#include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 

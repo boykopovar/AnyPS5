@@ -1,4 +1,4 @@
-#include "WindowsStubEmitter.hpp"
+#include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <domain/Types.hpp>
 #include <io/BufferUtils.hpp>
 #include <limits>

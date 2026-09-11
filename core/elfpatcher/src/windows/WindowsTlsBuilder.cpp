@@ -1,5 +1,5 @@
-#include "WindowsTlsBuilder.hpp"
-#include "WindowsStubEmitter.hpp"
+#include <elfpatcher/windows/WindowsTlsBuilder.hpp>
+#include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
