@@ -1,5 +1,6 @@
 #include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
+#include <elfpatcher/windows/WindowsDependencyStubBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 
@@ -52,7 +53,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto programPath = reserve(PathCapacity);
     const auto modulePath = reserve(PathCapacity);
     const auto handles = reserve(libraries.size() * 8);
-    const auto functionTable = reserve(12);
+    const auto functionTable = reserve(12 * 32);
     const auto unwindRva = CheckedRva(dataRva + data.size());
     data.insert(data.end(), {1, 10, 6, 0, 10, 0xb2, 6, 0xc0, 4, 0x70, 3, 0x60, 2, 0x50, 1, 0x30});
 
@@ -82,7 +83,6 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto searched = addString("Searched libraries:\n");
     const auto indent = addString("  ");
     const auto enteringElf = addString("Transferring control to ELF entry point\n");
-
     std::vector<std::uint32_t> resolvedPaths;
     for (std::size_t index = 0; index < libraries.size(); ++index)
         resolvedPaths.push_back(reserve(PathCapacity));
@@ -97,6 +97,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     if (data.size() <= diagnosticsOffset)
         throw Domain::RelinkerException("Empty startup diagnostics");
 
+    const WindowsDependencyStubBuilder dependencyBuilder(result.Data);
+    std::vector<std::size_t> dependencyCalls;
     result.Code.Rva = AlignRva(dataRva + data.size());
     WindowsStubEmitter code(result.Code.Rva);
 
@@ -245,6 +247,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         captureLastError();
         writeString(loadFailed, true);
         writeLastError();
+        code.Rip({0x48, 0x8d, 0x0d}, resolvedPaths[index]);
+        code.Rip({0x48, 0x8d, 0x15}, programPath);
+        dependencyCalls.push_back(code.Branch({0xe8}));
         raise(0xc0000135u);
         code.PatchBranch(loadSucceeded, code.GetRva());
         code.Rip({0x48, 0x89, 0x05}, CheckedRva(handles + index * 8));
@@ -327,7 +332,16 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
     Io::WriteU32(data, functionTable - dataRva + 4, functionEnd);
     Io::WriteU32(data, functionTable - dataRva + 8, unwindRva);
-    result.ExceptionDirectory = {functionTable, 12};
+    const auto dependency = dependencyBuilder.Build(code, nativeImports);
+    for (const auto offset : dependencyCalls)
+        code.PatchBranch(offset, dependency.EntryRva);
+    if (dependency.Functions.size() >= 32)
+        throw Domain::RelinkerException("Too many dependency diagnostic routines");
+    for (std::size_t index = 0; index < dependency.Functions.size(); ++index) {
+        for (std::size_t field = 0; field < 3; ++field)
+            Io::WriteU32(data, functionTable - dataRva + (index + 1) * 12 + field * 4, dependency.Functions[index][field]);
+    }
+    result.ExceptionDirectory = {functionTable, CheckedRva((dependency.Functions.size() + 1) * 12)};
     result.Code.Data = code.TakeBytes();
     return result;
 }

@@ -5,7 +5,7 @@
 namespace Elfpatcher::Windows {
 
 WindowsImports WindowsImportBuilder::Build(const std::uint32_t sectionRva) const {
-    const std::vector<std::string> names = {"ExitProcess", "FormatMessageA", "GetLastError", "GetModuleFileNameA", "GetProcAddress", "GetStdHandle", "LoadLibraryExA", "RaiseException", "WriteFile", "lstrlenA"};
+    const std::vector<std::string> names = {"ExitProcess", "FormatMessageA", "GetFileAttributesA", "GetLastError", "GetModuleFileNameA", "GetModuleHandleA", "GetProcAddress", "GetStdHandle", "GetSystemDirectoryA", "LoadLibraryExA", "RaiseException", "VirtualAlloc", "WriteFile", "lstrcatA", "lstrcmpA", "lstrcmpiA", "lstrcpyA", "lstrlenA"};
     WindowsImports result{{".idata", sectionRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(40)}, {sectionRva, 40}, {}, {}};
     auto& bytes = result.Section.Data;
     const auto lookupOffset = bytes.size();
