@@ -5,7 +5,7 @@
 #include <cstddef>
 
 #include "SceTypes.hpp"
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 
 extern "C" {
 
@@ -20,3 +20,4 @@ int64_t APS5_VABI sceKernelWrite(int d, const void* buf, size_t nbytes);
 }
 
 #endif
+

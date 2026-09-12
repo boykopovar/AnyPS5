@@ -12,7 +12,7 @@ Execution reaches `_start`, stack unwinding and exception handling tables are bu
 Shader initialization via `sceAgcCreate*` passes.
 Audio output and video output initialization pass
 
-Now: `sceKernelCreateSema not implemented`.
+Now: `fopen: open failed: "C:\app0\~INDEX": No such file or directory`.
 
 On Windows, after printing an unhandled exception the process exits with STATUS_STACK_BUFFER_OVERRUN due to the difficulty of manually [implementing proper exception handling](core/libs/prx/libc/src/exception).
 

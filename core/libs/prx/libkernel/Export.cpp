@@ -5,8 +5,8 @@
 #include "prx/libc/include/General.hpp"
 #include "DirectMemory/DirectMemory.hpp"
 #include "Equeue/Equeue.hpp"
-#include "File/include/File.hpp"
-#include "Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 
 extern "C" {
 
