@@ -8,7 +8,7 @@ extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyArray(NpUniversalDataSystemEventPropertyArray** new_array) {
     if (new_array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     *new_array = new NpUniversalDataSystemEventPropertyArray;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -23,7 +23,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetString(
     NpUniversalDataSystemEventPropertyArray* array, const char* value)
 {
     if (array == nullptr || value == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -32,7 +32,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt32(
     NpUniversalDataSystemEventPropertyArray* array, int32_t value)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -41,7 +41,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt32(
     NpUniversalDataSystemEventPropertyArray* array, uint32_t value)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -50,7 +50,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetInt64(
     NpUniversalDataSystemEventPropertyArray* array, int64_t value)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -59,7 +59,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetUInt64(
     NpUniversalDataSystemEventPropertyArray* array, uint64_t value)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -68,7 +68,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat32(
     NpUniversalDataSystemEventPropertyArray* array, float value)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -77,7 +77,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetFloat64(
 NpUniversalDataSystemEventPropertyArray* array, double value)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -86,7 +86,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBool(
     NpUniversalDataSystemEventPropertyArray* array, bool value)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -95,7 +95,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetBinary(
     NpUniversalDataSystemEventPropertyArray* array, const void* value, size_t value_size)
 {
     if (array == nullptr || value == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -106,7 +106,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetObject(
     NpUniversalDataSystemEventPropertyObject** value_ptr)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     if (value_ptr != nullptr) {
         *value_ptr = (value != nullptr
@@ -122,7 +122,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyArraySetArray(
     NpUniversalDataSystemEventPropertyArray** value_ptr)
 {
     if (array == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     if (value_ptr != nullptr) {
         *value_ptr = (value != nullptr

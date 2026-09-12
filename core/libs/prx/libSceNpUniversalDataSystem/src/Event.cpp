@@ -1,6 +1,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
+
 #include "NpUniversalDataSystem.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -14,7 +17,7 @@ int APS5_VABI sceNpUniversalDataSystemCreateEvent(
     NpUniversalDataSystemEventPropertyObject** prop_ptr)
 {
     if (event_name == nullptr || new_event == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     *new_event = new NpUniversalDataSystemEvent;
     if (prop_ptr != nullptr) {
@@ -36,7 +39,7 @@ int APS5_VABI sceNpUniversalDataSystemPostEvent(int context, int handle, const v
 
 int APS5_VABI sceNpUniversalDataSystemEventEstimateSize(const NpUniversalDataSystemEvent* event, size_t* size) {
     if (event == nullptr || size == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     *size = NP_UNIVERSAL_DATA_SYSTEM_EMPTY_EVENT_SIZE;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -49,7 +52,7 @@ int APS5_VABI sceNpUniversalDataSystemEventToString(
     size_t* string_size)
 {
     if (event == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     const size_t json_len = std::strlen(NP_UNIVERSAL_DATA_SYSTEM_EMPTY_JSON) + 1;
     if (string_size != nullptr) {

@@ -6,7 +6,7 @@ extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemCreateHandle(int* handle) {
     if (handle == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     *handle = NP_UNIVERSAL_DATA_SYSTEM_HANDLE_DEFAULT;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;

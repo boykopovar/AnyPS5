@@ -9,7 +9,7 @@ extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInitParam* param) {
     if (param == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -20,7 +20,7 @@ int APS5_VABI sceNpUniversalDataSystemTerminate(void) {
 
 int APS5_VABI sceNpUniversalDataSystemGetMemoryStat(NpUniversalDataSystemMemoryStat* stat) {
     if (stat == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     *stat = {};
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -28,7 +28,7 @@ int APS5_VABI sceNpUniversalDataSystemGetMemoryStat(NpUniversalDataSystemMemoryS
 
 int APS5_VABI sceNpUniversalDataSystemGetStorageStat(int context, NpUniversalDataSystemStorageStat* stat) {
     if (stat == nullptr) {
-        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        APS5_INVALID_ARG_EX;
     }
     *stat = {};
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
