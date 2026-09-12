@@ -5,6 +5,8 @@
 #include "prx/libc/include/General.hpp"
 #include "DirectMemory/DirectMemory.hpp"
 #include "Equeue/Equeue.hpp"
+#include "File/include/File.hpp"
+#include "Semaphore/include/Semaphore.hpp"
 
 extern "C" {
 
@@ -168,7 +170,6 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-
 
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
  (void)path;
@@ -593,8 +594,6 @@ int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
  return 0;
 }
 
-
-
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret) {
  (void)id;
  (void)ret;
@@ -639,9 +638,6 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-
-
-
 
 int APS5_VABI sceKernelAvailableFlexibleMemorySize(size_t* size) {
  (void)size;
@@ -716,12 +712,6 @@ int APS5_VABI sceKernelClockGettime(KernelClockid clock_id, KernelTimespec* tp) 
  return 0;
 }
 
-int APS5_VABI sceKernelClose(int d) {
- (void)d;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
  (void)size;
  NotImplemented_nid_no_patch(__func__);
@@ -747,25 +737,12 @@ int APS5_VABI sceKernelConvertUtcToLocaltime(int64_t utc_time, int64_t* local_ti
  return 0;
 }
 
-
-
 int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, uint32_t attr, uint64_t init_pattern, const void* param) {
  (void)ef;
  (void)name;
  (void)attr;
  (void)init_pattern;
  (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt) {
- (void)sem;
- (void)name;
- (void)attr;
- (void)init;
- (void)max;
- (void)opt;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -781,8 +758,6 @@ void APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2) {
  (void)c2;
  NotImplemented_nid_no_patch(__func__);
 }
-
-
 
 int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef) {
  (void)ef;
@@ -829,7 +804,6 @@ int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
  (void)fd;
@@ -912,7 +886,6 @@ int APS5_VABI sceKernelGetPageTableStats(int* cpu_total, int* cpu_available, int
  return 0;
 }
 
-
 void* APS5_VABI sceKernelGetProcParam(void) {
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
@@ -984,19 +957,6 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
  return {};
 }
 
-int64_t APS5_VABI sceKernelLseek(int d, int64_t offset, int whence) {
- (void)d;
- (void)offset;
- (void)whence;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-
-
-
-
-
 int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries, int num_entries, int* num_entries_out, int flags) {
  (void)entries;
  (void)num_entries;
@@ -1058,7 +1018,6 @@ int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
  return 0;
 }
 
-
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
  (void)addr;
  (void)len;
@@ -1068,28 +1027,11 @@ int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int 
  return 0;
 }
 
-
-
-int APS5_VABI sceKernelOpen(const char* path, int flags, uint16_t mode) {
- (void)path;
- (void)flags;
- (void)mode;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat) {
  (void)ef;
  (void)bit_pattern;
  (void)wait_mode;
  (void)result_pat;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
- (void)sem;
- (void)need;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -1128,19 +1070,10 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  return 0;
 }
 
-int64_t APS5_VABI sceKernelRead(int d, void* buf, size_t nbytes) {
- (void)d;
- (void)buf;
- (void)nbytes;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 uint64_t APS5_VABI sceKernelReadTsc(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-
 
 int APS5_VABI sceKernelRemoveExceptionHandler(int signum) {
  (void)signum;
@@ -1154,7 +1087,6 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-
 
 int APS5_VABI sceKernelRmdir(const char* path) {
  (void)path;
@@ -1222,22 +1154,8 @@ int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const
  return 0;
 }
 
-int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
- (void)sem;
- (void)count;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
  (void)seconds;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
- (void)path;
- (void)sb;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -1257,23 +1175,11 @@ void APS5_VABI sceKernelSync(void) {
  NotImplemented_nid_no_patch(__func__);
 }
 
-
-
-int APS5_VABI sceKernelUnlink(const char* path) {
- (void)path;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-
 int APS5_VABI sceKernelUuidCreate(uint32_t* uuid) {
  (void)uuid;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-
-
-
 
 int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat, KernelUseconds* timeout) {
  (void)ef;
@@ -1281,22 +1187,6 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
  (void)wait_mode;
  (void)result_pat;
  (void)timeout;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) {
- (void)sem;
- (void)need;
- (void)time;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int64_t APS5_VABI sceKernelWrite(int d, const void* buf, size_t nbytes) {
- (void)d;
- (void)buf;
- (void)nbytes;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
