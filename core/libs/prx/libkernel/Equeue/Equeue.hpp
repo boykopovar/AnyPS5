@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CORE_LIBS_PRX_LIBKERNEL_EQUEUE_EQUEUE_HPP
+#define CORE_LIBS_PRX_LIBKERNEL_EQUEUE_EQUEUE_HPP
 
 #include <condition_variable>
 #include <cstdint>
@@ -87,3 +88,5 @@ KernelEqueueRef EqueuePin(KernelEqueue eq);
 int APS5_VABI EqueueAddEvent(KernelEqueue eq, const KernelEqueueEvent& event);
 int APS5_VABI EqueueTriggerEvent(KernelEqueue eq, uintptr_t ident, int16_t filter, void* triggerData);
 int APS5_VABI EqueueDeleteEvent(KernelEqueue eq, uintptr_t ident, int16_t filter);
+
+#endif

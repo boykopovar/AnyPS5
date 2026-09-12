@@ -19,7 +19,11 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
 int APS5_VABI sceVideoOutGetVblankStatus(int handle, VideoOutVblankStatus* status);
 int APS5_VABI sceVideoOutIsFlipPending(int handle);
 int APS5_VABI sceVideoOutWaitVblank(int handle);
-
-#endif
+int APS5_VABI sceVideoOutLatencyControlWaitBeforeInput(int handle);
+int APS5_VABI sceVideoOutLatencyMeasureSetStartPoint(int handle, uint32_t point);
+int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, float gamma);
+int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* settings);
 
 }
+
+#endif

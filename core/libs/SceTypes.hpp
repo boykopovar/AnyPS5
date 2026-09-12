@@ -1942,6 +1942,11 @@ struct VideoOutOutputStatus {
 
 struct VideoOutOutputOptions { std::uint32_t internalData[16] = {}; };
 
+struct VideoOutColorSettings {
+    float gamma = 1.0f;
+    std::uint32_t reserved[3] = {};
+};
+
 
 using atexit_func_t = void (*)();
 
