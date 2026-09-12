@@ -9,5 +9,6 @@ add_library(libSceNpUniversalDataSystem SHARED EXCLUDE_FROM_ALL
 
 target_include_directories(libSceNpUniversalDataSystem PRIVATE
         ${LIBS_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_link_libraries(libSceNpUniversalDataSystem PRIVATE libc)

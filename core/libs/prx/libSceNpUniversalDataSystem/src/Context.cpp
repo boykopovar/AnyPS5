@@ -1,30 +1,24 @@
 #include <cstdint>
+#include "NpUniversalDataSystem.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemCreateContext(int* context, int user_id, uint32_t service_label, uint64_t options) {
-    (void)context;
-    (void)user_id;
-    (void)service_label;
-    (void)options;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (context == nullptr) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+    }
+    *context = NP_UNIVERSAL_DATA_SYSTEM_CONTEXT_DEFAULT;
+    return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
 int APS5_VABI sceNpUniversalDataSystemDestroyContext(int context) {
-    (void)context;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
 int APS5_VABI sceNpUniversalDataSystemRegisterContext(int context, int handle, uint64_t options) {
-    (void)context;
-    (void)handle;
-    (void)options;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
 }
