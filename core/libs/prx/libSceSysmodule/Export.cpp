@@ -105,7 +105,9 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
         throw std::runtime_error("sceSysmoduleIsLoaded: invalid id 0");
     }
     if (!findModuleName(id)) {
-        throw std::runtime_error(std::string("sceSysmoduleIsLoaded: unknown id ") + std::to_string(id));
+        APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
+        // throw std::runtime_error(std::string("sceSysmoduleIsLoaded: unknown id ") + std::to_string(id));
+        return 0;
     }
     std::lock_guard<std::mutex> lock(gMutex);
     auto it = gLoadCount.find(id);
@@ -120,7 +122,9 @@ int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
         throw std::runtime_error("sceSysmoduleLoadModule: invalid id 0");
     }
     if (!findModuleName(id)) {
-        throw std::runtime_error(std::string("sceSysmoduleLoadModule: unknown id ") + std::to_string(id));
+        APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
+        // throw std::runtime_error(std::string("sceSysmoduleLoadModule: unknown id ") + std::to_string(id));
+        return 0;
     }
     std::lock_guard<std::mutex> lock(gMutex);
     gLoadCount[id]++;
