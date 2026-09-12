@@ -1,12 +1,12 @@
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 
-static int ValidateOutputConfig(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, uint64_t reserved) {
+static int validateOutputConfig(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, uint64_t reserved) {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
@@ -28,18 +28,18 @@ static int ValidateOutputConfig(int handle, uint64_t mode, const VideoOutOutputO
 
 extern "C" {
 
-int APS5_VABI sceVideoOutOpen(int user_id, int bus_type, int index, const void* param) {
+int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param) {
     (void)param;
-    if (user_id != 255 && user_id != 0) {
+    if (userId != 255 && userId != 0) {
         return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
-    if (bus_type != VIDEO_OUT_BUS_TYPE_MAIN && bus_type != VIDEO_OUT_BUS_TYPE_OVERLAY && bus_type != VIDEO_OUT_BUS_TYPE_SUB) {
+    if (busType != VIDEO_OUT_BUS_TYPE_MAIN && busType != VIDEO_OUT_BUS_TYPE_OVERLAY && busType != VIDEO_OUT_BUS_TYPE_SUB) {
         return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     if (index != 0) {
         return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
-    const int handle = VideoOutDriver::Get().Open(bus_type);
+    const int handle = VideoOutDriver::Get().Open(busType);
     if (handle < 0) {
         return VIDEO_OUT_ERROR_RESOURCE_BUSY;
     }
@@ -100,7 +100,7 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     std::unique_lock lock(cfg->mutex);
     status->resolution = (cfg->width >= 3840 || cfg->height >= 2160) ? 2u : 1u;
     status->dynamicRange = 1;
-    status->refreshRate = VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    status->refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
     status->flags = 0;
     status->reserved[0] = 0;
     status->reserved[1] = 0;
@@ -138,16 +138,16 @@ int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options)
     return 0;
 }
 
-int APS5_VABI sceVideoOutIsOutputSupported(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reserved_ptr, uint64_t reserved) {
-    const int result = ValidateOutputConfig(handle, mode, options, reserved_ptr, reserved);
+int APS5_VABI sceVideoOutIsOutputSupported(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, uint64_t reserved) {
+    const int result = validateOutputConfig(handle, mode, options, reservedPtr, reserved);
     if (result != 0) {
         return result;
     }
     return (mode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? 0 : 1;
 }
 
-int APS5_VABI sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reserved_ptr, uint64_t reserved) {
-    const int supported = sceVideoOutIsOutputSupported(handle, mode, options, reserved_ptr, reserved);
+int APS5_VABI sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, uint64_t reserved) {
+    const int supported = sceVideoOutIsOutputSupported(handle, mode, options, reservedPtr, reserved);
     if (supported < 0) {
         return supported;
     }

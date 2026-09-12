@@ -5,5 +5,8 @@ add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoOutDriver.cpp
 )
 
-target_include_directories(libSceVideoOut PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceVideoOut PRIVATE libc)
+target_include_directories(libSceVideoOut PRIVATE
+        ${LIBS_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+)
+target_link_libraries(libSceVideoOut PRIVATE libc libkernel SDL2-static)

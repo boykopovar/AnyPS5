@@ -1,12 +1,22 @@
+#include <algorithm>
+#include <chrono>
 #include <mutex>
+#include <stdexcept>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
-#include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 
-static int RegisterVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind, void* udata) {
+static std::vector<EventRegistration>* getEventList(VideoOutConfig& cfg, int16_t eventKind) {
+    if (eventKind == VIDEO_OUT_EVENT_FLIP) return &cfg.flipEvents;
+    if (eventKind == VIDEO_OUT_EVENT_VBLANK) return &cfg.vblankEvents;
+    if (eventKind == VIDEO_OUT_EVENT_PRE_VBLANK_START) return &cfg.preVblankEvents;
+    if (eventKind == VIDEO_OUT_EVENT_SET_MODE) return &cfg.outputModeEvents;
+    throw std::runtime_error("getEventList: unknown event kind");
+}
+
+static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind, void* udata) {
     auto* cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
@@ -57,15 +67,29 @@ static int RegisterVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
         e->event.data = 0;
     };
     const int result = EqueueAddEvent_nid_postfix(eq, event);
-    return result == EQUEUE_ERROR_EBADF ? VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE : result;
+    if (result == EQUEUE_ERROR_EBADF) {
+        return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
+    }
+    std::unique_lock lock(cfg->mutex);
+    EventRegistration reg;
+    reg.eq = eq;
+    reg.generation = cfg->generation;
+    getEventList(*cfg, eventKind)->push_back(reg);
+    return result;
 }
 
-static int DeleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
+static int deleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
     if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
         return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
+    }
+    auto* cfg = VideoOutDriver::Get().GetConfig(handle);
+    if (cfg != nullptr) {
+        std::unique_lock lock(cfg->mutex);
+        auto* events = getEventList(*cfg, eventKind);
+        events->erase(std::remove_if(events->begin(), events->end(), [eq](const EventRegistration& r) { return r.eq == eq; }), events->end());
     }
     const int result = EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(eventKind), EVFILT_VIDEO_OUT);
     if (result == EQUEUE_ERROR_EBADF) {
@@ -77,31 +101,31 @@ static int DeleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
 extern "C" {
 
 int APS5_VABI sceVideoOutAddFlipEvent(KernelEqueue eq, int handle, void* udata) {
-    return RegisterVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_FLIP, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_FLIP, udata);
 }
 
 int APS5_VABI sceVideoOutAddVblankEvent(KernelEqueue eq, int handle, void* udata) {
-    return RegisterVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK, udata);
 }
 
 int APS5_VABI sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, void* udata) {
-    return RegisterVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, udata);
 }
 
 int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata) {
-    return RegisterVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
 }
 
 int APS5_VABI sceVideoOutDeleteFlipEvent(KernelEqueue eq, int handle) {
-    return DeleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_FLIP);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_FLIP);
 }
 
 int APS5_VABI sceVideoOutDeleteVblankEvent(KernelEqueue eq, int handle) {
-    return DeleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK);
 }
 
 int APS5_VABI sceVideoOutDeletePreVblankStartEvent(KernelEqueue eq, int handle) {
-    return DeleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START);
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START);
 }
 
 int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {

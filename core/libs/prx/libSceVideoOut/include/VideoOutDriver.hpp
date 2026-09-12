@@ -4,8 +4,12 @@
 #include <array>
 #include <condition_variable>
 #include <cstdint>
+#include <list>
 #include <mutex>
+#include <thread>
+#include <vector>
 
+#include "SDL.h"
 #include "SceTypes.hpp"
 
 static constexpr int VIDEO_OUT_ERROR_INVALID_VALUE = -2144796671;
@@ -29,6 +33,7 @@ static constexpr int VIDEO_OUT_BUS_TYPE_SUB = 2;
 static constexpr int VIDEO_OUT_BUFFER_NUM_MAX = 16;
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX = 4;
 static constexpr int VIDEO_OUT_NUM_MAX = 4;
+static constexpr std::size_t VIDEO_OUT_FLIP_QUEUE_CAPACITY = 16;
 
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED = 0;
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED = 1;
@@ -64,9 +69,19 @@ struct BufferAttributeGroup {
     bool occupied = false;
 };
 
+struct EventRegistration {
+    KernelEqueue eq = 0;
+    uint64_t generation = 0;
+};
+
 struct VideoOutConfig {
     std::mutex mutex;
     std::condition_variable_any vblankCond;
+
+    std::vector<EventRegistration> flipEvents;
+    std::vector<EventRegistration> vblankEvents;
+    std::vector<EventRegistration> preVblankEvents;
+    std::vector<EventRegistration> outputModeEvents;
 
     uint32_t width = 1920;
     uint32_t height = 1080;
@@ -85,16 +100,49 @@ struct VideoOutConfig {
     std::array<BufferAttributeGroup, VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX> groups{};
 };
 
-struct VideoOutDriver {
-    std::mutex mutex;
-    VideoOutConfig contexts[VIDEO_OUT_NUM_MAX];
+struct FlipRequest {
+    VideoOutConfig* cfg = nullptr;
+    uint64_t generation = 0;
+    int index = 0;
+    int flipMode = 0;
+    int64_t flipArg = 0;
+};
 
+class VideoOutDriver {
+public:
     static VideoOutDriver& Get();
+
+    VideoOutDriver();
+    ~VideoOutDriver();
+
+    VideoOutDriver(const VideoOutDriver&) = delete;
+    VideoOutDriver& operator=(const VideoOutDriver&) = delete;
 
     int Open(int busType);
     bool Close(int handle);
     VideoOutConfig* GetConfig(int handle);
     bool IsOpen(int handle);
+
+    void SubmitFlip(VideoOutConfig* cfg, int index, int flipMode, int64_t flipArg);
+
+private:
+    void presentLoop(std::stop_token token);
+    void vblankBegin();
+    void vblankEnd();
+    void processFlip(const FlipRequest& req);
+    void triggerEvents(VideoOutConfig& cfg, int eventKind, void* triggerData);
+
+    std::mutex mutex;
+    VideoOutConfig contexts[VIDEO_OUT_NUM_MAX];
+
+    std::mutex flipMutex;
+    std::condition_variable flipCond;
+    std::list<FlipRequest> flipQueue;
+
+    SDL_Window* window = nullptr;
+    SDL_Surface* windowSurface = nullptr;
+
+    std::jthread presentThread;
 };
 
 #endif
