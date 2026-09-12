@@ -169,12 +169,6 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
  return 0;
 }
 
-int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
- (void)rqtp;
- (void)rmtp;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
  (void)path;
@@ -918,20 +912,6 @@ int APS5_VABI sceKernelGetPageTableStats(int* cpu_total, int* cpu_available, int
  return 0;
 }
 
-uint64_t APS5_VABI sceKernelGetProcessTime(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-uint64_t APS5_VABI sceKernelGetProcessTimeCounter(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
 void* APS5_VABI sceKernelGetProcParam(void) {
  NotImplemented_nid_no_patch(__func__);
@@ -1089,12 +1069,6 @@ int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int 
 }
 
 
-int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
- (void)rqtp;
- (void)rmtp;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, uint16_t mode) {
  (void)path;
@@ -1291,11 +1265,6 @@ int APS5_VABI sceKernelUnlink(const char* path) {
  return 0;
 }
 
-int APS5_VABI sceKernelUsleep(KernelUseconds microseconds) {
- (void)microseconds;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
 int APS5_VABI sceKernelUuidCreate(uint32_t* uuid) {
  (void)uuid;
