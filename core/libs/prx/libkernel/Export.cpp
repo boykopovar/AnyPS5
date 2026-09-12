@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "DirectMemory/DirectMemory.hpp"
+#include "Equeue/Equeue.hpp"
 
 extern "C" {
 
@@ -598,36 +599,7 @@ int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
  return 0;
 }
 
-int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
- (void)eq;
- (void)id;
- (void)udata;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts, void* udata) {
- (void)eq;
- (void)id;
- (void)ts;
- (void)udata;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelAddUserEvent(KernelEqueue eq, int id) {
- (void)eq;
- (void)id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id) {
- (void)eq;
- (void)id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret) {
  (void)id;
@@ -781,12 +753,7 @@ int APS5_VABI sceKernelConvertUtcToLocaltime(int64_t utc_time, int64_t* local_ti
  return 0;
 }
 
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
- (void)eq;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
+
 
 int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, uint32_t attr, uint64_t init_pattern, const void* param) {
  (void)ef;
@@ -821,28 +788,10 @@ void APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2) {
  NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id) {
- (void)eq;
- (void)id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq) {
- (void)eq;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
 int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef) {
  (void)ef;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelDeleteHRTimerEvent(KernelEqueue eq, int id) {
- (void)eq;
- (void)id;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -852,14 +801,6 @@ int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
-
-int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id) {
- (void)eq;
- (void)id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 
 int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** addr) {
  (void)handle;
@@ -1342,13 +1283,7 @@ void APS5_VABI sceKernelSync(void) {
  NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata) {
- (void)eq;
- (void)id;
- (void)udata;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
+
 
 int APS5_VABI sceKernelUnlink(const char* path) {
  (void)path;
@@ -1369,15 +1304,7 @@ int APS5_VABI sceKernelUuidCreate(uint32_t* uuid) {
 }
 
 
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
- (void)eq;
- (void)ev;
- (void)num;
- (void)out;
- (void)timo;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
+
 
 int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat, KernelUseconds* timeout) {
  (void)ef;
