@@ -234,7 +234,7 @@ int KernelEqueuePrivate::DeleteEvent(uintptr_t ident, int16_t filter) {
     return EQUEUE_OK;
 }
 
-KernelEqueueRef EqueuePin(KernelEqueue eq) {
+KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq) {
     if (eq == 0) {
         return {};
     }
@@ -243,24 +243,24 @@ KernelEqueueRef EqueuePin(KernelEqueue eq) {
     return it != g_equeues.end() ? it->second : KernelEqueueRef{};
 }
 
-int APS5_VABI EqueueAddEvent(KernelEqueue eq, const KernelEqueueEvent& event) {
-    auto owner = EqueuePin(eq);
+int APS5_VABI EqueueAddEvent_nid_postfix(KernelEqueue eq, const KernelEqueueEvent& event) {
+    auto owner = EqueuePin_nid_postfix(eq);
     if (!owner) {
         return EQUEUE_ERROR_EBADF;
     }
     return owner->AddEvent(event);
 }
 
-int APS5_VABI EqueueTriggerEvent(KernelEqueue eq, uintptr_t ident, int16_t filter, void* triggerData) {
-    auto owner = EqueuePin(eq);
+int APS5_VABI EqueueTriggerEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, int16_t filter, void* triggerData) {
+    auto owner = EqueuePin_nid_postfix(eq);
     if (!owner) {
         return EQUEUE_ERROR_EBADF;
     }
     return owner->TriggerEvent(ident, filter, triggerData);
 }
 
-int APS5_VABI EqueueDeleteEvent(KernelEqueue eq, uintptr_t ident, int16_t filter) {
-    auto owner = EqueuePin(eq);
+int APS5_VABI EqueueDeleteEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, int16_t filter) {
+    auto owner = EqueuePin_nid_postfix(eq);
     if (!owner) {
         return EQUEUE_ERROR_EBADF;
     }
@@ -300,7 +300,7 @@ int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq) {
 }
 
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
-    auto owner = EqueuePin(eq);
+    auto owner = EqueuePin_nid_postfix(eq);
     if (!owner) {
         return EQUEUE_ERROR_EBADF;
     }
@@ -343,7 +343,7 @@ int APS5_VABI sceKernelAddUserEvent(KernelEqueue eq, int id) {
             e->event.data = 0;
         }
     };
-    return EqueueAddEvent(eq, event);
+    return EqueueAddEvent_nid_postfix(eq, event);
 }
 
 int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id) {
@@ -363,15 +363,15 @@ int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id) {
             e->event.data = 0;
         }
     };
-    return EqueueAddEvent(eq, event);
+    return EqueueAddEvent_nid_postfix(eq, event);
 }
 
 int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata) {
-    return EqueueTriggerEvent(eq, static_cast<uintptr_t>(id), EVFILT_USER, udata);
+    return EqueueTriggerEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_USER, udata);
 }
 
 int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id) {
-    return EqueueDeleteEvent(eq, static_cast<uintptr_t>(id), EVFILT_USER);
+    return EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_USER);
 }
 
 int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts, void* udata) {
@@ -396,11 +396,11 @@ int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTime
     event.event.filter = EVFILT_HRTIMER;
     event.event.flags = EV_ADD | EV_ONESHOT;
     event.event.udata = udata;
-    return EqueueAddEvent(eq, event);
+    return EqueueAddEvent_nid_postfix(eq, event);
 }
 
 int APS5_VABI sceKernelDeleteHRTimerEvent(KernelEqueue eq, int id) {
-    return EqueueDeleteEvent(eq, static_cast<uintptr_t>(id), EVFILT_HRTIMER);
+    return EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_HRTIMER);
 }
 
 int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
@@ -429,7 +429,7 @@ int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
             e->event.data = 0;
         }
     };
-    EqueueAddEvent(eq, event);
+    EqueueAddEvent_nid_postfix(eq, event);
     return EQUEUE_OK;
 }
 
@@ -441,7 +441,7 @@ int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id) {
     if (eq == 0) {
         return EQUEUE_OK;
     }
-    EqueueDeleteEvent(eq, static_cast<uintptr_t>(id), EVFILT_USER);
+    EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_USER);
     return EQUEUE_OK;
 }
 

@@ -14,7 +14,7 @@ static int RegisterVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
     if (eq == 0) {
         return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
     }
-    if (!EqueuePin(eq)) {
+    if (!EqueuePin_nid_postfix(eq)) {
         return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
     }
     KernelEqueueEvent event{};
@@ -56,7 +56,7 @@ static int RegisterVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
         e->event.fflags = 0;
         e->event.data = 0;
     };
-    const int result = EqueueAddEvent(eq, event);
+    const int result = EqueueAddEvent_nid_postfix(eq, event);
     return result == EQUEUE_ERROR_EBADF ? VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE : result;
 }
 
@@ -64,10 +64,10 @@ static int DeleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
-    if (eq == 0 || !EqueuePin(eq)) {
+    if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
         return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
     }
-    const int result = EqueueDeleteEvent(eq, static_cast<uintptr_t>(eventKind), EVFILT_VIDEO_OUT);
+    const int result = EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(eventKind), EVFILT_VIDEO_OUT);
     if (result == EQUEUE_ERROR_EBADF) {
         return VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE;
     }
