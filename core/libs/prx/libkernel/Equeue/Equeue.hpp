@@ -83,10 +83,13 @@ private:
 };
 
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
+extern "C" {
 
 KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq);
 int APS5_VABI EqueueAddEvent_nid_postfix(KernelEqueue eq, const KernelEqueueEvent& event);
 int APS5_VABI EqueueTriggerEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, int16_t filter, void* triggerData);
 int APS5_VABI EqueueDeleteEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, int16_t filter);
+
+}
 
 #endif

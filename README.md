@@ -11,7 +11,7 @@ Releases will be published after the first full successful launch of at least on
 Execution reaches `_start`, stack unwinding and exception handling tables are built. All unimplemented functions throw std::runtime_error. `what()` is printed to stderr and the process terminates.
 Shader initialization via `sceAgcCreate*` passes.
 
-Now: `sceVideoOutOpen not implemented`.
+Now: `sceAudioOutInit not implemented`.
 
 On Windows, after printing an unhandled exception the process exits with STATUS_STACK_BUFFER_OVERRUN due to the difficulty of manually [implementing proper exception handling](core/libs/prx/libc/src/exception).
 

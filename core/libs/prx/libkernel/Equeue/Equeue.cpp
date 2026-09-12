@@ -11,6 +11,8 @@ static std::unordered_map<KernelEqueue, KernelEqueueRef> g_equeues;
 static std::mutex g_equeueMutex;
 static uint64_t g_nextEqueue = 1;
 
+extern "C" {
+
 KernelEqueuePrivate::KernelEqueuePrivate(KernelEqueue handle) : m_handle(handle) {}
 
 KernelEqueuePrivate::~KernelEqueuePrivate() {
@@ -267,7 +269,6 @@ int APS5_VABI EqueueDeleteEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, in
     return owner->DeleteEvent(ident, filter);
 }
 
-extern "C" {
 
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     if (eq == nullptr || name == nullptr) {
