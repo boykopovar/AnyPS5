@@ -12,22 +12,32 @@ extern "C" {
 
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
 
-    FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
-        if (!filename || !mode) throw std::runtime_error("fopen: null argument");
-        std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
-        if (!handle) {
-            std::string msg = "fopen: open failed: \"";
-            msg += std::filesystem::absolute(filename).string();
-            msg += "\": ";
-            msg += std::strerror(errno);
-            throw std::runtime_error(msg);
+FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
+    if (!filename || !mode) throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_NULL_ARG);
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
+    const auto abs_path = std::filesystem::absolute(filename).string();
+    if (!handle) {
+        const auto reason = std::strerror(errno);
+        const std::filesystem::path fpath(filename);
+        bool sibling_exists = false;
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::absolute(fpath.parent_path()), ec)) {
+            if (!ec && entry.path().stem() == fpath.stem() && entry.path().extension() != fpath.extension()) {
+                sibling_exists = true;
+                break;
+            }
         }
-        auto stream = std::make_unique<FileStream>(handle.get(), true);
-        handle.release();
-
-        APS5_LOG_OUT("success: \"%s\"", filename);
-        return stream.release();
+        if (sibling_exists) {
+            APS5_LOG_OUT("%s: \"%s\": %s", FOPEN_MSG_NOT_FOUND, abs_path.c_str(), reason);
+            return nullptr;
+        }
+        throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_OPEN_FAILED + ": \"" + abs_path + "\": " + reason);
     }
+    APS5_LOG_OUT("success: \"%s\"", abs_path.c_str());
+    auto stream = std::make_unique<FileStream>(handle.get(), true);
+    handle.release();
+    return stream.release();
+}
 
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     GetNativeStream(stream);

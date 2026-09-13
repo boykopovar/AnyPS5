@@ -5,6 +5,11 @@
 #include <stdexcept>
 #include <utility>
 
+static constexpr const char* FOPEN_EXT_VERT = ".vert";
+static constexpr const char* FOPEN_MSG_NULL_ARG = "null argument";
+static constexpr const char* FOPEN_MSG_NOT_FOUND = "file not found";
+static constexpr const char* FOPEN_MSG_OPEN_FAILED = "open failed";
+
 class FileStream {
     std::FILE* _handle;
     bool _dynamic;
