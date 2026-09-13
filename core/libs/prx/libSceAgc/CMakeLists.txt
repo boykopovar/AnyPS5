@@ -13,4 +13,5 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
 )
 
 target_include_directories(libSceAgc PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceAgc PRIVATE libc)
+add_shader_recompiler(shader_recompiler_agc libc)
+target_link_libraries(libSceAgc PRIVATE shader_recompiler_agc libc)

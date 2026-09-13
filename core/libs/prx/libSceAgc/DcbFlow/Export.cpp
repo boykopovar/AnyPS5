@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "shader/recompilier/Recompiler.hpp"
 
 extern "C" {
 
@@ -106,7 +107,17 @@ uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_
  (void)buf;
  (void)op;
  (void)state;
- NotImplemented_nid_no_patch(__func__);
+ const std::array<std::uint32_t, 1> code = {0xbf810000u};
+ const std::array<std::uint32_t, 1> capabilities = {1u};
+ const std::array<ShaderRecompiler::RegisterValue, 3> shaderRegisters = {{{0x207u, 1u}, {0x208u, 1u}, {0x209u, 1u}}};
+ const std::array<ShaderRecompiler::MemoryRegion, 1> memory = {{{0x10000u, std::as_bytes(std::span(code))}}};
+ const ShaderRecompiler::RecompileRequest request{
+     {ShaderRecompiler::ShaderStage::Compute, 0x10000u, code, 0, {}},
+     {64, 0, {}, shaderRegisters, {}, {}, memory},
+     {0x00403000u, 0x00010600u, 64, capabilities, {}, {1024, 1024, 64}, 1024, 32768},
+     {0, 0, 0, 0}
+ };
+ (void)ShaderRecompiler::Recompile(request);
  return nullptr;
 }
 

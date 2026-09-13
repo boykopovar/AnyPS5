@@ -23,5 +23,6 @@ set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC_PIC ON CACHE BOOL "" FORCE)
 add_subdirectory(3rdparty/SDL2)
 
+add_subdirectory(core/shader/recompilier)
 add_subdirectory(core/libs)
 add_subdirectory(core/relinker)
