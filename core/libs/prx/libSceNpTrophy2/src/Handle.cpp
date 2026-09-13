@@ -1,5 +1,4 @@
-#include "NpTrophy2.hpp"
-#include "SceTypes.hpp"
+#include "prx/libSceNpTrophy2/include/NpTrophy2.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {

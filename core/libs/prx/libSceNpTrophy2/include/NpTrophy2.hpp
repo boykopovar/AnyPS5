@@ -4,7 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "NpTrophy2Types.hpp"
+#include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
+#include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "SceTypes.hpp"
 
 #endif

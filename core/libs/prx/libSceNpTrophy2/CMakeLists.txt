@@ -8,6 +8,5 @@ add_library(libSceNpTrophy2 SHARED EXCLUDE_FROM_ALL
 
 target_include_directories(libSceNpTrophy2 PRIVATE
         ${LIBS_INCLUDE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_link_libraries(libSceNpTrophy2 PRIVATE libc)
