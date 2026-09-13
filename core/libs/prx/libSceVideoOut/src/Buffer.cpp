@@ -127,6 +127,9 @@ int APS5_VABI sceVideoOutSubmitFlip(int handle, int index, int flipMode, int64_t
     if (flipMode < VIDEO_OUT_FLIP_MODE_VSYNC || flipMode > VIDEO_OUT_FLIP_MODE_VSYNC_MULTI) {
         return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
+    if (flipMode != VIDEO_OUT_FLIP_MODE_VSYNC) {
+        throw std::runtime_error(std::string(__func__) + ": flip mode not implemented");
+    }
     if (index < VIDEO_OUT_BUFFER_INDEX_BLACK || index >= VIDEO_OUT_BUFFER_NUM_MAX) {
         return VIDEO_OUT_ERROR_INVALID_INDEX;
     }

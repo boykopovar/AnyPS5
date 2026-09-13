@@ -29,7 +29,9 @@ static int validateOutputConfig(int handle, uint64_t mode, const VideoOutOutputO
 extern "C" {
 
 int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param) {
-    (void)param;
+    if (param != nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": param not implemented");
+    }
     if (userId != 255 && userId != 0) {
         return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
@@ -58,9 +60,7 @@ int APS5_VABI sceVideoOutSetFlipRate(int handle, int rate) {
     if (rate < 0 || rate > 2) {
         return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
-    std::unique_lock lock(cfg->mutex);
-    cfg->flipRate = rate;
-    return 0;
+    throw std::runtime_error(std::string(__func__) + " not implemented");
 }
 
 int APS5_VABI sceVideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status) {
@@ -169,14 +169,14 @@ int APS5_VABI sceVideoOutSetWindowModeMargins(int handle, int top, int bottom) {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
-    return 0;
+    throw std::runtime_error(std::string(__func__) + " not implemented");
 }
 
 int APS5_VABI sceVideoOutLatencyControlWaitBeforeInput(int handle) {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
-    return 0;
+    throw std::runtime_error(std::string(__func__) + " not implemented");
 }
 
 int APS5_VABI sceVideoOutLatencyMeasureSetStartPoint(int handle, uint32_t point) {
@@ -184,7 +184,7 @@ int APS5_VABI sceVideoOutLatencyMeasureSetStartPoint(int handle, uint32_t point)
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
-    return 0;
+    throw std::runtime_error(std::string(__func__) + " not implemented");
 }
 
 int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, float gamma) {
@@ -206,9 +206,7 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
     if (cfg == nullptr) {
         return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
-    std::unique_lock lock(cfg->mutex);
-    cfg->gamma = settings->gamma;
-    return 0;
+    throw std::runtime_error(std::string(__func__) + " not implemented");
 }
 
 }
