@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "NpTrophy2Types.hpp"
 #include "SceTypes.hpp"
 
 #endif
