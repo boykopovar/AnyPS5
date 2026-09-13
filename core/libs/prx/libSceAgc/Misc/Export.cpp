@@ -78,10 +78,4 @@ int APS5_VABI sceAgcSuspendPoint(void) {
  return 0;
 }
 
-int APS5_VABI sceAgcInit_nid_postfix(uint32_t* state, uint32_t ver) {
- (void)state;
- (void)ver;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 }
