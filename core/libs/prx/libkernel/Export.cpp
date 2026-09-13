@@ -7,6 +7,7 @@
 #include "Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 extern "C" {
 
@@ -33,19 +34,6 @@ int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
  return 0;
 }
 
-int APS5_VABI clock_getres_nid_postfix(int clock_id, KernelTimespec* res) {
- (void)clock_id;
- (void)res;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI clock_gettime_nid_postfix(int clock_id, KernelTimespec* time) {
- (void)clock_id;
- (void)time;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
 
 int APS5_VABI close_nid_postfix(int d) {
  (void)d;
@@ -121,13 +109,6 @@ int APS5_VABI getsockopt_nid_postfix(int s, int level, int optname, void* optval
  (void)optname;
  (void)optval;
  (void)optlen;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* time, KernelTimezone* timezone) {
- (void)time;
- (void)timezone;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
