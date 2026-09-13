@@ -1,4 +1,6 @@
 add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/Command/Packet.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Command/Memory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Shader/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Shader/ShaderUtils.cpp

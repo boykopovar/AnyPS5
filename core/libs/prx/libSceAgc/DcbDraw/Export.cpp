@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Command/Packet.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -122,11 +123,9 @@ uint32_t APS5_VABI sceAgcDcbDrawIndirectGetSize(void) {
  return 0;
 }
 
-uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, uint64_t index_addr) {
- (void)buf;
- (void)index_addr;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress) {
+    Agc::Command::CheckAddress(indexAddress, 2, __func__);
+    return Agc::Command::Emit(buf, 0x26u, {static_cast<std::uint32_t>(indexAddress), static_cast<std::uint32_t>(indexAddress >> 32u)}, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcDcbSetIndexCount(CommandBuffer* buf, uint32_t index_count) {
@@ -136,24 +135,18 @@ uint32_t* APS5_VABI sceAgcDcbSetIndexCount(CommandBuffer* buf, uint32_t index_co
  return nullptr;
 }
 
-uint32_t* APS5_VABI sceAgcDcbSetIndexSize(CommandBuffer* buf, uint8_t index_size, uint8_t cache_policy) {
- (void)buf;
- (void)index_size;
- (void)cache_policy;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbSetIndexSize(CommandBuffer* buf, std::uint8_t indexSize, std::uint8_t cachePolicy) {
+    Agc::Command::Require(indexSize <= 2, __func__, "invalid index element size");
+    Agc::Command::CheckBits(cachePolicy, 3, __func__);
+    return Agc::Command::Emit(buf, 0x7au, {0x20000243u, 0x400u | indexSize | (static_cast<std::uint32_t>(cachePolicy) << 6u)}, __func__);
 }
 
-uint32_t* APS5_VABI sceAgcDcbSetNumInstances(CommandBuffer* buf, uint32_t num_instances) {
- (void)buf;
- (void)num_instances;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbSetNumInstances(CommandBuffer* buf, std::uint32_t numInstances) {
+    return Agc::Command::Emit(buf, 0x2fu, {numInstances}, __func__);
 }
 
-uint32_t APS5_VABI sceAgcDcbSetNumInstancesGetSize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint32_t APS5_VABI sceAgcDcbSetNumInstancesGetSize() {
+    return 8;
 }
 
 uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t shader_type, const volatile void* indirect_base_addr) {
@@ -164,17 +157,16 @@ uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t sh
  return nullptr;
 }
 
-uint32_t* APS5_VABI sceAgcDcbGetLodStats(CommandBuffer* buf, uint8_t cache_policy, const volatile void* buffer, uint32_t buffer_size_in_bytes, uint32_t reset_count, uint8_t force_reset, uint8_t report_and_reset, uint32_t reporting_interval_in_100k_clocks) {
- (void)buf;
- (void)cache_policy;
- (void)buffer;
- (void)buffer_size_in_bytes;
- (void)reset_count;
- (void)force_reset;
- (void)report_and_reset;
- (void)reporting_interval_in_100k_clocks;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbGetLodStats(CommandBuffer* buf, std::uint8_t cachePolicy, const volatile void* buffer, std::uint32_t bufferSizeInBytes, std::uint32_t resetCount, std::uint8_t forceReset, std::uint8_t reportAndReset, std::uint32_t reportingIntervalIn100kClocks) {
+    Agc::Command::CheckBits(cachePolicy, 3, __func__);
+    Agc::Command::CheckBits(resetCount, 0xffu, __func__);
+    Agc::Command::CheckBits(forceReset, 1, __func__);
+    Agc::Command::CheckBits(reportAndReset, 1, __func__);
+    Agc::Command::CheckBits(reportingIntervalIn100kClocks, 0xffu, __func__);
+    const auto address = reinterpret_cast<std::uintptr_t>(buffer);
+    Agc::Command::CheckAddress(address, 64, __func__);
+    const auto control = (static_cast<std::uint32_t>(cachePolicy) << 28u) | (static_cast<std::uint32_t>(reportAndReset) << 19u) | (static_cast<std::uint32_t>(forceReset) << 18u) | (resetCount << 10u) | (reportingIntervalIn100kClocks << 2u);
+    return Agc::Command::Emit(buf, 0x8eu, {bufferSizeInBytes, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), control}, __func__);
 }
 
 }

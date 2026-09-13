@@ -1,3 +1,5 @@
+#include "prx/libSceAgc/Command/Memory.hpp"
+#include "prx/libSceAgc/Command/Packet.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -50,21 +52,8 @@ uint32_t* APS5_VABI sceAgcDcbCopyData(CommandBuffer* buf, uint8_t dst, uint8_t d
  return nullptr;
 }
 
-uint32_t* APS5_VABI sceAgcDcbDmaData(CommandBuffer* buf, uint8_t engine, uint8_t dst, uint8_t dst_cache_policy, uint64_t dst_address_or_offset, uint8_t src, uint8_t src_cache_policy, uint64_t src_address_or_offset_or_immediate, uint32_t num_bytes, uint8_t wait_for_previous, uint8_t write_confirm, uint8_t block_engine) {
- (void)buf;
- (void)engine;
- (void)dst;
- (void)dst_cache_policy;
- (void)dst_address_or_offset;
- (void)src;
- (void)src_cache_policy;
- (void)src_address_or_offset_or_immediate;
- (void)num_bytes;
- (void)wait_for_previous;
- (void)write_confirm;
- (void)block_engine;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbDmaData(CommandBuffer* buf, std::uint8_t engine, std::uint8_t dst, std::uint8_t dstCachePolicy, std::uint64_t dstAddress, std::uint8_t src, std::uint8_t srcCachePolicy, std::uint64_t srcAddress, std::uint32_t numBytes, std::uint8_t waitForPrevious, std::uint8_t writeConfirm, std::uint8_t blockEngine) {
+    return Agc::Command::WriteDma(buf, false, engine, dst, dstCachePolicy, dstAddress, src, srcCachePolicy, srcAddress, numBytes, waitForPrevious, writeConfirm, blockEngine, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcDcbDispatchIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint32_t flags) {
@@ -80,12 +69,16 @@ uint32_t APS5_VABI sceAgcDcbDispatchIndirectGetSize(void) {
  return 0;
 }
 
-uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, uint8_t event_type, const volatile void* address) {
- (void)buf;
- (void)event_type;
- (void)address;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address) {
+    Agc::Command::CheckBits(eventType, 0x3fu, __func__);
+    if ((eventType & 0xfeu) == 0x38u) {
+        const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
+        Agc::Command::CheckAddress(guestAddress, 8, __func__);
+        return Agc::Command::Emit(buf, 0x46u, {0x100u | eventType, static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u)}, __func__);
+    }
+    Agc::Command::Require(address == nullptr, __func__, "this event does not use an address");
+    const auto eventIndex = eventType == 7 || eventType == 15 || eventType == 16 ? 0x400u : 0u;
+    return Agc::Command::Emit(buf, 0x46u, {eventIndex | eventType}, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcDcbJump(CommandBuffer* buf, uint8_t mode, uint8_t cache_policy, const uint32_t* target, uint32_t size_in_dwords) {
@@ -133,24 +126,12 @@ uint32_t APS5_VABI sceAgcDcbRewindGetSize(void) {
  return 0;
 }
 
-uint32_t* APS5_VABI sceAgcDcbStallCommandBufferParser(CommandBuffer* buf) {
- (void)buf;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbStallCommandBufferParser(CommandBuffer* buf) {
+    return Agc::Command::Emit(buf, 0x42u, {0}, __func__);
 }
 
-uint32_t* APS5_VABI sceAgcDcbWaitRegMem(CommandBuffer* buf, uint8_t size, uint8_t compare_function, uint8_t op, uint8_t cache_policy, const volatile void* address, uint64_t reference, uint64_t mask, uint32_t poll_cycles) {
- (void)buf;
- (void)size;
- (void)compare_function;
- (void)op;
- (void)cache_policy;
- (void)address;
- (void)reference;
- (void)mask;
- (void)poll_cycles;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbWaitRegMem(CommandBuffer* buf, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t operation, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles) {
+    return Agc::Command::WriteWait(buf, size, compareFunction, operation, cachePolicy, address, reference, mask, pollCycles, __func__);
 }
 
 uint32_t APS5_VABI sceAgcDcbWaitOnAddressGetSize(uint32_t size) {
@@ -167,17 +148,8 @@ uint32_t* APS5_VABI sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint3
  return nullptr;
 }
 
-uint32_t* APS5_VABI sceAgcDcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_policy, uint64_t address_or_offset, const void* data, uint32_t num_dwords, uint8_t increment, uint8_t write_confirm) {
- (void)buf;
- (void)dst;
- (void)cache_policy;
- (void)address_or_offset;
- (void)data;
- (void)num_dwords;
- (void)increment;
- (void)write_confirm;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcDcbWriteData(CommandBuffer* buf, std::uint8_t dst, std::uint8_t cachePolicy, std::uint64_t address, const void* data, std::uint32_t numDwords, std::uint8_t increment, std::uint8_t writeConfirm) {
+    return Agc::Command::WriteData(buf, false, dst, cachePolicy, address, data, numDwords, increment, writeConfirm, __func__);
 }
 
 uint32_t APS5_VABI sceAgcDcbWriteDataGetSize(uint32_t num_dwords) {

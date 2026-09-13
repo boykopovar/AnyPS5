@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Command/Packet.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -5,30 +6,24 @@
 
 extern "C" {
 
-uint32_t* APS5_VABI sceAgcCbBranch(CommandBuffer* buf, uint8_t mode, uint8_t compare_function, const volatile uint64_t* compare_addr, uint64_t mask, uint64_t reference, uint8_t cache_policy1, const volatile uint32_t* buffer1, uint32_t size_in_dwords1, uint8_t cache_policy2, const volatile uint32_t* buffer2, uint32_t size_in_dwords2) {
- (void)buf;
- (void)mode;
- (void)compare_function;
- (void)compare_addr;
- (void)mask;
- (void)reference;
- (void)cache_policy1;
- (void)buffer1;
- (void)size_in_dwords1;
- (void)cache_policy2;
- (void)buffer2;
- (void)size_in_dwords2;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcCbBranch(CommandBuffer* buf, std::uint8_t mode, std::uint8_t compareFunction, const volatile std::uint64_t* compareAddress, std::uint64_t mask, std::uint64_t reference, std::uint8_t cachePolicy1, const volatile std::uint32_t* buffer1, std::uint32_t sizeInDwords1, std::uint8_t cachePolicy2, const volatile std::uint32_t* buffer2, std::uint32_t sizeInDwords2) {
+    Agc::Command::CheckBits(mode, 3, __func__);
+    Agc::Command::CheckBits(compareFunction, 7, __func__);
+    Agc::Command::CheckBits(cachePolicy1, 3, __func__);
+    Agc::Command::CheckBits(cachePolicy2, 3, __func__);
+    Agc::Command::CheckBits(sizeInDwords1, 0xfffffu, __func__);
+    Agc::Command::CheckBits(sizeInDwords2, 0xfffffu, __func__);
+    const auto address = reinterpret_cast<std::uintptr_t>(compareAddress);
+    const auto first = reinterpret_cast<std::uintptr_t>(buffer1);
+    const auto second = reinterpret_cast<std::uintptr_t>(buffer2);
+    Agc::Command::CheckAddress(address, 8, __func__);
+    Agc::Command::CheckAddress(first, 4, __func__);
+    Agc::Command::CheckAddress(second, 4, __func__);
+    return Agc::Command::Emit(buf, 0x3fu, {mode | (static_cast<std::uint32_t>(compareFunction) << 8u), static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), static_cast<std::uint32_t>(mask), static_cast<std::uint32_t>(mask >> 32u), static_cast<std::uint32_t>(reference), static_cast<std::uint32_t>(reference >> 32u), static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(first >> 32u), sizeInDwords1 | (static_cast<std::uint32_t>(cachePolicy1) << 28u), static_cast<std::uint32_t>(second), static_cast<std::uint32_t>(second >> 32u), sizeInDwords2 | (static_cast<std::uint32_t>(cachePolicy2) << 28u)}, __func__);
 }
 
-uint32_t* APS5_VABI sceAgcCbSetUcRegisterRangeDirect(CommandBuffer* buf, uint32_t offset, const uint32_t* values, uint32_t num) {
- (void)buf;
- (void)offset;
- (void)values;
- (void)num;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcCbSetUcRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues) {
+    return Agc::Command::WriteRegisterRange(buf, 0x79u, offset, values, numValues, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcCbCondWrite(CommandBuffer* buf, uint32_t cond, uint32_t a, uint32_t b, uint32_t c) {
@@ -41,19 +36,13 @@ uint32_t* APS5_VABI sceAgcCbCondWrite(CommandBuffer* buf, uint32_t cond, uint32_
     return nullptr;
 }
 
-uint32_t APS5_VABI sceAgcCbBranchGetSize() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint32_t APS5_VABI sceAgcCbBranchGetSize() {
+    return 56;
 }
 
-uint32_t* APS5_VABI sceAgcCbDispatch(CommandBuffer* buf, uint32_t thread_group_x, uint32_t thread_group_y, uint32_t thread_group_z, uint32_t modifier) {
- (void)buf;
- (void)thread_group_x;
- (void)thread_group_y;
- (void)thread_group_z;
- (void)modifier;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcCbDispatch(CommandBuffer* buf, std::uint32_t threadGroupX, std::uint32_t threadGroupY, std::uint32_t threadGroupZ, std::uint32_t modifier) {
+    Agc::Command::CheckBits(modifier, 0xa038u, __func__);
+    return Agc::Command::Emit(buf, 0x15u, {threadGroupX, threadGroupY, threadGroupZ, modifier | 0x41u}, __func__);
 }
 
 uint32_t APS5_VABI sceAgcCbDispatchGetSize(void) {
@@ -61,11 +50,8 @@ uint32_t APS5_VABI sceAgcCbDispatchGetSize(void) {
  return 0;
 }
 
-uint32_t* APS5_VABI sceAgcCbNop_nid_postfix(CommandBuffer* buf, uint32_t size_in_dwords) {
- (void)buf;
- (void)size_in_dwords;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcCbNop_nid_postfix(CommandBuffer* buf, std::uint32_t sizeInDwords) {
+    return Agc::Command::WriteNop(buf, sizeInDwords, __func__);
 }
 
 uint32_t APS5_VABI sceAgcCbNopGetSize(uint32_t size_in_dwords) {
@@ -96,13 +82,8 @@ uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, uint8_t action, uint1
  return nullptr;
 }
 
-uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, uint32_t offset, const uint32_t* values, uint32_t num_values) {
- (void)buf;
- (void)offset;
- (void)values;
- (void)num_values;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues) {
+    return Agc::Command::WriteRegisterRange(buf, 0x76u, offset, values, numValues, __func__);
 }
 
 uint32_t APS5_VABI sceAgcCbSetShRegisterRangeDirectGetSize(uint32_t num_values) {
@@ -111,19 +92,11 @@ uint32_t APS5_VABI sceAgcCbSetShRegisterRangeDirectGetSize(uint32_t num_values) 
  return 0;
 }
 
-uint32_t* APS5_VABI sceAgcCbSetShRegistersDirect(CommandBuffer* buf, const volatile ShaderRegister* regs, uint32_t num_regs) {
- (void)buf;
- (void)regs;
- (void)num_regs;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcCbSetShRegistersDirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs) {
+    return Agc::Command::WriteRegisters(buf, 0x76u, regs, numRegs, true, __func__);
 }
 std::uint32_t* APS5_VABI sceAgcCbSetUcRegistersDirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs) {
-    (void)buf;
-    (void)regs;
-    (void)numRegs;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Agc::Command::WriteRegisters(buf, 0x79u, regs, numRegs, false, __func__);
 }
 
 }

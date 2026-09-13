@@ -321,7 +321,7 @@ struct RtcTick {
 };
 
 struct CommandBuffer {
-    using Callback = bool (*)(CommandBuffer*, std::uint32_t, void*);
+    using Callback = bool (APS5_VABI *)(CommandBuffer*, std::uint32_t, void*);
     std::uint32_t* bottom;
     std::uint32_t* top;
     std::uint32_t* cursor_up;

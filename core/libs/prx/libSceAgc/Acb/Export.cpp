@@ -1,3 +1,5 @@
+#include "prx/libSceAgc/Command/Memory.hpp"
+#include "prx/libSceAgc/Command/Packet.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -55,27 +57,14 @@ uint32_t* APS5_VABI sceAgcAcbDispatchIndirect(CommandBuffer* buf, const volatile
  return nullptr;
 }
 
-uint32_t* APS5_VABI sceAgcAcbDmaData(CommandBuffer* buf, uint8_t dst, uint8_t dst_cache_policy, uint64_t dst_address_or_offset, uint8_t src, uint8_t src_cache_policy, uint64_t src_address_or_offset_or_immediate, uint32_t num_bytes, uint8_t wait_for_previous, uint8_t write_confirm) {
- (void)buf;
- (void)dst;
- (void)dst_cache_policy;
- (void)dst_address_or_offset;
- (void)src;
- (void)src_cache_policy;
- (void)src_address_or_offset_or_immediate;
- (void)num_bytes;
- (void)wait_for_previous;
- (void)write_confirm;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcAcbDmaData(CommandBuffer* buf, std::uint8_t dst, std::uint8_t dstCachePolicy, std::uint64_t dstAddress, std::uint8_t src, std::uint8_t srcCachePolicy, std::uint64_t srcAddress, std::uint32_t numBytes, std::uint8_t waitForPrevious, std::uint8_t writeConfirm) {
+    return Agc::Command::WriteDma(buf, true, 0, dst, dstCachePolicy, dstAddress, src, srcCachePolicy, srcAddress, numBytes, waitForPrevious, writeConfirm, 0, __func__);
 }
 
-uint32_t* APS5_VABI sceAgcAcbEventWrite(CommandBuffer* buf, uint8_t event_type, const volatile void* address) {
- (void)buf;
- (void)event_type;
- (void)address;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcAcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address) {
+    Agc::Command::CheckBits(eventType, 0x3fu, __func__);
+    Agc::Command::Require(address == nullptr, __func__, "ACB event address is not supported");
+    return Agc::Command::Emit(buf, 0x46u, {eventType | (eventType == 7 ? 0x400u : 0u)}, __func__);
 }
 
 uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
@@ -112,30 +101,12 @@ uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint
  return nullptr;
 }
 
-uint32_t* APS5_VABI sceAgcAcbWaitRegMem(CommandBuffer* buf, uint8_t size, uint8_t compare_function, uint8_t cache_policy, const volatile void* address, uint64_t reference, uint64_t mask, uint32_t poll_cycles) {
- (void)buf;
- (void)size;
- (void)compare_function;
- (void)cache_policy;
- (void)address;
- (void)reference;
- (void)mask;
- (void)poll_cycles;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcAcbWaitRegMem(CommandBuffer* buf, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles) {
+    return Agc::Command::WriteWait(buf, size, compareFunction, 0, cachePolicy, address, reference, mask, pollCycles, __func__);
 }
 
-uint32_t* APS5_VABI sceAgcAcbWriteData(CommandBuffer* buf, uint8_t dst, uint8_t cache_policy, uint64_t address_or_offset, const void* data, uint32_t num_dwords, uint8_t increment, uint8_t write_confirm) {
- (void)buf;
- (void)dst;
- (void)cache_policy;
- (void)address_or_offset;
- (void)data;
- (void)num_dwords;
- (void)increment;
- (void)write_confirm;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+std::uint32_t* APS5_VABI sceAgcAcbWriteData(CommandBuffer* buf, std::uint8_t dst, std::uint8_t cachePolicy, std::uint64_t address, const void* data, std::uint32_t numDwords, std::uint8_t increment, std::uint8_t writeConfirm) {
+    return Agc::Command::WriteData(buf, true, dst, cachePolicy, address, data, numDwords, increment, writeConfirm, __func__);
 }
 std::uint64_t APS5_VABI sceAgcAcbCopyDataGetSize() {
     NotImplemented_nid_no_patch(__func__);
