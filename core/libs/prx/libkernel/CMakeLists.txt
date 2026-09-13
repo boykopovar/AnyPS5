@@ -3,7 +3,6 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/NativeStat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Open.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Path.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/DirectMemory.cpp

@@ -1,6 +1,6 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
-#include "prx/libkernel/File/include/Path.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "SceTypes.hpp"
 
@@ -88,78 +88,75 @@ static int MapFlags(int sceFlags) {
 extern "C" {
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
-    if (path == nullptr) {
-        throw std::invalid_argument("sceKernelOpen: path is null");
-    }
-    auto native = File::ResolvePath(path);
+    auto native = ResolvePath_nid_no_patch(path);
     int fd = NativeOpen(native, MapFlags(flags), mode);
     if (fd < 0) {
-        throw std::runtime_error("sceKernelOpen: failed to open " + native.string() + ", errno=" + std::to_string(errno));
+        throw std::runtime_error(std::string(__func__) + ": failed to open " + native.string() + ", errno=" + std::to_string(errno));
     }
     return fd;
 }
 
 int APS5_VABI sceKernelClose(int d) {
     if (NativeClose(d) != 0) {
-        throw std::runtime_error("sceKernelClose: close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+        throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
     }
     return 0;
 }
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (buf == nullptr) {
-        throw std::invalid_argument("sceKernelRead: buf is null");
+        throw std::invalid_argument(std::string(__func__) + ": buf is null");
     }
     auto n = NativeRead(d, buf, nbytes);
     if (n < 0) {
-        throw std::runtime_error("sceKernelRead: read failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+        throw std::runtime_error(std::string(__func__) + ": read failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
     }
     return static_cast<std::int64_t>(n);
 }
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (buf == nullptr) {
-        throw std::invalid_argument("sceKernelWrite: buf is null");
+        throw std::invalid_argument(std::string(__func__) + ": buf is null");
     }
     auto n = NativeWrite(d, buf, nbytes);
     if (n < 0) {
-        throw std::runtime_error("sceKernelWrite: write failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+        throw std::runtime_error(std::string(__func__) + ": write failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
     }
     return static_cast<std::int64_t>(n);
 }
 
 int APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
     if (whence < 0 || whence > 2) {
-        throw std::invalid_argument("sceKernelLseek: invalid whence=" + std::to_string(whence));
+        throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }
     std::int64_t result = NativeLseek(d, offset, whence);
     if (result < 0) {
-        throw std::runtime_error("sceKernelLseek: lseek failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+        throw std::runtime_error(std::string(__func__) + ": lseek failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
     }
     if (result > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
-        throw std::overflow_error("sceKernelLseek: result " + std::to_string(result) + " overflows int return type");
+        throw std::overflow_error(std::string(__func__) + ": result " + std::to_string(result) + " overflows int return type");
     }
     return static_cast<int>(result);
 }
 
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     if (path == nullptr) {
-        throw std::invalid_argument("sceKernelStat: path is null");
+        throw std::invalid_argument(std::string(__func__) + ": path is null");
     }
     if (sb == nullptr) {
-        throw std::invalid_argument("sceKernelStat: sb is null");
+        throw std::invalid_argument(std::string(__func__) + ": sb is null");
     }
-    File::FillFileStat(File::ResolvePath(path), sb);
+    File::FillFileStat(ResolvePath_nid_no_patch(path), sb);
     return 0;
 }
 
 int APS5_VABI sceKernelUnlink(const char* path) {
     if (path == nullptr) {
-        throw std::invalid_argument("sceKernelUnlink: path is null");
+        throw std::invalid_argument(std::string(__func__) + ": path is null");
     }
-    auto native = File::ResolvePath(path);
+    auto native = ResolvePath_nid_no_patch(path);
     if (NativeUnlink(native) != 0) {
-        throw std::runtime_error("sceKernelUnlink: unlink failed for " + native.string() + ", errno=" + std::to_string(errno));
+        throw std::runtime_error(std::string(__func__) + ": unlink failed for " + native.string() + ", errno=" + std::to_string(errno));
     }
     return 0;
 }

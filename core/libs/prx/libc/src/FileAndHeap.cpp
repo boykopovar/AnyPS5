@@ -14,21 +14,22 @@ extern "C" {
 
 FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) {
     if (!filename || !mode) throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_NULL_ARG);
-    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(filename, mode), std::fclose);
-    const auto abs_path = std::filesystem::absolute(filename).string();
+    const std::filesystem::path fpath = ResolvePath_nid_no_patch(filename);
+    const auto abs_path = fpath.string();
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(abs_path.c_str(), mode), std::fclose);
     if (!handle) {
         const auto reason = std::strerror(errno);
-        const std::filesystem::path fpath(filename);
-        bool sibling_exists = false;
         std::error_code ec;
-        for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::absolute(fpath.parent_path()), ec)) {
-            if (!ec && entry.path().stem() == fpath.stem() && entry.path().extension() != fpath.extension()) {
-                sibling_exists = true;
+        std::filesystem::path sibling;
+        for (const auto& entry : std::filesystem::directory_iterator(fpath.parent_path(), ec)) {
+            if (ec) break;
+            if (entry.path().stem() == fpath.stem() && entry.path().extension() != fpath.extension()) {
+                sibling = std::filesystem::absolute(entry.path());
                 break;
             }
         }
-        if (sibling_exists) {
-            APS5_LOG_OUT("%s: \"%s\": %s", FOPEN_MSG_NOT_FOUND, abs_path.c_str(), reason);
+        if (!sibling.empty()) {
+            APS5_LOG_OUT("%s: \"%s\": %s. Sibling: \"%s\"", FOPEN_MSG_NOT_FOUND, abs_path.c_str(), reason, sibling.string().c_str());
             return nullptr;
         }
         throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_OPEN_FAILED + ": \"" + abs_path + "\": " + reason);
