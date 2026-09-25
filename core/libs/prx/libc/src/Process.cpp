@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
@@ -58,6 +59,11 @@ extern "C" void LibcRunShutdown_nid_postfix() {
 extern "C" {
 
 void APS5_VABI exit_nid_postfix(int code) {
+    static const bool trace = std::getenv("APS5_TRACE_EXIT") != nullptr;
+    if (trace) {
+        std::fprintf(stderr, "[libc] exit(%d) called from %p\n", code, __builtin_return_address(0));
+        std::fflush(stderr);
+    }
     LibcRunShutdown_nid_postfix();
     std::exit(code);
 }
@@ -68,6 +74,8 @@ void APS5_VABI exit_nid_postfix(int code) {
 ) {
     (void)arg0; (void)arg1; (void)arg2;
     (void)arg3; (void)arg4; (void)arg5;
+    std::fprintf(stderr, "[libc] abort() called from %p\n", __builtin_return_address(0));
+    std::fflush(nullptr);
     std::abort();
 }
 

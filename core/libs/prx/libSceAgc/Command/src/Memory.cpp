@@ -53,11 +53,13 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, std::uint8_t size, std::uint8_t 
     CheckBits(cachePolicy, 3, function);
     Require((pollCycles >> 4u) <= 0xffffu, function, "wait poll interval overflow");
     if (size == 0) {
-        CheckBits(reference, 0xffffffffu, function);
-        CheckBits(mask, 0xffffffffu, function);
+        // 32-bit waits only use the low halves; guests commonly pass a full 64-bit mask.
+        reference &= 0xffffffffu;
+        mask &= 0xffffffffu;
     }
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
-    CheckAddress(guestAddress, size == 0 ? 4 : 8, function);
+    // The address may be left null and filled in later with sceAgcWaitRegMemPatchAddress.
+    if (guestAddress != 0) CheckAddress(guestAddress, size == 0 ? 4 : 8, function);
     CheckBits(guestAddress, 0xffffffffffffull, function);
     const auto waitSize = size == 0 ? 7u : 9u;
     auto* packet = Allocate(buffer, waitSize + 7u, function);

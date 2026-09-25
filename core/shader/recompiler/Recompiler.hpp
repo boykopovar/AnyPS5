@@ -4,6 +4,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -240,6 +242,18 @@ struct DescriptorBinding {
     bool readOnly = false;
     std::optional<DescriptorImageShape> imageShape;
     std::vector<bool> samplerDepthCompare;
+    // Guest image elements the shader stores to (or updates atomically); the others are only read.
+    std::vector<bool> imageWritten;
+    // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
+    // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
+    // (~0.4-0.5 us each on NVIDIA), so a driver may keep these elements in device-local memory.
+    std::vector<bool> bufferAtomic;
+    // Guest buffer elements the shader may store to through this V# (any store or atomic in the
+    // program, whatever its offset), one entry per element of a GuestBuffers binding, empty
+    // otherwise. A false entry is proved: every access of that element is a load. A driver may then
+    // skip the write-back and the pending-write note for the element; an element beyond the vector
+    // (a producer that does not fill it) must be treated as written.
+    std::vector<bool> bufferWritten;
 };
 
 struct VertexAttribute {
@@ -256,8 +270,53 @@ struct FragmentParameter {
     bool perVertex;
 };
 
+// Compiled SPIR-V shared between a cached variant and every result materialized from it: results
+// are copied per dispatch and draw, so the words are reference counted and only duplicated when a
+// holder writes to them (tests and tools patch modules in place). Reads look like a vector.
+// The non-const data(), operator[], begin() and end() count as writes: on a shared holder (every
+// cached result) they clone the module, so a consumer that only reads takes the result by const
+// reference, or the per-dispatch copy this class removes comes back without a compiler hint.
+class SharedSpirv {
+public:
+    SharedSpirv() = default;
+    SharedSpirv(std::vector<std::uint32_t> words) : words(std::make_shared<std::vector<std::uint32_t>>(std::move(words))) {}
+    SharedSpirv& operator=(std::vector<std::uint32_t> other) {
+        words = std::make_shared<std::vector<std::uint32_t>>(std::move(other));
+        return *this;
+    }
+
+    [[nodiscard]] const std::vector<std::uint32_t>& Words() const { return words ? *words : Empty(); }
+    operator const std::vector<std::uint32_t>&() const { return Words(); }
+    [[nodiscard]] std::size_t size() const { return Words().size(); }
+    [[nodiscard]] bool empty() const { return Words().empty(); }
+    [[nodiscard]] const std::uint32_t* data() const { return Words().data(); }
+    [[nodiscard]] std::uint32_t* data() { return Mutable().data(); }
+    [[nodiscard]] const std::uint32_t& operator[](std::size_t index) const { return Words()[index]; }
+    [[nodiscard]] std::uint32_t& operator[](std::size_t index) { return Mutable()[index]; }
+    [[nodiscard]] std::vector<std::uint32_t>::const_iterator begin() const { return Words().begin(); }
+    [[nodiscard]] std::vector<std::uint32_t>::const_iterator end() const { return Words().end(); }
+    [[nodiscard]] std::vector<std::uint32_t>::iterator begin() { return Mutable().begin(); }
+    [[nodiscard]] std::vector<std::uint32_t>::iterator end() { return Mutable().end(); }
+    void resize(std::size_t count) { Mutable().resize(count); }
+    std::vector<std::uint32_t>::iterator insert(std::vector<std::uint32_t>::const_iterator where, std::initializer_list<std::uint32_t> values) { return Mutable().insert(where, values); }
+    friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) { return left.words == right.words || left.Words() == right.Words(); }
+
+private:
+    static const std::vector<std::uint32_t>& Empty() {
+        static const std::vector<std::uint32_t> empty;
+        return empty;
+    }
+    // Copy on write: a holder whose words are shared gets its own copy before the first write.
+    std::vector<std::uint32_t>& Mutable() {
+        if (words == nullptr || words.use_count() != 1) words = std::make_shared<std::vector<std::uint32_t>>(Words());
+        return *words;
+    }
+
+    std::shared_ptr<std::vector<std::uint32_t>> words;
+};
+
 struct RecompileResult {
-    std::vector<std::uint32_t> spirv;
+    SharedSpirv spirv;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
     std::uint32_t bdaAbiVersion = 0;
@@ -267,9 +326,24 @@ struct RecompileResult {
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     bool cacheHit = false;
+    // Identifies the compiled variant the result came from: equal ids mean identical SPIR-V and
+    // bindings, so drivers can reuse pipeline objects. Zero when unknown.
+    std::uint64_t variantId = 0;
 };
 
 [[nodiscard]] RecompileResult Recompile(const RecompileRequest& request);
+
+// The resource plan, snapshot and specialization a driver captured for the request (see
+// CaptureResources in Optimization/ResourceProgram.hpp): this overload reuses them instead of
+// materializing the request's memory regions again, and is otherwise Recompile(request).
+struct ResourceCapture;
+[[nodiscard]] RecompileResult Recompile(const RecompileRequest& request, const ResourceCapture& capture);
+
+// Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
+// only applied while a driver has it active, so it can be limited to one dispatch; the recompile
+// cache keys on it.
+void SetDebugProbeActive(bool active);
+[[nodiscard]] bool DebugProbeActive();
 
 struct RectListShaders {
     RecompileResult control;

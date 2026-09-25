@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILER_CACHEKEY_HPP
 
 #include "Recompiler.hpp"
+#include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
 
@@ -12,7 +13,16 @@ public:
     static void Build(const RecompileRequest& request, std::vector<std::uint64_t>& key) {
         key.clear();
         append(key, request.shader.stage);
-        append(key, request.shader.code);
+        // The code enters as a hash rather than word by word: the key is built, hashed and compared
+        // on every dispatch and draw. The cache verifies a match against the code it stored.
+        // Debug aid: APS5_NO_CODE_HASH_KEY=1 appends every code word, as before.
+        static const bool hashedCode = std::getenv("APS5_NO_CODE_HASH_KEY") == nullptr;
+        if (hashedCode) {
+            append(key, request.shader.code.size());
+            append(key, HashCode(request.shader.code));
+        } else {
+            append(key, request.shader.code);
+        }
         append(key, request.context.waveSize);
         append(key, request.context.userDataBaseRegister);
         append(key, request.context.userData.size());
@@ -20,6 +30,20 @@ public:
         append(key, request.context.pixel);
         append(key, request.context.vertex);
         append(key, request.target);
+        append(key, DebugProbeActive());
+    }
+
+    // A 64-bit hash of the code, two dwords per step; collisions are resolved by comparing the code.
+    static std::uint64_t HashCode(std::span<const std::uint32_t> code) {
+        std::uint64_t hash = 0x9e3779b97f4a7c15ull ^ (static_cast<std::uint64_t>(code.size()) * 0x100000001b3ull);
+        const auto mix = [&](std::uint64_t chunk) {
+            hash = (hash ^ chunk) * 0x9e3779b97f4a7c15ull;
+            hash ^= hash >> 29u;
+        };
+        std::size_t index = 0;
+        for (; index + 2 <= code.size(); index += 2) mix(code[index] | (static_cast<std::uint64_t>(code[index + 1]) << 32u));
+        if (index < code.size()) mix(code[index]);
+        return hash;
     }
 
 private:

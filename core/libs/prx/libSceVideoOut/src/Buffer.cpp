@@ -155,11 +155,9 @@ int APS5_VABI sceVideoOutSubmitFlip(int handle, int index, int flipMode, int64_t
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    if (flipMode < VIDEO_OUT_FLIP_MODE_VSYNC || flipMode > VIDEO_OUT_FLIP_MODE_VSYNC_MULTI) {
+    // Every mode is presented at the next vsync; HSYNC/WINDOW variants only change tearing behaviour.
+    if (flipMode < VIDEO_OUT_FLIP_MODE_VSYNC || flipMode > 6) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
-    }
-    if (flipMode != VIDEO_OUT_FLIP_MODE_VSYNC) {
-        throw std::runtime_error(std::string(__func__) + ": flip mode not implemented");
     }
     if (index < VIDEO_OUT_BUFFER_INDEX_BLACK || index >= VIDEO_OUT_BUFFER_NUM_MAX) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
@@ -174,8 +172,7 @@ int APS5_VABI sceVideoOutSubmitFlip(int handle, int index, int flipMode, int64_t
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
     }
     lock.unlock();
-    VideoOutDriver::Get().SubmitFlip(handle, index, flipMode, flipArg);
-    return 0;
+    return VideoOutDriver::Get().SubmitFlip(handle, index, flipMode, flipArg);
 }
 
 }

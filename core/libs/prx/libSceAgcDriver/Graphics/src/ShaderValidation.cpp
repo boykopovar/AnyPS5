@@ -1,7 +1,6 @@
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
-#include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <map>
@@ -9,8 +8,6 @@
 #include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include <type_traits>
 
 namespace AgcDriver::Graphics {
 namespace {
@@ -205,13 +202,26 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     mesh &&
                     capability == spv::CapabilityMeshShadingEXT;
 
+                // Enabled unconditionally or by the device setup in VulkanDevice.
+                const bool isFeatureCapability =
+                    capability == spv::CapabilityImageGatherExtended ||
+                    capability == spv::CapabilityImageQuery ||
+                    capability == spv::CapabilityStorageImageWriteWithoutFormat ||
+                    capability == spv::CapabilityStorageImageReadWithoutFormat ||
+                    capability == spv::CapabilityInt64 ||
+                    capability == spv::CapabilityInt16 ||
+                    capability == spv::CapabilityFloat16 ||
+                    capability == spv::CapabilityStorageBuffer8BitAccess ||
+                    capability == spv::CapabilityPhysicalStorageBufferAddresses;
+
                 Require(
                     isBaseCapability ||
                     isBarycentricCapability ||
                     isSubgroupCapability ||
                     isBdaCapability ||
                     isTessellationCapability ||
-                    isMeshCapability,
+                    isMeshCapability ||
+                    isFeatureCapability,
                     std::string("SPIR-V requires unsupported device capability ") +
                         std::to_string(static_cast<std::uint32_t>(capability)));
 
@@ -242,11 +252,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             case spv::OpSpecConstantOp:
                 throw std::runtime_error("AGC graphics: unsupported SPIR-V extension, grouped decoration or specialization constant");
             case spv::OpMemoryModel: {
-                const auto addressingModel = shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && !rectListControl
-                    ? spv::AddressingModelPhysicalStorageBuffer64
-                    : spv::AddressingModelLogical;
+                // Address-based shaders use PhysicalStorageBuffer64; everything else (including the
+                // generated rect-list stages) is Logical.
                 Require(count == 3, "invalid SPIR-V OpMemoryModel word count: " + std::to_string(count));
-                Require(instruction[1] == addressingModel, "unsupported SPIR-V addressing model: " + std::to_string(instruction[1]));
+                Require(instruction[1] == spv::AddressingModelPhysicalStorageBuffer64 || instruction[1] == spv::AddressingModelLogical, "unsupported SPIR-V addressing model: " + std::to_string(instruction[1]));
                 Require(instruction[2] == spv::MemoryModelGLSL450, "unsupported SPIR-V memory model: " + std::to_string(instruction[2]));
                 ++memoryModels;
                 break;
@@ -417,7 +426,6 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
             Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
             Require(binding->kind == ShaderRecompiler::DescriptorKind::Sampler || binding->kind == ShaderRecompiler::DescriptorKind::SampledImage || binding->kind == ShaderRecompiler::DescriptorKind::StorageImage, "SPIR-V descriptor type disagrees with recompiler binding metadata");
-            Require(binding->kind != ShaderRecompiler::DescriptorKind::StorageImage, "storage image resources are not implemented");
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
@@ -466,77 +474,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
 
 }
 
-namespace {
-
-struct ValidatedInterface {
-    std::map<std::uint32_t, std::string> inputs;
-    std::map<std::uint32_t, std::string> outputs;
-};
-
-std::shared_ptr<const ValidatedInterface> inspectCached(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric) {
-    PerformanceTimer timing("Graphics.ShaderValidation");
-    Require(compiled.program != nullptr, "missing compiled shader");
-    const auto& shader = *compiled.program;
-    std::string key;
-    const auto append = [&]<typename TValue>(const TValue& value) {
-        static_assert(std::is_trivially_copyable_v<TValue>);
-        key.append(reinterpret_cast<const char*>(&value), sizeof(value));
-    };
-    append(compiled.stage);
-    append(state.rectList);
-    append(state.stages.mesh.has_value());
-    if (state.stages.mesh) {
-        append(state.stages.mesh->threadsPerGroup);
-        append(state.stages.mesh->maxVertices);
-        append(state.stages.mesh->maxPrimitives);
-    }
-    append(state.stages.tessellation.has_value());
-    if (state.stages.tessellation) {
-        append(state.stages.tessellation->inputControlPoints);
-        append(state.stages.tessellation->outputControlPoints);
-    }
-    append(subgroup.supportedStages);
-    append(subgroup.supportedOperations);
-    append(fragmentShaderBarycentric);
-    append(shader.bdaAbiVersion);
-    append(shader.pushConstants.empty());
-    append(shader.bindings.size());
-    for (const auto& binding : shader.bindings) {
-        append(binding.kind);
-        append(binding.role);
-        append(binding.descriptorSet);
-        append(binding.binding);
-        append(binding.count);
-        append(binding.readOnly);
-        append(binding.guestDescriptor.empty());
-    }
-    append(shader.vertexAttributes.size());
-    for (const auto& attribute : shader.vertexAttributes) {
-        append(attribute.location);
-        append(attribute.components);
-        append(attribute.resource.fields[3]);
-    }
-    append(shader.spirv.size());
-    const auto code = std::as_bytes(std::span(shader.spirv));
-    if (!code.empty()) key.append(reinterpret_cast<const char*>(code.data()), code.size());
-    timing.Mark("key", key.size());
-    static thread_local std::map<std::string, std::shared_ptr<const ValidatedInterface>> cache;
-    const auto found = cache.find(key);
-    if (found != cache.end()) {
-        timing.Mark("hit");
-        return found->second;
-    }
-    auto module = Inspect(compiled, state, subgroup, fragmentShaderBarycentric);
-    auto result = std::make_shared<const ValidatedInterface>(ValidatedInterface{std::move(module.inputs), std::move(module.outputs)});
-    if (cache.size() >= 128) cache.clear();
-    cache.emplace(std::move(key), result);
-    timing.Mark("inspect");
-    return result;
-}
-
-}
-
-void ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric) {
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric) {
     using Stage = ShaderRecompiler::ShaderStage;
     const bool tessellation = state.stages.path == ShaderPath::Tessellation;
     const bool mesh = state.stages.path == ShaderPath::Geometry;
@@ -546,22 +484,30 @@ void ValidateShaders(std::span<const CompiledShader> shaders, const State& state
     Require(shaders.size() == (tessellation || state.rectList ? 4u : 2u), "incorrect graphics stage count");
     const std::array<Stage, 4> tessStages{Stage::Local, Stage::TessellationControl, Stage::TessellationEvaluation, Stage::Fragment};
     static_cast<void>(AssemblePushConstants(shaders));
-    std::shared_ptr<const ValidatedInterface> previous;
+    Module previous;
     for (std::size_t i = 0; i < shaders.size(); ++i) {
         const auto expected = state.rectList ? (i == 0 ? Stage::Vertex : tessStages[i]) : tessellation ? tessStages[i] : i == 1 ? Stage::Fragment : state.stages.path == ShaderPath::Geometry ? Stage::Mesh : Stage::Vertex;
         Require(shaders[i].program != nullptr, "missing compiled shader");
         Require(shaders[i].stage == expected, "graphics stage order disagrees");
         for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == 0, "graphics resource uses a descriptor set other than zero");
-        const auto current = inspectCached(shaders[i], state, subgroup, fragmentShaderBarycentric);
+        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric);
         if (i != 0) {
-            for (const auto& [location, signature] : current->inputs) {
-                const auto output = previous->outputs.find(location);
-                Require(output != previous->outputs.end() && output->second == signature, "graphics interfaces disagree at location " + std::to_string(location));
+            for (const auto& [location, signature] : current.inputs) {
+                const auto output = previous.outputs.find(location);
+                Require(output != previous.outputs.end() && output->second == signature, "graphics interfaces disagree at location " + std::to_string(location));
             }
         }
         previous = current;
     }
-    Require(previous->outputs.size() == 1 && previous->outputs.contains(0) && previous->outputs.at(0) == "vertex:f32x4", "fragment shader must export one float4 color at location zero");
+    // One float4 color per MRT attachment. A pixel shader may also export no color at all when it
+    // writes storage images or buffers instead; its attachments are then left untouched.
+    const auto attachments = std::max<std::size_t>(state.colors.size(), 1u);
+    std::set<std::uint32_t> locations;
+    for (const auto& [location, signature] : previous.outputs) {
+        Require(location < attachments && signature == "vertex:f32x4", "fragment shader must export float4 colors at locations below the attachment count");
+        locations.insert(location);
+    }
+    return locations;
 }
 
 void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment) {

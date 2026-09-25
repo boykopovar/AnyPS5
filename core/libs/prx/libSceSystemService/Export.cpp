@@ -13,9 +13,12 @@ int APS5_VABI sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void) {
 }
 
 int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo* info) {
- (void)info;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (info == nullptr) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ *info = SystemServiceDisplaySafeAreaInfo{};
+ info->ratio = 1.0f;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance) {
@@ -25,9 +28,11 @@ int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLumi
 }
 
 int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
- (void)value;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (value == nullptr) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ *value = false;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
@@ -76,8 +81,6 @@ int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
  if (event == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- event->event_type = -1;
- std::memset(event->data, 0, sizeof(event->data));
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
@@ -88,6 +91,11 @@ int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
 }
 
 int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceSystemServiceLoadExec() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

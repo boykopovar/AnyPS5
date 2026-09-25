@@ -12,25 +12,19 @@ add_custom_command(
 
 foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test agc_driver_graphics_tests agc_driver_bda_device_tests)
     if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Graphics/src/BufferPool.cpp Graphics/src/CommandCompletion.cpp)
-    endif()
-endforeach()
-
-foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test agc_driver_graphics_tests agc_driver_bda_device_tests)
-    if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Execution/src/GuestGpuRange.cpp)
+        target_sources(${agcTarget} PRIVATE Graphics/src/BufferPool.cpp)
     endif()
 endforeach()
 
 foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test agc_driver_graphics_tests)
     if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Graphics/src/TextureDetilerDescriptors.cpp Graphics/src/TextureCache.cpp Graphics/src/RegisteredGpuMemory.cpp)
+        target_sources(${agcTarget} PRIVATE Graphics/src/TextureDetilerDescriptors.cpp Graphics/src/TextureCache.cpp)
     endif()
 endforeach()
 
 foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test agc_driver_graphics_tests agc_driver_bda_device_tests)
     if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Graphics/src/GpuColorTransfer.cpp Graphics/src/ColorMemoryWriteback.cpp ${agcColorTransferHeader})
+        target_sources(${agcTarget} PRIVATE Graphics/src/GpuColorTransfer.cpp ${agcColorTransferHeader})
     endif()
 endforeach()
 
@@ -41,14 +35,6 @@ if(TARGET agc_driver_visual_test)
     target_sources(agc_driver_visual_test PRIVATE Execution/src/DisplayBuffer.cpp)
 endif()
 
-foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test agc_driver_graphics_tests)
-    if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Graphics/src/RenderCache.cpp Graphics/src/RenderMemoryOwnership.cpp Graphics/src/DrawQueue.cpp Graphics/src/DrawCompletion.cpp Graphics/src/RenderTexture.cpp Graphics/src/DescriptorCache.cpp)
-    endif()
-endforeach()
-
-foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test)
-    if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Execution/src/PresentationImage.cpp Execution/src/DeviceSynchronization.cpp Graphics/src/GraphicsPipelineCache.cpp)
-    endif()
-endforeach()
+# Upstream's GPU-resident draw path (RenderCache, DrawQueue, RenderTexture, PresentationImage,
+# GraphicsPipelineCache) targets the single-target Pipeline/GpuColorTransfer API; the multi-target
+# draw path in Draw.cpp does not use it yet, so those sources stay out of the build.

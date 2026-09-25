@@ -1,6 +1,10 @@
 #include "../include/Pthread.hpp"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <string>
 #include <future>
 #include <memory>
 #include <stdexcept>
@@ -16,6 +20,7 @@ static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 
 static constexpr std::size_t DEFAULT_STACK_SIZE = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
+static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -82,6 +87,10 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
         }
         self->threadId = std::this_thread::get_id();
         currentThread = self;
+        if (!self->name.empty()) {
+            const std::wstring description(self->name.begin(), self->name.end());
+            SetThreadDescription(GetCurrentThread(), description.c_str());
+        }
         args->initialized.set_value();
     } catch (...) {
         args->initialized.set_exception(std::current_exception());
@@ -100,7 +109,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
 
 extern "C" {
 
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char*) {
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
     if (!thread || !entry) throw std::runtime_error("scePthreadCreate: null arg");
     if (attr && !*attr) throw std::runtime_error("scePthreadCreate: null attributes");
     auto p = std::make_unique<PthreadPrivate>();
@@ -108,6 +117,11 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (attr && *attr) detached = ((*attr)->_detachstate == DETACH_DETACHED);
     p->_detached = detached;
     p->stackSize = attr ? (*attr)->_stacksize : DEFAULT_STACK_SIZE;
+    if (attr) {
+        p->affinity.store((*attr)->_affinity, std::memory_order_relaxed);
+        p->priority.store((*attr)->_schedpriority, std::memory_order_relaxed);
+    }
+    if (name) p->name = name;
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
 #ifdef _WIN32
@@ -199,6 +213,17 @@ void APS5_VABI scePthreadExit(void* retval) {
 
 Pthread APS5_VABI scePthreadSelf() {
 #ifdef _WIN32
+    if (!currentThread) {
+        auto adopted = std::make_unique<PthreadPrivate>();
+        HANDLE handle = nullptr;
+        if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            throw std::system_error(GetLastError(), std::system_category(), "Adopting guest thread");
+        adopted->nativeHandle = handle;
+        adopted->threadId = std::this_thread::get_id();
+        adopted->_detached = true;
+        adopted->references.store(1, std::memory_order_relaxed);
+        currentThread = adopted.release();
+    }
     return currentThread;
 #else
     return nullptr;
@@ -216,71 +241,90 @@ int APS5_VABI scePthreadCancel(Pthread thread) {
 }
 
 int APS5_VABI scePthreadEqual(Pthread thread1, Pthread thread2) {
- (void)thread1;
- (void)thread2;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return thread1 == thread2 ? 1 : 0;
 }
 
 int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) {
- (void)thread;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!thread || !mask) return SCE_KERNEL_ERROR_EINVAL;
+    *mask = thread->affinity.load(std::memory_order_relaxed);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadGetname(Pthread thread, char* name) {
- (void)thread;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    std::lock_guard lock(thread->nameLock);
+    const std::size_t length = std::min<std::size_t>(thread->name.size(), THREAD_NAME_CAPACITY - 1);
+    std::memcpy(name, thread->name.data(), length);
+    name[length] = '\0';
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) {
- (void)thread;
- (void)prio;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!thread || !prio) return SCE_KERNEL_ERROR_EINVAL;
+    *prio = thread->priority.load(std::memory_order_relaxed);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadGetthreadid(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+#ifdef _WIN32
+    return static_cast<int>(GetCurrentThreadId());
+#else
+    return static_cast<int>(std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0x7fffffff);
+#endif
 }
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
- (void)thread;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    std::lock_guard lock(thread->nameLock);
+    thread->name = name;
+#ifdef _WIN32
+    const std::wstring description(thread->name.begin(), thread->name.end());
+    SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), description.c_str());
+#endif
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
- (void)thread;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!thread || mask == 0) return SCE_KERNEL_ERROR_EINVAL;
+    thread->affinity.store(mask, std::memory_order_relaxed);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) {
- (void)state;
- (void)old_state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    static thread_local int cancelState = 0;
+    if (old_state) *old_state = cancelState;
+    cancelState = state;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadSetcanceltype(int type, int* old_type) {
- (void)type;
- (void)old_type;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    static thread_local int cancelType = 0;
+    if (old_type) *old_type = cancelType;
+    cancelType = type;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
- (void)thread;
- (void)prio;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!thread) return SCE_KERNEL_ERROR_EINVAL;
+    thread->priority.store(prio, std::memory_order_relaxed);
+    return SCE_OK;
+}
+
+int APS5_VABI scePthreadOnce(int32_t* once, void (APS5_VABI* init)(void)) {
+    if (!once || !init) return SCE_KERNEL_ERROR_EINVAL;
+    constexpr int32_t Never = 0;
+    constexpr int32_t Done = 1;
+    constexpr int32_t Running = 2;
+    std::atomic_ref<int32_t> state(*once);
+    int32_t expected = Never;
+    if (state.compare_exchange_strong(expected, Running, std::memory_order_acq_rel)) {
+        init();
+        state.store(Done, std::memory_order_release);
+        state.notify_all();
+        return SCE_OK;
+    }
+    while ((expected = state.load(std::memory_order_acquire)) == Running) state.wait(Running, std::memory_order_acquire);
+    return SCE_OK;
 }
 
 }

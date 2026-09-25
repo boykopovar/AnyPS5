@@ -1,5 +1,6 @@
 #include <bit>
 #include <chrono>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 
@@ -31,7 +32,8 @@ public:
     VideoOutput(std::shared_ptr<VideoOutConfig> config, std::shared_ptr<FlipQueue> requests) : cfg(std::move(config)), queue(std::move(requests)) {}
 
     std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo& info) override {
-        require(info.mode == VIDEO_OUT_FLIP_MODE_VSYNC, "unsupported flip mode");
+        // All flip modes are presented at the next vsync.
+        require(info.mode >= VIDEO_OUT_FLIP_MODE_VSYNC && info.mode <= 6, "unsupported flip mode");
         require(info.index >= VIDEO_OUT_BUFFER_INDEX_BLACK && info.index < VIDEO_OUT_BUFFER_NUM_MAX, "invalid flip index");
         auto request = std::make_shared<FlipRequest>();
         request->cfg = cfg;
@@ -119,6 +121,12 @@ void FlipRequest::GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>& frameT
         ready = true;
     }
     queue->changed.notify_all();
+    // The worker is done once the request is queued: hardware does not stall the command processor
+    // on a flip, and the title observes completion through flipPendingNum, which processFlip drops
+    // after presenting. A presentation failure reaches the worker through ReportFailure at its next
+    // packet. Debug aid: APS5_SYNC_FLIP=1 parks the worker until the presenter is done, as before.
+    static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
+    if (!syncFlip) return;
     std::unique_lock lock(cfg->mutex);
     cfg->vblankCond.wait(lock, [&] { return gpuComplete || cfg->failure || cfg->closing; });
     checkConfig(*cfg);
@@ -281,11 +289,15 @@ bool VideoOutDriver::IsOpen(int handle) {
     return GetConfig(handle) != nullptr;
 }
 
-void VideoOutDriver::SubmitFlip(int handle, int index, int flipMode, int64_t flipArg) {
+int VideoOutDriver::SubmitFlip(int handle, int index, int flipMode, int64_t flipArg) {
+    // A title that does not pace on flipPendingNum can run ahead of the presenter now that the queue
+    // worker no longer waits per flip; a full queue is the documented error, not a failure.
+    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
     std::array<uint32_t, AgcDriver::FlipPacketWords> words{AgcDriver::FlipPacketHeader, static_cast<uint32_t>(handle), static_cast<uint32_t>(index), static_cast<uint32_t>(flipMode), static_cast<uint32_t>(static_cast<uint64_t>(flipArg)), static_cast<uint32_t>(static_cast<uint64_t>(flipArg) >> 32u)};
     Packet packet{words.data(), static_cast<uint32_t>(words.size()), 0, {}};
     const auto result = sceAgcDriverSubmitDcb(&packet);
     require(result == 0, "driver rejected flip submission");
+    return 0;
 }
 
 void VideoOutDriver::triggerEvents(VideoOutConfig& cfg, int eventKind, void* triggerData) {
@@ -406,12 +418,6 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
     PadInput padInput;
     try {
         while (!token.stop_requested()) {
-            SDL_Event event;
-            while (SDL_PollEvent(&event)) {
-                require(event.type != SDL_QUIT, "window was closed");
-                padInput.HandleEvent(event, window);
-            }
-            padInput.Update();
             {
                 std::unique_lock lock(flipQueue->mutex);
                 flipQueue->changed.wait_for(lock, std::chrono::milliseconds(10), [&] { return token.stop_requested() || flipQueue->failure || !flipQueue->requests.empty(); });
@@ -422,6 +428,12 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
                     flipQueue->requests.pop_front();
                 }
             }
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                require(event.type != SDL_QUIT, "window was closed");
+                padInput.HandleEvent(event, window);
+            }
+            padInput.Update();
             if (current) {
                 require(current->timing != nullptr, "missing presentation timing");
                 const auto dequeued = AgcDriver::FrameTiming::Clock::now();
@@ -451,6 +463,9 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
     } catch (...) {
         auto error = std::current_exception();
         if (!error) std::terminate();
+        // The driver learns first: the worker no longer waits for the presenter, so a title (or test)
+        // that sees the failed flip's counters must already find the failure in the driver.
+        AgcDriverReportFailure_nid_postfix(error);
         PadReportInputFailure_nid_postfix(error);
         if (current) current->Fail(error);
         std::list<std::shared_ptr<FlipRequest>> failed;
@@ -470,7 +485,6 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
             }
         }
         flipQueue->changed.notify_all();
-        AgcDriverReportFailure_nid_postfix(error);
     }
 }
 

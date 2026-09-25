@@ -3,6 +3,29 @@
 layout(constant_id = 0) const uint ELEMENT_BYTES = 4u;
 layout(constant_id = 1) const uint BLOCK_BYTES = 256u;
 layout(constant_id = 2) const uint TILE_FAMILY = 0u;
+// 0: tiled input -> linear output (detile); 1: linear input -> tiled output (retile).
+layout(constant_id = 3) const uint RETILE = 0u;
+// TILE_FAMILY 2: XOR swizzle given per byte-address bit as masks of x (bits 0-11), y (12-23) and
+// slice (24-31) element-coordinate bits.
+layout(constant_id = 4) const uint EQ0 = 0u;
+layout(constant_id = 5) const uint EQ1 = 0u;
+layout(constant_id = 6) const uint EQ2 = 0u;
+layout(constant_id = 7) const uint EQ3 = 0u;
+layout(constant_id = 8) const uint EQ4 = 0u;
+layout(constant_id = 9) const uint EQ5 = 0u;
+layout(constant_id = 10) const uint EQ6 = 0u;
+layout(constant_id = 11) const uint EQ7 = 0u;
+layout(constant_id = 12) const uint EQ8 = 0u;
+layout(constant_id = 13) const uint EQ9 = 0u;
+layout(constant_id = 14) const uint EQ10 = 0u;
+layout(constant_id = 15) const uint EQ11 = 0u;
+layout(constant_id = 16) const uint EQ12 = 0u;
+layout(constant_id = 17) const uint EQ13 = 0u;
+layout(constant_id = 18) const uint EQ14 = 0u;
+layout(constant_id = 19) const uint EQ15 = 0u;
+// Nonzero: block extent in elements (thick 3D blocks are not the thin 2D shape derived below).
+layout(constant_id = 20) const uint BLOCK_WIDTH = 0u;
+layout(constant_id = 21) const uint BLOCK_HEIGHT = 0u;
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -20,8 +43,22 @@ layout(push_constant) uniform Push {
     uint tailX;
     uint tailY;
     uint elementBytes;
-    uint arrayLayer;
+    uint slice;
 } params;
+
+uint equationBit(uint mask, uvec2 p) {
+    uint selected = (p.x & (mask & 0xfffu)) ^ ((p.y << 12) & (mask & 0xfff000u)) ^ ((params.slice << 24) & (mask & 0xff000000u));
+    return bitCount(selected) & 1u;
+}
+
+uint equationOffset(uvec2 p) {
+    const uint eq[16] = uint[16](EQ0, EQ1, EQ2, EQ3, EQ4, EQ5, EQ6, EQ7, EQ8, EQ9, EQ10, EQ11, EQ12, EQ13, EQ14, EQ15);
+    uint offset = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+        offset |= equationBit(eq[bit], p) << bit;
+    }
+    return offset;
+}
 
 uint standardOffset(uint x, uint y) {
     switch (ELEMENT_BYTES) {
@@ -67,76 +104,9 @@ uint standard64Extra(uint x, uint y) {
 }
 
 
-uint renderTargetOffset(uint x, uint y) {
-    uint offset = 0u;
-    switch (ELEMENT_BYTES) {
-        case 1u:
-            offset ^= (y << 2u) & 0x0008u;
-            offset ^= (y << 4u) & 0x0010u;
-            offset ^= (y << 3u) & 0x00a0u;
-            offset ^= (y << 5u) & 0x0f00u;
-            offset ^= (y << 6u) & 0x1000u;
-            offset ^= (y << 7u) & 0x4000u;
-            offset ^= x & 0x0007u;
-            offset ^= (x << 3u) & 0x0040u;
-            offset ^= (x << 5u) & 0x0300u;
-            offset ^= (x << 4u) & 0x0400u;
-            offset ^= (x << 6u) & 0x0800u;
-            offset ^= (x << 7u) & 0x2000u;
-            offset ^= (x << 8u) & 0x8000u;
-            break;
-        case 2u:
-            offset ^= (y << 4u) & 0x0070u;
-            offset ^= (y << 5u) & 0x0f00u;
-            offset ^= (y << 8u) & 0x5000u;
-            offset ^= (x << 1u) & 0x000eu;
-            offset ^= (x << 4u) & 0x0480u;
-            offset ^= (x << 5u) & 0x0300u;
-            offset ^= (x << 6u) & 0x0800u;
-            offset ^= (x << 7u) & 0x2000u;
-            offset ^= (x << 8u) & 0x8000u;
-            break;
-        case 4u:
-            offset ^= (y << 4u) & 0x0070u;
-            offset ^= (y << 5u) & 0x0f00u;
-            offset ^= (y << 9u) & 0x1000u;
-            offset ^= (y << 8u) & 0x4000u;
-            offset ^= (x << 2u) & 0x000cu;
-            offset ^= (x << 5u) & 0x0380u;
-            offset ^= (x << 4u) & 0x0400u;
-            offset ^= (x << 6u) & 0x0800u;
-            offset ^= (x << 9u) & 0xa000u;
-            break;
-        case 8u:
-            offset ^= (y << 4u) & 0x0010u;
-            offset ^= (y << 6u) & 0x0080u;
-            offset ^= (y << 5u) & 0x0f00u;
-            offset ^= (y << 10u) & 0x5000u;
-            offset ^= (x << 3u) & 0x0008u;
-            offset ^= (x << 4u) & 0x0460u;
-            offset ^= (x << 5u) & 0x0300u;
-            offset ^= (x << 6u) & 0x0800u;
-            offset ^= (x << 10u) & 0x2000u;
-            offset ^= (x << 9u) & 0x8000u;
-            break;
-        case 16u:
-            offset ^= (x << 4u) & 0x0410u;
-            offset ^= (x << 5u) & 0x0340u;
-            offset ^= (x << 6u) & 0x0800u;
-            offset ^= (x << 11u) & 0xa000u;
-            offset ^= (y << 5u) & 0x0f20u;
-            offset ^= (y << 6u) & 0x0080u;
-            offset ^= (y << 10u) & 0x1000u;
-            offset ^= (y << 11u) & 0x4000u;
-            break;
-    }
-    uint z = params.arrayLayer;
-    return offset ^ ((z & 8u) << 5u) ^ ((z & 4u) << 7u) ^ ((z & 2u) << 9u) ^ ((z & 1u) << 11u);
-}
-
 uint blockOffset(uvec2 p) {
     if (TILE_FAMILY == 2u) {
-        return renderTargetOffset(p.x, p.y);
+        return equationOffset(p);
     }
     uint offset = standardOffset(p.x, p.y);
     if (BLOCK_BYTES > 4096u) {
@@ -146,6 +116,9 @@ uint blockOffset(uvec2 p) {
 }
 
 uvec2 blockExtent() {
+    if (BLOCK_WIDTH != 0u) {
+        return uvec2(BLOCK_WIDTH, BLOCK_HEIGHT);
+    }
     uint width;
     if (BLOCK_BYTES <= 256u) {
         width = ELEMENT_BYTES <= 2u ? 16u : (ELEMENT_BYTES <= 8u ? 8u : 4u);
@@ -197,6 +170,10 @@ void main() {
     uint blockIndex = block.y * params.blocksPerRow + block.x;
     uint tiledOffset = blockIndex * BLOCK_BYTES + blockOffset(swizzle);
 
-    copyElement(params.srcBase + tiledOffset, params.dstBase + linearOffset);
+    if (RETILE != 0u) {
+        copyElement(params.srcBase + linearOffset, params.dstBase + tiledOffset);
+    } else {
+        copyElement(params.srcBase + tiledOffset, params.dstBase + linearOffset);
+    }
 }
 

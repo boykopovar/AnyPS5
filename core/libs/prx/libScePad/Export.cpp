@@ -87,12 +87,14 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  return PAD_HANDLE;
 }
 
+int APS5_VABI scePadReadState(int handle, PadData* data);
+
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
- (void)handle;
- (void)data;
- (void)num;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    // The title drains the queued states; one current state is reported per call.
+    if (data == nullptr || num <= 0) APS5_INVALID_ARG_EX;
+    const int result = scePadReadState(handle, data);
+    if (result != 0) return result;
+    return 1;
 }
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {

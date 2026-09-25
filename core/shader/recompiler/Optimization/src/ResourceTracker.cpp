@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <span>
 #include <string>
@@ -19,6 +21,13 @@ constexpr std::uint32_t samplerDword3ReservedMask = 0x3ffff000u;
 [[noreturn]] void fail(const std::string& message) {
     throw std::runtime_error(message);
 }
+
+// Debug aid: APS5_TRACE_BDA=1 names the accesses that make a program address-based (see Collect).
+bool bdaTraceEnabled() {
+    static const bool enabled = std::getenv("APS5_TRACE_BDA") != nullptr;
+    return enabled;
+}
+constexpr unsigned bdaTraceLimit = 8;
 
 std::string formatHex32(std::uint32_t value) {
     static constexpr char digits[] = "0123456789abcdef";
@@ -101,6 +110,7 @@ public:
                 Collect(*inst);
             }
         }
+        if (m_bdaTraces > bdaTraceLimit) std::fprintf(stderr, "[bda] %u more address accesses in this program not shown\n", m_bdaTraces - bdaTraceLimit);
         LinkImageAliases();
         for (const auto& patch : m_handlePatches) {
             patch.handle->SetFlags<std::uint32_t>(patch.resource);
@@ -632,6 +642,17 @@ private:
                 return;
             }
             ValidateAddressHandle(inst.Argument(0));
+            // Debug aid: APS5_TRACE_BDA=1 names every access that makes the program address-based
+            // (a raw scalar load the SRT walker left in place, or a flat/global access), so the
+            // reason a stage takes the BDA path can be read off without a shader dump.
+            // The first few accesses of a program are printed (a Bink kernel has hundreds); Run
+            // reports how many more there were.
+            if (bdaTraceEnabled() && ++m_bdaTraces <= bdaTraceLimit) {
+                const auto* kind = memory.kind == ResourceKind::ScalarAddress ? "scalar address" : memory.kind == ResourceKind::Global ? "global" : "flat";
+                const IrValue* offset = inst.ArgumentCount() > 1 ? inst.Argument(1)->Resolve() : nullptr;
+                const bool immediateOffset = offset != nullptr && offset->HasImmediate();
+                std::fprintf(stderr, "[bda] %s at pc 0x%08x: %s access, offset %s%s\n", std::string(IrOpcodeName(op)).c_str(), flags.pc, kind, immediateOffset ? "immediate" : "dynamic", memory.kind == ResourceKind::ScalarAddress && !immediateOffset ? " (a register offset is not planned by the SRT walker)" : "");
+            }
             m_info.usesDma = true;
             return;
         }
@@ -703,6 +724,8 @@ private:
     std::vector<DescriptorSource> m_sources;
     std::vector<HandlePatch> m_handlePatches;
     std::vector<MemoryPatch> m_memoryPatches;
+    // APS5_TRACE_BDA: address accesses seen by Collect (the first bdaTraceLimit are printed).
+    unsigned m_bdaTraces = 0;
     std::vector<IndirectImagePlan> m_indirectImages;
 };
 

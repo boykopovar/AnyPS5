@@ -172,7 +172,8 @@ public:
     std::shared_ptr<VideoOutConfig> GetConfig(int handle);
     bool IsOpen(int handle);
 
-    void SubmitFlip(int handle, int index, int flipMode, int64_t flipArg);
+    // 0, or VIDEO_OUT_ERROR_FLIP_QUEUE_FULL when the title has VIDEO_OUT_FLIP_QUEUE_CAPACITY flips pending.
+    int SubmitFlip(int handle, int index, int flipMode, int64_t flipArg);
 
 private:
     bool close(int handle);

@@ -4,7 +4,11 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
@@ -703,19 +707,93 @@ std::uint32_t AtomicDecrement(SpirvEmitterState& state, std::uint32_t old, std::
     return Select(state, TypeU32(state), wrap, limit, next);
 }
 
+// Buffer atomics whose operand is the identity element (add, sub, or, xor of 0) leave memory
+// unchanged. Tile-classification kernels issue one such atomic per bin per wave with a mostly zero
+// count, and every atomic on a host-imported range is a serialized PCIe round trip (Demon's Souls
+// 0x…88aa800 / 0x…88ab300: 24 + 29 ms of GPU per frame for ~60K atomics each). An unused result
+// skips the operation; a used one takes a relaxed atomic load of the current value instead, which is
+// what the no-op update would have returned. APS5_NO_ATOMIC_ZERO_SKIP=1 restores the plain atomics.
+bool HasZeroIdentity(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::BufferAtomicIAdd32:
+    case IrOpcode::BufferAtomicISub32:
+    case IrOpcode::BufferAtomicOr32:
+    case IrOpcode::BufferAtomicXor32:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool AtomicZeroSkipEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_ATOMIC_ZERO_SKIP") != nullptr;
+    return !disabled;
+}
+
+// Emission sites by kind under APS5_PROFILE_DRAW (a two-lane wave64 program counts each site twice).
+// Printing is emission-driven: the line appears with the first site compiled at least 10 s after the
+// previous line (the first line 10 s after the first site), so it lags the true totals until the
+// next compile that emits a buffer atomic; the last sites of a run may never be printed.
+void NoteBufferAtomicSite(bool zeroSkip, bool zeroLoad) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    static std::atomic<std::uint64_t> plain{0}, skipped{0}, loads{0};
+    static std::atomic<std::int64_t> lastReport{0};
+    (zeroSkip ? skipped : zeroLoad ? loads : plain).fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto last = lastReport.load(std::memory_order_relaxed);
+    if (last == 0) {
+        // First site: start the 10 s window instead of printing a one-site line.
+        lastReport.compare_exchange_strong(last, now);
+        return;
+    }
+    if (now - last < 10 || !lastReport.compare_exchange_strong(last, now)) return;
+    std::fprintf(stderr, "[recompile] buffer atomic sites: %llu plain, %llu zero-skipped (unused result), %llu zero-load\n", static_cast<unsigned long long>(plain.load()), static_cast<unsigned long long>(skipped.load()), static_cast<unsigned long long>(loads.load()));
+}
+
 std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem) {
     auto& state = ctx.state;
     const bool lds = mem.kind == ResourceKind::Lds;
-    return EmitAtomicAccess(ctx, inst, mem, [&](std::uint32_t pointer) {
-        const std::uint32_t scope = lds ? spv::ScopeWorkgroup : spv::ScopeDevice;
-        const auto old = EmitAtomicOperation(ctx, inst, pointer, scope);
-        if (lds) {
-            const std::uint32_t semantics = spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask;
-            state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, semantics));
-        } else {
-            EmitDeviceAtomicMemoryBarrier(state);
-        }
-        return old;
+    const std::uint32_t scope = lds ? spv::ScopeWorkgroup : spv::ScopeDevice;
+    // Buffer atomic arguments are {resource, index, offset, soffset, value, exec}. A non-zero
+    // immediate operand (counters bumped by 1) can never take the zero path, so it keeps the plain
+    // atomic instead of a compare and a dead branch the main build has no optimizer to fold.
+    const auto nonZeroImmediateOperand = [&]() {
+        const IrValue* operand = inst.Argument(inst.ArgumentCount() - 2u)->Resolve();
+        return operand->HasImmediate() && operand->Type() == IrType::U32 && operand->ImmediateU32() != 0u;
+    };
+    const bool zeroIdentity = !lds && AtomicZeroSkipEnabled() && HasZeroIdentity(inst.Opcode()) && !nonZeroImmediateOperand();
+    const bool zeroSkip = zeroIdentity && !inst.HasUses();
+    std::uint32_t active = ActiveArgument(ctx, inst);
+    std::uint32_t nonZero = 0;
+    if (zeroIdentity) {
+        nonZero = Binary(state, spv::OpINotEqual, TypeBool(state), ctx.Arg(inst, inst.ArgumentCount() - 2u), ConstantU32(state, 0u));
+        if (zeroSkip) active = AndCondition(state, active, nonZero);
+    }
+    if (mem.kind == ResourceKind::Buffer) NoteBufferAtomicSite(zeroSkip, zeroIdentity && !zeroSkip);
+    return EmitValueOrZeroIfCondition(state, active, [&]() {
+        const auto access = PrepareMemoryElement(ctx, mem, DwordIndex(ctx, inst, mem));
+        return EmitValueOrZeroIfCondition(state, EmitMemoryElementInBounds(state, access.resource, access.index), [&]() {
+            const auto pointer = EmitMemoryElementPointer(state, access.resource, access.index);
+            const auto operation = [&]() {
+                const auto old = EmitAtomicOperation(ctx, inst, pointer, scope);
+                if (lds) {
+                    const std::uint32_t semantics = spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask;
+                    state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, semantics));
+                } else {
+                    EmitDeviceAtomicMemoryBarrier(state);
+                }
+                return old;
+            };
+            if (!zeroIdentity || zeroSkip) return operation();
+            return EmitValueIfElse(state, nonZero, TypeU32(state), operation, [&]() {
+                // The barrier stays so an "add 0" used as a coherent read keeps its acquire.
+                const auto current = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), current, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+                EmitDeviceAtomicMemoryBarrier(state);
+                return current;
+            });
+        });
     });
 }
 

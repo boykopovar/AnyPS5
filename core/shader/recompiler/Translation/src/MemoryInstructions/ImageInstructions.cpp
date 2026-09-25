@@ -87,6 +87,14 @@ bool TranslationContext::imageStore(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
     IrValue* data = constructU32x4(inst.destination, memory.dataDwords);
+    if (const DebugProbe probe = DebugProbeConfig(); probe.enabled) {
+        RdnaOperand probeReg{};
+        probeReg.kind = RdnaOperandKind::VectorRegister;
+        probeReg.reg = 255u;
+        IrValue& probed = ir.ShiftRightLogical(readRawU32(probeReg).Value(), ir.Constant(probe.shift));
+        IrValue& zero = ir.Constant(0u);
+        data = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrOpcodeType(IrOpcode::CompositeConstructU32x4), {&probed, &zero, &zero, &zero});
+    }
     IrValue& exec = ir.GetExec();
     (void)ir.Emit(IrOpcode::ImageWrite, IrOpcodeType(IrOpcode::ImageWrite), {resource, address, data, &exec}, addMemoryInfo(memory, inst.programCounter));
     return true;

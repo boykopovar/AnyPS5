@@ -30,7 +30,7 @@ IrF32 TranslationContext::readF16LaneAsF32(const RdnaOperand& operand, bool high
     const IrU32 raw = readU16LaneRaw(operand, selectHigh);
     const IrU16 bits(ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&raw.Value()}));
     const IrF16 half(ir.Emit(IrOpcode::BitCastF16U16, IrType::F16, {&bits.Value()}));
-    IrF32 value(ir.Emit(IrOpcode::ConvertF16F32, IrType::F32, {&half.Value()}));
+    IrF32 value(ir.Emit(IrOpcode::ConvertF32F16, IrType::F32, {&half.Value()}));
     if (operand.absolute) {
         value = IrF32(ir.Emit(IrOpcode::FPAbs32, IrType::F32, {&value.Value()}));
     }
@@ -45,7 +45,7 @@ IrF32 TranslationContext::readF16AsF32(const RdnaOperand& operand) {
     const IrU32 raw = applyBitSourceModifiers(operand, readRawU32(operand));
     const IrU16 bits(ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&raw.Value()}));
     const IrF16 half(ir.Emit(IrOpcode::BitCastF16U16, IrType::F16, {&bits.Value()}));
-    IrF32 value(ir.Emit(IrOpcode::ConvertF16F32, IrType::F32, {&half.Value()}));
+    IrF32 value(ir.Emit(IrOpcode::ConvertF32F16, IrType::F32, {&half.Value()}));
     if (operand.absolute) {
         value = IrF32(ir.Emit(IrOpcode::FPAbs32, IrType::F32, {&value.Value()}));
     }
@@ -104,7 +104,7 @@ void TranslationContext::write16Bits(const RdnaOperand& operand, IrU32 value) {
 }
 
 void TranslationContext::writeF16(const RdnaOperand& operand, IrF32 value) {
-    const IrF16 half(ir.Emit(IrOpcode::ConvertF32F16, IrType::F16, {&value.Value()}));
+    const IrF16 half(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&value.Value()}));
     const IrU16 bits(ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&half.Value()}));
     write16Bits(operand, IrU32(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&bits.Value()})));
 }

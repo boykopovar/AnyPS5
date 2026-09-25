@@ -1,4 +1,8 @@
 #include "Recompiler.hpp"
+#include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <cstdio>
 #include "CacheKey.hpp"
 #include <mutex>
 #include <shared_mutex>
@@ -59,9 +63,26 @@ ShaderStageKind toShaderStageKind(ShaderStage stage) {
 
 }
 
+namespace {
+
+// The host subgroup width wave64 programs are laid out for. Debug aid: APS5_SINGLE_LANE=<hex code
+// addresses, comma separated, or "all"> keeps the listed programs at one guest lane per invocation.
+std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
+    static const std::string list = [] { const char* text = std::getenv("APS5_SINGLE_LANE"); return text ? std::string(text) : std::string(); }();
+    if (!list.empty()) {
+        if (list == "all") return 64u;
+        char address[32];
+        std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
+        if (list.find(address) != std::string::npos) return 64u;
+    }
+    return request.target.subgroupSize;
+}
+
+}
+
 IrProgram PrepareResourceProgram(const RecompileRequest& request) {
     const auto stageKind = toShaderStageKind(request.shader.stage);
-    const auto inputInfo = BuildShaderStageInputInfo(stageKind, request.context);
+    const auto inputInfo = BuildShaderStageInputInfo(stageKind, request.context, HostSubgroupSize(request));
 
     constexpr RdnaInstructionDecoder decoder;
     const auto decoded = decoder.Decode(request.shader.code);
@@ -91,9 +112,20 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
     translateOptions.embeddedFetch = embeddedFetch.loads.empty() ? nullptr : &embeddedFetch;
 
     auto program = translator.Translate(decoded, cfg, translateOptions);
+    // Debug aid: APS5_DUMP_IR=<hex code address> (or "all") prints the program after each front-end pass.
+    const auto dumpIr = [&](const char* pass) {
+        static const std::string list = [] { const char* text = std::getenv("APS5_DUMP_IR"); return text ? std::string(text) : std::string(); }();
+        if (list.empty()) return;
+        char address[32];
+        std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(request.shader.codeAddress));
+        if (list != "all" && list.find(address) == std::string::npos) return;
+        std::fprintf(stderr, "==== IR 0x%s after %s\n%s\n", address, pass, ProgramToString(program).c_str());
+    };
+    dumpIr("translate");
 
     constexpr SsaBuilder ssaBuilder;
     ssaBuilder.Rewrite(program);
+    dumpIr("ssa");
 
     constexpr ConstantFolder constantFolder;
     constexpr DeadCodeEliminator deadCodeEliminator;
@@ -102,6 +134,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
     ResolveControlFlowIdentities(program);
     deadCodeEliminator.RemoveIdentities(program);
     deadCodeEliminator.Eliminate(program);
+    dumpIr("fold");
 
     constexpr ReadLaneEliminator readLaneEliminator;
     const auto readLaneStats = readLaneEliminator.Eliminate(program, translateOptions.waveSize);
@@ -115,15 +148,15 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
     constexpr SrtWalker srtWalker;
     srtWalker.BuildPlan(program);
     deadCodeEliminator.Eliminate(program);
+    dumpIr("srt");
 
     constexpr ResourceTracker resourceTracker;
     resourceTracker.Track(program);
     deadCodeEliminator.Eliminate(program);
+    dumpIr("resources");
 
     return program;
 }
-
-namespace {
 
 struct CompiledVariant {
     ResourceSpecialization specialization;
@@ -132,6 +165,18 @@ struct CompiledVariant {
     BindingAllocationResult bindings;
     RecompileResult result;
 };
+
+struct SourceEntry {
+    std::mutex mutex;
+    // The code the entry was built for: the key carries only a hash of it, so a candidate entry is
+    // accepted only when its code matches word for word. Owned here because the request's span
+    // points into a registration the driver may replace while the entry lives on.
+    std::vector<std::uint32_t> code;
+    std::shared_ptr<const IrResourcePlan> plan;
+    std::vector<std::shared_ptr<const CompiledVariant>> variants;
+};
+
+namespace {
 
 struct ResourceProgram {
     explicit ResourceProgram(const RecompileRequest& request) : program(PrepareResourceProgram(request)), plan(ResourceMaterializer{}.ExtractPlan(program)) {}
@@ -144,12 +189,6 @@ std::shared_ptr<const IrResourcePlan> makeResourcePlan(const RecompileRequest& r
     const auto resource = std::make_shared<ResourceProgram>(request);
     return std::shared_ptr<const IrResourcePlan>(resource, &resource->plan);
 }
-
-struct SourceEntry {
-    std::mutex mutex;
-    std::shared_ptr<const IrResourcePlan> plan;
-    std::vector<std::shared_ptr<const CompiledVariant>> variants;
-};
 
 struct SourceKeyHash {
     std::size_t operator()(const std::vector<std::uint64_t>& key) const {
@@ -164,22 +203,39 @@ struct SourceKeyHash {
 
 std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
     static std::shared_mutex mutex;
-    static std::unordered_map<std::vector<std::uint64_t>, std::shared_ptr<SourceEntry>, SourceKeyHash> sources;
+    // Entries whose code hashes alike share a bucket; the code comparison picks the right one.
+    static std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash> sources;
     thread_local std::vector<std::uint64_t> key;
     RecompileCacheKey::Build(request, key);
+    const auto find = [&]() -> std::shared_ptr<SourceEntry> {
+        const auto found = sources.find(key);
+        if (found == sources.end()) return nullptr;
+        for (const auto& entry : found->second) {
+            if (std::equal(entry->code.begin(), entry->code.end(), request.shader.code.begin(), request.shader.code.end())) return entry;
+        }
+        return nullptr;
+    };
     std::shared_ptr<SourceEntry> source;
     {
         std::shared_lock lock(mutex);
-        const auto found = sources.find(key);
-        if (found != sources.end()) source = found->second;
+        source = find();
     }
     if (source == nullptr) {
         std::unique_lock lock(mutex);
-        const auto found = sources.find(key);
-        if (found != sources.end()) source = found->second;
-        else {
+        source = find();
+        if (source == nullptr) {
             source = std::make_shared<SourceEntry>();
-            sources.emplace(key, source);
+            source->code.assign(request.shader.code.begin(), request.shader.code.end());
+            auto& bucket = sources[key];
+            if (!bucket.empty()) {
+                // A second entry under one key is a code hash collision (or the unhashed key with
+                // identical code, which cannot happen); each is reported under the profile switch.
+                static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+                static std::uint64_t collisions = 0;
+                ++collisions;
+                if (profile) std::fprintf(stderr, "[recompile] source key collision %llu: %zu entries share a key (%zu code words)\n", static_cast<unsigned long long>(collisions), bucket.size() + 1, request.shader.code.size());
+            }
+            bucket.push_back(source);
         }
     }
     {
@@ -192,7 +248,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
 }
 
 CompiledVariant compileVariant(const RecompileRequest& request, IrProgram program, const ResourceSnapshot& resourceSnapshot, const ResourceSpecialization& resourceSpecialization) {
-    const auto inputInfo = BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context);
+    const auto inputInfo = BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request));
     constexpr DeadCodeEliminator deadCodeEliminator;
     constexpr ResourceMaterializer resourceMaterializer;
     resourceMaterializer.Apply(program, resourceSpecialization);
@@ -219,6 +275,8 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 
     constexpr SpirvEmitter spirvEmitter;
     RecompileResult result;
+    static std::atomic<std::uint64_t> variants{0};
+    result.variantId = variants.fetch_add(1, std::memory_order_relaxed) + 1;
     result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
 
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -269,8 +327,32 @@ bool sameLayout(const BindingLayout& left, const BindingLayout& right) {
     return left.descriptorSet == right.descriptorSet && left.firstBinding == right.firstBinding && left.pushConstantOffsetBytes == right.pushConstantOffsetBytes && left.pushConstantSizeBytes == right.pushConstantSizeBytes;
 }
 
+// The cached variant of `source` for the specialization, compiled on first use.
+RecompileResult materializeVariant(SourceEntry& source, const RecompileRequest& request, const ResourceSnapshot& snapshot, const ResourceSpecialization& specialization) {
+    std::shared_ptr<const CompiledVariant> variant;
+    bool cacheHit = false;
+    {
+        std::lock_guard lock(source.mutex);
+        for (const auto& candidate : source.variants) {
+            if (sameLayout(candidate->layout, request.layout) && candidate->specialization == specialization) {
+                variant = candidate;
+                cacheHit = true;
+                break;
+            }
+        }
+        if (variant == nullptr) {
+            auto program = PrepareResourceProgram(request);
+            variant = std::make_shared<CompiledVariant>(compileVariant(request, std::move(program), snapshot, specialization));
+            source.variants.push_back(variant);
+        }
+    }
+    auto result = materializeResult(*variant, request, snapshot);
+    result.cacheHit = cacheHit;
+    return result;
+}
+
 RecompileResult RecompileImpl(const RecompileRequest& request) {
-    static_cast<void>(BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context));
+    static_cast<void>(BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request)));
     RequestMemoryView memory(request.context.memory);
     const auto runtime = memory.MakeRuntime(request.context.userData, request.shader.codeAddress);
     ResourceSnapshot snapshot;
@@ -285,39 +367,24 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
     }
     const auto source = getSource(request);
     materializer.Materialize(*source->plan, runtime, snapshot, specialization);
-    std::shared_ptr<const CompiledVariant> variant;
-    bool cacheHit = false;
-    {
-        std::lock_guard lock(source->mutex);
-        for (const auto& candidate : source->variants) {
-            if (sameLayout(candidate->layout, request.layout) && candidate->specialization == specialization) {
-                variant = candidate;
-                cacheHit = true;
-                break;
-            }
-        }
-        if (variant == nullptr) {
-            auto program = PrepareResourceProgram(request);
-            variant = std::make_shared<CompiledVariant>(compileVariant(request, std::move(program), snapshot, specialization));
-            source->variants.push_back(variant);
-        }
+    return materializeVariant(*source, request, snapshot, specialization);
+}
+
+// The capture already resolved the source entry (stage input validation included) and materialized
+// the request over exactly the words the driver captured, so neither is repeated here.
+RecompileResult RecompileImpl(const RecompileRequest& request, const ResourceCapture& capture) {
+    if (!request.useCache || capture.source == nullptr) {
+        auto program = PrepareResourceProgram(request);
+        const auto variant = compileVariant(request, std::move(program), capture.snapshot, capture.specialization);
+        return materializeResult(variant, request, capture.snapshot);
     }
-    auto result = materializeResult(*variant, request, snapshot);
-    result.cacheHit = cacheHit;
-    return result;
+    return materializeVariant(*capture.source, request, capture.snapshot, capture.specialization);
 }
 
-}
-
-std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request) {
-    static_cast<void>(BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context));
-    if (request.useCache) return getSource(request)->plan;
-    return makeResourcePlan(request);
-}
-
-RecompileResult Recompile(const RecompileRequest& request) {
+template <typename Impl>
+RecompileResult recompileReporting(const RecompileRequest& request, Impl&& impl) {
     try {
-        return RecompileImpl(request);
+        return impl();
     } catch (const std::exception& e) {
         constexpr auto requestSerializer = RequestSerializer{};
         const auto inputInfo = "\nRecompileRequest:\n" + requestSerializer.Serialize(request);
@@ -325,6 +392,36 @@ RecompileResult Recompile(const RecompileRequest& request) {
     } catch (...) {
         throw std::runtime_error("ShaderRecompiler::Recompile: unknown exception");
     }
+}
+
+}
+
+std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request) {
+    static_cast<void>(BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request)));
+    if (request.useCache) return getSource(request)->plan;
+    return makeResourcePlan(request);
+}
+
+std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime) {
+    // Validates the stage inputs once per request, as GetResourcePlan and Recompile(request) do.
+    static_cast<void>(BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request)));
+    auto capture = std::make_shared<ResourceCapture>();
+    if (request.useCache) {
+        capture->source = getSource(request);
+        capture->plan = capture->source->plan;
+    } else {
+        capture->plan = makeResourcePlan(request);
+    }
+    ResourceMaterializer{}.Materialize(*capture->plan, runtime, capture->snapshot, capture->specialization);
+    return capture;
+}
+
+RecompileResult Recompile(const RecompileRequest& request) {
+    return recompileReporting(request, [&] { return RecompileImpl(request); });
+}
+
+RecompileResult Recompile(const RecompileRequest& request, const ResourceCapture& capture) {
+    return recompileReporting(request, [&] { return RecompileImpl(request, capture); });
 }
 
 }

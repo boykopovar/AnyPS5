@@ -7,7 +7,9 @@
 
 namespace ShaderRecompiler {
 
-ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context);
+// hostSubgroupSize is the device subgroup width; wave64 workgroups on 32-wide subgroups run each
+// invocation as two guest lanes so a guest wave stays one host subgroup.
+ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context, std::uint32_t hostSubgroupSize);
 
 }
 

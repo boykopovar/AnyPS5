@@ -185,8 +185,23 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
 }
 
 static void queueAudio(Port& port, const void* data) {
-    if (port.device == 0 || data == nullptr) {
-        APS5_INVALID_ARG_EX;
+    // Without an SDL device there is nothing to queue: the callers already sleep for the block's
+    // duration so the game's timing holds. A null pointer is the documented way to wait until the
+    // port's queued audio has been output (sceAudioOutOutput(handle, NULL)); it queues nothing.
+    if (port.device == 0) return;
+    if (data == nullptr) {
+        const std::uint64_t waitStart = sceKernelGetProcessTime();
+        while (SDL_GetQueuedAudioSize(port.device) > 0) {
+            if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
+                SDL_ClearQueuedAudio(port.device);
+                break;
+            }
+            struct timespec req{};
+            req.tv_sec = 0;
+            req.tv_nsec = static_cast<long>(DRAIN_SLEEP_US * 1000ULL);
+            nanosleep(&req, nullptr);
+        }
+        return;
     }
 
     std::vector<std::uint8_t> prepareBuf;
@@ -391,12 +406,12 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     }
 
     for (std::uint32_t i = 0; i < num; i++) {
-        queueAudio(*getPort(param[i].handle), param[i].ptr);
+        if (auto* port = getPort(param[i].handle)) queueAudio(*port, param[i].ptr);
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
     for (std::uint32_t i = 0; i < num; i++) {
-        getPort(param[i].handle)->lastOutputTime = done;
+        if (auto* port = getPort(param[i].handle)) port->lastOutputTime = done;
     }
 
     return static_cast<int>(first.samplesNum);

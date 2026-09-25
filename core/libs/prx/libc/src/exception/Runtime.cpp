@@ -1,8 +1,30 @@
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include <cstdarg>
 #include <cstdio>
 #include <limits>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace LibcException {
+
+// Writes straight to the stderr handle: terminate paths must not wait on the CRT stream lock,
+// which another (possibly suspended) thread may hold.
+static void RawLog(const char* format, ...) {
+    char buffer[1024];
+    va_list args;
+    va_start(args, format);
+    int length = std::vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    if (length <= 0) return;
+    if (length > static_cast<int>(sizeof(buffer)) - 1) length = sizeof(buffer) - 1;
+#ifdef _WIN32
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(length), &written, nullptr);
+#else
+    std::fwrite(buffer, 1, length, stderr);
+#endif
+}
 
 [[noreturn]] static void DefaultTerminate() {
     if (globals.caught && Native(globals.caught->unwind.exception_class)) {
@@ -25,12 +47,12 @@ namespace LibcException {
         char* demangled = abi::__cxa_demangle(typeName, nullptr, nullptr, &status);
         const char* displayName = (status == 0 && demangled) ? demangled : typeName;
         if (what)
-            std::fprintf(stderr, "terminate called after throwing an instance of '%s'\n  what():  %s\n", displayName, what);
+            RawLog("terminate called after throwing an instance of '%s'\n  what():  %s\n", displayName, what);
         else
-            std::fprintf(stderr, "terminate called after throwing an instance of '%s'\n", displayName);
+            RawLog("terminate called after throwing an instance of '%s'\n", displayName);
         std::free(demangled);
     } else {
-        std::fprintf(stderr, "terminate called without an active exception\n");
+        RawLog("terminate called without an active exception\n");
     }
     std::abort();
 }
@@ -206,7 +228,7 @@ void APS5_VABI __cxa_free_exception_nid_postfix(void* object) {
     std::free(allocation);
 }
 
-[[noreturn]] void __cxa_throw_nid_postfix(void* object, std::type_info* type, void (*destructor)(void*)) {
+[[noreturn]] void APS5_VABI __cxa_throw_nid_postfix(void* object, std::type_info* type, void (*destructor)(void*)) {
     using namespace LibcException;
     auto* header = FromObject(object);
     header->type = type;
@@ -217,6 +239,8 @@ void APS5_VABI __cxa_free_exception_nid_postfix(void* object) {
     header->unwind.exception_cleanup = Cleanup;
     ++globals.uncaught;
     _Unwind_RaiseException_nid_postfix(&header->unwind);
+    RawLog("[libc] unhandled exception '%s' thrown from %p (caller %p)\n", type ? type->name() : "?", __builtin_return_address(0),
+           static_cast<void**>(static_cast<void**>(__builtin_frame_address(0))[0])[1]);
     __cxa_begin_catch_nid_postfix(&header->unwind);
     InvokeTerminate(header->terminate);
 }
@@ -261,7 +285,7 @@ void APS5_VABI __cxa_end_catch_nid_postfix() {
     }
 }
 
-[[noreturn]] void __cxa_rethrow_nid_postfix() {
+[[noreturn]] void APS5_VABI __cxa_rethrow_nid_postfix() {
     using namespace LibcException;
     auto* header = globals.caught;
     if (!header) Terminate();
@@ -280,23 +304,23 @@ std::type_info* APS5_VABI __cxa_current_exception_type_nid_postfix() {
     using namespace LibcException;
     return globals.caught && Native(globals.caught->unwind.exception_class) ? Primary(globals.caught)->type : nullptr;
 }
-void* __cxa_get_globals_nid_postfix() { return &LibcException::globals; }
-void* __cxa_get_globals_fast_nid_postfix() { return &LibcException::globals; }
-bool __cxa_uncaught_exception_nid_postfix() { return LibcException::globals.uncaught != 0; }
-unsigned __cxa_uncaught_exceptions_nid_postfix() { return LibcException::globals.uncaught; }
-bool _ZSt18uncaught_exceptionv_nid_postfix() { return __cxa_uncaught_exception_nid_postfix(); }
-int _ZSt19uncaught_exceptionsv_nid_postfix() { return static_cast<int>(__cxa_uncaught_exceptions_nid_postfix()); }
-[[noreturn]] void _ZSt9terminatev_nid_postfix() { LibcException::Terminate(); }
+void* APS5_VABI __cxa_get_globals_nid_postfix() { return &LibcException::globals; }
+void* APS5_VABI __cxa_get_globals_fast_nid_postfix() { return &LibcException::globals; }
+bool APS5_VABI __cxa_uncaught_exception_nid_postfix() { return LibcException::globals.uncaught != 0; }
+unsigned APS5_VABI __cxa_uncaught_exceptions_nid_postfix() { return LibcException::globals.uncaught; }
+bool APS5_VABI _ZSt18uncaught_exceptionv_nid_postfix() { return __cxa_uncaught_exception_nid_postfix(); }
+int APS5_VABI _ZSt19uncaught_exceptionsv_nid_postfix() { return static_cast<int>(__cxa_uncaught_exceptions_nid_postfix()); }
+[[noreturn]] void APS5_VABI _ZSt9terminatev_nid_postfix() { LibcException::Terminate(); }
 using LibcTerminateHandler = void(*)();
 LibcTerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(LibcTerminateHandler handler) {
     return LibcException::terminateHandler.exchange(handler ? handler : std::abort);
 }
-LibcTerminateHandler _ZSt13get_terminatev_nid_postfix() { return LibcException::terminateHandler.load(); }
+LibcTerminateHandler APS5_VABI _ZSt13get_terminatev_nid_postfix() { return LibcException::terminateHandler.load(); }
 
 void APS5_VABI __cxa_increment_exception_refcount_nid_postfix(void* object) {
     if (object) LibcException::AllocationOf(LibcException::FromObject(object))->references.fetch_add(1, std::memory_order_relaxed);
 }
-void __cxa_decrement_exception_refcount_nid_postfix(void* object) { LibcException::Release(object); }
+void APS5_VABI __cxa_decrement_exception_refcount_nid_postfix(void* object) { LibcException::Release(object); }
 void* APS5_VABI __cxa_current_primary_exception_nid_postfix() {
     using namespace LibcException;
     if (!globals.caught || !Native(globals.caught->unwind.exception_class)) return nullptr;
@@ -362,10 +386,10 @@ void* __dynamic_cast_nid_postfix(const void* source, const __cxxabiv1::__class_t
     return publicTarget.count == 1 ? publicTarget.found : nullptr;
 }
 
-[[noreturn]] void __cxa_call_terminate_nid_postfix(void* exception) {
+[[noreturn]] void APS5_VABI __cxa_call_terminate_nid_postfix(void* exception) {
     __cxa_begin_catch_nid_postfix(exception);
     LibcException::Terminate();
 }
-[[noreturn]] void __cxa_pure_virtual_nid_postfix() { LibcException::Terminate(); }
-[[noreturn]] void __cxa_deleted_virtual_nid_postfix() { LibcException::Terminate(); }
+[[noreturn]] void APS5_VABI __cxa_pure_virtual_nid_postfix() { LibcException::Terminate(); }
+[[noreturn]] void APS5_VABI __cxa_deleted_virtual_nid_postfix() { LibcException::Terminate(); }
 }

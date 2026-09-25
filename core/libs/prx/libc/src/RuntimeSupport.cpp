@@ -21,6 +21,7 @@ extern "C" {
 
 FileStream _Stderr_nid_postfix{stderr};
 FileStream _Stdout_nid_postfix{stdout};
+FileStream _Stdin_nid_postfix{stdin};
 
 int APS5_VABI __cxa_atexit_nid_postfix(void (*func)(void*), void* arg, void* dsoHandle) {
     (void)dsoHandle;

@@ -25,7 +25,7 @@ IrValue& IrBuilder::Emit(IrOpcode opcode, IrType type, std::initializer_list<IrV
             throw std::invalid_argument("IrBuilder::Emit argument cannot be null");
         }
         if (argument->Type() != IrOpcodeArgumentType(opcode, index)) {
-            throw std::invalid_argument("IrBuilder::Emit argument type mismatch at index " + std::to_string(index));
+            throw std::invalid_argument("IrBuilder::Emit argument type mismatch at index " + std::to_string(index) + " of " + std::string(IrOpcodeName(opcode)) + ": expected " + TypeToString(IrOpcodeArgumentType(opcode, index)) + ", got " + TypeToString(argument->Type()) + " from " + std::string(IrOpcodeName(argument->Opcode())));
         }
         value.AddArgument(argument);
         ++index;
@@ -48,7 +48,7 @@ IrValue& IrBuilder::Emit(IrOpcode opcode, IrType type, std::initializer_list<IrV
             throw std::invalid_argument("IrBuilder::Emit argument cannot be null");
         }
         if (argument->Type() != IrOpcodeArgumentType(opcode, index)) {
-            throw std::invalid_argument("IrBuilder::Emit argument type mismatch at index " + std::to_string(index));
+            throw std::invalid_argument("IrBuilder::Emit argument type mismatch at index " + std::to_string(index) + " of " + std::string(IrOpcodeName(opcode)) + ": expected " + TypeToString(IrOpcodeArgumentType(opcode, index)) + ", got " + TypeToString(argument->Type()) + " from " + std::string(IrOpcodeName(argument->Opcode())));
         }
         value.AddArgument(argument);
         ++index;

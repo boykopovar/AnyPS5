@@ -1,5 +1,8 @@
 #include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Recompiler.hpp"
+#include <atomic>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -55,6 +58,45 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& instruction
     if (!translated) {
         throw std::runtime_error("opcode has no IR translation at pc " + std::to_string(instruction.programCounter));
     }
+    if (const DebugProbe probe = DebugProbeConfig(); probe.enabled && instruction.programCounter == probe.programCounter) {
+        RdnaOperand source{};
+        source.kind = RdnaOperandKind::VectorRegister;
+        source.reg = probe.vgpr;
+        RdnaOperand target{};
+        target.kind = RdnaOperandKind::VectorRegister;
+        target.reg = 255u;
+        writeOperand(target, &readRawU32(source).Value());
+    }
+}
+
+namespace {
+std::atomic<bool> g_debugProbeActive{false};
+}
+
+void SetDebugProbeActive(bool active) {
+    g_debugProbeActive.store(active);
+}
+
+bool DebugProbeActive() {
+    return g_debugProbeActive.load();
+}
+
+DebugProbe DebugProbeConfig() {
+    static const DebugProbe parsed = [] {
+        DebugProbe result;
+        const char* text = std::getenv("APS5_PROBE");
+        if (text == nullptr) return result;
+        char* end = nullptr;
+        result.programCounter = static_cast<std::uint32_t>(std::strtoul(text, &end, 16));
+        if (end == nullptr || *end != ':') return result;
+        result.vgpr = static_cast<std::uint32_t>(std::strtoul(end + 1, &end, 10));
+        if (end != nullptr && *end == ':') result.shift = static_cast<std::uint32_t>(std::strtoul(end + 1, nullptr, 10));
+        result.enabled = result.vgpr < 255u;
+        return result;
+    }();
+    DebugProbe probe = parsed;
+    probe.enabled = parsed.enabled && DebugProbeActive();
+    return probe;
 }
 
 void DispatchInstruction(TranslationContext& context, const RdnaInstruction& instruction) {

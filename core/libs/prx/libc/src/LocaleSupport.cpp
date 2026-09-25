@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <vector>
+#include <algorithm>
 #include <array>
 #include <limits>
 
@@ -37,13 +38,32 @@ GuestLocale::Facet* APS5_VABI ReleaseLocale(GuestLocale::Facet* self) {
     if (self == nullptr) throw std::invalid_argument("locale release: null facet");
     std::atomic_ref<std::uint32_t> references(self->references);
     auto count = references.load();
+    // The classic locale is immortal: a release that would drop it to zero keeps its last reference.
     do {
-        if (count <= 1) throw std::runtime_error("classic locale: unbalanced release");
+        if (count <= 1) return nullptr;
     } while (!references.compare_exchange_weak(count, count - 1));
     return nullptr;
 }
 
+// Copies of the classic locale (see _Locimp::_Locimp(const _Locimp&)) count down to zero but are never
+// freed either, since their facets are shared with the classic locale.
+void APS5_VABI DestroyCopiedLocale(GuestLocale::Facet*) {}
+
+void APS5_VABI RetainCopiedLocale(GuestLocale::Facet* self) {
+    if (self == nullptr) throw std::invalid_argument("locale retain: null facet");
+    std::atomic_ref<std::uint32_t>(self->references).fetch_add(1);
+}
+
+GuestLocale::Facet* APS5_VABI ReleaseCopiedLocale(GuestLocale::Facet* self) {
+    if (self == nullptr) throw std::invalid_argument("locale release: null facet");
+    std::atomic_ref<std::uint32_t> references(self->references);
+    auto count = references.load();
+    while (count != 0 && !references.compare_exchange_weak(count, count - 1)) {}
+    return nullptr;
+}
+
 const GuestLocale::FacetVtable g_localeVtable{DestroyClassicLocale, DestroyClassicLocale, RetainLocale, ReleaseLocale};
+const GuestLocale::FacetVtable g_copiedLocaleVtable{DestroyCopiedLocale, DestroyCopiedLocale, RetainCopiedLocale, ReleaseCopiedLocale};
 GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
 
@@ -103,6 +123,7 @@ void APS5_VABI _ZNSt8ios_baseD2Ev_nid_postfix(GuestLocale::IosBase* self) {
     self->locale = nullptr;
 }
 
+// Dinkumware's static locale::_Init(bool) returns the global _Locimp, which the caller copies.
 GuestLocale::Implementation* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix() {
     std::lock_guard<std::mutex> lock(g_localeInitMutex);
     if (!g_localeInitialized) {
@@ -180,6 +201,52 @@ mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
 
 wint_t APS5_VABI _Towctrans_nid_postfix(wint_t c, wctrans_t desc) {
     return std::towctrans(c, desc);
+}
+
+// Locale ids and stream objects the title imports besides the ones above; the streams are zeroed
+// storage (the guest constructs Dinkumware streams itself) so address-taking code links and only a
+// use of them would misbehave.
+std::uint64_t _ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix = 0;
+alignas(16) unsigned char _ZSt4cout_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZSt4cerr_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZSt3cin_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZSt5wcout_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZSt5wcerr_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZSt4wcin_nid_postfix[0x400] {};
+
+// Facet vectors are read by inlined guest code, so they come from the guest application heap.
+GuestLocale::Facet** AllocateFacetVector(std::size_t count) {
+    auto* vector = static_cast<GuestLocale::Facet**>(ApplicationHeapAllocate_nid_no_patch(count * sizeof(GuestLocale::Facet*)));
+    if (vector == nullptr) throw std::runtime_error("locale: facet vector allocation failed");
+    std::memset(vector, 0, count * sizeof(GuestLocale::Facet*));
+    return vector;
+}
+
+// _Locimp::_Locimp(const _Locimp&): the copy shares the source's facets; guest locales are never freed.
+void APS5_VABI _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(GuestLocale::Implementation* self, const GuestLocale::Implementation* source) {
+    if (self == nullptr || source == nullptr) throw std::invalid_argument("_Locimp copy: null object");
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    *self = *source;
+    self->base.vtable = &g_copiedLocaleVtable;
+    self->base.references = 1;
+    if (source->facetCount != 0) {
+        self->facets = AllocateFacetVector(source->facetCount);
+        std::memcpy(self->facets, source->facets, source->facetCount * sizeof(GuestLocale::Facet*));
+    }
+}
+
+// _Locimp::_Addfac(facet*, size_t id): installs a facet at its id, growing the vector as needed.
+void APS5_VABI _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
+    if (self == nullptr) throw std::invalid_argument("_Locimp::_Addfac: null object");
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    if (id >= self->facetCount) {
+        const std::size_t count = std::max<std::size_t>(id + 1, 40);
+        auto* grown = AllocateFacetVector(count);
+        if (self->facetCount != 0) std::memcpy(grown, self->facets, self->facetCount * sizeof(GuestLocale::Facet*));
+        self->facets = grown;
+        self->facetCount = count;
+    }
+    self->facets[id] = facet;
 }
 
 void APS5_VABI _init_env_nid_postfix() {
