@@ -1,4 +1,6 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include <chrono>
 
 #include <stdexcept>
 #include <string>
@@ -53,14 +55,20 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  }
 
  std::unique_lock<std::mutex> lock(sem->mutex);
+ const auto waitStart = std::chrono::steady_clock::now();
+ const auto traceWait = [&](bool timedOut) {
+  KernelTraceWait_nid_postfix("sema", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
+ };
  if (time == nullptr) {
   sem->condition.wait(lock, [&] { return sem->tokenCount >= need; });
+  traceWait(false);
   sem->tokenCount -= need;
   return KERNEL_SEMA_OK;
  }
 
  auto timeout = std::chrono::microseconds(*time);
  bool acquired = sem->condition.wait_for(lock, timeout, [&] { return sem->tokenCount >= need; });
+ traceWait(!acquired);
  if (!acquired) {
   return KERNEL_SEMA_ERROR_ETIMEDOUT;
  }

@@ -3,11 +3,14 @@
 #include <cerrno>
 #include <chrono>
 #include <stdexcept>
+#include <string>
 
 static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_ENOMEM = 0x8002000C;
-static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x80020023;
+static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000B;
 static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
+static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
+static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 
 extern "C" {
 
@@ -32,7 +35,8 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
     case 1: (*attr)->type = MutexType::ErrorCheck; break;
     case 2: (*attr)->type = MutexType::Recursive; break;
     case 3: (*attr)->type = MutexType::Normal; break;
-    default: throw std::runtime_error("scePthreadMutexattrSettype: invalid type");
+    case 4: (*attr)->type = MutexType::Normal; break;
+    default: throw std::runtime_error("scePthreadMutexattrSettype: invalid type " + std::to_string(type));
     }
     return SCE_OK;
 }
@@ -91,16 +95,37 @@ int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {
 }
 
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) {
- (void)mutex;
- (void)usec;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!mutex || !*mutex) throw std::runtime_error("scePthreadMutexTimedlock: null mutex");
+    auto* m = *mutex;
+    const auto tid = std::this_thread::get_id();
+    const auto timeout = std::chrono::microseconds(usec);
+    if (m->_type == MutexType::Recursive) {
+        if (!m->_rmtx.try_lock_for(timeout)) return SCE_KERNEL_ERROR_ETIMEDOUT;
+        m->_owner.store(tid, std::memory_order_relaxed);
+        ++m->_count;
+        return SCE_OK;
+    }
+    if (m->_type == MutexType::ErrorCheck) {
+        if (m->_owner.load(std::memory_order_acquire) == tid) return SCE_KERNEL_ERROR_EDEADLK;
+    }
+    if (!m->_mtx.try_lock_for(timeout)) return SCE_KERNEL_ERROR_ETIMEDOUT;
+    m->_owner.store(tid, std::memory_order_relaxed);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!mutex || !*mutex) throw std::runtime_error("scePthreadMutexTrylock: null mutex");
+    auto* m = *mutex;
+    const auto tid = std::this_thread::get_id();
+    if (m->_type == MutexType::Recursive) {
+        if (!m->_rmtx.try_lock()) return SCE_KERNEL_ERROR_EBUSY;
+        m->_owner.store(tid, std::memory_order_relaxed);
+        ++m->_count;
+        return SCE_OK;
+    }
+    if (!m->_mtx.try_lock()) return SCE_KERNEL_ERROR_EBUSY;
+    m->_owner.store(tid, std::memory_order_relaxed);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) {

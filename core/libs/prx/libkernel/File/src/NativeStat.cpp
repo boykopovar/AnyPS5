@@ -10,21 +10,40 @@ using NativeStat = struct __stat64;
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return _wstat64(p.wstring().c_str(), st);
 }
+static int DoFstat(int fd, NativeStat* st) {
+    return _fstat64(fd, st);
+}
 #else
 #include <sys/stat.h>
 using NativeStat = struct stat;
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return ::stat(p.c_str(), st);
 }
+static int DoFstat(int fd, NativeStat* st) {
+    return ::fstat(fd, st);
+}
 #endif
 
 namespace File {
+
+static void FillFromNative(const NativeStat& st, FileStat* sb);
 
 void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
     NativeStat st{};
     if (DoStat(nativePath, &st) != 0) {
         throw std::runtime_error(std::string("FillFileStat: stat failed for ") + nativePath.string());
     }
+    FillFromNative(st, sb);
+}
+
+bool FillFileStatFromDescriptor(int fd, FileStat* sb) {
+    NativeStat st{};
+    if (DoFstat(fd, &st) != 0) return false;
+    FillFromNative(st, sb);
+    return true;
+}
+
+static void FillFromNative(const NativeStat& st, FileStat* sb) {
     *sb = FileStat{};
     sb->st_mode = static_cast<std::uint16_t>(st.st_mode);
     sb->st_size = static_cast<std::int64_t>(st.st_size);

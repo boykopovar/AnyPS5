@@ -1,6 +1,7 @@
 #include "../include/Pthread.hpp"
 #include "prx/libc/include/General.hpp"
 #include <stdexcept>
+#include <string>
 
 static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_ENOMEM = 0x8002000C;
@@ -86,87 +87,81 @@ int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
 }
 
 int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask) {
- (void)attr;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr || !mask) throw std::runtime_error("scePthreadAttrGetaffinity: null argument");
+    *mask = (*attr)->_affinity;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state) {
- (void)attr;
- (void)state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    if (!state) throw std::runtime_error(std::string(__func__) + ": null output");
+    *state = (*attr)->_detachstate;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrGetguardsize(const PthreadAttr* attr, size_t* guard_size) {
- (void)attr;
- (void)guard_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    if (!guard_size) throw std::runtime_error(std::string(__func__) + ": null output");
+    *guard_size = (*attr)->_guardsize;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param) {
- (void)attr;
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    if (!param) throw std::runtime_error(std::string(__func__) + ": null output");
+    param->sched_priority = (*attr)->_schedpriority;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched) {
- (void)attr;
- (void)solosched;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    if (!solosched) throw std::runtime_error(std::string(__func__) + ": null output");
+    *solosched = (*attr)->_solosched;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stack_addr) {
- (void)attr;
- (void)stack_addr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    if (!stack_addr) throw std::runtime_error(std::string(__func__) + ": null output");
+    *stack_addr = (*attr)->stackAddress;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_size) {
- (void)attr;
- (void)stack_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    if (!stack_size) throw std::runtime_error(std::string(__func__) + ": null output");
+    *stack_size = (*attr)->_stacksize;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask) {
- (void)attr;
- (void)mask;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error("scePthreadAttrSetaffinity: null attr");
+    (*attr)->_affinity = mask;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetguardsize(PthreadAttr* attr, size_t guard_size) {
- (void)attr;
- (void)guard_size;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    (*attr)->_guardsize = guard_size;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inherit_sched) {
- (void)attr;
- (void)inherit_sched;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    (*attr)->_inheritsched = inherit_sched;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy) {
- (void)attr;
- (void)policy;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    (*attr)->_schedpolicy = policy;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched) {
- (void)attr;
- (void)solosched;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
+    (*attr)->_solosched = solosched;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, size_t size) {

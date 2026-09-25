@@ -150,4 +150,119 @@ char* APS5_VABI strdup_nid_postfix(const char* s) {
     return copy;
 }
 
+int APS5_VABI bcmp_nid_postfix(const void* s1, const void* s2, size_t n) {
+    return std::memcmp(s1, s2, n);
+}
+
+size_t APS5_VABI strspn_nid_postfix(const char* s, const char* accept) {
+    return std::strspn(s, accept);
+}
+
+size_t APS5_VABI strcspn_nid_postfix(const char* s, const char* reject) {
+    return std::strcspn(s, reject);
+}
+
+const char* APS5_VABI strpbrk_nid_postfix(const char* s, const char* accept) {
+    return std::strpbrk(s, accept);
+}
+
+char* APS5_VABI strncat_nid_postfix(char* dest, const char* src, size_t n) {
+    return std::strncat(dest, src, n);
+}
+
+int APS5_VABI strcoll_nid_postfix(const char* s1, const char* s2) {
+    return std::strcmp(s1, s2);
+}
+
+int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    if (!dest || destsz == 0) return GuestEinval;
+    if (!src) {
+        dest[0] = '\0';
+        return GuestEinval;
+    }
+    size_t length = 0;
+    while (length < count && src[length] != '\0') ++length;
+    if (length >= destsz) {
+        dest[0] = '\0';
+        return GuestErange;
+    }
+    std::memcpy(dest, src, length);
+    dest[length] = '\0';
+    return 0;
+}
+
+float APS5_VABI strtof_nid_postfix(const char* str, char** endptr) {
+    return std::strtof(str, endptr);
+}
+
+double APS5_VABI atof_nid_postfix(const char* str) {
+    return std::atof(str);
+}
+
+unsigned long long APS5_VABI _Stoull_nid_postfix(const char* str, char** endptr, int base) {
+    return std::strtoull(str, endptr, base);
+}
+
+size_t APS5_VABI wcslen_nid_postfix(const wchar_t* s) {
+    return std::wcslen(s);
+}
+
+int APS5_VABI wcscmp_nid_postfix(const wchar_t* s1, const wchar_t* s2) {
+    return std::wcscmp(s1, s2);
+}
+
+int APS5_VABI wcsncmp_nid_postfix(const wchar_t* s1, const wchar_t* s2, size_t n) {
+    return std::wcsncmp(s1, s2, n);
+}
+
+wchar_t* APS5_VABI wcscpy_nid_postfix(wchar_t* dest, const wchar_t* src) {
+    return std::wcscpy(dest, src);
+}
+
+wchar_t* APS5_VABI wcsncpy_nid_postfix(wchar_t* dest, const wchar_t* src, size_t n) {
+    return std::wcsncpy(dest, src, n);
+}
+
+const wchar_t* APS5_VABI wcschr_nid_postfix(const wchar_t* s, wchar_t c) {
+    return std::wcschr(s, c);
+}
+
+const wchar_t* APS5_VABI wcsrchr_nid_postfix(const wchar_t* s, wchar_t c) {
+    return std::wcsrchr(s, c);
+}
+
+const wchar_t* APS5_VABI wcsstr_nid_postfix(const wchar_t* haystack, const wchar_t* needle) {
+    return std::wcsstr(haystack, needle);
+}
+
+const wchar_t* APS5_VABI wcspbrk_nid_postfix(const wchar_t* s, const wchar_t* accept) {
+    return std::wcspbrk(s, accept);
+}
+
+size_t APS5_VABI wcsspn_nid_postfix(const wchar_t* s, const wchar_t* accept) {
+    return std::wcsspn(s, accept);
+}
+
+wchar_t* APS5_VABI wmemset_nid_postfix(wchar_t* s, wchar_t c, size_t n) {
+    return std::wmemset(s, c, n);
+}
+
+double APS5_VABI wcstod_nid_postfix(const wchar_t* str, wchar_t** endptr) {
+    return std::wcstod(str, endptr);
+}
+
+float APS5_VABI wcstof_nid_postfix(const wchar_t* str, wchar_t** endptr) {
+    return std::wcstof(str, endptr);
+}
+
+long long APS5_VABI wcstol_nid_postfix(const wchar_t* str, wchar_t** endptr, int base) {
+    return std::wcstoll(str, endptr, base);
+}
+
+long long APS5_VABI wcstoll_nid_postfix(const wchar_t* str, wchar_t** endptr, int base) {
+    return std::wcstoll(str, endptr, base);
+}
+
 }

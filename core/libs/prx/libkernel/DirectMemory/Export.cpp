@@ -3,7 +3,68 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "DirectMemory.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <algorithm>
+#include <stdexcept>
+#include <string>
+#include <map>
+#include <cstdio>
+#include <mutex>
+
+namespace {
+
+constexpr size_t FLEXIBLE_MEMORY_SIZE = 448ULL * 1024 * 1024;
+
+constexpr int PRT_APERTURE_COUNT = 3;
+
+struct PrtAperture {
+    void* address;
+    size_t length;
+};
+
+std::mutex g_prtLock;
+PrtAperture g_prtApertures[PRT_APERTURE_COUNT] = {};
+
+std::mutex g_flexibleLock;
+std::map<uintptr_t, size_t> g_flexibleRanges;
+
+size_t _flexibleUsedLocked() {
+    size_t used = 0;
+    for (const auto& [start, len] : g_flexibleRanges) used += len;
+    return used;
+}
+
+int _mapFlexible(void** addr, size_t len, int prot, int flags) {
+    std::lock_guard lock(g_flexibleLock);
+    if (len > FLEXIBLE_MEMORY_SIZE - std::min(FLEXIBLE_MEMORY_SIZE, _flexibleUsedLocked())) {
+        std::fprintf(stderr, "[memory] flexible memory exhausted: request 0x%zx with 0x%zx of 0x%zx in use\n", len, _flexibleUsedLocked(), static_cast<size_t>(FLEXIBLE_MEMORY_SIZE));
+        return SCE_KERNEL_ERROR_ENOMEM;
+    }
+    const int result = DoMapAnon(addr, len, prot, flags);
+    if (result == 0) g_flexibleRanges[reinterpret_cast<uintptr_t>(*addr)] = len;
+    return result;
+}
+
+void _releaseFlexible(uintptr_t start, size_t len) {
+    std::lock_guard lock(g_flexibleLock);
+    const uintptr_t end = start + len;
+    auto it = g_flexibleRanges.upper_bound(start);
+    if (it != g_flexibleRanges.begin()) --it;
+    while (it != g_flexibleRanges.end() && it->first < end) {
+        const uintptr_t rangeStart = it->first;
+        const uintptr_t rangeEnd = rangeStart + it->second;
+        if (rangeEnd <= start) { ++it; continue; }
+        it = g_flexibleRanges.erase(it);
+        if (rangeStart < start) g_flexibleRanges[rangeStart] = start - rangeStart;
+        if (rangeEnd > end) g_flexibleRanges[end] = rangeEnd - end;
+    }
+}
+
+}
 
 extern "C" {
 
@@ -58,7 +119,7 @@ int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int p
 }
 
 int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
- return DoMapAnon(addr_in_out, len, prot, flags);
+ return _mapFlexible(addr_in_out, len, prot, flags);
 }
 
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
@@ -68,7 +129,7 @@ int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, i
 
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
  (void)name;
- return DoMapAnon(addr_in_out, len, prot, flags);
+ return _mapFlexible(addr_in_out, len, prot, flags);
 }
 
 int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot) {
@@ -76,7 +137,9 @@ int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot) {
 }
 
 int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
- return DoMunmap(reinterpret_cast<void*>(vaddr), len);
+ const int result = DoMunmap(reinterpret_cast<void*>(vaddr), len);
+ if (result == 0) _releaseFlexible(static_cast<uintptr_t>(vaddr), len);
+ return result;
 }
 
 int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
@@ -91,14 +154,40 @@ int APS5_VABI sceKernelReserveVirtualRange(void** addr, size_t len, int flags, s
 }
 
 int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
- (void)flags;
  if (!info || info_size < sizeof(VirtualQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
  memset(info, 0, sizeof(VirtualQueryInfo));
- uintptr_t ptr = reinterpret_cast<uintptr_t>(addr);
- info->start = ptr & ~static_cast<uintptr_t>(PS5_PAGE_SIZE - 1);
- info->end = info->start + PS5_PAGE_SIZE;
- info->is_direct = 1;
- info->protection = 3;
+ const auto address = reinterpret_cast<uintptr_t>(addr);
+ // The mapping that contains the address, or with SCE_KERNEL_VQ_FIND_NEXT (flags bit 0) the first
+ // mapping at or above it: titles walk their mappings and check that a mapping covers a whole
+ // allocation, so the answer must be the registered allocation, not a page.
+ constexpr int findNext = 1;
+ const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+ const GuestAllocations::Range* best = nullptr;
+ for (const auto& range : lease) {
+  const auto begin = range->allocationAddress;
+  const auto end = begin + range->allocationBytes;
+  if (address >= begin && address < end) { best = range.get(); break; }
+  if ((flags & findNext) != 0 && begin > address && (best == nullptr || begin < best->allocationAddress)) best = range.get();
+ }
+ if (best != nullptr) {
+  info->start = best->allocationAddress;
+  info->end = best->allocationAddress + best->allocationBytes;
+  info->protection = (best->readable ? 1 : 0) | (best->writable ? 2 : 0) | (!best->releasable ? 4 : 0);
+  info->is_direct = best->releasable ? 1u : 0u;
+  info->is_committed = 1;
+  return 0;
+ }
+ // Memory the registry does not know (the title's own heap blocks, stacks): the host's committed
+ // region around the address is the honest extent; unmapped memory is an error, as on the PS5.
+ MEMORY_BASIC_INFORMATION host{};
+ if (VirtualQuery(addr, &host, sizeof(host)) == 0 || host.State != MEM_COMMIT) return SCE_KERNEL_ERROR_EACCES;
+ info->start = reinterpret_cast<uintptr_t>(host.BaseAddress);
+ info->end = info->start + host.RegionSize;
+ const bool writable = (host.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0;
+ const bool executable = (host.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+ info->protection = 1 | (writable ? 2 : 0) | (executable ? 4 : 0);
+ info->is_flexible = 1;
+ info->is_committed = 1;
  return 0;
 }
 
@@ -140,14 +229,15 @@ int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end) {
 }
 
 int APS5_VABI sceKernelAvailableFlexibleMemorySize(size_t* size) {
- (void)size;
- NotImplemented_nid_no_patch(__func__);
+ if (!size) return SCE_KERNEL_ERROR_EINVAL;
+ std::lock_guard lock(g_flexibleLock);
+ *size = FLEXIBLE_MEMORY_SIZE - std::min(FLEXIBLE_MEMORY_SIZE, _flexibleUsedLocked());
  return 0;
 }
 
 int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
- (void)size;
- NotImplemented_nid_no_patch(__func__);
+ if (!size) return SCE_KERNEL_ERROR_EINVAL;
+ *size = FLEXIBLE_MEMORY_SIZE;
  return 0;
 }
 
@@ -169,36 +259,59 @@ int APS5_VABI sceKernelGetPageTableStats(int* cpu_total, int* cpu_available, int
 }
 
 int APS5_VABI sceKernelGetPrtAperture(int index, void** addr, size_t* len) {
- (void)index;
- (void)addr;
- (void)len;
- NotImplemented_nid_no_patch(__func__);
+ if (index < 0 || index >= PRT_APERTURE_COUNT || !addr || !len) return SCE_KERNEL_ERROR_EINVAL;
+ std::lock_guard lock(g_prtLock);
+ *addr = g_prtApertures[index].address;
+ *len = g_prtApertures[index].length;
  return 0;
 }
 
 int APS5_VABI sceKernelSetPrtAperture(int index, void* addr, size_t len) {
- (void)index;
- (void)addr;
- (void)len;
- NotImplemented_nid_no_patch(__func__);
+ if (index < 0 || index >= PRT_APERTURE_COUNT) return SCE_KERNEL_ERROR_EINVAL;
+ std::lock_guard lock(g_prtLock);
+ g_prtApertures[index] = {addr, len};
  return 0;
 }
 
+int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out, int flags);
+
 int APS5_VABI sceKernelBatchMap(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out) {
- (void)entries;
- (void)num_entries;
- (void)num_entries_out;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ constexpr int MapFixed = 0x10;
+ return sceKernelBatchMap2(entries, num_entries, num_entries_out, MapFixed);
 }
 
 int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out, int flags) {
- (void)entries;
- (void)num_entries;
- (void)num_entries_out;
- (void)flags;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!entries || num_entries < 0) return SCE_KERNEL_ERROR_EINVAL;
+ constexpr int OpMapDirect = 0;
+ constexpr int OpUnmap = 1;
+ constexpr int OpProtect = 2;
+ constexpr int OpMapFlexible = 3;
+ constexpr int OpTypeProtect = 4;
+ int processed = 0;
+ int result = 0;
+ for (; processed < num_entries; ++processed) {
+  auto& entry = entries[processed];
+  switch (entry.operation) {
+  case OpMapDirect:
+   result = DoMapDirect(&entry.start, entry.length, static_cast<uint8_t>(entry.protection), flags, static_cast<int64_t>(entry.offset), 0);
+   break;
+  case OpUnmap:
+   result = sceKernelMunmap(reinterpret_cast<uint64_t>(entry.start), entry.length);
+   break;
+  case OpProtect:
+  case OpTypeProtect:
+   result = DoMprotect(entry.start, entry.length, static_cast<uint8_t>(entry.protection));
+   break;
+  case OpMapFlexible:
+   result = _mapFlexible(&entry.start, entry.length, static_cast<uint8_t>(entry.protection), flags);
+   break;
+  default:
+   throw std::invalid_argument("sceKernelBatchMap2: unsupported operation " + std::to_string(entry.operation));
+  }
+  if (result != 0) break;
+ }
+ if (num_entries_out) *num_entries_out = processed;
+ return result;
 }
 
 }

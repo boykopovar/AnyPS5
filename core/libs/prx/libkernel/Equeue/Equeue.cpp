@@ -1,4 +1,5 @@
 #include "Equeue.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -311,12 +312,16 @@ int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int
     if (num < 1 || out == nullptr) {
         return EQUEUE_ERROR_EINVAL;
     }
+    const auto waitStart = std::chrono::steady_clock::now();
     if (timo == nullptr) {
         *out = owner->WaitForEvents(ev, num, 0);
     } else if (*timo == 0) {
         *out = owner->GetTriggeredEvents(ev, num);
     } else {
         *out = owner->WaitForEvents(ev, num, *timo);
+    }
+    if (timo == nullptr || *timo != 0) {
+        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), *out == 0);
     }
     if (*out == EQUEUE_ERROR_EBADF) {
         return EQUEUE_ERROR_EBADF;

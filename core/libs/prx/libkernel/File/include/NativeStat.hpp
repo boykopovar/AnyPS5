@@ -7,6 +7,7 @@
 namespace File {
 
 void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb);
+bool FillFileStatFromDescriptor(int fd, FileStat* sb);
 
 }
 
