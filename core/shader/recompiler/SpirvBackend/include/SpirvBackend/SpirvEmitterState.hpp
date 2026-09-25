@@ -84,6 +84,16 @@ struct SpirvEmitterState {
     std::uint32_t bdaPagetableVariable = 0;
     std::uint32_t faultBufferVariable = 0;
     std::uint32_t bdaPointerFunction = 0;
+    // False for programs with workgroup barriers: faulting BDA accesses then continue (see BdaInvocationsMayStop).
+    bool bdaStopsInvocations = true;
+    // Execution scope of the barriers that keep one guest wave's LDS accesses in program order across
+    // host invocations (see WaveLdsScope); 0 when none are emitted.
+    std::uint32_t waveLdsScope = 0;
+    // Debug aid (APS5_LOOP_GUARD=<exits>): after that many evaluated loop exits an invocation leaves its
+    // loops, and the first loop that ran out is reported as a LoopLimit fault instead of hanging the GPU.
+    std::uint32_t loopGuardLimit = 0;
+    std::uint32_t loopGuardVisits = 0;
+    std::uint32_t loopGuardPc = 0;
     std::uint32_t gdsVariable = 0;
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;

@@ -67,7 +67,7 @@ void _detectVertexBuffers(ShaderVertexInputInfo& info) {
 
 }
 
-ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context) {
+ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context, std::uint32_t hostSubgroupSize) {
     switch (stage) {
     case ShaderStageKind::Compute: {
         if (!context.compute.has_value()) {
@@ -80,11 +80,14 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         computeStorage.threadsNum[2] = compute.numThreads[2];
         computeStorage.ldsSizeDwords = compute.ldsSizeDwords;
         computeStorage.waveSize = context.waveSize;
+        computeStorage.hostSubgroupSize = hostSubgroupSize;
         computeStorage.groupId[0] = compute.groupIdEnable[0];
         computeStorage.groupId[1] = compute.groupIdEnable[1];
         computeStorage.groupId[2] = compute.groupIdEnable[2];
         computeStorage.tgSizeEn = compute.tgSizeEnable;
         computeStorage.threadIdsNum = static_cast<int>(compute.threadIdComponentCount);
+        // Workgroup ids (and the thread-group size word) follow the user SGPRs.
+        computeStorage.workgroupRegister = static_cast<int>(context.userDataBaseRegister + context.userData.size());
         ShaderStageInputInfo result;
         result.compute = &computeStorage;
         return result;

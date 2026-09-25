@@ -1,5 +1,9 @@
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
+#include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <string>
 #include <spirv/unified1/spirv.hpp>
 #include <cstdint>
 #include <stdexcept>
@@ -32,6 +36,8 @@ void EmitKillIfPixelValidMaskInactive(SpirvEmitterState& state) {
     EmitKillIfBoolFalse(state, active);
 }
 
+// Block metadata is paired with BlockOrder by position (as IrProgram validation does); terminator
+// targets name control-flow ids, which are not IR block ids.
 const IrBlock* TargetBlock(const IrProgram& program, std::uint32_t id) {
     const auto& blocks = program.BlockOrder();
     const auto& blockInfo = program.Metadata().blockInfo;
@@ -67,8 +73,43 @@ const BlockInfo* BlockInfoFor(const IrProgram& program, const IrBlock* block) {
 }
 
 void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
-    EmitKillIfPixelValidMaskInactive(ctx.state);
-    ctx.state.module.AddFunction(spv::OpReturn);
+    auto& state = ctx.state;
+    if (state.loopGuardLimit != 0 && state.faultBufferVariable != 0) {
+        const auto pc = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), pc, state.loopGuardPc);
+        EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), pc, ConstantU32(state, 0u)), [&] {
+            RecordBdaFault(state, BdaConstant(state, 0u), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
+        });
+    }
+    EmitKillIfPixelValidMaskInactive(state);
+    state.module.AddFunction(spv::OpReturn);
+}
+
+// The loop guard (see SpirvEmitterState::loopGuardLimit) at a branch that may leave a loop: counts the
+// evaluation and, past the limit, takes the exit and remembers the block's PC (plus one, 0 = none).
+std::uint32_t GuardLoopExit(SpirvEmitterState& state, const BlockInfo& info, std::uint32_t condition, bool exitWhenTrue) {
+    const auto visits = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), visits, state.loopGuardVisits);
+    const auto next = EmitBinaryU32(state, spv::OpIAdd, visits, ConstantU32(state, 1u));
+    state.module.AddFunction(spv::OpStore, state.loopGuardVisits, next);
+    const auto tripped = Binary(state, spv::OpUGreaterThan, TypeBool(state), next, ConstantU32(state, state.loopGuardLimit));
+    const auto previous = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), previous, state.loopGuardPc);
+    const auto first = Binary(state, spv::OpLogicalAnd, TypeBool(state), tripped, Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u)));
+    const auto pc = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelect, TypeU32(state), pc, first, ConstantU32(state, info.startPc + 1u), previous);
+    state.module.AddFunction(spv::OpStore, state.loopGuardPc, pc);
+    if (exitWhenTrue) return Binary(state, spv::OpLogicalOr, TypeBool(state), condition, tripped);
+    const auto stay = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLogicalNot, TypeBool(state), stay, tripped);
+    return Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, stay);
+}
+
+bool IsLoopMerge(const IrProgram& program, std::uint32_t block) {
+    for (const auto& info : program.Metadata().blockInfo) {
+        if (info.terminator.loopHeader && info.terminator.mergeBlock == block) return true;
+    }
+    return false;
 }
 
 std::uint32_t EmitBranchCondition(SpirvValueEmitContext& ctx, const BlockInfo& info) {
@@ -123,7 +164,18 @@ void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& progr
                 EmitReturnTerminator(ctx);
                 return;
             }
-            const auto condition = EmitBranchCondition(ctx, info);
+            if (const IrValue* resolved = info.condition->Resolve(); !resolved->HasImmediate() && !ctx.definitions.contains(resolved)) {
+                const std::string where = resolved->Parent() == nullptr ? std::string("no block") : "block " + std::to_string(resolved->Parent()->Id());
+                const std::string message = "branch condition " + std::string(IrOpcodeName(resolved->Opcode())) + " of block " + std::to_string(info.id) + " (defined in " + where + ") was not emitted before the branch";
+                ctx.Fail(message.c_str());
+            }
+            auto condition = EmitBranchCondition(ctx, info);
+            if (state.loopGuardLimit != 0 && term.trueBlock != term.falseBlock) {
+                if (IsLoopMerge(program, term.trueBlock)) condition = GuardLoopExit(state, info, condition, true);
+                else if (IsLoopMerge(program, term.falseBlock)) condition = GuardLoopExit(state, info, condition, false);
+            }
+            static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
+            if (debug) std::fprintf(stderr, "[spirv] block %u branches on %%%u = %s (kind %d)\n", static_cast<unsigned>(info.id), condition, std::string(IrOpcodeName(info.condition->Resolve()->Opcode())).c_str(), static_cast<int>(info.terminator.condition));
             emitMerge();
             state.module.AddFunction(spv::OpBranchConditional, condition, ctx.Label(trueBlock), ctx.Label(falseBlock));
             return;
@@ -480,6 +532,10 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
     state.currentBlock = block;
     EmitLabel(state, ctx.Label(block));
     bool emittedNonPhi = false;
+    // Wave LDS ordering (see WaveLdsScope): a barrier separates an LDS write from the next LDS access
+    // and a read from the next write. The block may be entered right after a write.
+    bool ldsWritten = true;
+    bool ldsRead = false;
     for (const IrValue* inst : block->Instructions()) {
         if (inst->Opcode() == IrOpcode::Phi) {
             if (emittedNonPhi) {
@@ -487,6 +543,22 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             }
         } else {
             emittedNonPhi = true;
+        }
+        if (state.waveLdsScope != 0) {
+            const auto access = SharedAccessOf(inst->Opcode());
+            if (inst->Opcode() == IrOpcode::Barrier) {
+                ldsWritten = false;
+                ldsRead = false;
+            } else if (access != SharedAccess::None) {
+                const bool writes = access != SharedAccess::Read;
+                if (ldsWritten || (writes && ldsRead)) {
+                    state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, state.waveLdsScope), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
+                    ldsWritten = false;
+                    ldsRead = false;
+                }
+                ldsWritten |= writes;
+                ldsRead |= access != SharedAccess::Write;
+            }
         }
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             if (half != 0 && ctx.otherHalf == nullptr) {
@@ -528,7 +600,24 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
     if (blocks.empty() || blocks.front() == nullptr) {
         context.Fail("structured control flow requires at least one block");
     }
+    if (state.loopGuardLimit != 0) {
+        const auto pointer = TypePointer(state, spv::StorageClassPrivate, TypeU32(state));
+        if (state.loopGuardVisits == 0) state.loopGuardVisits = state.module.DefineGlobalVariable(pointer, spv::StorageClassPrivate);
+        if (state.loopGuardPc == 0) state.loopGuardPc = state.module.DefineGlobalVariable(pointer, spv::StorageClassPrivate);
+        state.module.AddFunction(spv::OpStore, state.loopGuardVisits, ConstantU32(state, 0u));
+        state.module.AddFunction(spv::OpStore, state.loopGuardPc, ConstantU32(state, 0u));
+    }
     state.module.AddFunction(spv::OpBranch, context.Label(blocks.front()));
+    static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
+    if (debug) {
+        const auto& infos = program.Metadata().blockInfo;
+        for (std::size_t index = 0; index < blocks.size(); ++index) {
+            const auto* byId = BlockInfoFor(program, blocks[index]);
+            std::fprintf(stderr, "[spirv] order %zu: IR block %u, positional info id %u, id-matched info %s (kind %d true %u false %u)\n", index, blocks[index]->Id(),
+                         index < infos.size() ? infos[index].id : 0xffffffffu, byId ? std::to_string(byId->id).c_str() : "none",
+                         byId ? static_cast<int>(byId->terminator.kind) : -1, byId ? byId->terminator.trueBlock : 0u, byId ? byId->terminator.falseBlock : 0u);
+        }
+    }
     for (const IrBlock* block : blocks) {
         if (block == nullptr) {
             context.Fail("structured control flow contains a null block");

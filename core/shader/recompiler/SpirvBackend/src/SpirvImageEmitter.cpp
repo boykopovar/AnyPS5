@@ -6,7 +6,9 @@
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <array>
+#include <bit>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
@@ -659,7 +661,18 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     if (setup.dref) {
         resultNumericClass = IrTextureNumericClass::Float;
     }
-    ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), resultNumericClass, false, true));
+    // Debug aid: APS5_GATHER_CONST=<n> makes every non-depth gather return that integer (or its
+    // float value) in all four texels, to separate a wrong gather result from wrong math after it.
+    static const char* gatherConstText = std::getenv("APS5_GATHER_CONST");
+    auto gathered = sample;
+    if (gatherConstText != nullptr && !setup.dref) {
+        const auto value = static_cast<std::uint32_t>(std::strtoul(gatherConstText, nullptr, 0));
+        const bool integer = resultNumericClass == IrTextureNumericClass::Uint || resultNumericClass == IrTextureNumericClass::Sint;
+        const auto component = integer ? ConstantU32(state, value) : ConstantF32(state, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
+        gathered = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, resultNumericClass, 4), gathered, component, component, component, component);
+    }
+    ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, gathered), resultNumericClass, false, true));
 }
 
 std::uint32_t EmitIndirectImageSelector(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t key) {

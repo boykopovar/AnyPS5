@@ -64,7 +64,7 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
         return false;
     }
     IrValue* resource = getBufferResource(memory);
-    const BufferAddress address = readBufferAddress(inst, 0u);
+    const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
     IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
     if (memory.dataBits != 32u) {
@@ -82,7 +82,7 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
 bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
     const MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
     IrValue* resource = getBufferResource(memory);
-    const BufferAddress address = readBufferAddress(inst, 1u);
+    const BufferAddress address = readBufferAddress(inst);
     const IrU32 data = readU32(inst.destination);
     IrOpcode opcode;
     IrValue* value;
@@ -137,7 +137,7 @@ bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
 bool TranslationContext::bufferAtomic(const RdnaInstruction& inst, IrOpcode opcode) {
     const MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
     IrValue* resource = getBufferResource(memory);
-    const BufferAddress address = readBufferAddress(inst, 1u);
+    const BufferAddress address = readBufferAddress(inst);
     const MemoryFlags flags = addMemoryInfo(memory, inst.programCounter);
     IrValue& exec = ir.GetExec();
     IrValue* result;

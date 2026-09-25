@@ -98,6 +98,91 @@ IrValue* getRealValue(IrProgram& program, PhiMap& phiMap, IrValue* source, std::
     return &phi;
 }
 
+// Spilled SGPRs written with v_writelane inside divergent control flow reach their v_readlane through
+// per-lane exec selects and loop phis. Lane `lane` of such a vector can only hold what some WriteLane
+// stored to that lane, so the read is collected as the set of those stored values; operands that
+// enter through a phi without any lane write (the spill slot's initial contents) are never read back.
+struct LaneValues {
+    std::unordered_set<IrValue*> values;
+    std::unordered_set<IrValue*> visited;
+    bool failed = false;
+};
+
+void collectLaneValues(IrValue* value, std::uint32_t lane, std::uint32_t waveSize, bool throughPhi, LaneValues& out) {
+    if (out.failed) return;
+    value = value->Resolve();
+    if (!out.visited.insert(value).second) return;
+    if (out.visited.size() > 4096u) {
+        out.failed = true;
+        return;
+    }
+    switch (value->Opcode()) {
+    case IrOpcode::WriteLane: {
+        IrValue* selector = value->Argument(1)->Resolve();
+        if (!isImmediateU32(*selector)) {
+            out.failed = true;
+            return;
+        }
+        if (selector->ImmediateU32() % waveSize == lane) {
+            out.values.insert(value->Argument(0)->Resolve());
+            return;
+        }
+        collectLaneValues(value->Argument(2), lane, waveSize, throughPhi, out);
+        return;
+    }
+    case IrOpcode::SelectU32:
+        collectLaneValues(value->Argument(1), lane, waveSize, throughPhi, out);
+        collectLaneValues(value->Argument(2), lane, waveSize, throughPhi, out);
+        return;
+    default:
+        if (value->IsPhi()) {
+            for (std::size_t index = 0; index < value->ArgumentCount(); index++) collectLaneValues(value->Argument(index), lane, waveSize, true, out);
+            return;
+        }
+        if (!throughPhi) out.failed = true;
+        return;
+    }
+}
+
+// A stored value computed from the read itself (a spilled loop counter) is not a fixed value.
+bool dependsOn(IrValue* value, IrValue* target) {
+    std::vector<IrValue*> pending{value};
+    std::unordered_set<IrValue*> visited;
+    while (!pending.empty()) {
+        IrValue* current = pending.back()->Resolve();
+        pending.pop_back();
+        if (current == target) return true;
+        if (!visited.insert(current).second || visited.size() > 65536u) continue;
+        for (std::size_t index = 0; index < current->ArgumentCount(); index++) pending.push_back(current->Argument(index));
+    }
+    return false;
+}
+
+// A scalar phi whose operands are all `read` itself or members of `candidates` adds nothing new.
+IrValue* uniqueLaneValue(IrValue* read, std::unordered_set<IrValue*> candidates) {
+    std::unordered_set<IrValue*> expanded;
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (IrValue* candidate : std::vector<IrValue*>(candidates.begin(), candidates.end())) {
+            if (!candidate->IsPhi() || !expanded.insert(candidate).second) continue;
+            std::vector<IrValue*> operands;
+            bool closed = true;
+            for (std::size_t index = 0; index < candidate->ArgumentCount(); index++) {
+                IrValue* operand = candidate->Argument(index)->Resolve();
+                if (operand == read || operand == candidate || expanded.contains(operand)) continue;
+                operands.push_back(operand);
+            }
+            if (operands.empty()) closed = false;
+            if (!closed) continue;
+            candidates.erase(candidate);
+            for (IrValue* operand : operands) candidates.insert(operand);
+            changed = true;
+        }
+    }
+    candidates.erase(read);
+    return candidates.size() == 1u ? *candidates.begin() : nullptr;
+}
+
 }
 
 ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::uint32_t waveSize) const {
@@ -124,6 +209,13 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
                 continue;
             }
             if (!chain.value->IsPhi() || !isPossibleToEliminate(chain.value, lane, waveSize)) {
+                LaneValues values;
+                collectLaneValues(inst->Argument(0), lane, waveSize, false, values);
+                if (values.failed || values.values.empty()) continue;
+                if (IrValue* unique = uniqueLaneValue(inst, values.values); unique != nullptr && !dependsOn(unique, inst)) {
+                    inst->ReplaceUsesWith(unique, true);
+                    stats.rewrittenReads++;
+                }
                 continue;
             }
 

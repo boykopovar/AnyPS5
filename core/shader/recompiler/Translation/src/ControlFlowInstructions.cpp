@@ -2,6 +2,7 @@
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
@@ -14,11 +15,25 @@ void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin)
     throw std::runtime_error("GNM subvector loop instructions are not supported by this translator");
 }
 
+// s_*_saveexec reads its source before it writes the old exec into the destination, so
+// `s_and_saveexec_b64 vcc, vcc` (the Bink 2 decoder kernels gate every sparse coefficient load with
+// it) masks exec by the old vcc. Reading the source after the destination write turned that form into
+// exec = exec & exec. APS5_SAVEEXEC_WRITE_FIRST=1 restores the old order.
+bool SaveexecWritesDestinationFirst() {
+    static const bool writeFirst = std::getenv("APS5_SAVEEXEC_WRITE_FIRST") != nullptr;
+    return writeFirst;
+}
+
 void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operation, bool negateExec, bool negateSource, bool write64) {
+    // Callers name the lane-wise operation; the exec mask words themselves combine bitwise.
+    if (operation == IrOpcode::LogicalAnd) operation = IrOpcode::BitwiseAnd32;
+    else if (operation == IrOpcode::LogicalOr) operation = IrOpcode::BitwiseOr32;
+    const bool writeFirst = SaveexecWritesDestinationFirst();
     if (write64) {
         const std::array<IrU32, 2> oldExec{IrU32(ir.GetExecLo()), IrU32(ir.GetExecHi())};
-        writeU32Pair(inst.destination, oldExec);
+        if (writeFirst) writeU32Pair(inst.destination, oldExec);
         const std::array<IrU32, 2> source = readU32Pair(sourceAt(inst, 0u));
+        if (!writeFirst) writeU32Pair(inst.destination, oldExec);
         IrValue& lowExecOperand = negateExec ? ir.BitwiseNot(oldExec[0].Value()) : oldExec[0].Value();
         IrValue& lowSourceOperand = negateSource ? ir.BitwiseNot(source[0].Value()) : source[0].Value();
         IrValue& highExecOperand = negateExec ? ir.BitwiseNot(oldExec[1].Value()) : oldExec[1].Value();
@@ -29,19 +44,20 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         ir.SetExecHi(newExecHi.Value());
         const IrU1 nonZero(ir.LogicalOr(ir.INotEqual(newExecLo.Value(), ir.Constant(0u)), ir.INotEqual(newExecHi.Value(), ir.Constant(0u))));
         ir.SetScc(nonZero.Value());
-        ir.SetExec(nonZero.Value());
+        ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
         return;
     }
     const IrU32 oldExec(ir.GetExecLo());
-    writeRawU32(inst.destination, oldExec);
+    if (writeFirst) writeRawU32(inst.destination, oldExec);
     const IrU32 source = readU32(sourceAt(inst, 0u));
+    if (!writeFirst) writeRawU32(inst.destination, oldExec);
     IrValue& execOperand = negateExec ? ir.BitwiseNot(oldExec.Value()) : oldExec.Value();
     IrValue& sourceOperand = negateSource ? ir.BitwiseNot(source.Value()) : source.Value();
     const IrU32 newExec(ir.Emit(operation, IrType::U32, {&execOperand, &sourceOperand}));
     ir.SetExecLo(newExec.Value());
     const IrU1 nonZero(ir.INotEqual(newExec.Value(), ir.Constant(0u)));
     ir.SetScc(nonZero.Value());
-    ir.SetExec(nonZero.Value());
+    ir.SetExec(threadBit({newExec, IrU32(ir.GetExecHi())}).Value());
 }
 
 void TranslationContext::addU32(const RdnaInstruction& inst, bool vector, bool useCarryIn) {
@@ -220,12 +236,35 @@ void TranslationContext::sWqm(const RdnaInstruction& inst, bool wide) {
     writeRawU32(inst.destination, extractU64(result)[0]);
 }
 
+// M0 holds a uniform register offset. Vector registers are SSA values with fixed indices, so an indexed
+// access becomes a select over every register the program references at or past the base.
 void TranslationContext::vMovrelsB32(const RdnaInstruction& inst) {
-    throw std::runtime_error("dynamic M0-relative vector register addressing is not supported by this translator");
+    const RdnaOperand& source = sourceAt(inst, 0u);
+    if (source.kind != RdnaOperandKind::VectorRegister) {
+        throw std::runtime_error("v_movrels_b32 source is not a vector register");
+    }
+    IrValue& offset = ir.GetM0();
+    IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(source.reg)));
+    for (std::uint32_t reg = source.reg + 1u; reg < currentVectorLimit; ++reg) {
+        IrValue& hit = ir.IEqual(offset, ir.Constant(reg - source.reg));
+        result = IrU32(ir.Select(hit, ir.GetVectorReg(static_cast<VectorReg>(reg)), result.Value()));
+    }
+    writeRawU32(inst.destination, result);
 }
 
 void TranslationContext::vMovreldB32(const RdnaInstruction& inst) {
-    throw std::runtime_error("dynamic M0-relative vector register addressing is not supported by this translator");
+    const RdnaOperand destination = plainOperand(inst.destination);
+    if (destination.kind != RdnaOperandKind::VectorRegister) {
+        throw std::runtime_error("v_movreld_b32 destination is not a vector register");
+    }
+    const IrU32 value = readU32(sourceAt(inst, 0u));
+    IrValue& offset = ir.GetM0();
+    for (std::uint32_t reg = destination.reg; reg < currentVectorLimit; ++reg) {
+        RdnaOperand target = destination;
+        target.reg = reg;
+        IrValue& hit = ir.IEqual(offset, ir.Constant(reg - destination.reg));
+        writeRawU32(target, IrU32(ir.Select(hit, value.Value(), ir.GetVectorReg(static_cast<VectorReg>(reg)))));
+    }
 }
 
 void TranslationContext::vReadfirstlaneB32(const RdnaInstruction& inst) {

@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <cmath>
+#include <cstdlib>
 #include <SpirvBackend/SpirvEmitterHelpers.hpp>
 #include <SpirvBackend/SpirvEmitterInstructions.hpp>
 
@@ -102,6 +103,11 @@ std::uint32_t NormalizeFormatComponent(SpirvEmitterState& state, const SpirvBuff
 }
 
 void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
+    // GCN atomics imply no fence; this device-scope barrier is the acquire side of lock/publish
+    // patterns (atomic, then loads of data other waves wrote). It also makes every non-returning
+    // atomic wait for its completion. Experiment switch: APS5_NO_ATOMIC_BARRIER=1 drops it.
+    static const bool disabled = std::getenv("APS5_NO_ATOMIC_BARRIER") != nullptr;
+    if (disabled) return;
     const auto semantics = spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask;
     state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, semantics));
 }

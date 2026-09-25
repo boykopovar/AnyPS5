@@ -6,7 +6,9 @@
 #include "SpirvBackend/SpirvMemory/SpirvModuleSetup.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
+#include <algorithm>
 #include <bit>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <SpirvBackend/SpirvEmitterInstructions.hpp>
@@ -34,6 +36,34 @@ const ShaderWorkgroupInputInfo* ShaderWorkgroupInputFor(const SpirvEmitterState&
     default:
         return nullptr;
     }
+}
+
+// Lanes of one guest wave run in lockstep, so a lane reads LDS another lane of its wave wrote without a
+// barrier. Host invocations need one; it can be issued wherever the guest wave's control flow is
+// uniform across the barrier's scope: the host subgroup when it holds exactly one guest wave, or the
+// workgroup when the workgroup is a single wave.
+std::uint32_t WaveLdsScope(const IrProgram& program, const ShaderWorkgroupInputInfo* workgroup, std::uint32_t laneCount) {
+    if (program.Resources().stage != IrShaderStage::Compute || workgroup == nullptr) return 0;
+    bool writes = false;
+    for (const auto* block : program.BlockOrder()) {
+        for (const auto* instruction : block->Instructions()) {
+            const auto access = SharedAccessOf(instruction->Opcode());
+            writes |= access != SharedAccess::None && access != SharedAccess::Read;
+        }
+    }
+    if (!writes) return 0;
+    const auto threads = std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
+    // A single-wave workgroup gets workgroup-scope barriers: on NVIDIA a subgroup-scope
+    // OpControlBarrier did not make one lane's LDS writes visible to the others (Bink's decode
+    // shaders read half their block as zeros), while the workgroup scope does. Debug aid:
+    // APS5_WAVE_LDS_SUBGROUP=1 restores the subgroup scope for comparison.
+    static const bool preferSubgroup = std::getenv("APS5_WAVE_LDS_SUBGROUP") != nullptr;
+    if (!preferSubgroup && threads <= program.WaveSize()) return spv::ScopeWorkgroup;
+    // A wave64 program kept at one lane per invocation (APS5_SINGLE_LANE reports a 64-wide host) spans
+    // two real subgroups, so only the workgroup scope covers it; hosts wider than 32 lanes are not
+    // distinguished from that case and get the same, still correct, scope.
+    if (laneCount == 2u || (program.WaveSize() == workgroup->hostSubgroupSize && workgroup->hostSubgroupSize <= 32u)) return spv::ScopeSubgroup;
+    return threads <= program.WaveSize() ? spv::ScopeWorkgroup : 0u;
 }
 
 }
@@ -215,6 +245,10 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.module.RequireVersion(target.spirvVersion);
     const auto* workgroup = ShaderWorkgroupInputFor(state);
     state.laneCount = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u ? 2u : 1u;
+    state.waveLdsScope = WaveLdsScope(program, workgroup, state.laneCount);
+    if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
+    // Stopped invocations would leave the wave LDS barriers incomplete.
+    state.bdaStopsInvocations = state.waveLdsScope == 0 && BdaInvocationsMayStop(program);
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);

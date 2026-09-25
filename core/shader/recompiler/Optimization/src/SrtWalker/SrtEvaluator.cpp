@@ -3,6 +3,9 @@
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+#include <string>
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -51,6 +54,8 @@ bool Evaluator::EvaluateWide(IrValue* raw, std::uint64_t& result) {
     const bool evaluated = EvaluateInst(*inst, out);
     _visiting.pop_back();
     if (!evaluated) {
+        static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
+        if (debug) std::fprintf(stderr, "[srt] cannot evaluate %s (%zu arguments)\n", std::string(IrOpcodeName(inst->Opcode())).c_str(), inst->ArgumentCount());
         return false;
     }
     _cache.emplace(inst, out);
