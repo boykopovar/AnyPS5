@@ -47,14 +47,15 @@ add_custom_command(
 )
 
 add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/DisplayBuffer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/WorkerSampler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/BdaFeatures.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Pm4.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SwapchainState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
@@ -62,6 +63,7 @@ add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetTransfer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderInputState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
@@ -73,6 +75,7 @@ add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestTextureResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestSamplerResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureFormat.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DccMetadata.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureTiling.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureDetiler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
@@ -208,6 +211,7 @@ add_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         Graphics/src/GuestTextureResource.cpp
         Graphics/src/GuestSamplerResource.cpp
         Graphics/src/TextureFormat.cpp
+        Graphics/src/DccMetadata.cpp
         Graphics/src/TextureTiling.cpp
         Graphics/src/TextureDetiler.cpp
         Graphics/src/Texture.cpp
@@ -282,7 +286,6 @@ if(AGC_BUILD_VISUAL_TEST)
     add_executable(agc_driver_visual_test EXCLUDE_FROM_ALL
             tests/Visual.cpp
             Execution/src/VulkanDevice.cpp
-            Execution/src/SwapchainState.cpp
             Execution/src/AspectFit.cpp
             Execution/src/PresentationScaler.cpp
             Execution/src/GuestMemory.cpp
@@ -301,6 +304,7 @@ if(AGC_BUILD_VISUAL_TEST)
             Graphics/src/GuestTextureResource.cpp
             Graphics/src/GuestSamplerResource.cpp
             Graphics/src/TextureFormat.cpp
+            Graphics/src/DccMetadata.cpp
             Graphics/src/TextureTiling.cpp
             Graphics/src/TextureDetiler.cpp
             Graphics/src/Texture.cpp
@@ -363,3 +367,14 @@ if(AGC_BUILD_VISUAL_TEST)
 endif()
 
 include(PostCompile.cmake)
+# Replays shader_*.req files the driver writes when a compute dispatch cannot be recompiled.
+add_executable(agc_shader_replay EXCLUDE_FROM_ALL
+        tools/ShaderReplay.cpp
+)
+target_include_directories(agc_shader_replay PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_shader_replay PRIVATE shader_recompiler_agc_driver libc)
+if(ANYPS5_ENABLE_SPIRV_TOOLS)
+    target_link_libraries(agc_shader_replay PRIVATE SPIRV-Tools-static)
+endif()
+set_target_properties(agc_shader_replay PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_shader_replay)

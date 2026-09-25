@@ -2,13 +2,22 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <thread>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 namespace AgcDriver::Pm4 {
 namespace {
+
+std::string ToHex(std::uint32_t value) {
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%x", value);
+    return buffer;
+}
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(reason);
@@ -25,6 +34,13 @@ std::uint32_t registerOffset(std::uint32_t value) {
     return offset;
 }
 
+// Debug aid: APS5_TRACE_CONTEXT_STATE logs context-state operations and the context registers
+// written while a context is pushed. Read once: getenv scans the environment under a lock.
+bool TraceContextState() {
+    static const bool value = std::getenv("APS5_TRACE_CONTEXT_STATE") != nullptr;
+    return value;
+}
+
 Registers& registersFor(QueueState& queue, std::uint32_t opcode) {
     if (opcode == 0x69 || opcode == 0x9f) return queue.context;
     if (opcode == 0x76 || opcode == 0x63) return queue.shader;
@@ -32,7 +48,10 @@ Registers& registersFor(QueueState& queue, std::uint32_t opcode) {
 }
 
 void writeRegister(QueueState& queue, std::uint32_t opcode, std::uint32_t offset, std::uint32_t value) {
+    if ((opcode == 0x69 || opcode == 0x9f) && (offset == 0x8e || offset == 0x8f || offset == 0x318 || offset == 0x31b || offset == 0x31c || offset == 0x31d || offset == 0x390 || offset == 0x3b0 || offset == 0x3b8))
+        APS5_LOG_OUT_DEBUG("CONTEXT WRITE opcode=0x%x offset=0x%x value=0x%x", opcode, offset, value);
     registersFor(queue, opcode).insert_or_assign(offset, value);
+    if (TraceContextState() && (opcode == 0x69 || opcode == 0x9f) && ((offset >= 0x318 && offset < 0x318 + 8 * 0xf && (offset - 0x318) % 0xf == 0) || offset == 0x8e)) std::fprintf(stderr, "[context]   write %x = %08x (0x%x)\n", offset, value, opcode);
     if ((opcode == 0x64 || opcode == 0x79 || opcode == 0x7a) && offset == 0x243) queue.indexType = value & 3u;
 }
 
@@ -48,9 +67,9 @@ std::uint32_t dmaDestination(std::span<const std::uint32_t> packet) {
     return ((packet[1] >> 20u) & 3u) | ((packet[6] >> 25u) & 4u) | ((packet[6] >> 26u) & 8u);
 }
 
-void copyMemory(std::uint64_t source, std::uint64_t destination, std::size_t bytes, bool immediate) {
-    if (bytes == 0) return;
-    GuestMemory::CheckRange(reinterpret_cast<void*>(destination), bytes, 1, true);
+// The bytes a COPY_DATA or DMA_DATA stores: an immediate is a repeating 32-bit pattern, a memory
+// source is read through the checked path (it waits for recorded GPU work that writes it).
+std::vector<std::byte> copySource(std::uint64_t source, std::size_t bytes, bool immediate) {
     std::vector<std::byte> data(bytes);
     if (immediate) {
         const auto value = static_cast<std::uint32_t>(source);
@@ -58,12 +77,19 @@ void copyMemory(std::uint64_t source, std::uint64_t destination, std::size_t byt
     } else {
         GuestMemory::Read(source, data);
     }
-    GuestMemory::Write(destination, data);
+    return data;
+}
+
+void copyMemory(std::uint64_t source, std::uint64_t destination, std::size_t bytes, bool immediate) {
+    if (bytes == 0) return;
+    GuestMemory::CheckRange(reinterpret_cast<void*>(destination), bytes, 1, true);
+    GuestMemory::Write(destination, copySource(source, bytes, immediate));
 }
 
 }
 
 std::string Name(std::uint32_t header) {
+    if (FillerPacket(header)) return "PM4_FILLER";
     const auto opcode = (header >> 8u) & 0xffu;
     if (opcode == 0x10 && (header & 0xfcu) != 0) {
         switch ((header >> 2u) & 0x3fu) {
@@ -107,11 +133,13 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x20: return "GPU query predication is not implemented";
         case 0x22: return "conditional command execution and conditional flip reservation are not implemented";
         case 0x33: case 0x3f: return "nested command buffers, branching and nested flip reservation are not implemented";
-        case 0x39: case 0x3c: case 0x59: case 0x93:
+        case 0x3c: case 0x93: return {};
+        case 0x39: case 0x59:
             return "cooperative command-queue waits are not implemented";
         case 0x84: case 0x85: case 0x86: case 0x88:
             return "separate CE/DE execution and counter synchronization are not implemented";
-        case 0x43: case 0x47: case 0x48: case 0x49:
+        case 0x49: return {};
+        case 0x43: case 0x47: case 0x48:
             return "guest cache actions, GPU events and interrupt delivery are not implemented";
         case 0x8e: return "GPU LOD statistics are not implemented; synthetic results are forbidden";
         case 0x28: case 0x41: case 0x68: case 0x78:
@@ -121,8 +149,13 @@ std::string_view UnsupportedReason(std::uint32_t header) {
 }
 
 void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
-    require(packet.size() >= 2, "truncated PM4 header or payload");
+    require(!packet.empty(), "truncated PM4 header");
     const auto header = packet[0];
+    if (FillerPacket(header)) {
+        require(packet.size() == 1, "invalid PM4 filler size");
+        return;
+    }
+    require(packet.size() >= 2, "truncated PM4 header or payload");
     require((header & 0xc0000000u) == 0xc0000000u, "unsupported PM4 packet type");
     require(packet.size() == ((header >> 16u) & 0x3fffu) + 2u, "invalid PM4 packet size");
     const auto opcode = (header >> 8u) & 0xffu;
@@ -153,7 +186,13 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         }
         return;
     }
-    require((header & 0xffu) == 0 || (opcode == 0x11 && (header & 0xffu) == 2), "PM4 header flags are not implemented");
+    // Header bit 1 selects the compute shader type and bit 2 (register writes) resets the filter CAM;
+    // neither changes what the packet writes. Predication (bit 0) is not implemented.
+    const auto flags = header & 0xffu;
+    const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a;
+    auto allowedFlags = opcode == 0x11 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
+    if (IsTagMarker(packet)) allowedFlags |= 1u;
+    if ((flags & ~allowedFlags) != 0) throw std::runtime_error("PM4 header flags 0x" + ToHex(flags) + " are not implemented");
     switch (opcode) {
         case 0x11:
             size(4);
@@ -175,10 +214,10 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet[3] <= packet[1], "index count exceeds maximum index size");
             require((packet[4] & ~0x20u) == 0, "unsupported indexed draw flags");
             break;
-        case 0x15: size(5); require((packet[4] & ~0x8000u) == 0x41u, "dispatch modifiers are not implemented"); break;
+        case 0x15: size(5); if ((packet[4] & ~0x8020u) != 0x41u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
         case 0x16:
             require(packet.size() == 3 || packet.size() == 4, "invalid indirect dispatch size");
-            require((packet.back() & ~0x8000u) == 0x41u, "indirect dispatch modifiers are not implemented");
+            require((packet.back() & ~0x8020u) == 0x41u, "indirect dispatch modifiers are not implemented");
             break;
         case 0x42: size(2); require(packet[1] == 0, "unsupported PFP_SYNC_ME payload"); break;
         case 0x46: {
@@ -222,11 +261,26 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[1] & 3u) == 0 && packet[3] == 0x80000000u && packet[4] <= 0x3fffu, "unsupported indirect-register address or control fields");
             break;
         case 0x69: case 0x76: case 0x79: case 0x7a: {
+            if (IsTagMarker(packet)) break;
             if (opcode != 0x76) graphics();
             require(packet.size() >= 3, "register packet has no values");
             if (opcode == 0x7a) require((packet[1] & 0xf0000000u) == 0 || (packet.size() == 3 && packet[1] == 0x20000243u), "indexed register bank selection is not implemented");
             const auto offset = registerOffset(packet[1]);
             require(packet.size() - 2 <= 0x10000u - offset, "register range overflow");
+            break;
+        }
+        case 0x3c: case 0x93: {
+            size(opcode == 0x3c ? 7 : 9);
+            require((packet[1] & 0x10u) != 0, "register-space WAIT_REG_MEM is not implemented");
+            require((packet[1] & 7u) <= 6u, "invalid WAIT_REG_MEM compare function");
+            require((packet[2] & (opcode == 0x3c ? 3u : 7u)) == 0, "misaligned WAIT_REG_MEM address");
+            break;
+        }
+        case 0x49: {
+            size(8);
+            const auto dataSelect = packet[2] >> 29u;
+            require(dataSelect <= 3, "GDS RELEASE_MEM data is not implemented");
+            require(dataSelect == 0 || address(packet[3], packet[4]) == 0 || (packet[3] & (dataSelect == 1 ? 3u : 7u)) == 0, "misaligned RELEASE_MEM destination");
             break;
         }
         case 0x81:
@@ -266,6 +320,111 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     }
 }
 
+bool IsTagMarker(std::span<const std::uint32_t> packet) {
+    // libSceAgc brackets waits and draws with predicated SET_UCONFIG_REG writes of a tag value to
+    // 0x342; they carry no register state.
+    return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && (packet[0] & 1u) != 0 && packet[1] == 0x342u;
+}
+
+namespace {
+
+bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
+    const std::uint64_t reference = wide ? address(packet[4], packet[5]) : packet[4];
+    const std::uint64_t mask = wide ? address(packet[6], packet[7]) : packet[5];
+    const auto masked = value & mask;
+    switch (packet[1] & 7u) {
+        case 0: return true;
+        case 1: return masked < reference;
+        case 2: return masked <= reference;
+        case 3: return masked == reference;
+        case 4: return masked != reference;
+        case 5: return masked >= reference;
+        case 6: return masked > reference;
+        default: return false;
+    }
+}
+
+}
+
+bool WaitSatisfied(std::span<const std::uint32_t> packet) {
+    const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
+    const auto source = address(packet[2], packet[3]);
+    std::uint64_t value = 0;
+    // Named for the [hooksync] attribution (the read goes through the flush hook).
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
+    GuestMemory::Read(source, std::as_writable_bytes(std::span(&value, 1)).first(wide ? 8 : 4), wide ? 8 : 4);
+    return waitCompares(packet, wide, value);
+}
+
+bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet) {
+    const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
+    const auto source = address(packet[2], packet[3]);
+    const std::uint64_t value = wide ? *reinterpret_cast<const volatile std::uint64_t*>(source) : *reinterpret_cast<const volatile std::uint32_t*>(source);
+    return waitCompares(packet, wide, value);
+}
+
+bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value) {
+    const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
+    return waitCompares(packet, wide, value);
+}
+
+std::optional<LabelWrite> DecodeLabelWrite(std::span<const std::uint32_t> packet) {
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if (opcode == 0x49 && packet.size() >= 7) {
+        const auto dataSelect = packet[2] >> 29u;
+        const auto destination = address(packet[3], packet[4]);
+        if (dataSelect == 0 || dataSelect > 3) return std::nullopt;
+        if (destination == 0) return std::nullopt;
+        std::uint64_t value = address(packet[5], packet[6]);
+        if (dataSelect == 3) value = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
+        LabelWrite label{destination, {}};
+        label.inlineSize = dataSelect == 1 ? 4 : 8;
+        std::memcpy(label.inlineBytes.data(), &value, label.inlineSize);
+        return label;
+    }
+    if (opcode == 0x37 && packet.size() > 4) {
+        const auto destination = address(packet[2], packet[3]);
+        if (destination == 0) return std::nullopt;
+        // WR_ONE_ADDR stores every value at the same address: the last one remains.
+        const auto words = (packet[1] & 0x10000u) != 0 ? packet.last(1) : packet.subspan(4);
+        return LabelWrite{destination, std::as_bytes(words)};
+    }
+    return std::nullopt;
+}
+
+std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, const QueueState& queue, std::size_t limit) {
+    // The same decode as Execute's cases below (a packet Validate accepted): a store that is not
+    // resolved here still runs there. The size and alignment tests precede any memory read: a store
+    // the GPU path would reject anyway must not read (and sync for) its source here and again there.
+    const auto fits = [limit](std::uint64_t destination, std::size_t bytes) { return bytes <= limit && destination % 4 == 0 && bytes % 4 == 0; };
+    switch ((packet[0] >> 8u) & 0xffu) {
+        case 0x40: {
+            if (packet.size() < 6) return std::nullopt;
+            const auto source = ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u);
+            const std::size_t bytes = (packet[1] & 0x10000u) != 0 ? 8 : 4;
+            const auto destination = address(packet[4], packet[5]);
+            if (!fits(destination, bytes)) return std::nullopt;
+            return StoreWrite{destination, {}, copySource(address(packet[2], packet[3]), bytes, source >= 10)};
+        }
+        case 0x50: {
+            if (packet.size() < 7) return std::nullopt;
+            const std::size_t bytes = packet[6] & 0x3ffffffu;
+            const auto destination = address(packet[4], packet[5]);
+            if (!fits(destination, bytes)) return std::nullopt;
+            return StoreWrite{destination, {}, copySource(address(packet[2], packet[3]), bytes, dmaSource(packet) == 2)};
+        }
+        case 0x83: {
+            if (packet.size() < 5 || packet[1] / 4 > queue.constantRam.size() || packet[2] > queue.constantRam.size() - packet[1] / 4) return std::nullopt;
+            const auto words = std::span<const std::uint32_t>(queue.constantRam).subspan(packet[1] / 4, packet[2]);
+            if (words.size_bytes() > limit) return std::nullopt;
+            // A view of the queue's constant RAM: valid until the next CONST_RAM write on this queue,
+            // which is a later packet of the same worker.
+            return StoreWrite{address(packet[3], packet[4]), std::as_bytes(words), {}};
+        }
+        default: return std::nullopt;
+    }
+}
+
 bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet) {
     require(!packet.empty() && ((packet[0] >> 8u) & 0xffu) == 0x58, "cache barrier requires ACQUIRE_MEM");
     Validate(packet, 0);
@@ -274,22 +433,28 @@ bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet) {
 
 bool AccessesMemory(std::uint32_t header) {
     switch ((header >> 8u) & 0xffu) {
-        case 0x16: case 0x2d: case 0x35: case 0x37: case 0x40: case 0x50: case 0x63: case 0x64: case 0x83: case 0x9f: return true;
+        case 0x3c: case 0x93: case 0x49: case 0x16: case 0x2d: case 0x35: case 0x37: case 0x40: case 0x50: case 0x63: case 0x64: case 0x83: case 0x9f: return true;
         default: return false;
     }
 }
 
-std::array<std::uint32_t, 5> ResolveDispatch(std::span<const std::uint32_t> packet, const QueueState& queue) {
-    std::uint64_t source = 0;
-    if (packet.size() == 4) source = address(packet[1], packet[2]);
-    else {
-        require(queue.dispatchIndirectBase != 0, "indirect dispatch base has not been set");
-        require(packet[1] <= std::numeric_limits<std::uint64_t>::max() - queue.dispatchIndirectBase, "indirect dispatch address overflow");
-        source = queue.dispatchIndirectBase + packet[1];
-    }
-    std::array<std::uint32_t, 5> result{0xc0031500u, 0, 0, 0, packet.back()};
-    GuestMemory::Read(source, std::as_writable_bytes(std::span(result).subspan(1, 3)), 4);
+std::uint64_t DispatchArgumentAddress(std::span<const std::uint32_t> packet, const QueueState& queue) {
+    if (packet.size() == 4) return address(packet[1], packet[2]);
+    require(queue.dispatchIndirectBase != 0, "indirect dispatch base has not been set");
+    require(packet[1] <= std::numeric_limits<std::uint64_t>::max() - queue.dispatchIndirectBase, "indirect dispatch address overflow");
+    return queue.dispatchIndirectBase + packet[1];
+}
+
+std::array<std::uint32_t, 5> ReadDispatchArguments(std::uint64_t arguments, std::uint32_t initiator) {
+    std::array<std::uint32_t, 5> result{0xc0031500u, 0, 0, 0, initiator};
+    // Named for the [hooksync] attribution (the read goes through the flush hook).
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::IndirectArguments);
+    GuestMemory::Read(arguments, std::as_writable_bytes(std::span(result).subspan(1, 3)), 4);
     return result;
+}
+
+std::array<std::uint32_t, 5> ResolveDispatch(std::span<const std::uint32_t> packet, const QueueState& queue) {
+    return ReadDispatchArguments(DispatchArgumentAddress(packet, queue), packet.back());
 }
 
 DrawParameters ResolveDraw(std::span<const std::uint32_t> packet, const QueueState& queue) {
@@ -311,6 +476,7 @@ DrawParameters ResolveDraw(std::span<const std::uint32_t> packet, const QueueSta
     const auto bytes = static_cast<std::uint64_t>(packet[3]) * indexSize;
     require(bytes <= std::numeric_limits<std::size_t>::max(), "index range size overflow");
     GuestMemory::CheckRange(reinterpret_cast<const void*>(address), static_cast<std::size_t>(bytes), indexSize);
+    APS5_LOG_OUT_DEBUG("ResolveDraw context targetMask=0x%x shaderMask=0x%x indexCount=%u indexType=%u instances=%u", queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u, packet[3], queue.indexType, queue.instanceCount);
     return {address, packet[3], indexSize, queue.instanceCount, packet[4]};
 }
 
@@ -327,6 +493,8 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                     queue.markers.pop_back();
                     return;
                 case 0x1a:
+                    if (TraceContextState()) std::fprintf(stderr, "[context] op %u: %zu registers, saved %d, cb0 %x info %x mask %x\n", packet[1], queue.context.size(), queue.savedContext.has_value() ? 1 : 0, queue.context.contains(0x318) ? queue.context.at(0x318) : 0u, queue.context.contains(0x31c) ? queue.context.at(0x31c) : 0u, queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u);
+                    APS5_LOG_OUT_DEBUG("CONTEXT_STATE operation=%u targetMaskBefore=0x%x shaderMaskBefore=0x%x", packet[1], queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
                     switch (packet[1]) {
                         case 0: queue.ClearContext(); break;
                         case 1: case 3:
@@ -340,6 +508,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                             queue.savedContext.reset();
                             break;
                     }
+                    APS5_LOG_OUT_DEBUG("CONTEXT_STATE done operation=%u targetMaskAfter=0x%x shaderMaskAfter=0x%x", packet[1], queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
                     return;
                 default: throw std::runtime_error("custom packet requires driver execution");
             }
@@ -347,6 +516,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             ((packet[0] & 2u) == 0 ? queue.drawIndirectBase : queue.dispatchIndirectBase) = address(packet[2], packet[3]);
             return;
         case 0x12:
+            APS5_LOG_OUT_DEBUG("CLEAR_STATE targetMaskBefore=0x%x shaderMaskBefore=0x%x", queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
             queue.ClearContext(); return;
         case 0x13: queue.indexBufferSize = packet[1]; return;
         case 0x26: queue.indexBase = address(packet[1], packet[2]); return;
@@ -354,12 +524,47 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x2f: queue.instanceCount = packet[1]; return;
         case 0x63: case 0x64: case 0x9f: {
             std::vector<std::uint32_t> pairs(static_cast<std::size_t>(packet[4]) * 2);
+            // Named for the [hooksync] attribution (the read goes through the flush hook).
+            const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Registers);
             GuestMemory::Read(address(packet[1], packet[2]), std::as_writable_bytes(std::span(pairs)), 4);
             for (std::size_t i = 0; i < pairs.size(); i += 2) registerOffset(pairs[i]);
             for (std::size_t i = 0; i < pairs.size(); i += 2) writeRegister(queue, opcode, registerOffset(pairs[i]), pairs[i + 1]);
+            if (queue.savedContext.has_value() && TraceContextState()) {
+                std::fprintf(stderr, "[context]   indirect 0x%x:", opcode);
+                for (std::size_t i = 0; i < pairs.size(); i += 2) std::fprintf(stderr, " %x", registerOffset(pairs[i]));
+                std::fprintf(stderr, "\n");
+            }
+            return;
+        }
+        case 0x3c: case 0x93: {
+            // The waited-on value is written by the CPU or another queue; poll it like the CP would.
+            const auto start = std::chrono::steady_clock::now();
+            bool warned = false;
+            while (!WaitSatisfied(packet)) {
+                std::this_thread::sleep_for(std::chrono::microseconds(50));
+                if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
+                    warned = true;
+                    std::fprintf(stderr, "[gpu] WAIT_REG_MEM at 0x%llx still waiting after 5s (function %u ref 0x%x mask 0x%x)\n",
+                                 static_cast<unsigned long long>(address(packet[2], packet[3])), packet[1] & 7u, packet[4], packet[5]);
+                }
+            }
+            return;
+        }
+        case 0x49: {
+            // Earlier work has drained by the time the driver reaches this packet, so the end-of-pipe
+            // write can happen immediately. Interrupt delivery is not modeled.
+            const auto dataSelect = packet[2] >> 29u;
+            const auto destination = address(packet[3], packet[4]);
+            if (dataSelect == 0 || destination == 0) return;
+            std::uint64_t value = address(packet[5], packet[6]);
+            if (dataSelect == 3) {
+                value = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
+            }
+            GuestMemory::Write(destination, std::as_bytes(std::span(&value, 1)).first(dataSelect == 1 ? 4 : 8), dataSelect == 1 ? 4 : 8);
             return;
         }
         case 0x69: case 0x76: case 0x79: case 0x7a: {
+            if (IsTagMarker(packet)) return;
             const auto offset = registerOffset(packet[1]);
             for (std::size_t i = 2; i < packet.size(); ++i) writeRegister(queue, opcode, offset + static_cast<std::uint32_t>(i - 2), packet[i]);
             return;

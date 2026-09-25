@@ -75,14 +75,17 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words)
     const auto borderColorType = (words[3] >> 30u) & 0x3u;
 
     Require(!forceUnormCoords, "guest sampler descriptor uses unnormalized coordinates which are not implemented");
-    Require(anisoThreshold == 0, "guest sampler descriptor uses an anisotropy threshold override which is not implemented");
     Require(!forceSrgb, "guest sampler descriptor forces sRGB decoding which is not implemented");
-    Require(anisoBias == 0, "guest sampler descriptor uses an anisotropy bias which is not implemented");
-    Require(!truncCoord, "guest sampler descriptor uses coordinate truncation which is not implemented");
+    // TRUNC_COORD picks point-sampled texels by truncation instead of rounding, and the perf fields
+    // trade mip/depth precision for speed; Vulkan's nearest filtering already floors, so these only
+    // move texel selection by half a texel at most and are accepted as is. ANISO_THRESHOLD and
+    // ANISO_BIAS only tune how many anisotropic taps the hardware takes; the host filter picks its own.
+    static_cast<void>(truncCoord);
+    static_cast<void>(anisoThreshold);
+    static_cast<void>(anisoBias);
     Require(!disableCubeWrap, "guest sampler descriptor disables seamless cube filtering which is not implemented");
     Require(filterMode == 0, "guest sampler descriptor uses a reduction filter mode which is not implemented");
     Require(!disableDegamma, "guest sampler descriptor disables degamma which is not implemented");
-    Require(perfMip == 0 && perfZ == 0, "guest sampler descriptor uses performance counters which are not implemented");
     Require(lodBiasSec == 0, "guest sampler descriptor uses a secondary LOD bias which is not implemented");
     Require(!pointPreclamp, "guest sampler descriptor uses point preclamping which is not implemented");
     Require(!anisoOverride, "guest sampler descriptor uses an anisotropy override which is not implemented");

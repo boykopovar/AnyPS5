@@ -19,6 +19,7 @@ class TextureCache;
 class RenderCache;
 class DrawQueue;
 class GraphicsPipelineCache;
+class Recorder;
 class DescriptorCache;
 class SamplerCache;
 
@@ -59,11 +60,18 @@ struct Context {
     mutable std::shared_ptr<BufferPool> bufferPool;
     TextureCache* textureCache = nullptr;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+    bool depthClamp = false;
+    // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
+    VkDeviceSize hostImportAlignment = 0;
     RenderCache* renderCache = nullptr;
     DrawQueue* drawQueue = nullptr;
     GraphicsPipelineCache* graphicsPipelines = nullptr;
-    mutable std::shared_ptr<DescriptorCache> descriptorCache;
-    mutable std::shared_ptr<SamplerCache> samplerCache;
+    // Batches GPU work across guest commands (see Recorder); null before the device finished setup.
+    Recorder* recorder = nullptr;
+    // Per-device caches of the immutable descriptor objects a ShaderResources build needs (set
+    // layouts, descriptor pools, samplers); null (tests) means every build makes and destroys its own.
+    DescriptorCache* descriptorCache = nullptr;
+    SamplerCache* samplerCache = nullptr;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

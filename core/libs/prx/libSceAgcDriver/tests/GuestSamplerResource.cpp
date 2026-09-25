@@ -149,21 +149,17 @@ void RunGuestSamplerResourceTests() {
     badUnorm.forceUnormCoords = true;
     rejectFields(badUnorm, "unnormalized coordinates");
 
-    Fields badThreshold = base;
-    badThreshold.anisoThreshold = 1;
-    rejectFields(badThreshold, "anisotropy threshold override");
-
     Fields badSrgb = base;
     badSrgb.forceSrgb = true;
     rejectFields(badSrgb, "forces sRGB decoding");
 
-    Fields badAnisoBias = base;
-    badAnisoBias.anisoBias = 1;
-    rejectFields(badAnisoBias, "anisotropy bias");
-
-    Fields badTrunc = base;
-    badTrunc.truncCoord = true;
-    rejectFields(badTrunc, "coordinate truncation");
+    Fields truncated = base;
+    truncated.truncCoord = true;
+    truncated.perfMip = 1;
+    truncated.perfZ = 1;
+    truncated.anisoThreshold = 1;
+    truncated.anisoBias = 1;
+    static_cast<void>(DecodeSamplerResource(pack(truncated)));
 
     Fields badCubeWrap = base;
     badCubeWrap.disableCubeWrap = true;
@@ -176,13 +172,6 @@ void RunGuestSamplerResourceTests() {
     Fields badDegamma = base;
     badDegamma.disableDegamma = true;
     rejectFields(badDegamma, "disables degamma");
-
-    Fields badPerf = base;
-    badPerf.perfMip = 1;
-    rejectFields(badPerf, "performance counters");
-    badPerf = base;
-    badPerf.perfZ = 1;
-    rejectFields(badPerf, "performance counters");
 
     Fields badLodBiasSec = base;
     badLodBiasSec.lodBiasSec = 1;

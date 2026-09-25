@@ -179,9 +179,12 @@ void RunGuestTextureResourceTests() {
     badMinLod.minLod = 1;
     rejectFields(badMinLod, "nonzero minimum LOD clamp");
 
-    Fields badMinLodWarn = base;
-    badMinLodWarn.minLodWarn = 1;
-    rejectFields(badMinLodWarn, "minimum LOD warning threshold");
+    // Streaming feedback fields decode; nothing is reported back.
+    Fields feedback = base;
+    feedback.minLodWarn = 1;
+    feedback.mipStatsCntId = 1;
+    feedback.mipStatsCntEn = true;
+    static_cast<void>(DecodeTextureResource(pack(feedback)));
 
     const auto unmodulated = DecodeTextureResource(pack(base));
     for (std::uint32_t perfMod = 0; perfMod < 8; ++perfMod) {
@@ -195,13 +198,6 @@ void RunGuestTextureResourceTests() {
         modulated.cornerSample = true;
         rejectFields(modulated, "corner sampling");
     }
-
-    Fields badMipStats = base;
-    badMipStats.mipStatsCntId = 1;
-    rejectFields(badMipStats, "mip statistics counters");
-    badMipStats = base;
-    badMipStats.mipStatsCntEn = true;
-    rejectFields(badMipStats, "mip statistics counters");
 
     Fields badCorner = base;
     badCorner.cornerSample = true;
