@@ -1,4 +1,5 @@
 add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Acb/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Acb/src/Dispatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Acb/src/Memory.cpp

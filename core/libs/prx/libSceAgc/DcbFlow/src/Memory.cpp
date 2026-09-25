@@ -13,10 +13,13 @@ std::uint32_t* APS5_VABI sceAgcDcbAcquireMem(CommandBuffer* buf, std::uint8_t en
     Agc::Command::CheckBits(engine, 1, __func__);
     Agc::Command::CheckBits(cbDbOp, 0x7fffffffu, __func__);
     Agc::Command::CheckBits(gcrControl, 0x7ffffu, __func__);
-    const auto address = reinterpret_cast<std::uintptr_t>(base);
-    Agc::Command::Require((address & 0xffu) == 0 && (address >> 40u) == 0, __func__, "invalid acquire memory base address");
-    const auto wholeAddressSpace = sizeBytes == 0xffffffffffffffffull;
-    Agc::Command::Require(wholeAddressSpace || ((sizeBytes & 0xffu) == 0 && (sizeBytes >> 40u) == 0), __func__, "invalid acquire memory range size");
+    // The range only scopes cache maintenance, so round it outward to the 256-byte granularity the
+    // packet encodes instead of rejecting unaligned ranges.
+    const auto requested = reinterpret_cast<std::uintptr_t>(base);
+    auto address = requested & ~static_cast<std::uintptr_t>(0xffu);
+    const auto wholeAddressSpace = sizeBytes == 0xffffffffffffffffull || (address >> 40u) != 0 || sizeBytes > (1ull << 40u);
+    if (wholeAddressSpace) address = 0;
+    else sizeBytes = (sizeBytes + (requested - address) + 0xffu) & ~0xffull;
     Agc::Command::Require(pollCycles / 40u <= 0xffffu, __func__, "acquire poll interval overflow");
     return Agc::Command::Emit(buf, 0x58u, {(static_cast<std::uint32_t>(engine) << 31u) | cbDbOp, wholeAddressSpace ? 0u : static_cast<std::uint32_t>(sizeBytes >> 8u), 0, static_cast<std::uint32_t>(address >> 8u), 0, pollCycles / 40u, gcrControl}, __func__);
 }

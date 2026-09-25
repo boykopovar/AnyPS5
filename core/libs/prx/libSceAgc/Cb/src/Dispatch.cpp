@@ -9,7 +9,7 @@
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcCbDispatch(CommandBuffer* buf, std::uint32_t threadGroupX, std::uint32_t threadGroupY, std::uint32_t threadGroupZ, std::uint32_t modifier) {
-    Agc::Command::CheckBits(modifier, 0xa038u, __func__);
+    Agc::Command::CheckBits(modifier, 0xa038u | 0x41u, __func__);
     return Agc::Command::Emit(buf, 0x15u, {threadGroupX, threadGroupY, threadGroupZ, modifier | 0x41u}, __func__);
 }
 

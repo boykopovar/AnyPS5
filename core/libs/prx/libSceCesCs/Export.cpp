@@ -5,7 +5,7 @@
 
 extern "C" {
 
-const uint8_t* sceCesRefersUcsProfileCp1252(void) {
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void) {
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }

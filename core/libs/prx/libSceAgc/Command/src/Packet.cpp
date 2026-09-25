@@ -15,7 +15,10 @@ void Require(bool condition, const char* function, const char* reason) {
 }
 
 void CheckBits(std::uint64_t value, std::uint64_t mask, const char* function) {
-    Require((value & ~mask) == 0, function, "reserved bits are set");
+    if ((value & ~mask) == 0) return;
+    char reason[96];
+    std::snprintf(reason, sizeof(reason), "reserved bits are set (value 0x%llx, allowed 0x%llx)", static_cast<unsigned long long>(value), static_cast<unsigned long long>(mask));
+    Require(false, function, reason);
 }
 
 void CheckAddress(std::uint64_t address, std::uint32_t alignment, const char* function) {

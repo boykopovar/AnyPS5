@@ -51,11 +51,9 @@ uint32_t APS5_VABI sceAgcDcbRewindGetSize(void) {
 }
 
 uint32_t* APS5_VABI sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint32_t video_out_handle, uint32_t display_buffer_index) {
- (void)buf;
- (void)video_out_handle;
- (void)display_buffer_index;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    // Presentation copies the display buffer when the flip executes, so the buffer is always safe to
+    // render into; keep the arguments in a NOP for command-buffer dumps.
+    return Agc::Command::Emit(buf, 0x10u, {video_out_handle, display_buffer_index}, __func__);
 }
 
 }

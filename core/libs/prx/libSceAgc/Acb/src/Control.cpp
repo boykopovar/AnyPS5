@@ -30,11 +30,16 @@ uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
  return 0;
 }
 
-uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op) {
- (void)buf;
- (void)op;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+// Encoded as the custom DISPATCH_RESET NOP packet the driver consumes on compute queues.
+uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t value) {
+    (void)value;
+    Agc::Command::Require(buf != nullptr, __func__, "null command buffer");
+    constexpr std::uint32_t OpcodeNop = 0x10;
+    constexpr std::uint32_t CustomDispatchReset = 0x09;
+    auto* packet = Agc::Command::Allocate(buf, 2, __func__);
+    packet[0] = Agc::Command::Header(OpcodeNop, 2, CustomDispatchReset << 2);
+    packet[1] = op;
+    return packet;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbRewind(CommandBuffer* buf, std::uint32_t initialState) {
