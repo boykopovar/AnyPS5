@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "../include/ThreadLifecycle.hpp"
 #include "prx/libc/include/General.hpp"
 
 
@@ -32,8 +33,7 @@ int APS5_VABI pthread_detach_nid_postfix(Pthread thread) {
 }
 
 void APS5_VABI pthread_exit_nid_postfix(void* value) {
- (void)value;
- NotImplemented_nid_no_patch(__func__);
+    scePthreadExit(value);
 }
 
 int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
