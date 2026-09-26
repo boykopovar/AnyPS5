@@ -1,0 +1,22 @@
+name: Progress
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  progress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/progress.py out
+      - working-directory: out
+        run: |
+          git init -b progress
+          git add .
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -m "chore: update progress for ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" progress
