@@ -1,8 +1,120 @@
-#include <cstdint>
-#include <cstddef>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sched.h>
+#include <unistd.h>
+#endif
+
 #include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <limits>
+#include <memory>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <vector>
+
+namespace {
+
+std::atomic<std::uint32_t> gpoBits{0};
+constexpr std::array<std::uint8_t, 16> openPsId{'A', 'n', 'y', 'P', 'S', '5', 'O', 'p', 'e', 'n', 'P', 's', 'I', 'd', 0, 1};
+
+class ProcessArguments {
+public:
+    ProcessArguments() {
+#ifdef _WIN32
+        std::array<char, 32768> path{};
+        const auto size = GetModuleFileNameA(nullptr, path.data(), static_cast<DWORD>(path.size()));
+        if (size == 0)
+            throw std::system_error(GetLastError(), std::system_category(), "Reading executable path");
+        if (size >= path.size())
+            throw std::runtime_error("Executable path exceeds the guest argument buffer");
+        arguments.emplace_back(path.data(), size);
+#else
+        std::ifstream stream("/proc/self/cmdline", std::ios::binary);
+        if (!stream)
+            throw std::runtime_error("Cannot read process arguments");
+        std::string argument;
+        while (std::getline(stream, argument, '\0')) {
+            if (stream.eof())
+                throw std::runtime_error("Unterminated process argument");
+            arguments.push_back(argument);
+        }
+        if (stream.bad() || !stream.eof())
+            throw std::runtime_error("Reading process arguments failed");
+#endif
+        if (arguments.empty() || arguments.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+            throw std::runtime_error("Invalid process argument count");
+        for (const auto& argument : arguments)
+            pointers.push_back(argument.c_str());
+        pointers.push_back(nullptr);
+    }
+
+    int GetCount() const { return static_cast<int>(arguments.size()); }
+    const char** GetValues() { return pointers.data(); }
+
+private:
+    std::vector<std::string> arguments;
+    std::vector<const char*> pointers;
+};
+
+ProcessArguments& getProcessArguments() {
+    static ProcessArguments arguments;
+    return arguments;
+}
+
+void validateSchedulingPolicy(int policy) {
+    if (policy != 1 && policy != 3)
+        throw std::invalid_argument("Unsupported guest scheduling policy");
+}
+
+#ifdef _WIN32
+void syncVolumes() {
+    std::array<wchar_t, 32768> name{};
+    const auto first = FindFirstVolumeW(name.data(), static_cast<DWORD>(name.size()));
+    if (first == INVALID_HANDLE_VALUE)
+        throw std::system_error(GetLastError(), std::system_category(), "Enumerating volumes for sync");
+    const std::unique_ptr<void, decltype(&FindVolumeClose)> search(first, &FindVolumeClose);
+    for (;;) {
+        DWORD flags = 0;
+        if (!GetVolumeInformationW(name.data(), nullptr, 0, nullptr, nullptr, &flags, nullptr, 0))
+            throw std::system_error(GetLastError(), std::system_category(), "Reading volume properties for sync");
+        if ((flags & FILE_READ_ONLY_VOLUME) == 0) {
+            std::wstring path(name.data());
+            if (path.empty() || path.back() != L'\\')
+                throw std::runtime_error("Invalid volume path for sync");
+            path.pop_back();
+            const auto native = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (native == INVALID_HANDLE_VALUE)
+                throw std::system_error(GetLastError(), std::system_category(), "Opening volume for sync");
+            const std::unique_ptr<void, decltype(&CloseHandle)> volume(native, &CloseHandle);
+            if (!FlushFileBuffers(volume.get()))
+                throw std::system_error(GetLastError(), std::system_category(), "Flushing volume");
+        }
+        if (FindNextVolumeW(search.get(), name.data(), static_cast<DWORD>(name.size())))
+            continue;
+        const auto error = GetLastError();
+        if (error != ERROR_NO_MORE_FILES)
+            throw std::system_error(error, std::system_category(), "Enumerating volumes for sync");
+        break;
+    }
+}
+#endif
+
+}
 
 extern "C" {
 
@@ -10,75 +122,101 @@ extern "C" {
 char* __progname_nid_postfix = nullptr;
 
 int APS5_VABI getargc_nid_postfix(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return getProcessArguments().GetCount();
 }
 
 const char** APS5_VABI getargv_nid_postfix(void) {
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return getProcessArguments().GetValues();
 }
 
 int APS5_VABI getpagesize_nid_postfix(void) {
- return PS5_PAGE_SIZE;
+    return PS5_PAGE_SIZE;
 }
 
 int APS5_VABI getpid_nid_postfix(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+#ifdef _WIN32
+    const auto pid = GetCurrentProcessId();
+#else
+    const auto pid = ::getpid();
+#endif
+    if (pid == 0 || static_cast<std::uint64_t>(pid) > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
+        throw std::runtime_error("Process identifier is outside the guest range");
+    return static_cast<int>(pid);
 }
 
 void APS5_VABI exit_nid_postfix(int code) {
- (void)code;
- NotImplemented_nid_no_patch(__func__);
+    LibcExit_nid_no_patch(code);
 }
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+#ifdef _WIN32
+    PROCESSOR_NUMBER processor{};
+    GetCurrentProcessorNumberEx(&processor);
+    unsigned index = processor.Number;
+    for (WORD group = 0; group < processor.Group; ++group) {
+        const auto count = GetActiveProcessorCount(group);
+        if (count == 0)
+            throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
+        index += count;
+    }
+    return static_cast<int>(index);
+#else
+    const int cpu = ::sched_getcpu();
+    if (cpu < 0)
+        throw std::system_error(errno, std::generic_category(), "Reading current processor");
+    return cpu;
+#endif
 }
 
-uint64_t APS5_VABI sceKernelGetGPI(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint64_t APS5_VABI sceKernelGetGPI(void) {
+    return gpoBits.load(std::memory_order_relaxed);
 }
 
-void APS5_VABI sceKernelSetGPO(uint32_t bits) {
- (void)bits;
- NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceKernelSetGPO(std::uint32_t bits) {
+    gpoBits.store(bits, std::memory_order_relaxed);
 }
 
-int APS5_VABI sceKernelGetOpenPsId(void* open_ps_id) {
- (void)open_ps_id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
+    if (!openPsIdOutput)
+        throw std::invalid_argument("sceKernelGetOpenPsId: null output");
+    std::memcpy(openPsIdOutput, openPsId.data(), openPsId.size());
+    return 0;
 }
 
 void* APS5_VABI sceKernelGetProcParam(void) {
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return const_cast<void*>(ApplicationProcessParameters_nid_no_patch());
 }
 
-int APS5_VABI sceKernelUuidCreate(uint32_t* uuid) {
- (void)uuid;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
+    if (!uuid)
+        throw std::invalid_argument("sceKernelUuidCreate: null output");
+    static thread_local std::random_device device;
+    std::uniform_int_distribution<std::uint32_t> distribution;
+    std::array<std::uint32_t, 4> value;
+    for (auto& word : value)
+        word = distribution(device);
+    value[1] = (value[1] & 0x0fffffffu) | 0x40000000u;
+    value[2] = (value[2] & 0xffffff3fu) | 0x80u;
+    std::memcpy(uuid, value.data(), sizeof(value));
+    return 0;
 }
 
 void APS5_VABI sceKernelSync(void) {
- NotImplemented_nid_no_patch(__func__);
+#ifdef _WIN32
+    syncVolumes();
+#else
+    ::sync();
+#endif
 }
 
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
- (void)policy;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    validateSchedulingPolicy(policy);
+    return 256;
 }
 
 int APS5_VABI sched_get_priority_min_nid_postfix(int policy) {
- (void)policy;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    validateSchedulingPolicy(policy);
+    return 767;
 }
 
 }
