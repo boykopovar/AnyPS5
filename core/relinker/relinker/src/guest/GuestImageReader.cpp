@@ -6,13 +6,18 @@
 #include <limits>
 #include <iterator>
 #include <set>
+#include <sstream>
 
 namespace Relinker {
 
 GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes) const {
     const auto fail = [&](const std::string& message) { throw Domain::RelinkerException(path.string() + ": " + message); };
     const auto range = [&](std::uint64_t offset, std::uint64_t size) {
-        if (offset > bytes.size() || size > bytes.size() - offset) fail("ELF range exceeds file");
+        if (offset > bytes.size() || size > bytes.size() - offset) {
+            std::ostringstream message;
+            message << "ELF range exceeds file: offset=0x" << std::hex << offset << ", size=0x" << size << ", fileSize=0x" << bytes.size();
+            fail(message.str());
+        }
     };
     range(0, 64);
     if (Io::ReadU32(bytes, 0) != 0x464c457f || bytes[4] != 2 || bytes[5] != 1 || bytes[6] != 1 || Io::ReadU16(bytes, 18) != 62 || Io::ReadU32(bytes, 20) != 1) fail("Expected little-endian ELF64 x86-64");
@@ -28,7 +33,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     const Domain::ProgramHeader* dynlib = nullptr;
     const Domain::ProgramHeader* tls = nullptr;
     std::map<std::uint64_t, std::uint64_t> loads;
+    constexpr std::uint32_t sceComment = 0x6fffff00;
+    constexpr std::uint32_t sceLibVersion = 0x6fffff01;
     for (const auto& header : image.Headers) {
+        if (header.Type == sceComment || header.Type == sceLibVersion) continue;
         range(header.Offset, header.FileSize);
         if (header.Type == 1) {
             if (header.FileSize > header.MemorySize || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress || (header.Flags & ~7u) != 0) fail("Invalid load segment");
