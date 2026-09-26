@@ -1,14 +1,9 @@
-#include <cstdint>
-#include <cstddef>
-#include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HeapDiagnostics.hpp"
 
 extern "C" {
 
-
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info) {
- (void)info;
- NotImplemented_nid_no_patch(__func__);
+    LibcHeapTraceInfo_nid_no_patch(info);
 }
 
 }
