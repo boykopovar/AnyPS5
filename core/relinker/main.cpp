@@ -50,6 +50,7 @@ int main(const int argc, char* argv[]) {
             std::cout << "OK: " << result.ReplacedCount << " instructions replaced\n";
 
             if (args.autorun) return Cli::Autorun(absPath, args.toWindows);
+            return 0;
         }
 
         auto elfReader = std::make_shared<Relinker::ElfReader>(sourceBytes);
