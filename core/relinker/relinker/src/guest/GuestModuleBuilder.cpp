@@ -1,5 +1,4 @@
 #include <relinker/guest/GuestImage.hpp>
-#include <relinker/analysis/SyscallScanner.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <io/FileReader.hpp>
@@ -12,7 +11,7 @@
 
 namespace Relinker {
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, const bool skipSyscallCheck, const bool lazyBinding, const std::string& runPath) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath) const {
     const auto root = std::filesystem::absolute(inputPath).parent_path();
     const auto singular = root / "sce_module";
     const auto plural = root / "sce_modules";
@@ -61,12 +60,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) image.Bytes = Codegen::MakeAmd64OnlyConverter()->Convert(std::move(image.Bytes), codeHeaders).Bytes;
-        if (!skipSyscallCheck) {
-            const auto scanner = MakeSyscallScanner();
-            for (const auto& header : codeHeaders) {
-                const std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
-                scanner->ScanCodeSectionForSyscalls(code, header.MappedAddress, header.FileSize);
-            }
+        for (const auto& header : codeHeaders) {
+            const std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
+            syscallScanner.ScanCodeSectionForSyscalls(code, header.MappedAddress, header.FileSize);
         }
         images.push_back(std::move(image));
     }

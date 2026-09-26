@@ -55,10 +55,11 @@ int main(const int argc, char* argv[]) {
         }
 
         auto elfReader = std::make_shared<Relinker::ElfReader>(sourceBytes);
+        const std::shared_ptr<Relinker::ISyscallScanner> syscallScanner = args.skipSyscallCheck ? Relinker::MakeNullSyscallScanner() : Relinker::MakeSyscallScanner();
 
         const auto pipeline = std::make_shared<Relinker::RelinkerPipeline>(
             elfReader,
-            args.skipSyscallCheck ? Relinker::MakeNullSyscallScanner() : Relinker::MakeSyscallScanner(),
+            syscallScanner,
             Relinker::MakeCallSiteResolver(),
             std::make_shared<Relinker::ValidationPolicy>(),
             std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
@@ -77,7 +78,7 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, args.skipSyscallCheck, args.lazyBinding, args.runPath);
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath);
         }
 
         if (args.writeRegistry) {
