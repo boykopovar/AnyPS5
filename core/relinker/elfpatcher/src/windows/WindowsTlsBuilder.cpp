@@ -69,11 +69,18 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
 
             if (info.SegmentPrefix != 0) {
                 const auto position = info.OpcodeOffset;
-                const bool loadPointer = info.Length == 9 && position == 2 && bytes[0] == 0x64 && bytes[1] == 0x48 && bytes[2] == 0x8b && bytes[3] == 0x04 && bytes[4] == 0x25 && Io::ReadU32(source, header.Offset + offset + 5) == 0;
-                const bool storeImmediate = info.Length == 12 && position == 1 && bytes[0] == 0x64 && bytes[1] == 0xc7 && bytes[2] == 0x04 && bytes[3] == 0x25 && Io::ReadU32(source, header.Offset + offset + 4) == 0x28;
+                bool hasOperandSizePrefix = false;
+                bool supportedPrefixes = info.SegmentPrefix == 0x64;
+                for (std::size_t prefix = 0; prefix < position; ++prefix) {
+                    const auto value = bytes[prefix];
+                    if (value == 0x66) hasOperandSizePrefix = true;
+                    else if (value != 0x64 && !(prefix + 1 == position && value >= 0x40 && value <= 0x4f)) supportedPrefixes = false;
+                }
+                const bool loadPointer = supportedPrefixes && info.RexPrefix == 0x48 && info.Length - position == 7 && bytes[position] == 0x8b && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0;
+                const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
                 if (!loadPointer && !storeImmediate)
                     throw Domain::RelinkerException("Unsupported Windows guest TLS instruction", header.Offset + offset);
-                accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + 8) : 0});
+                accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0});
             }
         }
     }
