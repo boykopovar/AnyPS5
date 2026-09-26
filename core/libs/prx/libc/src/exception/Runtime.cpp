@@ -9,17 +9,18 @@ namespace LibcException {
         Header* primary = Primary(globals.caught);
         const char* typeName = primary->type ? primary->type->name() : nullptr;
         const char* what = nullptr;
-        if (primary->adjusted) {
+        void* exception = primary->adjusted;
+        if (exception && primary->type && Match(&typeid(std::exception), primary->type, exception)) {
             struct VtableLayout { std::ptrdiff_t offset; const void* type; void (*destroy)(void*); void (*del)(void*); const char* (*whatFn)(const void*); };
-            const void* vtable = *static_cast<const void* const*>(primary->adjusted);
+            const void* vtable = *static_cast<const void* const*>(exception);
             auto* layout = reinterpret_cast<const VtableLayout*>(static_cast<const char*>(vtable) - offsetof(VtableLayout, destroy));
 #ifdef _WIN32
             if (!primary->_pad) {
                 using GuestWhat = const char* (__attribute__((sysv_abi)) *)(const void*);
-                what = reinterpret_cast<GuestWhat>(layout->whatFn)(primary->adjusted);
+                what = reinterpret_cast<GuestWhat>(layout->whatFn)(exception);
             } else
 #endif
-            what = layout->whatFn(primary->adjusted);
+            what = layout->whatFn(exception);
         }
         int status = 0;
         char* demangled = abi::__cxa_demangle(typeName, nullptr, nullptr, &status);
