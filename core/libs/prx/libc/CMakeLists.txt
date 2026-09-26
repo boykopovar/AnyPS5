@@ -14,6 +14,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestMemoryBacking.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeapStorage.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HeapDiagnostics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mspace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationProcessParameters.cpp

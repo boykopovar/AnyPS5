@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <condition_variable>
 #include <cstddef>
@@ -40,4 +41,17 @@ extern "C" int APS5_VABI pthread_once_nid_postfix(
     lock.unlock();
     onceChanged.notify_all();
     return 0;
+}
+
+using OnceRoutine = void (APS5_VABI *)();
+
+extern "C" {
+
+int APS5_VABI scePthreadOnce_nid_postfix(void* onceControl, OnceRoutine initRoutine) {
+    (void)onceControl;
+    (void)initRoutine;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

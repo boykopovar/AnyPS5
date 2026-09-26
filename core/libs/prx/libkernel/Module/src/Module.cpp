@@ -52,3 +52,21 @@ int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const 
 }
 
 }
+
+extern "C" {
+
+int APS5_VABI __elf_phdr_match_addr_nid_postfix(ModuleInfo* module, std::uint64_t address) {
+    (void)module;
+    (void)address;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+// unknown signature
+std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(void* result) {
+    (void)result;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}

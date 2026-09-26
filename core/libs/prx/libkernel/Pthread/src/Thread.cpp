@@ -1,4 +1,5 @@
 #include "../include/Pthread.hpp"
+#include "../include/ThreadLifecycle.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdlib>
 #include <future>
@@ -29,7 +30,44 @@ struct ThreadArgs {
     PthreadPrivate* self;
 };
 
-static void FinishThread(PthreadPrivate* self, void* retval) {
+static std::atomic<thread_dtors_func_t> threadDtors{nullptr};
+static std::atomic<get_thread_atexit_count_func_t> threadAtexitCount{nullptr};
+static std::atomic<thread_atexit_report_func_t> threadAtexitReport{nullptr};
+static thread_local PthreadPrivate* currentThread = nullptr;
+static thread_local bool threadFinishing = false;
+
+void ThreadLifecycle::SetThreadDtors(thread_dtors_func_t callback) {
+    if (!callback)
+        throw std::runtime_error("Thread destructor callback is null");
+    thread_dtors_func_t expected = nullptr;
+    if (!threadDtors.compare_exchange_strong(expected, callback))
+        throw std::runtime_error("Thread destructor callback is already registered");
+}
+
+void ThreadLifecycle::SetThreadAtexitCount(get_thread_atexit_count_func_t callback) {
+    if (!callback)
+        throw std::runtime_error("Thread atexit count callback is null");
+    get_thread_atexit_count_func_t expected = nullptr;
+    if (!threadAtexitCount.compare_exchange_strong(expected, callback))
+        throw std::runtime_error("Thread atexit count callback is already registered");
+}
+
+void ThreadLifecycle::SetThreadAtexitReport(thread_atexit_report_func_t callback) {
+    if (!callback)
+        throw std::runtime_error("Thread atexit report callback is null");
+    thread_atexit_report_func_t expected = nullptr;
+    if (!threadAtexitReport.compare_exchange_strong(expected, callback))
+        throw std::runtime_error("Thread atexit report callback is already registered");
+}
+
+static void finishThread(PthreadPrivate* self, void* retval) {
+    if (!self || self != currentThread)
+        throw std::runtime_error("Finishing an unregistered guest thread");
+    if (threadFinishing)
+        throw std::runtime_error("Guest thread is already finishing");
+    threadFinishing = true;
+    if (const auto callback = threadDtors.load())
+        callback();
     {
         std::unique_lock<std::mutex> lk(self->_join_mtx);
         self->_retval = retval;
@@ -43,13 +81,13 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     const auto entry = args->entry;
     void* arg = args->arg;
     PthreadPrivate* self = args->self;
+    currentThread = self;
     args.reset();
-    FinishThread(self, entry(arg));
+    finishThread(self, entry(arg));
+    currentThread = nullptr;
 }
 
 #ifdef _WIN32
-static thread_local PthreadPrivate* currentThread = nullptr;
-
 static void ReleaseThread(PthreadPrivate* thread) {
     if (thread->references.fetch_sub(1, std::memory_order_acq_rel) != 1)
         return;
@@ -183,26 +221,22 @@ int APS5_VABI scePthreadDetach(Pthread thread) {
 }
 
 void APS5_VABI scePthreadExit(void* retval) {
-#ifdef _WIN32
     if (!currentThread)
         throw std::runtime_error("scePthreadExit: current thread is not registered");
     auto* self = currentThread;
-    FinishThread(self, retval);
+    finishThread(self, retval);
     currentThread = nullptr;
+#ifdef _WIN32
     ReleaseThread(self);
     _endthreadex(0);
 #else
     pthread_exit(retval);
 #endif
-    __builtin_unreachable();
+    throw std::runtime_error("Native thread exit returned");
 }
 
 Pthread APS5_VABI scePthreadSelf() {
-#ifdef _WIN32
     return currentThread;
-#else
-    return nullptr;
-#endif
 }
 
 void APS5_VABI scePthreadYield() {
@@ -281,6 +315,15 @@ int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
  (void)prio;
  NotImplemented_nid_no_patch(__func__);
  return 0;
+}
+
+}
+
+extern "C" {
+
+void APS5_VABI __pthread_cxa_finalize_nid_postfix(void* argument) {
+    (void)argument;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

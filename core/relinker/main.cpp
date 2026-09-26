@@ -17,11 +17,13 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <relinker/pipeline/RelinkerPipeline.hpp>
+#include <relinker/guest/GuestImage.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 int main(const int argc, char* argv[]) {
     Cli::Args args;
@@ -53,10 +55,11 @@ int main(const int argc, char* argv[]) {
         }
 
         auto elfReader = std::make_shared<Relinker::ElfReader>(sourceBytes);
+        const std::shared_ptr<Relinker::ISyscallScanner> syscallScanner = args.skipSyscallCheck ? Relinker::MakeNullSyscallScanner() : Relinker::MakeSyscallScanner();
 
         const auto pipeline = std::make_shared<Relinker::RelinkerPipeline>(
             elfReader,
-            args.skipSyscallCheck ? Relinker::MakeNullSyscallScanner() : Relinker::MakeSyscallScanner(),
+            syscallScanner,
             Relinker::MakeCallSiteResolver(),
             std::make_shared<Relinker::ValidationPolicy>(),
             std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
@@ -65,11 +68,17 @@ int main(const int argc, char* argv[]) {
         );
 
         std::cout << "System: " << (args.toWindows ? "Windows" : "Linux") << "; unused-filter=" << args.unusedFilterLevel << "\n";
+        std::cout << "sce_module/sce_modules processing: " << (args.skipSceModule ? "disabled (--skip-sce-module)" : "enabled") << '\n';
         auto result = pipeline->Relink(sourceBytes);
         for (const auto& patch : result.Patches) {
             if (patch.Offset > sourceBytes.size() || patch.Bytes.size() > sourceBytes.size() - patch.Offset)
                 throw Domain::RelinkerException("Relinker patch exceeds source image", patch.Offset);
             for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
+        }
+
+        std::vector<Relinker::GuestArtifact> guestArtifacts;
+        if (!args.skipSceModule) {
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath);
         }
 
         if (args.writeRegistry) {
@@ -95,7 +104,13 @@ int main(const int argc, char* argv[]) {
             );
         }
 
-        fileWriter.Write(absPath, patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding, args.windowsDiagnostics));
+        const auto executableBytes = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding, args.windowsDiagnostics);
+        for (const auto& artifact : guestArtifacts) {
+            std::filesystem::create_directories(artifact.Path.parent_path());
+            fileWriter.Write(artifact.Path.string(), artifact.Bytes);
+            std::cout << "Guest module: " << artifact.Path.string() << '\n';
+        }
+        fileWriter.Write(absPath, executableBytes);
         std::cout << "External prx references: " << result.RegistryEntries.size() << "\nOutput file: " << absPath << '\n';
 
         if (args.autorun) return Cli::Autorun(absPath, args.toWindows);

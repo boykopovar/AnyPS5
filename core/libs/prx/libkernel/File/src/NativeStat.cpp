@@ -10,21 +10,21 @@ using NativeStat = struct __stat64;
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return _wstat64(p.wstring().c_str(), st);
 }
+static int DoFstat(int fd, NativeStat* st) {
+    return _fstat64(fd, st);
+}
 #else
 #include <sys/stat.h>
 using NativeStat = struct stat;
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return ::stat(p.c_str(), st);
 }
+static int DoFstat(int fd, NativeStat* st) {
+    return ::fstat(fd, st);
+}
 #endif
 
-namespace File {
-
-void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
-    NativeStat st{};
-    if (DoStat(nativePath, &st) != 0) {
-        throw std::runtime_error(std::string("FillFileStat: stat failed for ") + nativePath.string());
-    }
+static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     *sb = FileStat{};
     sb->st_mode = static_cast<std::uint16_t>(st.st_mode);
     sb->st_size = static_cast<std::int64_t>(st.st_size);
@@ -70,6 +70,24 @@ void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
     sb->st_birthtim.tv_nsec = static_cast<std::int64_t>(st.st_birthtim.tv_nsec);
 #endif
 #endif
+}
+
+namespace File {
+
+void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
+    NativeStat st{};
+    if (DoStat(nativePath, &st) != 0) {
+        throw std::runtime_error(std::string("FillFileStat: stat failed for ") + nativePath.string());
+    }
+    CopyNativeStat(st, sb);
+}
+
+void FillFileStat(int nativeDescriptor, FileStat* sb) {
+    NativeStat st{};
+    if (DoFstat(nativeDescriptor, &st) != 0) {
+        throw std::runtime_error(std::string("FillFileStat: fstat failed for fd ") + std::to_string(nativeDescriptor));
+    }
+    CopyNativeStat(st, sb);
 }
 
 }

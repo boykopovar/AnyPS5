@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HeapDiagnostics.hpp"
 
 uint32_t Need_sceLibc = 1;
 
@@ -39,8 +40,7 @@ extern "C" {
     }
 
     void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info) {
-        (void)info;
-        NotImplemented_nid_no_patch(__func__);
+        LibcHeapTraceInfo_nid_no_patch(info);
     }
 
     int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (*destructor)(void*), void* object, void* module_id) {

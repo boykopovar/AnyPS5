@@ -1,6 +1,8 @@
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
+#include <elfpatcher/windows/WindowsTlsTemplateBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <relinker/analysis/CodeInstructionCollector.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <bit>
@@ -14,6 +16,8 @@ namespace {
 struct TlsAccess {
     std::uint32_t Rva;
     std::size_t Length;
+    bool StoreImmediate;
+    std::uint32_t Immediate;
 };
 
 void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, const std::uint32_t target) {
@@ -35,12 +39,13 @@ void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, cons
 
 }
 
-PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva) const {
+PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva) const {
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
 
     std::vector<TlsAccess> accesses;
     std::set<std::uint32_t> branchTargets;
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers);
 
     for (const auto& header : headers) {
         if (header.Type == 7) {
@@ -50,7 +55,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         }
         if (header.Type != 1 || (header.Flags & 1) == 0)
             continue;
-        for (std::uint64_t offset = 0; offset < header.FileSize;) {
+        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+            const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
             const auto rva = image.GetRva(header.MappedAddress + offset, info.Length);
@@ -63,11 +69,19 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
 
             if (info.SegmentPrefix != 0) {
                 const auto position = info.OpcodeOffset;
-                if (info.SegmentPrefix != 0x64 || info.RexPrefix != 0x48 || info.Length - position != 7 || bytes[position] != 0x8b || bytes[position + 1] != 0x04 || bytes[position + 2] != 0x25 || Io::ReadU32(source, header.Offset + offset + position + 3) != 0)
+                bool hasOperandSizePrefix = false;
+                bool supportedPrefixes = info.SegmentPrefix == 0x64;
+                for (std::size_t prefix = 0; prefix < position; ++prefix) {
+                    const auto value = bytes[prefix];
+                    if (value == 0x66) hasOperandSizePrefix = true;
+                    else if (value != 0x64 && !(prefix + 1 == position && value >= 0x40 && value <= 0x4f)) supportedPrefixes = false;
+                }
+                const bool loadPointer = supportedPrefixes && info.RexPrefix == 0x48 && info.Length - position == 7 && bytes[position] == 0x8b && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0;
+                const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
+                if (!loadPointer && !storeImmediate)
                     throw Domain::RelinkerException("Unsupported Windows guest TLS instruction", header.Offset + offset);
-                accesses.push_back({rva, info.Length});
+                accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0});
             }
-            offset += info.Length;
         }
     }
 
@@ -89,9 +103,11 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     const auto alignment = std::max<std::uint64_t>(tls->Alignment, 16);
     const auto blockSize = CheckedRva((tls->MemorySize + alignment - 1) & ~(alignment - 1));
     const auto templateOffset = CheckedRva((64 + alignment - 1) & ~(alignment - 1));
-    PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(templateOffset + blockSize + 16)};
+    constexpr std::uint32_t threadControlBlockSize = 0x30;
+    PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(templateOffset + blockSize + threadControlBlockSize)};
 
     const auto indexRva = nextRva + 40;
+    if (tlsIndexRva != nullptr) *tlsIndexRva = indexRva;
     const auto callbackTableRva = nextRva + 48;
     const auto templateRva = nextRva + templateOffset;
     const auto codeRva = AlignRva(nextRva + data.Data.size());
@@ -120,19 +136,26 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             throw Domain::RelinkerException("Branch enters a guest TLS instruction", *target);
         patchAccess(sections, access, code.GetRva());
         code.Emit({0x48, 0x8d, 0x64, 0x24, 0x80, 0x51});
+        if (access.StoreImmediate) code.Emit({0x50});
         loadPointer();
+        if (access.StoreImmediate) {
+            code.Emit({0xc7, 0x40, 0x28});
+            code.U32(access.Immediate);
+            code.Emit({0x58});
+        }
         code.Emit({0x59, 0x48, 0x8d, 0xa4, 0x24, 0x80, 0, 0, 0});
         code.Rip({0xe9}, CheckedRva(access.Rva + access.Length));
     }
 
-    std::copy_n(source.begin() + tls->Offset, tls->FileSize, data.Data.begin() + templateOffset);
+    const auto templateBytes = WindowsTlsTemplateBuilder().Build(*tls, image, sections, templateRva, relocations);
+    std::copy(templateBytes.begin(), templateBytes.end(), data.Data.begin() + templateOffset);
     const auto writeAddress = [&](const std::size_t offset, const std::uint32_t rva) {
         Io::WriteU64(data.Data, offset, ImageBase + rva);
         relocations.push_back(CheckedRva(data.Rva + offset));
     };
 
     writeAddress(0, templateRva);
-    writeAddress(8, CheckedRva(templateRva + blockSize + 16));
+    writeAddress(8, CheckedRva(templateRva + blockSize + threadControlBlockSize));
     writeAddress(16, indexRva);
     writeAddress(24, callbackTableRva);
     writeAddress(48, codeRva);

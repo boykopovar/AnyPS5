@@ -28,7 +28,7 @@ struct PthreadMutexPrivate {
     std::atomic<std::thread::id> _owner;
     int _count;
 
-    PthreadMutexPrivate() : _type(MutexType::Normal), _count(0) {}
+    PthreadMutexPrivate() : _type(MutexType::Normal), _owner(std::thread::id{}), _count(0) {}
 };
 
 struct PthreadCondattrPrivate {
