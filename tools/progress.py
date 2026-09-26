@@ -24,7 +24,7 @@ OPCODE_ALIASES = {
     "VMadMixloF16": "V_FMA_MIXLO_F16",
     "VMadMixhiF16": "V_FMA_MIXHI_F16",
 }
-WIDTH, MAP_HEIGHT, HEADER = 1000, 400, 36
+PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#1f6feb", "#0d1117", "#ffffff"
 
 
@@ -151,11 +151,10 @@ def text(x, y, value, size):
             f'stroke="{BORDER}" stroke-width="3" paint-order="stroke">{escape(value)}</text>')
 
 
-def treemap(title, data, top):
+def treemap(title, data, left):
     groups = sorted((g for g in data["groups"] if g["done"] + g["todo"]), key=lambda g: -(g["done"] + g["todo"]))
-    parts = [text(8, top + 24, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 18)]
-    y0 = top + HEADER
-    for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], 0, y0, WIDTH, MAP_HEIGHT)):
+    parts = [text(left + 4, 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)]
+    for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
         total = group["done"] + group["todo"]
         parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%)</title>')
         for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
@@ -169,11 +168,11 @@ def treemap(title, data, top):
 
 
 def render(libraries, shaders):
-    height = 2 * (HEADER + MAP_HEIGHT)
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {height}" width="{WIDTH}" height="{height}">',
-             rect(0, 0, WIDTH, height, BORDER, 0)]
+    width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
+             rect(0, 0, width, height, BORDER, 0)]
     parts += treemap("System libraries", libraries, 0)
-    parts += treemap("GPU shader instructions", shaders, HEADER + MAP_HEIGHT)
+    parts += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP)
     parts.append("</svg>")
     return "\n".join(parts)
 
