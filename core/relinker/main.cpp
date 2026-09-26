@@ -23,6 +23,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 int main(const int argc, char* argv[]) {
     Cli::Args args;
@@ -66,6 +67,7 @@ int main(const int argc, char* argv[]) {
         );
 
         std::cout << "System: " << (args.toWindows ? "Windows" : "Linux") << "; unused-filter=" << args.unusedFilterLevel << "\n";
+        std::cout << "sce_module/sce_modules processing: " << (args.skipSceModule ? "disabled (--skip-sce-module)" : "enabled") << '\n';
         auto result = pipeline->Relink(sourceBytes);
         for (const auto& patch : result.Patches) {
             if (patch.Offset > sourceBytes.size() || patch.Bytes.size() > sourceBytes.size() - patch.Offset)
@@ -73,7 +75,10 @@ int main(const int argc, char* argv[]) {
             for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
         }
 
-        const auto guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, args.skipSyscallCheck, args.lazyBinding, args.runPath);
+        std::vector<Relinker::GuestArtifact> guestArtifacts;
+        if (!args.skipSceModule) {
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, args.skipSyscallCheck, args.lazyBinding, args.runPath);
+        }
 
         if (args.writeRegistry) {
             const std::filesystem::path outFsPath(absPath);
