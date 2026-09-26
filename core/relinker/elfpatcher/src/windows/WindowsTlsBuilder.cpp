@@ -2,6 +2,7 @@
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTlsTemplateBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <relinker/analysis/CodeInstructionCollector.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <bit>
@@ -44,6 +45,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
 
     std::vector<TlsAccess> accesses;
     std::set<std::uint32_t> branchTargets;
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers);
 
     for (const auto& header : headers) {
         if (header.Type == 7) {
@@ -53,7 +55,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         }
         if (header.Type != 1 || (header.Flags & 1) == 0)
             continue;
-        for (std::uint64_t offset = 0; offset < header.FileSize;) {
+        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+            const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
             const auto rva = image.GetRva(header.MappedAddress + offset, info.Length);
@@ -72,7 +75,6 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     throw Domain::RelinkerException("Unsupported Windows guest TLS instruction", header.Offset + offset);
                 accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + 8) : 0});
             }
-            offset += info.Length;
         }
     }
 
