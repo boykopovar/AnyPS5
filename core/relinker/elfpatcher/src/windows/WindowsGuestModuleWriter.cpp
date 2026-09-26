@@ -26,7 +26,12 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             const auto& symbol = guest.Symbols.at(symbolIndex);
             const auto rva = image.GetRva(target, 8);
             for (const auto& header : guest.Headers) {
-                if (header.Type == 7 && target >= header.MappedAddress && target - header.MappedAddress < header.FileSize) throw Domain::RelinkerException("Windows guest TLS template relocations require explicit support", target);
+                if (header.Type != 7 || header.FileSize == 0) continue;
+                const auto templateRva = image.GetRva(header.MappedAddress, header.FileSize);
+                const auto templateEnd = static_cast<std::uint64_t>(templateRva) + header.FileSize;
+                if (rva >= templateEnd || static_cast<std::uint64_t>(rva) + 8 <= templateRva) continue;
+                if (rva < templateRva || templateEnd - rva < 8) throw Domain::RelinkerException("Guest relocation crosses the TLS template boundary", target);
+                if (type == 16 || (symbolIndex != 0 && symbol.Section == 0)) throw Domain::RelinkerException("Runtime-bound guest TLS template relocation is not supported", target);
             }
             const auto next = targets.lower_bound(target);
             if ((next != targets.end() && next->first < target + 8) || (next != targets.begin() && std::prev(next)->second > target)) throw Domain::RelinkerException("Overlapping guest relocations", target);
