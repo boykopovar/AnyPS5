@@ -171,7 +171,7 @@ def render(libraries, shaders):
     width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
              rect(0, 0, width, height, BORDER, 0)]
-    parts += treemap("System libraries", libraries, 0)
+    parts += treemap("System libraries*", libraries, 0)
     parts += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP)
     parts.append("</svg>")
     return "\n".join(parts)
@@ -223,7 +223,7 @@ if __name__ == "__main__":
     output.mkdir(parents=True, exist_ok=True)
     libraries, shaders = collect_libraries(), collect_shaders()
     (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
-    (output / "badge-libraries.svg").write_text(badge("libraries", libraries))
+    (output / "badge-libraries.svg").write_text(badge("libraries*", libraries))
     (output / "badge-shaders.svg").write_text(badge("shaders", shaders))
     (output / "progress.svg").write_text(render(libraries, shaders))
     (output / "README.md").write_text(summary(libraries, shaders))
