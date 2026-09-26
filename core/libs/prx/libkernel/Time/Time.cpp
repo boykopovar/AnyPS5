@@ -101,9 +101,19 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
         APS5_INVALID_ARG_EX;
     }
 #ifdef _WIN32
-    if (clockId == 0 || clockId == 9 || clockId == 10) {
+    if (clockId == 0 || clockId == 9) {
         FILETIME ft{};
         GetSystemTimePreciseAsFileTime(&ft);
+        std::uint64_t t = (static_cast<std::uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        t -= 116444736000000000ULL;
+        t *= 100ULL;
+        tp->tv_sec = static_cast<std::int64_t>(t / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(t % 1000000000ULL);
+        return 0;
+    }
+    if (clockId == 10 || clockId == 13) {
+        FILETIME ft{};
+        GetSystemTimeAsFileTime(&ft);
         std::uint64_t t = (static_cast<std::uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
         t -= 116444736000000000ULL;
         t *= 100ULL;
@@ -123,8 +133,15 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     switch (clockId) {
         case 0:
         case 9:
-        case 10:
             nativeId = CLOCK_REALTIME;
+            break;
+        case 10:
+        case 13:
+#ifdef CLOCK_REALTIME_COARSE
+            nativeId = CLOCK_REALTIME_COARSE;
+#else
+            nativeId = CLOCK_REALTIME;
+#endif
             break;
         case 4:
         case 7:
@@ -191,7 +208,7 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
         res->tv_nsec = 100LL;
         return 0;
     }
-    if (clockId == 4 || clockId == 1 || clockId == 5 || clockId == 7 || clockId == 8 || clockId == 10 || clockId == 11 || clockId == 12) {
+    if (clockId == 4 || clockId == 1 || clockId == 5 || clockId == 7 || clockId == 8 || clockId == 10 || clockId == 11 || clockId == 12 || clockId == 13) {
         static const std::uint64_t freq = [] {
             LARGE_INTEGER f{};
             QueryPerformanceFrequency(&f);
@@ -208,8 +225,15 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     switch (clockId) {
         case 0:
         case 9:
-        case 10:
             nativeId = CLOCK_REALTIME;
+            break;
+        case 10:
+        case 13:
+#ifdef CLOCK_REALTIME_COARSE
+            nativeId = CLOCK_REALTIME_COARSE;
+#else
+            nativeId = CLOCK_REALTIME;
+#endif
             break;
         case 4:
         case 7:
