@@ -6,6 +6,7 @@
 
 extern "C" {
 
+// unknown signature
 char* __progname_nid_postfix = nullptr;
 
 int APS5_VABI getargc_nid_postfix(void) {
