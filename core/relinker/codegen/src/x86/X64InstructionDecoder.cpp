@@ -227,7 +227,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             immediateSize = ImmSize8;
         } else if (opcode == TwoByteShldImm8 || opcode == TwoByteShrdImm8 ||
                    opcode == TwoByteShufpsImm8 || opcode == TwoByteShufpdImm8 ||
-                   opcode == TwoBytePextrw) {
+                   opcode == TwoBytePextrw || opcode == TwoBytePinsrw) {
             hasModRm = true;
             immediateSize = ImmSize8;
         } else if (opcode == TwoByteShldCl || opcode == TwoByteShrdCl) {
@@ -247,6 +247,11 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
                    opcode == TwoByteGrp7 ||
                    opcode == TwoByteGrp15 ||
                    opcode == TwoByteXadd ||
+                   opcode == TwoByteXaddByte ||
+                   opcode == TwoBytePopcnt ||
+                   opcode == TwoByteBtc ||
+                   opcode == TwoByteMovnti ||
+                   opcode == TwoBytePrefetchw ||
                    opcode == TwoByteGrp9 ||
                    opcode == TwoByteNopModRm || opcode == TwoByteEndbr) {
             hasModRm = true;
@@ -503,7 +508,9 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             (op >= TwoByteShiftImm8Min && op <= TwoByteShiftImm8Max) ||
             op == TwoByteShldImm8 || op == TwoByteShrdImm8 ||
             op == TwoByteShufpsImm8 || op == TwoByteShufpdImm8 ||
-            op == TwoBytePextrw || op == TwoByteShldCl || op == TwoByteShrdCl)
+            op == TwoBytePextrw || op == TwoByteShldCl || op == TwoByteShrdCl ||
+            op == TwoByteXaddByte || op == TwoBytePopcnt || op == TwoByteBtc ||
+            op == TwoByteMovnti || op == TwoBytePinsrw || op == TwoBytePrefetchw)
             hasModRm = true;
     }
 
