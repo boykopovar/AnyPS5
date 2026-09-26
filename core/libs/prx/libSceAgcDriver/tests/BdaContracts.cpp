@@ -50,5 +50,5 @@ void RunBdaContractTests() {
     AgcDriver::Graphics::Require(decoded.request.target.bdaAbiVersion == BdaAbi::Version && decoded.request.target.supportedCapabilities.size() == capabilities.size() && decoded.request.target.supportedExtensions[1] == extensions[1], "BDA request serialization changed target contract");
     auto invalid = encoded;
     invalid[0] = invalid[0] == 'A' ? 'B' : 'A';
-    reject([&] { static_cast<void>(serializer.Deserialize(invalid)); }, "serialization version");
+    reject([&] { static_cast<void>(serializer.Deserialize(invalid)); }, "signature");
 }
