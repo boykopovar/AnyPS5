@@ -1,72 +1,60 @@
+#include "../include/Mutex.hpp"
 #include <cstdint>
-#include <cstddef>
-#include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+#include <stdexcept>
+
+namespace {
+
+int toPosix(int result) {
+    if (result == 0)
+        return 0;
+    const auto error = static_cast<std::uint32_t>(result);
+    if ((error & 0xffff0000u) != 0x80020000u)
+        throw std::runtime_error("Unexpected SCE mutex error");
+    return static_cast<int>(error & 0xffffu);
+}
+
+}
 
 extern "C" {
 
 int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexDestroy(mutex));
 }
 
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
- (void)mutex;
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexInit(mutex, attr, nullptr));
 }
 
 int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexLock(mutex));
 }
 
 int APS5_VABI pthread_mutex_timedlock_nid_postfix(PthreadMutex* mutex, const KernelTimespec* abstime) {
- (void)mutex;
- (void)abstime;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(MutexOperations::Timedlock(mutex, abstime));
 }
 
 int APS5_VABI pthread_mutex_trylock_nid_postfix(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexTrylock(mutex));
 }
 
 int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex) {
- (void)mutex;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexUnlock(mutex));
 }
 
 int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexattrDestroy(attr));
 }
 
 int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr) {
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexattrInit(attr));
 }
 
 int APS5_VABI pthread_mutexattr_setprotocol_nid_postfix(PthreadMutexattr* attr, int protocol) {
- (void)attr;
- (void)protocol;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexattrSetprotocol(attr, protocol));
 }
 
 int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int type) {
- (void)attr;
- (void)type;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return toPosix(scePthreadMutexattrSettype(attr, type));
 }
 
 }
