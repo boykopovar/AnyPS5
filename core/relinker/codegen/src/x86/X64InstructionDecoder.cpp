@@ -200,7 +200,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             immediateSize = ImmSize32;
         }
 
-        if (opcode == OneByteJmpRel8 || opcode == OneByteJrcxz ||
+        if (opcode == OneByteJmpRel8 || opcode == OneByteJrcxz || opcode == OneByteIntImm8 ||
             (opcode >= OneByteLoop && opcode <= OneByteLoopMax) ||
             (opcode >= OneByteInOutImm8Min && opcode <= OneByteInOutImm8Max)) {
             immediateSize = ImmSize8;

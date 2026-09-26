@@ -5,6 +5,8 @@
 
 namespace Codegen::X64OpcodeConstants {
 
+inline constexpr std::uint8_t OneByteIntImm8 = 0xCD;
+
 inline constexpr std::uint8_t PrefixLock = 0xF0;
 inline constexpr std::uint8_t PrefixRepne = 0xF2;
 inline constexpr std::uint8_t PrefixRep = 0xF3;
