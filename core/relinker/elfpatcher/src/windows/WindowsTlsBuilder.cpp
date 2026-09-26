@@ -35,7 +35,7 @@ void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, cons
 
 }
 
-PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva) const {
+PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva) const {
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
 
@@ -92,6 +92,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(templateOffset + blockSize + 16)};
 
     const auto indexRva = nextRva + 40;
+    if (tlsIndexRva != nullptr) *tlsIndexRva = indexRva;
     const auto callbackTableRva = nextRva + 48;
     const auto templateRva = nextRva + templateOffset;
     const auto codeRva = AlignRva(nextRva + data.Data.size());

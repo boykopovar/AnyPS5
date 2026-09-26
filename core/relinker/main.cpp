@@ -17,6 +17,7 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <relinker/pipeline/RelinkerPipeline.hpp>
+#include <relinker/guest/GuestImage.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <filesystem>
 #include <iostream>
@@ -72,6 +73,8 @@ int main(const int argc, char* argv[]) {
             for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
         }
 
+        const auto guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, args.skipSyscallCheck, args.lazyBinding, args.runPath);
+
         if (args.writeRegistry) {
             const std::filesystem::path outFsPath(absPath);
             const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
@@ -95,7 +98,13 @@ int main(const int argc, char* argv[]) {
             );
         }
 
-        fileWriter.Write(absPath, patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding, args.windowsDiagnostics));
+        const auto executableBytes = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding, args.windowsDiagnostics);
+        for (const auto& artifact : guestArtifacts) {
+            std::filesystem::create_directories(artifact.Path.parent_path());
+            fileWriter.Write(artifact.Path.string(), artifact.Bytes);
+            std::cout << "Guest module: " << artifact.Path.string() << '\n';
+        }
+        fileWriter.Write(absPath, executableBytes);
         std::cout << "External prx references: " << result.RegistryEntries.size() << "\nOutput file: " << absPath << '\n';
 
         if (args.autorun) return Cli::Autorun(absPath, args.toWindows);

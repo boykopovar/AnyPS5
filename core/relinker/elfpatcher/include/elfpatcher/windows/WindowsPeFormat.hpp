@@ -32,6 +32,8 @@ struct PeImport {
     std::string Name;
     std::uint32_t TargetRva;
     std::uint64_t Addend;
+    std::int32_t TargetModule = -1;
+    std::uint32_t RelocationType = 1;
 };
 
 struct PeRelocations {

@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <stdexcept>
+#include <domain/GuestRuntime.hpp>
 
 namespace Domain {
 
@@ -92,6 +93,7 @@ struct SysVDynamicSection {
     std::vector<std::uint8_t> DynStrData;
     std::vector<std::uint8_t> RelaData;
     std::vector<std::uint8_t> RelaPltData;
+    std::vector<GuestRuntime> GuestModules;
 };
 
 struct CallRegistryEntry {
