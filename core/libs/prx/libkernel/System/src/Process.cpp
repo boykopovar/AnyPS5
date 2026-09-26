@@ -141,8 +141,8 @@ struct GuestResourceUsage {
 
 extern "C" {
 
-// unknown signature
-char* __progname_nid_postfix = nullptr;
+// unknown data
+const char* __progname_nid_postfix = "eboot.bin";
 
 int APS5_VABI getargc_nid_postfix(void) {
     return getProcessArguments().GetCount();
