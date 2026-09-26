@@ -284,3 +284,12 @@ int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
 }
 
 }
+
+extern "C" {
+
+void APS5_VABI __pthread_cxa_finalize_nid_postfix(void* argument) {
+    (void)argument;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}

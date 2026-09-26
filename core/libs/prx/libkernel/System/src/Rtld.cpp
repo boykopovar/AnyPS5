@@ -38,3 +38,43 @@ void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors) {
 }
 
 }
+
+using ThreadAtexitCount = int (APS5_VABI *)(KernelModule module);
+using ThreadAtexitReport = void (APS5_VABI *)(KernelModule module);
+using ThreadDtors = void (APS5_VABI *)();
+
+extern "C" {
+
+void APS5_VABI _sceKernelRtldSetApplicationHeapAPI_nid_postfix(void* api[]) {
+    (void)api;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(std::uint64_t* counter) {
+    (void)counter;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(std::uint64_t* counter) {
+    (void)counter;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI _sceKernelSetThreadAtexitCount_nid_postfix(ThreadAtexitCount callback) {
+    (void)callback;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI _sceKernelSetThreadAtexitReport_nid_postfix(ThreadAtexitReport callback) {
+    (void)callback;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+void APS5_VABI _sceKernelSetThreadDtors_nid_postfix(ThreadDtors callback) {
+    (void)callback;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}

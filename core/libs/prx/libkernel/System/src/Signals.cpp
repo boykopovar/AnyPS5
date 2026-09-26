@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <csignal>
@@ -57,4 +58,14 @@ int APS5_VABI raise_nid_postfix(int guest) {
     if (result) *__error_nid_postfix() = 22;
     return result ? -1 : 0;
 }
+}
+
+extern "C" {
+
+int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t programCounter) {
+    (void)programCounter;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

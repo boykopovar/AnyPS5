@@ -6,6 +6,8 @@
 
 extern "C" {
 
+char* __progname_nid_postfix = nullptr;
+
 int APS5_VABI getargc_nid_postfix(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;

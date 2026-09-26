@@ -187,3 +187,28 @@ int APS5_VABI sceKernelRmdir(const char* path) {
 }
 
 }
+
+extern "C" {
+
+int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
+    (void)path;
+    (void)mode;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t length) {
+    (void)path;
+    (void)length;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceKernelUtimes_nid_postfix(const char* path, const KernelTimeval* times) {
+    (void)path;
+    (void)times;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
