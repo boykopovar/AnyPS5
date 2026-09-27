@@ -88,6 +88,10 @@ foreach(LIB_DIR ${LIBS_DIRS})
             target_link_libraries(${LIB_NAME} PRIVATE libkernel libc)
         endif()
 
+        if(WIN32 AND LIB_NAME STREQUAL "libSceSystemService")
+            target_link_libraries(${LIB_NAME} PRIVATE shell32)
+        endif()
+
         set_target_properties(${LIB_NAME} PROPERTIES
                 PREFIX ""
                 SUFFIX .prx

@@ -2,6 +2,10 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
 #include "prx/libc/include/Shutdown.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -105,10 +109,19 @@ int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
 }
 
 int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* url, void* reserved) {
- (void)url;
  (void)reserved;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!url) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ const bool https = std::strncmp(url, "https://", 8) == 0 && url[8] != '\0';
+ const bool http = std::strncmp(url, "http://", 7) == 0 && url[7] != '\0';
+ if (!https && !http) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+#ifdef _WIN32
+ const auto result = ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
+ return reinterpret_cast<std::intptr_t>(result) > 32 ? SYSTEM_SERVICE_OK : -1;
+#else
+ return -1;
+#endif
 }
 
 }
