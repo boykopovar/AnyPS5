@@ -1,5 +1,6 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
@@ -108,20 +109,90 @@ int APS5_VABI atoi_nid_postfix(const char* str) {
     return std::atoi(str);
 }
 
-const wchar_t* APS5_VABI wmemchr_nid_postfix(const wchar_t* s, wchar_t c, size_t n) {
-    return std::wmemchr(s, c, n);
+// The PS5 SDK defines wchar_t as a 16-bit unsigned code unit under __SCE__.
+// Use explicit guest-width elements rather than the host's wchar_t (32-bit on Linux).
+size_t APS5_VABI wcslen_nid_postfix(const std::uint16_t* text) {
+    size_t length = 0;
+    while (text[length] != 0) ++length;
+    return length;
 }
 
-int APS5_VABI wmemcmp_nid_postfix(const wchar_t* s1, const wchar_t* s2, size_t n) {
-    return std::wmemcmp(s1, s2, n);
+int APS5_VABI wcscmp_nid_postfix(const std::uint16_t* left, const std::uint16_t* right) {
+    while (*left != 0 && *left == *right) { ++left; ++right; }
+    return *left < *right ? -1 : *left > *right ? 1 : 0;
 }
 
-wchar_t* APS5_VABI wmemcpy_nid_postfix(wchar_t* dest, const wchar_t* src, size_t n) {
-    return std::wmemcpy(dest, src, n);
+int APS5_VABI wcsncmp_nid_postfix(const std::uint16_t* left, const std::uint16_t* right, size_t count) {
+    for (size_t index = 0; index < count; ++index) {
+        if (left[index] != right[index]) return left[index] < right[index] ? -1 : 1;
+        if (left[index] == 0) break;
+    }
+    return 0;
 }
 
-wchar_t* APS5_VABI wmemmove_nid_postfix(wchar_t* dest, const wchar_t* src, size_t n) {
-    return std::wmemmove(dest, src, n);
+std::uint16_t* APS5_VABI wcscpy_nid_postfix(std::uint16_t* destination, const std::uint16_t* source) {
+    auto* result = destination;
+    while ((*destination++ = *source++) != 0) {}
+    return result;
+}
+
+std::uint16_t* APS5_VABI wcsncpy_nid_postfix(std::uint16_t* destination, const std::uint16_t* source, size_t count) {
+    size_t index = 0;
+    for (; index < count && source[index] != 0; ++index) destination[index] = source[index];
+    for (; index < count; ++index) destination[index] = 0;
+    return destination;
+}
+
+std::uint16_t* APS5_VABI wcscat_nid_postfix(std::uint16_t* destination, const std::uint16_t* source) {
+    wcscpy_nid_postfix(destination + wcslen_nid_postfix(destination), source);
+    return destination;
+}
+
+std::uint16_t* APS5_VABI wcsncat_nid_postfix(std::uint16_t* destination, const std::uint16_t* source, size_t count) {
+    auto* end = destination + wcslen_nid_postfix(destination);
+    size_t index = 0;
+    for (; index < count && source[index] != 0; ++index) end[index] = source[index];
+    end[index] = 0;
+    return destination;
+}
+
+const std::uint16_t* APS5_VABI wcschr_nid_postfix(const std::uint16_t* text, std::uint16_t character) {
+    do { if (*text == character) return text; } while (*text++ != 0);
+    return nullptr;
+}
+
+const std::uint16_t* APS5_VABI wcsrchr_nid_postfix(const std::uint16_t* text, std::uint16_t character) {
+    const std::uint16_t* found = nullptr;
+    do { if (*text == character) found = text; } while (*text++ != 0);
+    return found;
+}
+
+const std::uint16_t* APS5_VABI wcsstr_nid_postfix(const std::uint16_t* text, const std::uint16_t* needle) {
+    if (*needle == 0) return text;
+    for (; *text != 0; ++text) {
+        if (*text == *needle && wcsncmp_nid_postfix(text, needle, wcslen_nid_postfix(needle)) == 0)
+            return text;
+    }
+    return nullptr;
+}
+
+const std::uint16_t* APS5_VABI wmemchr_nid_postfix(const std::uint16_t* text, std::uint16_t character, size_t count) {
+    for (size_t index = 0; index < count; ++index) if (text[index] == character) return text + index;
+    return nullptr;
+}
+
+int APS5_VABI wmemcmp_nid_postfix(const std::uint16_t* left, const std::uint16_t* right, size_t count) {
+    for (size_t index = 0; index < count; ++index)
+        if (left[index] != right[index]) return left[index] < right[index] ? -1 : 1;
+    return 0;
+}
+
+std::uint16_t* APS5_VABI wmemcpy_nid_postfix(std::uint16_t* destination, const std::uint16_t* source, size_t count) {
+    return static_cast<std::uint16_t*>(std::memcpy(destination, source, count * sizeof(std::uint16_t)));
+}
+
+std::uint16_t* APS5_VABI wmemmove_nid_postfix(std::uint16_t* destination, const std::uint16_t* source, size_t count) {
+    return static_cast<std::uint16_t*>(std::memmove(destination, source, count * sizeof(std::uint16_t)));
 }
 
 }
