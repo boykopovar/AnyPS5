@@ -113,6 +113,10 @@ endforeach()
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 
 if(BUILD_TESTING)
+    add_executable(guest_kernel_model_tests tests/GuestKernelModel.cpp
+            prx/libkernel/HostRuntime/GuestKernelModel.cpp)
+    target_include_directories(guest_kernel_model_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME guest_kernel_model COMMAND guest_kernel_model_tests)
     add_executable(guest_foreground_user_tests tests/GuestForegroundUser.cpp)
     target_include_directories(guest_foreground_user_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_foreground_user_tests PRIVATE libSceUserService libc)

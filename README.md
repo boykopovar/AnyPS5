@@ -30,6 +30,14 @@ substitute arbitrary pointers for real PS5 kernel facilities. Payload support
 requires a separate startup bridge and an explicitly modeled kernel interface;
 merely adding exports is insufficient.
 
+The `GuestKernelModel` provides bounded guest memory, synthetic kernel memory,
+pipe endpoints, and a dispatcher for FreeBSD syscall numbers 3, 4, 6, 20, and
+542. Unsupported calls return FreeBSD `ENOSYS` (78). Its test covers the
+initial `getpid`/`dynlib_get_obj_member` sequence used by the public PS5 SDK
+CRT and verifies that the latter remains unsupported. This component is not
+yet connected to guest machine-code syscall sites; it must not be interpreted
+as a working PS5 kernel or as a successful payload launch.
+
 The relinker uses only the C++20 standard library and should build with any conforming compiler.
 
 [libc.prx](core/libs/prx/libc) implementations contain compiler-specific code. Linux builds work with GCC; on Windows, MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`) is currently required.
