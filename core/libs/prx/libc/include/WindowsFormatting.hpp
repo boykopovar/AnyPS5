@@ -232,7 +232,14 @@ inline int ScanWindows(const char* input, const char* format, const void* source
         bool suppressed = false;
         if (*format == '*') { suppressed = true; ++format; }
         std::string token = suppressed ? "%*" : "%";
-        while (std::isdigit(static_cast<unsigned char>(*format))) token += *format++;
+        std::string width;
+        while (std::isdigit(static_cast<unsigned char>(*format))) width += *format++;
+        if (!width.empty()) {
+            const auto parsedWidth = std::stoull(width);
+            if (parsedWidth == 0 || parsedWidth > INT_MAX)
+                throw std::invalid_argument("Invalid scan field width");
+        }
+        token += width;
         std::string length;
         if (*format && std::strchr("hljztL", *format)) {
             length += *format++;
@@ -243,7 +250,10 @@ inline int ScanWindows(const char* input, const char* format, const void* source
         if (conversion == '\0') throw std::invalid_argument("Incomplete scan conversion");
         ++format;
         if (conversion == 'n') {
-            if (suppressed) throw std::invalid_argument("Suppressed scan count");
+            if (suppressed || !width.empty()) throw std::invalid_argument("Invalid scan count conversion");
+            if (length != "hh" && length != "h" && !length.empty() && length != "l" &&
+                length != "ll" && length != "j" && length != "z" && length != "t")
+                throw std::invalid_argument("Unsupported scan count length");
             void* destination = args.Next<void*>();
             if (!destination) throw std::invalid_argument("Null scan destination");
             const auto count = static_cast<std::ptrdiff_t>(input - start);
@@ -256,7 +266,8 @@ inline int ScanWindows(const char* input, const char* format, const void* source
             continue;
         }
         if (conversion == '[') {
-            token += length;
+            if (!length.empty()) throw std::invalid_argument("Unsupported wide scan character set");
+            if (!suppressed && width.empty()) throw std::invalid_argument("Unbounded scan character set");
             token += '[';
             if (*format == '^') token += *format++;
             if (*format == ']') token += *format++;
@@ -267,8 +278,23 @@ inline int ScanWindows(const char* input, const char* format, const void* source
         } else {
             if (!std::strchr("diouxXaAeEfFgGcsp", conversion))
                 throw std::invalid_argument("Unsupported scan conversion");
-            // Guest long is 64-bit; Windows long is 32-bit.
-            token += length == "l" && std::strchr("diouxX", conversion) ? "ll" : length;
+            const bool integer = std::strchr("diouxX", conversion) != nullptr;
+            const bool floating = std::strchr("aAeEfFgG", conversion) != nullptr;
+            if (integer) {
+                if (length != "hh" && length != "h" && !length.empty() && length != "l" &&
+                    length != "ll" && length != "j" && length != "z" && length != "t")
+                    throw std::invalid_argument("Unsupported integer scan length");
+                // Guest long, intmax_t, size_t and ptrdiff_t are 64-bit.
+                token += length == "l" || length == "j" || length == "z" || length == "t" ? "ll" : length;
+            } else if (floating) {
+                if (!length.empty() && length != "l")
+                    throw std::invalid_argument("Unsupported floating scan length");
+                token += length;
+            } else {
+                if (!length.empty()) throw std::invalid_argument("Unsupported wide scan conversion");
+                if (!suppressed && (conversion == 's') && width.empty())
+                    throw std::invalid_argument("Unbounded scan string");
+            }
             token += conversion;
         }
         token += "%n";
