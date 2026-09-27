@@ -2,6 +2,10 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
+
+extern "C" int APS5_VABI scePthreadRename(Pthread thread, const char* name);
+extern "C" Pthread APS5_VABI scePthreadSelf();
 
 
 extern "C" {
@@ -52,15 +56,15 @@ int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value) {
 }
 
 int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
- (void)thread;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return scePthreadRename(thread, name) == 0 ? 0 : EINVAL;
+}
+
+void APS5_VABI pthread_set_name_np_nid_postfix(Pthread thread, const char* name) {
+    if (scePthreadRename(thread, name) != 0) errno = EINVAL;
 }
 
 Pthread APS5_VABI pthread_self_nid_postfix(void) {
- NotImplemented_nid_no_patch(__func__);
- return {};
+    return scePthreadSelf();
 }
 
 int APS5_VABI pthread_setcancelstate_nid_postfix(int state, int* old_state) {

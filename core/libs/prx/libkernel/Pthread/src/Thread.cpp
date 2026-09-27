@@ -1,11 +1,13 @@
 #include "../include/Pthread.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdlib>
+#include <cerrno>
 #include <future>
 #include <memory>
 #include <stdexcept>
 #include <thread>
 #include <system_error>
+#include <string>
 
 #ifndef _WIN32
 #include <pthread.h>
@@ -249,10 +251,21 @@ int APS5_VABI scePthreadGetthreadid(void) {
 }
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
- (void)thread;
- (void)name;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (name == nullptr || name[0] == '\0') return SCE_KERNEL_ERROR_EINVAL;
+#ifdef _WIN32
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, nullptr, 0);
+    if (size == 0) return SCE_KERNEL_ERROR_EINVAL;
+    std::wstring wide(static_cast<std::size_t>(size), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, wide.data(), size) == 0)
+        return SCE_KERNEL_ERROR_EINVAL;
+    const HANDLE handle = thread == nullptr ? GetCurrentThread() : thread->nativeHandle;
+    return SUCCEEDED(SetThreadDescription(handle, wide.c_str())) ? SCE_OK : SCE_KERNEL_ERROR_EINVAL;
+#else
+    // Linux limits native names to 15 bytes; truncate at that boundary.
+    const std::string nativeName(name, std::char_traits<char>::length(name));
+    return pthread_setname_np(thread == nullptr ? pthread_self() : thread->_thr.native_handle(),
+                              nativeName.substr(0, 15).c_str()) == 0 ? SCE_OK : SCE_KERNEL_ERROR_EINVAL;
+#endif
 }
 
 int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
