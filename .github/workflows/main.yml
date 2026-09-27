@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up MSYS2 & MinGW Toolchain
         uses: msys2/setup-msys2@v2
