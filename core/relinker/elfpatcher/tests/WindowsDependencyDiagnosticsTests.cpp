@@ -35,11 +35,14 @@ void checkRuntimeDependencies() {
     check({"libSceLibcInternal.prx", "libkernel.prx"},
           {"libSceLibcInternal.prx", "libkernel.prx", "libc.prx"});
     check({"libc.prx", "libSceLibcInternal.prx"},
-          {"libc.prx", "libSceLibcInternal.prx"});
+          {"libc.prx", "libSceLibcInternal.prx", "libkernel.prx"});
     check({"libSceLibcInternal.sprx", "libSceNet.sprx"},
-          {"libSceLibcInternal.sprx", "libSceNet.sprx", "libc.sprx"});
+          {"libSceLibcInternal.sprx", "libSceNet.sprx", "libkernel.sprx", "libc.sprx"});
     check({"libc.sprx", "libSceLibcInternal.sprx"},
-          {"libc.sprx", "libSceLibcInternal.sprx"});
+          {"libc.sprx", "libSceLibcInternal.sprx", "libkernel.sprx"});
+    check({"libkernel_web.sprx", "libkernel.sprx"},
+          {"libkernel_web.sprx", "libkernel.sprx"});
+    check({"libkernel_sys.prx"}, {"libkernel_sys.prx", "libkernel.prx"});
 }
 
 void writeFile(const Fs::path& path, const std::vector<std::uint8_t>& bytes) {

@@ -50,9 +50,16 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
         result.push_back(std::move(name));
     }
     // Windows GetProcAddress does not search a module's dependencies as ELF
-    // symbol lookup does. Keep the requested modules first, then expose the
-    // shared C runtime under the same extension as libSceLibcInternal.
+    // symbol lookup does. Keep requested modules first, then expose the shared
+    // kernel and C runtimes under the payload's extension.
     for (const auto* extension : {".prx", ".sprx"}) {
+        const std::string kernel = std::string("libkernel") + extension;
+        if ((unique.contains(std::string("libkernel_web") + extension) ||
+             unique.contains(std::string("libkernel_sys") + extension) ||
+             unique.contains(std::string("libSceLibcInternal") + extension)) &&
+            !unique.contains(kernel)) {
+            result.push_back(kernel);
+        }
         const std::string runtime = std::string("libc") + extension;
         if (unique.contains(std::string("libSceLibcInternal") + extension) &&
             !unique.contains(runtime)) {

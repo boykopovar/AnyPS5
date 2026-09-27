@@ -117,6 +117,15 @@ endforeach()
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 
 if(BUILD_TESTING)
+    add_executable(guest_thread_specific_tests tests/GuestThreadSpecific.cpp)
+    target_include_directories(guest_thread_specific_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_thread_specific_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_thread_specific_tests)
+    add_test(NAME guest_thread_specific COMMAND guest_thread_specific_tests)
+    if(WIN32)
+        set_tests_properties(guest_thread_specific PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_executable(guest_kernel_model_tests tests/GuestKernelModel.cpp
             prx/libkernel/HostRuntime/GuestKernelModel.cpp)
     target_include_directories(guest_kernel_model_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
