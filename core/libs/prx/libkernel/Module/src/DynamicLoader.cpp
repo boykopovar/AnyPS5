@@ -1,4 +1,5 @@
 #include "prx/libc/include/General.hpp"
+#include "SceTypes.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <cstdio>
@@ -49,9 +50,43 @@ void* FindSymbol(Module& module, const char* name) {
     const auto nid = Nid::ComputeNid(name, "");
     return Symbol(module, nid.c_str());
 }
+void* FindInKernel(const char* name) {
+#ifdef _WIN32
+    const auto module = GetModuleHandleW(L"libkernel.prx");
+    if (!module) return nullptr;
+    if (auto* symbol = GetProcAddress(module, name)) return reinterpret_cast<void*>(symbol);
+    const auto nid = Nid::ComputeNid(name, "");
+    return reinterpret_cast<void*>(GetProcAddress(module, nid.c_str()));
+#else
+    if (auto* symbol = ::dlsym(RTLD_DEFAULT, name)) return symbol;
+    const auto nid = Nid::ComputeNid(name, "");
+    return ::dlsym(RTLD_DEFAULT, nid.c_str());
+#endif
+}
 }
 
 extern "C" {
+// SDK payloads use handle 1 (or 0x2001) for libkernel before other modules.
+int APS5_VABI sceKernelDlsym(KernelModule handle, const char* name, void** address) {
+    if (!address || !name || !*name) return -1;
+    *address = nullptr;
+    try {
+        if (handle == 1 || handle == 0x2001) {
+            *address = FindInKernel(name);
+        } else {
+            std::shared_ptr<Module> module;
+            {
+                std::lock_guard lock(modulesMutex);
+                auto found = modules.find(static_cast<std::uint32_t>(handle));
+                if (found == modules.end()) return -1;
+                module = found->second;
+            }
+            *address = FindSymbol(*module, name);
+        }
+        return *address ? 0 : -1;
+    } catch (const std::exception&) { return -1; }
+}
+
 char* APS5_VABI dlerror_nid_postfix() {
     if (!pendingError) return nullptr;
     pendingError = false;
