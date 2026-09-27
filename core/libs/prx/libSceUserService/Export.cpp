@@ -54,6 +54,14 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
  return 0;
 }
 
+int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
+ if (user_id == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ *user_id = USER_SERVICE_INITIAL_USER_ID;
+ return USER_SERVICE_OK;
+}
+
 int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
  (void)user_id;
  (void)presets;
