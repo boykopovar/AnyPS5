@@ -1,0 +1,51 @@
+name: Build AnyPS5 Libraries
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 & MinGW Toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure CMake
+        shell: msys2 {0}
+        run: |
+          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Libraries Target
+        shell: msys2 {0}
+        run: |
+          cmake --build build --target libs --parallel 4
+
+      - name: List built binaries (for debug)
+        shell: msys2 {0}
+        run: |
+          echo "Built files under build/:"
+          find build -type f \( -name '*.prx' -o -name '*.sprx' \) -print || true
+
+      - name: Upload compiled binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyps5-binaries
+          path: |
+            build/**/*.prx
+            build/**/*.sprx
+          retention-days: 7
