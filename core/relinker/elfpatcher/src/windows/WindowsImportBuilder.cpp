@@ -1,6 +1,7 @@
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <set>
+#include <string>
 
 namespace Elfpatcher::Windows {
 
@@ -48,11 +49,16 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
             throw Domain::RelinkerException("Invalid or duplicate DT_NEEDED library: " + name);
         result.push_back(std::move(name));
     }
-    // AnyPS5 implements the C runtime in libc.prx. Windows GetProcAddress
-    // does not search a module's dependencies as ELF symbol lookup does.
-    // Keep the requested module first, then make its shared runtime visible.
-    if (unique.contains("libSceLibcInternal.prx") && !unique.contains("libc.prx"))
-        result.push_back("libc.prx");
+    // Windows GetProcAddress does not search a module's dependencies as ELF
+    // symbol lookup does. Keep the requested modules first, then expose the
+    // shared C runtime under the same extension as libSceLibcInternal.
+    for (const auto* extension : {".prx", ".sprx"}) {
+        const std::string runtime = std::string("libc") + extension;
+        if (unique.contains(std::string("libSceLibcInternal") + extension) &&
+            !unique.contains(runtime)) {
+            result.push_back(runtime);
+        }
+    }
     return result;
 }
 
