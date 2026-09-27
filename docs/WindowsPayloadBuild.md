@@ -63,6 +63,30 @@ If the ELF is outside Downloads, locate it with File Explorer and assign
 implementation and another build; the audit passing alone does not establish
 runtime compatibility.
 
+## Regenerate a converted executable after rebuilding the libraries
+
+The converted `.exe` contains its own startup stub. Deploying new PRXs does
+not update a previously converted executable. A trace that prints
+`Loading module:` comes from an older relinker build; the current stub prints
+`Loading PRX:` and tries the NID export before the original symbol name. For
+example, `sceSystemServiceHideSplashScreen` is implemented by
+`libSceSystemService` and its patched NID is `Vo5V8KAwCmk`.
+
+From the fork checkout, with `$elf` and `$payloadRoot` set as above, generate
+a separate executable and test that file:
+
+```powershell
+$converted = Join-Path $payloadRoot 'crispy-doom-current.exe'
+& .\build\core\relinker\relinker.exe --windows --windows-diagnostics --skip-syscall-check $elf.FullName $converted
+if ($LASTEXITCODE -ne 0) { throw "Relinker failed: $LASTEXITCODE" }
+& C:\WinLibs\mingw64\bin\gdb.exe -batch -q -x (Join-Path $payloadRoot 'trace.gdb') $converted
+```
+
+`--skip-syscall-check` only allows conversion of this known payload with raw
+syscall instructions. Those instructions are not yet routed to the guest
+kernel model. A later startup error or crash must be diagnosed separately;
+this command does not make the payload safe to run past that point.
+
 If `LoadLibraryExA` still fails on `libSceVideoOut.sprx` with Windows error 127,
 capture the complete import tables and the files actually deployed. The error
 means a dependent module could not provide a requested procedure; the GDB
