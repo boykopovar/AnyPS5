@@ -80,12 +80,4 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
  return 0;
 }
 
-int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* oset) {
- (void)how;
- (void)set;
- (void)oset;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 }

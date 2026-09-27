@@ -39,6 +39,31 @@ extern "C" {
 // FreeBSD's guest sigset_t is four 32-bit words, covering signals 1..128.
 struct GuestSignalSet { std::uint32_t bits[4]; };
 static_assert(sizeof(GuestSignalSet) == 16);
+static thread_local GuestSignalSet guestThreadMask{};
+
+int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* oldSet) {
+    if (set != nullptr && how != 1 && how != 2 && how != 3) return 22;
+    const GuestSignalSet previous = guestThreadMask;
+    if (set != nullptr) {
+        for (unsigned index = 0; index < 4; ++index) {
+            switch (how) {
+                case 1: guestThreadMask.bits[index] |= set->bits[index]; break;
+                case 2: guestThreadMask.bits[index] &= ~set->bits[index]; break;
+                case 3: guestThreadMask.bits[index] = set->bits[index]; break;
+            }
+        }
+        // SIGKILL (9) and SIGSTOP (17) cannot be blocked by the guest.
+        guestThreadMask.bits[0] &= ~((std::uint32_t{1} << 8) | (std::uint32_t{1} << 16));
+    }
+    if (oldSet != nullptr) *oldSet = previous;
+    return 0;
+}
+
+int APS5_VABI sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* oldSet) {
+    const int result = pthread_sigmask_nid_postfix(how, set, oldSet);
+    if (result != 0) { *__error_nid_postfix() = result; return -1; }
+    return 0;
+}
 
 int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet* set) {
     if (set == nullptr) { *__error_nid_postfix() = 22; return -1; }

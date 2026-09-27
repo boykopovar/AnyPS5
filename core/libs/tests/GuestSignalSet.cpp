@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <thread>
 
 struct GuestSignalSet { std::uint32_t bits[4]; };
 static_assert(sizeof(GuestSignalSet) == 16);
@@ -15,6 +16,8 @@ int APS5_VABI sigismember_nid_postfix(const GuestSignalSet*, int);
 int APS5_VABI sigisemptyset_nid_postfix(const GuestSignalSet*);
 int APS5_VABI sigandset_nid_postfix(GuestSignalSet*, const GuestSignalSet*, const GuestSignalSet*);
 int APS5_VABI sigorset_nid_postfix(GuestSignalSet*, const GuestSignalSet*, const GuestSignalSet*);
+int APS5_VABI pthread_sigmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
+int APS5_VABI sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -44,4 +47,32 @@ int main() {
     Require(sigaddset_nid_postfix(&guarded.set, 0) == -1 && *__error_nid_postfix() == 22);
     Require(sigismember_nid_postfix(&guarded.set, 129) == -1 && *__error_nid_postfix() == 22);
     Require(sigemptyset_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22);
+
+    GuestSignalSet selected{};
+    Require(sigaddset_nid_postfix(&selected, 2) == 0);
+    Require(sigaddset_nid_postfix(&selected, 9) == 0);
+    Require(sigaddset_nid_postfix(&selected, 17) == 0);
+    GuestSignalSet previous{};
+    Require(pthread_sigmask_nid_postfix(1, &selected, &previous) == 0);
+    Require(sigisemptyset_nid_postfix(&previous) == 1);
+    Require(pthread_sigmask_nid_postfix(999, nullptr, &previous) == 0);
+    Require(sigismember_nid_postfix(&previous, 2) == 1);
+    Require(sigismember_nid_postfix(&previous, 9) == 0);
+    Require(sigismember_nid_postfix(&previous, 17) == 0);
+    std::thread anotherThread([] {
+        GuestSignalSet mask{};
+        Require(pthread_sigmask_nid_postfix(999, nullptr, &mask) == 0);
+        Require(sigisemptyset_nid_postfix(&mask) == 1);
+        Require(sigaddset_nid_postfix(&mask, 33) == 0);
+        Require(pthread_sigmask_nid_postfix(3, &mask, nullptr) == 0);
+    });
+    anotherThread.join();
+    Require(pthread_sigmask_nid_postfix(2, &selected, &previous) == 0);
+    Require(sigismember_nid_postfix(&previous, 2) == 1);
+    Require(sigprocmask_nid_postfix(999, &selected, nullptr) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(pthread_sigmask_nid_postfix(999, &selected, nullptr) == 22);
+    GuestSignalSet current{};
+    Require(sigprocmask_nid_postfix(3, nullptr, &current) == 0);
+    Require(sigisemptyset_nid_postfix(&current) == 1);
 }
