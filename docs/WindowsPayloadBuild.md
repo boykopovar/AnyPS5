@@ -8,10 +8,12 @@ guest kernel model. Build from this branch rather than the older
 The CMake generation failure prevents every later build and copy command.
 
 Use PowerShell to create a separate checkout next to your current project.
-This leaves any uncommitted local work in the old checkout intact:
+Replace the example parent directory below with a directory that exists on
+your computer. This leaves any uncommitted local work in the old checkout
+intact. If you already cloned the fork, do not clone it again:
 
 ```powershell
-cd C:\path\to\ps5translation
+cd "$env:USERPROFILE\Downloads\ps5translation"
 git clone --recurse-submodules --branch fix/integration-upstream-payload-runtime https://github.com/nahshongraham97/AnyPS5.git AnyPS5-fork
 cd .\AnyPS5-fork
 git remote -v
@@ -24,29 +26,53 @@ The branch's GitHub Actions build uses WinLibs MinGW GCC 16.2.0, POSIX threads,
 SEH, and the MSVCRT runtime. Use that toolchain when reproducing CI; keep the
 compiler and any copied MinGW runtime DLLs from the same installation.
 After a successful build, deploy the **patched** libraries, including their
-`.sprx` copies, with the provided script:
+`.sprx` copies. Set `$payloadRoot` to your real `CrispyDoom\payloads` path.
+The path below matches the Crispy Doom v1.0-7.1.0 download under your user
+Downloads folder. These PowerShell commands do not require changing the
+script execution policy:
 
 ```powershell
-.\scripts\Deploy-PatchedLibraries.ps1 -BuildDir (Join-Path (Get-Location) 'build') -PayloadLibrariesDir 'C:\path\to\CrispyDoom\payloads\libs'
-python .\scripts\audit-elf-imports.py 'C:\path\to\crispy-doom.elf' .\build\core\libs\libs
+$repoRoot = (Get-Location).Path
+$payloadRoot = Join-Path $env:USERPROFILE 'Downloads\crispy-doom-ps5-v1.0-7.1.0\CrispyDoom\payloads'
+if (!(Test-Path -LiteralPath $payloadRoot -PathType Container)) { throw "Payload directory not found: $payloadRoot" }
+$patchedDir = Join-Path $repoRoot 'build\core\libs\libs'
+$librariesDir = Join-Path $payloadRoot 'libs'
+$libraries = @(Get-ChildItem -LiteralPath $patchedDir -Filter '*.prx' -File)
+if ($libraries.Count -eq 0) { throw "No patched PRX files found in $patchedDir" }
+New-Item -ItemType Directory -Path $librariesDir -Force | Out-Null
+foreach ($library in $libraries) {
+    $name = [IO.Path]::GetFileNameWithoutExtension($library.Name)
+    Copy-Item -LiteralPath $library.FullName -Destination (Join-Path $librariesDir "$name.prx") -Force
+    Copy-Item -LiteralPath $library.FullName -Destination (Join-Path $librariesDir "$name.sprx") -Force
+}
+Write-Host "Deployed $($libraries.Count) patched libraries to $librariesDir"
 ```
 
 Do not copy from `build\core\libs\libs\unpatched`: those binaries lack the
-NID patching needed by converted ELF imports. Run the audit against the
-original ELF, replacing its example path with the actual file path. A missing
-import report requires an implementation and another build; the audit passing
-alone does not establish runtime compatibility.
+NID patching needed by converted ELF imports. Find the original ELF under
+Downloads and run the audit against it:
+
+```powershell
+$elf = Get-ChildItem -LiteralPath (Join-Path $env:USERPROFILE 'Downloads') -Recurse -File -Filter 'crispy-doom.elf' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (!$elf) { throw 'crispy-doom.elf was not found under Downloads; set $elf to its actual location.' }
+python .\scripts\audit-elf-imports.py $elf.FullName $patchedDir
+```
+
+If the ELF is outside Downloads, locate it with File Explorer and assign
+`$elf = Get-Item 'its real path'`. A missing import report requires an
+implementation and another build; the audit passing alone does not establish
+runtime compatibility.
 
 If `LoadLibraryExA` still fails on `libSceVideoOut.sprx` with Windows error 127,
 capture the complete import tables and the files actually deployed. The error
 means a dependent module could not provide a requested procedure; the GDB
-trace alone does not identify which procedure or module. From the payloads
-directory, run:
+trace alone does not identify which procedure or module. With the variables
+from the deployment block still set, run:
 
 ```powershell
-& C:\WinLibs\mingw64\bin\objdump.exe -p .\libs\libSceVideoOut.sprx | Select-String 'DLL Name:|vma:|ordinal:'
-Get-ChildItem .\libs -File | Where-Object { $_.Extension -in '.sprx','.prx','.dll' } | Select-Object Name,Length,LastWriteTime
-Get-FileHash .\libs\libSceVideoOut.sprx, .\libs\libSceVideoOut.prx -Algorithm SHA256
+& C:\WinLibs\mingw64\bin\objdump.exe -p (Join-Path $librariesDir 'libSceVideoOut.sprx') | Select-String 'DLL Name:|vma:|ordinal:'
+Get-ChildItem -LiteralPath $librariesDir -File | Where-Object { $_.Extension -in '.sprx','.prx','.dll' } | Select-Object Name,Length,LastWriteTime
+Get-FileHash (Join-Path $librariesDir 'libSceVideoOut.sprx'), (Join-Path $librariesDir 'libSceVideoOut.prx') -Algorithm SHA256
 ```
 
 Check the named dependent libraries in the same payload directory for the
