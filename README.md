@@ -18,6 +18,18 @@ The real game reaches the logo, main menu, and [gameplay](https://gist.github.co
 
 ## Build
 
+To audit an ELF against the NID-patched Windows libraries, run
+`python scripts/audit-elf-imports.py path/to/game.elf build/core/libs/libs`.
+It reports missing imports and exits with status 1 when any are missing.
+The audit does not establish that an ELF will run: exports must also match the
+guest ABI and semantics. In particular, PS5 SDK payloads receive a
+`payload_args` pointer at their entry point, including a dynamic symbol
+resolver, pipe descriptors, kernel addresses, and a result pointer. The
+current Windows entry stub does not supply that contract, and a host cannot
+substitute arbitrary pointers for real PS5 kernel facilities. Payload support
+requires a separate startup bridge and an explicitly modeled kernel interface;
+merely adding exports is insufficient.
+
 The relinker uses only the C++20 standard library and should build with any conforming compiler.
 
 [libc.prx](core/libs/prx/libc) implementations contain compiler-specific code. Linux builds work with GCC; on Windows, MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`) is currently required.
