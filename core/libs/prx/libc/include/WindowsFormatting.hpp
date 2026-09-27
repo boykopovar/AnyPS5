@@ -3,6 +3,7 @@
 
 #include "SceTypes.hpp"
 #include <cstdio>
+#include <cctype>
 #include <climits>
 #include <cstring>
 #include <limits>
@@ -202,6 +203,89 @@ inline int PrintWindows(const char* format, const void* args) {
     if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), stdout) != static_cast<size_t>(size))
         throw std::runtime_error("Formatted output write failed");
     return size;
+}
+
+// The Windows CRT cannot consume a SysV va_list. Scan one conversion at a
+// time, retrieving each guest destination from the SysV register/stack list.
+inline int ScanWindows(const char* input, const char* format, const void* source) {
+    if (!input || !format || !source) throw std::invalid_argument("Null scanning argument");
+    FormatArguments args(source);
+    const char* const start = input;
+    int assignments = 0;
+    while (*format) {
+        if (std::isspace(static_cast<unsigned char>(*format))) {
+            do { ++format; } while (std::isspace(static_cast<unsigned char>(*format)));
+            while (std::isspace(static_cast<unsigned char>(*input))) ++input;
+            continue;
+        }
+        if (*format != '%') {
+            if (*input != *format) return *input == '\0' && assignments == 0 ? EOF : assignments;
+            ++format; ++input;
+            continue;
+        }
+        ++format;
+        if (*format == '%') {
+            if (*input != '%') return *input == '\0' && assignments == 0 ? EOF : assignments;
+            ++format; ++input;
+            continue;
+        }
+        bool suppressed = false;
+        if (*format == '*') { suppressed = true; ++format; }
+        std::string token = suppressed ? "%*" : "%";
+        while (std::isdigit(static_cast<unsigned char>(*format))) token += *format++;
+        std::string length;
+        if (*format && std::strchr("hljztL", *format)) {
+            length += *format++;
+            if ((length == "h" && *format == 'h') || (length == "l" && *format == 'l'))
+                length += *format++;
+        }
+        const char conversion = *format;
+        if (conversion == '\0') throw std::invalid_argument("Incomplete scan conversion");
+        ++format;
+        if (conversion == 'n') {
+            if (suppressed) throw std::invalid_argument("Suppressed scan count");
+            void* destination = args.Next<void*>();
+            if (!destination) throw std::invalid_argument("Null scan destination");
+            const auto count = static_cast<std::ptrdiff_t>(input - start);
+            if (length == "hh") *static_cast<signed char*>(destination) = static_cast<signed char>(count);
+            else if (length == "h") *static_cast<short*>(destination) = static_cast<short>(count);
+            else if (length.empty()) *static_cast<int*>(destination) = static_cast<int>(count);
+            else if (length == "l" || length == "ll" || length == "j" || length == "z" || length == "t")
+                *static_cast<std::int64_t*>(destination) = count;
+            else throw std::invalid_argument("Unsupported scan count length");
+            continue;
+        }
+        if (conversion == '[') {
+            token += length;
+            token += '[';
+            if (*format == '^') token += *format++;
+            if (*format == ']') token += *format++;
+            const char* setStart = format;
+            while (*format && *format != ']') token += *format++;
+            if (*format != ']' || format == setStart) throw std::invalid_argument("Invalid scan character set");
+            token += *format++;
+        } else {
+            if (!std::strchr("diouxXaAeEfFgGcsp", conversion))
+                throw std::invalid_argument("Unsupported scan conversion");
+            // Guest long is 64-bit; Windows long is 32-bit.
+            token += length == "l" && std::strchr("diouxX", conversion) ? "ll" : length;
+            token += conversion;
+        }
+        token += "%n";
+        int consumed = -1;
+        int converted;
+        if (suppressed) {
+            converted = std::sscanf(input, token.c_str(), &consumed);
+        } else {
+            void* destination = args.Next<void*>();
+            if (!destination) throw std::invalid_argument("Null scan destination");
+            converted = std::sscanf(input, token.c_str(), destination, &consumed);
+        }
+        if (consumed < 0) return converted == EOF && assignments == 0 ? EOF : assignments;
+        input += consumed;
+        if (!suppressed) ++assignments;
+    }
+    return assignments;
 }
 
 }

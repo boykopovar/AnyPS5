@@ -129,6 +129,15 @@ int APS5_VABI sprintf_nid_postfix(VA_ARGS) {
 
 #endif
 
+#ifdef _WIN32
+int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    const int result = LibcDetail::ScanWindows(input, format, args);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+#else
 int APS5_VABI sscanf_nid_postfix(VA_ARGS) {
     LibcDetail::RegSaveArea regs;
     LibcDetail::FillRegSaveArea(regs, rdx, rcx, r8, r9, 0, 0,
@@ -141,6 +150,15 @@ int APS5_VABI sscanf_nid_postfix(VA_ARGS) {
         reinterpret_cast<const char*>(rsi),
         *va
     );
+}
+#endif
+
+int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList* args) {
+#ifdef _WIN32
+    return LibcDetail::ScanWindows(input, format, args);
+#else
+    return std::vsscanf(input, format, *reinterpret_cast<std::va_list*>(args));
+#endif
 }
 
 int APS5_VABI vprintf_nid_postfix(const char* str, VaList* c) {
