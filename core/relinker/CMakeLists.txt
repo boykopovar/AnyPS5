@@ -1,4 +1,6 @@
 add_executable(relinker
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/NidCompute.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/CliArgs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/Autorun.cpp
@@ -46,6 +48,7 @@ add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/pipeline/RelinkerPipeline.cpp
 )
 target_include_directories(relinker PRIVATE
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/include
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/include
         ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
