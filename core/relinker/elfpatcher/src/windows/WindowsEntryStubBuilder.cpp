@@ -2,6 +2,7 @@
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsDependencyStubBuilder.hpp>
 #include <io/BufferUtils.hpp>
+#include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <optional>
 
@@ -69,8 +70,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     }
 
     std::vector<std::uint32_t> symbolNames;
-    for (const auto& import : imports)
+    std::vector<std::uint32_t> symbolNids;
+    for (const auto& import : imports) {
         symbolNames.push_back(addString(import.Name));
+        symbolNids.push_back(addString(Nid::ComputeNid(import.Name, "")));
+    }
 
     const auto lastError = reserve(4);
     const auto errorDigits = reserve(11);
@@ -272,20 +276,32 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     std::vector<std::size_t> lazyUnresolvedImports;
     for (std::size_t index = 0; index < imports.size(); ++index) {
         code.Rip({0x48, 0x8d, 0x1d}, handles);
+        code.Rip({0x48, 0x8d, 0x35}, symbolNids[index]);
+        code.Emit({0xbd});
+        code.U32(CheckedRva(libraries.size()));
+        const auto searchLibraries = [&] {
+            const auto search = code.GetRva();
+            code.Emit({0x48, 0x8b, 0x0b, 0x48, 0x89, 0xf2});
+            call("GetProcAddress");
+            code.Emit({0x48, 0x85, 0xc0});
+            const auto found = code.Branch({0x0f, 0x85});
+            code.Emit({0x48, 0x83, 0xc3, 8, 0xff, 0xcd});
+            code.Rip({0x0f, 0x85}, search);
+            return found;
+        };
+        // Patched PRX exports use NIDs. Retain plain-name lookup for native
+        // helper DLLs and unpatched exports that intentionally keep a name.
+        const auto nidResolved = searchLibraries();
+        code.Rip({0x48, 0x8d, 0x1d}, handles);
         code.Rip({0x48, 0x8d, 0x35}, symbolNames[index]);
         code.Emit({0xbd});
         code.U32(CheckedRva(libraries.size()));
-        const auto search = code.GetRva();
-        code.Emit({0x48, 0x8b, 0x0b, 0x48, 0x89, 0xf2});
-        call("GetProcAddress");
-        code.Emit({0x48, 0x85, 0xc0});
-        const auto resolved = code.Branch({0x0f, 0x85});
-        code.Emit({0x48, 0x83, 0xc3, 8, 0xff, 0xcd});
-        code.Rip({0x0f, 0x85}, search);
+        const auto plainResolved = searchLibraries();
         if (lazyBinding) {
             lazyUnresolvedImports.push_back(index);
             const auto skipGotWrite = code.Branch({0xe9});
-            code.PatchBranch(resolved, code.GetRva());
+            code.PatchBranch(nidResolved, code.GetRva());
+            code.PatchBranch(plainResolved, code.GetRva());
             if (imports[index].Addend != 0) {
                 code.Emit({0x48, 0xba});
                 code.U64(imports[index].Addend);
@@ -298,7 +314,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         captureLastError();
         writeString(errorRvas.at(3 + index), true);
         unresolvedBranches.push_back(code.Branch({0xe9}));
-        code.PatchBranch(resolved, code.GetRva());
+        code.PatchBranch(nidResolved, code.GetRva());
+        code.PatchBranch(plainResolved, code.GetRva());
         if (imports[index].Addend != 0) {
             code.Emit({0x48, 0xba});
             code.U64(imports[index].Addend);
