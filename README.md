@@ -18,6 +18,9 @@ The real game reaches the logo, main menu, and [gameplay](https://gist.github.co
 
 ## Build
 
+For a reproducible Windows checkout, library build, deployment, and loader
+diagnostics, see [Windows payload build and deployment](docs/WindowsPayloadBuild.md).
+
 To audit an ELF against the NID-patched Windows libraries, run
 `python scripts/audit-elf-imports.py path/to/game.elf build/core/libs/libs`.
 It reports missing imports and exits with status 1 when any are missing.
@@ -40,7 +43,7 @@ as a working PS5 kernel or as a successful payload launch.
 
 The relinker uses only the C++20 standard library and should build with any conforming compiler.
 
-[libc.prx](core/libs/prx/libc) implementations contain compiler-specific code. Linux builds work with GCC; on Windows, MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`) is currently required.
+[libc.prx](core/libs/prx/libc) implementations contain compiler-specific code. Linux builds work with GCC; the Windows CI build uses WinLibs MinGW-w64 GCC 16.2.0 (POSIX threads, SEH, MSVCRT).
 
 The project targets maximum compiler portability. Support for additional compilers will be addressed after the first successful game launch.
 
