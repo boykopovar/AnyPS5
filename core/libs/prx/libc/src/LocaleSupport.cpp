@@ -86,6 +86,16 @@ extern "C" {
 
 // The runtime currently exposes the classic C locale. Keep byte classification
 // independent of any locale selected by host-side libraries.
+// Guest FreeBSD locale categories are LC_ALL=0 through LC_MESSAGES=6.
+// The empty locale selects the runtime default, which is currently C.
+char* APS5_VABI setlocale_nid_postfix(int category, const char* locale) {
+    if (category < 0 || category > 6) return nullptr;
+    if (locale != nullptr && locale[0] != '\0' && std::strcmp(locale, "C") != 0 &&
+        std::strcmp(locale, "POSIX") != 0) return nullptr;
+    static char classicName[] = "C";
+    return classicName;
+}
+
 int APS5_VABI isupper_nid_postfix(int c) { return c >= 'A' && c <= 'Z'; }
 int APS5_VABI islower_nid_postfix(int c) { return c >= 'a' && c <= 'z'; }
 int APS5_VABI isalpha_nid_postfix(int c) { return isupper_nid_postfix(c) || islower_nid_postfix(c); }

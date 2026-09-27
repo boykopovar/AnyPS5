@@ -9,6 +9,7 @@
 #include <vector>
 
 extern "C" {
+char* APS5_VABI setlocale_nid_postfix(int category, const char* locale);
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
 GuestLocale::Implementation* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix();
@@ -74,6 +75,19 @@ static void CheckGuestCalls() {
     Require(locale->base.references == initial);
     Require(locale->facetCount == 1 && locale->facets[0] == nullptr);
     Require(std::strcmp(locale->name, "C") == 0 && !locale->transparent);
+}
+
+static void CheckCLocaleSelection() {
+    for (int category = 0; category <= 6; ++category) {
+        Require(std::strcmp(setlocale_nid_postfix(category, nullptr), "C") == 0);
+        Require(std::strcmp(setlocale_nid_postfix(category, "C"), "C") == 0);
+        Require(std::strcmp(setlocale_nid_postfix(category, "POSIX"), "C") == 0);
+        Require(std::strcmp(setlocale_nid_postfix(category, ""), "C") == 0);
+        Require(setlocale_nid_postfix(category, "en_US.UTF-8") == nullptr);
+    }
+    Require(setlocale_nid_postfix(-1, "C") == nullptr);
+    Require(setlocale_nid_postfix(7, "C") == nullptr);
+    Require(std::strcmp(setlocale_nid_postfix(0, nullptr), "C") == 0);
 }
 
 static void CheckLocinfoAlignment() {
@@ -145,6 +159,7 @@ static void CheckStreamDestruction() {
 }
 
 int main() {
+    CheckCLocaleSelection();
     CheckGuestCalls();
     CheckLocinfoAlignment();
     CheckCharacterTables();
