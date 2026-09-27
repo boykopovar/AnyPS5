@@ -5,14 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** addr) {
- (void)handle;
- (void)symbol;
- (void)addr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info) {
  (void)addr;
  (void)flags;
