@@ -34,6 +34,10 @@ endfunction()
 
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL)
+# libkernel and other PRX targets call libc's host-side helper functions.
+# On Windows, an import library only contains exported symbols. Make the
+# existing implementations visible rather than duplicating them in libkernel.
+set_target_properties(libc PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_subdirectory(${LIBC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/prx/libc)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
