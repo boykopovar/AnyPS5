@@ -359,6 +359,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_strings PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_executable(exception_runtime_tests tests/ExceptionRuntime.cpp)
+    target_include_directories(exception_runtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(exception_runtime_tests PRIVATE libc)
+    configure_windows_unwind(exception_runtime_tests)
+    add_test(NAME exception_runtime COMMAND exception_runtime_tests)
+    if(WIN32)
+        set_tests_properties(exception_runtime PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 add_executable(application_heap_tests EXCLUDE_FROM_ALL tests/ApplicationHeap.cpp prx/libc/src/ApplicationHeap.cpp)

@@ -195,6 +195,9 @@ add_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         tests/GuestTextureResource.cpp
         tests/GuestSamplerResource.cpp
         tests/TextureDetiler.cpp
+        Graphics/src/Draw.cpp
+        Graphics/src/Pipeline.cpp
+        Graphics/src/GraphicsPipelineCache.cpp
         Graphics/src/State.cpp
         Graphics/src/ColorTargetLayout.cpp
         Graphics/src/ColorTargetTransfer.cpp
@@ -228,6 +231,7 @@ target_include_directories(agc_driver_graphics_tests PRIVATE
 )
 
 target_link_libraries(agc_driver_graphics_tests PRIVATE
+        shader_recompiler_agc_driver
         libc
 )
 
@@ -252,6 +256,18 @@ target_include_directories(agc_driver_bda_device_tests PRIVATE
 target_link_libraries(agc_driver_bda_device_tests PRIVATE SDL2-static libc shader_recompiler_agc_driver)
 set_target_properties(agc_driver_bda_device_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_bda_device_tests)
+
+if(BUILD_TESTING)
+    foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_driver_flip_tests agc_driver_pm4_tests)
+        string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
+        set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
+        add_test(NAME ${agcTestName} COMMAND ${agcTest})
+        if(WIN32)
+            set_tests_properties(${agcTestName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()
 
 option(AGC_BUILD_VISUAL_TEST "Enable the standalone AGC SPIR-V visual test" OFF)
 

@@ -221,6 +221,18 @@ void APS5_VABI __cxa_free_exception_nid_postfix(void* object) {
     InvokeTerminate(header->terminate);
 }
 
+LibcException::Header* __cxa_init_primary_exception_nid_postfix(void* object, std::type_info* type, void (*destructor)(void*)) {
+    using namespace LibcException;
+    auto* header = FromObject(object);
+    header->type = type;
+    header->destructor = destructor;
+    header->terminate = terminateHandler.load(std::memory_order_acquire);
+    header->adjusted = object;
+    header->unwind.exception_class = PrimaryClass;
+    header->unwind.exception_cleanup = Cleanup;
+    return header;
+}
+
 void* APS5_VABI __cxa_begin_catch_nid_postfix(void* exception) {
     using namespace LibcException;
     auto* unwind = static_cast<_Unwind_Exception*>(exception);

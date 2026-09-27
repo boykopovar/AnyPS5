@@ -8,7 +8,7 @@
 
 #if defined(__linux__) || defined(_WIN32)
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
 extern "C" _Unwind_Reason_Code __gxx_personality_v0(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
 #endif
 
@@ -23,7 +23,7 @@ bool OwnPersonality(Word personality) {
     }
 #endif
     if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix)) return true;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     if (personality == reinterpret_cast<Word>(__gxx_personality_v0)) return true;
 #endif
     return false;

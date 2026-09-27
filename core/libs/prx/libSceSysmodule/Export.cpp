@@ -55,8 +55,8 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
         std::uint64_t end = 0;
         char perms[8] = {};
         std::uint64_t offset = 0;
-        int devMajor = 0;
-        int devMinor = 0;
+        unsigned int devMajor = 0;
+        unsigned int devMinor = 0;
         std::uint64_t inode = 0;
         char path[4096] = {};
         int parsed = std::sscanf(

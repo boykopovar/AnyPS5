@@ -44,7 +44,7 @@ inline std::string StripNidPostfix(const std::string& name) {
     std::string result = name;
     if (result.size() >= kNidPostfixLen &&
         result.compare(result.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) == 0) {
-        result = result.substr(0u, result.size() - kNidPostfixLen);
+        result.resize(result.size() - kNidPostfixLen);
     }
     const auto disambigPos = result.rfind(kNidDisambigMarker);
     if (disambigPos != std::string::npos) {
@@ -54,7 +54,7 @@ inline std::string StripNidPostfix(const std::string& name) {
             [](unsigned char c) { return std::isdigit(c) != 0; }
         );
         if (allDigits && suffixStart < result.size())
-            result = result.substr(0u, disambigPos);
+            result.resize(disambigPos);
     }
     return result;
 }
