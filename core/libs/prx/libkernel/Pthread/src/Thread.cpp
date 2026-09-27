@@ -18,6 +18,8 @@ static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 
 static constexpr std::size_t DEFAULT_STACK_SIZE = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
+static thread_local int guestCancelState = 0; // PTHREAD_CANCEL_ENABLE
+static thread_local int guestCancelType = 0;  // PTHREAD_CANCEL_DEFERRED
 
 #ifdef _WIN32
 #include <windows.h>
@@ -276,17 +278,17 @@ int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
 }
 
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) {
- (void)state;
- (void)old_state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (state != 0 && state != 1) return SCE_KERNEL_ERROR_EINVAL;
+    if (old_state != nullptr) *old_state = guestCancelState;
+    guestCancelState = state;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadSetcanceltype(int type, int* old_type) {
- (void)type;
- (void)old_type;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (type != 0 && type != 2) return SCE_KERNEL_ERROR_EINVAL;
+    if (old_type != nullptr) *old_type = guestCancelType;
+    guestCancelType = type;
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {

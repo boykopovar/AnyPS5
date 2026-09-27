@@ -6,6 +6,8 @@
 
 extern "C" int APS5_VABI scePthreadRename(Pthread thread, const char* name);
 extern "C" Pthread APS5_VABI scePthreadSelf();
+extern "C" int APS5_VABI scePthreadSetcancelstate(int state, int* oldState);
+extern "C" int APS5_VABI scePthreadSetcanceltype(int type, int* oldType);
 
 
 extern "C" {
@@ -68,10 +70,11 @@ Pthread APS5_VABI pthread_self_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_setcancelstate_nid_postfix(int state, int* old_state) {
- (void)state;
- (void)old_state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return scePthreadSetcancelstate(state, old_state) == 0 ? 0 : EINVAL;
+}
+
+int APS5_VABI pthread_setcanceltype_nid_postfix(int type, int* old_type) {
+    return scePthreadSetcanceltype(type, old_type) == 0 ? 0 : EINVAL;
 }
 
 int APS5_VABI pthread_setprio_nid_postfix(Pthread thread, int prio) {
