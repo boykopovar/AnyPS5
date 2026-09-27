@@ -43,6 +43,11 @@ jobs:
         run: |
           cmake --build build --target libs --parallel 4
 
+      - name: Build Relinker
+        shell: pwsh
+        run: |
+          cmake --build build --target relinker --parallel 4
+
       - name: List built binaries (for debug)
         shell: pwsh
         run: |
@@ -53,6 +58,6 @@ jobs:
         with:
           name: anyps5-binaries
           path: |
-            build/**/*.prx
-            build/**/*.sprx
+            build/core/libs/libs/*.prx
+            build/core/relinker/relinker.exe
           retention-days: 7
