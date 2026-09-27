@@ -104,4 +104,11 @@ int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
  return 0;
 }
 
+int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* url, void* reserved) {
+ (void)url;
+ (void)reserved;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 }
