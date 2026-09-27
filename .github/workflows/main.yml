@@ -2,7 +2,7 @@ name: Build AnyPS5 Libraries
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'fix/**' ]
   pull_request:
     branches: [ main, master ]
 
