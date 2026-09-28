@@ -18,8 +18,7 @@ uint32_t* APS5_VABI sceAgcAcbDispatchIndirect(CommandBuffer* buf, const volatile
 }
 
 std::uint32_t APS5_VABI sceAgcAcbDispatchIndirectGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 16; // DISPATCH_INDIRECT with an absolute address: header + address lo/hi + initiator
 }
 
 }

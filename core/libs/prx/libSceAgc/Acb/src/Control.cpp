@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/Acb/include/Control.hpp"
 
+#include "prx/libSceAgc/Command/include/Control.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/DcbState/include/Marker.hpp"
@@ -18,17 +19,12 @@ void* APS5_VABI sceAgcAcb_gQkqkLttcpw (void) {
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbJump(CommandBuffer* buf, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords) {
-    (void)buf;
-    (void)cachePolicy;
-    (void)target;
-    (void)sizeInDwords;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    // The compute ring has no call stack to return to, so the jump always chains.
+    return Agc::Command::WriteJump(buf, 1, cachePolicy, target, sizeInDwords, __func__);
 }
 
 uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return 16; // INDIRECT_BUFFER: header + 3 dwords
 }
 
 // Encoded as the custom DISPATCH_RESET NOP packet the driver consumes on compute queues.
@@ -44,15 +40,11 @@ uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbRewind(CommandBuffer* buf, std::uint32_t initialState) {
-    (void)buf;
-    (void)initialState;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return Agc::Command::WriteRewind(buf, initialState, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcAcbRewindGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 8; // REWIND: header + 1 dword
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, std::uint32_t videoOutHandle, std::uint32_t displayBufferIndex) {

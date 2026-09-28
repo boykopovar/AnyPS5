@@ -1,7 +1,9 @@
 #include "prx/libSceAgc/DcbFlow/include/Control.hpp"
 
+#include "prx/libSceAgc/Command/include/Control.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -19,13 +21,8 @@ void* APS5_VABI sceAgcDcbA_zARR5aCmkoY(void) {
 
 
 uint32_t* APS5_VABI sceAgcDcbJump(CommandBuffer* buf, uint8_t mode, uint8_t cache_policy, const uint32_t* target, uint32_t size_in_dwords) {
- (void)buf;
- (void)mode;
- (void)cache_policy;
- (void)target;
- (void)size_in_dwords;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    // mode 1 chains (the target replaces the rest of this buffer), mode 0 calls and returns after the target.
+    return Agc::Command::WriteJump(buf, mode, cache_policy, target, size_in_dwords, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbJumpGetSize() {
@@ -39,21 +36,23 @@ std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t o
 }
 
 uint32_t* APS5_VABI sceAgcDcbRewind(CommandBuffer* buf, uint32_t initial_state) {
- (void)buf;
- (void)initial_state;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return Agc::Command::WriteRewind(buf, initial_state, __func__);
 }
 
 uint32_t APS5_VABI sceAgcDcbRewindGetSize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return 8; // REWIND: header + 1 dword
 }
 
 uint32_t* APS5_VABI sceAgcDcbWaitUntilSafeForRendering(CommandBuffer* buf, uint32_t video_out_handle, uint32_t display_buffer_index) {
-    // Presentation copies the display buffer when the flip executes, so the buffer is always safe to
-    // render into; keep the arguments in a NOP for command-buffer dumps.
-    return Agc::Command::Emit(buf, 0x10u, {video_out_handle, display_buffer_index}, __func__);
+    // Same packet sceAgcDriverWaitUntilSafeForRendering produces; the executor specifically recognizes
+    // AgcDriver::RenderingWaitPacketHeader (see Driver.cpp) and blocks on the display-buffer reuse fence.
+    // A plain NOP with these arguments (upstream's previous stub) is not matched by that check.
+    auto* packet = Agc::Command::Allocate(buf, AgcDriver::RenderingWaitPacketWords, __func__);
+    packet[0] = AgcDriver::RenderingWaitPacketHeader;
+    packet[1] = video_out_handle;
+    packet[2] = display_buffer_index;
+    packet[3] = 0;
+    return packet;
 }
 
 }

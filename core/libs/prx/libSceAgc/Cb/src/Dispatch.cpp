@@ -14,8 +14,7 @@ std::uint32_t* APS5_VABI sceAgcCbDispatch(CommandBuffer* buf, std::uint32_t thre
 }
 
 uint32_t APS5_VABI sceAgcCbDispatchGetSize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return 20; // DISPATCH_DIRECT: header + 4 dwords
 }
 
 }

@@ -9,6 +9,7 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Registers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Sync.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Memory.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/RegisterDefaults.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Packet.cpp
