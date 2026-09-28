@@ -11,7 +11,8 @@ MemoryInfo scalarMemoryInfoFromInstruction(const RdnaInstruction& inst, bool raw
     if (inst.family != RdnaInstructionFamily::SMEM) {
         throw std::runtime_error("scalarMemoryInfoFromInstruction requires an SMEM instruction");
     }
-    if (inst.source0.kind != RdnaOperandKind::ScalarRegister) {
+    // Raw address loads may take their 64-bit base from VCC; descriptor loads need four SGPRs.
+    if (inst.source0.kind != RdnaOperandKind::ScalarRegister && !(raw && inst.source0.kind == RdnaOperandKind::VccLo)) {
         throw std::runtime_error("scalar memory base must be a scalar register");
     }
     MemoryInfo memory;
@@ -29,7 +30,8 @@ MemoryInfo scalarMemoryInfoFromInstruction(const RdnaInstruction& inst, bool raw
 
 bool TranslationContext::sLoad(const RdnaInstruction& inst, bool raw) {
     const MemoryInfo memory = scalarMemoryInfoFromInstruction(inst, raw);
-    IrValue* resource = raw ? getScalarAddressResource(inst.source0.reg) : getBufferResource(memory);
+    const std::uint32_t baseCode = inst.source0.kind == RdnaOperandKind::VccLo ? 106u : inst.source0.reg;
+    IrValue* resource = raw ? getScalarAddressResource(baseCode) : getBufferResource(memory);
     const IrU32 offset = readU32(inst.source1);
     std::array<IrValue*, 16u> loaded{};
     for (std::uint32_t component = 0u; component < memory.dataDwords; ++component) {

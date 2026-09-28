@@ -1,3 +1,4 @@
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <csignal>
@@ -11,6 +12,8 @@ namespace {
 using GuestHandler = void (APS5_VABI *)(int);
 std::atomic<GuestHandler> handlers[32]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
+std::atomic<std::uint32_t> blockedMask{0};
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 std::mutex registration;
 int NativeSignal(int guest) {
     switch (guest) {
@@ -32,10 +35,12 @@ void Dispatch(int native) {
     // Preserve the guest's persistent registration across CRT delivery.
     std::signal(native, Dispatch);
 #endif
+    if ((blockedMask.load() & (1u << guest)) != 0) return;
     const auto callback = handlers[guest].load();
     if (reinterpret_cast<std::uintptr_t>(callback) > 1) callback(guest);
 }
 }
+
 extern "C" {
 // FreeBSD's guest sigset_t is four 32-bit words, covering signals 1..128.
 struct GuestSignalSet { std::uint32_t bits[4]; };
@@ -171,4 +176,32 @@ int APS5_VABI raise_nid_postfix(int guest) {
     if (result) *__error_nid_postfix() = 22;
     return result ? -1 : 0;
 }
+int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
+    std::lock_guard lock(registration);
+    if (previousSet != nullptr) {
+        previousSet->bits[0] = blockedMask.load();
+        previousSet->bits[1] = 0;
+        previousSet->bits[2] = 0;
+        previousSet->bits[3] = 0;
+    }
+    if (set != nullptr) {
+        switch (how) {
+            case 1: blockedMask.fetch_or(set->bits[0]); break;
+            case 2: blockedMask.fetch_and(~set->bits[0]); break;
+            case 3: blockedMask.store(set->bits[0]); break;
+            default: throw std::invalid_argument("_sigprocmask: invalid how");
+        }
+    }
+    return 0;
+}
+}
+
+extern "C" {
+
+int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t programCounter) {
+    (void)programCounter;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

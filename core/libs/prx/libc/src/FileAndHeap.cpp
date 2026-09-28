@@ -63,6 +63,14 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
     return stream.release();
 }
 
+int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestEnoent = 2;
+    if (!result || !filename || !mode) return GuestEinval;
+    *result = fopen_nid_postfix(filename, mode);
+    return *result ? 0 : GuestEnoent;
+}
+
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     GetNativeStream(stream);
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
@@ -121,6 +129,17 @@ int APS5_VABI fseek_nid_postfix(FileStream* stream, std::int64_t offset, int ori
 
 std::int64_t APS5_VABI ftell_nid_postfix(FileStream* stream) { return ftello_nid_postfix(stream); }
 
+int APS5_VABI fgetpos_nid_postfix(FileStream* stream, std::int64_t* position) {
+    if (!position) throw std::invalid_argument("fgetpos: null position");
+    *position = ftello_nid_postfix(stream);
+    return 0;
+}
+
+int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* position) {
+    if (!position) throw std::invalid_argument("fsetpos: null position");
+    return fseeko_nid_postfix(stream, *position, SEEK_SET);
+}
+
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
     const int result = std::fputs(str, GetNativeStream(stream));
@@ -146,6 +165,15 @@ void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize) {
 }
 
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {
+    return ApplicationHeapAlign_nid_no_patch(alignment, size);
+}
+
+void* APS5_VABI aligned_alloc_nid_postfix(size_t alignment, size_t size) {
+    return ApplicationHeapAlign_nid_no_patch(alignment, size);
+}
+
+void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignment) {
+    if (ptr != nullptr) NotImplemented_nid_no_patch("reallocalign of an existing block");
     return ApplicationHeapAlign_nid_no_patch(alignment, size);
 }
 

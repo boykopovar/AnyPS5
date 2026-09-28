@@ -5,7 +5,7 @@
 
 namespace Elfpatcher::Windows {
 
-std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& sections, const std::uint32_t entryRva, const std::array<PeDirectory, 16>& directories) const {
+std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& sections, const std::uint32_t entryRva, const std::array<PeDirectory, 16>& directories, const bool windowsGui) const {
     constexpr std::size_t peOffset = 0x80;
     constexpr std::size_t optionalOffset = peOffset + 24;
     constexpr std::size_t sectionTable = optionalOffset + 240;
@@ -29,7 +29,7 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
     Io::WriteU16(result, optionalOffset + 48, 6);
     Io::WriteU16(result, optionalOffset + 50, 2);
     Io::WriteU32(result, optionalOffset + 60, LoadRva);
-    Io::WriteU16(result, optionalOffset + 68, 3);
+    Io::WriteU16(result, optionalOffset + 68, windowsGui ? 2 : 3);
     Io::WriteU16(result, optionalOffset + 70, directories[5].Size == 0 ? 0x100 : 0x160);
     Io::WriteU64(result, optionalOffset + 72, 0x210000);
     Io::WriteU64(result, optionalOffset + 80, 0x200000);

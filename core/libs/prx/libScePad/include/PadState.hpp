@@ -9,6 +9,8 @@
 struct PadInputState {
     std::uint32_t buttons = 0;
     std::array<std::uint8_t, 4> sticks{128, 128, 128, 128};
+    std::uint8_t analogButtonsL2 = 0;
+    std::uint8_t analogButtonsR2 = 0;
     bool touchLeft = false;
     bool touchRight = false;
 };

@@ -1,6 +1,7 @@
 #ifndef CODEGEN_CODEGENTYPES_HPP
 #define CODEGEN_CODEGENTYPES_HPP
 
+#include <codegen/x86/Amd64OnlySubstitutionTypes.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
 #include <vector>
@@ -28,9 +29,20 @@ struct RewriteResult {
     std::vector<AddressAdjustment> Adjustments;
 };
 
+struct TrampolineSite {
+    Domain::FileByteOffset Offset;
+    Domain::VirtualAddress Address;
+    std::size_t Length;
+    std::vector<std::uint8_t> OriginalBytes;
+    std::vector<std::uint8_t> Body;
+    std::size_t ReturnBranchOffset;
+};
+
 struct ConvertResult {
     std::vector<std::uint8_t> Bytes;
     std::size_t ReplacedCount;
+    std::vector<TrampolineSite> Trampolines;
+    std::vector<Amd64OnlySubstitutionReport> Reports;
 };
 
 enum class ControlFlowKind : std::uint8_t {

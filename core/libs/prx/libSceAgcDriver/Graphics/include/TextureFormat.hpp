@@ -6,10 +6,13 @@
 #endif
 #include <vulkan/vulkan.h>
 #include <cstdint>
+#include <optional>
 
 namespace AgcDriver::Graphics {
 
 VkFormat ResolveTextureFormat(std::uint32_t guestFormat);
+std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32_t elementBytes);
+std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes);
 std::uint32_t BytesPerElement(std::uint32_t guestFormat);
 bool IsBlockCompressed(std::uint32_t guestFormat);
 std::uint32_t BlockWidth(std::uint32_t guestFormat);

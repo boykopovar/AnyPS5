@@ -1,7 +1,9 @@
 #include <codegen/IInstructionScanner.hpp>
+#include <codegen/CodegenException.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <algorithm>
 #include <memory>
+#include <string>
 
 namespace Codegen {
 
@@ -29,7 +31,12 @@ std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(
         const std::uint8_t* cursor = codeSection.data() + i;
         const std::size_t available = limit - i;
 
-        const std::size_t length = decoder.Decode(cursor, available);
+        std::size_t length = 0;
+        try {
+            length = decoder.Decode(cursor, available);
+        } catch (const CodegenException& e) {
+            throw CodegenException(std::string("Cannot decode instruction: ") + e.what(), codeSectionOffset + i);
+        }
 
         matches.push_back({codeSectionOffset + i, length});
 

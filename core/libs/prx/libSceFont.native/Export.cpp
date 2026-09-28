@@ -497,7 +497,7 @@ int APS5_VABI sceFontWritingLineWritesOrder(FontWritingLine writing_line, uint64
  return 0;
 }
 
-const FontWritingStep* sceFontWritingRefersRenderStep(FontWriting* font_writing) {
+const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* font_writing) {
  (void)font_writing;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;

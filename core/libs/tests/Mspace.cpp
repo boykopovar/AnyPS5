@@ -16,7 +16,19 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void*, void*, std::size_t);
 void APS5_VABI sceLibcMspaceFree_nid_postfix(void*, void*);
 int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void*, void**, std::size_t, std::size_t);
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void*);
+void* APS5_VABI sceLibcMspaceMemalign_nid_postfix(void*, std::size_t, std::size_t);
+int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void*, void*);
+int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void*, void*);
 }
+struct MallocManagedSize {
+    std::uint16_t size;
+    std::uint16_t version;
+    std::uint32_t reserved;
+    std::size_t maxSystemSize;
+    std::size_t currentSystemSize;
+    std::size_t maxInuseSize;
+    std::size_t currentInuseSize;
+};
 static void Require(bool value) {
     if (!value) { std::fputs("Mspace check failed\n", stderr); std::abort(); }
 }
@@ -58,6 +70,27 @@ int main() {
         }
     });
     for (auto& worker : workers) worker.join();
+    MallocManagedSize stats{sizeof(MallocManagedSize), 1, 0, 0, 0, 0, 0};
+    Require(sceLibcMspaceMallocStats_nid_postfix(arena, &stats) == 0);
+    Require(stats.currentSystemSize == storage.size() && stats.maxSystemSize == storage.size());
+    Require(stats.currentInuseSize == 0 && stats.maxInuseSize >= storage.size() - 256);
+    MallocManagedSize shortStats{8, 1, 0, 0, 0, 0, 0};
+    Require(sceLibcMspaceMallocStatsFast_nid_postfix(arena, &shortStats) == 22);
+    void* memaligned = sceLibcMspaceMemalign_nid_postfix(arena, 256, 100);
+    Require(memaligned && (reinterpret_cast<std::uintptr_t>(memaligned) & 255) == 0);
+    Require(sceLibcMspaceMemalign_nid_postfix(arena, 24, 100) == nullptr);
+    Require(sceLibcMspaceMallocStatsFast_nid_postfix(arena, &stats) == 0 && stats.currentInuseSize >= 100);
+    sceLibcMspaceFree_nid_postfix(arena, memaligned);
+    void* region = sceLibcMspaceMalloc_nid_postfix(arena, 8192);
+    Require(region != nullptr);
+    Require(sceLibcMspaceCreate_nid_postfix("outside", static_cast<unsigned char*>(region) + 8192, 4096, 0) == nullptr);
+    void* nested = sceLibcMspaceCreate_nid_postfix("nested", region, 8192, 1);
+    Require(nested == region);
+    void* inner = sceLibcMspaceMalloc_nid_postfix(nested, 64);
+    Require(inner > region && inner < static_cast<unsigned char*>(region) + 8192);
+    Require(sceLibcMspaceCreate_nid_postfix("flags", storage.data(), storage.size(), 2) == nullptr);
+    Require(sceLibcMspaceDestroy_nid_postfix(nested) == 0);
+    sceLibcMspaceFree_nid_postfix(arena, region);
     Require(sceLibcMspaceDestroy_nid_postfix(arena) == 0);
     Require(sceLibcMspaceMalloc_nid_postfix(arena, 8) == nullptr);
     Require(sceLibcMspaceCreate_nid_postfix("reuse", storage.data(), storage.size(), 0) == arena);

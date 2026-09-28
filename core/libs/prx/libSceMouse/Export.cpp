@@ -1,36 +1,25 @@
-#include <cstdint>
-#include <cstddef>
-#include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libSceMouse/include/MouseState.hpp"
 
 extern "C" {
 
-int APS5_VABI sceMouseClose(int32_t handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceMouseInit() {
+    return Mouse::Initialize();
 }
 
-int APS5_VABI sceMouseInit(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceMouseOpen(int userId, std::int32_t type, std::int32_t index, const void* param) {
+    return Mouse::Open(userId, type, index, static_cast<const MouseOpenParam*>(param));
 }
 
-int APS5_VABI sceMouseOpen(int user_id, int32_t type, int32_t index, const void* param) {
- (void)user_id;
- (void)type;
- (void)index;
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceMouseClose(std::int32_t handle) {
+    return Mouse::Close(handle);
 }
 
-int APS5_VABI sceMouseRead(int32_t handle, MouseData* data, int32_t num) {
- (void)handle;
- (void)data;
- (void)num;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceMouseRead(std::int32_t handle, MouseData* data, std::int32_t num) {
+    return Mouse::Read(handle, data, num);
+}
+
+void MousePublishInput_nid_postfix(const MouseInputEvent& event) {
+    Mouse::Publish(event);
 }
 
 }

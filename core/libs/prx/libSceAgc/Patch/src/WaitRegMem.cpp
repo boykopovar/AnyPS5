@@ -30,9 +30,17 @@ int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint64_t r
 }
 
 int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction) {
-    (void)cmd;
-    (void)compareFunction;
-    NotImplemented_nid_no_patch(__func__);
+    auto* wait = Agc::Command::ValidateWait(cmd, __func__);
+    Agc::Command::Require(compareFunction <= 6, __func__, "invalid wait comparison");
+    wait[1] = (wait[1] & ~7u) | compareFunction;
+    return 0;
+}
+
+int APS5_VABI sceAgcWriteDataPatchSetAddressOrOffset(std::uint32_t* cmd, std::uint64_t address) {
+    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), 4, __func__);
+    Agc::Command::Require(((cmd[0] >> 8u) & 0xffu) == 0x37u, __func__, "not a WRITE_DATA packet");
+    cmd[2] = static_cast<std::uint32_t>(address);
+    cmd[3] = static_cast<std::uint32_t>(address >> 32u);
     return 0;
 }
 

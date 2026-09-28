@@ -11,18 +11,23 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
     switch (opcode) {
         case 0x03u: return RdnaOpcode::SMovB32;
         case 0x04u: return RdnaOpcode::SMovB64;
+        case 0x05u: return RdnaOpcode::SCmovB32;
         case 0x06u: return RdnaOpcode::SCmovB64;
         case 0x07u: return RdnaOpcode::SNotB32;
         case 0x08u: return RdnaOpcode::SNotB64;
         case 0x09u: return RdnaOpcode::SWqmB32;
         case 0x0au: return RdnaOpcode::SWqmB64;
         case 0x0bu: return RdnaOpcode::SBrevB32;
+        case 0x0du: return RdnaOpcode::SBcnt0I32B32;
         case 0x0fu: return RdnaOpcode::SBcnt1I32B32;
         case 0x10u: return RdnaOpcode::SBcnt1I32B64;
+        case 0x11u: return RdnaOpcode::SFf0I32B32;
         case 0x13u: return RdnaOpcode::SFf1I32B32;
         case 0x14u: return RdnaOpcode::SFf1I32B64;
         case 0x15u: return RdnaOpcode::SFlbitI32B32;
         case 0x16u: return RdnaOpcode::SFlbitI32B64;
+        case 0x19u: return RdnaOpcode::SSextI32I8;
+        case 0x1au: return RdnaOpcode::SSextI32I16;
         case 0x1bu: return RdnaOpcode::SBitset0B32;
         case 0x1cu: return RdnaOpcode::SBitset0B64;
         case 0x1du: return RdnaOpcode::SBitset1B32;
@@ -30,6 +35,9 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
         case 0x1fu: return RdnaOpcode::SGetpcB64;
         case 0x20u: return RdnaOpcode::SSetpcB64;
         case 0x24u: return RdnaOpcode::SAndSaveexecB64;
+        case 0x25u: return RdnaOpcode::SOrSaveexecB64;
+        case 0x26u: return RdnaOpcode::SXorSaveexecB64;
+        case 0x27u: return RdnaOpcode::SAndn2SaveexecB64;
         case 0x28u: return RdnaOpcode::SOrn2SaveexecB64;
         case 0x2du: return RdnaOpcode::SQuadmaskB64;
         case 0x34u: return RdnaOpcode::SAbsI32;
@@ -194,6 +202,9 @@ std::uint32_t scalarDestinationDwordCount(RdnaOpcode opcode) {
         case RdnaOpcode::SBitset1B64:
         case RdnaOpcode::SGetpcB64:
         case RdnaOpcode::SAndSaveexecB64:
+        case RdnaOpcode::SOrSaveexecB64:
+        case RdnaOpcode::SXorSaveexecB64:
+        case RdnaOpcode::SAndn2SaveexecB64:
         case RdnaOpcode::SOrn2SaveexecB64:
         case RdnaOpcode::SQuadmaskB64:
         case RdnaOpcode::SAndn1SaveexecB64:

@@ -1,11 +1,30 @@
 #include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
 
 namespace {
+
+// A multi-dword global load is one address instruction so the emitter can resolve its guest address
+// once (see EmitBdaDwordReads). APS5_BDA_BYTE_READS=1 keeps one LoadAddressU32 per dword, as before.
+bool wideAddressLoadsEnabled() {
+    static const bool byteReads = std::getenv("APS5_BDA_BYTE_READS") != nullptr;
+    return !byteReads;
+}
+
+IrOpcode wideAddressLoadOpcode(std::uint32_t dwords) {
+    switch (dwords) {
+    case 2u:
+        return IrOpcode::LoadAddressU32x2;
+    case 3u:
+        return IrOpcode::LoadAddressU32x3;
+    default:
+        return IrOpcode::LoadAddressU32x4;
+    }
+}
 
 ResourceKind flatSegmentResourceKind(std::uint32_t segment) {
     switch (segment) {
@@ -54,6 +73,18 @@ bool TranslationContext::flatLoad(const RdnaInstruction& inst) {
     const AddressOperands address = readAddressOperands(inst, 0u);
     IrValue& active = ir.GetExec();
     const std::uint32_t count = memory.dataBits == 32u ? std::min(memory.dataDwords, 4u) : 1u;
+    if (count > 1u && memory.kind != ResourceKind::Scratch && wideAddressLoadsEnabled()) {
+        MemoryInfo group = memory;
+        group.dataDwords = count;
+        group.componentCount = count;
+        group.componentIndex = 0u;
+        const IrOpcode wide = wideAddressLoadOpcode(count);
+        IrValue& loaded = ir.Emit(wide, IrOpcodeType(wide), {address.resource, address.low, address.high, &active}, addMemoryInfo(group, inst.programCounter));
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            writeOperand(offsetOperand(inst.destination, index), &ir.CompositeExtract(loaded, index));
+        }
+        return true;
+    }
     for (std::uint32_t index = 0u; index < count; ++index) {
         MemoryInfo component = memory;
         component.offset += index * 4u;

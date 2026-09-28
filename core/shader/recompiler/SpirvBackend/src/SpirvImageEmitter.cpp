@@ -6,18 +6,29 @@
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <array>
+#include <bit>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
 namespace ShaderRecompiler {
 namespace {
 
+// A bindless table root's runtime slot and whether the key is mapped (SPIR-V ids), both 0 for a
+// direct image.
+struct TableSelection {
+    std::uint32_t slot = 0;
+    std::uint32_t mapped = 0;
+};
+
 struct ImageEmitAccess {
     const IrValue& inst;
     const MemoryInfo& mem;
     const ImageResource& image;
     const IrValue& address;
+    TableSelection table;
+    std::uint32_t slot = table.slot;
 };
 
 struct SampleSetup {
@@ -224,6 +235,13 @@ std::uint32_t SampledComponentZero(SpirvEmitterState& state, IrTextureNumericCla
     throw std::runtime_error("invalid sampled image numeric class");
 }
 
+// An image op's u32x4 result through a bindless table: zeros when the key is not mapped.
+std::uint32_t TableResult(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t result) {
+    if (access.table.mapped == 0) return result;
+    auto& state = ctx.state;
+    return Select(state, TypeU32Vector(state, 4), access.table.mapped, result, ConstantU32CompositeZero(state, 4));
+}
+
 std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t value, IrTextureNumericClass numericClass, bool dref, bool gather) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
@@ -287,7 +305,7 @@ std::uint32_t QueryDimensions(SpirvValueEmitContext& ctx, const ImageEmitAccess&
     auto& state = ctx.state;
     const auto dimension = access.image.dimension;
     const auto& info = RdnaImageDimensionInfoFor(dimension);
-    const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
+    const auto image = LoadSampledImageDescriptor(state, access.mem.resource, access.slot);
     const auto size = state.module.AllocateId();
     if (info.multisampled != 0u) {
         state.module.AddFunction(spv::OpImageQuerySize, ImageViewSizeType(state, dimension), size, image);
@@ -441,14 +459,14 @@ std::uint32_t EmitOneDimensionalGatherLz(SpirvValueEmitContext& ctx, const Image
     auto& state = ctx.state;
     const auto numericClass = access.image.numericClass;
     state.module.EmitCapability(spv::CapabilityImageQuery);
-    const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
+    const auto image = LoadSampledImageDescriptor(state, access.mem.resource, access.slot);
     const auto width = state.module.AllocateId();
     state.module.AddFunction(spv::OpImageQuerySizeLod, TypeU32(state), width, image, ConstantU32(state, 0));
     const auto widthF32 = state.module.AllocateId();
     state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), widthF32, width);
     const auto left = state.module.AllocateId();
     state.module.AddFunction(spv::OpExtInst, TypeF32(state), left, GlslStd450(state), GLSLstd450Floor, Binary(state, spv::OpFSub, TypeF32(state), Binary(state, spv::OpFMul, TypeF32(state), coord, widthF32), ConstantF32(state, 0x3f000000u)));
-    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler);
+    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler, access.slot);
     const auto vectorType = ImageVectorType(state, numericClass, 4);
     const auto scalarType = ImageScalarType(state, numericClass);
     const auto component = ImageConversionFormat(access.image).format == IrBufferFormat::Invalid ? ImageGatherComponent(EffectiveDmask(access.mem)) : 0u;
@@ -541,13 +559,13 @@ const ImageResource& ImageResourceOf(const SpirvEmitterState& state, const Memor
 
 void EmitQueryDimensionsOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     ctx.state.module.EmitCapability(spv::CapabilityImageQuery);
-    ctx.Define(access.inst, QueryDimensions(ctx, access));
+    ctx.Define(access.inst, TableResult(ctx, access, QueryDimensions(ctx, access)));
 }
 
 void EmitQueryLodOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     state.module.EmitCapability(spv::CapabilityImageQuery);
-    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler);
+    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler, access.slot);
     const auto coord = CoordF32(ctx, access, 0, RdnaImageDimensionInfoFor(access.image.dimension).spatialComponents);
     const auto lod = state.module.AllocateId();
     state.module.AddFunction(spv::OpImageQueryLod, TypeF32Vector(state, 2), lod, sampled, coord);
@@ -559,7 +577,7 @@ void EmitQueryLodOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     }
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), result, values[0], values[1], values[2], values[3]);
-    ctx.Define(access.inst, result);
+    ctx.Define(access.inst, TableResult(ctx, access, result));
 }
 
 void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -568,7 +586,7 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto numericClass = access.image.numericClass;
     const auto condition = ctx.Arg(access.inst, 2);
     ctx.Define(access.inst, EmitValueOrDefaultIfCondition(state, condition, TypeU32Vector(state, 4), ConstantU32CompositeZero(state, 4), [&]() {
-        const auto descriptor = LoadSampledImageDescriptor(state, access.mem.resource);
+        const auto descriptor = LoadSampledImageDescriptor(state, access.mem.resource, access.slot);
         const auto color = state.module.AllocateId();
         const auto coord = CoordU32(ctx, access);
         if (dimensionInfo.multisampled != 0u) {
@@ -579,12 +597,15 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         } else {
             state.module.AddFunction(spv::OpImageFetch, ImageVectorType(state, numericClass, 4), color, descriptor, coord, spv::ImageOperandsLodMask, LodU32(ctx, access));
         }
-        return ResultVector(ctx, access, UnpackImageTexel(ctx, access, color), numericClass, false, false);
+        return TableResult(ctx, access, ResultVector(ctx, access, UnpackImageTexel(ctx, access, color), numericClass, false, false));
     }));
 }
 
 void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
+    if (access.slot != 0) {
+        ctx.Fail(access.inst, "stores through a bindless image table are unsupported");
+    }
     const bool uintImage = access.image.numericClass == IrTextureNumericClass::Uint;
     EmitIfCondition(state, ctx.Arg(access.inst, 3), [&]() {
         const auto mipLod = access.image.mipMode == ImageMipMode::DynamicStorage ? LodU32(ctx, access) : 0u;
@@ -596,6 +617,9 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 
 void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
+    if (access.slot != 0) {
+        ctx.Fail(access.inst, "atomics through a bindless image table are unsupported");
+    }
     const auto atomicOpcode = ImageAtomicOpcode(access.inst.Opcode());
     ctx.Define(access.inst, EmitValueOrZeroIfCondition(state, ctx.Arg(access.inst, 3), [&]() {
         const auto pointer = state.module.AllocateId();
@@ -628,13 +652,13 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
             ctx.Fail(access.inst, "has an unsupported 1D gather variant");
         }
         const auto sample = EmitOneDimensionalGatherLz(ctx, access, setup.coord);
-        ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), setup.numericClass, false, true));
+        ctx.Define(access.inst, TableResult(ctx, access, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), setup.numericClass, false, true)));
         return;
     }
     if (dimension == RdnaImageDimension::Dim1DArray) {
         ctx.Fail(access.inst, "has an unsupported 1D-array gather");
     }
-    const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler);
+    const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler, access.slot);
     const auto sample = state.module.AllocateId();
     std::vector<std::uint32_t> words;
     if (setup.dref) {
@@ -659,12 +683,26 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     if (setup.dref) {
         resultNumericClass = IrTextureNumericClass::Float;
     }
-    ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), resultNumericClass, false, true));
+    // Debug aid: APS5_GATHER_CONST=<n> makes every non-depth gather return that integer (or its
+    // float value) in all four texels, to separate a wrong gather result from wrong math after it.
+    static const char* gatherConstText = std::getenv("APS5_GATHER_CONST");
+    auto gathered = sample;
+    if (gatherConstText != nullptr && !setup.dref) {
+        const auto value = static_cast<std::uint32_t>(std::strtoul(gatherConstText, nullptr, 0));
+        const bool integer = resultNumericClass == IrTextureNumericClass::Uint || resultNumericClass == IrTextureNumericClass::Sint;
+        const auto component = integer ? ConstantU32(state, value) : ConstantF32(state, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
+        gathered = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, resultNumericClass, 4), gathered, component, component, component, component);
+    }
+    ctx.Define(access.inst, TableResult(ctx, access, ResultVector(ctx, access, UnpackImageGather(ctx, access, gathered), resultNumericClass, false, true)));
 }
 
-std::uint32_t EmitIndirectImageSelector(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t key) {
+// The bound slot of a bindless table for the runtime key: a binary search over the (key, slot)
+// pairs the materializer appended to the flattened SRT. A key the mapping lacks (past the table,
+// or a null or unusable entry) selects slot 0 and reports unmapped: its result is zeroed, as a
+// null T# samples on hardware.
+TableSelection EmitIndirectImageSelector(SpirvValueEmitContext& ctx, const ImageResource& image, std::uint32_t key) {
     auto& state = ctx.state;
-    const auto& image = access.image;
     const auto loadMapping = [&](std::uint32_t index) {
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, ConstantU32(state, 0), index);
@@ -676,6 +714,7 @@ std::uint32_t EmitIndirectImageSelector(SpirvValueEmitContext& ctx, const ImageE
     auto low = ConstantU32(state, 0u);
     auto high = loadMapping(mapping);
     auto selected = ConstantU32(state, 0u);
+    auto mapped = ConstantBool(state, false);
     for (std::uint32_t iteration = 0; iteration < image.indirectSearchIterations; iteration++) {
         const auto active = Binary(state, spv::OpULessThan, TypeBool(state), low, high);
         const auto mid = Binary(state, spv::OpShiftRightLogical, TypeU32(state), Binary(state, spv::OpIAdd, TypeU32(state), low, high), ConstantU32(state, 1u));
@@ -686,13 +725,14 @@ std::uint32_t EmitIndirectImageSelector(SpirvValueEmitContext& ctx, const ImageE
         const auto equal = Binary(state, spv::OpIEqual, TypeBool(state), mappedKey, key);
         const auto match = Binary(state, spv::OpLogicalAnd, TypeBool(state), active, equal);
         selected = Select(state, TypeU32(state), match, candidate, selected);
+        mapped = Binary(state, spv::OpLogicalOr, TypeBool(state), mapped, match);
         const auto less = Binary(state, spv::OpULessThan, TypeBool(state), mappedKey, key);
         const auto takeUpper = Binary(state, spv::OpLogicalAnd, TypeBool(state), active, less);
         const auto takeLower = Binary(state, spv::OpLogicalAnd, TypeBool(state), active, Unary(state, spv::OpLogicalNot, TypeBool(state), less));
         low = Select(state, TypeU32(state), takeUpper, Binary(state, spv::OpIAdd, TypeU32(state), mid, ConstantU32(state, 1u)), low);
         high = Select(state, TypeU32(state), takeLower, mid, high);
     }
-    return selected;
+    return {selected, mapped};
 }
 
 void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
@@ -725,65 +765,38 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         operandMask |= spv::ImageOperandsBiasMask;
         operands.push_back(AddressF32(ctx, access, setup.layout.bias));
     }
-    const auto emitSample = [&](std::uint32_t resource) {
-        const auto sampled = MakeSampledImage(state, resource, mem.sampler);
-        const auto sample = state.module.AllocateId();
-        std::vector<std::uint32_t> words = {opcode, resultType, sample, sampled, setup.coord};
-        if (setup.dref) {
-            words.push_back(drefValue);
-        }
-        if (operandMask != 0u) {
-            words.push_back(operandMask);
-            words.insert(words.end(), operands.begin(), operands.end());
-        }
-        state.module.AddFunction(words);
-        return sample;
-    };
-    if (image.indirectRoot != mem.resource) {
-        const auto sample = emitSample(mem.resource);
-        const auto result = setup.dref ? sample : UnpackImageTexel(ctx, access, sample);
-        ctx.Define(access.inst, ResultVector(ctx, access, result, setup.numericClass, setup.dref, false));
-        return;
+    const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler, access.slot);
+    const auto sample = state.module.AllocateId();
+    std::vector<std::uint32_t> words = {opcode, resultType, sample, sampled, setup.coord};
+    if (setup.dref) {
+        words.push_back(drefValue);
     }
-    const auto* handle = access.inst.Argument(0);
+    if (operandMask != 0u) {
+        words.push_back(operandMask);
+        words.insert(words.end(), operands.begin(), operands.end());
+    }
+    state.module.AddFunction(words);
+    const auto result = setup.dref ? sample : UnpackImageTexel(ctx, access, sample);
+    ctx.Define(access.inst, TableResult(ctx, access, ResultVector(ctx, access, result, setup.numericClass, setup.dref, false)));
+}
+
+// A bindless table root's selection for this access (see EmitIndirectImageSelector), ids 0 for
+// a direct image.
+TableSelection TableSlot(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, const ImageResource& image) {
+    auto& state = ctx.state;
+    if (image.indirectRoot != mem.resource) {
+        return {};
+    }
+    const auto* handle = inst.Argument(0);
     const auto& sources = state.program.Resources().descriptorSources;
     if (handle == nullptr || image.source >= sources.size() || !sources[image.source].indirectImage.has_value() || sources[image.source].indirectImage->keyArg >= handle->ArgumentCount()) {
-        ctx.Fail(access.inst, "has invalid indirect image key provenance");
+        ctx.Fail(inst, "has invalid bindless image table key provenance");
     }
-    if (state.flattenedSrtVariable == 0 || image.indirectSearchIterations == 0u || image.indirectResources.size() < 2u) {
-        ctx.Fail(access.inst, "has no indirect image runtime mapping");
+    if (state.flattenedSrtVariable == 0 || image.indirectSearchIterations == 0u) {
+        ctx.Fail(inst, "has no bindless image table runtime mapping");
     }
     const auto key = ctx.Def(handle->Argument(sources[image.source].indirectImage->keyArg));
-    const auto selected = EmitIndirectImageSelector(ctx, access, key);
-    const auto defaultLabel = state.module.AllocateId();
-    const auto mergeLabel = state.module.AllocateId();
-    std::vector<std::uint32_t> labels(image.indirectResources.size() - 1u);
-    std::vector<std::uint32_t> switchWords = {spv::OpSwitch, selected, defaultLabel};
-    for (std::uint32_t candidate = 1; candidate < image.indirectResources.size(); candidate++) {
-        labels[candidate - 1u] = state.module.AllocateId();
-        switchWords.push_back(candidate);
-        switchWords.push_back(labels[candidate - 1u]);
-    }
-    state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
-    state.module.AddFunction(switchWords);
-    std::vector<std::uint32_t> phiWords = {spv::OpPhi, resultType, state.module.AllocateId()};
-    EmitLabel(state, defaultLabel);
-    phiWords.push_back(emitSample(image.indirectResources[0]));
-    phiWords.push_back(defaultLabel);
-    state.module.AddFunction(spv::OpBranch, mergeLabel);
-    for (std::uint32_t candidate = 1; candidate < image.indirectResources.size(); candidate++) {
-        EmitLabel(state, labels[candidate - 1u]);
-        phiWords.push_back(emitSample(image.indirectResources[candidate]));
-        phiWords.push_back(labels[candidate - 1u]);
-        state.module.AddFunction(spv::OpBranch, mergeLabel);
-    }
-    EmitLabel(state, mergeLabel);
-    state.module.AddFunction(phiWords);
-    auto result = phiWords[2];
-    if (!setup.dref) {
-        result = UnpackImageTexel(ctx, access, result);
-    }
-    ctx.Define(access.inst, ResultVector(ctx, access, result, setup.numericClass, setup.dref, false));
+    return EmitIndirectImageSelector(ctx, image, key);
 }
 
 void EmitSamplingOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -815,7 +828,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     if (address == nullptr) {
         ctx.Fail(inst, "has no image address");
     }
-    const ImageEmitAccess access{inst, mem, image, *address};
+    const ImageEmitAccess access{inst, mem, image, *address, TableSlot(ctx, inst, mem, image)};
     switch (irOpcode) {
         case IrOpcode::ImageQueryDimensions:
             EmitQueryDimensionsOp(ctx, access);

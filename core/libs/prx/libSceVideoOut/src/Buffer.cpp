@@ -10,9 +10,9 @@
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group) {
     const auto& attribute = group.attribute;
     if (attribute.reserved0 != 0 || attribute.pad0 != 0 || attribute.reserved1[0] != 0 || attribute.reserved1[1] != 0 || attribute.reserved1[2] != 0) throw std::runtime_error("VideoOut: reserved buffer attribute bits are set");
-    if (attribute.tiling_mode != 0 || attribute.pitch_in_pixel != 0 || attribute.aspect_ratio != 0 || attribute.option != 0) throw std::runtime_error("VideoOut: unsupported tiling, pitch, aspect ratio or buffer option");
+    if (attribute.tiling_mode > 1 || (attribute.tiling_mode == 0 && attribute.pitch_in_pixel != 0) || attribute.aspect_ratio != 0 || attribute.option != 0) throw std::runtime_error("VideoOut: unsupported tiling, pitch, aspect ratio or buffer option");
     if (group.category != VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED || buffer.metadataAddress != 0 || attribute.dcc_control != 0 || attribute.dcc_cb_register_clear_color != 0) throw std::runtime_error("VideoOut: DCC presentation is not implemented");
-    const AgcDriver::DisplayBuffer result{buffer.dataAddress, attribute.pixel_format, attribute.width, attribute.height};
+    const AgcDriver::DisplayBuffer result{buffer.dataAddress, attribute.pixel_format, attribute.width, attribute.height, attribute.tiling_mode, attribute.pitch_in_pixel};
     static_cast<void>(AgcDriverDisplayBufferSize_nid_postfix(result));
     return result;
 }
@@ -155,11 +155,9 @@ int APS5_VABI sceVideoOutSubmitFlip(int handle, int index, int flipMode, int64_t
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    if (flipMode < VIDEO_OUT_FLIP_MODE_VSYNC || flipMode > VIDEO_OUT_FLIP_MODE_VSYNC_MULTI) {
+    // Every mode is presented at the next vsync; HSYNC/WINDOW variants only change tearing behaviour.
+    if (flipMode < VIDEO_OUT_FLIP_MODE_VSYNC || flipMode > 6) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
-    }
-    if (flipMode != VIDEO_OUT_FLIP_MODE_VSYNC) {
-        throw std::runtime_error(std::string(__func__) + ": flip mode not implemented");
     }
     if (index < VIDEO_OUT_BUFFER_INDEX_BLACK || index >= VIDEO_OUT_BUFFER_NUM_MAX) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
@@ -174,8 +172,7 @@ int APS5_VABI sceVideoOutSubmitFlip(int handle, int index, int flipMode, int64_t
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
     }
     lock.unlock();
-    VideoOutDriver::Get().SubmitFlip(handle, index, flipMode, flipArg);
-    return 0;
+    return VideoOutDriver::Get().SubmitFlip(handle, index, flipMode, flipArg);
 }
 
 }

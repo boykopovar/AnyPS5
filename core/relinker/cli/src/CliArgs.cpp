@@ -13,6 +13,8 @@ Args ParseArgs(int argc, char* argv[]) {
         const std::string arg = argv[i];
         if (arg == "--skip-syscall-check") {
             args.skipSyscallCheck = true;
+        } else if (arg == "--skip-sce-module") {
+            args.skipSceModule = true;
         } else if (arg == "--to-intel") {
             args.toIntel = true;
         } else if (arg.rfind("unused-filter=", 0) == 0) {
@@ -35,6 +37,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.autorun = true;
         } else if (arg == "--windows-diagnostics") {
             args.windowsDiagnostics = true;
+        } else if (arg == "--windows-gui") {
+            args.windowsGui = true;
         } else if (arg.rfind("--", 0) == 0 || arg == "unused-filter") {
             throw std::runtime_error("unknown option: " + arg);
         } else if (args.inputPath.empty()) {
@@ -49,9 +53,12 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
 
+    if (args.windowsGui && !args.toWindows)
+        throw std::runtime_error("--windows-gui requires --windows");
+
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
-            "Usage: relinker [--windows] [--windows-diagnostics] [--skip-syscall-check] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
             "Example: relinker input.elf output.elf"
         );
 

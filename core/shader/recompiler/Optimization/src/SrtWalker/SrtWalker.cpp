@@ -45,13 +45,13 @@ void SrtWalker::EvaluateDescriptorSources(const IrResourcePlan& program, std::sp
     std::vector<std::uint32_t> ignored;
     std::vector<std::uint8_t> active;
     if (!Detail::EvaluateRuntimeSourcesImpl(program, sources, runtime, results, ignored, false, {}, active)) {
-        throw std::runtime_error("SrtWalker::EvaluateDescriptorSources failed to evaluate descriptor sources");
+        throw std::runtime_error("SrtWalker::EvaluateDescriptorSources failed to evaluate descriptor sources: " + Detail::RuntimeSourceFailureReason());
     }
 }
 
 void SrtWalker::EvaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources) const {
     if (!Detail::EvaluateRuntimeSourcesImpl(program, sources, runtime, results, flat, true, cleanFlatSlots, activeSources)) {
-        throw std::runtime_error("SrtWalker::EvaluateRuntimeSources failed to evaluate runtime sources");
+        throw std::runtime_error("SrtWalker::EvaluateRuntimeSources failed to evaluate runtime sources: " + Detail::RuntimeSourceFailureReason());
     }
 }
 

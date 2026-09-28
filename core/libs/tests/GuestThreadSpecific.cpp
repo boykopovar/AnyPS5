@@ -51,6 +51,12 @@ int main() {
     assert(pthread_setspecific_nid_postfix(first, &mainValue) == 22);
     assert(pthread_getspecific_nid_postfix(first) == nullptr);
 
+    PthreadKey reused = 0;
+    assert(pthread_key_create_nid_postfix(&reused, CountDestructor) == 0);
+    assert(reused == first);
+    assert(pthread_getspecific_nid_postfix(reused) == nullptr);
+    assert(pthread_key_delete_nid_postfix(reused) == 0);
+
     PthreadKey aliasKey = 0;
     assert(scePthreadKeyCreate(&aliasKey, CountDestructor) == 0);
     std::thread aliasWorker([&] {

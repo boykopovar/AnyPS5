@@ -49,9 +49,9 @@ std::uint32_t ImageScalarType(SpirvEmitterState& state, IrTextureNumericClass nu
 std::uint32_t ImageVectorType(SpirvEmitterState& state, IrTextureNumericClass numericClass, std::uint32_t components);
 std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image);
 std::uint32_t ImageViewSizeType(SpirvEmitterState& state, RdnaImageDimension dimension);
-std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t resource);
+std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t slotId = 0);
 std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t sampler);
-std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t sampler);
+std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t sampler, std::uint32_t slotId = 0);
 std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint32_t resource);
 void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t mipLod, std::uint32_t coord, std::uint32_t texel);
 std::uint32_t ExecutionModelForStage(IrShaderStage stage);
@@ -177,6 +177,33 @@ std::uint32_t EmitValueOrDefaultIfCondition(SpirvEmitterState& state, std::uint3
 template<typename TFunction>
 std::uint32_t EmitValueOrZeroIfCondition(SpirvEmitterState& state, std::uint32_t condition, TFunction&& function) {
     return EmitValueOrDefaultIfCondition(state, condition, TypeU32(state), ConstantU32(state, 0u), std::forward<TFunction>(function));
+}
+
+// Same structure with both arms emitting code; each arm gets its own exit block so the phi stays
+// valid when an arm opens nested selections.
+template<typename TThen, typename TElse>
+std::uint32_t EmitValueIfElse(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t type, TThen&& thenFunction, TElse&& elseFunction) {
+    const auto thenLabel = state.module.AllocateId();
+    const auto thenExit = state.module.AllocateId();
+    const auto elseLabel = state.module.AllocateId();
+    const auto elseExit = state.module.AllocateId();
+    const auto mergeLabel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, condition, thenLabel, elseLabel);
+    EmitLabel(state, thenLabel);
+    const auto thenValue = thenFunction();
+    state.module.AddFunction(spv::OpBranch, thenExit);
+    EmitLabel(state, thenExit);
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, elseLabel);
+    const auto elseValue = elseFunction();
+    state.module.AddFunction(spv::OpBranch, elseExit);
+    EmitLabel(state, elseExit);
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, mergeLabel);
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, type, value, thenValue, thenExit, elseValue, elseExit);
+    return value;
 }
 
 template<typename TFunction>

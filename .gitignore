@@ -32,6 +32,7 @@ _SaveData/
 _sd/
 
 build/
+build_tools/
 b/
 Build/
 build-*/

@@ -1,4 +1,5 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <new>
 #include <stdexcept>
+#include <algorithm>
 
 namespace {
 
@@ -27,6 +29,28 @@ std::exception_ptr heapFailure;
 Initialize heapFinalize = nullptr;
 bool heapFinalized = false;
 thread_local bool heapCallbackActive = false;
+
+void* APS5_VABI defaultAllocate(std::size_t bytes) { return GuestHeap::GuestHeapAllocate_nid_postfix(bytes); }
+void APS5_VABI defaultFree(void* pointer) { GuestHeap::GuestHeapFree_nid_postfix(pointer); }
+void* APS5_VABI defaultReallocate(void* pointer, std::size_t bytes) { return GuestHeap::GuestHeapReallocate_nid_postfix(pointer, bytes); }
+void* APS5_VABI defaultCalloc(std::size_t count, std::size_t bytes) {
+    if (bytes != 0 && count > std::numeric_limits<std::size_t>::max() / bytes) throw std::bad_alloc();
+    auto* pointer = defaultAllocate(count * bytes);
+    std::memset(pointer, 0, count * bytes);
+    return pointer;
+}
+void* APS5_VABI defaultAlign(std::size_t alignment, std::size_t bytes) { return GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes); }
+int APS5_VABI defaultPosixAlign(void** pointer, std::size_t alignment, std::size_t bytes) {
+    if (pointer == nullptr || alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) return 22;
+    try { *pointer = defaultAlign(alignment, bytes); return 0; }
+    catch (const std::bad_alloc&) { return 12; }
+}
+
+std::array<void*, 10> defaultApi() {
+    return {reinterpret_cast<void*>(defaultAllocate), reinterpret_cast<void*>(defaultFree),
+        reinterpret_cast<void*>(defaultCalloc), reinterpret_cast<void*>(defaultReallocate),
+        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign)};
+}
 
 class CallbackScope {
 public:
@@ -87,8 +111,12 @@ void ApplicationHeapRegister_nid_no_patch(void* const* api) {
     if (api == nullptr) throw std::invalid_argument("application heap: null allocator API");
     std::array<void*, 10> replacement;
     std::memcpy(replacement.data(), api, sizeof(replacement));
-    for (std::size_t index = 0; index < 7; ++index) {
-        if (replacement[index] == nullptr) throw std::invalid_argument("application heap: incomplete allocator API");
+    if (std::all_of(replacement.begin(), replacement.end(), [](const void* entry) { return entry == nullptr; })) {
+        replacement = defaultApi();
+    } else {
+        for (std::size_t index = 0; index < 7; ++index) {
+            if (replacement[index] == nullptr) throw std::invalid_argument("application heap: incomplete allocator API");
+        }
     }
     std::lock_guard lock(heapMutex);
     if (heapFailure) std::rethrow_exception(heapFailure);

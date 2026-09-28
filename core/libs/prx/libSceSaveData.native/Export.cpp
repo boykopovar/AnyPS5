@@ -1,5 +1,11 @@
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <deque>
+#include <fstream>
+#include <map>
+#include <mutex>
+#include <vector>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -16,6 +22,24 @@ static bool g_initialized = false;
 
 static std::string save_root() {
     return std::string(SAVE_DIR);
+}
+
+// Events the title polls with sceSaveDataGetEventResult (a backup completes at once here), and the
+// "save data memory" blobs (small per-slot memories the title reads and writes without mounting),
+// persisted as files under the save root so they survive restarts.
+static std::mutex g_state_mutex;
+static std::deque<SaveDataEvent> g_events;
+static std::map<std::uint32_t, std::vector<std::uint8_t>> g_memories;
+constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_BACKUP = 2;
+
+static std::string memory_path(std::uint32_t slot) {
+    return save_root() + "/_memory_" + std::to_string(slot) + ".bin";
+}
+
+static void store_memory(std::uint32_t slot, const std::vector<std::uint8_t>& memory) {
+    std::filesystem::create_directories(save_root());
+    std::ofstream file(memory_path(slot), std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(memory.data()), static_cast<std::streamsize>(memory.size()));
 }
 
 static bool dir_name_match(const char* str, const char* pattern) {
@@ -51,9 +75,20 @@ static bool dir_name_match(const char* str, const char* pattern) {
 extern "C" {
 
 int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
-    (void)backup;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (backup == nullptr || backup->dir_name == nullptr) {
+        throw std::runtime_error("sceSaveDataBackup: null argument");
+    }
+    // The system copies the save directory to its backup area asynchronously; the copy itself is
+    // not observable by the title, only its completion event.
+    SaveDataEvent event{};
+    event.type = SAVE_DATA_EVENT_TYPE_BACKUP;
+    event.error_code = SAVE_DATA_OK;
+    event.user_id = backup->user_id;
+    if (backup->title_id != nullptr) event.title_id = *backup->title_id;
+    event.dir_name = *backup->dir_name;
+    std::lock_guard lock(g_state_mutex);
+    g_events.push_back(event);
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataCommit(const SaveDataCommitParam* param) {
@@ -119,9 +154,16 @@ int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond, Sa
 
 int APS5_VABI sceSaveDataGetEventResult(const void* event_param, SaveDataEvent* event) {
     (void)event_param;
-    (void)event;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (event == nullptr) {
+        throw std::runtime_error("sceSaveDataGetEventResult: null event");
+    }
+    std::lock_guard lock(g_state_mutex);
+    if (g_events.empty()) {
+        return SAVE_DATA_ERROR_NOT_FOUND;
+    }
+    *event = g_events.front();
+    g_events.pop_front();
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mount_point, SaveDataMountInfo* info) {
@@ -153,9 +195,25 @@ int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_
 }
 
 int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
-    (void)get_param;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (get_param == nullptr) {
+        throw std::runtime_error("sceSaveDataGetSaveDataMemory2: null argument");
+    }
+    std::lock_guard lock(g_state_mutex);
+    const auto it = g_memories.find(get_param->slot_id);
+    if (it == g_memories.end()) {
+        return SAVE_DATA_ERROR_NOT_FOUND;
+    }
+    if (get_param->data != nullptr && get_param->data->buf != nullptr) {
+        const auto& memory = it->second;
+        if (get_param->data->offset > memory.size()) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        const auto bytes = std::min(get_param->data->buf_size, memory.size() - get_param->data->offset);
+        std::memcpy(get_param->data->buf, memory.data() + get_param->data->offset, bytes);
+    }
+    if (get_param->param != nullptr) std::memset(get_param->param, 0, sizeof(SaveDataParam));
+    if (get_param->icon != nullptr) get_param->icon->data_size = 0;
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataInitialize3(const void* init) {
@@ -204,12 +262,10 @@ int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult
         throw std::runtime_error("sceSaveDataMount3: invalid directory name");
     }
     const std::string real_path = save_root() + "/" + dirName;
-    const std::string mountPoint = "/" + real_path;
-    if (mountPoint.size() >= sizeof(mount_result->mount_point.data)) {
-        throw std::runtime_error("sceSaveDataMount3: directory path exceeds mount point capacity");
-    }
-    if (find_slot_by_mount_point(mountPoint.c_str()) != -1) {
-        return SAVE_DATA_ERROR_BUSY;
+    for (const auto& used : g_slots) {
+        if (used.used && used.real_path == real_path) {
+            return SAVE_DATA_ERROR_BUSY;
+        }
     }
     const bool exists = std::filesystem::is_directory(real_path);
     if (create && exists) {
@@ -225,6 +281,10 @@ int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult
     if (create || create2) {
         std::filesystem::create_directories(real_path);
     }
+    // The title gets a short mount point (16 bytes on the PS5) and opens files under it; the
+    // path resolver maps it to the save directory, whose name may be far longer.
+    const std::string mountPoint = "/_sm/" + std::to_string(slot);
+    AddPathAlias_nid_no_patch(mountPoint.c_str(), std::filesystem::absolute(real_path).string().c_str());
     g_slots[slot].used = true;
     g_slots[slot].mount_point = mountPoint;
     g_slots[slot].real_path = real_path;
@@ -271,22 +331,61 @@ int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_
 }
 
 int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param) {
-    (void)set_param;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (set_param == nullptr) {
+        throw std::runtime_error("sceSaveDataSetSaveDataMemory2: null argument");
+    }
+    std::lock_guard lock(g_state_mutex);
+    const auto it = g_memories.find(set_param->slot_id);
+    if (it == g_memories.end()) {
+        return SAVE_DATA_ERROR_NOT_FOUND;
+    }
+    auto& memory = it->second;
+    if (set_param->data != nullptr) {
+        const auto count = set_param->data_num == 0 ? 1u : set_param->data_num;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto& data = set_param->data[i];
+            if (data.buf == nullptr) continue;
+            if (data.offset > memory.size() || data.buf_size > memory.size() - data.offset) {
+                return SAVE_DATA_ERROR_PARAMETER;
+            }
+            std::memcpy(memory.data() + data.offset, data.buf, data.buf_size);
+        }
+    }
+    store_memory(set_param->slot_id, memory);
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDataMemorySetupResult* result) {
-    (void)setup_param;
-    (void)result;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (setup_param == nullptr) {
+        throw std::runtime_error("sceSaveDataSetupSaveDataMemory2: null argument");
+    }
+    std::lock_guard lock(g_state_mutex);
+    auto& memory = g_memories[setup_param->slot_id];
+    std::size_t existed = 0;
+    if (memory.empty()) {
+        std::ifstream file(memory_path(setup_param->slot_id), std::ios::binary);
+        if (file) {
+            memory.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            existed = memory.size();
+        }
+    } else {
+        existed = memory.size();
+    }
+    if (memory.size() < setup_param->memory_size) {
+        memory.resize(setup_param->memory_size, 0);
+    }
+    if (existed == 0) store_memory(setup_param->slot_id, memory);
+    if (result != nullptr) {
+        std::memset(result, 0, sizeof(*result));
+        result->existed_memory_size = existed;
+    }
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
     (void)sync_param;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    // Every Set already reached the file; nothing is buffered.
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataTerminate(void) {
@@ -316,6 +415,7 @@ int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
     }
+    RemovePathAlias_nid_no_patch(g_slots[slot].mount_point.c_str());
     g_slots[slot] = MountSlot{};
     return SAVE_DATA_OK;
 }

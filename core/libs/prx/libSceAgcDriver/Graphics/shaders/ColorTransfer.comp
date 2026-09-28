@@ -22,6 +22,8 @@ void main() {
         tiledIndex = ((y / 128u) * parameters.blocksPerRow + x / 128u) * 16384u + offset / 4u;
     }
     uint pixel = (parameters.mode & 1u) != 0u ? linear[linearIndex] : tiled[tiledIndex];
+    // Mode 8: A2B10G10R10 source (red in the low bits) presented as 8-bit RGBA.
+    if ((parameters.mode & 8u) != 0u) pixel = ((pixel >> 2u) & 0xffu) | (((pixel >> 12u) & 0xffu) << 8u) | (((pixel >> 22u) & 0xffu) << 16u) | 0xff000000u;
     if ((parameters.mode & 2u) != 0u) pixel = (pixel & 0xff00ff00u) | ((pixel & 0xffu) << 16u) | ((pixel >> 16u) & 0xffu);
     if ((parameters.mode & 1u) != 0u) tiled[tiledIndex] = pixel;
     else linear[linearIndex] = pixel;

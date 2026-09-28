@@ -18,6 +18,12 @@ struct EmbeddedFetchPlan {
     std::vector<EmbeddedFetchLoad> loads;
     std::int32_t vertexOffsetSgpr = -1;
     std::int32_t instanceOffsetSgpr = -1;
+    // Whether the offset SGPR is read (or written) anywhere besides the accumulator add, and
+    // whether two different SGPRs were added to the accumulator (the SGPR then stays -1).
+    bool vertexOffsetShared = false;
+    bool instanceOffsetShared = false;
+    bool vertexOffsetConflict = false;
+    bool instanceOffsetConflict = false;
 };
 
 class EmbeddedVertexFetchAnalyzer {

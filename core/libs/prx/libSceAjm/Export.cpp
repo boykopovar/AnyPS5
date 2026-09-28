@@ -94,7 +94,7 @@ int APS5_VABI sceAjmModuleUnregister(uint32_t context, uint32_t codec) {
  return 0;
 }
 
-const char* sceAjmStrError(int error) {
+const char* APS5_VABI sceAjmStrError(int error) {
  (void)error;
  NotImplemented_nid_no_patch(__func__);
  return nullptr;

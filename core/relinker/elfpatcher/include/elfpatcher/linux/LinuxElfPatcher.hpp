@@ -6,6 +6,7 @@
 #include <elfpatcher/general/IProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/ISectionHeaderTableBuilder.hpp>
 #include <io/IByteWriter.hpp>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -27,7 +28,8 @@ public:
         std::uint64_t originalPltGotVaddr,
         const std::string& runPath,
         bool lazyBinding,
-        bool dependencyDiagnostics
+        bool dependencyDiagnostics,
+        const std::vector<Codegen::TrampolineSite>& trampolines
     ) override;
 
 private:
@@ -37,6 +39,7 @@ private:
     std::shared_ptr<Io::IByteWriter> _byteWriter;
 
     void _appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const;
+    void _appendTrampoline(std::vector<std::uint8_t>& buf, const Codegen::TrampolineSite& site, std::uint64_t extraBlockOffset, const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset) const;
 };
 
 }

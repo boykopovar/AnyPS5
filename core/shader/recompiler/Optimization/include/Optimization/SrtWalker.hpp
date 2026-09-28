@@ -5,11 +5,23 @@
 
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace ShaderRecompiler {
 
 using SrtMemoryReader = bool (*)(void* userData, std::uint64_t address, std::uint32_t* value);
+
+// The guest addresses a walk dereferenced (Detail::Evaluator::EvaluateRawRead): the leaf read of
+// each pure flat slot (IrResourcePlan::pureFlatSlots) as (flat offset, address), set by the
+// flattened loop through `leaf`/`leafSlot` around that slot's evaluation, and every other raw read
+// address.
+struct SrtReadTrace {
+    const IrValue* leaf = nullptr;
+    std::uint32_t leafSlot = 0;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves;
+    std::vector<std::uint64_t> otherReads;
+};
 
 struct SrtRuntime {
     std::span<const std::uint32_t> userData;
@@ -17,6 +29,7 @@ struct SrtRuntime {
     SrtMemoryReader readMemory = nullptr;
     void* userContext = nullptr;
     SrtMemoryReader readSpecializationMemory = nullptr;
+    SrtReadTrace* readTrace = nullptr;
 };
 
 enum class RuntimeValueType {

@@ -238,6 +238,34 @@ void testPresentation(bool expectUnavailable) {
     LibcRunShutdown_nid_postfix();
 }
 
+// Flips of two buffers submitted without waiting for each other: every one completes in order
+// (presentations trail on the GPU, APS5_FLIP_INFLIGHT), and the shutdown retires the ones in flight.
+void testBackToBack() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::array<std::vector<std::byte>, 2> allocations{std::vector<std::byte>(6 * 65536 + 65535), std::vector<std::byte>(6 * 65536 + 65535)};
+    std::array<VideoOutBuffers, 2> buffers{};
+    for (std::size_t i = 0; i < buffers.size(); ++i) {
+        const auto storage = alignedBuffer(allocations[i]);
+        fillBuffer(storage, 259, 137);
+        buffers[i] = {storage.data(), nullptr, {nullptr, nullptr}};
+    }
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, buffers.data(), 2, &attribute, 0, nullptr);
+    int64_t argument = 1000;
+    for (int index : {0, 1, 0, 1}) sceVideoOutSubmitFlip(handle, index, 1, ++argument);
+    std::unique_lock lock(cfg->mutex);
+    check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 4; }), "back-to-back presentations did not complete");
+    if (cfg->failure) std::rethrow_exception(cfg->failure);
+    check(cfg->flipStatus.flipPendingNum == 0 && cfg->bufferPending[0] == 0 && cfg->bufferPending[1] == 0, "back-to-back flips left pending counts");
+    check(cfg->flipStatus.flipArg == argument && cfg->flipStatus.currentBuffer == 1, "back-to-back flip status is wrong");
+    lock.unlock();
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -245,6 +273,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "decode") testDecode();
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
         else if (argc == 2 && std::string(argv[1]) == "present") testPresentation(false);
+        else if (argc == 2 && std::string(argv[1]) == "backtoback") testBackToBack();
         else if (argc == 2 && std::string(argv[1]) == "unavailable") testPresentation(true);
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");

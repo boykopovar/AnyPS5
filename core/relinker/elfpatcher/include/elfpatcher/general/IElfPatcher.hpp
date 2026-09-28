@@ -1,6 +1,7 @@
 #ifndef ELFPATCHER_IELFPATCHER_HPP
 #define ELFPATCHER_IELFPATCHER_HPP
 
+#include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
 #include <string>
@@ -19,7 +20,8 @@ public:
         std::uint64_t originalPltGotVaddr,
         const std::string& runPath,
         bool lazyBinding,
-        bool dependencyDiagnostics
+        bool dependencyDiagnostics,
+        const std::vector<Codegen::TrampolineSite>& trampolines
     ) = 0;
 };
 

@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 #include "SDL_scancode.h"
 #include "SDL_mouse.h"
 
@@ -49,6 +50,8 @@ inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::None, InputControl::Button, PadButton::Up, 1},
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::None, InputControl::Button, PadButton::Down, -1}
 };
+
+std::vector<InputBinding> LoadInputMapping();
 
 }
 

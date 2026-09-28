@@ -1,6 +1,9 @@
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include <spirv/unified1/spirv.hpp>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -13,6 +16,19 @@ namespace {
 [[noreturn]] void fail(const std::string& message) {
     throw std::runtime_error(message);
 }
+
+// Debug aid: APS5_TRACE_BUFFER_WRITTEN=1 prints, after every Populate, how many guest buffer
+// elements the program may store to and how many it only loads (this call and cumulative), so the
+// replay tool shows what a driver gains from DescriptorBinding::bufferWritten.
+bool bufferWrittenTraceEnabled() {
+    static const bool enabled = std::getenv("APS5_TRACE_BUFFER_WRITTEN") != nullptr;
+    return enabled;
+}
+struct BufferWrittenCounts {
+    std::atomic<unsigned long long> written{0};
+    std::atomic<unsigned long long> readOnly{0};
+};
+BufferWrittenCounts bufferWrittenCounts;
 
 DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
     if (kind == DescriptorBindingKind::Samplers) {
@@ -71,11 +87,10 @@ DescriptorImageShape ImageShapeForResource(const ImageResource& image) {
         return DescriptorImageShape::Image3D;
     }
     if (info.spirvDimension == spv::Dim2D) {
-        if (image.cube) {
-            if (info.arrayed == 0u) {
-                fail("DescriptorBindingBuilder::Populate cube image resource is not arrayed");
-            }
-            return DescriptorImageShape::ImageCube;
+        // Cube images are declared and addressed as 2D arrays of faces (the backend converts
+        // cube coordinates to face layers), so they bind as 2D arrays.
+        if (image.cube && info.arrayed == 0u) {
+            fail("DescriptorBindingBuilder::Populate cube image resource is not arrayed");
         }
         return info.arrayed != 0u ? DescriptorImageShape::Image2DArray : DescriptorImageShape::Image2D;
     }
@@ -187,6 +202,8 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
 
     std::vector<DescriptorBinding> bindings;
     bindings.reserve(layout.descriptors.size());
+    std::size_t writtenHere = 0;
+    std::size_t readOnlyHere = 0;
     for (const IrDescriptorBinding& logical : layout.descriptors) {
         DescriptorBinding physical;
         physical.descriptorSet = 0u;
@@ -199,10 +216,24 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         switch (physical.role) {
         case DescriptorRole::GuestBuffers:
             physical.guestDescriptor = GuestBuffersDescriptor(logical.resources, snapshot);
+            for (const std::uint32_t resource : logical.resources) {
+                const auto& buffer = info.buffers.at(resource);
+                physical.bufferAtomic.push_back(buffer.atomic);
+                // The tracker merges every buffer access of a source into its resource
+                // (ResourceTracker::Merge), so an element without a store or atomic is read-only
+                // over its whole extent; stores through pointers (BDA) never bind a V#.
+                physical.bufferWritten.push_back(buffer.written || buffer.atomic);
+                if (buffer.written || buffer.atomic) ++writtenHere;
+                else ++readOnlyHere;
+            }
             break;
         case DescriptorRole::GuestImages:
             physical.guestDescriptor = GuestImagesDescriptor(logical.resources, snapshot);
             physical.imageShape = ImageShapeFor(info.images, logical.resources);
+            for (const std::uint32_t resource : logical.resources) {
+                const auto& image = info.images.at(resource);
+                physical.imageWritten.push_back(image.written || image.atomic);
+            }
             break;
         case DescriptorRole::GuestSamplers:
             physical.guestDescriptor = GuestSamplersDescriptor(logical.resources, snapshot);
@@ -243,6 +274,13 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         bindings.push_back(std::move(physical));
     }
 
+    if (bufferWrittenTraceEnabled()) {
+        // Cumulative counts include every Populate of the process (the replay tool populates
+        // each program twice), so the per-call counts are the ones to sum per program.
+        const auto written = bufferWrittenCounts.written.fetch_add(writtenHere) + writtenHere;
+        const auto readOnly = bufferWrittenCounts.readOnly.fetch_add(readOnlyHere) + readOnlyHere;
+        std::fprintf(stderr, "[bindings] guest buffer elements: %zu written, %zu read-only (total so far: %llu / %llu)\n", writtenHere, readOnlyHere, written, readOnly);
+    }
     allocation.bindings = std::move(bindings);
     allocation.pushConstants.clear();
     if (layout.UsesPushData()) {

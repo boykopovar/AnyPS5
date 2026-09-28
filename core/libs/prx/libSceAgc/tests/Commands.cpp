@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdio>
 #include <stdexcept>
+#include <cstring>
 #include <string>
 
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t op, std::uint32_t state);
@@ -14,10 +15,19 @@ extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, std::ui
 extern "C" int APS5_VABI sceAgcSuspendPoint();
 extern "C" int APS5_VABI sceAgcInit(std::uint32_t* state, std::uint32_t version);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexAuto(CommandBuffer* buf, std::uint32_t indexCount, std::uint64_t modifier);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier);
 extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint64_t reference);
 extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddressUnk(std::uint32_t** addr, std::uint32_t* cmd, int type);
 extern "C" std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateAnotherOp(CommandBuffer* buf, std::uint32_t operation);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress);
 
 namespace {
 
@@ -94,6 +104,64 @@ bool APS5_VABI growContext(CommandBuffer* buffer, std::uint32_t count, void* use
     buffer->cursor_up = growth.destination.buffer.cursor_up;
     buffer->cursor_down = growth.destination.buffer.cursor_down;
     return true;
+}
+
+void testIndexedIndirectDraws() {
+    Storage storage;
+    const auto* single = sceAgcDcbDrawIndexIndirect(&storage.buffer, 0x40, 0);
+    const std::array<std::uint32_t, 5> expectedSingle{0xc0032500u, 0x40, 0x280, 0x280, 0};
+    check(single == storage.words.data() && std::equal(expectedSingle.begin(), expectedSingle.end(), single), "indexed indirect draw packet mismatch");
+    alignas(4) std::uint32_t count = 0;
+    const auto* multi = sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0x80, 1, 8, &count, 20, 0);
+    const auto address = reinterpret_cast<std::uintptr_t>(&count);
+    const std::array<std::uint32_t, 10> expectedMulti{0xc0083800u, 0x80, 0x280, 0x280, 0x40000280u, 8, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 20, 0};
+    check(multi == storage.words.data() + expectedSingle.size() && std::equal(expectedMulti.begin(), expectedMulti.end(), multi), "indexed indirect multi draw packet mismatch");
+    check(storage.buffer.cursor_up == storage.words.data() + expectedSingle.size() + expectedMulti.size(), "incorrect indexed indirect cursor advance");
+    const auto before = storage.words;
+    expectFailure([&] { sceAgcDcbDrawIndexIndirect(&storage.buffer, 2, 0); });
+    expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, &count, 16, 0); });
+    expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 0, 8, &count, 20, 0); });
+    check(storage.words == before, "invalid indexed indirect draw modified packet memory");
+}
+
+void testMarkers() {
+    Storage dcb;
+    Storage acb;
+    const auto* dcbPush = sceAgcDcbPushMarker(&dcb.buffer, "frame", 0xff0000u);
+    const auto* acbPush = sceAgcAcbPushMarker(&acb.buffer, "frame", 0x00ff00u);
+    check(acbPush == acb.words.data() && acbPush[0] == Agc::Command::Header(0x10, 3, 0x0bu << 2u), "ACB push marker header mismatch");
+    check(std::strcmp(reinterpret_cast<const char*>(acbPush + 1), "frame") == 0, "ACB push marker text mismatch");
+    const auto* acbPop = sceAgcAcbPopMarker(&acb.buffer);
+    check(acbPop == acb.words.data() + 3 && acbPop[0] == Agc::Command::Header(0x10, 2, 0x0cu << 2u) && acbPop[1] == 0, "ACB pop marker mismatch");
+    sceAgcDcbPopMarker(&dcb.buffer);
+    const auto* acbSet = sceAgcAcbSetMarker(&acb.buffer, nullptr, 0);
+    const auto* dcbSet = sceAgcDcbSetMarker(&dcb.buffer, nullptr, 0);
+    check(acbSet == acb.words.data() + 5 && dcbSet == dcb.words.data() + 5, "set marker did not return its push packet");
+    check(acbSet[0] == Agc::Command::Header(0x10, 2, 0x0bu << 2u) && acbSet[1] == 0 && acbSet[2] == Agc::Command::Header(0x10, 2, 0x0cu << 2u), "ACB set marker is not a push and pop pair");
+    check(dcbPush == dcb.words.data() && dcb.words == acb.words, "ACB and DCB markers differ");
+    check(acb.buffer.cursor_up == acb.words.data() + 9, "incorrect ACB marker cursor advance");
+    expectFailure([] { sceAgcAcbPushMarker(nullptr, "frame", 0); });
+    expectFailure([] { sceAgcAcbPopMarker(nullptr); });
+    expectFailure([] { sceAgcAcbSetMarker(nullptr, "frame", 0); });
+}
+
+void testIndexBuffer() {
+    Storage storage;
+    alignas(4) std::uint16_t indices[2]{};
+    const auto address = reinterpret_cast<std::uintptr_t>(indices);
+    const auto* bound = sceAgcDcbSetIndexBuffer(&storage.buffer, address);
+    check(bound[1] == static_cast<std::uint32_t>(address) && bound[2] == static_cast<std::uint32_t>(address >> 32u), "index buffer address mismatch");
+    const auto* unbound = sceAgcDcbSetIndexBuffer(&storage.buffer, 0);
+    check(unbound == bound + 3 && unbound[0] == bound[0] && unbound[1] == 0 && unbound[2] == 0, "index buffer was not unbound");
+    const auto before = storage.words;
+    try {
+        sceAgcDcbSetIndexBuffer(&storage.buffer, 0x1001);
+    } catch (const std::runtime_error& error) {
+        check(std::string(error.what()).find("0x1001") != std::string::npos, "misaligned index buffer error omits the address");
+        check(storage.words == before, "misaligned index buffer modified packet memory");
+        return;
+    }
+    throw std::runtime_error("misaligned index buffer was accepted");
 }
 
 void testContextState() {
@@ -272,6 +340,9 @@ void testDefaults() {
 int main() {
     try {
         testPackets();
+        testIndexedIndirectDraws();
+        testMarkers();
+        testIndexBuffer();
         testContextState();
         testFlip();
         testRegisters();

@@ -355,6 +355,7 @@ constexpr VectorOpcodeInfo vop3Opcodes[] = {
     {0x311u, RdnaOpcode::VPackB32F16},
     {0x314u, RdnaOpcode::VLshlrevB16},
     {0x319u, RdnaOpcode::VSubrevI32},
+    {0x344u, RdnaOpcode::VPermB32},
     {0x345u, RdnaOpcode::VXadU32},
     {0x346u, RdnaOpcode::VLshlAddU32},
     {0x347u, RdnaOpcode::VAddLshlU32},

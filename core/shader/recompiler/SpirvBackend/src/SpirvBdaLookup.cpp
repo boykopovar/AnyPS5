@@ -4,8 +4,22 @@
 
 namespace ShaderRecompiler {
 
-void DefineGetBdaPointer(SpirvEmitterState& state) {
-    if (!state.program.Info().usesDma) return;
+namespace {
+
+void ReturnBdaZeroIf(SpirvEmitterState& state, std::uint32_t condition) {
+    const auto failed = state.module.AllocateId();
+    const auto next = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, condition, failed, next);
+    EmitLabel(state, failed);
+    state.module.AddFunction(spv::OpReturnValue, BdaConstant(state, 0u));
+    EmitLabel(state, next);
+}
+
+// (u64 address, u32 bytes, u32 instruction) -> u64 device address of the range holding all the bytes,
+// or 0. With recordFaults the failure is published first; without, the caller retries byte-wise, and
+// the fault is recorded there if the bytes are unmapped for real.
+std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool recordFaults) {
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);
@@ -16,9 +30,9 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpLoad, u32, value, pointer);
         return value;
     };
-    state.bdaPointerFunction = state.module.AllocateId();
-    state.module.AddName(state.bdaPointerFunction, "get_bda_pointer");
-    state.module.AddFunction(spv::OpFunction, u64, state.bdaPointerFunction, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, u64, u64, u32, u32));
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, name);
+    state.module.AddFunction(spv::OpFunction, u64, function, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, u64, u64, u32, u32));
     const auto address = state.module.AllocateId();
     const auto bytes = state.module.AllocateId();
     const auto instruction = state.module.AllocateId();
@@ -31,7 +45,13 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
     const auto pointer = TypePointer(state, spv::StorageClassFunction, u32);
     state.module.AddFunction(spv::OpVariable, pointer, low, spv::StorageClassFunction);
     state.module.AddFunction(spv::OpVariable, pointer, high, spv::StorageClassFunction);
-    const auto fail = [&](std::uint32_t condition, BdaAbi::FaultReason reason) { ReturnBdaFailureIf(state, condition, address, bytes, instruction, reason); };
+    const auto fail = [&](std::uint32_t condition, BdaAbi::FaultReason reason) {
+        if (recordFaults) {
+            ReturnBdaFailureIf(state, condition, address, bytes, instruction, reason);
+        } else {
+            ReturnBdaZeroIf(state, condition);
+        }
+    };
     const auto length = state.module.AllocateId();
     state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
     fail(binary(spv::OpULessThan, boolean, length, constant(4)), BdaAbi::FaultReason::InvalidTable);
@@ -92,6 +112,15 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
     fail(binary(spv::OpULessThanEqual, boolean, deviceEnd, result), BdaAbi::FaultReason::Overflow);
     state.module.AddFunction(spv::OpReturnValue, result);
     state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
+}
+
+void DefineGetBdaPointer(SpirvEmitterState& state) {
+    if (!state.program.Info().usesDma) return;
+    state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
+    if (!BdaByteReadsForced()) state.bdaProbeFunction = DefineBdaLookup(state, "probe_bda_pointer", false);
 }
 
 }

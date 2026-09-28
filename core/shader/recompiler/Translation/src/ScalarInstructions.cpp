@@ -40,6 +40,13 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SCselectB64:
         scalarSelect64(inst, sourceAt(inst, 1u));
         return true;
+    case RdnaOpcode::SCmovB32: {
+        const IrU32 source = readU32(sourceAt(inst, 0u));
+        const IrU32 previous = readU32(inst.destination);
+        const IrU32 result(ir.Select(ir.GetScc(), source.Value(), previous.Value()));
+        writeRawU32(inst.destination, result);
+        return true;
+    }
     case RdnaOpcode::SCmovB64:
         scalarSelect64(inst, inst.destination);
         return true;
@@ -60,6 +67,15 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return true;
     case RdnaOpcode::SAndSaveexecB64:
         sSaveexec(inst, IrOpcode::LogicalAnd, false, false, true);
+        return true;
+    case RdnaOpcode::SOrSaveexecB64:
+        sSaveexec(inst, IrOpcode::LogicalOr, false, false, true);
+        return true;
+    case RdnaOpcode::SXorSaveexecB64:
+        sSaveexec(inst, IrOpcode::LogicalXor, false, false, true);
+        return true;
+    case RdnaOpcode::SAndn2SaveexecB64:
+        sSaveexec(inst, IrOpcode::LogicalAnd, true, false, true);
         return true;
     case RdnaOpcode::SAndn1SaveexecB64:
         sSaveexec(inst, IrOpcode::LogicalAnd, false, true, true);
@@ -187,6 +203,26 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return simpleInteger(inst, IrOpcode::BitwiseNot32, IrType::U32, false, false, true);
     case RdnaOpcode::SBrevB32:
         return simpleInteger(inst, IrOpcode::BitReverse32, IrType::U32, false, false, false);
+    case RdnaOpcode::SSextI32I8:
+    case RdnaOpcode::SSextI32I16: {
+        const auto source = readU32(sourceAt(inst, 0u));
+        const auto width = inst.op == RdnaOpcode::SSextI32I8 ? 8u : 16u;
+        auto& result = ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&source.Value(), &ir.Constant(0u), &ir.Constant(width)});
+        writeOperand(inst.destination, &result);
+        return true;
+    }
+    case RdnaOpcode::SBcnt0I32B32:
+    case RdnaOpcode::SFf0I32B32: {
+        const IrU32 source = readU32(sourceAt(inst, 0u));
+        auto& inverted = ir.BitwiseNot(source.Value());
+        const bool count = inst.op == RdnaOpcode::SBcnt0I32B32;
+        auto& result = ir.Emit(count ? IrOpcode::BitCount32 : IrOpcode::FindILsb32, IrType::U32, {&inverted});
+        writeOperand(inst.destination, &result);
+        if (count) {
+            ir.SetScc(ir.INotEqual(result, ir.Constant(0u)));
+        }
+        return true;
+    }
     case RdnaOpcode::SBcnt1I32B32:
         return simpleInteger(inst, IrOpcode::BitCount32, IrType::U32, false, false, true);
     case RdnaOpcode::SBcnt1I32B64:

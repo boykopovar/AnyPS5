@@ -13,6 +13,8 @@ struct DisplayBuffer {
     std::uint64_t pixelFormat;
     std::uint32_t width;
     std::uint32_t height;
+    std::uint32_t tilingMode = 0;
+    std::uint32_t pitchInPixel = 0;
 };
 
 std::size_t DisplayBufferSize(const DisplayBuffer& buffer);

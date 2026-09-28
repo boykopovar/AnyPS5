@@ -1,8 +1,14 @@
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 
 namespace AgcDriver::Graphics {
 
 void TextureDetiler::BeginBatch() {
+    GuestMemory::AssertGpuLockHeld("TextureDetiler::BeginBatch");
+    // Sets of recorded work that has not completed stay allocated; the pools are recycled once the
+    // recorder is idle again.
+    if (const auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle()) return;
     for (const auto pool : descriptorPools) {
         Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), "vkResetDescriptorPool texture detiler");
     }

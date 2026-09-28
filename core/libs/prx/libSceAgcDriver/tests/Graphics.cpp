@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <bit>
@@ -84,7 +85,11 @@ void stateTests() {
     Require(state.viewport.y == 4 && state.viewport.height == -4, "negative viewport height was lost");
     Require(state.color.format == VK_FORMAT_R8G8B8A8_UNORM, "RGBA format changed");
     queue.userConfig[0x24b] = 1;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "GE_MULTI_PRIM_IB_RESET_EN");
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    (void)AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "primitive restart rejected a non-indexed draw");
+    Require(AgcDriver::Graphics::DrawRejection(queue, true).find("GE_MULTI_PRIM_IB_RESET_EN") != std::string::npos, "primitive restart was accepted for an indexed draw");
     queue = makeState();
     queue.userConfig.erase(0x24b);
     queue.context[0x2a5] = 0;
@@ -114,6 +119,23 @@ void stateTests() {
     queue = makeState();
     queue.context[0x10f] = 0x7fc00000;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite");
+    // The register facade: every register the decoders read is in DrawKeyRegisters (a wrong hit of
+    // the draw key otherwise), and nothing is recorded without a log pointer.
+    queue = makeState();
+    std::vector<AgcDriver::Graphics::RegisterRead> log;
+    AgcDriver::Graphics::RegisterReadLog() = &log;
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::DrawRejection(queue, true).empty(), "precheck rejected the reference state");
+    static_cast<void>(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, state.hasColorTarget, state.color.componentMapping));
+    AgcDriver::Graphics::RegisterReadLog() = nullptr;
+    Require(!log.empty(), "the register facade recorded nothing");
+    for (const auto read : log) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a register the decoders read: " + std::string(AgcDriver::Graphics::RegisterBankName(read.bank)) + " " + std::to_string(read.offset));
+    Require(!AgcDriver::Graphics::DrawKeyCovers({AgcDriver::Graphics::RegisterBank::Context, 0x100}) && AgcDriver::Graphics::DrawKeyCovers({AgcDriver::Graphics::RegisterBank::Shader, 0xab}) && !AgcDriver::Graphics::DrawKeyCovers({AgcDriver::Graphics::RegisterBank::Shader, 0xac}), "DrawKeyRegisters coverage changed");
+    log.clear();
+    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    Require(log.empty(), "the register facade recorded without a log");
 }
 
 void hardwareScreenOffsetTests() {
@@ -430,8 +452,10 @@ VKAPI_ATTR void VKAPI_CALL mockDestroyShaderModule(VkDevice, VkShaderModule, con
 VKAPI_ATTR VkResult VKAPI_CALL mockCreateComputePipelines(VkDevice, VkPipelineCache, std::uint32_t count, const VkComputePipelineCreateInfo* infos, const VkAllocationCallbacks*, VkPipeline* pipelines) {
     Require(count == 1, "mock expects exactly one compute pipeline per call");
     Require(infos[0].stage.pSpecializationInfo != nullptr, "compute pipeline must provide specialization data");
+    // The detiler's constants 0-2 (element size, block size, addressing family) are what the tests
+    // check; the swizzle equation and block extent follow them.
     std::array<std::uint32_t, 3> values{};
-    Require(infos[0].stage.pSpecializationInfo->dataSize == sizeof(values), "compute pipeline specialization data has an unexpected size");
+    Require(infos[0].stage.pSpecializationInfo->dataSize >= sizeof(values), "compute pipeline specialization data has an unexpected size");
     std::memcpy(values.data(), infos[0].stage.pSpecializationInfo->pData, sizeof(values));
     *pipelines = makeHandle<VkPipeline>();
     mock.pipelineSpecializations.push_back(values);

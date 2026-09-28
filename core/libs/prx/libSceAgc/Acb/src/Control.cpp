@@ -2,6 +2,7 @@
 
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "prx/libSceAgc/DcbState/include/Marker.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -30,11 +31,16 @@ uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
  return 0;
 }
 
-uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op) {
- (void)buf;
- (void)op;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+// Encoded as the custom DISPATCH_RESET NOP packet the driver consumes on compute queues.
+uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t value) {
+    (void)value;
+    Agc::Command::Require(buf != nullptr, __func__, "null command buffer");
+    constexpr std::uint32_t OpcodeNop = 0x10;
+    constexpr std::uint32_t CustomDispatchReset = 0x09;
+    auto* packet = Agc::Command::Allocate(buf, 2, __func__);
+    packet[0] = Agc::Command::Header(OpcodeNop, 2, CustomDispatchReset << 2);
+    packet[1] = op;
+    return packet;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbRewind(CommandBuffer* buf, std::uint32_t initialState) {
@@ -68,25 +74,19 @@ std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t vide
 }
 
 uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {
- (void)buf;
- (void)str;
- (void)color;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    (void)color;
+    return Agc::Marker::Push(buf, str, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
- (void)buf;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return Agc::Marker::Pop(buf, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {
- (void)buf;
- (void)str;
- (void)color;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    (void)color;
+    auto* packet = Agc::Marker::Push(buf, str, __func__);
+    Agc::Marker::Pop(buf, __func__);
+    return packet;
 }
 
 }

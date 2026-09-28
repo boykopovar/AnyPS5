@@ -298,6 +298,9 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("LoadAddressU8", U8, AddressResource, U32, U32, U1),
     makeMeta("LoadAddressU16", U16, AddressResource, U32, U32, U1),
     makeMeta("LoadAddressU32", U32, AddressResource, U32, U32, U1),
+    makeMeta("LoadAddressU32x2", U32x2, AddressResource, U32, U32, U1),
+    makeMeta("LoadAddressU32x3", U32x3, AddressResource, U32, U32, U1),
+    makeMeta("LoadAddressU32x4", U32x4, AddressResource, U32, U32, U1),
     makeMeta("StoreAddressU8", Void, AddressResource, U32, U32, U8, U1),
     makeMeta("StoreAddressU16", Void, AddressResource, U32, U32, U16, U1),
     makeMeta("StoreAddressU32", Void, AddressResource, U32, U32, U32, U1),
@@ -531,6 +534,12 @@ AddressOpcodeInfo AddressOpcodeInfoOf(IrOpcode opcode) {
             return {AddressAccess::Read, 16u};
         case IrOpcode::LoadAddressU32:
             return {AddressAccess::Read, 32u};
+        case IrOpcode::LoadAddressU32x2:
+            return {AddressAccess::Read, 32u, 2u};
+        case IrOpcode::LoadAddressU32x3:
+            return {AddressAccess::Read, 32u, 3u};
+        case IrOpcode::LoadAddressU32x4:
+            return {AddressAccess::Read, 32u, 4u};
         case IrOpcode::StoreAddressU8:
             return {AddressAccess::Write, 8u};
         case IrOpcode::StoreAddressU16:

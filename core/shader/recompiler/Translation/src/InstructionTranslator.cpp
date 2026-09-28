@@ -360,6 +360,10 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     if (options.embeddedFetch != nullptr) {
         program.Info().vertexOffsetSgpr = options.embeddedFetch->vertexOffsetSgpr;
         program.Info().instanceOffsetSgpr = options.embeddedFetch->instanceOffsetSgpr;
+        program.Info().vertexOffsetShared = options.embeddedFetch->vertexOffsetShared;
+        program.Info().instanceOffsetShared = options.embeddedFetch->instanceOffsetShared;
+        program.Info().vertexOffsetConflict = options.embeddedFetch->vertexOffsetConflict;
+        program.Info().instanceOffsetConflict = options.embeddedFetch->instanceOffsetConflict;
     }
     program.Metadata().cfgFailureKind = cfg.failureKind;
     program.Metadata().failureReason = cfg.unsupportedReason;

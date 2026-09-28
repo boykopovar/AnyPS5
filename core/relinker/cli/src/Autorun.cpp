@@ -19,17 +19,18 @@ int Autorun(const std::string& absPath, bool toWindows) {
     const std::string cmd = "\"" + absPath + "\"";
     const int rawCode = std::system(cmd.c_str());
 
+    int exitCode = rawCode;
     if (toWindows) {
         std::cout << "\nExit code: " << rawCode << '\n';
     } else {
-        std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << (rawCode >> 8) << '\n';
+        if (rawCode != -1) exitCode = (rawCode >> 8) & 0xFF;
+        std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
     }
 
     std::cout << "\nPress Enter to exit...\n";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
 
-    return rawCode;
+    return exitCode;
 }
 
 }

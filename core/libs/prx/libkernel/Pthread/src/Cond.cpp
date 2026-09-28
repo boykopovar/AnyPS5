@@ -1,95 +1,175 @@
-#include "../include/Pthread.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/Posix/Common.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
+#include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <stdexcept>
+#include <thread>
 
-static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ENOMEM = 0x8002000C;
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x80020062;
-static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
-static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
+namespace {
+
+constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
+constexpr int sceBusy = static_cast<int>(0x80020010u);
+constexpr int scePermission = static_cast<int>(0x80020001u);
+std::mutex condInitializationMutex;
+
+PthreadCond destroyedCond() {
+    return reinterpret_cast<PthreadCond>(std::uintptr_t{2});
+}
+
+PthreadCond resolveCond(PthreadCond* cond) {
+    if (!cond)
+        throw std::invalid_argument("Condition variable pointer is null");
+    std::atomic_ref<PthreadCond> slot(*cond);
+    if (const auto current = slot.load(std::memory_order_acquire); current && current != destroyedCond())
+        return current;
+    std::lock_guard lock(condInitializationMutex);
+    const auto current = slot.load(std::memory_order_acquire);
+    if (current == destroyedCond())
+        throw std::runtime_error("Condition variable has been destroyed");
+    if (current)
+        return current;
+    auto* created = new PthreadCondPrivate();
+    slot.store(created, std::memory_order_release);
+    return created;
+}
+
+PthreadMutex resolveMutex(PthreadMutex* mutex) {
+    if (!mutex || !*mutex)
+        throw std::invalid_argument("Mutex pointer is null");
+    return *mutex;
+}
+
+int waitUntil(PthreadCond* cond, PthreadMutex* mutex, std::optional<std::uint64_t> deadlineNanos, const void* caller) {
+    auto* c = resolveCond(cond);
+    auto* m = resolveMutex(mutex);
+    if (m->_owner.load(std::memory_order_acquire) != std::this_thread::get_id() ||
+        (m->_type == MutexType::Recursive && m->_count != 1))
+        return scePermission;
+    {
+        std::lock_guard lock(condInitializationMutex);
+        if (std::atomic_ref<PthreadCond>(*cond).load(std::memory_order_acquire) != c)
+            throw std::runtime_error("Condition variable has been destroyed");
+        c->_waiters.fetch_add(1, std::memory_order_acq_rel);
+    }
+    struct Waiter {
+        PthreadCondPrivate* cond;
+        ~Waiter() { cond->_waiters.fetch_sub(1, std::memory_order_acq_rel); }
+    } waiter{c};
+    bool timedOut = false;
+    const auto waitStart = std::chrono::steady_clock::now();
+    struct Trace {
+        const void* caller; const bool& timedOut; std::chrono::steady_clock::time_point start;
+        ~Trace() { KernelTraceWait_nid_postfix("cond", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), timedOut); }
+    } trace{caller, timedOut, waitStart};
+    if (m->_type == MutexType::Recursive) {
+        std::unique_lock<std::recursive_timed_mutex> lock(m->_rmtx, std::adopt_lock);
+        const auto previousCount = m->_count;
+        m->_count = 0;
+        m->_owner.store(std::thread::id{}, std::memory_order_release);
+        if (deadlineNanos) timedOut = !c->_cv.WaitUntil(lock, *deadlineNanos);
+        else c->_cv.Wait(lock);
+        m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
+        m->_count = previousCount;
+        lock.release();
+        return timedOut ? sceTimedOut : 0;
+    }
+    std::unique_lock<std::timed_mutex> lock(m->_mtx, std::adopt_lock);
+    m->_owner.store(std::thread::id{}, std::memory_order_release);
+    if (deadlineNanos) timedOut = !c->_cv.WaitUntil(lock, *deadlineNanos);
+    else c->_cv.Wait(lock);
+    m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
+    lock.release();
+    return timedOut ? sceTimedOut : 0;
+}
+
+}
+
+int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
+    KernelUseconds usec = 0;
+    if (!PosixThread::RelativeMicroseconds(resolveCond(cond)->_clockid, abstime, &usec))
+        throw std::invalid_argument("Invalid absolute condition variable timeout");
+    return waitUntil(cond, mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
+}
 
 extern "C" {
 
 int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) {
-    if (!attr) throw std::runtime_error("scePthreadCondattrInit: null attr");
-    auto* p = new (std::nothrow) PthreadCondattrPrivate{0};
-    if (!p) return SCE_KERNEL_ERROR_ENOMEM;
-    *attr = p;
-    return SCE_OK;
+    if (!attr)
+        throw std::invalid_argument("Condition attribute pointer is null");
+    *attr = new PthreadCondattrPrivate{0};
+    return 0;
 }
 
 int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) {
-    if (!attr || !*attr) throw std::runtime_error("scePthreadCondattrDestroy: null attr");
+    if (!attr || !*attr)
+        throw std::invalid_argument("Condition attributes are not initialized");
     delete *attr;
     *attr = nullptr;
-    return SCE_OK;
+    return 0;
 }
 
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr*, const char*) {
-    if (!cond) throw std::runtime_error("scePthreadCondInit: null cond");
-    auto* p = new (std::nothrow) PthreadCondPrivate{};
-    if (!p) return SCE_KERNEL_ERROR_ENOMEM;
-    *cond = p;
-    return SCE_OK;
+int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) {
+    if (!attr || !*attr)
+        throw std::invalid_argument("Condition attributes are not initialized");
+    (*attr)->_clockid = static_cast<int>(clockId);
+    return 0;
+}
+
+int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char*) {
+    if (!cond)
+        throw std::invalid_argument("Condition variable pointer is null");
+    if (attr && !*attr)
+        throw std::invalid_argument("Condition attributes are not initialized");
+    auto replacement = std::make_unique<PthreadCondPrivate>();
+    if (attr)
+        replacement->_clockid = (*attr)->_clockid;
+    std::lock_guard lock(condInitializationMutex);
+    std::atomic_ref<PthreadCond>(*cond).store(replacement.release(), std::memory_order_release);
+    return 0;
 }
 
 int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) {
-    if (!cond || !*cond) throw std::runtime_error("scePthreadCondDestroy: null cond");
-    if ((*cond)->_waiters.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_EBUSY;
+    if (!cond)
+        throw std::invalid_argument("Condition variable pointer is null");
+    std::lock_guard lock(condInitializationMutex);
+    if (!*cond || *cond == destroyedCond())
+        throw std::runtime_error("Condition variable has already been destroyed");
+    if ((*cond)->_waiters.load(std::memory_order_acquire) != 0)
+        return sceBusy;
     delete *cond;
-    *cond = nullptr;
-    return SCE_OK;
+    std::atomic_ref<PthreadCond>(*cond).store(destroyedCond(), std::memory_order_release);
+    return 0;
 }
 
 int APS5_VABI scePthreadCondSignal(PthreadCond* cond) {
-    if (!cond || !*cond) throw std::runtime_error("scePthreadCondSignal: null cond");
-    (*cond)->_cv.notify_one();
-    return SCE_OK;
+    resolveCond(cond)->_cv.NotifyOne();
+    return 0;
 }
 
 int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) {
-    if (!cond || !*cond) throw std::runtime_error("scePthreadCondBroadcast: null cond");
-    (*cond)->_cv.notify_all();
-    return SCE_OK;
-}
-
-int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, unsigned int usec) {
-    if (!cond || !*cond || !mutex || !*mutex)
-        throw std::runtime_error("scePthreadCondTimedwait: null arg");
-    auto* m = *mutex;
-    auto* c = *cond;
-    const auto thread = std::this_thread::get_id();
-    if (m->_owner.load(std::memory_order_acquire) != thread ||
-        (m->_type == MutexType::Recursive && m->_count != 1)) return SCE_KERNEL_ERROR_EPERM;
-    c->_waiters.fetch_add(1, std::memory_order_acq_rel);
-    if (m->_type == MutexType::Recursive) {
-        std::unique_lock<std::recursive_timed_mutex> lk(m->_rmtx, std::adopt_lock);
-        auto res = c->_cv.wait_for(lk, std::chrono::microseconds(usec));
-        lk.release();
-        m->_owner.store(thread, std::memory_order_release);
-        c->_waiters.fetch_sub(1, std::memory_order_acq_rel);
-        return res == std::cv_status::timeout ? SCE_KERNEL_ERROR_ETIMEDOUT : SCE_OK;
-    }
-    std::unique_lock<std::timed_mutex> lk(m->_mtx, std::adopt_lock);
-    auto res = c->_cv.wait_for(lk, std::chrono::microseconds(usec));
-    lk.release();
-    m->_owner.store(thread, std::memory_order_release);
-    c->_waiters.fetch_sub(1, std::memory_order_acq_rel);
-    return res == std::cv_status::timeout ? SCE_KERNEL_ERROR_ETIMEDOUT : SCE_OK;
+    resolveCond(cond)->_cv.NotifyAll();
+    return 0;
 }
 
 int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
- (void)cond;
- (void)thread;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)thread;
+    resolveCond(cond)->_cv.NotifyAll();
+    return 0;
 }
 
 int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) {
- extern int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond*, PthreadMutex*);
- const int error = pthread_cond_wait_nid_postfix(cond, mutex);
- return error ? static_cast<int>(0x80020000u | static_cast<unsigned>(error)) : 0;
+    return waitUntil(cond, mutex, std::nullopt, __builtin_return_address(0));
+}
+
+int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
+    return waitUntil(cond, mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
 }
 
 }

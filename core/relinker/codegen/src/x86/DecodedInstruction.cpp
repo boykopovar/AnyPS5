@@ -58,6 +58,13 @@ std::size_t DecodedInstruction::_skipPrefixesAndRex(
     return pos;
 }
 
+std::size_t DecodedInstruction::OpcodeOffset() const {
+    bool operandSizeOverride = false;
+    bool repnePrefix = false;
+    bool repPrefix = false;
+    return _skipPrefixesAndRex(&operandSizeOverride, &repnePrefix, &repPrefix);
+}
+
 bool DecodedInstruction::IsShaNi() const {
     bool operandSizeOverride = false;
     bool repnePrefix = false;

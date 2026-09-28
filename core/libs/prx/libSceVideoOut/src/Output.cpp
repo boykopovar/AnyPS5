@@ -181,14 +181,14 @@ int APS5_VABI sceVideoOutSetWindowModeMargins(int handle, int top, int bottom) {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    throw std::runtime_error(std::string(__func__) + " not implemented");
+    return 0;
 }
 
 int APS5_VABI sceVideoOutLatencyControlWaitBeforeInput(int handle) {
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    throw std::runtime_error(std::string(__func__) + " not implemented");
+    return 0;
 }
 
 int APS5_VABI sceVideoOutLatencyMeasureSetStartPoint(int handle, uint32_t point) {
@@ -196,7 +196,7 @@ int APS5_VABI sceVideoOutLatencyMeasureSetStartPoint(int handle, uint32_t point)
     if (!VideoOutDriver::Get().IsOpen(handle)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    throw std::runtime_error(std::string(__func__) + " not implemented");
+    return 0;
 }
 
 int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, float gamma) {
@@ -218,7 +218,8 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
-    throw std::runtime_error(std::string(__func__) + " not implemented");
+    // Output gamma is accepted but not yet applied to presentation.
+    return 0;
 }
 
 }

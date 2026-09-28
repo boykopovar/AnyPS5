@@ -110,6 +110,19 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
     return result;
 }
 
+// The whole byte range a vertex buffer descriptor covers (records * stride, or records when the
+// stride is 0): what an indirect draw, whose counts only the GPU knows, copies for the fetch.
+inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    const auto records = attribute.resource.fields[2];
+    Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
+    const auto bytes = stride == 0 ? static_cast<std::uint64_t>(records) : static_cast<std::uint64_t>(records) * stride;
+    Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "empty or oversized vertex buffer descriptor");
+    const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
+    Require(address != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid vertex buffer address range");
+    return static_cast<std::size_t>(bytes);
+}
+
 inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute& attribute, std::uint32_t maxIndex, std::uint32_t instances, std::uint32_t firstInstance = 0) {
     Require(instances != 0, "vertex input requires nonzero instance count");
     Require(firstInstance <= std::numeric_limits<std::uint32_t>::max() - (instances - 1u), "vertex input instance range overflow");

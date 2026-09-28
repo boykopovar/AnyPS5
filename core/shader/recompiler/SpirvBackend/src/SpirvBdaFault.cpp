@@ -61,6 +61,7 @@ void ReturnBdaFailureIf(SpirvEmitterState& state, std::uint32_t condition, std::
 }
 
 void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition) {
+    if (!state.bdaStopsInvocations) return;
     const auto failed = state.module.AllocateId();
     const auto next = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);

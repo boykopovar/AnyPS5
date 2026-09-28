@@ -1,5 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "SceTypes.hpp"
+#include <cstring>
+#include <exception>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +12,12 @@ extern "C" {
 void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
 int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
 int* APS5_VABI __error_nid_postfix();
+int APS5_VABI sceKernelMapNamedFlexibleMemory(void**, std::size_t, int, int, const char*);
+int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
+int APS5_VABI sceKernelMunmap(void*, std::size_t);
+int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
+int APS5_VABI sceKernelSetVirtualRangeName(const void*, std::uint64_t, const char*);
+int APS5_VABI sceKernelClearVirtualRangeName(const void*, std::uint64_t);
 }
 
 static void Require(bool condition) {
@@ -18,7 +27,39 @@ static void Require(bool condition) {
     }
 }
 
+static const char* NameAt(const void* address) {
+    static VirtualQueryInfo info;
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) == 0);
+    return info.name;
+}
+
+static void CheckNamedAndHintedMappings() {
+    constexpr std::size_t length = 0x10000;
+    void* first = nullptr;
+    Require(sceKernelMapNamedFlexibleMemory(&first, length, 3, 0, "first mapping") == 0);
+    Require(std::strcmp(NameAt(first), "first mapping") == 0);
+    auto* middle = static_cast<unsigned char*>(first) + 0x4000;
+    Require(sceKernelSetVirtualRangeName(middle, 0x4000, "middle") == 0);
+    Require(std::strcmp(NameAt(first), "first mapping") == 0);
+    Require(std::strcmp(NameAt(middle), "middle") == 0);
+    Require(sceKernelClearVirtualRangeName(first, length) == 0);
+    Require(NameAt(middle)[0] == '\0');
+    Require(sceKernelSetVirtualRangeName(nullptr, length, "x") != 0);
+#if defined(__linux__)
+    void* hinted = first;
+    Require(sceKernelMapFlexibleMemory(&hinted, length, 3, 0) == 0);
+    Require(hinted > first && (reinterpret_cast<std::uintptr_t>(hinted) & 0x3fff) == 0);
+    bool rejected = false;
+    void* overwrite = first;
+    try { sceKernelMapFlexibleMemory(&overwrite, 0x4000, 3, 0x90); } catch (const std::exception&) { rejected = true; }
+    Require(rejected && overwrite == first);
+    Require(sceKernelMunmap(hinted, length) == 0);
+#endif
+    Require(sceKernelMunmap(first, length) == 0);
+}
+
 int main() {
+    CheckNamedAndHintedMappings();
     constexpr std::size_t page = 0x4000;
     const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
     const auto reject = [&](std::size_t length, int protection, int flags, int fd,

@@ -28,8 +28,8 @@ PadData Pad::ReadState() {
     data.left_stick_y = state.sticks[1];
     data.right_stick_x = state.sticks[2];
     data.right_stick_y = state.sticks[3];
-    data.analog_buttons_l2 = (state.buttons & 0x100) != 0 ? 255 : 0;
-    data.analog_buttons_r2 = (state.buttons & 0x200) != 0 ? 255 : 0;
+    data.analog_buttons_l2 = state.analogButtonsL2;
+    data.analog_buttons_r2 = state.analogButtonsR2;
     data.acceleration_y = 1.0f;
     data.orientation_w = 1.0f;
     data.connected = true;
@@ -47,7 +47,9 @@ PadData Pad::ReadState() {
 extern "C" void PadPublishInput_nid_postfix(const PadInputState& input) {
     std::lock_guard lock(stateMutex);
     if (failure) std::rethrow_exception(failure);
-    if (state.buttons == input.buttons && state.sticks == input.sticks && state.touchLeft == input.touchLeft && state.touchRight == input.touchRight) return;
+    if (state.buttons == input.buttons && state.sticks == input.sticks &&
+        state.analogButtonsL2 == input.analogButtonsL2 && state.analogButtonsR2 == input.analogButtonsR2 &&
+        state.touchLeft == input.touchLeft && state.touchRight == input.touchRight) return;
     state = input;
     timestamp = sceKernelGetProcessTime();
 }

@@ -1,5 +1,8 @@
 #include "BdaTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <limits>
@@ -117,5 +120,37 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         unaligned.Upload(true);
         reject([&] { unaligned.Descriptor(address + 4, 4); }, "offset alignment");
         reject([&] { unaligned.Descriptor(address + sizeof(guest), 4); }, "exceeds its GPU owner");
+    }
+    {
+        // The cached address space: a second build in an unchanged registry takes the first one's
+        // space, and a guest free of a range pinned only by the cache goes through the pin waiter's
+        // drop (no GPU work to wait for) and empties the registry of it.
+        void* block = GuestHeap::GuestHeapAllocate_nid_postfix(64);
+        const auto blockAddress = reinterpret_cast<std::uintptr_t>(block);
+        std::memset(block, 0x5a, 64);
+        const auto registered = [&] {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            return std::any_of(lease.begin(), lease.end(), [&](const auto& range) { return range->address == blockAddress; });
+        };
+        Require(registered(), "guest heap block is not registered");
+        const auto before = AddressSpaceCounters();
+        for (int build = 0; build < 2; ++build) {
+            GuestBufferMemory leased(context);
+            leased.AcquireRegistered();
+            Require(leased.HoldsLease(), "address-based build holds no lease");
+            leased.Upload(true);
+            const auto view = leased.Descriptor(blockAddress, 64);
+            Require(view.range == 64, "leased block has no descriptor");
+            const auto ranges = leased.AddressRanges();
+            Require(std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == blockAddress && range.end == blockAddress + 64; }), "leased block is missing from the BDA table");
+            leased.WriteBack();
+            Require(!leased.HoldsLease(), "write-back kept the lease");
+        }
+        const auto after = AddressSpaceCounters();
+        if (after.enabled) Require(after.hits == before.hits + 1 && after.rebuiltFirst + after.rebuiltGeneration + after.rebuiltWaiterDrop + after.rebuiltEpoch + after.rebuiltDevice == before.rebuiltFirst + before.rebuiltGeneration + before.rebuiltWaiterDrop + before.rebuiltEpoch + before.rebuiltDevice + 1, "second build did not take the cached address space");
+        GuestHeap::GuestHeapFree_nid_postfix(block);
+        Require(!registered(), "freed guest heap block remains registered");
+        const auto dropped = AddressSpaceCounters();
+        if (dropped.enabled) Require(dropped.waiterDrops == after.waiterDrops + 1 && LeaseCounters().cacheDrops == dropped.waiterDrops, "the free did not drop the cached address space");
     }
 }

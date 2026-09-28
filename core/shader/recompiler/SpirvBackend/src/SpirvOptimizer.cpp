@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #include <spirv-tools/libspirv.hpp>
 #include <spirv-tools/optimizer.hpp>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -39,8 +40,40 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
     }
     spvtools::Optimizer optimizer(environment);
     optimizer.SetMessageConsumer(consumer);
-    optimizer.RegisterPerformancePasses(true);
-    optimizer.SetValidateAfterAll(true);
+    static const char* mode = std::getenv("APS5_SPIRV_OPT");
+    if (mode != nullptr && std::string(mode) == "none") return std::vector<std::uint32_t>(spirv.begin(), spirv.end());
+    // The recompiler emits helpers (BDA lookup, fault reporting) as functions called from every memory
+    // access. Exhaustive inlining multiplies module size by ~10x and optimization time by ~20x, so the
+    // default pipeline keeps the performance passes that work per function and leaves inlining to the driver.
+    // APS5_SPIRV_OPT=full restores the SPIRV-Tools performance pipeline, =none skips optimization.
+    if (mode == nullptr || std::string(mode) != "full") {
+        optimizer.RegisterPass(spvtools::CreateWrapOpKillPass())
+            .RegisterPass(spvtools::CreateDeadBranchElimPass())
+            .RegisterPass(spvtools::CreateAggressiveDCEPass(true))
+            .RegisterPass(spvtools::CreatePrivateToLocalPass())
+            .RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass())
+            .RegisterPass(spvtools::CreateLocalSingleStoreElimPass())
+            .RegisterPass(spvtools::CreateAggressiveDCEPass(true))
+            .RegisterPass(spvtools::CreateScalarReplacementPass(0))
+            .RegisterPass(spvtools::CreateLocalAccessChainConvertPass())
+            .RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass())
+            .RegisterPass(spvtools::CreateLocalSingleStoreElimPass())
+            .RegisterPass(spvtools::CreateAggressiveDCEPass(true))
+            .RegisterPass(spvtools::CreateLocalMultiStoreElimPass())
+            .RegisterPass(spvtools::CreateAggressiveDCEPass(true))
+            .RegisterPass(spvtools::CreateCCPPass())
+            .RegisterPass(spvtools::CreateAggressiveDCEPass(true))
+            .RegisterPass(spvtools::CreateDeadBranchElimPass())
+            .RegisterPass(spvtools::CreateRedundancyEliminationPass())
+            .RegisterPass(spvtools::CreateSimplificationPass())
+            .RegisterPass(spvtools::CreateAggressiveDCEPass(true))
+            .RegisterPass(spvtools::CreateBlockMergePass())
+            .RegisterPass(spvtools::CreateSimplificationPass());
+    } else {
+        optimizer.RegisterPerformancePasses(true);
+    }
+    // Validating after every pass costs more than the passes on large shaders; the result is validated below.
+    optimizer.SetValidateAfterAll(false);
     spvtools::OptimizerOptions options;
     options.set_preserve_bindings(true);
     options.set_preserve_spec_constants(true);

@@ -509,7 +509,8 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                 }
                 const bool scalarAddress = memory.kind == ResourceKind::ScalarAddress;
                 const bool validGroupWidth = scalarAddress ? (memory.componentCount == 1u || memory.componentCount == 2u || memory.componentCount == 4u || memory.componentCount == 8u || memory.componentCount == 16u) : (memory.componentCount >= 1u && memory.componentCount <= 4u);
-                if (memory.dataBits != addressInfo.dataBits || memory.dataDwords != 1u || !validGroupWidth || memory.componentIndex >= memory.componentCount || memory.sampler != 0u) {
+                const bool validWideLayout = addressInfo.components == 1u || (memory.componentIndex == 0u && memory.componentCount == addressInfo.components);
+                if (memory.dataBits != addressInfo.dataBits || memory.dataDwords != addressInfo.components || !validGroupWidth || !validWideLayout || memory.componentIndex >= memory.componentCount || memory.sampler != 0u) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has inconsistent address-memory metadata");
                 }
             }

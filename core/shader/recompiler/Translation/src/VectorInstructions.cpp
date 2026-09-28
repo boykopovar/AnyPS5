@@ -673,6 +673,8 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return vLshlAddU32(inst);
     case RdnaOpcode::VAddLshlU32:
         return vAddLshlU32(inst);
+    case RdnaOpcode::VPermB32:
+        return vPermB32(inst);
     case RdnaOpcode::VXadU32:
         return vXadU32(inst);
     case RdnaOpcode::VLshlOrB32:

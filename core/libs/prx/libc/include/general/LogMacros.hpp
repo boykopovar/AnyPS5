@@ -56,6 +56,9 @@ _APS5_LOG_IMPL_NF(stdout, fmt); \
 } \
 } while (0)
 
+#define APS5_LOG_TIMING(fmt, ...) APS5_LOG_OUT_IF(APS5_ENABLE_TIMING_LOG, fmt, __VA_ARGS__)
+#define APS5_LOG_CHARS_OUT_TIMING(fmt) APS5_LOG_CHARS_OUT_IF(APS5_ENABLE_TIMING_LOG, fmt)
+
 #ifdef APS5_DEBUG_LOG
 #define APS5_LOG_DEBUG(fmt, ...) _APS5_LOG_IMPL(stdout, fmt, __VA_ARGS__)
 #define APS5_LOG_CHARS_OUT_DEBUG(fmt) _APS5_LOG_IMPL_NF(stdout, fmt)

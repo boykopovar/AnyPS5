@@ -257,6 +257,9 @@ enum class IrOpcode : std::uint16_t {
     LoadAddressU8,
     LoadAddressU16,
     LoadAddressU32,
+    LoadAddressU32x2,
+    LoadAddressU32x3,
+    LoadAddressU32x4,
     StoreAddressU8,
     StoreAddressU16,
     StoreAddressU32,
@@ -350,6 +353,7 @@ enum class ImageResourceClass { None, Sampled, Storage };
 struct AddressOpcodeInfo {
     AddressAccess access = AddressAccess::None;
     std::uint32_t dataBits = 0;
+    std::uint32_t components = 1;
 };
 
 struct ImageOpcodeInfo {

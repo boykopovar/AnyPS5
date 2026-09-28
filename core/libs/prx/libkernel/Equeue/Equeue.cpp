@@ -1,4 +1,5 @@
 #include "Equeue.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -40,7 +41,7 @@ void KernelEqueuePrivate::Close() {
         }
     }
     m_events.clear();
-    m_cond.notify_all();
+    m_cond.NotifyAll();
 }
 
 void KernelEqueuePrivate::TriggerExpiredTimers(uint64_t nowNs) {
@@ -112,8 +113,7 @@ int KernelEqueuePrivate::WaitForEvents(KernelEvent* ev, int num, uint32_t micros
     if (m_closed) {
         return EQUEUE_ERROR_EBADF;
     }
-    const auto deadline = std::chrono::steady_clock::now() +
-        std::chrono::microseconds(micros);
+    const std::uint64_t deadline = TimedWait::DeadlineNanos(micros);
     for (;;) {
         TriggerExpiredTimers(MonotonicNs());
         int ret = 0;
@@ -151,21 +151,16 @@ int KernelEqueuePrivate::WaitForEvents(KernelEvent* ev, int num, uint32_t micros
             return EQUEUE_ERROR_EBADF;
         }
         if (micros == 0) {
-            m_cond.wait(lock);
+            m_cond.Wait(lock);
         } else {
             uint32_t timerWait = 0;
             const bool hasTimer = NextTimerWaitMicros(MonotonicNs(), &timerWait);
-            const auto now = std::chrono::steady_clock::now();
+            const std::uint64_t now = TimedWait::NowNanos();
             if (now >= deadline) {
                 return 0;
             }
-            const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(
-                deadline - now
-            ).count();
-            const auto waitUs = hasTimer
-                ? std::min<uint64_t>(static_cast<uint64_t>(remaining), timerWait)
-                : static_cast<uint64_t>(remaining);
-            m_cond.wait_for(lock, std::chrono::microseconds(waitUs));
+            const std::uint64_t timerDeadline = now + static_cast<std::uint64_t>(timerWait) * 1000ULL;
+            m_cond.WaitUntil(lock, hasTimer ? std::min(deadline, timerDeadline) : deadline);
         }
     }
 }
@@ -189,7 +184,7 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
     } else {
         m_events.push_back(event);
     }
-    m_cond.notify_one();
+    m_cond.NotifyOne();
     return EQUEUE_OK;
 }
 
@@ -211,7 +206,7 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
     } else {
         it->triggered = true;
     }
-    m_cond.notify_one();
+    m_cond.NotifyOne();
     return EQUEUE_OK;
 }
 
@@ -311,12 +306,16 @@ int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int
     if (num < 1 || out == nullptr) {
         return EQUEUE_ERROR_EINVAL;
     }
+    const auto waitStart = std::chrono::steady_clock::now();
     if (timo == nullptr) {
         *out = owner->WaitForEvents(ev, num, 0);
     } else if (*timo == 0) {
         *out = owner->GetTriggeredEvents(ev, num);
     } else {
         *out = owner->WaitForEvents(ev, num, *timo);
+    }
+    if (timo == nullptr || *timo != 0) {
+        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), *out == 0);
     }
     if (*out == EQUEUE_ERROR_EBADF) {
         return EQUEUE_ERROR_EBADF;

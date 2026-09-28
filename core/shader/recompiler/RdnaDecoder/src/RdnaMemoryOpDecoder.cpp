@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
 #include <bit>
 #include <limits>
@@ -382,7 +383,18 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     setRawWords(instruction, code, wordIndex, 2u);
 
     instruction.destination = scalarDestination(sdst);
-    instruction.source0 = scalarDescriptorBase(sbase * 2u, 2u, "SMEM base register range overflow");
+    // The base pair may also be VCC (s106:107), which compilers use as a scratch address register.
+    if (sbase * 2u == 106u) {
+        RdnaOperand vcc{};
+        vcc.kind = RdnaOperandKind::VccLo;
+        instruction.source0 = vcc;
+    } else if (sbase * 2u > 104u) {
+        char reason[96];
+        std::snprintf(reason, sizeof(reason), "SMEM base register range overflow (sbase s%u at pc 0x%x, words %08x %08x)", sbase * 2u, programCounter, word0, word1);
+        throw std::runtime_error(reason);
+    } else {
+        instruction.source0 = scalarDescriptorBase(sbase * 2u, 2u, "SMEM base register range overflow");
+    }
     instruction.source1 = scalarSource(soffsetCode);
     instruction.sourceCount = 2;
     return instruction;

@@ -61,6 +61,9 @@ struct IrResourcePlan {
     std::vector<std::uint32_t> materializationSources;
     std::vector<SrtRead> srtReads;
     std::vector<std::uint8_t> cleanFlatSlots;
+    // One byte per srtReads slot, 1 when the CPU walk never consumes the slot's value (see
+    // Detail::ComputePureFlatSlots): a driver may reuse a capture whose words differ only there.
+    std::vector<std::uint8_t> pureFlatSlots;
     bool requiresSpecializationMemory = false;
     bool srtPlanComplete = false;
     bool resourceTrackingComplete = false;

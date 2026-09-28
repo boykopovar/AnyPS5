@@ -1,4 +1,5 @@
 #include "Translation/ShaderInputInfoBuilder.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "IntermediateRepresentation/IrMetadata.hpp"
 #include <array>
 #include <cstdint>
@@ -7,11 +8,6 @@
 namespace ShaderRecompiler {
 
 namespace {
-
-thread_local ShaderPixelInputInfo pixelStorage;
-thread_local ShaderComputeInputInfo computeStorage;
-thread_local ShaderVertexInputInfo vertexStorage;
-
 IrShaderStage _toIrShaderStage(ShaderStageKind stage) {
     switch (stage) {
     case ShaderStageKind::Vertex: return IrShaderStage::Vertex;
@@ -67,24 +63,29 @@ void _detectVertexBuffers(ShaderVertexInputInfo& info) {
 
 }
 
-ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context) {
+ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context, std::uint32_t hostSubgroupSize) {
     switch (stage) {
     case ShaderStageKind::Compute: {
         if (!context.compute.has_value()) {
             throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.compute is not set");
         }
         const auto& compute = *context.compute;
+        struct ComputeStorage {};
+        auto& computeStorage = HostThreadLocal<ShaderComputeInputInfo, ComputeStorage>();
         computeStorage = ShaderComputeInputInfo{};
         computeStorage.threadsNum[0] = compute.numThreads[0];
         computeStorage.threadsNum[1] = compute.numThreads[1];
         computeStorage.threadsNum[2] = compute.numThreads[2];
         computeStorage.ldsSizeDwords = compute.ldsSizeDwords;
         computeStorage.waveSize = context.waveSize;
+        computeStorage.hostSubgroupSize = hostSubgroupSize;
         computeStorage.groupId[0] = compute.groupIdEnable[0];
         computeStorage.groupId[1] = compute.groupIdEnable[1];
         computeStorage.groupId[2] = compute.groupIdEnable[2];
         computeStorage.tgSizeEn = compute.tgSizeEnable;
         computeStorage.threadIdsNum = static_cast<int>(compute.threadIdComponentCount);
+        // Workgroup ids (and the thread-group size word) follow the user SGPRs.
+        computeStorage.workgroupRegister = static_cast<int>(context.userDataBaseRegister + context.userData.size());
         ShaderStageInputInfo result;
         result.compute = &computeStorage;
         return result;
@@ -94,6 +95,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.pixel is not set");
         }
         const auto& pixel = *context.pixel;
+        struct PixelStorage {};
+        auto& pixelStorage = HostThreadLocal<ShaderPixelInputInfo, PixelStorage>();
         pixelStorage = ShaderPixelInputInfo{};
         for (std::uint32_t i = 0; i < 32; ++i) {
             pixelStorage.interpolatorSettings[i] = pixel.interpolatorSettings[i];
@@ -133,6 +136,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         }
         const auto& vertex = *context.vertex;
         if (vertex.resourcesNum > vertex.resources.size()) throw std::runtime_error("ShaderInputInfoBuilder: invalid vertex resource count");
+        struct VertexStorage {};
+        auto& vertexStorage = HostThreadLocal<ShaderVertexInputInfo, VertexStorage>();
         vertexStorage = ShaderVertexInputInfo{};
         vertexStorage.logicalStage = _toIrShaderStage(stage);
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;

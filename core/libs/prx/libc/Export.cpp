@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HeapDiagnostics.hpp"
 
 uint32_t Need_sceLibc = 1;
 
@@ -39,8 +40,7 @@ extern "C" {
     }
 
     void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info) {
-        (void)info;
-        NotImplemented_nid_no_patch(__func__);
+        LibcHeapTraceInfo_nid_no_patch(info);
     }
 
     int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (*destructor)(void*), void* object, void* module_id) {
@@ -60,5 +60,31 @@ extern "C" {
         NotImplemented_nid_no_patch(__func__);
         return 0;
     }
+
+int APS5_VABI _ZNKSt9exception6_RaiseEv_nid_postfix() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI fputwc_nid_postfix() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI fputws_nid_postfix() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI vswprintf_nid_postfix() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+APS5_EXPORT("Pu0Ecyk-7FU", libcUnknown_Pu0Ecyk_M7FU);
+int APS5_VABI libcUnknown_Pu0Ecyk_M7FU() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
 
 }

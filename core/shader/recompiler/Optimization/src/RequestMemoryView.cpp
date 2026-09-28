@@ -1,5 +1,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -37,19 +39,24 @@ RequestMemoryView::RequestMemoryView(std::span<const MemoryRegion> memoryRegions
 
 bool RequestMemoryView::ReadGuestMemory(void* userContext, std::uint64_t address, std::uint32_t* value) {
     const auto* self = static_cast<const RequestMemoryView*>(userContext);
+    static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
+    const auto miss = [&] {
+        if (debug) std::fprintf(stderr, "[srt] guest read 0x%llx is outside the request memory\n", static_cast<unsigned long long>(address));
+        return false;
+    };
     const auto it = std::upper_bound(self->regions.begin(), self->regions.end(), address, [](std::uint64_t addressValue, const MemoryRegion& region) {
         return addressValue < region.guestAddress;
     });
     if (it == self->regions.begin()) {
-        return false;
+        return miss();
     }
     const MemoryRegion& region = *std::prev(it);
     if (address < region.guestAddress) {
-        return false;
+        return miss();
     }
     const std::uint64_t offset = address - region.guestAddress;
     if (offset > region.bytes.size() || region.bytes.size() - offset < sizeof(std::uint32_t)) {
-        return false;
+        return miss();
     }
     std::uint32_t word = 0;
     std::memcpy(&word, region.bytes.data() + offset, sizeof(word));

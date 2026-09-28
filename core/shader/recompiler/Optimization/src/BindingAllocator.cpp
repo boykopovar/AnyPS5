@@ -109,7 +109,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     }
 
     std::array<std::vector<std::uint32_t>, ImageBindingCount> imageGroups;
-    for (std::uint32_t i = 0; i < info.images.size(); i++) {
+    const auto place = [&](std::uint32_t i) {
         const DescriptorBindingKind kind = DescriptorBindingForImage(info.images[i]);
         const std::uint32_t group = ImageBindingIndex(kind);
         if (group >= imageGroups.size()) {
@@ -123,6 +123,24 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
                  std::to_string(info.images[i].mipCount));
         }
         resources.insert(resources.end(), count, i);
+    };
+    // A bindless table's slots follow their root as consecutive elements: the SPIR-V indexes the
+    // binding with element(root) + slot.
+    for (std::uint32_t i = 0; i < info.images.size(); i++) {
+        const auto root = info.images[i].indirectRoot;
+        if (root != ImageResource::NoIndirectImage && root != i) {
+            continue;
+        }
+        place(i);
+        if (root != i) {
+            continue;
+        }
+        for (const auto slot : info.images[i].indirectResources) {
+            if (slot >= info.images.size() || info.images[slot].indirectRoot != i) {
+                fail("shader binding layout failed: image " + std::to_string(i) + " has an inconsistent table slot");
+            }
+            if (slot != i) place(slot);
+        }
     }
     for (std::uint32_t i = 0; i < imageGroups.size(); i++) {
         if (!imageGroups[i].empty()) {

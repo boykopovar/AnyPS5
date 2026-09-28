@@ -13,18 +13,15 @@ public:
     GpuColorTransfer(const GpuColorTransfer&) = delete;
     GpuColorTransfer& operator=(const GpuColorTransfer&) = delete;
     void Upload(std::uint64_t address, std::uint32_t width, std::uint32_t height, ColorTileMode mode);
-    void Detile(VkCommandBuffer commands, bool swapRedBlue = false);
+    void Detile(VkCommandBuffer commands, bool swapRedBlue = false, bool tenBit = false);
     void Tile(VkCommandBuffer commands);
     void WriteBack(std::uint64_t address);
-    void WriteBackTracked(std::uint64_t address);
-    bool MatchesGuest(std::uint64_t address);
     VkBuffer LinearBuffer() const;
     RenderTarget& Target(const ColorTarget& color, bool blending);
 
 private:
-    void writeBack(std::uint64_t address, bool tracked);
     void prepare(std::uint32_t width, std::uint32_t height, ColorTileMode mode);
-    void convert(VkCommandBuffer commands, bool toTiled, bool swapRedBlue);
+    void convert(VkCommandBuffer commands, bool toTiled, bool swapRedBlue, bool tenBit = false);
     void release() noexcept;
     Context context;
     VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
@@ -32,10 +29,10 @@ private:
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    // Guest bytes in host memory, and the device-local copies the conversion shader works on.
     std::unique_ptr<Buffer> tiled;
-    std::unique_ptr<Buffer> linear;
-    std::unique_ptr<Buffer> readback;
-    std::unique_ptr<Buffer> upload;
+    std::unique_ptr<DeviceBuffer> tiledDevice;
+    std::unique_ptr<DeviceBuffer> linear;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     ColorTileMode mode = ColorTileMode::Linear;

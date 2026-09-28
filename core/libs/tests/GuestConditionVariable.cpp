@@ -32,7 +32,7 @@ int main() {
     Require(scePthreadCondInit(&cond, nullptr, nullptr) == 0 && cond);
     Require(pthread_cond_destroy_nid_postfix(&cond) == 0 && !cond);
     Require(pthread_cond_init_nid_postfix(&cond, nullptr) == 0 && cond);
-    Require(scePthreadCondDestroy(&cond) == 0 && !cond);
+    Require(scePthreadCondDestroy(&cond) == 0);
 
     PthreadMutex mutex = nullptr;
     Require(scePthreadMutexInit(&mutex, nullptr, nullptr) == 0);
@@ -57,7 +57,7 @@ int main() {
     notifier.join();
     Require(pthread_cond_broadcast_nid_postfix(&cond) == 0);
     Require(scePthreadMutexLock(&mutex) == 0);
-    Require(static_cast<unsigned>(scePthreadCondTimedwait(&cond, &mutex, 1000)) == 0x80020062u);
+    Require(static_cast<unsigned>(scePthreadCondTimedwait(&cond, &mutex, 1000)) == 0x8002003cu);
     Require(scePthreadMutexUnlock(&mutex) == 0);
     Require(pthread_cond_destroy_nid_postfix(&cond) == 0);
     Require(scePthreadMutexDestroy(&mutex) == 0);

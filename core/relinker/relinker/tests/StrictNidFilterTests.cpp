@@ -153,10 +153,12 @@ void vectorInstructionLengths() {
         {0xC5, 0xD9, 0x73, 0xD4, 0x20},
         {0xC4, 0xE1, 0x79, 0x70, 0xC0, 0x1B},
         {0xC4, 0xE1, 0x78, 0x77},
-        {0x62, 0xF1, 0x7D, 0x48, 0x72, 0xD0, 0x04}
+        {0x62, 0xF1, 0x7D, 0x48, 0x72, 0xD0, 0x04},
+        {0xF3, 0x0F, 0xB8, 0xC0},
+        {0xCD, 0x41}
     };
     for (const auto& instruction : instructions)
-        require(decoder.Decode(instruction.data(), instruction.size()) == instruction.size(), "Vector immediate or VZEROUPPER was decoded with the wrong length");
+        require(decoder.Decode(instruction.data(), instruction.size()) == instruction.size(), "Vector immediate, VZEROUPPER, POPCNT or INT was decoded with the wrong length");
 }
 
 void exceptionLandingPads() {

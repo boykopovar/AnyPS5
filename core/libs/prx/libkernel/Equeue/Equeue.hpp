@@ -1,7 +1,6 @@
 #ifndef CORE_LIBS_PRX_LIBKERNEL_EQUEUE_EQUEUE_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_EQUEUE_EQUEUE_HPP
 
-#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <list>
@@ -12,6 +11,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 
 static constexpr int16_t EVFILT_USER = -11;
 static constexpr int16_t EVFILT_VIDEO_OUT = -13;
@@ -23,11 +23,11 @@ static constexpr uint16_t EV_CLEAR = 0x0020;
 static constexpr uint16_t EV_ERROR = 0x4000;
 
 static constexpr int EQUEUE_OK = 0;
-static constexpr int EQUEUE_ERROR_EBADF = -2147418090;
-static constexpr int EQUEUE_ERROR_EFAULT = -2147418103;
-static constexpr int EQUEUE_ERROR_EINVAL = -2147418107;
-static constexpr int EQUEUE_ERROR_ENOENT = -2147418095;
-static constexpr int EQUEUE_ERROR_ETIMEDOUT = -2147418077;
+static constexpr int EQUEUE_ERROR_EBADF = 0x80020009;
+static constexpr int EQUEUE_ERROR_EFAULT = 0x8002000E;
+static constexpr int EQUEUE_ERROR_EINVAL = 0x80020016;
+static constexpr int EQUEUE_ERROR_ENOENT = 0x80020002;
+static constexpr int EQUEUE_ERROR_ETIMEDOUT = 0x8002003C;
 
 struct KernelEqueueEvent;
 
@@ -76,7 +76,7 @@ private:
 
     std::list<KernelEqueueEvent> m_events;
     std::mutex m_mutex;
-    std::condition_variable_any m_cond;
+    TimedWait::Condition m_cond;
     std::string m_name;
     KernelEqueue m_handle;
     bool m_closed = false;

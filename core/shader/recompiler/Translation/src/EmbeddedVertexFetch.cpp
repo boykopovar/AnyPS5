@@ -161,6 +161,43 @@ std::uint32_t embeddedFetchDstSize(const RdnaInstruction& inst) {
     return inst.op == RdnaOpcode::VMadU64U32 ? 2u : decodedDstSize(inst);
 }
 
+// How many consecutive SGPRs a scalar operand of the instruction names, over-estimated where the
+// decoder does not say (descriptor bases, 64-bit pairs, carry-ins): a register counted as read that
+// is not only costs the driver's fold decision, never its correctness.
+std::uint32_t scalarOperandWidth(const RdnaInstruction& inst, std::uint32_t operandIndex) {
+    switch (inst.family) {
+    case RdnaInstructionFamily::SMEM:
+        return operandIndex == 0u ? 4u : 1u;
+    case RdnaInstructionFamily::MUBUF:
+    case RdnaInstructionFamily::MTBUF:
+        return operandIndex == 1u ? 4u : 1u;
+    case RdnaInstructionFamily::MIMG:
+        return 8u;
+    case RdnaInstructionFamily::FLAT:
+        return 2u;
+    case RdnaInstructionFamily::VOP2:
+    case RdnaInstructionFamily::VOP3:
+    case RdnaInstructionFamily::VOP3P:
+        return inst.is64Bit || operandIndex == 2u ? 2u : 1u;
+    default:
+        return inst.is64Bit ? 2u : 1u;
+    }
+}
+
+bool touchesSgpr(const RdnaInstruction& inst, std::uint32_t sgpr) {
+    const std::array<const RdnaOperand*, 4> sources{&inst.source0, &inst.source1, &inst.source2, &inst.source3};
+    for (std::uint32_t i = 0u; i < sources.size(); i++) {
+        if (!isScalarOperand(*sources[i])) continue;
+        const auto first = scalarSlot(*sources[i]);
+        if (sgpr >= first && sgpr < first + scalarOperandWidth(inst, i)) return true;
+    }
+    if (isScalarOperand(inst.destination)) {
+        const auto first = scalarSlot(inst.destination);
+        if (sgpr >= first && sgpr < first + std::max(inst.is64Bit ? 2u : 1u, decodedDstSize(inst))) return true;
+    }
+    return false;
+}
+
 }
 
 EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& program, std::uint32_t attributeTableRegister, std::uint32_t bufferTableRegister, std::uint32_t userDataBaseRegister, std::uint32_t userDataCount, std::uint32_t waveSize) const {
@@ -190,6 +227,8 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     std::int32_t instanceOffsetCandidate = -1;
     bool vertexOffsetConflict = false;
     bool instanceOffsetConflict = false;
+    std::vector<std::uint32_t> vertexAddPcs;
+    std::vector<std::uint32_t> instanceAddPcs;
 
     for (const auto& inst : program.instructions) {
         const bool vertexIndexAccumulator = isVectorOperand(inst.destination) && (inst.destination.reg == 0u || (userDataBaseRegister == 8u && inst.destination.reg == kVertexIndexVgpr));
@@ -210,6 +249,7 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                 } else {
                     candidate = static_cast<std::int32_t>(reg);
                 }
+                (vertexIndexAccumulator ? vertexAddPcs : instanceAddPcs).push_back(inst.programCounter);
             }
         }
         switch (inst.op) {
@@ -364,6 +404,19 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
             }
         }
     }
+
+    plan.vertexOffsetConflict = vertexOffsetConflict;
+    plan.instanceOffsetConflict = instanceOffsetConflict;
+    const auto shared = [&](std::int32_t sgpr, const std::vector<std::uint32_t>& addPcs) {
+        if (sgpr < 0) return false;
+        for (const auto& inst : program.instructions) {
+            if (std::find(addPcs.begin(), addPcs.end(), inst.programCounter) != addPcs.end()) continue;
+            if (touchesSgpr(inst, static_cast<std::uint32_t>(sgpr))) return true;
+        }
+        return false;
+    };
+    plan.vertexOffsetShared = shared(plan.vertexOffsetSgpr, vertexAddPcs);
+    plan.instanceOffsetShared = shared(plan.instanceOffsetSgpr, instanceAddPcs);
 
     return plan;
 }
