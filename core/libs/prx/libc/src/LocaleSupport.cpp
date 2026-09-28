@@ -9,6 +9,7 @@
 #include <vector>
 #include <array>
 #include <limits>
+#include <cerrno>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -94,6 +95,26 @@ char* APS5_VABI setlocale_nid_postfix(int category, const char* locale) {
         std::strcmp(locale, "POSIX") != 0) return nullptr;
     static char classicName[] = "C";
     return classicName;
+}
+
+// The guest SDK uses 16-bit wchar_t. Only the classic C locale is modeled;
+// its multibyte representation is single-byte ASCII, not the host CRT locale.
+std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source,
+                                           std::size_t capacity) {
+    if (source == nullptr) { errno = 22; return static_cast<std::size_t>(-1); }
+    std::size_t converted = 0;
+    for (;;) {
+        // A null destination requests the full required length, irrespective of capacity.
+        if (destination != nullptr && converted == capacity) return converted;
+        const auto character = source[converted];
+        if (character == 0) {
+            if (destination != nullptr) destination[converted] = '\0';
+            return converted;
+        }
+        if (character > 0x7f) { errno = 86; return static_cast<std::size_t>(-1); }
+        if (destination != nullptr) destination[converted] = static_cast<char>(character);
+        ++converted;
+    }
 }
 
 int APS5_VABI isupper_nid_postfix(int c) { return c >= 'A' && c <= 'Z'; }

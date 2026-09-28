@@ -77,6 +77,23 @@ jobs:
           ctest --test-dir build -R '^guest_signals$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Guest signal test failed' }
 
+      - name: Test guest wide character conversion
+        shell: pwsh
+        run: |
+          cmake --build build --target guest_wide_strings_tests --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Guest wide character build failed' }
+          ctest --test-dir build -R '^guest_wide_strings$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Guest wide character test failed' }
+
+      - name: Verify patched libc wide conversion export
+        shell: pwsh
+        run: |
+          cmake --build build --target patched_libc --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Patched libc build failed' }
+          $exports = & objdump -p build/core/libs/libs/libc.prx
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read patched libc exports' }
+          if (-not ($exports | Select-String -SimpleMatch 'v7S7LhP2OJc')) { throw 'Missing patched wcstombs export' }
+
       - name: Verify patched kernel exports
         shell: pwsh
         run: |

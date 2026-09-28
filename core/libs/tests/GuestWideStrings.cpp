@@ -19,6 +19,8 @@ const std::uint16_t* APS5_VABI wmemchr_nid_postfix(const std::uint16_t*, std::ui
 int APS5_VABI wmemcmp_nid_postfix(const std::uint16_t*, const std::uint16_t*, std::size_t);
 std::uint16_t* APS5_VABI wmemcpy_nid_postfix(std::uint16_t*, const std::uint16_t*, std::size_t);
 std::uint16_t* APS5_VABI wmemmove_nid_postfix(std::uint16_t*, const std::uint16_t*, std::size_t);
+std::size_t APS5_VABI wcstombs_nid_postfix(char*, const std::uint16_t*, std::size_t);
+int* APS5_VABI __error_nid_postfix();
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -52,4 +54,21 @@ int main() {
     Require(wmemcpy_nid_postfix(copied.data(), text.data(), 5) == copied.data());
     Require(wmemmove_nid_postfix(copied.data() + 1, copied.data(), 5) == copied.data() + 1);
     Require(wmemcmp_nid_postfix(copied.data() + 1, text.data(), 5) == 0);
+    const std::array<std::uint16_t, 4> ascii{u'A', u'B', u'C', 0};
+    std::array<char, 5> bytes{'x', 'x', 'x', 'x', 'x'};
+    Require(wcstombs_nid_postfix(nullptr, ascii.data(), 0) == 3);
+    Require(wcstombs_nid_postfix(bytes.data(), ascii.data(), 0) == 0 && bytes[0] == 'x');
+    Require(wcstombs_nid_postfix(bytes.data(), ascii.data(), 2) == 2);
+    Require(bytes[0] == 'A' && bytes[1] == 'B' && bytes[2] == 'x');
+    Require(wcstombs_nid_postfix(bytes.data(), ascii.data(), 3) == 3 && bytes[3] == 'x');
+    Require(wcstombs_nid_postfix(bytes.data(), ascii.data(), 4) == 3 && bytes[3] == '\0');
+    const std::array<std::uint16_t, 3> invalid{u'A', 0xd83d, 0};
+    *__error_nid_postfix() = 0;
+    Require(wcstombs_nid_postfix(bytes.data(), invalid.data(), 1) == 1);
+    Require(*__error_nid_postfix() == 0);
+    Require(wcstombs_nid_postfix(bytes.data(), invalid.data(), 2) == static_cast<std::size_t>(-1));
+    Require(*__error_nid_postfix() == 86);
+    Require(wcstombs_nid_postfix(nullptr, invalid.data(), 0) == static_cast<std::size_t>(-1));
+    Require(wcstombs_nid_postfix(bytes.data(), nullptr, 4) == static_cast<std::size_t>(-1));
+    Require(*__error_nid_postfix() == 22);
 }
