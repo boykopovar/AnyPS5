@@ -92,8 +92,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Patched libc build failed' }
           $exports = & objdump -p build/core/libs/libs/libc.prx
           if ($LASTEXITCODE -ne 0) { throw 'Cannot read patched libc exports' }
-          if (-not ($exports | Select-String -SimpleMatch 'v7S7LhP2OJc')) { throw 'Missing patched wcstombs export' }
-          if (-not ($exports | Select-String -SimpleMatch 'qVHpv0PxouI')) { throw 'Missing patched mbrtowc export' }
+          foreach ($nid in @('v7S7LhP2OJc', 'qVHpv0PxouI', 'j6OnScWpu7k', '6eU9xX9oEdQ', '8hygs6D9KBY', 'y9OoA+P5cjk')) {
+            if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc conversion export: $nid" }
+          }
 
       - name: Verify patched kernel exports
         shell: pwsh

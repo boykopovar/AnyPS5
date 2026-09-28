@@ -21,6 +21,10 @@ std::uint16_t* APS5_VABI wmemcpy_nid_postfix(std::uint16_t*, const std::uint16_t
 std::uint16_t* APS5_VABI wmemmove_nid_postfix(std::uint16_t*, const std::uint16_t*, std::size_t);
 std::size_t APS5_VABI wcstombs_nid_postfix(char*, const std::uint16_t*, std::size_t);
 std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t*, const char*, std::size_t, void*);
+std::size_t APS5_VABI mbrlen_nid_postfix(const char*, std::size_t, void*);
+int APS5_VABI mbtowc_nid_postfix(std::uint16_t*, const char*, std::size_t);
+std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t*, const char**, std::size_t, void*);
+std::size_t APS5_VABI wcrtomb_nid_postfix(char*, std::uint16_t, void*);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -87,5 +91,34 @@ int main() {
     decoded = 0xbeef;
     Require(mbrtowc_nid_postfix(&decoded, "\x80", 1, state.data()) == static_cast<std::size_t>(-1));
     Require(decoded == 0xbeef && *__error_nid_postfix() == 86);
+    Require(mbrlen_nid_postfix("A", 1, state.data()) == 1);
+    Require(mbrlen_nid_postfix("", 1, state.data()) == 0);
+    Require(mbrlen_nid_postfix("A", 0, state.data()) == static_cast<std::size_t>(-2));
+    Require(mbtowc_nid_postfix(&decoded, nullptr, 0) == 0);
+    Require(mbtowc_nid_postfix(&decoded, "B", 1) == 1 && decoded == u'B');
+    Require(mbtowc_nid_postfix(&decoded, "B", 0) == -1 && *__error_nid_postfix() == 86);
+
+    const char* source = "AB";
+    std::array<std::uint16_t, 4> wide{0xbeef, 0xbeef, 0xbeef, 0xbeef};
+    Require(mbsrtowcs_nid_postfix(wide.data(), &source, 1, state.data()) == 1);
+    Require(wide[0] == u'A' && wide[1] == 0xbeef && *source == 'B');
+    Require(mbsrtowcs_nid_postfix(wide.data() + 1, &source, 2, state.data()) == 1);
+    Require(wide[1] == u'B' && wide[2] == 0 && source == nullptr);
+    source = "ABC";
+    Require(mbsrtowcs_nid_postfix(nullptr, &source, 0, state.data()) == 3);
+    Require(source != nullptr && *source == 'A');
+    source = "A\x80";
+    Require(mbsrtowcs_nid_postfix(wide.data(), &source, 3, state.data()) == static_cast<std::size_t>(-1));
+    Require(*source == static_cast<char>(0x80) && *__error_nid_postfix() == 86);
+    source = "A";
+    Require(mbsrtowcs_nid_postfix(wide.data(), &source, 0, state.data()) == 0 && *source == 'A');
+    Require(mbsrtowcs_nid_postfix(wide.data(), nullptr, 2, state.data()) == static_cast<std::size_t>(-1));
+    Require(*__error_nid_postfix() == 22);
+    Require(wcrtomb_nid_postfix(nullptr, 0xffff, state.data()) == 1);
+    char encoded = 'x';
+    Require(wcrtomb_nid_postfix(&encoded, u'C', state.data()) == 1 && encoded == 'C');
+    Require(wcrtomb_nid_postfix(&encoded, 0, state.data()) == 1 && encoded == '\0');
+    Require(wcrtomb_nid_postfix(&encoded, 0xd83d, state.data()) == static_cast<std::size_t>(-1));
+    Require(*__error_nid_postfix() == 86 && encoded == '\0');
     for (const auto byte : state) Require(byte == 0);
 }

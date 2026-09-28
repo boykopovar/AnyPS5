@@ -130,6 +130,58 @@ std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char
     return character == 0 ? 0 : 1;
 }
 
+std::size_t APS5_VABI mbrlen_nid_postfix(const char* source, std::size_t count, void* state) {
+    return mbrtowc_nid_postfix(nullptr, source, count, state);
+}
+
+int APS5_VABI mbtowc_nid_postfix(std::uint16_t* destination, const char* source,
+                                 std::size_t count) {
+    if (source == nullptr) return 0; // The C locale has no shift state.
+    const auto result = mbrtowc_nid_postfix(destination, source, count, nullptr);
+    if (result == static_cast<std::size_t>(-2)) { errno = 86; return -1; }
+    if (result == static_cast<std::size_t>(-1)) return -1;
+    return static_cast<int>(result);
+}
+
+std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source,
+                                             std::size_t capacity, void* state) {
+    (void)state;
+    if (source == nullptr || *source == nullptr) { errno = 22; return static_cast<std::size_t>(-1); }
+    const char* cursor = *source;
+    std::size_t converted = 0;
+    for (;;) {
+        if (destination != nullptr && converted == capacity) {
+            *source = cursor;
+            return converted;
+        }
+        const auto character = static_cast<unsigned char>(*cursor);
+        if (character > 0x7f) {
+            if (destination != nullptr) *source = cursor;
+            errno = 86;
+            return static_cast<std::size_t>(-1);
+        }
+        if (character == 0) {
+            if (destination != nullptr) {
+                destination[converted] = 0;
+                *source = nullptr;
+            }
+            return converted;
+        }
+        if (destination != nullptr) destination[converted] = character;
+        ++cursor;
+        ++converted;
+    }
+}
+
+std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t character,
+                                           void* state) {
+    (void)state;
+    if (destination == nullptr) return 1; // Encoding the null character resets the C locale.
+    if (character > 0x7f) { errno = 86; return static_cast<std::size_t>(-1); }
+    *destination = static_cast<char>(character);
+    return 1;
+}
+
 int APS5_VABI isupper_nid_postfix(int c) { return c >= 'A' && c <= 'Z'; }
 int APS5_VABI islower_nid_postfix(int c) { return c >= 'a' && c <= 'z'; }
 int APS5_VABI isalpha_nid_postfix(int c) { return isupper_nid_postfix(c) || islower_nid_postfix(c); }
