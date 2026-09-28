@@ -37,6 +37,7 @@ struct PthreadCondattrPrivate {
 
 struct PthreadCondPrivate {
     std::condition_variable_any _cv;
+    std::atomic<unsigned> _waiters{0};
 };
 
 struct PthreadAttrPrivate {
