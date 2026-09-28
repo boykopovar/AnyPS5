@@ -13,30 +13,30 @@
 extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" std::int64_t APS5_VABI sysconf_nid_postfix(int name);
 
-extern "C" {
-int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::size_t* oldLength,
-                                      const void* newValue, std::size_t newLength) {
+namespace {
+enum class HardwareQuery { CpuCount, PageSize, PhysicalMemory, RealMemory };
+
+int QueryHardware(const HardwareQuery query, void* oldValue, std::size_t* oldLength,
+                  const void* newValue, std::size_t newLength) {
     const auto fail = [](int error) { *__error_nid_postfix() = error; return -1; };
-    if (name == nullptr || *name == '\0' || (oldValue != nullptr && oldLength == nullptr) ||
-        (newValue == nullptr && newLength != 0)) return fail(22); // EINVAL.
+    if ((oldValue != nullptr && oldLength == nullptr) || (newValue == nullptr && newLength != 0))
+        return fail(22); // EINVAL.
 
     // Values with known guest layouts. Firmware-specific names must remain
     // unknown until a firmware profile supplies their actual values.
     std::uint64_t value = 0;
     std::size_t required = 0;
-    if (std::strcmp(name, "hw.ncpu") == 0 || std::strcmp(name, "hw.pagesize") == 0) {
-        const auto queried = sysconf_nid_postfix(name[3] == 'n' ? 58 : 47);
+    if (query == HardwareQuery::CpuCount || query == HardwareQuery::PageSize) {
+        const auto queried = sysconf_nid_postfix(query == HardwareQuery::CpuCount ? 58 : 47);
         if (queried < 1 || queried > INT_MAX) return fail(5); // EIO.
         value = static_cast<std::uint32_t>(queried);
         required = sizeof(std::uint32_t);
-    } else if (std::strcmp(name, "hw.physmem") == 0) {
+    } else {
         const auto pages = sysconf_nid_postfix(121);
         if (pages < 1 || static_cast<std::uint64_t>(pages) > UINT64_MAX / PS5_PAGE_SIZE)
             return fail(5);
         value = static_cast<std::uint64_t>(pages) * PS5_PAGE_SIZE;
         required = sizeof(std::uint64_t);
-    } else {
-        return fail(2); // ENOENT.
     }
     if (newValue != nullptr) return fail(1); // EPERM: these nodes are read-only.
     if (oldLength == nullptr) return fail(22);
@@ -47,6 +47,38 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         std::memcpy(oldValue, &value, required);
     }
     return 0;
+}
+}
+
+extern "C" {
+int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::size_t* oldLength,
+                                      const void* newValue, std::size_t newLength) {
+    if (!name || !*name) { *__error_nid_postfix() = 22; return -1; }
+    if (std::strcmp(name, "hw.ncpu") == 0)
+        return QueryHardware(HardwareQuery::CpuCount, oldValue, oldLength, newValue, newLength);
+    if (std::strcmp(name, "hw.pagesize") == 0)
+        return QueryHardware(HardwareQuery::PageSize, oldValue, oldLength, newValue, newLength);
+    if (std::strcmp(name, "hw.physmem") == 0)
+        return QueryHardware(HardwareQuery::PhysicalMemory, oldValue, oldLength, newValue, newLength);
+    if (std::strcmp(name, "hw.realmem") == 0)
+        return QueryHardware(HardwareQuery::RealMemory, oldValue, oldLength, newValue, newLength);
+    *__error_nid_postfix() = 2; // ENOENT.
+    return -1;
+}
+
+int APS5_VABI sysctl_nid_postfix(const int* mib, unsigned int count, void* oldValue,
+                                 std::size_t* oldLength, const void* newValue, std::size_t newLength) {
+    if (!mib || count == 0 || count > 24) { *__error_nid_postfix() = 22; return -1; }
+    if (count != 2 || mib[0] != 6) { *__error_nid_postfix() = 2; return -1; }
+    HardwareQuery query;
+    switch (mib[1]) {
+        case 3: query = HardwareQuery::CpuCount; break;
+        case 5: query = HardwareQuery::PhysicalMemory; break;
+        case 7: query = HardwareQuery::PageSize; break;
+        case 12: query = HardwareQuery::RealMemory; break;
+        default: *__error_nid_postfix() = 2; return -1;
+    }
+    return QueryHardware(query, oldValue, oldLength, newValue, newLength);
 }
 
 // Guest long is 64 bits, including when the Windows host long is 32 bits.

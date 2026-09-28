@@ -5,6 +5,7 @@
 extern "C" {
 std::int64_t APS5_VABI sysconf_nid_postfix(int);
 int APS5_VABI sysctlbyname_nid_postfix(const char*, void*, std::size_t*, const void*, std::size_t);
+int APS5_VABI sysctl_nid_postfix(const int*, unsigned int, void*, std::size_t*, const void*, std::size_t);
 int APS5_VABI getpagesize_nid_postfix();
 int* APS5_VABI __error_nid_postfix();
 }
@@ -45,4 +46,25 @@ int main() {
     Require(*__error_nid_postfix() == 22);
     Require(sysctlbyname_nid_postfix("hw.ncpu", &cores, &length, &cores, sizeof(cores)) == -1);
     Require(*__error_nid_postfix() == 1);
+    // Crispy Doom's SDL_GetSystemRAM fallback calls sysctl({CTL_HW, HW_REALMEM}, 2, ...).
+    const int realMemoryMib[2] = {6, 12};
+    std::uint64_t realMemory = 0;
+    length = sizeof(realMemory);
+    Require(sysctl_nid_postfix(realMemoryMib, 2, &realMemory, &length, nullptr, 0) == 0);
+    Require(length == sizeof(realMemory) && realMemory >= pageSize);
+    std::uint64_t namedRealMemory = 0;
+    length = sizeof(namedRealMemory);
+    Require(sysctlbyname_nid_postfix("hw.realmem", &namedRealMemory, &length, nullptr, 0) == 0);
+    Require(realMemory == namedRealMemory);
+    length = 0;
+    Require(sysctl_nid_postfix(realMemoryMib, 2, nullptr, &length, nullptr, 0) == 0);
+    Require(length == sizeof(realMemory));
+    length = 4;
+    Require(sysctl_nid_postfix(realMemoryMib, 2, &realMemory, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 12 && length == sizeof(realMemory));
+    Require(sysctl_nid_postfix(realMemoryMib, 0, &realMemory, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 22);
+    const int unknownMib[2] = {6, 99};
+    Require(sysctl_nid_postfix(unknownMib, 2, &realMemory, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 2);
 }

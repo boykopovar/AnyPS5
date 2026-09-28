@@ -105,6 +105,7 @@ downloads/
 .DS_Store
 Thumbs.db
 cookies.txt
+windows-diagnostics-imports.txt
 
 .env
 .env.local

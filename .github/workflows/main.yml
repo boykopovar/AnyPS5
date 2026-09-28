@@ -36,7 +36,7 @@ jobs:
       - name: Configure CMake
         shell: pwsh
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 
       - name: Build Libraries Target
         shell: pwsh
@@ -52,6 +52,14 @@ jobs:
         shell: pwsh
         run: |
           python -m unittest discover -s scripts/tests -p test_audit_payload_startup.py
+
+      - name: Test guest system configuration
+        shell: pwsh
+        run: |
+          cmake --build build --target guest_system_configuration_tests --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Guest system configuration build failed' }
+          ctest --test-dir build -R '^guest_system_configuration$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Guest system configuration test failed' }
 
       - name: List built binaries (for debug)
         shell: pwsh
