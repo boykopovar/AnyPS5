@@ -117,6 +117,19 @@ std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_
     }
 }
 
+// The C locale is stateless. Keep the guest mbstate_t opaque: a host mbstate_t
+// can have a different layout and must not be used to interpret guest memory.
+std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char* source,
+                                          std::size_t count, void* state) {
+    (void)state;
+    if (source == nullptr) return 0;
+    if (count == 0) return static_cast<std::size_t>(-2);
+    const auto character = static_cast<unsigned char>(*source);
+    if (character > 0x7f) { errno = 86; return static_cast<std::size_t>(-1); }
+    if (destination != nullptr) *destination = character;
+    return character == 0 ? 0 : 1;
+}
+
 int APS5_VABI isupper_nid_postfix(int c) { return c >= 'A' && c <= 'Z'; }
 int APS5_VABI islower_nid_postfix(int c) { return c >= 'a' && c <= 'z'; }
 int APS5_VABI isalpha_nid_postfix(int c) { return isupper_nid_postfix(c) || islower_nid_postfix(c); }

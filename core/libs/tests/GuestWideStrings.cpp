@@ -20,6 +20,7 @@ int APS5_VABI wmemcmp_nid_postfix(const std::uint16_t*, const std::uint16_t*, st
 std::uint16_t* APS5_VABI wmemcpy_nid_postfix(std::uint16_t*, const std::uint16_t*, std::size_t);
 std::uint16_t* APS5_VABI wmemmove_nid_postfix(std::uint16_t*, const std::uint16_t*, std::size_t);
 std::size_t APS5_VABI wcstombs_nid_postfix(char*, const std::uint16_t*, std::size_t);
+std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t*, const char*, std::size_t, void*);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -71,4 +72,20 @@ int main() {
     Require(wcstombs_nid_postfix(nullptr, invalid.data(), 0) == static_cast<std::size_t>(-1));
     Require(wcstombs_nid_postfix(bytes.data(), nullptr, 4) == static_cast<std::size_t>(-1));
     Require(*__error_nid_postfix() == 22);
+
+    // The guest's mbstate_t layout is opaque to this stateless C-locale decoder.
+    std::array<unsigned char, 16> state{};
+    std::uint16_t decoded = 0xbeef;
+    *__error_nid_postfix() = 0;
+    Require(mbrtowc_nid_postfix(&decoded, "A", 0, state.data()) == static_cast<std::size_t>(-2));
+    Require(decoded == 0xbeef && *__error_nid_postfix() == 0);
+    Require(mbrtowc_nid_postfix(&decoded, "A", 1, state.data()) == 1 && decoded == u'A');
+    Require(mbrtowc_nid_postfix(&decoded, "", 1, state.data()) == 0 && decoded == 0);
+    Require(mbrtowc_nid_postfix(nullptr, "Z", 1, nullptr) == 1);
+    Require(mbrtowc_nid_postfix(&decoded, nullptr, 0, state.data()) == 0);
+    Require(mbrtowc_nid_postfix(&decoded, "\x7f", 1, state.data()) == 1 && decoded == 0x7f);
+    decoded = 0xbeef;
+    Require(mbrtowc_nid_postfix(&decoded, "\x80", 1, state.data()) == static_cast<std::size_t>(-1));
+    Require(decoded == 0xbeef && *__error_nid_postfix() == 86);
+    for (const auto byte : state) Require(byte == 0);
 }
