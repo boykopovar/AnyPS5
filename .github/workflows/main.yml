@@ -85,6 +85,14 @@ jobs:
           ctest --test-dir build -R '^guest_wide_strings$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Guest wide character test failed' }
 
+      - name: Test guest allocated formatting
+        shell: pwsh
+        run: |
+          cmake --build build --target guest_allocated_formatting_tests --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Guest allocated formatting build failed' }
+          ctest --test-dir build -R '^guest_allocated_formatting$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Guest allocated formatting test failed' }
+
       - name: Verify patched libc wide conversion exports
         shell: pwsh
         run: |
@@ -95,6 +103,7 @@ jobs:
           foreach ($nid in @('v7S7LhP2OJc', 'qVHpv0PxouI', 'j6OnScWpu7k', '6eU9xX9oEdQ', '8hygs6D9KBY', 'y9OoA+P5cjk')) {
             if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc conversion export: $nid" }
           }
+          if (-not ($exports | Select-String -SimpleMatch 'qjBlw2cVMAM')) { throw 'Missing patched vasprintf export' }
 
       - name: Verify patched kernel exports
         shell: pwsh

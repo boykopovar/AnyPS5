@@ -4,13 +4,15 @@
 #include <cstdarg>
 #include <new>
 #include <stdexcept>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/VarArgsAbi.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+extern "C" int* APS5_VABI __error_nid_postfix();
 
 #ifdef _WIN32
 #include "prx/libc/include/WindowsFormatting.hpp"
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 int ScanWindowsSafe(const char* input, const char* format, const void* args) noexcept {
@@ -205,6 +207,50 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
     std::va_list* va = reinterpret_cast<std::va_list*>(c);
     return std::vsnprintf(str, size, format, *va);
 #endif
+}
+
+int APS5_VABI vasprintf_nid_postfix(char** output, const char* format, VaList* args) noexcept {
+    if (output == nullptr) { *__error_nid_postfix() = 22; return -1; }
+    *output = nullptr;
+    if (format == nullptr || args == nullptr) { *__error_nid_postfix() = 22; return -1; }
+    try {
+#ifdef _WIN32
+        // The guest's SysV va_list cannot be passed to the Windows CRT.
+        std::string formatted;
+        const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &formatted);
+        char* result = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(formatted.size() + 1));
+        std::memcpy(result, formatted.data(), formatted.size());
+        result[formatted.size()] = '\0';
+#else
+        auto* guestArgs = reinterpret_cast<std::va_list*>(args);
+        std::va_list measure;
+        va_copy(measure, *guestArgs);
+        const int count = std::vsnprintf(nullptr, 0, format, measure);
+        va_end(measure);
+        if (count < 0) { *__error_nid_postfix() = 22; return -1; }
+        char* result = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(static_cast<std::size_t>(count) + 1));
+        std::va_list render;
+        va_copy(render, *guestArgs);
+        const int written = std::vsnprintf(result, static_cast<std::size_t>(count) + 1, format, render);
+        va_end(render);
+        if (written != count) {
+            ApplicationHeapFree_nid_no_patch(result);
+            *__error_nid_postfix() = 5;
+            return -1;
+        }
+#endif
+        *output = result;
+        return count;
+    } catch (const std::bad_alloc&) {
+        *__error_nid_postfix() = 12;
+    } catch (const std::invalid_argument&) {
+        *__error_nid_postfix() = 22;
+    } catch (const std::overflow_error&) {
+        *__error_nid_postfix() = 84;
+    } catch (...) {
+        *__error_nid_postfix() = 5;
+    }
+    return -1;
 }
 
 int APS5_VABI puts_nid_postfix(const char* s) {
