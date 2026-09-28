@@ -1,8 +1,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 extern "C" {
 std::int64_t APS5_VABI sysconf_nid_postfix(int);
+int APS5_VABI sysctlbyname_nid_postfix(const char*, void*, std::size_t*, const void*, std::size_t);
 int APS5_VABI getpagesize_nid_postfix();
 int* APS5_VABI __error_nid_postfix();
 }
@@ -18,4 +20,29 @@ int main() {
     Require(sysconf_nid_postfix(-1) == -1); // verifies full-width signed return
     Require(*__error_nid_postfix() == 22);
     Require(sysconf_nid_postfix(0x7fffffff) == -1);
+    std::uint32_t cores = 0;
+    std::size_t length = sizeof(cores);
+    Require(sysctlbyname_nid_postfix("hw.ncpu", &cores, &length, nullptr, 0) == 0);
+    Require(length == sizeof(cores) && cores > 0);
+    length = 0;
+    Require(sysctlbyname_nid_postfix("hw.pagesize", nullptr, &length, nullptr, 0) == 0);
+    Require(length == sizeof(std::uint32_t));
+    std::uint32_t pageSize = 0;
+    Require(sysctlbyname_nid_postfix("hw.pagesize", &pageSize, &length, nullptr, 0) == 0);
+    Require(pageSize == 0x4000);
+    std::uint64_t physical = 0;
+    length = sizeof(physical);
+    Require(sysctlbyname_nid_postfix("hw.physmem", &physical, &length, nullptr, 0) == 0);
+    Require(length == sizeof(physical) && physical >= pageSize);
+    length = 1;
+    Require(sysctlbyname_nid_postfix("hw.ncpu", &cores, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 12 && length == sizeof(cores));
+    Require(sysctlbyname_nid_postfix("unknown.node", &cores, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 2);
+    Require(sysctlbyname_nid_postfix(nullptr, &cores, &length, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(sysctlbyname_nid_postfix("hw.ncpu", &cores, nullptr, nullptr, 0) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(sysctlbyname_nid_postfix("hw.ncpu", &cores, &length, &cores, sizeof(cores)) == -1);
+    Require(*__error_nid_postfix() == 1);
 }

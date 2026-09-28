@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <cstdint>
+#include <cstring>
+#include <climits>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -9,8 +11,44 @@
 #endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
+extern "C" std::int64_t APS5_VABI sysconf_nid_postfix(int name);
 
 extern "C" {
+int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::size_t* oldLength,
+                                      const void* newValue, std::size_t newLength) {
+    const auto fail = [](int error) { *__error_nid_postfix() = error; return -1; };
+    if (name == nullptr || *name == '\0' || (oldValue != nullptr && oldLength == nullptr) ||
+        (newValue == nullptr && newLength != 0)) return fail(22); // EINVAL.
+
+    // Values with known guest layouts. Firmware-specific names must remain
+    // unknown until a firmware profile supplies their actual values.
+    std::uint64_t value = 0;
+    std::size_t required = 0;
+    if (std::strcmp(name, "hw.ncpu") == 0 || std::strcmp(name, "hw.pagesize") == 0) {
+        const auto queried = sysconf_nid_postfix(name[3] == 'n' ? 58 : 47);
+        if (queried < 1 || queried > INT_MAX) return fail(5); // EIO.
+        value = static_cast<std::uint32_t>(queried);
+        required = sizeof(std::uint32_t);
+    } else if (std::strcmp(name, "hw.physmem") == 0) {
+        const auto pages = sysconf_nid_postfix(121);
+        if (pages < 1 || static_cast<std::uint64_t>(pages) > UINT64_MAX / PS5_PAGE_SIZE)
+            return fail(5);
+        value = static_cast<std::uint64_t>(pages) * PS5_PAGE_SIZE;
+        required = sizeof(std::uint64_t);
+    } else {
+        return fail(2); // ENOENT.
+    }
+    if (newValue != nullptr) return fail(1); // EPERM: these nodes are read-only.
+    if (oldLength == nullptr) return fail(22);
+    const auto supplied = *oldLength;
+    *oldLength = required;
+    if (oldValue != nullptr) {
+        if (supplied < required) return fail(12); // ENOMEM.
+        std::memcpy(oldValue, &value, required);
+    }
+    return 0;
+}
+
 // Guest long is 64 bits, including when the Windows host long is 32 bits.
 std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
     const int saved = *__error_nid_postfix();

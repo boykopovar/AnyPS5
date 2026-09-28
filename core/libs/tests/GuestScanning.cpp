@@ -8,6 +8,9 @@
 #include <stdexcept>
 
 extern "C" int APS5_VABI vsscanf_nid_postfix(const char*, const char*, VaList*);
+#ifdef _WIN32
+extern "C" int* APS5_VABI __error_nid_postfix();
+#endif
 
 static void Require(bool valid) { if (!valid) std::abort(); }
 
@@ -70,4 +73,10 @@ int main() {
     float single = 0;
     Require(ScanGuest("2.5", "%f", &single) == 1 && single == 2.5f);
     Require(ScanExport("18", "%d", &decimal) == 1 && decimal == 18);
+#ifdef _WIN32
+    *__error_nid_postfix() = 0;
+    Require(ScanExport("too-long", "%s", guarded.data) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(guarded.before == 'B' && guarded.after == 'A');
+#endif
 }

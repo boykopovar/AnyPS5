@@ -2,12 +2,32 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdarg>
+#include <new>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/VarArgsAbi.hpp"
 #include "prx/libc/include/FileStream.hpp"
 
 #ifdef _WIN32
 #include "prx/libc/include/WindowsFormatting.hpp"
+extern "C" int* APS5_VABI __error_nid_postfix();
+
+namespace {
+int ScanWindowsSafe(const char* input, const char* format, const void* args) noexcept {
+    try {
+        return LibcDetail::ScanWindows(input, format, args);
+    } catch (const std::bad_alloc&) {
+        *__error_nid_postfix() = 12; // Guest ENOMEM.
+    } catch (const std::invalid_argument&) {
+        *__error_nid_postfix() = 22; // Guest EINVAL.
+    } catch (const std::out_of_range&) {
+        *__error_nid_postfix() = 22;
+    } catch (...) {
+        *__error_nid_postfix() = 5; // Guest EIO for unexpected CRT failures.
+    }
+    return -1;
+}
+}
 #endif
 
 extern "C" {
@@ -133,7 +153,7 @@ int APS5_VABI sprintf_nid_postfix(VA_ARGS) {
 int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::ScanWindows(input, format, args);
+    const int result = ScanWindowsSafe(input, format, args);
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -155,7 +175,7 @@ int APS5_VABI sscanf_nid_postfix(VA_ARGS) {
 
 int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList* args) {
 #ifdef _WIN32
-    return LibcDetail::ScanWindows(input, format, args);
+    return ScanWindowsSafe(input, format, args);
 #else
     return std::vsscanf(input, format, *reinterpret_cast<std::va_list*>(args));
 #endif
