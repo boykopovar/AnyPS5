@@ -1,6 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "prx/libSceAgcDriver/Execution/include/MemoryAccessScope.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -302,42 +301,25 @@ void testCopies() {
 #endif
 }
 
-void testMemorySynchronization() {
+// The GPU works directly on host-imported guest memory since 8a69fef, so the driver no longer
+// resynchronizes ranges around a memory transfer: these packets are plain reads and writes of
+// guest memory.
+void testMemoryTransfers() {
     struct MemoryState {
         std::uint32_t source = 0;
         std::uint32_t destination = 0;
-        bool read = false;
-        bool written = false;
     } memory;
     AgcDriver::QueueState state;
-    const auto resolve = [](void* context, std::uint64_t address, std::size_t bytes, bool writable) {
-        auto& memory = *static_cast<MemoryState*>(context);
-        check(bytes == sizeof(std::uint32_t), "memory transfer resolved an unrelated range");
-        if (writable) {
-            check(address == reinterpret_cast<std::uintptr_t>(&memory.destination), "memory transfer resolved an unrelated destination");
-            memory.written = true;
-        } else {
-            check(address == reinterpret_cast<std::uintptr_t>(&memory.source), "memory transfer resolved an unrelated source");
-            memory.source = 42;
-            memory.read = true;
-        }
-    };
-    const AgcDriver::GuestMemory::MemoryAccessScope scope(&memory, resolve);
     execute(state, makePacket(0x37, {0x100, low(&memory.destination), high(&memory.destination), 17}));
-    check(memory.written && !memory.read && memory.destination == 17, "WRITE_DATA did not synchronize its destination");
+    check(memory.destination == 17, "WRITE_DATA did not store its destination");
     for (const auto opcode : {0x40u, 0x50u}) {
-        memory = {};
+        memory = {42, 0};
         const auto packet = opcode == 0x40
             ? makePacket(opcode, {0x101, low(&memory.source), high(&memory.source), low(&memory.destination), high(&memory.destination)})
             : makePacket(opcode, {0x60000000, low(&memory.source), high(&memory.source), low(&memory.destination), high(&memory.destination), 4});
         execute(state, packet);
-        check(memory.read && memory.written && memory.destination == 42, "memory copy used stale data before range synchronization");
+        check(memory.destination == 42, "memory copy did not transfer the source value");
     }
-    const AgcDriver::GuestMemory::MemoryAccessScope rejecting(&memory, [](void*, std::uint64_t, std::size_t, bool) {
-        throw std::runtime_error("range synchronization failed");
-    });
-    expectFailure([&] { execute(state, makePacket(0x37, {0x100, low(&memory.destination), high(&memory.destination), 99})); }, "range synchronization failed");
-    check(memory.destination == 42, "failed synchronization changed the destination");
 }
 
 void testEventWrite() {
@@ -486,7 +468,7 @@ int main(int argc, char** argv) {
         testIndirectDraw();
         testMemory();
         testCopies();
-        testMemorySynchronization();
+        testMemoryTransfers();
         testEventWrite();
         testAcquireMem();
         testDriverSubmission();
