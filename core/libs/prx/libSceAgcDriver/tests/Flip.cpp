@@ -110,8 +110,12 @@ void testFlipAndBoundary() {
         check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->entered; }), "worker did not reach flip");
         check(output->state->last.argument == -0x123456789abcdefLL && output->state->last.index == -2, "decoded flip arguments changed");
     }
+    // Since 8a69fef a suspend point only marks where the system may suspend the title and does not
+    // wait for earlier work: the packets ahead of a flip can wait on a label the CPU writes after
+    // this call. It returns while this flip is still held in GpuReady.
     auto boundary = std::async(std::launch::async, [] { AgcDriverSuspendPoint_nid_postfix(); });
-    check(boundary.wait_for(std::chrono::milliseconds(30)) == std::future_status::timeout, "suspend completed before preceding work");
+    check(boundary.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready, "suspend point waited for a pending flip");
+    boundary.get();
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     auto replacement = std::make_shared<Output>();
     AgcDriverRegisterVideoOutput_nid_postfix(7, replacement);
@@ -121,7 +125,6 @@ void testFlipAndBoundary() {
         output->state->block = false;
     }
     output->state->changed.notify_all();
-    boundary.get();
     AgcDriverWaitIdle_nid_postfix();
     check(output->state->ready == 1 && replacement->state->ready == 1, "registration lifetime or FIFO was lost");
     check(output->state->failed == 0, "successful request failed");
@@ -139,7 +142,8 @@ void testFlipAndBoundary() {
     }
     for (auto& producer : producers) producer.join();
     for (auto error : errors) if (error) std::rethrow_exception(error);
-    AgcDriverSuspendPoint_nid_postfix();
+    // A suspend point no longer waits for earlier work (see above), so wait for idle before counting.
+    AgcDriverWaitIdle_nid_postfix();
     check(replacement->state->ready == 201, "concurrent submissions were lost");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, replacement);
 }
@@ -149,12 +153,15 @@ void testFailure() {
     output->state->fail = true;
     AgcDriverRegisterVideoOutput_nid_postfix(7, output);
     submitFlip();
+    // A suspend point reports only a failure already recorded (it no longer waits, see above), so
+    // the waiters learn of the asynchronous one through WaitIdle.
     std::array<std::string, 4> messages;
     std::vector<std::thread> waiters;
-    for (auto& message : messages) waiters.emplace_back([&message] { message = expectFailure([] { AgcDriverSuspendPoint_nid_postfix(); }); });
+    for (auto& message : messages) waiters.emplace_back([&message] { message = expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }); });
     for (auto& waiter : waiters) waiter.join();
     for (auto& message : messages) check(message == "intentional flip failure", "asynchronous failure was lost");
     check(expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }) == messages[0], "idle lost flip failure");
+    check(expectFailure([] { AgcDriverSuspendPoint_nid_postfix(); }) == messages[0], "suspend lost flip failure");
     check(expectFailure([] { submitFlip(); }) == messages[0], "submit lost flip failure");
     check(output->state->ready == 0 && output->state->failed == 1, "failed flip was completed successfully");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
