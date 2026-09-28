@@ -567,10 +567,14 @@ public:
         boundary.queue = 0;
         boundary.enqueuedAt = std::chrono::steady_clock::now();
         enqueue(std::move(boundary));
-        ++accepted;
-        // The suspend point only marks where the system may suspend the title; it does not wait for
-        // the GPU. Blocking here deadlocks frames whose GPU work waits on labels the CPU writes later.
+        const auto target = ++accepted;
+        // Waits for the workers to reach the boundary (record and submit), not for the GPU: a title
+        // cannot be suspended while its own packets are still unexecuted. Nothing is drained here.
+        ++suspendWaiters;
         changed.notify_all();
+        changed.wait(lock, [&] { return failure != nullptr || stopping || completed >= target; });
+        --suspendWaiters;
+        rethrowFailure();
     }
 
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output) {
@@ -1459,6 +1463,8 @@ private:
     bool resetGraphics = false;
     // Threads in WaitIdle (under `mutex`): a worker's completion notifies only while one waits.
     std::uint32_t idleWaiters = 0;
+    // Threads in SuspendPoint (under `mutex`), for the same reason.
+    std::uint32_t suspendWaiters = 0;
 
     static bool& OnWorkerThread() {
         static thread_local bool worker = false;
@@ -6127,9 +6133,9 @@ private:
                     std::lock_guard lock(mutex);
                     rethrowFailure();
                     markCompleted(submission.serial);
-                    // Only WaitIdle waits for a completion (idle workers wait for work, notified at
-                    // its enqueue): the notify is skipped while nobody is in it.
-                    notify = idleWaiters != 0;
+                    // Only WaitIdle and a suspend point wait for a completion (idle workers wait for
+                    // work, notified at its enqueue): the notify is skipped while nobody is in one.
+                    notify = idleWaiters != 0 || suspendWaiters != 0;
                 }
                 if (notify) changed.notify_all();
                 else ++costs.notifiesSkipped;
