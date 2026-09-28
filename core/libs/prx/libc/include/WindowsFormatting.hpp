@@ -314,6 +314,123 @@ inline int ScanWindows(const char* input, const char* format, const void* source
     return assignments;
 }
 
+// scanf on a guest FILE must consume exactly the matched bytes. Each CRT call
+// receives one destination, never the guest SysV va_list.
+inline int ScanStreamWindows(std::FILE* stream, const char* format, const void* source) {
+    if (!stream || !format || !source) throw std::invalid_argument("Null scanning argument");
+    FormatArguments args(source);
+    std::ptrdiff_t total = 0;
+    int assignments = 0;
+    auto match = [&](char expected) {
+        const int next = std::fgetc(stream);
+        if (next == EOF) return EOF;
+        if (next != static_cast<unsigned char>(expected)) {
+            std::ungetc(next, stream);
+            return 0;
+        }
+        ++total;
+        return 1;
+    };
+    while (*format) {
+        if (std::isspace(static_cast<unsigned char>(*format))) {
+            do { ++format; } while (std::isspace(static_cast<unsigned char>(*format)));
+            int next;
+            while ((next = std::fgetc(stream)) != EOF && std::isspace(static_cast<unsigned char>(next))) ++total;
+            if (next != EOF) std::ungetc(next, stream);
+            continue;
+        }
+        if (*format != '%') {
+            const int matched = match(*format++);
+            if (matched != 1) return matched == EOF && assignments == 0 ? EOF : assignments;
+            continue;
+        }
+        ++format;
+        if (*format == '%') {
+            ++format;
+            const int matched = match('%');
+            if (matched != 1) return matched == EOF && assignments == 0 ? EOF : assignments;
+            continue;
+        }
+        bool suppressed = false;
+        if (*format == '*') { suppressed = true; ++format; }
+        std::string token = suppressed ? "%*" : "%";
+        std::string width;
+        while (std::isdigit(static_cast<unsigned char>(*format))) width += *format++;
+        if (!width.empty()) {
+            const auto parsedWidth = std::stoull(width);
+            if (parsedWidth == 0 || parsedWidth > INT_MAX)
+                throw std::invalid_argument("Invalid scan field width");
+        }
+        token += width;
+        std::string length;
+        if (*format && std::strchr("hljztL", *format)) {
+            length += *format++;
+            if ((length == "h" && *format == 'h') || (length == "l" && *format == 'l'))
+                length += *format++;
+        }
+        const char conversion = *format;
+        if (conversion == '\0') throw std::invalid_argument("Incomplete scan conversion");
+        ++format;
+        if (conversion == 'n') {
+            if (suppressed || !width.empty()) throw std::invalid_argument("Invalid scan count conversion");
+            if (length != "hh" && length != "h" && !length.empty() && length != "l" &&
+                length != "ll" && length != "j" && length != "z" && length != "t")
+                throw std::invalid_argument("Unsupported scan count length");
+            void* destination = args.Next<void*>();
+            if (!destination) throw std::invalid_argument("Null scan destination");
+            if (length == "hh") *static_cast<signed char*>(destination) = static_cast<signed char>(total);
+            else if (length == "h") *static_cast<short*>(destination) = static_cast<short>(total);
+            else if (length.empty()) *static_cast<int*>(destination) = static_cast<int>(total);
+            else *static_cast<std::int64_t*>(destination) = total;
+            continue;
+        }
+        if (conversion == '[') {
+            if (!length.empty()) throw std::invalid_argument("Unsupported wide scan character set");
+            if (!suppressed && width.empty()) throw std::invalid_argument("Unbounded scan character set");
+            token += '[';
+            if (*format == '^') token += *format++;
+            if (*format == ']') token += *format++;
+            const char* setStart = format;
+            while (*format && *format != ']') token += *format++;
+            if (*format != ']' || format == setStart) throw std::invalid_argument("Invalid scan character set");
+            token += *format++;
+        } else {
+            if (!std::strchr("diouxXaAeEfFgGcsp", conversion))
+                throw std::invalid_argument("Unsupported scan conversion");
+            const bool integer = std::strchr("diouxX", conversion) != nullptr;
+            const bool floating = std::strchr("aAeEfFgG", conversion) != nullptr;
+            if (integer) {
+                if (length != "hh" && length != "h" && !length.empty() && length != "l" &&
+                    length != "ll" && length != "j" && length != "z" && length != "t")
+                    throw std::invalid_argument("Unsupported integer scan length");
+                token += length == "l" || length == "j" || length == "z" || length == "t" ? "ll" : length;
+            } else if (floating) {
+                if (!length.empty() && length != "l")
+                    throw std::invalid_argument("Unsupported floating scan length");
+                token += length;
+            } else {
+                if (!length.empty()) throw std::invalid_argument("Unsupported wide scan conversion");
+                if (!suppressed && conversion == 's' && width.empty())
+                    throw std::invalid_argument("Unbounded scan string");
+            }
+            token += conversion;
+        }
+        token += "%n";
+        int consumed = -1;
+        int converted;
+        if (suppressed) converted = std::fscanf(stream, token.c_str(), &consumed);
+        else {
+            void* destination = args.Next<void*>();
+            if (!destination) throw std::invalid_argument("Null scan destination");
+            converted = std::fscanf(stream, token.c_str(), destination, &consumed);
+        }
+        if (consumed < 0) return converted == EOF && assignments == 0 ? EOF : assignments;
+        total += consumed;
+        if (!suppressed) ++assignments;
+    }
+    return assignments;
+}
+
 }
 
 #endif

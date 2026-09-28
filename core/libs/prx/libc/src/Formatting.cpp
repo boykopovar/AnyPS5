@@ -29,10 +29,58 @@ int ScanWindowsSafe(const char* input, const char* format, const void* args) noe
     }
     return -1;
 }
+int ScanStreamWindowsSafe(std::FILE* stream, const char* format, const void* args) noexcept {
+    try {
+        return LibcDetail::ScanStreamWindows(stream, format, args);
+    } catch (const std::bad_alloc&) {
+        *__error_nid_postfix() = 12;
+    } catch (const std::invalid_argument&) {
+        *__error_nid_postfix() = 22;
+    } catch (const std::out_of_range&) {
+        *__error_nid_postfix() = 22;
+    } catch (...) {
+        *__error_nid_postfix() = 5;
+    }
+    return -1;
+}
 }
 #endif
 
 extern "C" {
+
+int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) noexcept {
+    if (!stream || !format || !args) { *__error_nid_postfix() = 22; return -1; }
+    try {
+        std::FILE* native = GetNativeStream(stream);
+#ifdef _WIN32
+        const int result = ScanStreamWindowsSafe(native, format, args);
+#else
+        const int result = std::vfscanf(native, format, *reinterpret_cast<std::va_list*>(args));
+#endif
+        stream->SyncStatus();
+        return result;
+    } catch (...) {
+        *__error_nid_postfix() = 5;
+        return -1;
+    }
+}
+
+int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) noexcept {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+#else
+    std::va_list args;
+    va_start(args, format);
+#endif
+    const int result = vfscanf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    return result;
+}
 
 int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
     auto* native = GetNativeStream(stream);

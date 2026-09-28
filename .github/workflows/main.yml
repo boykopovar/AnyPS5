@@ -93,6 +93,14 @@ jobs:
           ctest --test-dir build -R '^guest_allocated_formatting$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Guest allocated formatting test failed' }
 
+      - name: Test guest file scanning
+        shell: pwsh
+        run: |
+          cmake --build build --target guest_file_scanning_tests --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Guest file scanning build failed' }
+          ctest --test-dir build -R '^guest_file_scanning$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Guest file scanning test failed' }
+
       - name: Test guest collation
         shell: pwsh
         run: |
@@ -113,6 +121,9 @@ jobs:
           }
           if (-not ($exports | Select-String -SimpleMatch 'qjBlw2cVMAM')) { throw 'Missing patched vasprintf export' }
           if (-not ($exports | Select-String -SimpleMatch '77pL1FoD4I4')) { throw 'Missing patched __mb_cur_max data export' }
+          foreach ($nid in @('npLpPTaSuHg', 'lckWSkHDBrY')) {
+            if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc file scanning export: $nid" }
+          }
           foreach ($nid in @('gjbmYpP-XJQ', 'zogPrkd46DY', 'fV2xHER+bKE', 'VuMMb5CfpEw')) {
             if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc collation export: $nid" }
           }
