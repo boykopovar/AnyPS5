@@ -56,12 +56,19 @@ Downloads and run the audit against it:
 $elf = Get-ChildItem -LiteralPath (Join-Path $env:USERPROFILE 'Downloads') -Recurse -File -Filter 'crispy-doom.elf' -ErrorAction SilentlyContinue | Select-Object -First 1
 if (!$elf) { throw 'crispy-doom.elf was not found under Downloads; set $elf to its actual location.' }
 python .\scripts\audit-elf-imports.py $elf.FullName $patchedDir
+python .\scripts\audit-payload-startup.py $elf.FullName
 ```
 
 If the ELF is outside Downloads, locate it with File Explorer and assign
 `$elf = Get-Item 'its real path'`. A missing import report requires an
 implementation and another build; the audit passing alone does not establish
 runtime compatibility.
+The startup audit reports SDK markers and possible raw `syscall` opcode
+locations. A byte match is only a candidate until instructions are decoded.
+For the current Crispy Doom ELF, its SDK CRT reads six `payload_args` fields
+and executes kernel dependent initialization before `main`. The Windows
+entry stub supplies none of the kernel facilities; the report deliberately
+marks this combination as not runnable by the current Windows conversion.
 
 ## Regenerate a converted executable after rebuilding the libraries
 

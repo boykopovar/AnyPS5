@@ -23,6 +23,8 @@ diagnostics, see [Windows payload build and deployment](docs/WindowsPayloadBuild
 
 To audit an ELF against the NID-patched Windows libraries, run
 `python scripts/audit-elf-imports.py path/to/game.elf build/core/libs/libs`.
+To inspect an SDK payload's entry contract and possible raw syscall sites,
+run `python scripts/audit-payload-startup.py path/to/payload.elf`.
 It reports missing imports and exits with status 1 when any are missing.
 The audit does not establish that an ELF will run: exports must also match the
 guest ABI and semantics. In particular, PS5 SDK payloads receive a
