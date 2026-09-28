@@ -124,7 +124,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_condition_variable COMMAND guest_condition_variable_tests)
     if(WIN32)
         set_tests_properties(guest_condition_variable PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;$<TARGET_FILE_DIR:libc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_executable(guest_scanning_tests tests/GuestScanning.cpp)
     target_include_directories(guest_scanning_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
