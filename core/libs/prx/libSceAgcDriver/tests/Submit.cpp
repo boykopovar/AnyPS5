@@ -148,16 +148,20 @@ void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitAcb(0x21, &packet) == 0, "dispatch was not accepted");
+    AgcDriverWaitIdle_nid_postfix();
+    std::array<std::uint32_t, 5> unmapped{0xc0033700, 0x100, 0x100, 0, 0x41};
+    Packet write{unmapped.data(), static_cast<std::uint32_t>(unmapped.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&write) == 0, "write was not accepted");
     std::array<std::string, 4> messages;
     std::vector<std::thread> waiters;
     for (auto& message : messages) {
         waiters.emplace_back([&message] { message = expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }); });
     }
     for (auto& waiter : waiters) waiter.join();
-    for (const auto& message : messages) check(message.find("required shader register") != std::string::npos, "worker failure was lost");
-    check(expectFailure([&] { sceAgcDriverSubmitDcb(&packet); }) == messages[0], "subsequent DCB lost worker failure");
-    check(expectFailure([&] { sceAgcDriverAgrSubmitDcb(&packet); }) == messages[0], "subsequent AGR lost worker failure");
-    check(expectFailure([&] { sceAgcDriverSubmitAcb(0x20, &packet); }) == messages[0], "subsequent ACB lost worker failure");
+    for (const auto& message : messages) check(message.find("guest memory") != std::string::npos, "worker failure was lost");
+    check(expectFailure([&] { sceAgcDriverSubmitDcb(&write); }) == messages[0], "subsequent DCB lost worker failure");
+    check(expectFailure([&] { sceAgcDriverAgrSubmitDcb(&write); }) == messages[0], "subsequent AGR lost worker failure");
+    check(expectFailure([&] { sceAgcDriverSubmitAcb(0x20, &write); }) == messages[0], "subsequent ACB lost worker failure");
 }
 
 }
@@ -169,7 +173,7 @@ int main() {
         testClearState();
         testSubmissions();
         testWorkerFailure();
-        check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("required shader register") != std::string::npos, "shutdown lost worker failure");
+        check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("guest memory") != std::string::npos, "shutdown lost worker failure");
         std::puts("AGC driver submit tests passed");
         return 0;
     } catch (const std::exception& error) {
