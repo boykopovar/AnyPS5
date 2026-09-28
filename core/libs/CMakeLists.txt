@@ -63,6 +63,7 @@ add_custom_command(
         DEPENDS nid_patcher libc ${LIBC_UNPATCHED}
         COMMENT "Patching NIDs for libc"
 )
+add_custom_target(patched_libc DEPENDS ${LIBC_PATCHED})
 
 file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
 list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
@@ -109,6 +110,7 @@ foreach(LIB_DIR ${LIBS_DIRS})
                 DEPENDS nid_patcher ${LIB_NAME} ${UNPATCHED_FILE} ${LIBC_UNPATCHED}
                 COMMENT "Patching NIDs for ${LIB_NAME}"
         )
+        add_custom_target(patched_${LIB_NAME} DEPENDS ${PATCHED_FILE})
 
         list(APPEND PATCHED_OUTPUTS ${PATCHED_FILE})
     endif()

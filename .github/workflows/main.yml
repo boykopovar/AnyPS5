@@ -69,6 +69,17 @@ jobs:
           ctest --test-dir build -R '^guest_condition_variable$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Guest condition variable test failed' }
 
+      - name: Verify patched kernel exports
+        shell: pwsh
+        run: |
+          cmake --build build --target patched_libkernel --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Patched kernel build failed' }
+          $exports = & objdump -p build/core/libs/libs/libkernel.prx
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read patched kernel exports' }
+          foreach ($nid in @('DFmMT80xcNI', 'RXXqi4CtF8w')) {
+            if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched kernel export: $nid" }
+          }
+
       - name: List built binaries (for debug)
         shell: pwsh
         run: |

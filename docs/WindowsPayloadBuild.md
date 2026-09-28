@@ -1,6 +1,6 @@
 # Windows payload build and deployment
 
-The fork's `fix/integration-upstream-payload-runtime` branch contains the
+The fork's `fix/payload-startup-audit` branch contains the
 MinGW PRX export fixes, patched library deployment script, and the experimental
 guest kernel model. Build from this branch rather than the older
 `integration/core-engine` checkout. In particular, that checkout's edited
@@ -14,7 +14,7 @@ intact. If you already cloned the fork, do not clone it again:
 
 ```powershell
 cd "$env:USERPROFILE\Downloads\ps5translation"
-git clone --recurse-submodules --branch fix/integration-upstream-payload-runtime https://github.com/nahshongraham97/AnyPS5.git AnyPS5-fork
+git clone --recurse-submodules --branch fix/payload-startup-audit https://github.com/nahshongraham97/AnyPS5.git AnyPS5-fork
 cd .\AnyPS5-fork
 git remote -v
 git status --short --branch
@@ -25,6 +25,61 @@ cmake --build build --target libs relinker --parallel 4
 The branch's GitHub Actions build uses WinLibs MinGW GCC 16.2.0, POSIX threads,
 SEH, and the MSVCRT runtime. Use that toolchain when reproducing CI; keep the
 compiler and any copied MinGW runtime DLLs from the same installation.
+`cmake --build build --target libkernel` produces the **unpatched** PRX under
+`build\core\libs\libs\unpatched`. It does not refresh
+`build\core\libs\libs\libkernel.prx`. For a focused rebuild use
+`--target patched_libkernel`; for deployment use `--target libs` so all
+patched PRXs are refreshed. The deployment script rebuilds that target before
+copying, and stops if the build fails. A matching hash on two deployed files
+alone cannot establish that either contains the new export.
+
+Press Ctrl + A to select all existing text, press Delete, and paste this corrected version:
+
+```powershell
+$repo = Join-Path $env:USERPROFILE 'Downloads\crispy-doom-ps5-v1.0-7.1.0\CrispyDoom\payloads\AnyPS5-fork'
+$payloadRoot = Split-Path -Parent $repo
+Set-Location -LiteralPath $repo
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw 'Git update failed.' }
+cmake --build build --target patched_libkernel relinker guest_system_configuration_tests --parallel 4
+if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+ctest --test-dir build -R '^guest_system_configuration$' --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw 'Guest system configuration test failed.' }
+$built = Join-Path $repo 'build\core\libs\libs\libkernel.prx'
+$expectedExport = 'DFmMT80xcNI'
+$exports = & 'C:\WinLibs\mingw64\bin\objdump.exe' -p $built
+if ($LASTEXITCODE -ne 0 -or -not ($exports | Select-String -SimpleMatch $expectedExport)) {
+    throw "The patched libkernel PRX does not export the sysctl NID: $expectedExport"
+}
+$librariesDir = Join-Path $payloadRoot 'libs'
+New-Item -ItemType Directory -Path $librariesDir -Force | Out-Null
+foreach ($extension in @('prx', 'sprx')) {
+    $destination = Join-Path $librariesDir "libkernel.$extension"
+    Copy-Item -LiteralPath $built -Destination $destination -Force
+    if ((Get-FileHash -LiteralPath $built -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash) {
+        throw "Hash mismatch: $destination"
+    }
+}
+$elf = Join-Path $payloadRoot 'crispy-doom.elf'
+$converted = Join-Path $payloadRoot 'crispy-doom-current.exe'
+$traceScript = Join-Path $payloadRoot 'trace.gdb'
+$traceLog = Join-Path $env:USERPROFILE 'Downloads\crispy-doom-anyps5-current-trace.txt'
+foreach ($path in @($elf, $traceScript)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing file: $path" }
+}
+& (Join-Path $repo 'build\core\relinker\relinker.exe') --windows --windows-diagnostics --skip-syscall-check $elf $converted
+if ($LASTEXITCODE -ne 0) { throw 'Relinker failed.' }
+Push-Location $payloadRoot
+try {
+    & 'C:\WinLibs\mingw64\bin\gdb.exe' -batch -q -x $traceScript $converted 2>&1 |
+        Tee-Object -FilePath $traceLog
+} finally {
+    Pop-Location
+}
+Write-Host "Fresh trace: $traceLog"
+```
+
 After a successful build, deploy the **patched** libraries, including their
 `.sprx` copies. Set `$payloadRoot` to your real `CrispyDoom\payloads` path.
 The path below matches the Crispy Doom v1.0-7.1.0 download under your user

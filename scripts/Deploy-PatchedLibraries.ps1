@@ -5,6 +5,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$BuildDir = (Resolve-Path -LiteralPath $BuildDir -ErrorAction Stop).Path
+& cmake --build $BuildDir --target libs --parallel 4
+if ($LASTEXITCODE -ne 0) { throw "NID-patched library build failed: $LASTEXITCODE" }
 $patchedDir = Join-Path $BuildDir 'core\libs\libs'
 if (!(Test-Path -LiteralPath $patchedDir -PathType Container)) {
     throw "Patched library directory does not exist: $patchedDir. Build the libs target first."
