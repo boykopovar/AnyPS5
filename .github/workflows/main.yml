@@ -112,6 +112,7 @@ jobs:
             if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc conversion export: $nid" }
           }
           if (-not ($exports | Select-String -SimpleMatch 'qjBlw2cVMAM')) { throw 'Missing patched vasprintf export' }
+          if (-not ($exports | Select-String -SimpleMatch '77pL1FoD4I4')) { throw 'Missing patched __mb_cur_max data export' }
           foreach ($nid in @('gjbmYpP-XJQ', 'zogPrkd46DY', 'fV2xHER+bKE', 'VuMMb5CfpEw')) {
             if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc collation export: $nid" }
           }

@@ -26,11 +26,14 @@ int APS5_VABI mbtowc_nid_postfix(std::uint16_t*, const char*, std::size_t);
 std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t*, const char**, std::size_t, void*);
 std::size_t APS5_VABI wcrtomb_nid_postfix(char*, std::uint16_t, void*);
 int* APS5_VABI __error_nid_postfix();
+extern int __mb_cur_max_nid_postfix;
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
+    Require(sizeof(__mb_cur_max_nid_postfix) == sizeof(int));
+    Require(__mb_cur_max_nid_postfix == 1);
     const std::array<std::uint16_t, 5> text{u'A', 0xd83d, 0xde00, 0xff10, 0};
     const std::array<std::uint16_t, 3> emoji{0xd83d, 0xde00, 0};
     Require(wcslen_nid_postfix(text.data()) == 4);

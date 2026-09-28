@@ -85,6 +85,10 @@ constexpr auto g_upperTable = MakeCaseTable(true);
 
 extern "C" {
 
+// FreeBSD's MB_CUR_MAX reads this exported int. The only supported guest
+// locale is C, whose multibyte characters occupy one byte.
+int __mb_cur_max_nid_postfix = 1;
+
 // The runtime currently exposes the classic C locale. Keep byte classification
 // independent of any locale selected by host-side libraries.
 // Guest FreeBSD locale categories are LC_ALL=0 through LC_MESSAGES=6.
