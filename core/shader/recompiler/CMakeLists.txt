@@ -138,6 +138,7 @@ function(add_shader_recompiler target runtimeTarget)
     )
 
     target_include_directories(${target} PUBLIC
+            ${PROJECT_SOURCE_DIR}/core/libs
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/include
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/include

@@ -101,6 +101,20 @@ public:
     ShaderResources& operator=(const ShaderResources&) = delete;
     VkDescriptorSetLayout Layout() const;
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
+    struct DrawBindings {
+        DrawBindings() = default;
+        DrawBindings(const DrawBindings&) = delete;
+        DrawBindings& operator=(const DrawBindings&) = delete;
+        struct Snapshot {
+            std::uint64_t address;
+            std::shared_ptr<Buffer> buffer;
+        };
+        DescriptorCache* cache = nullptr;
+        DescriptorCache::SetAllocation allocation;
+        std::vector<Snapshot> snapshots;
+        ~DrawBindings();
+    };
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder) const;
     void WriteBack();
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs

@@ -21,6 +21,7 @@ public:
     // Fills the source image from another image of the same extent (any blittable format, layout
     // unchanged), leaving the source image ready to blit or read back.
     void RecordBlitInto(VkCommandBuffer commands, VkImage image, VkImageLayout layout, VkFilter filter);
+    void RecordBlitInto(VkCommandBuffer commands, VkImage image, VkImageLayout layout, VkFilter filter, std::uint32_t width, std::uint32_t height);
     // Copies the source image's texels (tightly packed rows of its format) into a host-readable buffer
     // and makes them visible to the host once the submission completes.
     void RecordReadback(VkCommandBuffer commands, VkBuffer destination);

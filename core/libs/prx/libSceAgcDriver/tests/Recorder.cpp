@@ -653,6 +653,44 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         Require(!recorder.PendingReadOverlaps(element, 16), "the build's read refuses after its batch ran");
         recorder.Sync();
     }
+    std::weak_ptr<ShaderResources::DrawBindings> snapshotLifetime;
+    {
+        auto snapshotContext = context;
+        DescriptorCache cache(snapshotContext);
+        snapshotContext.descriptorCache = &cache;
+        Recorder snapshotRecorder(snapshotContext);
+        snapshotRecorder.Activate();
+        ShaderResources resources(snapshotContext, compute);
+        auto first = resources.PrepareDrawBindings(snapshotRecorder);
+        Require(first != nullptr && first->snapshots.size() == 1, "read-only draw input was not snapshotted");
+        std::memset(reinterpret_cast<void*>(element), 0x22, elementBytes);
+        auto second = resources.PrepareDrawBindings(snapshotRecorder);
+        Require(second != nullptr && second->snapshots.size() == 1, "cached draw input was not snapshotted again");
+        Require(first->allocation.set != second->allocation.set, "in-flight draws share mutable descriptor bindings");
+        std::memset(reinterpret_cast<void*>(element), 0x33, elementBytes);
+        auto downloaded = std::make_shared<Buffer>(snapshotContext, elementBytes * 2, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const auto commands = snapshotRecorder.Commands();
+        RecordMemoryBarrier(snapshotContext, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        const auto copy = snapshotContext.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+        VkBufferCopy region{0, 0, elementBytes};
+        copy(commands, first->snapshots[0].buffer->Handle(), downloaded->Handle(), 1, &region);
+        region.dstOffset = elementBytes;
+        copy(commands, second->snapshots[0].buffer->Handle(), downloaded->Handle(), 1, &region);
+        RecordMemoryBarrier(snapshotContext, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        snapshotLifetime = first;
+        first.reset();
+        second.reset();
+        Require(!snapshotLifetime.expired(), "draw snapshot was released before its GPU batch");
+        snapshotRecorder.Sync();
+        const auto contents = downloaded->Bytes();
+        Require(std::all_of(contents.begin(), contents.begin() + elementBytes, [](std::byte value) { return value == std::byte{0x11}; }), "first draw observed overwritten input");
+        Require(std::all_of(contents.begin() + elementBytes, contents.end(), [](std::byte value) { return value == std::byte{0x22}; }), "second draw observed overwritten input");
+        snapshotRecorder.NotePendingWrite(element, elementBytes);
+        Require(resources.PrepareDrawBindings(snapshotRecorder) == nullptr, "GPU-produced input was replaced with stale CPU memory");
+        snapshotRecorder.Sync();
+    }
+    Require(snapshotLifetime.expired(), "draw snapshots outlived their recorder");
+    recorder.Activate();
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block);

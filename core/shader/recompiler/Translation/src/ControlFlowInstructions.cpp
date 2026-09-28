@@ -28,6 +28,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
     // Callers name the lane-wise operation; the exec mask words themselves combine bitwise.
     if (operation == IrOpcode::LogicalAnd) operation = IrOpcode::BitwiseAnd32;
     else if (operation == IrOpcode::LogicalOr) operation = IrOpcode::BitwiseOr32;
+    else if (operation == IrOpcode::LogicalXor) operation = IrOpcode::BitwiseXor32;
     const bool writeFirst = SaveexecWritesDestinationFirst();
     if (write64) {
         const std::array<IrU32, 2> oldExec{IrU32(ir.GetExecLo()), IrU32(ir.GetExecHi())};

@@ -532,6 +532,28 @@ bool TranslationContext::vAddLshlU32(const RdnaInstruction& inst) {
     return true;
 }
 
+bool TranslationContext::vPermB32(const RdnaInstruction& inst) {
+    const IrU32 high = readU32(sourceAt(inst, 0u));
+    const IrU32 low = readU32(sourceAt(inst, 1u));
+    const IrU32 selectors = readU32(sourceAt(inst, 2u));
+    IrValue* result = &ir.Constant(0u);
+    for (std::uint32_t byte = 0u; byte < 4u; ++byte) {
+        IrValue& selector = ir.BitwiseAnd(ir.ShiftRightLogical(selectors.Value(), ir.Constant(byte * 8u)), ir.Constant(255u));
+        IrValue& signIndex = ir.IAdd(ir.IMul(ir.BitwiseAnd(selector, ir.Constant(3u)), ir.Constant(2u)), ir.Constant(1u));
+        IrValue& index = ir.Select(ir.ULessThan(selector, ir.Constant(8u)), selector, signIndex);
+        IrValue& word = ir.Select(ir.ULessThan(index, ir.Constant(4u)), low.Value(), high.Value());
+        IrValue& shift = ir.IMul(ir.BitwiseAnd(index, ir.Constant(3u)), ir.Constant(8u));
+        IrValue& value = ir.BitwiseAnd(ir.ShiftRightLogical(word, shift), ir.Constant(255u));
+        IrValue& sign = ir.Select(ir.UGreaterThan(value, ir.Constant(127u)), ir.Constant(255u), ir.Constant(0u));
+        IrValue& selected = ir.Select(ir.ULessThan(selector, ir.Constant(8u)), value, sign);
+        IrValue& fill = ir.Select(ir.IEqual(selector, ir.Constant(12u)), ir.Constant(0u), ir.Constant(255u));
+        IrValue& output = ir.Select(ir.ULessThan(selector, ir.Constant(12u)), selected, fill);
+        result = &ir.BitwiseOr(*result, ir.ShiftLeftLogical(output, ir.Constant(byte * 8u)));
+    }
+    writeOperand(inst.destination, result);
+    return true;
+}
+
 bool TranslationContext::vXadU32(const RdnaInstruction& inst) {
     const IrU32 lhs = readU32(sourceAt(inst, 0u));
     const IrU32 rhs = readU32(sourceAt(inst, 1u));

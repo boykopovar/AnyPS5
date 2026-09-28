@@ -1,5 +1,6 @@
 #include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -10,7 +11,10 @@ namespace ShaderRecompiler::Detail {
 
 namespace {
 
-thread_local std::string g_failureReason;
+std::string& failureReason() {
+    struct FailureReasonStorage {};
+    return HostThreadLocal<std::string, FailureReasonStorage>();
+}
 
 std::string DescribeValue(const IrValue* value, std::uint32_t depth) {
     if (value == nullptr) return "null";
@@ -27,7 +31,7 @@ std::string DescribeValue(const IrValue* value, std::uint32_t depth) {
 }
 
 bool Fail(std::string reason) {
-    g_failureReason = std::move(reason);
+    failureReason() = std::move(reason);
     return false;
 }
 
@@ -41,7 +45,7 @@ const DescriptorSource* Source(const IrResourcePlan& program, std::uint32_t sour
 }
 
 bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources) {
-    g_failureReason.clear();
+    failureReason().clear();
     static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
     if (debug) {
         for (std::size_t slot = 0; slot < program.srtReads.size(); ++slot) std::fprintf(stderr, "[srt] slot %zu = %s"  "\n", slot, DescribeValue(program.srtReads[slot].value, 6).c_str());
@@ -143,7 +147,7 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
 }
 
 const std::string& RuntimeSourceFailureReason() {
-    return g_failureReason;
+    return failureReason();
 }
 
 }

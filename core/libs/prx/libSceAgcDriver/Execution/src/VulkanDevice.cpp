@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -20,6 +21,9 @@
 #endif
 #include <atomic>
 #include <chrono>
+#include <charconv>
+#include <condition_variable>
+#include <fstream>
 #include <cstdlib>
 #include <mutex>
 #include <SDL_loadso.h>
@@ -58,7 +62,70 @@ void require(bool condition, const char* reason) {
 // go. APS5_NO_RESOURCE_CACHE=1 builds every dispatch's resources as before.
 using ResourceCache = Graphics::ResourceCache;
 
-void WriteFrameBmp(int index, std::uint32_t fullWidth, std::uint32_t fullHeight, std::span<const std::byte> full);
+std::uint32_t DumpScale();
+void WriteFrameBmp(int index, std::uint32_t fullWidth, std::uint32_t fullHeight, std::span<const std::byte> full, std::uint32_t scale);
+
+class FrameDumpWriter {
+public:
+    ~FrameDumpWriter() {
+        {
+            std::lock_guard lock(mutex);
+            stopping = true;
+        }
+        changed.notify_one();
+        if (worker.joinable()) worker.join();
+    }
+
+    void Enqueue(int index, std::uint32_t width, std::uint32_t height, std::uint32_t scale, std::vector<std::byte> pixels) {
+        std::lock_guard lock(mutex);
+        require(!stopping, "frame dump writer has stopped");
+        require(pixels.size() <= maxBytes - queuedBytes, "frame dump queue exceeded 64 MiB");
+        if (!worker.joinable()) worker = std::thread([this] { run(); });
+        const auto bytes = pixels.size();
+        pending.push_back({index, width, height, scale, std::move(pixels)});
+        queuedBytes += bytes;
+        changed.notify_one();
+    }
+
+private:
+    struct Frame {
+        int index;
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t scale;
+        std::vector<std::byte> pixels;
+    };
+
+    void run() {
+        try {
+            for (;;) {
+                std::deque<Frame> batch;
+                {
+                    std::unique_lock lock(mutex);
+                    changed.wait(lock, [this] { return stopping || !pending.empty(); });
+                    if (pending.empty() && stopping) return;
+                    batch.swap(pending);
+                }
+                for (const auto& frame : batch) {
+                    WriteFrameBmp(frame.index, frame.width, frame.height, frame.pixels, frame.scale);
+                    std::lock_guard lock(mutex);
+                    queuedBytes -= frame.pixels.size();
+                }
+            }
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[gpu] frame dump writer failed: %s\n", error.what());
+            std::terminate();
+        }
+    }
+
+    static constexpr std::size_t maxBytes = 64 * 1024 * 1024;
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::deque<Frame> pending;
+    std::thread worker;
+    std::size_t queuedBytes = 0;
+    bool stopping = false;
+};
 
 // The [present] line's counters (see the header); mutated under State::presentMutex.
 VulkanDevice::PresentStatistics presentCounters{};
@@ -175,6 +242,10 @@ struct VulkanDevice::State {
         VkCommandBuffer commands = VK_NULL_HANDLE;
         std::shared_ptr<void> kept;
         std::unique_ptr<Graphics::Buffer> dumpBuffer;
+        std::unique_ptr<PresentationScaler> dumpScaler;
+        std::uint32_t dumpWidth = 0;
+        std::uint32_t dumpHeight = 0;
+        std::uint32_t dumpScale = 1;
         bool dumpRecorded = false;
         int dumpIndex = 0;
         std::uint32_t imageIndex = 0;
@@ -207,7 +278,7 @@ struct VulkanDevice::State {
     bool queuePending = false;
     std::uint32_t queueIndex = 0;
     int nextDumpIndex = 0;
-    std::thread dumpWriter;
+    FrameDumpWriter dumpWriter;
 
     template<typename TFunction>
     TFunction InstanceFunction(const char* name) const {
@@ -358,17 +429,14 @@ struct VulkanDevice::State {
     }
 
     void WriteFrameDump(const PresentSlot& slot) {
-        require(slot.dumpBuffer != nullptr && scaler != nullptr, "frame dump was not recorded");
-        // The readback buffer is reused by the slot's next dump, so its bytes are copied out before
-        // the writer thread (one at a time) downscales and writes them.
+        require(slot.dumpBuffer != nullptr, "frame dump was not recorded");
         std::vector<std::byte> full(slot.dumpBuffer->Bytes().begin(), slot.dumpBuffer->Bytes().end());
-        if (dumpWriter.joinable()) dumpWriter.join();
         const auto index = slot.dumpIndex;
-        const auto width = scaler->SourceWidth();
-        const auto height = scaler->SourceHeight();
+        const auto width = slot.dumpWidth;
+        const auto height = slot.dumpHeight;
         static const auto start = std::chrono::steady_clock::now();
         std::fprintf(stderr, "[gpu] frame_%03d.bmp: %ux%u display read back on the GPU at %.1f s\n", index, width, height, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
-        dumpWriter = std::thread([index, width, height, pixels = std::move(full)] { WriteFrameBmp(index, width, height, pixels); });
+        dumpWriter.Enqueue(index, width, height, slot.dumpScale, std::move(full));
     }
 
     // Blocks on the fence, or polls it every 50 us with APS5_PRESENT_POLL_FENCE=1 (the difference
@@ -402,8 +470,10 @@ struct VulkanDevice::State {
                 }
                 if (recorder) SettleRetired(true);
             }
-            if (dumpWriter.joinable()) dumpWriter.join();
-            for (auto& slot : presentSlots) slot.dumpBuffer.reset();
+            for (auto& slot : presentSlots) {
+                slot.dumpBuffer.reset();
+                slot.dumpScaler.reset();
+            }
             // Results still in the unit shadows reach guest memory before the device goes; the
             // slabs (kept by the publishing batch) are freed by the recorder's teardown.
             if (recorder) {
@@ -1542,15 +1612,19 @@ namespace {
 std::uint32_t DumpScale() {
     static const std::uint32_t scale = [] {
         const char* value = std::getenv("APS5_DUMP_SCALE");
-        const int parsed = value ? std::atoi(value) : 4;
-        return static_cast<std::uint32_t>(parsed > 0 ? parsed : 1);
+        if (value == nullptr) return std::uint32_t{4};
+        std::uint32_t parsed = 0;
+        const auto end = value + std::strlen(value);
+        const auto result = std::from_chars(value, end, parsed);
+        require(result.ec == std::errc{} && result.ptr == end && parsed > 0 && parsed <= 16384, "APS5_DUMP_SCALE must be between 1 and 16384");
+        return parsed;
     }();
     return scale;
 }
 
 // frame_<index>.bmp: every DumpScale()-th pixel of a BGRA8 image, 32-bit top-down.
-void WriteFrameBmp(int index, std::uint32_t fullWidth, std::uint32_t fullHeight, std::span<const std::byte> full) {
-    const auto scale = DumpScale();
+void WriteFrameBmp(int index, std::uint32_t fullWidth, std::uint32_t fullHeight, std::span<const std::byte> full, std::uint32_t scale) {
+    require(scale != 0 && full.size() == static_cast<std::size_t>(fullWidth) * fullHeight * 4, "invalid frame dump pixels");
     const std::uint32_t width = (fullWidth + scale - 1) / scale;
     const std::uint32_t height = (fullHeight + scale - 1) / scale;
     std::vector<std::byte> pixels(static_cast<std::size_t>(width) * height * 4);
@@ -1559,16 +1633,19 @@ void WriteFrameBmp(int index, std::uint32_t fullWidth, std::uint32_t fullHeight,
     }
     char name[32];
     std::snprintf(name, sizeof(name), "frame_%03d.bmp", index);
-    if (std::FILE* file = std::fopen(name, "wb")) {
+    {
+        std::ofstream file;
+        file.exceptions(std::ios::failbit | std::ios::badbit);
+        file.open(name, std::ios::binary);
         const std::uint32_t imageBytes = width * height * 4;
         const std::uint32_t header[13] = {0, 0, 54, 40, width, static_cast<std::uint32_t>(-static_cast<std::int32_t>(height)), 1u | (32u << 16u), 0, imageBytes, 2835, 2835, 0, 0};
         const std::uint16_t magic = 0x4d42;
         const std::uint32_t fileBytes = 54 + imageBytes;
-        std::fwrite(&magic, 2, 1, file);
-        std::fwrite(&fileBytes, 4, 1, file);
-        std::fwrite(header + 1, 4, 12, file);
-        std::fwrite(pixels.data(), 1, pixels.size(), file);
-        std::fclose(file);
+        file.write(reinterpret_cast<const char*>(&magic), 2);
+        file.write(reinterpret_cast<const char*>(&fileBytes), 4);
+        file.write(reinterpret_cast<const char*>(header + 1), 48);
+        file.write(reinterpret_cast<const char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+        file.close();
     }
 }
 
@@ -1668,7 +1745,7 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
     if (dumps.dumped < dumps.limit) {
         if (dumps.cpu) {
             const auto full = ReadDisplayBuffer(buffer);
-            WriteFrameBmp(dumps.dumped++, buffer.width, buffer.height, full);
+            WriteFrameBmp(dumps.dumped++, buffer.width, buffer.height, full, DumpScale());
         } else {
             state->nextDumpIndex = dumps.dumped++;
             dumpFrame = true;
@@ -1679,6 +1756,7 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
         lastReport = std::chrono::steady_clock::now();
         std::fprintf(stderr, "[flip] %llu presents from the resident image (%llu refreshed first), through guest memory: %llu not pending, %llu unsuitable; %llu GPU frame dumps\n", static_cast<unsigned long long>(residentPresents), static_cast<unsigned long long>(refreshedPresents), static_cast<unsigned long long>(notPending), static_cast<unsigned long long>(unsuitable), static_cast<unsigned long long>(gpuDumps));
     }
+    CaptureTrace::Log("present dump=%d address=%llx width=%u height=%u resident=%d generation=%llu", dumpFrame ? state->nextDumpIndex : -1, static_cast<unsigned long long>(buffer.address), buffer.width, buffer.height, resident != nullptr, static_cast<unsigned long long>(resident ? resident->Generation() : 0));
     if (!present(buffer.width, buffer.height, true, {}, &buffer, resident, filter, dumpFrame)) {
         // A dropped frame (swapchain out of date) keeps the dump numbering contiguous.
         if (dumpFrame) --dumps.dumped;
@@ -1739,9 +1817,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     require(index < state->images.size() && index < state->rendered.size(), "acquired image index is out of range");
     auto& rendered = state->rendered[index];
     const bool clearOnly = pixels.empty() && display == nullptr;
-    // A resident image is blitted straight to the swapchain; a frame dump goes through the
-    // scaler's BGRA8 image so the readback has one format.
-    const bool direct = resident != nullptr && !dumpFrame;
+    const bool direct = resident != nullptr;
     // The scaler's source image, the color transfer's staging and the upload buffer are single
     // objects an in-flight blit through them may still read: the paths using or re-creating them
     // wait for every slot first. The game path did so before taking the mutex
@@ -1763,6 +1839,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     SubmitRecorded(false);
     std::chrono::steady_clock::time_point lastSubmittedAt{};
     const std::uint64_t batchesAtBlit = state->recorder ? state->recorder->NewestSubmitted(&lastSubmittedAt) : 0;
+    CaptureTrace::Log("blit dump=%d batch=%llu slot=%zu image=%u direct=%d", dumpFrame ? state->nextDumpIndex : -1, static_cast<unsigned long long>(batchesAtBlit), state->presentCursor, index, direct);
     timing.Mark("pixel_upload");
     APS5_LOG_OUT_DEBUG("present source=%s bytes=%zu", pixels.empty() ? "clear" : "pixels", pixels.size());
     auto commands = slot.commands;
@@ -1848,6 +1925,15 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         Graphics::Recorder::CountBarriers(CommandClass::PresentBlit);
         if (direct) PresentationScaler::RecordBlitFrom(graphicsContext(), commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, width, height, residentFilter, barrier.image, state->extent.width, state->extent.height);
         else state->scaler->RecordBlit(commands, barrier.image, state->extent.width, state->extent.height);
+        if (dumpFrame && direct) {
+            const auto scale = DumpScale();
+            slot.dumpWidth = (width + scale - 1) / scale;
+            slot.dumpHeight = (height + scale - 1) / scale;
+            slot.dumpScale = 1;
+            if (!slot.dumpScaler) slot.dumpScaler = std::make_unique<PresentationScaler>(graphicsContext(), VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM);
+            slot.dumpScaler->EnsureSourceImage(slot.dumpWidth, slot.dumpHeight);
+            slot.dumpScaler->RecordBlitInto(commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, VK_FILTER_NEAREST, width, height);
+        }
         if (resident != nullptr) {
             // Later batches write the image again (the next frame into this buffer, a refresh): they
             // start after the blit has read it.
@@ -1857,9 +1943,14 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             Graphics::Recorder::CountBarriers(CommandClass::PresentBlit);
         }
         if (dumpFrame) {
-            const auto dumpBytes = static_cast<std::size_t>(state->scaler->SourceWidth()) * state->scaler->SourceHeight() * 4;
+            if (!direct) {
+                slot.dumpWidth = state->scaler->SourceWidth();
+                slot.dumpHeight = state->scaler->SourceHeight();
+                slot.dumpScale = DumpScale();
+            }
+            const auto dumpBytes = static_cast<std::size_t>(slot.dumpWidth) * slot.dumpHeight * 4;
             if (!slot.dumpBuffer || slot.dumpBuffer->Bytes().size() != dumpBytes) slot.dumpBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), dumpBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-            state->scaler->RecordReadback(commands, slot.dumpBuffer->Handle());
+            (direct ? slot.dumpScaler : state->scaler)->RecordReadback(commands, slot.dumpBuffer->Handle());
         }
     }
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1938,8 +2029,7 @@ VulkanDevice::PresentStatistics VulkanDevice::PresentCounts() {
 bool VulkanDevice::PresentWaitsForSlots(const DisplayBuffer* buffer) const {
     if (buffer == nullptr || !state->SharedSlotInFlight()) return false;
     if (buffer->tilingMode == 1) return true;
-    const auto& dumps = Dumps();
-    if ((dumps.dumped < dumps.limit && !dumps.cpu) || NoResidentPresent()) return true;
+    if (NoResidentPresent()) return true;
     VkFilter filter = VK_FILTER_LINEAR;
     bool pending = false;
     if (PresentableResident(graphicsContext(), *buffer, filter, pending) == nullptr) return true;

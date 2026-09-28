@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <algorithm>
@@ -260,6 +261,7 @@ std::shared_ptr<StorageTexture> sampledStorageSource(const Context& context, con
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
 std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, std::uint64_t guestBytes = 0) {
+    CaptureTrace::Log("sampled-lookup address=%llx width=%u height=%u dcc=%llx", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, static_cast<unsigned long long>(resource.dccAddress));
     static const bool disabled = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     const bool profile = LookupOutcomes::Profiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2458,6 +2460,70 @@ void ShaderResources::release() noexcept {
 
 VkDescriptorSetLayout ShaderResources::Layout() const {
     return _layout;
+}
+
+ShaderResources::DrawBindings::~DrawBindings() {
+    if (cache != nullptr && allocation.set != VK_NULL_HANDLE) cache->Free(allocation);
+}
+
+std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder) const {
+    if (_set == VK_NULL_HANDLE || usesBda) return {};
+    const auto reads = guestMemory.InPlaceReads();
+    auto result = std::make_shared<DrawBindings>();
+    std::vector<std::size_t> selected;
+    for (std::size_t index = 0; index < allocations.size(); ++index) {
+        const auto& item = allocations[index];
+        if (!item.guest || item.written || guestMemory.WritesOverlap(item.address, item.size)) continue;
+        const bool direct = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return item.address >= range.first && item.address < range.second && item.size <= range.second - item.address; });
+        if (!direct || recorder.PendingWriteOverlaps(item.address, item.size)) continue;
+        auto buffer = std::make_shared<Buffer>(context, item.size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(item.address), item.size);
+        selected.push_back(index);
+        result->snapshots.push_back({item.address, std::move(buffer)});
+        CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(item.address), item.size);
+    }
+    if (selected.empty()) return {};
+    Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
+    std::map<VkDescriptorType, std::uint32_t> counts;
+    for (const auto& binding : bindings) counts[binding.layout.descriptorType] += binding.layout.descriptorCount;
+    std::vector<VkDescriptorPoolSize> sizes;
+    for (const auto& [type, count] : counts) sizes.push_back({type, count});
+    result->cache = context.descriptorCache;
+    result->allocation = result->cache->Allocate(_layout, sizes);
+    Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
+    std::vector<VkCopyDescriptorSet> copies;
+    for (const auto& binding : bindings) {
+        VkCopyDescriptorSet copy{VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET};
+        copy.srcSet = _set;
+        copy.srcBinding = binding.layout.binding;
+        copy.dstSet = result->allocation.set;
+        copy.dstBinding = binding.layout.binding;
+        copy.descriptorCount = binding.layout.descriptorCount;
+        copies.push_back(copy);
+    }
+    const auto update = context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets");
+    update(context.device, 0, nullptr, static_cast<std::uint32_t>(copies.size()), copies.data());
+    std::vector<VkDescriptorBufferInfo> infos;
+    infos.reserve(selected.size());
+    for (const auto& snapshot : result->snapshots) infos.push_back({snapshot.buffer->Handle(), 0, snapshot.buffer->Bytes().size()});
+    std::vector<VkWriteDescriptorSet> writes;
+    for (const auto& binding : bindings) {
+        for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
+            const auto found = std::find(selected.begin(), selected.end(), binding.allocations[element]);
+            if (found == selected.end()) continue;
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = result->allocation.set;
+            write.dstBinding = binding.layout.binding;
+            write.dstArrayElement = static_cast<std::uint32_t>(element);
+            write.descriptorCount = 1;
+            write.descriptorType = binding.layout.descriptorType;
+            write.pBufferInfo = &infos[static_cast<std::size_t>(found - selected.begin())];
+            writes.push_back(write);
+        }
+    }
+    update(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    recorder.Keep(result);
+    return result;
 }
 
 void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {

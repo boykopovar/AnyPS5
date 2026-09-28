@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -5621,6 +5622,7 @@ private:
             const auto opcode = (header >> 8u) & 0xffu;
             // Names this packet for the flush hook's sync attribution ([hooksync]); the flip is 0xffff.
             GuestMemory::SetCurrentPacket(header == FlipPacketHeader ? 0xffffu : opcode, submission.queue);
+            CaptureTrace::Log("packet submission=%llu queue=%x offset=%zu header=%08x words=%zu", static_cast<unsigned long long>(submission.serial), submission.queue, cursor, header, packet.size());
             // Pending labels and full batches go to the GPU before this packet's own work starts
             // (see flushBetweenPackets); labels themselves only check the deadline, so a label
             // group shares one submission. Timed on its own, before the packet's timer starts.
@@ -5930,6 +5932,7 @@ private:
                 frame->IncludeSubmission(submission.serial, now, now, now, true);
                 frame->SetFlip(submission.serial, cursor, now, now);
                 frame->NoteFlipBatches(batchesAtFlip, unsignaledAtFlip);
+                CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
                 submission.flips.at(cursor)->GpuReady(frame);
             } else if (opcode == 0x15) {
                 timed(&WorkerProfile::dispatchMs, [&] { tolerate("dispatch", [&] { dispatch(queue, packet, submission); }); });
@@ -5994,6 +5997,7 @@ private:
                         std::string rejected;
                         const auto verdict = draw(queue, packet, submission, rejected);
                         drawn = verdict == DrawVerdict::Drawn;
+                        CaptureTrace::Log("draw submission=%llu queue=%x offset=%zu target=%llx mask=%x verdict=%d reason=%.256s", static_cast<unsigned long long>(submission.serial), submission.queue, cursor, static_cast<unsigned long long>(color), readRegister(queue.context, 0x8e), static_cast<int>(verdict), rejected.c_str());
                         if (verdict == DrawVerdict::Rejected) {
                             skipped(rejected);
                             countSkip(Graphics::DrawSkip::Prechecked);
@@ -6003,6 +6007,7 @@ private:
                             std::fprintf(stderr, "[draw] target 0x%llx mask 0x%x ok\n",static_cast<unsigned long long>(color), readRegister(queue.context, 0x8e));
                         }
                     } catch (const std::exception& error) {
+                        CaptureTrace::Log("draw-error submission=%llu offset=%zu reason=%.256s", static_cast<unsigned long long>(submission.serial), cursor, error.what());
                         skipped(error.what());
                         countSkip(Graphics::DrawSkip::Thrown);
                     }
@@ -6144,12 +6149,8 @@ private:
             } catch (...) {
                 std::fprintf(stderr, "[gpu] worker failed with a non-standard exception\n");
             }
-            for (const auto& [offset, flip] : submission.flips) flip->Fail(error);
-            ReportFailure(error);
-            {
-                std::lock_guard gpuLock(GuestMemory::GpuMutex());
-                device.reset();
-            }
+            std::fflush(stderr);
+            std::terminate();
         }
     }
 };

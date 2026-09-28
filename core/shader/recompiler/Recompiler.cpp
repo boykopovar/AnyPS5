@@ -223,7 +223,8 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
     static std::shared_mutex mutex;
     // Entries whose code hashes alike share a bucket; the code comparison picks the right one.
     static std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash> sources;
-    thread_local std::vector<std::uint64_t> key;
+    struct SourceKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::uint64_t>, SourceKeyStorage>();
     RecompileCacheKey::Build(request, key);
     const auto find = [&]() -> std::shared_ptr<SourceEntry> {
         const auto found = sources.find(key);

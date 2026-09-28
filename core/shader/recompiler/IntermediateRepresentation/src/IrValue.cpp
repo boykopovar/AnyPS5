@@ -261,7 +261,7 @@ bool IrValue::operator==(const IrValue& other) const {
     if (this == &other) {
         return true;
     }
-    if (opcode != other.opcode || type != other.type || hasImmediate != other.hasImmediate) {
+    if (opcode != other.opcode || type != other.type || flags != other.flags || hasImmediate != other.hasImmediate) {
         return false;
     }
     if (hasImmediate && immediateBits != other.immediateBits) {

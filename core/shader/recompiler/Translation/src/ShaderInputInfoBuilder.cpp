@@ -1,4 +1,5 @@
 #include "Translation/ShaderInputInfoBuilder.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "IntermediateRepresentation/IrMetadata.hpp"
 #include <array>
 #include <cstdint>
@@ -7,11 +8,6 @@
 namespace ShaderRecompiler {
 
 namespace {
-
-thread_local ShaderPixelInputInfo pixelStorage;
-thread_local ShaderComputeInputInfo computeStorage;
-thread_local ShaderVertexInputInfo vertexStorage;
-
 IrShaderStage _toIrShaderStage(ShaderStageKind stage) {
     switch (stage) {
     case ShaderStageKind::Vertex: return IrShaderStage::Vertex;
@@ -74,6 +70,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.compute is not set");
         }
         const auto& compute = *context.compute;
+        struct ComputeStorage {};
+        auto& computeStorage = HostThreadLocal<ShaderComputeInputInfo, ComputeStorage>();
         computeStorage = ShaderComputeInputInfo{};
         computeStorage.threadsNum[0] = compute.numThreads[0];
         computeStorage.threadsNum[1] = compute.numThreads[1];
@@ -97,6 +95,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.pixel is not set");
         }
         const auto& pixel = *context.pixel;
+        struct PixelStorage {};
+        auto& pixelStorage = HostThreadLocal<ShaderPixelInputInfo, PixelStorage>();
         pixelStorage = ShaderPixelInputInfo{};
         for (std::uint32_t i = 0; i < 32; ++i) {
             pixelStorage.interpolatorSettings[i] = pixel.interpolatorSettings[i];
@@ -136,6 +136,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         }
         const auto& vertex = *context.vertex;
         if (vertex.resourcesNum > vertex.resources.size()) throw std::runtime_error("ShaderInputInfoBuilder: invalid vertex resource count");
+        struct VertexStorage {};
+        auto& vertexStorage = HostThreadLocal<ShaderVertexInputInfo, VertexStorage>();
         vertexStorage = ShaderVertexInputInfo{};
         vertexStorage.logicalStage = _toIrShaderStage(stage);
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;

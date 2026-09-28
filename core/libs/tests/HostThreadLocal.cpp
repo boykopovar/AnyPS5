@@ -1,4 +1,6 @@
 #include <cstdlib>
+#include <array>
+#include <future>
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
@@ -21,4 +23,14 @@ int main() {
         if (DestroyedHostThreadLocals() != 128 + (i + 1) * 2) std::abort();
     }
 #endif
+    for (unsigned i = 0; i < 16; ++i) {
+        const auto before = DestroyedHostThreadLocals();
+        std::array<std::future<void>, 4> workers;
+        for (auto& worker : workers) {
+            worker = std::async(std::launch::async, [] { TouchHostThreadLocal(); TouchHostThreadLocal(); });
+        }
+        for (auto& worker : workers) worker.get();
+        if (DestroyedHostThreadLocals() != before + 8) std::abort();
+    }
+
 }

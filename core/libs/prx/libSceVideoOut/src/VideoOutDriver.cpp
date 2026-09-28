@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include <exception>
 #include <thread>
 #include <limits>
 #include <stdexcept>
@@ -9,6 +10,7 @@
 #include "SDL.h"
 #include "SDL_vulkan.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
+#include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -465,6 +467,7 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
     std::shared_ptr<FlipRequest> current;
     try {
         PadInput padInput;
+        MouseInput mouseInput;
         while (!token.stop_requested()) {
             {
                 std::unique_lock lock(flipQueue->mutex);
@@ -480,6 +483,7 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
             while (SDL_PollEvent(&event)) {
                 require(event.type != SDL_QUIT, "window was closed");
                 padInput.HandleEvent(event, window);
+                if (window.Handle() != nullptr) mouseInput.HandleEvent(event, SDL_GetWindowID(window.Handle()));
             }
             padInput.Update();
             if (current) {
@@ -508,31 +512,14 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
             auto error = std::make_exception_ptr(std::runtime_error("VideoOut: pending flip cancelled during shutdown"));
             for (auto& request : cancelled) request->Fail(error);
         }
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[videoout] presentation failed: %s\n", error.what());
+        std::fflush(stderr);
+        std::terminate();
     } catch (...) {
-        auto error = std::current_exception();
-        if (!error) std::terminate();
-        // The driver learns first: the worker no longer waits for the presenter, so a title (or test)
-        // that sees the failed flip's counters must already find the failure in the driver.
-        AgcDriverReportFailure_nid_postfix(error);
-        PadReportInputFailure_nid_postfix(error);
-        if (current) current->Fail(error);
-        std::list<std::shared_ptr<FlipRequest>> failed;
-        {
-            std::lock_guard lock(flipQueue->mutex);
-            flipQueue->failure = error;
-            failed.swap(flipQueue->requests);
-        }
-        for (auto& request : failed) request->Fail(error);
-        {
-            std::lock_guard lock(mutex);
-            for (auto& cfg : contexts) {
-                if (!cfg) continue;
-                std::lock_guard cfgLock(cfg->mutex);
-                if (!cfg->failure) cfg->failure = error;
-                cfg->vblankCond.notify_all();
-            }
-        }
-        flipQueue->changed.notify_all();
+        std::fprintf(stderr, "[videoout] presentation failed with a non-standard exception\n");
+        std::fflush(stderr);
+        std::terminate();
     }
 }
 
@@ -549,7 +536,13 @@ void VideoOutDriver::vblankLoop(std::stop_token token) {
             }
             vblankEnd();
         }
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[videoout] vblank failed: %s\n", error.what());
+        std::fflush(stderr);
+        std::terminate();
     } catch (...) {
-        AgcDriverReportFailure_nid_postfix(std::current_exception());
+        std::fprintf(stderr, "[videoout] vblank failed with a non-standard exception\n");
+        std::fflush(stderr);
+        std::terminate();
     }
 }

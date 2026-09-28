@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILER_CACHEKEY_HPP
 
 #include "Recompiler.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
@@ -37,7 +38,8 @@ public:
     // key of a source memo whose owner fixes the code (a registered shader at an offset) and the
     // device itself, and which is bypassed while the probe is active.
     static std::uint64_t ContextHash(const RecompileRequest& request) {
-        thread_local std::vector<std::uint64_t> key;
+        struct ContextKeyStorage {};
+        auto& key = HostThreadLocal<std::vector<std::uint64_t>, ContextKeyStorage>();
         key.clear();
         append(key, request.shader.stage);
         append(key, request.context.waveSize);
