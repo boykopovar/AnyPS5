@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/MemoryAccessScope.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <mutex>
@@ -575,6 +576,7 @@ void CheckRange(const void* pointer, std::size_t bytes, std::size_t alignment, b
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(address != 0 && address % alignment == 0, "null or misaligned address");
     require(bytes <= std::numeric_limits<std::uintptr_t>::max() - address, "address range overflow");
+    MemoryAccessScope::Resolve(address, bytes, writable);
     const auto reason = verify(address, bytes, writable);
     if (!reason.empty()) {
         // Debug aid: APS5_TRACE_UNREADABLE names the code that checked an inaccessible range.
