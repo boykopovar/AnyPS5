@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -39,6 +40,13 @@ extern "C" {
 // FreeBSD's guest sigset_t is four 32-bit words, covering signals 1..128.
 struct GuestSignalSet { std::uint32_t bits[4]; };
 static_assert(sizeof(GuestSignalSet) == 16);
+struct GuestSignalAction {
+    GuestHandler handler;
+    int flags;
+    GuestSignalSet mask;
+};
+static_assert(offsetof(GuestSignalAction, flags) == 8 &&
+              offsetof(GuestSignalAction, mask) == 12 && sizeof(GuestSignalAction) == 32);
 static thread_local GuestSignalSet guestThreadMask{};
 
 int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* oldSet) {
@@ -129,6 +137,32 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
         return invalid;
     }
     return previous;
+}
+int APS5_VABI sigaction_nid_postfix(int guest, const GuestSignalAction* action,
+                                   GuestSignalAction* previous) {
+    if (!NativeSignal(guest)) { *__error_nid_postfix() = 22; return -1; }
+    if (action) {
+        // The host signal bridge currently supports only the basic handler
+        // and ignore/default dispositions; it cannot honor sa_flags or mask.
+        if (action->flags != 0) { *__error_nid_postfix() = 45; return -1; }
+        for (const auto word : action->mask.bits)
+            if (word != 0) { *__error_nid_postfix() = 45; return -1; }
+        if (reinterpret_cast<std::uintptr_t>(action->handler) == static_cast<std::uintptr_t>(-1)) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+    }
+    GuestSignalAction old{};
+    if (action) {
+        const auto prior = signal_nid_postfix(guest, action->handler);
+        if (reinterpret_cast<std::uintptr_t>(prior) == static_cast<std::uintptr_t>(-1)) return -1;
+        old.handler = prior;
+    } else {
+        std::lock_guard lock(registration);
+        old.handler = handlers[guest].load();
+    }
+    if (previous) *previous = old;
+    return 0;
 }
 int APS5_VABI raise_nid_postfix(int guest) {
     const int native = NativeSignal(guest);

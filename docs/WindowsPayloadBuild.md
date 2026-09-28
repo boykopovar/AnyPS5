@@ -148,6 +148,10 @@ if ($LASTEXITCODE -ne 0) { throw "Relinker failed: $LASTEXITCODE" }
 syscall instructions. Those instructions are not yet routed to the guest
 kernel model. A later startup error or crash must be diagnosed separately;
 this command does not make the payload safe to run past that point.
+The `sigaction` export currently handles queries and simple dispositions for
+the signals supported by the host bridge. It returns a guest error for
+nonzero flags or signal masks, which cannot yet be honored; resolving this
+import is not evidence of complete signal compatibility.
 
 If `LoadLibraryExA` still fails on `libSceVideoOut.sprx` with Windows error 127,
 capture the complete import tables and the files actually deployed. The error
