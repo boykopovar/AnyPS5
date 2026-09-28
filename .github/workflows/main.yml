@@ -48,6 +48,11 @@ jobs:
         run: |
           cmake --build build --target relinker --parallel 4
 
+      - name: Test SDK payload startup audit
+        shell: pwsh
+        run: |
+          python -m unittest discover -s scripts/tests -p test_audit_payload_startup.py
+
       - name: List built binaries (for debug)
         shell: pwsh
         run: |
