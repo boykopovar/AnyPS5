@@ -530,6 +530,7 @@ bool IsImageOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::ImageGather4CO:
         case RdnaOpcode::ImageGather4CLzO:
         case RdnaOpcode::ImageGather4h:
+        case RdnaOpcode::ImageBvhIntersectRay:
             return true;
         default:
             return false;

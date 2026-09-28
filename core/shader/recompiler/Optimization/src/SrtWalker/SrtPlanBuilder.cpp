@@ -70,7 +70,12 @@ void PlanBuilder::Collect(IrValue* raw, std::uint32_t usePc) {
         return;
     }
     IrValue* offset = inst->Argument(1)->Resolve();
-    if (!offset->HasImmediate() || offset->Type() != IrType::U32) {
+    // An immediate offset alone is not enough: a Phi that merges a constant on one path with a
+    // per-invocation value on another still reports HasImmediate() for the constant path, but folding
+    // it here would bake a wrong, divergent SRT slot into the plan. Require the runtime validator to
+    // prove the value is actually invariant before treating it as foldable.
+    const auto foldable = offset->HasImmediate() && offset->Type() == IrType::U32 && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst);
+    if (!foldable) {
         if (std::find(_program.Metadata().dynamicReads.begin(), _program.Metadata().dynamicReads.end(), value) == _program.Metadata().dynamicReads.end()) {
             _program.Metadata().dynamicReads.push_back(value);
         }

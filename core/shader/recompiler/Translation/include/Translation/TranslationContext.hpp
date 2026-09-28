@@ -91,6 +91,7 @@ private:
     bool imageStore(const RdnaInstruction& inst);
     bool imageSample(const RdnaInstruction& inst);
     bool imageGather(const RdnaInstruction& inst);
+    bool imageBvhIntersectRay(const RdnaInstruction& inst);
     IrValue* loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory, std::uint32_t pc);
     IrValue* extractSharedU32(IrValue* value, std::uint32_t width, std::uint32_t index);
     void writeSharedU32(std::uint32_t width, IrU32 address, const std::array<IrValue*, 4>& values, const MemoryInfo& memory, std::uint32_t pc);

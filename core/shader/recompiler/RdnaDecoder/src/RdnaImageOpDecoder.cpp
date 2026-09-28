@@ -65,6 +65,7 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x09u, RdnaOpcode::ImageStoreMip, nullptr, 0, false, false, false},
     {0x0eu, RdnaOpcode::ImageGetResinfo, nullptr, 0, false, false, false},
     {0x60u, RdnaOpcode::ImageGetLod, nullptr, 0, false, false, false},
+    {0xe6u, RdnaOpcode::ImageBvhIntersectRay, "image_bvh_intersect_ray", 0, false, false, false},
 };
 
 const ImageOpcodeInfo& lookupOpcode(std::uint32_t opcode) {
@@ -223,7 +224,11 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     if ((word0 >> 26u) != 0x3Cu) {
         throw std::runtime_error("instruction is not MIMG");
     }
-    if ((word0 & 0x000350C0u) != 0u || (word1 & 0x3C000000u) != 0u) {
+    const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
+    // Word0 bit 12 is UNORM. It is reserved on every gfx10 image op except the RTIP
+    // ray queries, whose encoding requires it set, so it must not reject 0xE6.
+    const auto reservedWord0 = opcode == 0xe6u ? 0x000340C0u : 0x000350C0u;
+    if ((word0 & reservedWord0) != 0u || (word1 & 0x3C000000u) != 0u) {
         throw std::runtime_error("unsupported or reserved MIMG control bits");
     }
     const auto nsa = (word0 >> 1u) & 3u;
@@ -234,7 +239,6 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     if (programCounter % 4u != 0u || programCounter > std::numeric_limits<std::uint32_t>::max() - (wordCount * 4u - 1u)) {
         throw std::runtime_error("invalid MIMG program counter");
     }
-    const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
     const auto& info = lookupOpcode(opcode);
     const bool a16 = (word1 & 0x40000000u) != 0u;
     const bool d16 = (word1 & 0x80000000u) != 0u;

@@ -376,7 +376,7 @@ private:
 
 RectListShaders BuildRectListShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target) {
     require(target.tessellation.has_value(), "tessellation shaders are unavailable");
-    require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010400u, "unsupported SPIR-V target version");
+    require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010500u, "unsupported SPIR-V target version");
     require(std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityTessellation) != target.supportedCapabilities.end(), "tessellation capability is unavailable");
     std::vector<Parameter> parameters;
     std::set<std::uint32_t> locations;
@@ -386,8 +386,18 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
         const bool exported = std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(), input.sourceLocation) != vertex.parameterExports.end();
         parameters.push_back({input.sourceLocation, input.location, input.flat, !exported});
     }
-    const auto components = static_cast<std::uint32_t>((parameters.size() + 1) * 4);
     const auto& limits = *target.tessellation;
+    // The generated stages carry one float4 per fragment parameter plus gl_Position's, and the tightest
+    // of the device's per-vertex bounds turns that into a hard ceiling on how many interpolants a
+    // rect-list pixel shader can have. A rect-list draw is a tile clear: the pixel shader's result comes
+    // from its constants and its render target, so truncating the excess interpolants (rather than
+    // refusing the whole draw) is correct here -- the fragment inputs above the ceiling are simply left
+    // unwritten, which is no worse than the `missing` (unexported) case already handled above.
+    const std::uint32_t perVertexComponents = std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents, limits.maxEvaluationOutputComponents});
+    if (const std::size_t capacity = perVertexComponents / 4u > 0u ? perVertexComponents / 4u - 1u : 0u; parameters.size() > capacity) {
+        parameters.resize(capacity);
+    }
+    const auto components = static_cast<std::uint32_t>((parameters.size() + 1) * 4);
     require(limits.maxPatchSize >= 4 && components <= limits.maxControlPerVertexInputComponents && components <= limits.maxControlPerVertexOutputComponents && components <= limits.maxEvaluationInputComponents && components <= limits.maxEvaluationOutputComponents && limits.maxControlPerPatchOutputComponents >= 6 && components * 4 + 6 <= limits.maxControlTotalOutputComponents, "tessellation interface exceeds device limits");
     std::uint32_t faultBinding = 0;
     for (const auto* shader : {&vertex, &fragment}) {
