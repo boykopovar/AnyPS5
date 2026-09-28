@@ -144,36 +144,30 @@ void testSubmissions() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
-void testWorkerFailure() {
-    // Since 8a69fef the worker skips a dispatch or draw it cannot translate, so a failure needs a
-    // packet outside `tolerate`. A WRITE_DATA larger than a deferred label (32 bytes) is executed
-    // on the worker by Pm4::Execute; with no device (nothing here dispatches or draws) it stores
-    // through GuestMemory::Write, whose range check rejects the unmapped guest address 0x1000.
+// Since 0d29a0a a GPU worker failure terminates the process instead of being reported to later
+// calls, so this runs as its own ctest (agc_driver_worker_failure) that expects the worker's
+// message. Since 8a69fef the worker skips a dispatch or draw it cannot translate, so the failure
+// needs a packet outside `tolerate`: a WRITE_DATA larger than a deferred label (32 bytes) is
+// executed on the worker by Pm4::Execute; with no device (nothing here dispatches or draws) it
+// stores through GuestMemory::Write, whose range check rejects the unmapped guest address 0x1000.
+[[noreturn]] void testWorkerFailure() {
     std::array<std::uint32_t, 13> words{0xc00b3700, 0x100, 0x1000, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitAcb(0x21, &packet) == 0, "submission was not accepted");
-    std::array<std::string, 4> messages;
-    std::vector<std::thread> waiters;
-    for (auto& message : messages) {
-        waiters.emplace_back([&message] { message = expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }); });
-    }
-    for (auto& waiter : waiters) waiter.join();
-    for (const auto& message : messages) check(message.find("guest memory") != std::string::npos, "worker failure was lost");
-    check(expectFailure([&] { sceAgcDriverSubmitDcb(&packet); }) == messages[0], "subsequent DCB lost worker failure");
-    check(expectFailure([&] { sceAgcDriverAgrSubmitDcb(&packet); }) == messages[0], "subsequent AGR lost worker failure");
-    check(expectFailure([&] { sceAgcDriverSubmitAcb(0x20, &packet); }) == messages[0], "subsequent ACB lost worker failure");
+    AgcDriverWaitIdle_nid_postfix();
+    throw std::runtime_error("worker failure did not terminate the process");
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "failure") testWorkerFailure();
         testEvents();
         testValidation();
         testClearState();
         testSubmissions();
-        testWorkerFailure();
-        check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("guest memory") != std::string::npos, "shutdown lost worker failure");
+        LibcRunShutdown_nid_postfix();
         std::puts("AGC driver submit tests passed");
         return 0;
     } catch (const std::exception& error) {

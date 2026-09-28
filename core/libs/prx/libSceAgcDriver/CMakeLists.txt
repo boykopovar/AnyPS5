@@ -291,6 +291,20 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    # A GPU worker failure terminates the process, so these expect the worker's message and an
+    # unsuccessful exit (see tests/ExpectTermination.cmake).
+    add_test(NAME agc_driver_worker_failure COMMAND ${CMAKE_COMMAND}
+        -DTEST_EXECUTABLE=$<TARGET_FILE:agc_driver_tests> -DTEST_ARGUMENT=failure
+        "-DEXPECTED_OUTPUT=\\[gpu\\] worker failed: AGC driver: guest memory is not readable"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ExpectTermination.cmake)
+    add_test(NAME agc_driver_flip_failure COMMAND ${CMAKE_COMMAND}
+        -DTEST_EXECUTABLE=$<TARGET_FILE:agc_driver_flip_tests> -DTEST_ARGUMENT=failure
+        "-DEXPECTED_OUTPUT=\\[gpu\\] worker failed: intentional flip failure"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ExpectTermination.cmake)
+    if(WIN32)
+        set_tests_properties(agc_driver_worker_failure agc_driver_flip_failure PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 option(AGC_BUILD_VISUAL_TEST "Enable the standalone AGC SPIR-V visual test" OFF)

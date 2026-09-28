@@ -148,23 +148,15 @@ void testFlipAndBoundary() {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, replacement);
 }
 
-void testFailure() {
+// Since 0d29a0a a GPU worker failure terminates the process instead of being reported to later
+// calls, so this runs as its own ctest (agc_driver_flip_failure) that expects the worker's message.
+[[noreturn]] void testFailure() {
     auto output = std::make_shared<Output>();
     output->state->fail = true;
     AgcDriverRegisterVideoOutput_nid_postfix(7, output);
     submitFlip();
-    // A suspend point reports only a failure already recorded (it no longer waits, see above), so
-    // the waiters learn of the asynchronous one through WaitIdle.
-    std::array<std::string, 4> messages;
-    std::vector<std::thread> waiters;
-    for (auto& message : messages) waiters.emplace_back([&message] { message = expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }); });
-    for (auto& waiter : waiters) waiter.join();
-    for (auto& message : messages) check(message == "intentional flip failure", "asynchronous failure was lost");
-    check(expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }) == messages[0], "idle lost flip failure");
-    check(expectFailure([] { AgcDriverSuspendPoint_nid_postfix(); }) == messages[0], "suspend lost flip failure");
-    check(expectFailure([] { submitFlip(); }) == messages[0], "submit lost flip failure");
-    check(output->state->ready == 0 && output->state->failed == 1, "failed flip was completed successfully");
-    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+    AgcDriverWaitIdle_nid_postfix();
+    throw std::runtime_error("flip failure did not terminate the process");
 }
 
 void testReset(bool compute) {
@@ -185,10 +177,15 @@ void testReset(bool compute) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 2) testReset(std::string(argv[1]) == "compute");
-        else { testFlipAndBoundary(); testFailure(); }
-        const auto shutdown = expectFailure([] { LibcRunShutdown_nid_postfix(); });
-        check(shutdown.find(argc == 2 ? (std::string(argv[1]) == "compute" ? "registered" : "required shader register") : "intentional flip failure") != std::string::npos, "shutdown lost worker failure");
+        if (argc == 2 && std::string(argv[1]) == "failure") testFailure();
+        if (argc == 2) {
+            testReset(std::string(argv[1]) == "compute");
+            const auto shutdown = expectFailure([] { LibcRunShutdown_nid_postfix(); });
+            check(shutdown.find(std::string(argv[1]) == "compute" ? "registered" : "required shader register") != std::string::npos, "shutdown lost worker failure");
+        } else {
+            testFlipAndBoundary();
+            LibcRunShutdown_nid_postfix();
+        }
         std::puts("AGC flip and suspend tests passed");
         return 0;
     } catch (const std::exception& error) {
