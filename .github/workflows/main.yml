@@ -93,6 +93,14 @@ jobs:
           ctest --test-dir build -R '^guest_allocated_formatting$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Guest allocated formatting test failed' }
 
+      - name: Test guest collation
+        shell: pwsh
+        run: |
+          cmake --build build --target guest_collation_tests --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Guest collation build failed' }
+          ctest --test-dir build -R '^guest_collation$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Guest collation test failed' }
+
       - name: Verify patched libc wide conversion exports
         shell: pwsh
         run: |
@@ -104,6 +112,9 @@ jobs:
             if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc conversion export: $nid" }
           }
           if (-not ($exports | Select-String -SimpleMatch 'qjBlw2cVMAM')) { throw 'Missing patched vasprintf export' }
+          foreach ($nid in @('gjbmYpP-XJQ', 'zogPrkd46DY', 'fV2xHER+bKE', 'VuMMb5CfpEw')) {
+            if (-not ($exports | Select-String -SimpleMatch $nid)) { throw "Missing patched libc collation export: $nid" }
+          }
 
       - name: Verify patched kernel exports
         shell: pwsh

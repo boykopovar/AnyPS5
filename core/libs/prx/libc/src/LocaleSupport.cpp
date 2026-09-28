@@ -97,6 +97,38 @@ char* APS5_VABI setlocale_nid_postfix(int category, const char* locale) {
     return classicName;
 }
 
+// The classic locale collates by code-unit value; transformed keys can be
+// compared with strcmp / guest-width wcscmp in exactly the same order.
+int APS5_VABI strcoll_nid_postfix(const char* left, const char* right) {
+    return std::strcmp(left, right);
+}
+
+std::size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source,
+                                          std::size_t capacity) {
+    const auto length = std::strlen(source);
+    if (capacity != 0) {
+        const auto copied = length < capacity ? length + 1 : capacity;
+        std::memcpy(destination, source, copied);
+    }
+    return length;
+}
+
+int APS5_VABI wcscoll_nid_postfix(const std::uint16_t* left, const std::uint16_t* right) {
+    while (*left != 0 && *left == *right) { ++left; ++right; }
+    return *left < *right ? -1 : *left > *right ? 1 : 0;
+}
+
+std::size_t APS5_VABI wcsxfrm_nid_postfix(std::uint16_t* destination,
+                                           const std::uint16_t* source, std::size_t capacity) {
+    std::size_t length = 0;
+    while (source[length] != 0) ++length;
+    if (capacity != 0) {
+        const auto copied = length < capacity ? length + 1 : capacity;
+        std::memcpy(destination, source, copied * sizeof(*source));
+    }
+    return length;
+}
+
 // The guest SDK uses 16-bit wchar_t. Only the classic C locale is modeled;
 // its multibyte representation is single-byte ASCII, not the host CRT locale.
 std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source,
