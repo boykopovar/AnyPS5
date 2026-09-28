@@ -61,6 +61,14 @@ jobs:
           ctest --test-dir build -R '^guest_system_configuration$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Guest system configuration test failed' }
 
+      - name: Test guest condition variable
+        shell: pwsh
+        run: |
+          cmake --build build --target guest_condition_variable_tests --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Guest condition variable build failed' }
+          ctest --test-dir build -R '^guest_condition_variable$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Guest condition variable test failed' }
+
       - name: List built binaries (for debug)
         shell: pwsh
         run: |
