@@ -5,6 +5,9 @@
 
 namespace AgcDriver::Graphics {
 
+// APS5_LOOP_GUARD: whether a dispatch has reported a loop that ran past the guard.
+bool LoopGuardTripped();
+
 class BdaResources {
 public:
     explicit BdaResources(const Context& context);

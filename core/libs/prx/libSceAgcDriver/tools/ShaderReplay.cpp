@@ -78,6 +78,16 @@ bool Replay(const char* path) {
     try {
         const auto result = ShaderRecompiler::Recompile(request.request);
         std::printf("  recompiled: %zu SPIR-V words\n", result.spirv.size());
+        if (g_memory) {
+            for (const auto& binding : result.bindings) {
+                if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+                for (std::size_t i = 0; i + 4 <= binding.guestDescriptor.size(); i += 4) {
+                    const auto* v = binding.guestDescriptor.data() + i;
+                    const bool written = i / 4 >= binding.bufferWritten.size() || binding.bufferWritten[i / 4];
+                    std::printf("  buffer %zu: V# %08x %08x %08x %08x%s\n", i / 4, v[0], v[1], v[2], v[3], written ? " written" : "");
+                }
+            }
+        }
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         if (g_disassemble) {
             spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_2);

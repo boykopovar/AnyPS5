@@ -2309,6 +2309,54 @@ bool TraceDispatchIo() {
     return traceIo;
 }
 
+// Debug aid: APS5_WATCH_MEMORY=<hex address>:<hex bytes> (with APS5_SYNC_DISPATCH=1) keeps the last
+// 64 contents of the range, each with the dispatch that left it, and writes them to
+// watch_<n>_<program>.bin when the loop guard first trips: the dispatch that corrupted a structure a
+// looping shader walks is the one whose snapshot first shows the damage.
+void WatchMemory(std::uint64_t programAddress) {
+    static const std::pair<std::uint64_t, std::uint64_t> range = [] {
+        const char* text = std::getenv("APS5_WATCH_MEMORY");
+        if (text == nullptr) return std::pair<std::uint64_t, std::uint64_t>{0, 0};
+        char* end = nullptr;
+        const auto address = std::strtoull(text, &end, 16);
+        const auto bytes = end != nullptr && *end == ':' ? std::strtoull(end + 1, nullptr, 16) : 0ull;
+        if (address == 0 || bytes == 0) throw std::runtime_error("APS5_WATCH_MEMORY takes <hex address>:<hex bytes>");
+        if (!SyncEachDispatch()) throw std::runtime_error("APS5_WATCH_MEMORY needs APS5_SYNC_DISPATCH=1");
+        return std::pair<std::uint64_t, std::uint64_t>{address, bytes};
+    }();
+    if (range.second == 0) return;
+    static std::mutex mutex;
+    static std::deque<std::pair<std::uint64_t, std::vector<std::uint8_t>>> history;
+    static bool written = false;
+    std::lock_guard lock(mutex);
+    if (written) return;
+    // The heap base differs between runs above bit 36: the first of those bases the range is
+    // mapped at, once it is.
+    static std::uint64_t address = 0;
+    if (address == 0) {
+        for (std::uint64_t high = 0; high < 16 && address == 0; ++high) {
+            const auto candidate = (range.first & 0xfffffffffull) | (high << 36u);
+            if (GuestMemory::Accessible(reinterpret_cast<const void*>(candidate), static_cast<std::size_t>(range.second))) address = candidate;
+        }
+        if (address == 0) return;
+        std::fprintf(stderr, "[watch] watching 0x%llx+0x%llx\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(range.second));
+    }
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(address);
+    if (!GuestMemory::Accessible(bytes, static_cast<std::size_t>(range.second))) return;
+    if (history.empty() || std::memcmp(history.back().second.data(), bytes, static_cast<std::size_t>(range.second)) != 0) {
+        history.emplace_back(programAddress, std::vector<std::uint8_t>(bytes, bytes + range.second));
+        if (history.size() > 64) history.pop_front();
+    }
+    if (!Graphics::LoopGuardTripped()) return;
+    written = true;
+    for (std::size_t i = 0; i < history.size(); ++i) {
+        char name[64];
+        std::snprintf(name, sizeof(name), "watch_%02zu_%llx.bin", i, static_cast<unsigned long long>(history[i].first));
+        std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(history[i].second.data()), static_cast<std::streamsize>(history[i].second.size()));
+    }
+    std::fprintf(stderr, "[watch] loop guard tripped: %zu contents of 0x%llx+0x%llx written (watch_*.bin, oldest first)\n", history.size(), static_cast<unsigned long long>(address), static_cast<unsigned long long>(range.second));
+}
+
 // The [dispatch] phases for indirect dispatches alone, every 10 s on an [indirect] line: what the
 // 'indirect' GpuMutex hold ([lock] line) spends its time on inside the device call (the label
 // record before it is timed in the driver, [labels] line), with the longest hold seen and the
@@ -3178,6 +3226,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         Graphics::CountLeaseOutcome(false, recorder.Submissions() + 1);
     }
     if (TraceDispatchIo()) std::fprintf(stderr, "[dispatch-io] %s:%s\n", groupsText, resources->Describe().c_str());
+    WatchMemory(programAddress);
     // The recipe for the caller's dispatch-cache variant (design_cpu_final M4, rule R3): only an
     // object the resource cache serves under this content key (reusable: no lease, no copied
     // writes, every direct region import- or mirror-served), so a hit's proof is the template's
@@ -3314,6 +3363,7 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
         timer.phase(PhaseSync);
     }
     if (TraceDispatchIo()) std::fprintf(stderr, "[dispatch-io] %s:%s\n", groupsText, hit->resources->Describe().c_str());
+    WatchMemory(programAddress);
     timer.finish(lookupsBefore, groupsText, indirect);
     if (profile) reportRecipes();
     return RecipeOutcome::Recorded;

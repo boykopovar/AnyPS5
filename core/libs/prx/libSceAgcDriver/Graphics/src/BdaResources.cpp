@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
@@ -226,6 +227,14 @@ VkDescriptorBufferInfo BdaResources::Fault() const {
     return {fault->Handle(), 0, ShaderRecompiler::BdaAbi::FaultBufferBytes};
 }
 
+namespace {
+std::atomic<bool> loopGuardTripped{false};
+}
+
+bool LoopGuardTripped() {
+    return loopGuardTripped.load(std::memory_order_relaxed);
+}
+
 void BdaResources::CheckFault() const {
     markWrittenPages();
     ShaderRecompiler::BdaAbi::Fault report{};
@@ -238,7 +247,8 @@ void BdaResources::CheckFault() const {
     Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::LoopLimit) {
         // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
-        std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x ran past %u evaluations\n", report.instruction, report.bytes);
+        loopGuardTripped.store(true, std::memory_order_relaxed);
+        std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
         std::memset(fault->Bytes().data(), 0, fault->Bytes().size());
         return;
     }
