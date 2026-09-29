@@ -48,6 +48,8 @@ struct ImageSampleLayout {
     std::uint32_t bias = NoImageComponent;
     std::uint32_t coord = 0;
     std::uint32_t lod = NoImageComponent;
+    // The _cl minimum level, after the coordinates.
+    std::uint32_t clamp = NoImageComponent;
     std::uint32_t gradX = NoImageComponent;
     std::uint32_t gradY = NoImageComponent;
 };

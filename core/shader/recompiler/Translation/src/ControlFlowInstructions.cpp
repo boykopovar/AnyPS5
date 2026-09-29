@@ -77,7 +77,8 @@ void TranslationContext::addU32(const RdnaInstruction& inst, bool vector, bool u
         ir.SetScc(carryOut.Value());
         return;
     }
-    const IrU1 carryIn = vector ? IrU1(ir.GetVcc()) : IrU1(ir.GetScc());
+    // A vector carry-in is the mask the third source names: VCC for VOP2, any SGPR pair for VOP3.
+    const IrU1 carryIn = !vector ? IrU1(ir.GetScc()) : inst.sourceCount >= 3u ? readMask(sourceAt(inst, 2u)) : IrU1(ir.GetVcc());
     const IrU32 carryInU32(ir.Select(carryIn.Value(), ir.Constant(1u), ir.Constant(0u)));
     IrValue& secondAdd = ir.Emit(IrOpcode::IAddCarry32, IrType::U32x2, {&sum.Value(), &carryInU32.Value()});
     const IrU32 result(ir.Emit(IrOpcode::CompositeExtractU32x2, IrType::U32, {&secondAdd, &ir.Constant(0u)}));
@@ -111,7 +112,7 @@ void TranslationContext::subbU32(const RdnaInstruction& inst, bool vector, bool 
     const IrU32 second = readU32(sourceAt(inst, 1u));
     const IrU32& lhs = reverse ? second : first;
     const IrU32& rhs = reverse ? first : second;
-    const IrU1 borrowIn = vector ? IrU1(ir.GetVcc()) : IrU1(ir.GetScc());
+    const IrU1 borrowIn = !vector ? IrU1(ir.GetScc()) : inst.sourceCount >= 3u ? readMask(sourceAt(inst, 2u)) : IrU1(ir.GetVcc());
     const IrU32 borrowInU32(ir.Select(borrowIn.Value(), ir.Constant(1u), ir.Constant(0u)));
     const IrU32 partial(ir.ISub(lhs.Value(), rhs.Value()));
     const IrU1 firstBorrow(ir.ULessThan(lhs.Value(), rhs.Value()));

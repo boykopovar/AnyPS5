@@ -1,5 +1,6 @@
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include <bit>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 
@@ -82,9 +83,11 @@ void validateFlags(std::uint32_t flags) {
     if ((flags & ~known) != 0u) {
         throw std::runtime_error("unknown image address flags");
     }
-    if ((flags & (RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagCd | RdnaImageSampleFlagAdjust)) != 0u) {
-        throw std::runtime_error("unsupported image clamp, coarse derivative or adjustment address layout");
+    if ((flags & RdnaImageSampleFlagCd) != 0u) {
+        throw std::runtime_error("unsupported image coarse derivative (_cd) address layout");
     }
+    // The _a sample aliases (OPM set) keep the plain address layout: the adjustment only touches reserved
+    // bits of the sampler's dword 3, which the resource tracker canonicalizes (as in Kyty).
     const auto lodModes = flags & (RdnaImageSampleFlagLod | RdnaImageSampleFlagBias | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLevelZero);
     if (std::popcount(lodModes) > 1) {
         throw std::runtime_error("conflicting image LOD modes");
@@ -225,11 +228,15 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
         throw std::runtime_error("instruction is not MIMG");
     }
     const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
-    // Word0 bit 12 is UNORM. It is reserved on every gfx10 image op except the RTIP
-    // ray queries, whose encoding requires it set, so it must not reject 0xE6.
-    const auto reservedWord0 = opcode == 0xe6u ? 0x000340C0u : 0x000350C0u;
+    const auto& info = lookupOpcode(opcode);
+    // Word0 bit 12 is UNORM, unnormalized addressing, which only a sampler reads: loads, stores and
+    // atomics address texels by integer anyway (the ISA wants it set on stores and atomics, and the
+    // RTIP ray queries require it). On a sample or gather it is not implemented.
+    const auto reservedWord0 = info.sample || info.gather ? 0x000350C0u : 0x000340C0u;
     if ((word0 & reservedWord0) != 0u || (word1 & 0x3C000000u) != 0u) {
-        throw std::runtime_error("unsupported or reserved MIMG control bits");
+        char message[96];
+        std::snprintf(message, sizeof(message), "unsupported or reserved MIMG control bits (words %08x %08x)", word0, word1);
+        throw std::runtime_error(message);
     }
     const auto nsa = (word0 >> 1u) & 3u;
     const auto wordCount = 2u + nsa;
@@ -239,7 +246,6 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     if (programCounter % 4u != 0u || programCounter > std::numeric_limits<std::uint32_t>::max() - (wordCount * 4u - 1u)) {
         throw std::runtime_error("invalid MIMG program counter");
     }
-    const auto& info = lookupOpcode(opcode);
     const bool a16 = (word1 & 0x40000000u) != 0u;
     const bool d16 = (word1 & 0x80000000u) != 0u;
     const auto flags = info.flags | (a16 ? RdnaImageSampleFlagA16 : 0u);
@@ -261,7 +267,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
         ++components;
     }
     if (info.sample || info.gather) {
-        components += std::popcount(info.flags & (RdnaImageSampleFlagOffset | RdnaImageSampleFlagCompare | RdnaImageSampleFlagBias | RdnaImageSampleFlagLod));
+        components += std::popcount(info.flags & (RdnaImageSampleFlagOffset | RdnaImageSampleFlagCompare | RdnaImageSampleFlagBias | RdnaImageSampleFlagLod | RdnaImageSampleFlagLodClamp));
         if ((flags & RdnaImageSampleFlagDerivative) != 0u) {
             components += gradientCount(dimension) * 2u;
         }
