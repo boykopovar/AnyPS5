@@ -1039,6 +1039,26 @@ void EmitReadConstBuffer(SpirvValueEmitContext& ctx, const IrValue& inst) {
     }
     auto& state = ctx.state;
     const auto address = Binary(state, spv::OpIAdd, TypeU32(state), ctx.Arg(inst, 1), ConstantU32(state, mem.offset));
+    if (mem.gpuDescriptor) {
+        // Through a GPU-selected V# (MemoryInfo::gpuDescriptor): the dword at the base plus the
+        // dword-aligned offset, zero past the buffer's STRIDE * NUM_RECORDS bytes (NUM_RECORDS for
+        // stride 0).
+        const IrValue* handle = inst.Argument(0)->Resolve();
+        if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) {
+            ctx.Fail(inst, "has no GPU-selected V#");
+        }
+        const auto u32 = TypeU32(state);
+        const auto word1 = ctx.Arg(*handle, 1);
+        const auto records = ctx.Arg(*handle, 2);
+        const auto stride = EmitBitFieldUExtract(state, word1, ConstantU32(state, 16u), ConstantU32(state, 14u));
+        const auto size = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), stride, ConstantU32(state, 0u)), records, Binary(state, spv::OpIMul, u32, stride, records));
+        const auto byte = Binary(state, spv::OpBitwiseAnd, u32, address, ConstantU32(state, ~3u));
+        const auto inBounds = Binary(state, spv::OpULessThan, TypeBool(state), byte, size);
+        const auto base = DeviceAddressFromWords(state, ctx.Arg(*handle, 0), EmitBitFieldUExtract(state, word1, ConstantU32(state, 0u), ConstantU32(state, 16u)));
+        const auto guest = Binary(state, spv::OpIAdd, TypeScalarU64(state), base, Unary(state, spv::OpUConvert, TypeScalarU64(state), byte));
+        ctx.Define(inst, EmitValueOrZeroIfCondition(state, inBounds, [&] { return EmitBdaRead(ctx, inst, guest, 32u); }));
+        return;
+    }
     const auto rawIndex = Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u));
     const auto access = PrepareMemoryResourceAccess(state, mem);
     const auto element = EmitMemoryElementIndex(state, access, rawIndex);
