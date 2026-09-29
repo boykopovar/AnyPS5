@@ -12,8 +12,6 @@
 
 
 namespace {
-// The audio engine is not implemented: every call succeeds without producing sound. Calls are counted per function and
-// only the first few are reported, so a per-grain render loop neither floods the log nor burns a core on formatting.
 int SoftFailNp(const char* func) {
     static std::mutex mutex;
     static std::map<std::string, unsigned long long> calls;
@@ -125,7 +123,7 @@ int APS5_VABI sceNgs2RackLock(uintptr_t rack_handle) {
 int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption* option, Ngs2ContextBufferInfo* buffer_info) {
  (void)rack_id;
  (void)option;
- buffer_info->host_buffer_size = 0x10000;  // silence-only: small fixed requirement
+ buffer_info->host_buffer_size = 0x10000;
  return SoftFailNp(__func__);
  return 0;
 }
@@ -163,21 +161,18 @@ int APS5_VABI sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info
 }
 int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2ContextBufferInfo* buffer_info) {
  (void)option;
- buffer_info->host_buffer_size = 0x10000;  // silence-only: small fixed requirement
+ buffer_info->host_buffer_size = 0x10000;
  return SoftFailNp(__func__);
  return 0;
 }
 int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBufferInfo* buffer_info, uint32_t num_buffer_info) {
     (void)system_handle;
-    // No voices are ever mixed, so the render output is silence; the caller must not read uninitialised buffers.
     if (buffer_info != nullptr) {
         for (uint32_t i = 0; i < num_buffer_info; ++i) {
             if (buffer_info[i].buffer != nullptr && buffer_info[i].buffer_size != 0) std::memset(buffer_info[i].buffer, 0, buffer_info[i].buffer_size);
         }
     }
     SoftFailNp(__func__);
-    // On the console the render call is paced by the audio hardware (one 256-sample grain at 48 kHz); without pacing the
-    // audio thread spins at full speed.
     std::this_thread::sleep_for(std::chrono::microseconds(5333));
     return 0;
 }

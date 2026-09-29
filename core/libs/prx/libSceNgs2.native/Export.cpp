@@ -1,16 +1,3 @@
-// Software NGS2 audio engine.
-//
-// Object model: System -> Racks (0x1000 sampler, 0x2000 submixer, 0x2001 reverb, 0x3000 mastering) -> Voices.
-// The handles handed to the game are the addresses of heap objects that are also recorded in a registry, so every
-// entry point validates the handle before it touches it (a stale/garbage handle returns an error, it never crashes).
-//
-// Rendering: sceNgs2SystemRender mixes every playing sampler voice (PCM I8/U8/I16/I32/F32 LE+BE and PS-ADPCM/VAG)
-// into a stereo float bus and writes it into the first render buffer. Routing follows the voice patches
-// (sampler -> submixer -> mastering, reverb branches are dropped); a voice without a patch goes straight to the output.
-// The layout of the option / param structures follows the Prospero SDK.
-//
-// Everything the game asks for that is not implemented is logged once with a [NGS2] tag, and a compact summary is
-// printed every 5 seconds.
 
 #include <cstdarg>
 #include "prx/libc/include/VerboseLog.hpp"
@@ -55,7 +42,6 @@ constexpr uint32_t kRackCustomSampler = 0x4001;
 constexpr uint32_t kRackCustomSubmixer = 0x4002;
 constexpr uint32_t kRackCustomMastering = 0x4003;
 
-// The custom racks carry the same voice semantics as their built-in twins, only with module chains around them.
 constexpr bool IsSamplerRack(uint32_t id) { return id == kRackSampler || id == kRackCustomSampler; }
 constexpr bool IsSubmixerRack(uint32_t id) { return id == kRackSubmixer || id == kRackCustomSubmixer; }
 constexpr bool IsMasteringRack(uint32_t id) { return id == kRackMastering || id == kRackCustomMastering; }
@@ -66,7 +52,6 @@ constexpr int kMaxMatrices = 8;
 constexpr int kMaxMatrixLevels = 64;
 constexpr uint32_t kRepeatInfinite = 0xFFFFFFFFu;
 
-// waveform types (Ngs2Pcm constants from the reference)
 constexpr uint32_t kWavePcmI8 = 0x10, kWavePcmU8 = 0x11, kWavePcmI16Le = 0x12, kWavePcmI16Be = 0x13;
 constexpr uint32_t kWavePcmI32Le = 0x16, kWavePcmI32Be = 0x17, kWavePcmF32Le = 0x18, kWavePcmF32Be = 0x19;
 
@@ -79,14 +64,13 @@ uint32_t PcmBytes(uint32_t t) {
     }
 }
 
-// ---- guest-visible layouts (Prospero) ------------------------------------------------------------------------------
-struct SysOptionLayout {           // 144 bytes
+struct SysOptionLayout {
     std::size_t size;
     char name[64];
     std::uintptr_t job[4];
     uint32_t flags, max_grain, num_grain, sample_rate, max_voice_channels, reserved[5];
 };
-struct RackOptionLayout {          // 176 bytes
+struct RackOptionLayout {
     std::size_t size;
     char name[64];
     uint32_t flags, max_grain, max_voices, max_input_delay, max_matrices, max_ports, max_voice_channels, max_output_channels, reserved[18];
@@ -96,7 +80,6 @@ static_assert(sizeof(RackOptionLayout) == 176);
 
 struct WaveFormatLayout { uint32_t type, channels, rate, config, frame_offset, frame_margin; };
 
-// ---- runtime model -------------------------------------------------------------------------------------------------
 struct Block {
     const uint8_t* data = nullptr;
     uint64_t size = 0;
@@ -116,16 +99,14 @@ struct Voice {
     bool accepts_blocks = true;
     float pitch = 1.0f;
     VState state = VState::Empty;
-    // cursor on blocks.front()
     bool cursor_init = false;
     double pos = 0;
     uint32_t repeats_done = 0;
     uint32_t cur_frames = 0, cur_start = 0, cur_nch = 1;
-    uint32_t cur_kind = 0;           // 0 = pcm, 1 = adpcm (decoded into adpcm)
+    uint32_t cur_kind = 0;
     uint32_t cur_type = 0;
     double cur_rate = 48000;
     std::vector<int16_t> adpcm;
-    // stats
     uint64_t decoded_samples = 0, decoded_bytes = 0;
     uint64_t last_user = 0;
     const void* last_data = nullptr;
@@ -133,12 +114,10 @@ struct Voice {
     float stop_gain = 1.0f;
     uint32_t starve_grains = 0;
     bool had_blocks_since_play = false;
-    // routing
     struct Port { bool patched = false; std::uintptr_t dest = 0; uint32_t dest_input = 0; float volume = 1.0f; int32_t matrix = -1; } ports[kMaxPorts];
     std::vector<float> matrices[kMaxMatrices];
     bool matrix_set[kMaxMatrices] = {};
     uint64_t last_active_render = 0;
-    // guest voice callback (param id 7): fired once per completed block, outside the engine lock
     std::uintptr_t cb_fn = 0, cb_user = 0;
     uint32_t cb_flags = 0;
 };
@@ -158,10 +137,10 @@ struct System {
 };
 
 struct Diag {
-    std::map<uint32_t, uint64_t> param_count;      // all param ids seen
-    std::map<uint32_t, uint64_t> param_unimpl;     // ids seen but not implemented
-    std::map<uint64_t, uint64_t> fmt_count;        // (type<<32)|(ch<<24?) key -> count
-    std::map<uint32_t, uint64_t> cmd_count;        // RunCommands first words
+    std::map<uint32_t, uint64_t> param_count;
+    std::map<uint32_t, uint64_t> param_unimpl;
+    std::map<uint64_t, uint64_t> fmt_count;
+    std::map<uint32_t, uint64_t> cmd_count;
     std::set<std::string> once;
     uint64_t calls_control = 0, calls_runcmd = 0, calls_getstate = 0, calls_render = 0;
     uint64_t blocks_started = 0, blocks_unsupported = 0, blocks_added = 0, events = 0;
@@ -182,7 +161,7 @@ struct Globals {
     std::vector<PendingCb> pending_cb;
 };
 Globals& G() {
-    static Globals* g = new Globals();   // never destroyed: the render thread may outlive static destruction
+    static Globals* g = new Globals();
     return *g;
 }
 
@@ -197,7 +176,6 @@ void Log(const char* fmt, ...) {
     std::fflush(stderr);
 }
 
-// True the first time `key` is seen. Caller holds the lock.
 bool Once(const std::string& key) { return G().diag.once.insert(key).second; }
 
 std::string Hex(const void* p, size_t n) {
@@ -258,7 +236,6 @@ const char* RackName(uint32_t id) {
     }
 }
 
-// ---- PS-ADPCM ------------------------------------------------------------------------------------------------------
 constexpr int kCoeff0[5] = {0, 60, 115, 98, 122};
 constexpr int kCoeff1[5] = {0, 0, -52, -55, -60};
 
@@ -298,7 +275,6 @@ void DecodeAdpcm(const uint8_t* frames, uint64_t bytes, std::vector<int16_t>& ou
     }
 }
 
-// ---- diagnostics ---------------------------------------------------------------------------------------------------
 void Report(System* focus_unused = nullptr) {
     (void)focus_unused;
     if (!VerboseLog()) return;
@@ -347,7 +323,6 @@ void Report(System* focus_unused = nullptr) {
     d.active_max = 0;
 }
 
-// ---- voice control -------------------------------------------------------------------------------------------------
 void ClearVoice(Voice& v) {
     v.blocks.clear();
     v.cursor_init = false;
@@ -367,7 +342,7 @@ void ApplyEvent(Voice& v, uint32_t ev) {
     ++d.events;
     if (d.events <= 12) Log("[NGS2] event 0x%x on voice %u of rack 0x%x (%s) state=%d", ev, v.index, v.rack->id, RackName(v.rack->id), (int)v.state);
     switch (ev) {
-        case 0x01:  // play
+        case 0x01:
             if (v.state == VState::Empty || v.state == VState::Stopping) {
                 v.state = VState::Playing;
                 v.stop_gain = 1.0f;
@@ -376,11 +351,11 @@ void ApplyEvent(Voice& v, uint32_t ev) {
                 ++d.voices_started;
             }
             break;
-        case 0x02:  // stop (fade)
+        case 0x02:
             if (v.state == VState::Playing || v.state == VState::Paused) v.state = VState::Stopping;
             break;
-        case 0x04:  // stop immediately
-        case 0x08:  // kill
+        case 0x04:
+        case 0x08:
             ClearVoice(v);
             break;
         case 0x10:
@@ -396,10 +371,6 @@ void ApplyEvent(Voice& v, uint32_t ev) {
     }
 }
 
-// Waveform blocks are NOT stored inline in the param: the param carries a pointer to an array of 40-byte
-// Ngs2WaveformBlock records (offset/size/repeats/skip/samples/reserved/user) that live in guest memory, and the
-// block data address is param.data + block.data_offset. Flag bits: 1 = voice keeps accepting blocks,
-// 2 = payload is raw codec bytes appended to the current block, 4 = clear the queue first.
 void HandleSamplerBlocks(Voice& v, const uint8_t* p, uint32_t size) {
     auto& d = G().diag;
     if (size < 32) { if (Once("blocks-short")) Log("[NGS2] waveform-blocks param too short (%u)", size); return; }
@@ -435,7 +406,7 @@ void HandleSamplerBlocks(Voice& v, const uint8_t* p, uint32_t size) {
         blk.skip = Rd<uint32_t>(b + 20);
         blk.num_samples = Rd<uint32_t>(b + 24);
         blk.user = Rd<uint64_t>(b + 32);
-        if (blk.size == 0 && blk.num_samples == 0) continue;   // queue terminator
+        if (blk.size == 0 && blk.num_samples == 0) continue;
         if (only_data) {
             if (Once("blocks-raw")) Log("[NGS2] raw-data waveform block (compressed codec stream append) NOT IMPLEMENTED: size=%llu", (unsigned long long)blk.size);
             ++d.blocks_unsupported;
@@ -464,10 +435,9 @@ void HandleParam(Voice& v, const uint8_t* p, uint32_t size, uint32_t id) {
     if (Once("pid" + std::to_string(id)))
         Log("[NGS2] new voice param id=0x%08x size=%u rack=0x%x(%s) bytes=%s", id, size, v.rack->id, RackName(v.rack->id), Hex(p, std::min<uint32_t>(size, 48)).c_str());
     if ((id >> 15) & 1) {
-        // fall through to unimplemented
     } else if (fam == 0) {
         switch (cid) {
-            case 1:  // matrix levels: matrix_id, num_levels, levels*
+            case 1:
                 if (size >= 24) {
                     const uint32_t mid = Rd<uint32_t>(p + 8), nl = Rd<uint32_t>(p + 12);
                     const float* lv = reinterpret_cast<const float*>(Rd<uint64_t>(p + 16));
@@ -483,21 +453,21 @@ void HandleParam(Voice& v, const uint8_t* p, uint32_t size, uint32_t id) {
                     }
                 }
                 break;
-            case 2:  // port volume
+            case 2:
                 if (size >= 16) {
                     const uint32_t port = Rd<uint32_t>(p + 8);
                     const float lvl = Rd<float>(p + 12);
                     if (port < kMaxPorts && std::isfinite(lvl)) { v.ports[port].volume = lvl; impl = true; }
                 }
                 break;
-            case 3:  // port matrix
+            case 3:
                 if (size >= 16) {
                     const uint32_t port = Rd<uint32_t>(p + 8);
                     if (port < kMaxPorts) { v.ports[port].matrix = Rd<int32_t>(p + 12); impl = true; }
                 }
                 break;
-            case 4: impl = true; break;  // port delay: ignored (no audible effect worth modelling)
-            case 5:  // patch: port, dest_input_id, dest_handle
+            case 4: impl = true; break;
+            case 5:
                 if (size >= 24) {
                     const uint32_t port = Rd<uint32_t>(p + 8);
                     if (port < kMaxPorts) {
@@ -509,10 +479,10 @@ void HandleParam(Voice& v, const uint8_t* p, uint32_t size, uint32_t id) {
                     }
                 }
                 break;
-            case 6:  // event
+            case 6:
                 if (size >= 12) { ApplyEvent(v, Rd<uint32_t>(p + 8)); impl = true; }
                 break;
-            case 7:  // callback {hdr8, fn, userdata, flags}
+            case 7:
                 if (size >= 28) {
                     v.cb_fn = static_cast<std::uintptr_t>(Rd<uint64_t>(p + 8));
                     v.cb_user = static_cast<std::uintptr_t>(Rd<uint64_t>(p + 16));
@@ -525,7 +495,7 @@ void HandleParam(Voice& v, const uint8_t* p, uint32_t size, uint32_t id) {
         }
     } else if (IsSamplerRack(fam) && IsSamplerRack(v.rack->id)) {
         switch (id & 0xFFFF) {
-            case 0:  // setup: format at +8
+            case 0:
                 if (size >= 32) {
                     WaveFormatLayout f;
                     std::memcpy(&f, p + 8, sizeof(f));
@@ -539,11 +509,11 @@ void HandleParam(Voice& v, const uint8_t* p, uint32_t size, uint32_t id) {
                 }
                 break;
             case 1: HandleSamplerBlocks(v, p, size); impl = true; break;
-            case 4:  // exit loop: stop repeating the block that is playing now
+            case 4:
                 for (auto& b : v.blocks) { if (b.repeats != 0) { b.repeats = 0; break; } }
                 impl = true;
                 break;
-            case 5:  // pitch / playback rate, a linear ratio
+            case 5:
                 if (size >= 12) {
                     const float ratio = Rd<float>(p + 8);
                     if (std::isfinite(ratio)) { v.pitch = std::clamp(ratio, 0.0f, 4.0f); impl = true; }
@@ -552,8 +522,6 @@ void HandleParam(Voice& v, const uint8_t* p, uint32_t size, uint32_t id) {
             default: break;
         }
     } else if (fam == 0x4000) {
-        // Custom module control (rack's programmable FX chain). No audible effect is modelled, so the
-        // commands are accepted and ignored -- the module chain for these ids is not modelled.
         if (Once("modctl" + std::to_string(id & 0xFFFF)))
             Log("[NGS2] custom module control id=0x%08x (module 0x%x, ctl %u, no. %u) accepted and ignored (no FX chain)",
                 id, (id >> 8) & 0xFF, (id >> 5) & 7, id & 0x1F);
@@ -578,7 +546,6 @@ void WalkParams(Voice& v, const uint8_t* p, const char* who) {
     }
 }
 
-// ---- rendering -----------------------------------------------------------------------------------------------------
 float PcmSample(const uint8_t* p, uint32_t type) {
     switch (type) {
         case kWavePcmI8: return static_cast<float>(static_cast<int8_t>(*p)) * (1.0f / 128.0f);
@@ -593,7 +560,6 @@ float PcmSample(const uint8_t* p, uint32_t type) {
     }
 }
 
-// Prepare the front block for playback. Returns false when the block had to be dropped.
 bool InitBlock(Voice& v, uint32_t sys_rate) {
     (void)sys_rate;
     auto& d = G().diag;
@@ -616,7 +582,7 @@ bool InitBlock(Voice& v, uint32_t sys_rate) {
     } else {
         const uint8_t* data = b.data;
         uint64_t size = b.size;
-        if (size >= 0x30 && Rd<uint32_t>(data) == 0x70474156u) {  // "VAGp" (stored big-endian on disk: bytes 'V','A','G','p')
+        if (size >= 0x30 && Rd<uint32_t>(data) == 0x70474156u) {
             data += 0x30;
             size -= 0x30;
             size -= size % 16;
@@ -643,13 +609,12 @@ bool InitBlock(Voice& v, uint32_t sys_rate) {
 }
 
 void FoldMatrix(const std::vector<float>& lv, uint32_t nin, float g[2][2]) {
-    // returns g[in][out] for in < 2; out 0/1 = L/R
     std::memset(g, 0, sizeof(float) * 4);
     uint32_t nout = nin ? static_cast<uint32_t>(lv.size()) / nin : 0;
     if (nout == 0 || static_cast<uint32_t>(lv.size()) % nin != 0) nout = std::min<uint32_t>(2, static_cast<uint32_t>(lv.size()));
-    if (lv.size() == 64) nout = 8;   // full 8x8 matrix
+    if (lv.size() == 64) nout = 8;
     if (nout == 0) nout = 2;
-    if (nout == 1 && nin == 2 && lv.size() == 2) {  // a stereo voice given two levels: those are its L and R pan gains
+    if (nout == 1 && nin == 2 && lv.size() == 2) {
         g[0][0] = std::isfinite(lv[0]) ? lv[0] : 0.0f;
         g[1][1] = std::isfinite(lv[1]) ? lv[1] : 0.0f;
         return;
@@ -663,15 +628,12 @@ void FoldMatrix(const std::vector<float>& lv, uint32_t nin, float g[2][2]) {
                 case 0: case 4: case 6: g[i][0] += l; break;
                 case 1: case 5: case 7: g[i][1] += l; break;
                 case 2: g[i][0] += l * 0.7071f; g[i][1] += l * 0.7071f; break;
-                default: break;  // LFE dropped
+                default: break;
             }
         }
     }
 }
 
-// A patch destination names where a voice's port feeds. Real NGS2 lets a title patch to a RACK (the rack's
-// input port), while sceNgs2RackGetVoiceHandle hands out voice handles, so both forms arrive here; resolving
-// only voices silently muted every voice, because the game patches all of them to the mastering rack handle.
 float RouteGain(std::uintptr_t dest, int depth) {
     if (dest == 0 || depth > 4) return 0.0f;
     if (Voice* dv = FindVoice(dest)) {
@@ -685,12 +647,12 @@ float RouteGain(std::uintptr_t dest, int depth) {
                     any = true;
                     sum += p.volume * RouteGain(p.dest, depth + 1);
                 }
-                return any ? sum : 1.0f;  // an unpatched submixer is assumed to feed the output
+                return any ? sum : 1.0f;
             }
-            default: return 0.0f;  // reverb / others: wet path is not modelled
+            default: return 0.0f;
         }
     }
-    if (G().racks.count(dest) != 0) return 1.0f;  // patched straight into a rack: it reaches the render buffers
+    if (G().racks.count(dest) != 0) return 1.0f;
     return 0.0f;
 }
 
@@ -715,7 +677,7 @@ void ComputeGains(const Voice& v, float gain[2][2]) {
     }
     float total = 0;
     for (int i = 0; i < 2; ++i) for (int o = 0; o < 2; ++o) total += std::fabs(gain[i][o]);
-    if (!any || total == 0.0f) {  // no patch seen, or a route we cannot model: feed the output directly rather than mute the title
+    if (!any || total == 0.0f) {
         if (any && Once("route-unmodelled")) Log("[NGS2] voices are patched but every route folded to zero gain; mixing direct to output (dest handles are unresolved)");
         float m[2][2];
         if (v.matrix_set[0]) FoldMatrix(v.matrices[0], nin, m);
@@ -731,7 +693,6 @@ void MixVoice(Voice& v, float* bus, uint32_t frames, uint32_t sys_rate, uint32_t
     float vpeak = 0;
     for (uint32_t f = 0; f < frames; ++f) {
         if (v.blocks.empty()) {
-            // starved: keep "playing" for a grace period (the game refills its queue), then finish
             if (v.state == VState::Stopping || (v.had_blocks_since_play && ++v.starve_grains > 8u * grain_for_timeout) ||
                 (!v.had_blocks_since_play && ++v.starve_grains > 96u * grain_for_timeout)) {
                 ClearVoice(v);
@@ -812,13 +773,12 @@ void WriteOut(uint8_t* dst, uint32_t type, uint32_t ch, uint32_t frames, const f
                 case kWavePcmI8: *o = static_cast<uint8_t>(static_cast<int8_t>(x * 127.0f)); break;
                 case kWavePcmU8: *o = static_cast<uint8_t>(x * 127.0f + 128.0f); break;
                 case kWavePcmI32Le: { int32_t v = static_cast<int32_t>(static_cast<double>(x) * 2147483647.0); std::memcpy(o, &v, 4); break; }
-                default: std::memcpy(o, &x, 4); break;  // F32 LE (also the default for an unset type)
+                default: std::memcpy(o, &x, 4); break;
             }
         }
     }
 }
 
-// ---- misc helpers --------------------------------------------------------------------------------------------------
 uint32_t ClampU32(uint32_t v, uint32_t lo, uint32_t hi, uint32_t def) { return (v >= lo && v <= hi) ? v : def; }
 
 void EnsureVoices(Rack& r, uint32_t n) {
@@ -889,7 +849,6 @@ uint32_t RackBufferSize(uint32_t rack_id, const RackOptionLayout* opt) {
 
 extern "C" {
 
-// ---- waveform / pan / geom helpers --------------------------------------------------------------------------------
 int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_pos, uint32_t num_samples, Ngs2WaveformBlock* block) {
     if (block == nullptr || format == nullptr) return kErrInvalidParam;
     std::memset(block, 0, sizeof(*block));
@@ -898,7 +857,7 @@ int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_
     if (bps != 0) {
         block->data_offset = sample_pos * bps * ch;
         block->data_size = num_samples * bps * ch;
-    } else {  // ADPCM: 28 samples per 16-byte frame
+    } else {
         block->data_offset = sample_pos / 28 * 16;
         block->data_size = (num_samples + 27) / 28 * 16;
         block->num_skip_samples = sample_pos % 28;
@@ -957,7 +916,7 @@ int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2W
         info->audio_frame_size = fsz;
     } else if (data_size >= 0x30 && !std::memcmp(d, "VAGp", 4)) {
         const uint32_t rate = (uint32_t(d[0x10]) << 24) | (uint32_t(d[0x11]) << 16) | (uint32_t(d[0x12]) << 8) | d[0x13];
-        info->format.waveform_type = 0x40;  // VAG (constant unverified; the sampler detects ADPCM by content)
+        info->format.waveform_type = 0x40;
         info->format.num_channels = 1;
         info->format.sample_rate = rate ? rate : 48000;
         info->data_offset = 0x30;
@@ -979,7 +938,6 @@ int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2W
     return kOk;
 }
 
-// Geom: source/listener helper math (documented layouts from the reference).
 struct GVec { float x, y, z; };
 struct GListenerParam { GVec pos, front, up, vel; float sound_speed; uint32_t reserved[2]; };
 struct GListenerWork { float pos[3], right[3], up[3], front[3], vel[3], sound_speed; uint32_t coordinate; };
@@ -1016,7 +974,7 @@ int APS5_VABI sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2Ge
     auto norm = [](GVec v) { float l = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); return l > 1e-6f ? GVec{v.x / l, v.y / l, v.z / l} : GVec{0, 0, 1}; };
     const GVec f = norm(p->front);
     GVec u = norm(p->up);
-    GVec r = {u.y * f.z - u.z * f.y, u.z * f.x - u.x * f.z, u.x * f.y - u.y * f.x};  // up x front
+    GVec r = {u.y * f.z - u.z * f.y, u.z * f.x - u.x * f.z, u.x * f.y - u.y * f.x};
     r = norm(r);
     u = {f.y * r.z - f.z * r.y, f.z * r.x - f.x * r.z, f.x * r.y - f.y * r.x};
     w->pos[0] = p->pos.x; w->pos[1] = p->pos.y; w->pos[2] = p->pos.z;
@@ -1033,7 +991,6 @@ int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2G
     if (listener == nullptr || source == nullptr || out_attrib == nullptr) return kErrInvalidParam;
     const auto* w = reinterpret_cast<const GListenerWork*>(listener);
     const auto* s = reinterpret_cast<const GSourceParam*>(source);
-    // out: float pitch_ratio; float level[64]; ...
     auto* out = reinterpret_cast<float*>(out_attrib);
     std::memset(out_attrib, 0, sizeof(Ngs2GeomAttribute));
     float* level = out + 1;
@@ -1041,23 +998,20 @@ int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2G
     const float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
     const float lx = d[0] * w->right[0] + d[1] * w->right[1] + d[2] * w->right[2];
     const float lz = d[0] * w->front[0] + d[1] * w->front[1] + d[2] * w->front[2];
-    // attenuation (inverse-distance rolloff between reference and max distance)
     float att = 1.0f;
     const float ref = s->ref_dist > 0 ? s->ref_dist : 1.0f;
     if (dist > ref) att = ref / (ref + s->rolloff_factor * (std::min(dist, s->max_dist > 0 ? s->max_dist : dist) - ref));
     const float maxl = s->max_level > 0 ? s->max_level : 1.0f;
     att = std::clamp(att * maxl, s->min_level, std::max(maxl, s->min_level));
-    // constant-power stereo pan from the azimuth
-    float pan = 0.0f;  // -1 left .. +1 right
+    float pan = 0.0f;
     if (dist > 1e-4f) pan = std::clamp(lx / std::sqrt(lx * lx + lz * lz + 1e-12f), -1.0f, 1.0f);
     if (dist <= std::max(s->radius, 1e-4f)) pan = 0.0f;
-    const float ang = (pan + 1.0f) * 0.25f * 3.14159265f;  // 0..pi/2
+    const float ang = (pan + 1.0f) * 0.25f * 3.14159265f;
     const float gl = std::cos(ang) * 1.41421356f * 0.7071f * att * (s->fbw > 0 ? s->fbw : 1.0f);
     const float gr = std::sin(ang) * 1.41421356f * 0.7071f * att * (s->fbw > 0 ? s->fbw : 1.0f);
-    level[0] = gl; level[1] = gr;      // in0 -> L,R
-    level[2] = 0.0f; level[3] = gr;    // in1 -> R (second channel of a stereo source), stride-2 reading
-    level[8] = 0.0f; level[9] = gr;    // same for a stride-8 reading
-    // doppler
+    level[0] = gl; level[1] = gr;
+    level[2] = 0.0f; level[3] = gr;
+    level[8] = 0.0f; level[9] = gr;
     float pitch = 1.0f;
     if (s->doppler > 0 && dist > 1e-4f) {
         const float c = w->sound_speed > 0 ? w->sound_speed : 343.0f;
@@ -1091,7 +1045,6 @@ int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* p
         float* row = out + static_cast<size_t>(p) * ns;
         for (uint32_t i = 0; i < ns; ++i) row[i] = 0;
         const float a = pp[p].angle;
-        // find the two speakers bracketing the angle (angles in radians, wrapped)
         float best0 = 1e9f, best1 = 1e9f;
         int i0 = -1, i1 = -1;
         for (uint32_t i = 0; i < ns; ++i) {
@@ -1104,7 +1057,7 @@ int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* p
         }
         const float lvl = pp[p].fbw > 0 ? pp[p].fbw : 1.0f;
         if (i0 >= 0 && i1 >= 0 && best0 + best1 > 1e-6f) {
-            const float t = best0 / (best0 + best1);  // 0 -> fully speaker0
+            const float t = best0 / (best0 + best1);
             row[i0] = std::cos(t * 1.5707963f) * lvl;
             row[i1] = std::sin(t * 1.5707963f) * lvl;
         } else if (i0 >= 0) row[i0] = lvl;
@@ -1113,7 +1066,6 @@ int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* p
     return kOk;
 }
 
-// ---- system --------------------------------------------------------------------------------------------------------
 int APS5_VABI sceNgs2SystemResetOption(Ngs2SystemOption* option) {
     if (option == nullptr) return kErrInvalidParam;
     auto* o = reinterpret_cast<SysOptionLayout*>(option);
@@ -1136,7 +1088,7 @@ int APS5_VABI sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2Cont
     return CreateSystem(reinterpret_cast<const SysOptionLayout*>(option), handle);
 }
 int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
-    (void)allocator;  // the engine keeps its state on the host heap; the guest allocator is not needed
+    (void)allocator;
     return CreateSystem(reinterpret_cast<const SysOptionLayout*>(option), handle);
 }
 int APS5_VABI sceNgs2SystemDestroy(uintptr_t system_handle, Ngs2ContextBufferInfo* buffer_info) {
@@ -1155,7 +1107,6 @@ int APS5_VABI sceNgs2SystemGetInfo(uintptr_t system_handle, Ngs2SystemInfo* info
     if (s == nullptr) return kErrInvalidSystemHandle;
     if (info == nullptr || info_size == 0 || info_size > 0x1000 || !Writable(info, info_size)) return kErrInvalidOutAddress;
     std::memset(info, 0, info_size);
-    // Prospero layout: name[64] @0, handle @64, buffer_info(64) @72, uid @136, min/max grain, state flags, rack count, ...
     if (info_size >= 0x98) {
         auto* b = reinterpret_cast<uint8_t*>(info);
         const uint64_t h = system_handle;
@@ -1203,7 +1154,6 @@ int APS5_VABI sceNgs2SystemGetUserData(uintptr_t system_handle, uintptr_t* user_
     return kOk;
 }
 
-// ---- racks ---------------------------------------------------------------------------------------------------------
 int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption* option, Ngs2ContextBufferInfo* buffer_info) {
     if (buffer_info == nullptr) return kErrInvalidOutAddress;
     std::memset(buffer_info, 0, sizeof(*buffer_info));
@@ -1263,7 +1213,6 @@ int APS5_VABI sceNgs2RackGetUserData(uintptr_t rack_handle, uintptr_t* user_data
     return kOk;
 }
 
-// ---- voices --------------------------------------------------------------------------------------------------------
 int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHeader* param_list) {
     std::lock_guard lock(G().mtx);
     Voice* v = FindVoice(voice_handle);
@@ -1274,10 +1223,6 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
     return kOk;
 }
 
-// sceNgs2VoiceRunCommands takes an ARRAY of 12-byte commands, not a param chain:
-// {u32 id; u8 flags; u8 type; u16 count; u32 value} where port/matrix index = id>>24 and the operation is
-// id & 0xffffff (2 = event, 5 = matrix levels, 6 = port volume, 7 = port matrix). `type` selects how the value
-// is read (4 = event id, 0x11 = float pointer, 1 = float, 3 = int).
 bool RunCommandArray(Voice& v, const uint8_t* p, uint32_t num_commands) {
     auto& d = G().diag;
     const uint32_t first = Rd<uint32_t>(p);
@@ -1320,7 +1265,6 @@ bool RunCommandArray(Voice& v, const uint8_t* p, uint32_t num_commands) {
     return true;
 }
 
-// The command-buffer entry point: treated as a parameter list when it parses as one, otherwise reported.
 int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const void* commands, uint32_t num_commands, uint32_t flags) {
     std::lock_guard lock(G().mtx);
     Voice* v = FindVoice(voice_handle);
@@ -1363,7 +1307,6 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
     const uint64_t user = v->blocks.empty() ? v->last_user : v->blocks.front().user;
     const void* wd = v->blocks.empty() ? v->last_data : v->blocks.front().data;
     if (v->rack->id == kRackCustomSampler && state_size >= 48) {
-        // Ngs2CustomSamplerVoiceState: voice_state(8), waveform_data(8), num_decoded_samples(8), decoded_data_size(8), user_data(8)
         std::memcpy(b + 8, &wd, 8);
         std::memcpy(b + 16, &v->decoded_samples, 8);
         std::memcpy(b + 24, &v->decoded_bytes, 8);
@@ -1397,7 +1340,6 @@ int APS5_VABI sceNgs2VoiceGetOwner(uintptr_t voice_handle, uintptr_t* rack_handl
     return kOk;
 }
 
-// ---- render --------------------------------------------------------------------------------------------------------
 int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBufferInfo* buffer_info, uint32_t num_buffer_info) {
     uint32_t grain = 256, rate = 48000;
     int32_t result = kOk;
@@ -1428,11 +1370,8 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
                     MixVoice(v, bus.data(), grain, rate, std::max<uint32_t>(1, 1));
                 }
             }
-            // starved voices that are still Playing but silent need grain accounting: MixVoice counts per frame, so timeouts
-            // above are expressed in frames-worth ticks (see MixVoice); nothing else to do here.
             float peak = 0;
             for (float x : bus) peak = std::max(peak, std::fabs(x));
-            // the summed voices can exceed full scale: soft-limit above 0.9 instead of letting the device hard-clip
             for (float& x : bus) {
                 const float a = std::fabs(x);
                 if (a > 0.9f) x = std::copysign(0.9f + 0.1f * std::tanh((a - 0.9f) * 10.0f), x);
@@ -1458,7 +1397,6 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
             Report();
         }
     }
-    // Voice callbacks run with the engine unlocked: they call back into VoiceGetState.
     std::vector<Globals::PendingCb> cbs;
     { std::lock_guard lock(G().mtx); cbs.swap(G().pending_cb); }
     for (const auto& c : cbs) {
@@ -1468,13 +1406,12 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
         std::memcpy(info + 0x18, &c.handle, 8);
         reinterpret_cast<void(APS5_VABI*)(void*)>(c.fn)(info);
     }
-    // Pace to the audio hardware: one grain per call (5333 us for 256 frames at 48 kHz).
     {
         static std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now();
         const auto period = std::chrono::microseconds(static_cast<int64_t>(grain) * 1000000 / rate);
         deadline += period;
         const auto now = std::chrono::steady_clock::now();
-        if (deadline + std::chrono::milliseconds(50) < now) deadline = now;   // fell behind: do not burst
+        if (deadline + std::chrono::milliseconds(50) < now) deadline = now;
         while (std::chrono::steady_clock::now() < deadline) {
             if (deadline - std::chrono::steady_clock::now() > std::chrono::milliseconds(2)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             else std::this_thread::yield();
