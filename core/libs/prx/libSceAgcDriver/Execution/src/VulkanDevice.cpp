@@ -2309,42 +2309,63 @@ bool TraceDispatchIo() {
     return traceIo;
 }
 
-// Debug aid: APS5_WATCH_MEMORY=<hex address>:<hex bytes> (with APS5_SYNC_DISPATCH=1) keeps the last
-// 64 contents of the range, each with the dispatch that left it, and writes them to
-// watch_<n>_<program>.bin when the loop guard first trips: the dispatch that corrupted a structure a
-// looping shader walks is the one whose snapshot first shows the damage.
+// Debug aid: APS5_WATCH_MEMORY=<hex address>:<hex bytes>[,<hex address>:<hex bytes>...] (with
+// APS5_SYNC_DISPATCH=1) keeps the last 64 contents of the ranges, each with the dispatch that left it,
+// and writes them to watch_<n>_<program>.bin (the ranges back to back, in order) when the loop guard
+// first trips: the dispatch that corrupted a structure a looping shader walks is the one whose
+// snapshot first shows the damage.
 void WatchMemory(std::uint64_t programAddress) {
-    static const std::pair<std::uint64_t, std::uint64_t> range = [] {
+    struct Range {
+        std::uint64_t address = 0;
+        std::uint64_t bytes = 0;
+    };
+    static const std::vector<Range> ranges = [] {
+        std::vector<Range> parsed;
         const char* text = std::getenv("APS5_WATCH_MEMORY");
-        if (text == nullptr) return std::pair<std::uint64_t, std::uint64_t>{0, 0};
-        char* end = nullptr;
-        const auto address = std::strtoull(text, &end, 16);
-        const auto bytes = end != nullptr && *end == ':' ? std::strtoull(end + 1, nullptr, 16) : 0ull;
-        if (address == 0 || bytes == 0) throw std::runtime_error("APS5_WATCH_MEMORY takes <hex address>:<hex bytes>");
+        if (text == nullptr) return parsed;
+        while (true) {
+            char* end = nullptr;
+            const auto address = std::strtoull(text, &end, 16);
+            const auto bytes = *end == ':' ? std::strtoull(end + 1, &end, 16) : 0ull;
+            if (address == 0 || bytes == 0 || (*end != ',' && *end != '\0')) throw std::runtime_error("APS5_WATCH_MEMORY takes <hex address>:<hex bytes>[,...]");
+            parsed.push_back({address, bytes});
+            if (*end == '\0') break;
+            text = end + 1;
+        }
         if (!SyncEachDispatch()) throw std::runtime_error("APS5_WATCH_MEMORY needs APS5_SYNC_DISPATCH=1");
-        return std::pair<std::uint64_t, std::uint64_t>{address, bytes};
+        return parsed;
     }();
-    if (range.second == 0) return;
+    if (ranges.empty()) return;
     static std::mutex mutex;
     static std::deque<std::pair<std::uint64_t, std::vector<std::uint8_t>>> history;
     static bool written = false;
     std::lock_guard lock(mutex);
     if (written) return;
-    // The heap base differs between runs above bit 36: the first of those bases the range is
-    // mapped at, once it is.
-    static std::uint64_t address = 0;
-    if (address == 0) {
-        for (std::uint64_t high = 0; high < 16 && address == 0; ++high) {
-            const auto candidate = (range.first & 0xfffffffffull) | (high << 36u);
-            if (GuestMemory::Accessible(reinterpret_cast<const void*>(candidate), static_cast<std::size_t>(range.second))) address = candidate;
+    // The heap base differs between runs above bit 36: the first of those bases each range is
+    // mapped at, once all are.
+    static std::vector<std::uint64_t> addresses;
+    if (addresses.empty()) {
+        std::vector<std::uint64_t> found;
+        for (const auto& range : ranges) {
+            std::uint64_t address = 0;
+            for (std::uint64_t high = 0; high < 16 && address == 0; ++high) {
+                const auto candidate = (range.address & 0xfffffffffull) | (high << 36u);
+                if (GuestMemory::Accessible(reinterpret_cast<const void*>(candidate), static_cast<std::size_t>(range.bytes))) address = candidate;
+            }
+            if (address == 0) return;
+            found.push_back(address);
         }
-        if (address == 0) return;
-        std::fprintf(stderr, "[watch] watching 0x%llx+0x%llx\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(range.second));
+        addresses = std::move(found);
+        for (std::size_t i = 0; i < ranges.size(); ++i) std::fprintf(stderr, "[watch] watching 0x%llx+0x%llx\n", static_cast<unsigned long long>(addresses[i]), static_cast<unsigned long long>(ranges[i].bytes));
     }
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(address);
-    if (!GuestMemory::Accessible(bytes, static_cast<std::size_t>(range.second))) return;
-    if (history.empty() || std::memcmp(history.back().second.data(), bytes, static_cast<std::size_t>(range.second)) != 0) {
-        history.emplace_back(programAddress, std::vector<std::uint8_t>(bytes, bytes + range.second));
+    std::vector<std::uint8_t> contents;
+    for (std::size_t i = 0; i < ranges.size(); ++i) {
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(addresses[i]);
+        if (!GuestMemory::Accessible(bytes, static_cast<std::size_t>(ranges[i].bytes))) return;
+        contents.insert(contents.end(), bytes, bytes + ranges[i].bytes);
+    }
+    if (history.empty() || history.back().second != contents) {
+        history.emplace_back(programAddress, std::move(contents));
         if (history.size() > 64) history.pop_front();
     }
     if (!Graphics::LoopGuardTripped()) return;
@@ -2354,7 +2375,7 @@ void WatchMemory(std::uint64_t programAddress) {
         std::snprintf(name, sizeof(name), "watch_%02zu_%llx.bin", i, static_cast<unsigned long long>(history[i].first));
         std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(history[i].second.data()), static_cast<std::streamsize>(history[i].second.size()));
     }
-    std::fprintf(stderr, "[watch] loop guard tripped: %zu contents of 0x%llx+0x%llx written (watch_*.bin, oldest first)\n", history.size(), static_cast<unsigned long long>(address), static_cast<unsigned long long>(range.second));
+    std::fprintf(stderr, "[watch] loop guard tripped: %zu contents written (watch_*.bin, oldest first)\n", history.size());
 }
 
 // The [dispatch] phases for indirect dispatches alone, every 10 s on an [indirect] line: what the
