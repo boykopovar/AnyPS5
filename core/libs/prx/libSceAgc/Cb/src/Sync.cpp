@@ -15,9 +15,7 @@ std::uint32_t* APS5_VABI sceAgcCbNop_nid_postfix(CommandBuffer* buf, std::uint32
 }
 
 uint32_t APS5_VABI sceAgcCbNopGetSize(uint32_t size_in_dwords) {
- (void)size_in_dwords;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return size_in_dwords * 4u; // a NOP packet is exactly size_in_dwords dwords including its header
 }
 
 std::uint32_t APS5_VABI sceAgcCbQueueEndOfPipeActionGetSize() {

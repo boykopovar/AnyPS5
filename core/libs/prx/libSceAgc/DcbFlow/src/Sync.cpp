@@ -44,9 +44,7 @@ std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t ev
 }
 
 std::uint64_t APS5_VABI sceAgcDcbEventWriteGetSize(std::uint8_t eventType) {
-    (void)eventType;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return (eventType & 0xfeu) == 0x38u ? 16 : 8; // EVENT_WRITE, plus the address for the 0x38/0x39 events
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbStallCommandBufferParser(CommandBuffer* buf) {

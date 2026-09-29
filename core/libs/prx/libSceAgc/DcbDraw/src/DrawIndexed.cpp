@@ -32,8 +32,7 @@ std::uint32_t* APS5_VABI sceAgcDcbDrawIndexOffset(CommandBuffer* buf, std::uint3
 }
 
 uint32_t APS5_VABI sceAgcDcbDrawIndexOffsetGetSize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return 20; // DRAW_INDEX_OFFSET_2: header + 4 dwords
 }
 
 uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, uint32_t data_offset_in_bytes, uint64_t modifier) {

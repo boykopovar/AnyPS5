@@ -14,8 +14,7 @@ std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetIndexBufferGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 12; // INDEX_BASE: header + 2 dwords
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbSetIndexCount(CommandBuffer* buf, std::uint32_t indexCount) {
@@ -33,8 +32,7 @@ std::uint32_t* APS5_VABI sceAgcDcbSetIndexSize(CommandBuffer* buf, std::uint8_t 
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetIndexSizeGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 12; // SET_UCONFIG_REG_INDEX: header + 2 dwords
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint32_t dataOffsetInBytes) {

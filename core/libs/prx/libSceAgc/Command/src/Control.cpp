@@ -7,7 +7,8 @@ std::uint32_t* WriteJump(CommandBuffer* buffer, std::uint8_t chain, std::uint8_t
     CheckBits(chain, 1, function);
     CheckBits(cachePolicy, 3, function);
     CheckBits(sizeInDwords, 0xfffffu, function);
-    CheckAddress(guestAddress, 4, function);
+    // Titles reserve a jump with a null target and write the address into the packet later.
+    Require((guestAddress & 3u) == 0, function, "misaligned jump target");
     // INDIRECT_BUFFER: address, then size in bits 19:0, chain (no return) in bit 20, cache policy in 29:28.
     return Emit(buffer, 0x3fu, {static_cast<std::uint32_t>(guestAddress) & ~3u, static_cast<std::uint32_t>(guestAddress >> 32u), 0x0f200000u | (static_cast<std::uint32_t>(cachePolicy) << 28u) | (static_cast<std::uint32_t>(chain) << 20u) | sizeInDwords}, function);
 }

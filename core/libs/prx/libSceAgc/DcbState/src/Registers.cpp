@@ -9,15 +9,11 @@
 extern "C" {
 
 uint32_t* APS5_VABI sceAgcDcbSetCxRegisterDirect(CommandBuffer* buf, ShaderRegister reg) {
- (void)buf;
- (void)reg;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return Agc::Command::WriteRegisterRange(buf, 0x69u, reg.offset, &reg.value, 1u, __func__);
 }
 
 uint32_t APS5_VABI sceAgcDcbSetCxRegisterDirectGetSize(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return 12;
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbSetCxRegistersIndirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs) {
@@ -31,15 +27,11 @@ std::uint32_t APS5_VABI sceAgcDcbSetCxRegistersIndirectGetSize(std::uint32_t num
 }
 
 uint32_t* APS5_VABI sceAgcDcbSetShRegisterDirect(CommandBuffer* buf, ShaderRegister reg) {
- (void)buf;
- (void)reg;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return Agc::Command::WriteRegisterRange(buf, 0x76u, reg.offset, &reg.value, 1u, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetShRegisterDirectGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 12;
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbSetShRegistersIndirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs) {
@@ -52,15 +44,11 @@ std::uint32_t APS5_VABI sceAgcDcbSetShRegistersIndirectGetSize(std::uint32_t num
 }
 
 uint32_t* APS5_VABI sceAgcDcbSetUcRegisterDirect(CommandBuffer* buf, ShaderRegister reg) {
- (void)buf;
- (void)reg;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    return Agc::Command::WriteRegisterRange(buf, 0x79u, reg.offset, &reg.value, 1u, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetUcRegisterDirectGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 12;
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbSetUcRegistersIndirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs) {
