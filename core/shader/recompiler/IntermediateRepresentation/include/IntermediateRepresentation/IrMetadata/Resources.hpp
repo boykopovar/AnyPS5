@@ -49,6 +49,9 @@ struct ImageResource {
     bool depthCompare = false;
     bool cube = false;
     bool r128 = false;
+    // Specialized: a 32-bit integer read of a depth plane (IsDepthBitsTexture), bound as the float
+    // depth view; the texel bits are the result, the swizzle's constants integers.
+    bool depthBits = false;
     std::uint32_t indirectRoot = NoIndirectImage;
     std::uint32_t indirectMappingOffset = 0;
     std::uint32_t indirectSearchIterations = 0;

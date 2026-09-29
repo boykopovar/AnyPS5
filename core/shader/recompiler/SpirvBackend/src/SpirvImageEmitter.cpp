@@ -254,6 +254,9 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
         valueClass = IrTextureNumericClass::Float;
     }
     const bool integer = valueClass == IrTextureNumericClass::Uint || valueClass == IrTextureNumericClass::Sint;
+    if (mem.dataBits == 16u && access.image.depthBits) {
+        ctx.Fail(access.inst, "reads the bits of a depth plane as 16-bit results");
+    }
     if (mem.dataBits == 16u) {
         if (mem.dataDwords > 4u) {
             ctx.Fail(access.inst, "has more than four packed image result dwords");
@@ -294,6 +297,13 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
     for (std::uint32_t index = 0; index < 4u; index++) {
         if (dref) {
             component[index] = index == 0u ? F32BitsToU32(ctx, value) : ConstantU32(state, 0);
+            continue;
+        }
+        // Through a depth view read for its bits, only the depth channel (X) is a texel: the view
+        // gives 1.0 where the integer view gives 1 (ONE, or W of the single channel).
+        const auto selector = (access.image.shaderSwizzle >> (index * 3u)) & 7u;
+        if (access.image.depthBits && !gather && selector != 4u) {
+            component[index] = ConstantU32(state, selector == 1u || selector == 7u ? 1u : 0u);
             continue;
         }
         const auto scalar = state.module.AllocateId();

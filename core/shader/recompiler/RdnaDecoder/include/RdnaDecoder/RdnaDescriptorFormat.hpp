@@ -20,6 +20,10 @@ enum class ImageType : std::uint32_t {
 [[nodiscard]] bool IsFmaskTextureFormat(IrBufferFormat format);
 [[nodiscard]] IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapTextureFormat(IrBufferFormat format);
+// A sampled T# (dwords 1 and 3) of a 32-bit integer format over a depth layout (a Z swizzle mode):
+// the raw bits of a D32 depth plane. A host cannot view a depth image with an integer format, so
+// the image binds its float depth view and the shader takes the texel bits (ImageResource::depthBits).
+[[nodiscard]] bool IsDepthBitsTexture(std::uint32_t word1, std::uint32_t word3);
 
 }
 

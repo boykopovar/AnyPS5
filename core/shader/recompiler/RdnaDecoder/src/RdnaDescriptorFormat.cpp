@@ -121,4 +121,12 @@ IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
     return format == IrBufferFormat::Format11_11_10UInt ? IrBufferFormat::Format32UInt : format;
 }
 
+bool IsDepthBitsTexture(std::uint32_t word1, std::uint32_t word3) {
+    const auto format = static_cast<IrBufferFormat>((word1 >> 20u) & 0x1ffu);
+    // SW_4KB_Z, SW_64KB_Z, SW_64KB_Z_T, SW_4KB_Z_X, SW_64KB_Z_X.
+    const auto swizzle = (word3 >> 20u) & 0x1fu;
+    const bool depthLayout = swizzle == 4u || swizzle == 8u || swizzle == 16u || swizzle == 20u || swizzle == 24u;
+    return depthLayout && (format == IrBufferFormat::Format32UInt || format == IrBufferFormat::Format32SInt);
+}
+
 }
