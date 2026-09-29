@@ -38,6 +38,7 @@ std::string FirstLine(const std::string& text) {
 bool g_disassemble = false;
 bool g_assembly = false;
 bool g_memory = false;
+bool g_spirv = false;
 
 bool Replay(const char* path) {
     const auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
@@ -78,6 +79,12 @@ bool Replay(const char* path) {
     try {
         const auto result = ShaderRecompiler::Recompile(request.request);
         std::printf("  recompiled: %zu SPIR-V words\n", result.spirv.size());
+        if (g_spirv) {
+            // For spirv-val: <request>.spv in the working directory.
+            std::string name(path);
+            name = name.substr(name.find_last_of("/\\") + 1) + ".spv";
+            std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(result.spirv.data()), static_cast<std::streamsize>(result.spirv.size() * sizeof(result.spirv[0])));
+        }
         if (g_memory) {
             for (const auto& binding : result.bindings) {
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
@@ -108,7 +115,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--mem] [--spv] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
         return 2;
     }
     int failures = 0;
@@ -123,6 +130,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--mem") {
             g_memory = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--spv") {
+            g_spirv = true;
             continue;
         }
         try {
