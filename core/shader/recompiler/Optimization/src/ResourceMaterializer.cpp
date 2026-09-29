@@ -507,6 +507,7 @@ void buildResourceSpecialization(const IrResourcePlan& plan, ResourceSnapshot& s
         entry.packedStride = packedStride;
         entry.descriptorFormat = buffer.formatted ? decoded.Format() : IrBufferFormat::Invalid;
         entry.descriptorSwizzle = buffer.formatted ? decoded.DstSelXYZW() : DstSel(4, 5, 6, 7);
+        entry.empty = decoded.GetSize() == 0u;
         result.buffers.push_back(entry);
     }
 
@@ -590,6 +591,7 @@ void ResourceMaterializer::Apply(IrProgram& program, const ResourceSpecializatio
         buffers[i].packedStride = specialization.buffers[i].packedStride;
         buffers[i].descriptorFormat = specialization.buffers[i].descriptorFormat;
         buffers[i].descriptorSwizzle = specialization.buffers[i].descriptorSwizzle;
+        buffers[i].empty = specialization.buffers[i].empty;
     }
 
     auto images = resources.info.images;
@@ -874,7 +876,7 @@ void ResourceMaterializer::CountBindlessRejection(BindlessRejection reason) {
 }
 
 bool ResourceSpecialization::Buffer::operator==(const Buffer& other) const {
-    return packedStride == other.packedStride && descriptorFormat == other.descriptorFormat && descriptorSwizzle == other.descriptorSwizzle;
+    return packedStride == other.packedStride && descriptorFormat == other.descriptorFormat && descriptorSwizzle == other.descriptorSwizzle && empty == other.empty;
 }
 
 bool ResourceSpecialization::Image::operator==(const Image& other) const {

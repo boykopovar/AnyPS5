@@ -25,6 +25,9 @@ struct BufferResource {
     bool atomic = false;
     bool formatted = false;
     bool scalar = false;
+    // Specialized: the V# has no records (a null V#), so every access is out of bounds: loads read
+    // zero (or the format's default), stores and atomics are dropped, as on hardware.
+    bool empty = false;
 
     bool operator==(const BufferResource& other) const = default;
 };

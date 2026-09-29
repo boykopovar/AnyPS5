@@ -13,6 +13,7 @@ struct ResourceSpecialization {
         std::uint32_t packedStride = 0;
         IrBufferFormat descriptorFormat = IrBufferFormat::Invalid;
         std::uint32_t descriptorSwizzle = ShaderImageIdentitySwizzle;
+        bool empty = false;
 
         bool operator==(const Buffer& other) const;
     };

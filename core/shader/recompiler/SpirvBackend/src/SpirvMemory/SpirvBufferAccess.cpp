@@ -111,6 +111,10 @@ MemoryResourceAccess PrepareStorageBufferResourceAccess(SpirvEmitterState& state
     access.byteOffset = state.memoryByteOffsets.at(arrayIndex);
     access.length = state.module.AllocateId();
     state.module.AddFunction(spv::OpArrayLength, TypeU32(state), access.length, access.objectPointer, 0u);
+    // A null V# binds a placeholder the shader must not touch: nothing is in bounds.
+    if (mem.resource < state.program.Info().buffers.size() && state.program.Info().buffers[mem.resource].empty) {
+        access.length = ConstantU32(state, 0u);
+    }
     return access;
 }
 

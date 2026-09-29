@@ -2015,8 +2015,12 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
     const auto address = descriptor.Base48();
     const auto byteSize = descriptor.GetSize();
+    if (byteSize == 0) {
+        // A null V#: every access is out of bounds in the shader (BufferResource::empty).
+        allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
+        return allocations.size() - 1;
+    }
     Require(address != 0, "null shader buffer descriptor address");
-    Require(byteSize != 0, "empty shader buffer descriptor");
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
     Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
     const auto size = static_cast<std::size_t>(byteSize);
