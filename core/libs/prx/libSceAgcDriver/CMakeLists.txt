@@ -158,6 +158,11 @@ target_link_libraries(agc_shader_memory_tests PRIVATE shader_recompiler_agc_driv
 set_target_properties(agc_shader_memory_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_shader_memory_tests)
 
+add_executable(agc_structurizer_tests EXCLUDE_FROM_ALL tests/Structurizer.cpp)
+target_link_libraries(agc_structurizer_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_structurizer_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_structurizer_tests)
+
 add_executable(agc_driver_flip_tests EXCLUDE_FROM_ALL
         tests/Flip.cpp
 )
@@ -287,7 +292,7 @@ set_target_properties(agc_driver_bda_device_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_bda_device_tests)
 
 if(BUILD_TESTING)
-    foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_driver_flip_tests agc_driver_pm4_tests)
+    foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_driver_flip_tests agc_driver_pm4_tests)
         string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
         set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
         add_test(NAME ${agcTestName} COMMAND ${agcTest})

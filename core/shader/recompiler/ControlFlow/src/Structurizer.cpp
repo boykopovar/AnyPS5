@@ -288,6 +288,26 @@ bool canReachBefore(const ControlFlowGraph& graph, std::uint32_t start, std::uin
     return false;
 }
 
+// Whether `start` reaches `target` without passing the loop's continue or merge block.
+bool reachesWithinIteration(const ControlFlowGraph& graph, const NaturalLoop& loop, std::uint32_t start, std::uint32_t target) {
+    std::vector<std::uint32_t> pending = {start};
+    std::vector<bool> visited(graph.blocks.size(), false);
+    while (!pending.empty()) {
+        const auto blockId = pending.back();
+        pending.pop_back();
+        if (blockId == target) {
+            return true;
+        }
+        if (blockId == loop.continueBlock || blockId == loop.mergeBlock || visited[blockId]) {
+            continue;
+        }
+        visited[blockId] = true;
+        const auto& block = graph.FindBlock(blockId);
+        pending.insert(pending.end(), block.successors.begin(), block.successors.end());
+    }
+    return false;
+}
+
 std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock& block) {
     const auto globalMerge = graph.FindNearestCommonPostDominator(block.terminator.trueBlock, block.terminator.falseBlock);
     const auto* loop = findInnermostContainingLoop(graph, block.id);
@@ -324,6 +344,16 @@ std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock
     }
     if (isLoopControlGateway(graph, *loop, falseTarget) && graph.Dominates(block.id, falseTarget) && isInsideLoopConstruct(graph, *loop, trueTarget)) {
         return falseTarget;
+    }
+    // An arm that reaches the post-dominator only in a later iteration (around the back edge)
+    // leaves the selection by continuing; the merge is where the other arm goes. Splitting the
+    // post-dominator off would leave it where it is, and the split repeats without end.
+    if (globalMerge != InvalidControlFlowId) {
+        const bool trueJoins = reachesWithinIteration(graph, *loop, trueTarget, globalMerge);
+        const bool falseJoins = reachesWithinIteration(graph, *loop, falseTarget, globalMerge);
+        if (trueJoins != falseJoins) {
+            return trueJoins ? trueTarget : falseTarget;
+        }
     }
     return globalMerge;
 }
