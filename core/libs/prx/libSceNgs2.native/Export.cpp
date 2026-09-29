@@ -18,10 +18,14 @@
 #include <thread>
 #include <unordered_set>
 #include <vector>
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <fstream>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -188,6 +192,7 @@ std::string Hex(const void* p, size_t n) {
     return s;
 }
 
+#ifdef _WIN32
 bool Readable(const void* p, size_t n) {
     if (p == nullptr) return false;
     if (n == 0) return true;
@@ -216,6 +221,31 @@ bool Writable(void* p, size_t n) {
     }
     return true;
 }
+#else
+bool ProbeMapping(const void* p, size_t n, bool requireWrite) {
+    if (p == nullptr) return false;
+    if (n == 0) return true;
+    const auto start = reinterpret_cast<uintptr_t>(p);
+    const auto end = start + n;
+    if (end < start) return false;
+    std::ifstream maps("/proc/self/maps");
+    if (!maps) return false;
+    std::string line;
+    auto cursor = start;
+    while (cursor < end && std::getline(maps, line)) {
+        unsigned long long regionStart = 0, regionEnd = 0;
+        char r = '-', w = '-';
+        if (std::sscanf(line.c_str(), "%llx-%llx %c%c", &regionStart, &regionEnd, &r, &w) != 4) continue;
+        if (regionEnd <= cursor) continue;
+        if (regionStart > cursor || r != 'r') return false;
+        if (requireWrite && w != 'w') return false;
+        cursor = regionEnd;
+    }
+    return cursor >= end;
+}
+bool Readable(const void* p, size_t n) { return ProbeMapping(p, n, false); }
+bool Writable(void* p, size_t n) { return ProbeMapping(p, n, true); }
+#endif
 
 template <class T> T Rd(const uint8_t* p) { T v; std::memcpy(&v, p, sizeof(T)); return v; }
 
