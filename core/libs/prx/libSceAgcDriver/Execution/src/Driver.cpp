@@ -5112,6 +5112,30 @@ private:
         return true;
     }
 
+    // PIXEL_PIPE_STAT_DUMP, drained like a label: every draw before it completed, so the recorder's
+    // sample count is the DB counter at this point. The PS5 layout interleaves a begin and an end
+    // counter per DB (16 of them, 16 bytes apart; a query's begin dump writes the first of each
+    // pair, its end dump the second): the count goes to the first DB and the others stay at zero,
+    // all with bit 63 marking the result ready.
+    // ponytail: a GPU drain per dump; accumulate on the GPU behind the batch if titles dump many
+    // per frame.
+    void dumpSampleCounters(std::uint64_t address) {
+        std::uint64_t samples = 0;
+        {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            auto* recorder = Graphics::Recorder::Active();
+            require(recorder != nullptr, "occlusion counters without the command recorder are not implemented");
+            recorder->CountSamples();
+            samples = Graphics::Recorder::SamplesPassed();
+        }
+        constexpr std::uint64_t ready = 1ull << 63u;
+        for (std::uint64_t db = 0; db < 16; ++db) {
+            const std::uint64_t value = ready | (db == 0 ? samples : 0u);
+            GuestMemory::Write(address + db * 16u, std::as_bytes(std::span(&value, 1)), 8);
+        }
+    }
+
     // Before a packet's CPU read of guest memory outside any lock (the group counts of a
     // DISPATCH_INDIRECT resolved on the CPU): a label this queue still has queued may write those
     // bytes and the flush hook only knows recorded stores, so the queued labels are recorded first.
@@ -5954,11 +5978,12 @@ private:
             // draw's preparation reads goes through the flush hook. Debug aid: APS5_DRAW_DRAIN=1 restores.
             static const bool drawDrain = std::getenv("APS5_DRAW_DRAIN") != nullptr;
             const bool drawPacket = Pm4::DrawOpcode(opcode);
+            const bool sampleDump = opcode == 0x46 && (packet[1] & 0x3fu) == 0x39u;
             // Flips no longer drain either: the frame's batches are submitted and the presenter's blit
             // follows them on the same queue (see Driver::Present). Debug aid: APS5_SYNC_FLIP=1 restores.
             static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
             const bool drains = drainAll ? ((Pm4::AccessesMemory(header) && opcode != 0x16) || opcode == 0x42 || opcode == 0x46 || opcode == 0x58 || header == FlipPacketHeader)
-                                         : (!wroteOnGpu && !orderedAlready && (opcode == 0x49 || opcode == 0x37 || opcode == 0x40 || opcode == 0x50 || opcode == 0x83 || (drawPacket && drawDrain) || (header == FlipPacketHeader && syncFlip)));
+                                         : (!wroteOnGpu && !orderedAlready && (opcode == 0x49 || opcode == 0x37 || opcode == 0x40 || opcode == 0x50 || opcode == 0x83 || sampleDump || (drawPacket && drawDrain) || (header == FlipPacketHeader && syncFlip)));
             if (drains) {
                 // The GPU wait happens without the mutex: the batches are submitted under it, the
                 // timeline value is waited for outside (the other workers keep recording), then the
@@ -6139,6 +6164,8 @@ private:
                     }
                 }); });
                 finishDrawPacket(drawn);
+            } else if (sampleDump) {
+                dumpSampleCounters(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u));
             } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
                 if (!wroteOnGpu) Pm4::Execute(packet, queue);
             }

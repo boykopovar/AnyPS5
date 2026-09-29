@@ -312,6 +312,13 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                     size(2);
                     require(eventIndex == 0 || eventIndex == 7, "invalid cache-flush event index");
                     break;
+                case 0x39:
+                    // PIXEL_PIPE_STAT_DUMP: the occlusion counters (see Driver::dumpSampleCounters).
+                    graphics();
+                    size(4);
+                    require(eventIndex == 1, "invalid occlusion counter dump event index");
+                    require(address(packet[2], packet[3]) != 0 && (packet[2] & 7u) == 0, "null or misaligned occlusion counter dump address");
+                    break;
                 default: throw std::runtime_error("EVENT_WRITE event type " + std::to_string(eventType) + " is not implemented");
             }
             break;

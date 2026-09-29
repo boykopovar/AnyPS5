@@ -116,6 +116,8 @@ struct Context {
     bool drawIndirectFirstInstance = false;
     bool multiDrawIndirect = false;
     bool drawIndirectCount = false;
+    // Occlusion queries count exact samples (occlusionQueryPrecise), not just any-passed.
+    bool occlusionQueryPrecise = false;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
     // draw whose records one of them produces reads them on the CPU. Null in tests.
