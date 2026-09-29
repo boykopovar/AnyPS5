@@ -10,4 +10,22 @@ uint32_t APS5_VABI sceRazorCpuIsCapturing(void) {
  return 0;
 }
 
+int APS5_VABI sceRazorCpuJobManagerDispatch(const void* args) {
+ (void)args;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceRazorCpuJobManagerJob(const void* args) {
+ (void)args;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceRazorCpuJobManagerSequence(const void* args) {
+ (void)args;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 }

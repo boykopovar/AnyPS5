@@ -10,6 +10,16 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 
+namespace {
+
+// Output-only pad features (vibration, light bar, trigger effects, ...) have no host counterpart on the
+// virtual pad, so they validate the handle and succeed without side effects, exactly like a pad without haptics.
+int PadOutputOnly(int handle) {
+    return handle == PAD_HANDLE ? PAD_OK : PAD_ERROR_INVALID_HANDLE;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI scePadClose_nid_postfix(int handle) {
@@ -107,15 +117,11 @@ int APS5_VABI scePadReadState(int handle, PadData* data) {
 }
 
 int APS5_VABI scePadResetLightBar(int handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return PadOutputOnly(handle);
 }
 
 int APS5_VABI scePadResetOrientation(int handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return PadOutputOnly(handle);
 }
 
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
@@ -126,10 +132,8 @@ int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
 }
 
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
- (void)handle;
  (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return PadOutputOnly(handle);
 }
 
 int APS5_VABI scePadSetMotionSensorState(int handle, bool enable) {
@@ -149,17 +153,13 @@ int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) {
 }
 
 int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
- (void)handle;
  (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return PadOutputOnly(handle);
 }
 
 int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) {
- (void)handle;
  (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return PadOutputOnly(handle);
 }
 
 int APS5_VABI scePadSetVibrationMode(int handle, int mode) {

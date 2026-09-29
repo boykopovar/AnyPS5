@@ -20,8 +20,7 @@ int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* argu
 }
 
 int APS5_VABI sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo* info) {
@@ -103,6 +102,15 @@ int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
 }
 
 int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void) {
+ return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceInitializePlayerDialogParam(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceSystemServiceLaunchPlayerDialog(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

@@ -9,6 +9,7 @@ static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
+static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
@@ -87,10 +88,10 @@ int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
 }
 
 int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
- (void)user_id;
- (void)state;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)user_id;
+    if (!state) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *state = NP_REACHABILITY_STATE_UNAVAILABLE;
+    return 0;
 }
 
 int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
@@ -107,10 +108,10 @@ int APS5_VABI sceNpGetState(int user_id, uint32_t* state) {
 }
 
 int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
- (void)user_id;
- (void)has_signed_up;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)user_id;
+    if (!has_signed_up) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *has_signed_up = false;
+    return 0;
 }
 
 int APS5_VABI sceNpPollAsync(int req_id, int* result) {
@@ -126,31 +127,31 @@ void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata)
 }
 
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
- (void)callback;
- (void)userdata;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)userdata;
+    // The signed-out state never changes, so registered callbacks never fire.
+    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI sceNpRegisterPlusEventCallback(void* callback, void* userdata) {
- (void)callback;
- (void)userdata;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)userdata;
+    // The signed-out state never changes, so registered callbacks never fire.
+    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI sceNpRegisterPremiumEventCallback(void* callback, void* userdata) {
- (void)callback;
- (void)userdata;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)userdata;
+    // The signed-out state never changes, so registered callbacks never fire.
+    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
- (void)callback;
- (void)userdata;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)userdata;
+    // The signed-out state never changes, so registered callbacks never fire.
+    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
@@ -166,8 +167,7 @@ int APS5_VABI sceNpSetNpTitleId(const NpTitleId* title_id, const NpTitleSecret* 
 }
 
 int APS5_VABI sceNpUnregisterStateCallback(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return 0;
 }
 
 int APS5_VABI sceNpGetAccountLanguage2(int req_id, int user_id, void* language) {
@@ -190,6 +190,10 @@ int APS5_VABI sceNpRegisterStateCallbackA(void* callback, void* userdata) {
 
 int APS5_VABI sceNpUnregisterStateCallbackA(int callback_id) {
     (void)callback_id;
+    return 0;
+}
+
+int APS5_VABI sceNpUnregisterPremiumEventCallback(void) {
     return 0;
 }
 
