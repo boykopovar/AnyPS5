@@ -269,6 +269,7 @@ std::uint32_t EmitDataConsume(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageQueryDimensions(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageQueryLod(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageRead(SpirvValueEmitContext& ctx, const IrValue& inst);
+void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageWrite(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageSampleRaw(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitImageGatherRaw(SpirvValueEmitContext& ctx, const IrValue& inst);

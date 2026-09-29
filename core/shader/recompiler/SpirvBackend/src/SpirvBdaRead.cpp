@@ -167,13 +167,13 @@ void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
 // unaligned mirror or a wrapping span falls back to the byte path. That path repeats, per extracted
 // dword in order, the address, overflow check and byte lookups of a separate dword load, so every
 // fault is recorded exactly as one; the probe records none, and a span it accepts cannot fault.
-std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t offset, std::uint32_t dwords) {
+std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t offset, std::uint32_t dwords, bool everyDword) {
     auto& state = ctx.state;
     if (dwords == 0u || dwords > 4u) ctx.Fail(inst, "unsupported BDA read width");
     if (state.bdaPointerFunction == 0) ctx.Fail(inst, "BDA lookup function is missing");
     const auto u64 = TypeScalarU64(state);
     const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
-    const auto used = UsedBdaDwords(inst, dwords);
+    const auto used = everyDword ? (1u << dwords) - 1u : UsedBdaDwords(inst, dwords);
     const auto isUsed = [&](std::uint32_t dword) { return (used & (1u << dword)) != 0u; };
     std::array<std::uint32_t, 4> values{};
     std::uint32_t first = dwords;

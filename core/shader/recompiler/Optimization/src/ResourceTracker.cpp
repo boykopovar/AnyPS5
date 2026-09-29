@@ -689,6 +689,11 @@ private:
 
     void Collect(IrValue& inst) {
         const auto op = inst.Opcode();
+        if (op == IrOpcode::ImageBvhIntersectRay) {
+            // A ray query reads its node through the BDA page table (its T# is a run-time value).
+            m_info.usesDma = true;
+            return;
+        }
         const auto buffer = BufferAccessOf(op);
         const auto addressInfo = AddressOpcodeInfoOf(op);
         const auto imageInfo = ImageOpcodeInfoOf(op);

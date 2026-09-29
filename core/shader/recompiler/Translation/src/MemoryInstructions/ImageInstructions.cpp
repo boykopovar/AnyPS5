@@ -41,11 +41,21 @@ MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::imageBvhIntersectRay(const RdnaInstruction& inst) {
-    // No BVH exists to traverse yet, so every ray query reports a clean miss instead of faulting on
-    // an unimplemented opcode. 0xFFFFFFFF is the hardware miss encoding for the result dwords.
-    IrValue& miss = ir.Constant(0xffffffffu);
-    for (std::uint32_t i = 0u; i < inst.dataDwordCount; ++i) {
-        writeOperand(offsetOperand(inst.destination, i), &miss);
+    // The node test only: the guest shader owns the traversal and its stack. The T# is read at run
+    // time and the node through the BDA page table, so the access is address-based (kind Global);
+    // imageSampleFlags carries A16 (the direction and inverse direction as halves).
+    if (inst.dataDwordCount != 4u || inst.imageD16) {
+        throw std::runtime_error("image_bvh_intersect_ray returns four dwords");
+    }
+    MemoryInfo memory;
+    memory.kind = ResourceKind::Global;
+    memory.dataDwords = 4u;
+    memory.imageSampleFlags = inst.imageA16 ? RdnaImageSampleFlagA16 : 0u;
+    IrValue* descriptor = constructU32x4(inst.source1, 4u);
+    IrValue* address = makeImageAddress(inst, inst.source0);
+    IrValue& result = ir.Emit(IrOpcode::ImageBvhIntersectRay, IrOpcodeType(IrOpcode::ImageBvhIntersectRay), {descriptor, address, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
+    for (std::uint32_t i = 0u; i < 4u; ++i) {
+        writeOperand(offsetOperand(inst.destination, i), &ir.CompositeExtract(result, i));
     }
     return true;
 }

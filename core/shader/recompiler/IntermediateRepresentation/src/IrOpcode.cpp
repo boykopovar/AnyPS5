@@ -382,6 +382,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("TtraceData", Void),
     makeMeta("InstPrefetch", Void),
     makeMeta("SelectU32", U32, U1, U32, U32),
+    makeMeta("ImageBvhIntersectRay", U32x4, U32x4, ImageAddress, U1),
 }};
 
 const OpcodeMeta& metaOf(IrOpcode opcode) {

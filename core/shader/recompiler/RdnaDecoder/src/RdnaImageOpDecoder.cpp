@@ -262,7 +262,10 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     if (d16 && !(info.sample || info.gather || opcode == 0u || opcode == 1u || opcode == 8u || opcode == 9u)) {
         throw std::runtime_error("MIMG opcode does not support D16");
     }
-    std::uint32_t components = opcode == 0x0Eu ? 1u : coordinateCount(dimension);
+    // A ray query addresses 32-bit dwords: the node pointer, the ray extent, the origin xyz, then the
+    // direction and the inverse direction xyz, packed as six halves in three dwords with A16.
+    const bool rayQuery = info.opcode == RdnaOpcode::ImageBvhIntersectRay;
+    std::uint32_t components = rayQuery ? (a16 ? 8u : 11u) : opcode == 0x0Eu ? 1u : coordinateCount(dimension);
     if (opcode == 1u || opcode == 9u) {
         ++components;
     }
@@ -272,7 +275,8 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
             components += gradientCount(dimension) * 2u;
         }
     }
-    const auto addressDwords = GetRdnaImageAddressDwordCount(flags, components);
+    const auto addressFlags = rayQuery ? info.flags : flags;
+    const auto addressDwords = GetRdnaImageAddressDwordCount(addressFlags, components);
     const auto vaddr = word1 & 255u;
     const auto vdata = (word1 >> 8u) & 255u;
     if (nsa != 0u && addressDwords > 1u + nsa * 4u) {
@@ -311,7 +315,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     instruction.imageD16 = d16;
     instruction.imageR128 = r128;
     instruction.imageDimension = dimension;
-    instruction.imageSampleFlags = flags;
+    instruction.imageSampleFlags = addressFlags;
     instruction.imageAddressComponents = components;
     instruction.imageNsaDwordCount = nsa;
     instruction.destination = vectorRegister(vdata);
