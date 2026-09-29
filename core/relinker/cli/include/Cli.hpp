@@ -1,6 +1,7 @@
 #ifndef CORE_RELINKER_CLI_INCLUDE_CLI_HPP
 #define CORE_RELINKER_CLI_INCLUDE_CLI_HPP
 
+#include <set>
 #include <string>
 #include <cstdint>
 
@@ -20,6 +21,7 @@ struct Args {
     std::string inputPath;
     std::string outputPath;
     std::string runPath = "$ORIGIN/libs";
+    std::set<std::string> excludedSceModules;
 };
 
 Args ParseArgs(int argc, char* argv[]);

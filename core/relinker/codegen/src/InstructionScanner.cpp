@@ -35,6 +35,8 @@ std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(
         try {
             length = decoder.Decode(cursor, available);
         } catch (const CodegenException& e) {
+            // Zero padding at the segment tail decodes as `add [rax], al` pairs; an odd tail leaves one truncated byte.
+            if (std::all_of(cursor, cursor + available, [](const std::uint8_t b) { return b == 0; })) break;
             throw CodegenException(std::string("Cannot decode instruction: ") + e.what(), codeSectionOffset + i);
         }
 

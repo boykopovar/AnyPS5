@@ -11,7 +11,7 @@
 
 namespace Relinker {
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const {
     const auto root = std::filesystem::absolute(inputPath).parent_path();
     const auto singular = root / "sce_module";
     const auto plural = root / "sce_modules";
@@ -22,8 +22,10 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto directory = hasSingular ? singular : plural;
     if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + directory.string());
     std::vector<std::filesystem::path> paths;
+    std::set<std::string> unmatchedExclusions = excludedModules;
     for (const auto& entry : std::filesystem::directory_iterator(directory)) {
         if (entry.path().filename().string().ends_with(GuestModuleSuffix)) continue;
+        if (unmatchedExclusions.erase(entry.path().filename().string()) != 0) continue;
         if (!entry.is_regular_file()) continue;
         std::ifstream stream(entry.path(), std::ios::binary);
         if (!stream) throw Domain::RelinkerException("Cannot read guest candidate: " + entry.path().string());
@@ -32,6 +34,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (stream.bad()) throw Domain::RelinkerException("Cannot read guest candidate magic: " + entry.path().string());
         if (stream.gcount() == 4 && static_cast<unsigned char>(magic[0]) == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') paths.push_back(entry.path());
     }
+    if (!unmatchedExclusions.empty()) throw Domain::RelinkerException("Excluded sce_module file not found: " + *unmatchedExclusions.begin());
     std::sort(paths.begin(), paths.end());
     if (paths.empty()) return {};
     if (lazyBinding) throw Domain::RelinkerException("Guest modules require eager binding; --lazy-binding is incompatible");

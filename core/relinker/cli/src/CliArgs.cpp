@@ -15,6 +15,10 @@ Args ParseArgs(int argc, char* argv[]) {
             args.skipSyscallCheck = true;
         } else if (arg == "--skip-sce-module") {
             args.skipSceModule = true;
+        } else if (arg == "--exclude-sce-module") {
+            if (i + 1 >= argc)
+                throw std::runtime_error("--exclude-sce-module requires a file name");
+            args.excludedSceModules.insert(argv[++i]);
         } else if (arg == "--to-intel") {
             args.toIntel = true;
         } else if (arg.rfind("unused-filter=", 0) == 0) {
@@ -50,6 +54,9 @@ Args ParseArgs(int argc, char* argv[]) {
         }
     }
 
+    if (args.skipSceModule && !args.excludedSceModules.empty())
+        throw std::runtime_error("--exclude-sce-module conflicts with --skip-sce-module");
+
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
 
@@ -58,7 +65,7 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
-            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
             "Example: relinker input.elf output.elf"
         );
 

@@ -4,6 +4,7 @@
 #include <codegen/x86/Sse4aLowering.hpp>
 #include <codegen/x86/Sse4aOperands.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/IInstructionScanner.hpp>
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
@@ -392,6 +393,14 @@ void registerFormExecution() {
 void registerFormExecution() {}
 #endif
 
+void scannerZeroTail() {
+    const auto scanner = Codegen::MakeInstructionScanner();
+    const Bytes code{0xC3, 0x00, 0x00, 0x00};
+    require(scanner->ScanCodeSection(code, 0, code.size()).size() == 2, "Odd zero padding at segment tail must end the scan");
+    const Bytes truncated{0xC3, 0x0F};
+    requireFailure([&] { (void)scanner->ScanCodeSection(truncated, 0, truncated.size()); }, "Truncated non-zero tail must still fail");
+}
+
 int main() {
     try {
         decoderLengths();
@@ -402,6 +411,7 @@ int main() {
         converterSegment();
         converterFailureOffsets();
         linuxPlacement();
+        scannerZeroTail();
         std::cout << "AMD64-only converter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
