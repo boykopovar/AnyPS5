@@ -273,6 +273,10 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
     return source;
 }
 
+std::array<std::uint32_t, 3> partialThreads(const RecompileRequest& request) {
+    return request.context.compute ? request.context.compute->partialThreads : std::array<std::uint32_t, 3>{};
+}
+
 CompiledVariant compileVariant(const RecompileRequest& request, IrProgram program, const ResourceSnapshot& resourceSnapshot, const ResourceSpecialization& resourceSpecialization) {
     const auto inputInfo = BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request));
     constexpr DeadCodeEliminator deadCodeEliminator;
@@ -289,7 +293,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     auto bindings = bindingAllocator.Allocate(program, request.layout);
 
     constexpr DescriptorBindingBuilder descriptorBindingBuilder;
-    descriptorBindingBuilder.Populate(bindings, program, resourceSnapshot);
+    descriptorBindingBuilder.Populate(bindings, program, resourceSnapshot, partialThreads(request));
 
     SpirvTargetOptions targetOptions {};
     targetOptions.vulkanVersion = request.target.vulkanVersion;
@@ -343,7 +347,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     bindings.layout = variant.bindings.layout;
     bindings.pushConstantOffsetBytes = variant.bindings.pushConstantOffsetBytes;
     bindings.pushConstantSizeBytes = variant.bindings.pushConstantSizeBytes;
-    DescriptorBindingBuilder{}.Populate(bindings, variant.info.info, variant.info.stage, variant.info.userDataBase, snapshot);
+    DescriptorBindingBuilder{}.Populate(bindings, variant.info.info, variant.info.stage, variant.info.userDataBase, snapshot, partialThreads(request));
     result.bindings = std::move(bindings.bindings);
     result.pushConstants = std::move(bindings.pushConstants);
     for (auto& attribute : result.vertexAttributes) {
@@ -466,6 +470,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     for (const auto stride : snapshot.uniformFill.groupStride) mix(stride);
     mix(snapshot.uniformFill.words);
     mix(snapshot.uniformFill.value);
+    for (const auto threads : partialThreads(request)) mix(threads);
     if (request.context.vertex) {
         const auto& vertex = *request.context.vertex;
         const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);

@@ -35,6 +35,8 @@ struct ShaderInfo {
     // Some access stores through the BDA page table (MemoryInfo::gpuDescriptor): the pages it
     // writes are noted in the fault buffer (BdaAbi::WrittenPageSlots).
     bool bdaWrites = false;
+    // The entry reads the partial-group dispatch size (StageInputKind::DispatchThreadLimit).
+    bool dispatchThreadLimit = false;
 
     bool operator==(const ShaderInfo& other) const = default;
 };

@@ -9,8 +9,9 @@ namespace ShaderRecompiler {
 
 class DescriptorBindingBuilder {
 public:
-    void Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot) const;
-    void Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage, std::uint32_t userDataBase, const ResourceSnapshot& snapshot) const;
+    // `partialThreads`: ShaderComputeStageInfo::partialThreads (zero outside compute).
+    void Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const;
+    void Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const;
 };
 
 }

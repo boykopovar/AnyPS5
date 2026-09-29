@@ -3183,7 +3183,7 @@ private:
         for (std::uint32_t i = 0; i < userCount; ++i) {
             userData.push_back(readRegister(queue.shader, 0x240 + i));
         }
-        const auto compute = Graphics::DecodeComputeStageInfo(queue.shader);
+        auto compute = Graphics::DecodeComputeStageInfo(queue.shader);
         const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}};
         // The GpuMutex is only taken to create the device: taking it just to copy the pointer made
         // every dispatch wait behind another queue's whole device phase before its lock-free prologue.
@@ -3215,6 +3215,14 @@ private:
         if (indirectArguments == 0 && copyBuffer(queue, submission.queue, packet, std::span(snapshot.code).subspan(codeOffset), userData, compute, localDevice, address)) {
             pendingDispatchPhases().outcome = DispatchOutcome::CopyHle;
             return;
+        }
+        // USE_THREAD_DIMENSIONS that is no whole number of groups: the host launches whole groups,
+        // the partial-group variant retires the threads past the size.
+        if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {
+            const std::array<std::uint32_t, 3> threads{packet[1], packet[2], packet[3]};
+            for (std::uint32_t axis = 0; axis < 3; ++axis) {
+                if (threads[axis] % compute.numThreads[axis] != 0) compute.partialThreads = threads;
+            }
         }
         ShaderRecompiler::RecompileRequest request{
             {ShaderRecompiler::ShaderStage::Compute, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
@@ -3280,6 +3288,8 @@ private:
         };
         mix(address);
         mix(packet[4] & 0x8000u);
+        // The partial-group size is shader data of the compiled result.
+        for (const auto threads : compute.partialThreads) mix(threads);
         for (const auto word : userData) mix(word);
         // Only the shader registers the request reads (thread counts and RSRC1/2; the program
         // address is `address`): on queue 0 the bank also holds the graphics stages' registers,

@@ -33,6 +33,9 @@ enum class StageInputKind {
     LocalInvocationId,
     LocalInvocationIndex,
     GlobalInvocationId,
+    // Not an input: a partial-group dispatch's size in threads, from shader data
+    // (IrBindingLayout::DispatchThreadLimitDword).
+    DispatchThreadLimit,
     Parameter,
 };
 

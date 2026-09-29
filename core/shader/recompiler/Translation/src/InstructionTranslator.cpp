@@ -200,6 +200,13 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             initialExec = &entryIr.ULessThan(builtin(StageInputKind::LocalInvocationIndex), entryIr.Constant(totalThreads));
         }
     }
+    // A dispatch sized in threads launches a partial last workgroup; the host rounds it up to
+    // whole groups, so threads past the dispatch size start inactive.
+    if (options.stage == ShaderStageKind::Compute && options.inputInfo.compute->partialGroups) {
+        for (std::uint32_t axis = 0; axis < 3u; axis++) {
+            initialExec = &entryIr.LogicalAnd(*initialExec, entryIr.ULessThan(builtin(StageInputKind::GlobalInvocationId, axis), builtin(StageInputKind::DispatchThreadLimit, axis)));
+        }
+    }
     entryIr.SetExec(*initialExec);
     IrValue& initialMask = entryIr.Emit(IrOpcode::Ballot, IrOpcodeType(IrOpcode::Ballot), {initialExec});
     entryIr.SetExecLo(entryIr.CompositeExtract(initialMask, 0u));

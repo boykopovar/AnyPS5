@@ -43,6 +43,14 @@ struct ShaderComputeStageInfo {
     std::array<bool, 3> groupIdEnable;
     bool tgSizeEnable;
     std::uint32_t threadIdComponentCount;
+    // A dispatch sized in threads (USE_THREAD_DIMENSIONS) that is no whole number of workgroups:
+    // its size per axis, the last workgroup partial; zero otherwise. Variants key on whether it
+    // is set only; the size reaches the shader as shader data.
+    std::array<std::uint32_t, 3> partialThreads;
+
+    [[nodiscard]] bool PartialGroups() const {
+        return partialThreads != std::array<std::uint32_t, 3>{};
+    }
 };
 
 struct ShaderPixelStageInfo {

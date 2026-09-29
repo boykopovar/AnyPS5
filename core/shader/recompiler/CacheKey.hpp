@@ -103,6 +103,7 @@ private:
         append(key, value.groupIdEnable);
         append(key, value.tgSizeEnable);
         append(key, value.threadIdComponentCount);
+        append(key, value.PartialGroups());
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderPixelStageInfo& value) {

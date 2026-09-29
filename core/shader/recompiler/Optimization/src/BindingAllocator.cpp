@@ -95,6 +95,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     next.userDataRegisters = collectUserData(program);
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
     next.memoryOffsetCount = static_cast<std::uint32_t>(info.buffers.size());
+    next.dispatchThreadLimit = info.dispatchThreadLimit;
     const std::uint32_t pushDataStartDword = layout.pushConstantOffsetBytes / 4u;
     const std::uint32_t pushConstantSizeDwords = layout.pushConstantSizeBytes / 4u;
     const bool usesPushData = next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushConstantSizeDwords;
