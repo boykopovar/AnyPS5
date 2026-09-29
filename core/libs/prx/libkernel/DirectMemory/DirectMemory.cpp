@@ -9,9 +9,12 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <limits>
 #include <stdexcept>
 #include <system_error>
+#include <vector>
 
 #if defined(__linux__)
 #include <sys/mman.h>
@@ -215,6 +218,73 @@ void Trace(const char* format, ...) {
     va_end(args);
 }
 
+// Direct memory keeps its contents across mappings: titles unmap physical pages and map them again at
+// another address (titles move their pools that way) and read back what they wrote through the old one.
+// ponytail: the contents move by copying at unmap and map, so a physical page mapped at two live
+// addresses throws; a shared section with views (as in Kyty) lifts that but loses write watching.
+struct DirectMapping {
+    std::uintptr_t end;
+    std::uint64_t phys;
+};
+std::mutex g_directLock;
+std::map<std::uintptr_t, DirectMapping> g_directMappings;
+// Contents of unmapped direct memory by physical page; all-zero pages are left out.
+std::map<std::uint64_t, std::unique_ptr<unsigned char[]>> g_physPages;
+
+void ProtectOrThrow(std::uintptr_t address, std::size_t len, int nativeProt) {
+    if (mprotect(reinterpret_cast<void*>(address), len, nativeProt) != 0) throw std::system_error(errno, std::generic_category(), "mprotect failed");
+}
+
+void SaveContents(std::uintptr_t address, std::size_t len, std::uint64_t phys) {
+    static const unsigned char zero[PS5_PAGE_SIZE] = {};
+    ProtectOrThrow(address, len, PROT_READ);
+    for (std::size_t offset = 0; offset < len; offset += PS5_PAGE_SIZE) {
+        const auto* page = reinterpret_cast<const unsigned char*>(address + offset);
+        if (std::memcmp(page, zero, PS5_PAGE_SIZE) == 0) continue;
+        auto& copy = g_physPages[phys + offset];
+        copy.reset(new unsigned char[PS5_PAGE_SIZE]);
+        std::memcpy(copy.get(), page, PS5_PAGE_SIZE);
+    }
+}
+
+// Takes [start, end) out of the direct mappings; with save its bytes stay as the contents of its pages.
+void EraseMappings(std::uintptr_t start, std::uintptr_t end, bool save) {
+    auto it = g_directMappings.lower_bound(start);
+    if (it != g_directMappings.begin() && std::prev(it)->second.end > start) --it;
+    while (it != g_directMappings.end() && it->first < end) {
+        const auto base = it->first;
+        const auto mapping = it->second;
+        it = g_directMappings.erase(it);
+        const auto cutStart = std::max(base, start);
+        if (save) SaveContents(cutStart, std::min(mapping.end, end) - cutStart, mapping.phys + (cutStart - base));
+        if (base < start) g_directMappings.emplace(base, DirectMapping{start, mapping.phys});
+        if (mapping.end > end) it = g_directMappings.emplace(end, DirectMapping{mapping.end, mapping.phys + (end - base)}).first;
+    }
+}
+
+void RequireUnmapped(std::uint64_t phys, std::size_t len, std::uintptr_t address) {
+    for (const auto& [base, mapping] : g_directMappings) {
+        if (mapping.phys < phys + len && phys < mapping.phys + (mapping.end - base)) {
+            char message[192];
+            std::snprintf(message, sizeof(message), "direct memory 0x%llx+0x%zx is already mapped at 0x%llx; mapping it at 0x%llx too is not implemented", static_cast<unsigned long long>(phys), len,
+                          static_cast<unsigned long long>(base), static_cast<unsigned long long>(address));
+            throw std::runtime_error(message);
+        }
+    }
+}
+
+// Records a fresh mapping of phys at address (zero-filled, already protected nativeProt) and brings its contents back.
+void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int nativeProt) {
+    RequireUnmapped(phys, len, address);
+    g_directMappings.emplace(address, DirectMapping{address + len, phys});
+    auto it = g_physPages.lower_bound(phys);
+    const auto last = g_physPages.lower_bound(phys + len);
+    if (it == last) return;
+    ProtectOrThrow(address, len, PROT_READ | PROT_WRITE);
+    for (; it != last; it = g_physPages.erase(it)) std::memcpy(reinterpret_cast<void*>(address + (it->first - phys)), it->second.get(), PS5_PAGE_SIZE);
+    ProtectOrThrow(address, len, nativeProt);
+}
+
 bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len, int prot, int flags, int64_t physStart = -1) {
     constexpr int GuestMapFixed = 0x10;
     constexpr int GuestMapNoOverwrite = 0x80;
@@ -223,10 +293,18 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
     Trace("remap fixed %p+0x%zx prot=0x%x phys=0x%llx", addr, len, prot, static_cast<long long>(physStart));
     const auto nativeProtection = LinuxProtFromSce(prot);
     mutation.Protect(addr, len, (prot & 3) != 0, (prot & 2) != 0, [&] {
+        const auto address = reinterpret_cast<std::uintptr_t>(addr);
+        std::lock_guard lock(g_directLock);
+        EraseMappings(address, address + len, true);
+        // The range shows the physical pages' contents now, not what was mapped there before.
 #ifdef _WIN32
+        if (physStart >= 0 && !VirtualFree(addr, len, MEM_DECOMMIT)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualFree decommit failed");
         if (!VirtualAlloc(addr, len, MEM_COMMIT, WinProtFromPosix(nativeProtection))) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualAlloc commit failed");
+#else
+        if (physStart >= 0 && madvise(addr, len, MADV_DONTNEED) != 0) throw std::system_error(errno, std::generic_category(), "madvise failed");
 #endif
         if (mprotect(addr, len, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "mprotect failed");
+        if (physStart >= 0) AddMapping(address, len, static_cast<std::uint64_t>(physStart), nativeProtection);
     });
     return true;
 }
@@ -306,6 +384,34 @@ void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment) 
     return aligned;
 }
 
+// SCE protections as the title set them: the host page protection keeps only the CPU bits, but titles
+// read the GPU and AMPR bits back (a streamer reads straight into memory the APR may write).
+struct ProtectedRange {
+    std::uintptr_t end;
+    int prot;
+};
+std::mutex g_protectionLock;
+std::map<std::uintptr_t, ProtectedRange> g_protections;
+
+void EraseProtections(std::uintptr_t start, std::uintptr_t end) {
+    auto it = g_protections.lower_bound(start);
+    if (it != g_protections.begin() && std::prev(it)->second.end > start) --it;
+    while (it != g_protections.end() && it->first < end) {
+        const auto rangeStart = it->first;
+        const auto range = it->second;
+        it = g_protections.erase(it);
+        if (rangeStart < start) g_protections.emplace(rangeStart, ProtectedRange{start, range.prot});
+        if (range.end > end) it = g_protections.emplace(end, ProtectedRange{range.end, range.prot}).first;
+    }
+}
+
+void RecordProtection(const void* addr, size_t len, int prot) {
+    const auto start = reinterpret_cast<std::uintptr_t>(addr);
+    std::lock_guard lock(g_protectionLock);
+    EraseProtections(start, start + len);
+    if (prot >= 0) g_protections.emplace(start, ProtectedRange{start + len, prot});
+}
+
 void ValidateOutput(void** addr) {
     if (!addr) {
         // return SCE_KERNEL_ERROR_EINVAL;
@@ -322,16 +428,23 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
         return SCE_KERNEL_ERROR_EINVAL;
     }
     GuestAllocations::Mutation mutation;
-    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags)) return 0;
+    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags, physStart)) {
+        RecordProtection(*addr, len, prot);
+        return 0;
+    }
     if (*addr != nullptr && (flags & GuestMapFixedFlag) != 0) mutation.RequireAvailable(*addr, len);
+    std::lock_guard lock(g_directLock);
+    RequireUnmapped(static_cast<std::uint64_t>(physStart), len, reinterpret_cast<std::uintptr_t>(*addr));
     void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
     try {
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0);
+        AddMapping(reinterpret_cast<std::uintptr_t>(mapped), len, static_cast<std::uint64_t>(physStart), LinuxProtFromSce(prot));
     } catch (...) {
         Unmap(mapped, len);
         throw;
     }
     *addr = mapped;
+    RecordProtection(mapped, len, prot);
     Trace("map direct %p+0x%zx phys=0x%llx prot=0x%x flags=0x%x align=0x%zx", mapped, len, static_cast<unsigned long long>(physStart), prot, flags, alignment);
     return 0;
 }
@@ -340,7 +453,10 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
-    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags)) return 0;
+    if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags)) {
+        RecordProtection(*addr, len, prot);
+        return 0;
+    }
     if (*addr != nullptr && (flags & GuestMapFixedFlag) != 0) mutation.RequireAvailable(*addr, len);
     void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, PS5_PAGE_SIZE);
     try {
@@ -350,6 +466,7 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags) {
         throw;
     }
     *addr = mapped;
+    RecordProtection(mapped, len, prot);
     Trace("map anon %p+0x%zx prot=0x%x flags=0x%x", mapped, len, prot, flags);
     return 0;
 }
@@ -379,6 +496,7 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     mutation.Protect(pointer, bytes, (prot & 3) != 0, (prot & 2) != 0, [&] {
         if (mprotect(const_cast<void*>(pointer), bytes, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "mprotect failed");
     });
+    RecordProtection(pointer, bytes, prot);
     return 0;
 }
 
@@ -387,6 +505,11 @@ int DoMunmap(void* addr, size_t len) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
     mutation.Unmap(addr, len, [&](const void* allocation, bool last) {
+        {
+            const auto address = reinterpret_cast<std::uintptr_t>(addr);
+            std::lock_guard lock(g_directLock);
+            EraseMappings(address, address + len, true);
+        }
 #if defined(__linux__)
         Unmap(addr, len);
 #else
@@ -395,6 +518,7 @@ int DoMunmap(void* addr, size_t len) {
         else munmap(addr, len);
 #endif
     });
+    RecordProtection(addr, len, -1);
     return 0;
 }
 
@@ -412,4 +536,27 @@ int DoReserveVirtual(void** addr, size_t len, size_t alignment) {
     *addr = mapped;
     Trace("reserve %p+0x%zx align=0x%zx", mapped, len, alignment);
     return 0;
+}
+
+void ForgetDirectMemory(int64_t start, size_t len) {
+    const auto first = static_cast<std::uint64_t>(start);
+    const auto end = first + len;
+    std::lock_guard lock(g_directLock);
+    g_physPages.erase(g_physPages.lower_bound(first), g_physPages.lower_bound(end));
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> released;
+    for (const auto& [base, mapping] : g_directMappings) {
+        const auto mappedEnd = mapping.phys + (mapping.end - base);
+        if (mapping.phys < end && first < mappedEnd) released.emplace_back(base + (std::max(first, mapping.phys) - mapping.phys), base + (std::min(end, mappedEnd) - mapping.phys));
+    }
+    for (const auto& [from, to] : released) EraseMappings(from, to, false);
+}
+
+bool GuestProtection(uintptr_t addr, int* prot) {
+    std::lock_guard lock(g_protectionLock);
+    auto next = g_protections.upper_bound(addr);
+    if (next == g_protections.begin()) return false;
+    const auto containing = std::prev(next);
+    if (addr >= containing->second.end) return false;
+    *prot = containing->second.prot;
+    return true;
 }

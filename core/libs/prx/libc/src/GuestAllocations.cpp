@@ -181,6 +181,12 @@ void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t 
     ranges.emplace(address, std::make_shared<const Range>(Range{address, bytes, readable, writable, address, bytes}));
 }
 
+[[noreturn]] void PinnedFailure(std::uintptr_t address, std::size_t bytes, const char* why) {
+    char message[160];
+    std::snprintf(message, sizeof(message), "guest allocation 0x%llx+0x%llx is owned by an active GPU command (%s)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), why);
+    throw std::runtime_error(message);
+}
+
 void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* pointer, std::size_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "guest allocation range overflow");
@@ -192,12 +198,11 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
     // this registry, so waiting with the lock held would deadlock them. The scan restarts after the
     // lock is retaken, since another mutation may have run meanwhile. Without a waiter the lease is
     // dropped by another thread (a synchronous draw or dispatch), so yielding suffices. A waiter
-    // round that finished nothing (the holder is not recorded GPU work) counts as a spin, so a lease
-    // nobody releases fails as fast as it did without a waiter; rounds that did finish work are
-    // bounded by the deadline only, as each one is a GPU wait.
+    // round that finished nothing (the holder is not recorded GPU work) yields: the holder may be a
+    // driver thread inside a long Vulkan call (importing host memory takes a lease for its whole
+    // length), so every wait is bounded by the deadline only.
     auto* state = static_cast<MutationState*>(mutation);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    int idleRounds = 0;
     int syncedRounds = 0;
     for (;;) {
         bool pinned = false;
@@ -212,7 +217,7 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
             }
         }
         if (!pinned) return;
-        require(std::chrono::steady_clock::now() < deadline, "guest allocation is owned by an active GPU command");
+        if (std::chrono::steady_clock::now() >= deadline) PinnedFailure(address, bytes, "waited 60 s for the lease");
         const auto waiter = pinWaiter.load(std::memory_order_acquire);
         bool progressed = false;
         if (waiter != nullptr && state != nullptr && state->lock.owns_lock()) {
@@ -229,7 +234,6 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
             if (++syncedRounds == 8) std::fprintf(stderr, "[gpu] leased allocation 0x%llx+0x%llx still pinned after %d recorder syncs\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), syncedRounds);
             continue;
         }
-        require(++idleRounds < 1000000, "guest allocation is owned by an active GPU command");
     }
 }
 

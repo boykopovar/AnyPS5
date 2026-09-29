@@ -100,6 +100,16 @@ unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix() {
     throw std::runtime_error("_Throw_C_error: C11 thread error " + std::to_string(code));
 }
 
+[[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code) {
+    throw std::runtime_error("_Throw_Cpp_error: C++ thread error " + std::to_string(code));
+}
+
+// The title's std::error_category object carries its own Dinkumware vtable and string ABI.
+const void* APS5_VABI _ZSt16generic_categoryv_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
 void APS5_VABI _Lockfilelock_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("_Lockfilelock: null stream");
 #ifdef _WIN32

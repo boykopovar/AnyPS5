@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "prx/libkernel/File/include/NativeStat.hpp"
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -186,10 +187,63 @@ int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char** paths, 
     return 0;
 }
 
+// The prefix is prepended to every path; titles pass "" with absolute /app0 paths.
+int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
+    if (!prefix || !paths || !ids) return _fail(GUEST_EINVAL);
+    for (uint32_t index = 0; index < count; ++index) {
+        const std::string path = paths[index] ? std::string(prefix) + paths[index] : std::string();
+        if (path.empty() || !_resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr)) {
+            if (error_index) *error_index = index;
+            return _fail(GUEST_ENOENT);
+        }
+    }
+    return 0;
+}
+
+int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {
+    return sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(prefix, paths, count, ids, nullptr, error_index);
+}
+
+int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
+    if (!size) return _fail(GUEST_EINVAL);
+    *size = _file(id).size;
+    return 0;
+}
+
+int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
+    if (!stat) return _fail(GUEST_EINVAL);
+    File::FillFileStat(_file(id).path, stat);
+    return 0;
+}
+
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
     (void)priority;
     if (!buffer || buffer->type != Apr::BufferType::Apr) return _fail(GUEST_EINVAL);
     _execute(*buffer);
+    return 0;
+}
+
+// Command buffers run synchronously, so a submission is complete (result 0) before its id is returned
+// and waiting on it has nothing left to do.
+int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
+    if (!id) return _fail(GUEST_EINVAL);
+    const int result = sceKernelAprSubmitCommandBuffer(buffer, priority);
+    if (result != 0) return result;
+    static std::atomic<uint32_t> nextId{1};
+    *id = nextId.fetch_add(1);
+    return 0;
+}
+
+int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* result, uint32_t* id) {
+    if (!result) return _fail(GUEST_EINVAL);
+    const int submitted = sceKernelAprSubmitCommandBufferAndGetId(buffer, priority, id);
+    if (submitted != 0) return submitted;
+    *result = 0;
+    return 0;
+}
+
+int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {
+    (void)id;
     return 0;
 }
 

@@ -17,6 +17,7 @@ bool g_iconAttempted = false;
 bool g_iconLoaded = false;
 char g_title[128] = {};
 char g_titleId[12] = {};
+std::uint64_t g_downloadDataSizeMiB = 0;
 std::vector<std::uint8_t> g_iconBytes;
 
 constexpr const char* AppMetadataParamJsonGuestPath = "/app0/sce_sys/param.json";
@@ -35,6 +36,7 @@ void ensureTitleLoaded() {
     const auto parsed = parseParamJson(resolvedPath);
     copyToFixedBuffer(g_title, sizeof(g_title), parsed.title);
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
+    g_downloadDataSizeMiB = parsed.downloadDataSizeMiB;
     g_titleLoaded = true;
 }
 
@@ -66,6 +68,11 @@ AppTitle GetAppTitle_nid_postfix() {
     AppTitle result{};
     std::memcpy(result.value, g_title, sizeof(result.value));
     return result;
+}
+
+std::uint64_t GetAppDownloadDataSizeMiB_nid_postfix() {
+    ensureTitleLoaded();
+    return g_downloadDataSizeMiB;
 }
 
 AppTitleId GetAppTitleId_nid_postfix() {

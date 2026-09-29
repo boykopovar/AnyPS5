@@ -5,7 +5,7 @@
 #include <cstdint>
 
 // Guest virtual memory is placed inside one reserved arena below the PS5 application map limit
-// (0xFC_0000_0000), in ascending first-fit order like the PS5 kernel. Guest code indexes tables by
+// (0xFC_0000_0000), in ascending first-fit order from the system-managed area like the PS5 kernel. Guest code indexes tables by
 // absolute address and breaks on host addresses outside that range.
 namespace GuestArena {
 

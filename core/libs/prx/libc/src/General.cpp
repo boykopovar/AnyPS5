@@ -53,7 +53,8 @@ std::optional<std::filesystem::path> ResolveAlias(const std::string& guestPath) 
 struct WorkingDirectory {
     std::mutex mutex;
     const std::filesystem::path root = std::filesystem::canonical(std::filesystem::current_path());
-    std::filesystem::path current = root;
+    // A PS5 process starts in /app0, so titles open game files by relative path.
+    std::filesystem::path current = std::filesystem::is_directory(root / "app0") ? root / "app0" : root;
 };
 WorkingDirectory& Directories() { static WorkingDirectory state; return state; }
 std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {

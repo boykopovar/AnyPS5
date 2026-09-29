@@ -188,6 +188,25 @@ int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, 
     return 0;
 }
 
+int APS5_VABI wcsncpy_s_nid_postfix(wchar_t* dest, size_t destsz, const wchar_t* src, size_t count) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    if (!dest || destsz == 0) return GuestEinval;
+    if (!src) {
+        dest[0] = L'\0';
+        return GuestEinval;
+    }
+    size_t length = 0;
+    while (length < count && src[length] != L'\0') ++length;
+    if (length >= destsz) {
+        dest[0] = L'\0';
+        return GuestErange;
+    }
+    std::wmemcpy(dest, src, length);
+    dest[length] = L'\0';
+    return 0;
+}
+
 int APS5_VABI strcpy_s_nid_postfix(char* dest, size_t destsz, const char* src) {
     return strncpy_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
 }

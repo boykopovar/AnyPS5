@@ -57,10 +57,9 @@ int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksiz
     if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
     if (stacksize < 16384) throw std::runtime_error(std::string(__func__) + ": too small");
 #ifdef _WIN32
-    SYSTEM_INFO system{};
-    GetSystemInfo(&system);
-    if (stacksize % system.dwPageSize != 0 || stacksize > std::numeric_limits<unsigned>::max())
-        throw std::runtime_error(std::string(__func__) + ": invalid Windows stack size");
+    // Like libthr, any size is kept as given; thread creation rounds it up to whole pages.
+    if (stacksize > std::numeric_limits<unsigned>::max() - 0xffffu)
+        throw std::runtime_error(std::string(__func__) + ": stack size exceeds the Windows limit");
 #endif
     (*attr)->_stacksize = stacksize;
     return SCE_OK;

@@ -22,6 +22,8 @@ AppTitle GetAppTitle_nid_postfix();
 AppTitleId GetAppTitleId_nid_postfix();
 bool HasAppIcon_nid_postfix();
 AppIconData GetAppIconData_nid_postfix();
+// The download data quota param.json declares, in MiB (0 when none).
+std::uint64_t GetAppDownloadDataSizeMiB_nid_postfix();
 
 }
 

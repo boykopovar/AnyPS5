@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
 
@@ -98,6 +99,12 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
     auto native = ResolvePath_nid_no_patch(path);
     int fd = NativeOpen(native, MapFlags(flags), mode);
+#ifdef _WIN32
+    if (fd < 0 && errno != ENOENT) {
+        std::error_code error;
+        if (std::filesystem::is_directory(native, error)) fd = File::OpenDirectoryDescriptor(native);
+    }
+#endif
     if (fd < 0) {
         return SceErrorFromErrno(errno);
     }
@@ -105,6 +112,9 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
 }
 
 int APS5_VABI sceKernelClose(int d) {
+#ifdef _WIN32
+    File::ForgetDirectoryDescriptor(d);
+#endif
     if (NativeClose(d) != 0) {
         throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
     }

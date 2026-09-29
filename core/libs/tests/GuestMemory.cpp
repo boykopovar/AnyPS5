@@ -18,6 +18,10 @@ int APS5_VABI sceKernelMunmap(void*, std::size_t);
 int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
 int APS5_VABI sceKernelSetVirtualRangeName(const void*, std::uint64_t, const char*);
 int APS5_VABI sceKernelClearVirtualRangeName(const void*, std::uint64_t);
+int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
+int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
+int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
+int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
 }
 
 static void Require(bool condition) {
@@ -58,8 +62,46 @@ static void CheckNamedAndHintedMappings() {
     Require(sceKernelMunmap(first, length) == 0);
 }
 
+// Direct memory contents follow the physical pages: unmapped and mapped again elsewhere, they read back.
+static void CheckDirectMemoryFollowsPhysicalPages() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* first = nullptr;
+    Require(sceKernelMapDirectMemory(&first, page * 2, 3, 0, phys, 0) == 0);
+    static_cast<unsigned char*>(first)[0] = 11;
+    static_cast<unsigned char*>(first)[page + 5] = 22;
+    bool aliased = false;
+    void* alias = nullptr;
+    try { sceKernelMapDirectMemory(&alias, page, 3, 0, phys + page, 0); } catch (const std::exception&) { aliased = true; }
+    Require(aliased);
+    Require(sceKernelMunmap(first, page * 2) == 0);
+    void* filler = nullptr;
+    Require(sceKernelMapFlexibleMemory(&filler, page * 2, 3, 0) == 0);
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&second, page, 3, 0, phys + page, 0) == 0);
+    Require(second != first && static_cast<unsigned char*>(second)[5] == 22);
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page, 0, 0) == 0);
+    void* fixed = reserved;
+    Require(sceKernelMapDirectMemory(&fixed, page, 1, 0x10, phys, 0) == 0);
+    Require(fixed == reserved && static_cast<unsigned char*>(fixed)[0] == 11);
+    Require(sceKernelMunmap(fixed, page) == 0);
+    Require(sceKernelMunmap(second, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+    std::int64_t again = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &again) == 0 && again == phys);
+    void* fresh = nullptr;
+    Require(sceKernelMapDirectMemory(&fresh, page * 2, 3, 0, again, 0) == 0);
+    Require(static_cast<unsigned char*>(fresh)[0] == 0 && static_cast<unsigned char*>(fresh)[page + 5] == 0);
+    Require(sceKernelMunmap(fresh, page * 2) == 0);
+    Require(sceKernelMunmap(filler, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(again, page * 2) == 0);
+}
+
 int main() {
     CheckNamedAndHintedMappings();
+    CheckDirectMemoryFollowsPhysicalPages();
     constexpr std::size_t page = 0x4000;
     const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
     const auto reject = [&](std::size_t length, int protection, int flags, int fd,

@@ -1,4 +1,5 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -11,6 +12,7 @@ static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return _wstat64(p.wstring().c_str(), st);
 }
 static int DoFstat(int fd, NativeStat* st) {
+    if (const auto directory = File::DirectoryDescriptorPath(fd)) return DoStat(*directory, st);
     return _fstat64(fd, st);
 }
 #else

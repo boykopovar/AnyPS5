@@ -259,5 +259,9 @@ ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
     ParsedParamJson result;
     result.title = title;
     result.titleId = titleId;
+    if (const JsonValue* downloadData = findObjectMember(root, "downloadDataSize")) {
+        if (downloadData->type != JsonType::Number || downloadData->numberValue < 0) throw std::runtime_error("param.json downloadDataSize is not a size");
+        result.downloadDataSizeMiB = static_cast<std::uint64_t>(downloadData->numberValue);
+    }
     return result;
 }

@@ -97,4 +97,34 @@ void APS5_VABI srand_nid_postfix(unsigned int seed) {
     g_randState = seed;
 }
 
+
+// Dinkumware float classification codes returned by _FDtest and _FExp.
+constexpr short FloatDenorm = -2;
+constexpr short FloatFinite = -1;
+constexpr short FloatInfinite = 1;
+constexpr short FloatNan = 2;
+
+std::uint32_t _FNan_nid_postfix[4] = {0x7FC00000u, 0, 0, 0};
+
+short APS5_VABI _FDtest_nid_postfix(const float* x) {
+    switch (std::fpclassify(*x)) {
+        case FP_NAN: return FloatNan;
+        case FP_INFINITE: return FloatInfinite;
+        case FP_ZERO: return 0;
+        case FP_SUBNORMAL: return FloatDenorm;
+        default: return FloatFinite;
+    }
+}
+
+// Stores y * e^(*x) * 2^eoff in *x and classifies the result as 0 (zero or underflow), infinite, or finite.
+short APS5_VABI _FExp_nid_postfix(float* x, float y, short eoff) {
+    *x = static_cast<float>(std::ldexp(static_cast<double>(y) * std::exp(static_cast<double>(*x)), eoff));
+    if (*x == 0.0f) return 0;
+    return std::isinf(*x) ? FloatInfinite : FloatFinite;
+}
+
+unsigned __int128 APS5_VABI __udivti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor) {
+    return dividend / divisor;
+}
+
 }
