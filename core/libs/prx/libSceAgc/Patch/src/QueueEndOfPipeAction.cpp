@@ -30,19 +30,12 @@ int APS5_VABI sceAgcQueueEndOfPipeActionPatchAddress(std::uint32_t* cmd, const v
     return 0;
 }
 
-int APS5_VABI sceAgcQueueEndOfPipeActionPatchData(uint32_t* cmd, uint32_t context_id, uint32_t data_sel, uint64_t data) {
-    // RELEASE_MEM as built by sceAgcCbReleaseMem: [2] dst | interrupt << 24 | data select << 29, [5..6] data, [7] interrupt context.
+int APS5_VABI sceAgcQueueEndOfPipeActionPatchData(uint32_t* cmd, uint64_t data) {
+    // RELEASE_MEM as built by sceAgcCbReleaseMem: [2] data select << 29, [5..6] data.
     Agc::Command::ValidatePacket(cmd, 0x49u, 8, __func__);
-    Agc::Command::Require(data_sel <= 3, __func__, "invalid release data selector");
-    Agc::Command::CheckBits(context_id, 0x7ffffffu, __func__);
-    if (data_sel == 1) {
-        Agc::Command::CheckBits(data, 0xffffffffu, __func__);
-    }
-    Agc::Command::Require(((cmd[2] >> 24u) & 7u) != 4u || data_sel == 0, __func__, "interrupt-only release cannot write data");
-    cmd[2] = (cmd[2] & 0x1fffffffu) | (data_sel << 29u);
+    if ((cmd[2] >> 29u) == 1u) Agc::Command::CheckBits(data, 0xffffffffu, __func__);
     cmd[5] = static_cast<std::uint32_t>(data);
     cmd[6] = static_cast<std::uint32_t>(data >> 32u);
-    cmd[7] = context_id;
     return 0;
 }
 

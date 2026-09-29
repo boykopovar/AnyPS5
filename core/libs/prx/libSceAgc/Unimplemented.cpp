@@ -84,19 +84,6 @@ int APS5_VABI sceAgcSetAmmSemaphoreMemory() {
  return 0;
 }
 
-APS5_EXPORT("-KRzWekV120", sceAgcUnknown__MKRzWekV120);
-// Unnamed DCB state toggle: games call it as (cb, enable, 0, 0) and ignore the result. It sits
-// between SetBaseIndirectArgs and SetIndexBuffer in the import table; treated as a no-op.
-std::uint32_t* APS5_VABI sceAgcUnknown__MKRzWekV120(void* buf, std::uint32_t enable, std::uint64_t a2, std::uint64_t a3) {
-    static bool logged = false;
-    if (!logged) {
-        logged = true;
-        std::fprintf(stderr, "[agc] -KRzWekV120 treated as no-op (enable=%u args=0x%llx,0x%llx)" "\n", enable, static_cast<unsigned long long>(a2), static_cast<unsigned long long>(a3));
-    }
-    (void)buf;
-    return nullptr;
-}
-
 APS5_EXPORT("6nths4DHNrs", sceAgcUnknown_6nths4DHNrs);
 int APS5_VABI sceAgcUnknown_6nths4DHNrs() {
  NotImplemented_nid_no_patch(__func__);

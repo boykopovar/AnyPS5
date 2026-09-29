@@ -35,6 +35,16 @@ std::uint32_t APS5_VABI sceAgcDcbSetIndexSizeGetSize() {
     return 12; // SET_UCONFIG_REG_INDEX: header + 2 dwords
 }
 
+// Unnamed: sceAgcDcbSetIndexSize with the per-instance object id flag (VGT_INDEX_TYPE bit 14), as
+// Kyty and SharpEmu build it.
+APS5_EXPORT("-KRzWekV120", sceAgcUnknown__MKRzWekV120);
+std::uint32_t* APS5_VABI sceAgcUnknown__MKRzWekV120(CommandBuffer* buf, std::uint8_t indexSize, std::uint8_t cachePolicy, std::uint8_t perInstanceObjectId) {
+    Agc::Command::CheckBits(perInstanceObjectId, 1, __func__);
+    auto* packet = sceAgcDcbSetIndexSize(buf, indexSize, cachePolicy);
+    packet[2] |= static_cast<std::uint32_t>(perInstanceObjectId) << 14u;
+    return packet;
+}
+
 std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint32_t dataOffsetInBytes) {
     (void)buf;
     (void)dataOffsetInBytes;
