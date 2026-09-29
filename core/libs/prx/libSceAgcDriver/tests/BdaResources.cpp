@@ -36,9 +36,11 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     memory.AddWritable(address, sizeof(guest));
     memory.AddWritable(address + 16, 16);
     memory.Upload(true);
-    const auto first = memory.Descriptor(address, sizeof(guest));
-    const auto alias = memory.Descriptor(address + 16, 16);
-    Require(first.buffer == alias.buffer && alias.offset == 16, "aliased guest buffers have different owners");
+    std::uint32_t adjustment = 0;
+    const auto first = memory.Descriptor(address, sizeof(guest), adjustment);
+    Require(adjustment == 0, "a view at its owner's start is bound off it");
+    const auto alias = memory.Descriptor(address + 16, 16, adjustment);
+    Require(first.buffer == alias.buffer && alias.offset + adjustment == 16 && alias.range == 16 + adjustment, "aliased guest buffers have different owners");
     const auto ranges = memory.AddressRanges();
     Require(ranges.size() == 1 && ranges[0].begin == address && ranges[0].end == address + sizeof(guest), "incorrect BDA range bounds");
     Require(ranges[0].deviceAddress != 0 && ranges[0].permissions == ShaderRecompiler::BdaAbi::Read, "incorrect BDA address or permissions");
@@ -118,8 +120,10 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         GuestBufferMemory unaligned(aligned);
         unaligned.AddWritable(address, sizeof(guest));
         unaligned.Upload(true);
-        reject([&] { unaligned.Descriptor(address + 4, 4); }, "offset alignment");
-        reject([&] { unaligned.Descriptor(address + sizeof(guest), 4); }, "exceeds its GPU owner");
+        std::uint32_t adjustment = 0;
+        const auto view = unaligned.Descriptor(address + 4, 4, adjustment);
+        Require(adjustment == 4 && view.offset == 0 && view.range == 8, "a view off the offset alignment binds from below it");
+        reject([&] { unaligned.Descriptor(address + sizeof(guest), 4, adjustment); }, "exceeds its GPU owner");
     }
     {
         // The cached address space: a second build in an unchanged registry takes the first one's
@@ -139,8 +143,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
             leased.AcquireRegistered();
             Require(leased.HoldsLease(), "address-based build holds no lease");
             leased.Upload(true);
-            const auto view = leased.Descriptor(blockAddress, 64);
-            Require(view.range == 64, "leased block has no descriptor");
+            std::uint32_t adjustment = 0;
+            const auto view = leased.Descriptor(blockAddress, 64, adjustment);
+            Require(view.range == 64 + adjustment, "leased block has no descriptor");
             const auto ranges = leased.AddressRanges();
             Require(std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == blockAddress && range.end == blockAddress + 64; }), "leased block is missing from the BDA table");
             leased.WriteBack();

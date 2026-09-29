@@ -51,8 +51,7 @@ public:
     // The same inside a render pass another pipeline of the same attachments began (compatible by
     // construction: the attachment formats alone decide).
     void Continue(VkCommandBuffer commands, const VkViewport& viewport, const VkRect2D& scissor) const;
-    void PushConstants(VkCommandBuffer commands, std::span<const CompiledShader> shaders) const;
-    // The same from an assembled block (a draw recipe's, made by AssemblePushConstants once).
+    // An assembled block (AssemblePushConstants, then ShaderResources::PatchPushConstants).
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
     void Abandon() noexcept;

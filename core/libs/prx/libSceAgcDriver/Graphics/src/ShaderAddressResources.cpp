@@ -32,8 +32,8 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
     }
 }
 
-VkDescriptorBufferInfo ShaderResources::descriptor(const Allocation& allocation) const {
-    if (allocation.guest) return guestMemory.Descriptor(allocation.address, allocation.size);
+VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
+    if (allocation.guest) return guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment);
     if (allocation.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
         Require(context.emptyBuffer != VK_NULL_HANDLE, "no placeholder buffer for a null V#");
         return {context.emptyBuffer, 0, allocation.size};

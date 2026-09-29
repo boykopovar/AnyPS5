@@ -828,7 +828,15 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         // vector) counts as written, like imageWritten below.
                         const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                         const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
-                        item.allocations.push_back(addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic));
+                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic);
+                        // The element's byte offset in the shader data (RecompileResult::memoryOffsetDword).
+                        const auto& push = shader.program->pushConstants;
+                        if (!push.empty()) {
+                            const auto position = shader.program->memoryOffsetDword * 4u + element;
+                            Require(position < push.size(), "guest buffer offset lies outside the shader's push constants");
+                            allocations[index].pushByte = static_cast<std::int32_t>(shader.pushConstantOffset + position);
+                        }
+                        item.allocations.push_back(index);
                     }
                 } else if (addressRole) {
                     item.allocations.push_back(allocations.size());
@@ -965,6 +973,11 @@ void ShaderResources::buildComplete() {
                 writes.push_back(write);
             }
             context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        }
+        for (const auto& allocation : allocations) {
+            if (allocation.adjustment == 0) continue;
+            Require(allocation.pushByte >= 0, "a guest buffer off the storage buffer offset alignment in a shader whose shader data is a buffer is not implemented");
+            pushPatches.emplace_back(static_cast<std::uint32_t>(allocation.pushByte), allocation.adjustment);
         }
         timing.descriptorsMs += phase(BuildPhase::Descriptors);
         noteReusable();

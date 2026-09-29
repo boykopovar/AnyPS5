@@ -277,13 +277,6 @@ void Pipeline::Continue(VkCommandBuffer commands, const VkViewport& viewport, co
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &scissor);
 }
 
-void Pipeline::PushConstants(VkCommandBuffer commands, std::span<const CompiledShader> shaders) const {
-    const auto stages = PushConstantStages(shaders);
-    if (stages == 0) return;
-    const auto bytes = AssemblePushConstants(shaders);
-    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, stages, 0, PipelinePushConstantBytes, bytes.data());
-}
-
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
     if (stages == 0) return;
     context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, stages, 0, PipelinePushConstantBytes, bytes.data());

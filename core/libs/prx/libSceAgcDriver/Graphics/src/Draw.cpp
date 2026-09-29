@@ -1159,7 +1159,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     if (record.pushBytes != nullptr) record.pipeline->PushConstants(commands, record.pushStages, *record.pushBytes);
-    else record.pipeline->PushConstants(commands, shaders);
+    else {
+        auto bytes = AssemblePushConstants(shaders);
+        resources.PatchPushConstants(bytes);
+        record.pipeline->PushConstants(commands, PushConstantStages(shaders), bytes);
+    }
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset);
     if (args != nullptr) CountIndirectDraw(record.indirect->path, record.indirect->readMs, rewritten);
@@ -1488,7 +1492,10 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             recipe->passKey = passKey;
             recipe->vertexInput = inputs.vertexInput;
             recipe->pushStages = PushConstantStages(shaders);
-            if (recipe->pushStages != 0) recipe->pushBytes = AssemblePushConstants(shaders);
+            if (recipe->pushStages != 0) {
+                recipe->pushBytes = AssemblePushConstants(shaders);
+                resources->PatchPushConstants(recipe->pushBytes);
+            }
             recipe->masked = masked;
             recipe->fragmentOutputs = inputs.fragmentOutputs;
             recipe->shaderStages = inputs.shaderStages;
@@ -1577,7 +1584,9 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    pipeline->PushConstants(commands, shaders);
+    auto pushBytes = AssemblePushConstants(shaders);
+    resources->PatchPushConstants(pushBytes);
+    pipeline->PushConstants(commands, PushConstantStages(shaders), pushBytes);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset);
     if (args != nullptr) CountIndirectDraw(indirect.path, indirect.readMs, rewritten);

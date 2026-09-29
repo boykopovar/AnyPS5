@@ -185,6 +185,11 @@ public:
     // compiled shader's descriptors. A recipe hit refreshes the template iff the two differ.
     std::uint64_t DataWordsHash() const { return dataWordsHash; }
     static std::uint64_t DataWordsHash(const CompiledShader& shader);
+    // Stores the byte offsets of the guest buffers bound below their views (GuestBufferMemory::
+    // Descriptor) into a push constant block assembled from the shaders this object was built for.
+    void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
+        for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
+    }
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     // Why the fast proof of a Revalidate left the object to the full walk (the [rescache]
@@ -237,6 +242,11 @@ private:
         bool written = true;
         // Data buffers: the words the buffer holds once the recorded work ran (see RefreshData).
         std::vector<std::uint32_t> dataWords;
+        // Guest buffers: how far below the view the descriptor starts (GuestBufferMemory::
+        // Descriptor), and where in the push constant block the shader reads that (-1: the
+        // shader data is a buffer).
+        std::uint32_t adjustment = 0;
+        std::int32_t pushByte = -1;
     };
 
     struct Binding {
@@ -308,7 +318,7 @@ private:
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
-    VkDescriptorBufferInfo descriptor(const Allocation& allocation) const;
+    VkDescriptorBufferInfo descriptor(Allocation& allocation);
     void noteReusable();
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)
@@ -400,6 +410,8 @@ private:
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
     std::uint64_t dataWordsHash = 14695981039346656037ull;
     void rehashDataWords();
+    // The nonzero guest buffer adjustments by push constant byte (PatchPushConstants).
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
     BuildTiming timing;
     // Build state carried from stage A to stage B: the bindings in plan order, the image bindings
     // still to look up (index into `bindings`; the DescriptorBinding lives in the compiled shader),

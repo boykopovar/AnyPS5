@@ -314,6 +314,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 #endif
 
     result.bdaAbiVersion = program.Info().usesDma ? request.target.bdaAbiVersion : 0u;
+    result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
     result.vertexOffsetShared = program.Info().vertexOffsetShared;

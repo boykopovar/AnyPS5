@@ -163,7 +163,10 @@ public:
     void Upload(bool addressable);
     void UploadPrepare(bool addressable);
     void UploadFinish(bool addressable);
-    VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes) const;
+    // A view off minStorageBufferOffsetAlignment in its GPU owner (a view inside a merged or
+    // imported range) is bound from the aligned offset below it; `adjustment` is the difference,
+    // which the shader adds to every access (RecompileResult::memoryOffsetDword).
+    VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;
     // The BDA table of the cached address space when it serves this upload alone (an address-based
     // build with no region outside it): its ranges, immutable while the space lives, and the

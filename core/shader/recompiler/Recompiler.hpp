@@ -327,6 +327,10 @@ struct RecompileResult {
     SharedSpirv spirv;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
+    // The shader data dword of the guest buffers' byte offsets, one byte per GuestBuffers element
+    // (four per dword), zero as populated: a driver binding an element below its view (the storage
+    // buffer offset alignment) stores the difference there, the shader adds it to every access.
+    std::uint32_t memoryOffsetDword = 0;
     std::uint32_t bdaAbiVersion = 0;
     std::vector<VertexAttribute> vertexAttributes;
     std::int32_t vertexOffsetSgpr = -1;
