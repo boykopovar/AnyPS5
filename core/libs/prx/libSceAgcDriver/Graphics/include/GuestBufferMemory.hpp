@@ -184,6 +184,8 @@ public:
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& Writes() const { return writes; }
     // Whether any written range lives in a copied buffer, so a write-back must run once the GPU is done.
     bool HasCopiedWrites() const;
+    std::size_t ViewAliases() const { return aliases.size(); }
+    std::size_t GpuViewAliases() const;
     // Reports writes into host-imported memory (made by the GPU in place, or copied back into it by
     // RecordCopyBacks) to the write tracking now.
     void MarkDirectWrites() const;
@@ -298,6 +300,19 @@ private:
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
+    static std::uint64_t bindingBase(const Region& region);
+    struct View {
+        std::uint64_t begin;
+        std::uint64_t end;
+        bool written;
+    };
+    struct Alias {
+        Region region;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+    };
+    void bindMisalignedViews(bool addressable, Recorder* recorder, std::vector<Region*>& gpuCopies);
+    const Alias* aliasFor(std::uint64_t address, std::size_t bytes) const;
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>>& boundWrites() const { return aliases.empty() ? writes : regionWrites; }
     Context context;
     bool stagingAllowed = false;
     GuestAllocations::Lease lease;
@@ -312,6 +327,9 @@ private:
     // regions follow the registry's order), so AddSnapshot can search instead of scanning.
     bool regionsSorted = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+    std::vector<View> views;
+    std::vector<Alias> aliases;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> regionWrites;
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
     bool uploaded = false;

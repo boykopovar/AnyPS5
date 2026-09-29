@@ -1109,6 +1109,7 @@ void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t b
 void GuestBufferMemory::AddWritable(std::uint64_t address, std::size_t bytes, bool atomic) {
     addDescriptorRegion(address, bytes, atomic);
     writes.emplace_back(address, address + bytes);
+    views.push_back({address, address + bytes, true});
 }
 
 void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
@@ -1116,6 +1117,7 @@ void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
     // direct-write mark, and UploadPrepare copies it without the device lock. A written descriptor
     // overlapping the range still covers it through its own Writes() entry.
     addDescriptorRegion(address, bytes, false);
+    views.push_back({address, address + bytes, false});
 }
 
 void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
@@ -1345,6 +1347,16 @@ void reportStaging() {
     lastStaged = staged;
     lastIn = in;
     lastOut = out;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    std::sort(ranges.begin(), ranges.end());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    for (const auto& range : ranges) {
+        if (!merged.empty() && range.first < merged.back().second) merged.back().second = std::max(merged.back().second, range.second);
+        else merged.push_back(range);
+    }
+    return merged;
 }
 
 }
@@ -1669,6 +1681,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
         copyRegion(region, addressable);
         if (profile) copyUs += microsecondsSince(copyStart);
     }
+    bindMisalignedViews(addressable, recorder, gpuCopies);
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
     if (!profile) return;
     const auto loopUs = microsecondsSince(loopStart);
@@ -1868,25 +1881,137 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     recorder->EndGpuTiming(timing, copiedBytes);
 }
 
+std::uint64_t GuestBufferMemory::bindingBase(const Region& region) {
+    return region.direct != nullptr ? region.direct->base : region.mirror != nullptr ? region.mirror->base : region.begin;
+}
+
+void GuestBufferMemory::bindMisalignedViews(bool addressable, Recorder* recorder, std::vector<Region*>& gpuCopies) {
+    const auto alignment = context.limits.minStorageBufferOffsetAlignment;
+    if (alignment <= 1 || views.empty()) return;
+    struct Misaligned {
+        const Region* owner;
+        std::uint64_t residue;
+        std::size_t view;
+    };
+    std::vector<Misaligned> misaligned;
+    for (std::size_t index = 0; index < views.size(); ++index) {
+        const auto& view = views[index];
+        const auto* found = owner(view.begin);
+        if (found == nullptr || view.end > found->end || (found->buffer == nullptr && found->direct == nullptr && found->mirror == nullptr && !found->gpuCopy)) continue;
+        if ((view.begin - bindingBase(*found)) % alignment == 0) continue;
+        misaligned.push_back({found, view.begin % alignment, index});
+    }
+    if (misaligned.empty()) return;
+    std::sort(misaligned.begin(), misaligned.end(), [&](const Misaligned& left, const Misaligned& right) {
+        if (left.owner != right.owner) return std::less<const Region*>{}(left.owner, right.owner);
+        if (left.residue != right.residue) return left.residue < right.residue;
+        return views[left.view].begin < views[right.view].begin;
+    });
+    constexpr auto InRegion = std::numeric_limits<std::size_t>::max();
+    std::vector<std::size_t> binding(views.size(), InRegion);
+    std::vector<const Region*> owners;
+    for (const auto& entry : misaligned) {
+        const auto& view = views[entry.view];
+        if (!aliases.empty() && owners.back() == entry.owner && aliases.back().region.begin % alignment == entry.residue && view.begin < aliases.back().region.end) {
+            auto& last = aliases.back().region;
+            last.end = std::max(last.end, view.end);
+            last.writable = last.writable || view.written;
+            binding[entry.view] = aliases.size() - 1;
+            continue;
+        }
+        aliases.push_back({Region{view.begin, view.end, view.written, {}, nullptr}, {}});
+        owners.push_back(entry.owner);
+        binding[entry.view] = aliases.size() - 1;
+    }
+    regionWrites.clear();
+    std::vector<std::size_t> written;
+    for (std::size_t index = 0; index < views.size(); ++index) {
+        const auto& view = views[index];
+        if (!view.written) continue;
+        written.push_back(index);
+        if (binding[index] == InRegion) regionWrites.emplace_back(view.begin, view.end);
+        else aliases[binding[index]].writes.emplace_back(view.begin, view.end);
+    }
+    for (std::size_t first = 0; first < written.size(); ++first) {
+        for (std::size_t second = first + 1; second < written.size(); ++second) {
+            const auto& left = views[written[first]];
+            const auto& right = views[written[second]];
+            if (binding[written[first]] == binding[written[second]] || left.end <= right.begin || right.end <= left.begin) continue;
+            char message[240];
+            std::snprintf(message, sizeof(message), "written guest buffer views overlap at incompatible storage buffer offset alignments (view 0x%llx+0x%llx, view 0x%llx+0x%llx, alignment 0x%llx)", static_cast<unsigned long long>(left.begin), static_cast<unsigned long long>(left.end - left.begin), static_cast<unsigned long long>(right.begin), static_cast<unsigned long long>(right.end - right.begin), static_cast<unsigned long long>(alignment));
+            Require(false, message);
+        }
+    }
+    const bool onGpu = recorder != nullptr && gpuCopiesEnabled();
+    std::vector<const std::byte*> hostSources(aliases.size(), nullptr);
+    for (std::size_t index = 0; index < aliases.size(); ++index) {
+        auto& region = aliases[index].region;
+        const auto& source = *owners[index];
+        const VkBuffer import = source.direct != nullptr ? source.direct->buffer : source.gpuCopy ? source.copySource : VK_NULL_HANDLE;
+        if (import != VK_NULL_HANDLE && onGpu) {
+            region.gpuCopy = true;
+            region.copySource = import;
+            region.copySourceBase = source.direct != nullptr ? source.direct->base : source.copySourceBase;
+        } else if (source.mirror != nullptr) {
+            hostSources[index] = source.mirror->buffer->Bytes().data() + (region.begin - source.mirror->base);
+        } else if (import == VK_NULL_HANDLE) {
+            hostSources[index] = source.buffer->Bytes().data() + (region.begin - source.begin);
+        }
+        if (source.sparse) {
+            for (const auto& [first, last] : source.backed) {
+                const auto from = std::max(first, region.begin);
+                const auto to = std::min(last, region.end);
+                if (from < to) region.backed.emplace_back(from, to);
+            }
+            region.sparse = !(region.backed.size() == 1 && region.backed.front().first == region.begin && region.backed.front().second == region.end);
+            if (!region.sparse) region.backed.clear();
+        }
+    }
+    owners.clear();
+    bool opened = false;
+    for (std::size_t index = 0; index < aliases.size(); ++index) {
+        auto& region = aliases[index].region;
+        const auto bytes = static_cast<std::size_t>(region.end - region.begin);
+        region.buffer = std::make_shared<Buffer>(context, bytes, gpuCopyUsage(addressable), copyBufferProperties(false));
+        if (region.gpuCopy) {
+            if (!opened) static_cast<void>(recorder->Commands());
+            opened = true;
+            StorageTexture::FlushPending(region.begin, bytes, nullptr, "aliased buffer view");
+            gpuCopies.push_back(&region);
+            continue;
+        }
+        const auto target = region.buffer->Bytes();
+        if (hostSources[index] != nullptr) {
+            std::memcpy(target.data(), hostSources[index], bytes);
+        } else {
+            const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::BufferUpload);
+            GuestMemory::Read(region.begin, target);
+        }
+        if (!aliases[index].writes.empty()) region.uploaded.assign(target.begin(), target.end());
+    }
+}
+
+const GuestBufferMemory::Alias* GuestBufferMemory::aliasFor(std::uint64_t address, std::size_t bytes) const {
+    const auto alignment = context.limits.minStorageBufferOffsetAlignment;
+    if (alignment == 0) return nullptr;
+    for (const auto& alias : aliases) {
+        if (address >= alias.region.begin && address + bytes <= alias.region.end && (address - alias.region.begin) % alignment == 0) return &alias;
+    }
+    return nullptr;
+}
+
+std::size_t GuestBufferMemory::GpuViewAliases() const {
+    return static_cast<std::size_t>(std::count_if(aliases.begin(), aliases.end(), [](const Alias& alias) { return alias.region.gpuCopy; }));
+}
+
 void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     if (!uploaded || committed) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    // The written ranges, merged: a V# bound twice would otherwise copy the same bytes twice.
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
     bool recording = false;
     VkCommandBuffer commands = VK_NULL_HANDLE;
     auto timing = Recorder::NoTiming;
     std::uint64_t copiedBytes = 0;
-    for (auto& region : regions) {
-        if (!region.gpuCopy || region.copiedBack) continue;
-        if (merged.empty() && !writes.empty()) {
-            auto sorted = writes;
-            std::sort(sorted.begin(), sorted.end());
-            for (const auto& range : sorted) {
-                if (!merged.empty() && range.first < merged.back().second) merged.back().second = std::max(merged.back().second, range.second);
-                else merged.push_back(range);
-            }
-        }
+    const auto copyBack = [&](Region& region, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& merged) {
         for (const auto& [begin, end] : merged) {
             const auto from = std::max(begin, region.begin);
             const auto to = std::min(end, region.end);
@@ -1914,9 +2039,24 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
         // HasCopiedWrites, so the caller still registers the CPU write-back that stores the
         // staging bytes, instead of losing the shader's results.
         region.copiedBack = true;
+    };
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    bool mergedReady = false;
+    for (auto& region : regions) {
+        if (!region.gpuCopy || region.copiedBack) continue;
+        if (!mergedReady) merged = mergeRanges(boundWrites());
+        mergedReady = true;
+        copyBack(region, merged);
+    }
+    for (auto& alias : aliases) {
+        if (!alias.region.gpuCopy || alias.region.copiedBack) continue;
+        copyBack(alias.region, mergeRanges(alias.writes));
     }
     if (!recording) return;
-    if (Recorder::BarrierValidate()) recorder.NoteAccess(Recorder::CommandClass::StagingOut, Recorder::Access{{}, merged, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
+    if (Recorder::BarrierValidate()) {
+        const auto written = mergeRanges(writes);
+        recorder.NoteAccess(Recorder::CommandClass::StagingOut, Recorder::Access{{}, written, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
+    }
     // As a GPU label store or fill: visible to everything recorded after (shaders, transfers, an
     // indirect dispatch's arguments) and to the host once the batch completed; the caller's
     // pending-write note makes CPU readers wait for that.
@@ -1934,9 +2074,19 @@ VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std:
     Require(found != nullptr, "guest buffer has no GPU owner");
     const auto& region = *found;
     Require(address >= region.begin && address + bytes <= region.end && (region.buffer != nullptr || region.direct != nullptr || region.mirror != nullptr), "guest buffer view exceeds its GPU owner");
-    const auto base = region.direct != nullptr ? region.direct->base : region.mirror != nullptr ? region.mirror->base : region.begin;
+    const auto base = bindingBase(region);
     const auto offset = address - base;
-    Require(context.limits.minStorageBufferOffsetAlignment != 0 && offset % context.limits.minStorageBufferOffsetAlignment == 0, "guest buffer view violates storage buffer offset alignment");
+    if (context.limits.minStorageBufferOffsetAlignment != 0 && offset % context.limits.minStorageBufferOffsetAlignment != 0) {
+        if (const auto* alias = aliasFor(address, bytes)) {
+            Require(bytes <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
+            return {alias->region.buffer->Handle(), address - alias->region.begin, bytes};
+        }
+    }
+    if (context.limits.minStorageBufferOffsetAlignment == 0 || offset % context.limits.minStorageBufferOffsetAlignment != 0) {
+        char message[200];
+        std::snprintf(message, sizeof(message), "guest buffer view violates storage buffer offset alignment (view 0x%llx+0x%zx, owner 0x%llx..0x%llx, base 0x%llx, %s)", static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end), static_cast<unsigned long long>(base), region.direct != nullptr ? "direct" : region.mirror != nullptr ? "mirror" : "buffer");
+        Require(false, message);
+    }
     Require(bytes <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? region.mirror->buffer->Handle() : region.buffer->Handle();
     return {handle, offset, bytes};
@@ -1970,7 +2120,10 @@ std::optional<GuestBufferMemory::CachedTable> GuestBufferMemory::CachedAddressTa
 }
 
 bool GuestBufferMemory::HasCopiedWrites() const {
-    for (const auto& [begin, end] : writes) {
+    for (const auto& alias : aliases) {
+        if (!alias.writes.empty() && !(alias.region.gpuCopy && alias.region.copiedBack)) return true;
+    }
+    for (const auto& [begin, end] : boundWrites()) {
         const auto* found = owner(begin);
         if (found == nullptr) continue;
         const auto& region = *found;
@@ -1988,22 +2141,21 @@ bool GuestBufferMemory::HasCopiedWrites() const {
 }
 
 void GuestBufferMemory::MarkDirectWrites() const {
-    for (const auto& [begin, end] : writes) {
+    for (const auto& [begin, end] : boundWrites()) {
         const auto* found = owner(begin);
         if (found == nullptr) continue;
         const auto& region = *found;
         if (region.direct != nullptr || (region.gpuCopy && region.copiedBack)) GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
     }
+    for (const auto& alias : aliases) {
+        if (!alias.region.gpuCopy || !alias.region.copiedBack) continue;
+        for (const auto& [begin, end] : alias.writes) GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+    }
 }
 
 void GuestBufferMemory::WriteBack() {
     Require(uploaded && !committed, "guest memory cannot be committed twice or before upload");
-    std::sort(writes.begin(), writes.end());
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
-    for (const auto& range : writes) {
-        if (!merged.empty() && range.first < merged.back().second) merged.back().second = std::max(merged.back().second, range.second);
-        else merged.push_back(range);
-    }
+    const auto merged = mergeRanges(boundWrites());
     // The CPU keeps running while the GPU works, so storing whole ranges would roll back its writes to
     // bytes the shader never touched. Only runs that differ from the uploaded copy are stored.
     for (const auto& [begin, end] : merged) {
@@ -2072,13 +2224,44 @@ void GuestBufferMemory::WriteBack() {
             packed += static_cast<std::size_t>(last - first);
         }
     }
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    for (const auto& alias : aliases) {
+        const auto& region = alias.region;
+        for (const auto& [begin, end] : mergeRanges(alias.writes)) {
+            const auto length = static_cast<std::size_t>(end - begin);
+            const auto first = static_cast<std::size_t>(begin - region.begin);
+            if (region.gpuCopy && region.copiedBack) {
+                GuestMemory::MarkWritten(begin, length);
+                continue;
+            }
+            Recorder::NoteWrittenBack(begin, length);
+            if (region.gpuCopy) {
+                GuestMemory::Write(begin, region.buffer->Bytes().subspan(first, length));
+                if (profile) Copies().stagingStores.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            const auto current = region.buffer->Bytes();
+            const std::span<const std::byte> reference(region.uploaded);
+            if (!region.sparse) {
+                GuestMemory::WriteChanged(begin, current.subspan(first, length), reference.subspan(first, length));
+                continue;
+            }
+            for (const auto& [backedFirst, backedLast] : region.backed) {
+                const auto from = std::max(backedFirst, begin);
+                const auto to = std::min(backedLast, end);
+                if (from >= to) continue;
+                const auto offset = static_cast<std::size_t>(from - region.begin);
+                GuestMemory::WriteChanged(from, current.subspan(offset, static_cast<std::size_t>(to - from)), reference.subspan(offset, static_cast<std::size_t>(to - from)));
+            }
+        }
+    }
     committed = true;
     lease.clear();
     space.reset();
 }
 
 std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferMemory::DirectRegions() const {
-    if (!uploaded || committed) return std::nullopt;
+    if (!uploaded || committed || !aliases.empty()) return std::nullopt;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> result;
     if (space != nullptr) {
         for (const auto& region : space->base) {

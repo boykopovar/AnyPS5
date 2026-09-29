@@ -120,6 +120,36 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         unaligned.Upload(true);
         reject([&] { unaligned.Descriptor(address + 4, 4); }, "offset alignment");
         reject([&] { unaligned.Descriptor(address + sizeof(guest), 4); }, "exceeds its GPU owner");
+
+        alignas(64) std::array<std::uint8_t, 64> views{};
+        for (std::size_t i = 0; i < views.size(); ++i) views[i] = static_cast<std::uint8_t>(i);
+        const auto viewsAddress = reinterpret_cast<std::uintptr_t>(views.data());
+        {
+            GuestBufferMemory memory(aligned);
+            memory.AddReadable(viewsAddress, views.size());
+            memory.AddWritable(viewsAddress + 4, 8);
+            memory.AddReadable(viewsAddress + 40, 8);
+            memory.Upload(false);
+            Require(memory.ViewAliases() == 2 && memory.GpuViewAliases() == 0, "misaligned views were not given host copies");
+            const auto whole = memory.Descriptor(viewsAddress, views.size());
+            const auto written = memory.Descriptor(viewsAddress + 4, 8);
+            const auto read = memory.Descriptor(viewsAddress + 40, 8);
+            Require(whole.offset == 0 && written.offset % 16 == 0 && read.offset % 16 == 0, "view descriptors are not aligned");
+            Require(written.buffer != whole.buffer && read.buffer != whole.buffer && written.buffer != read.buffer && written.range == 8 && read.range == 8, "misaligned views bind the region's buffer");
+            Require(std::memcmp(access.bytes(written.buffer).data() + written.offset, views.data() + 4, 8) == 0 && std::memcmp(access.bytes(read.buffer).data() + read.offset, views.data() + 40, 8) == 0, "a view's binding does not hold the guest bytes at its address");
+            reject([&] { memory.Descriptor(viewsAddress + 8, 4); }, "offset alignment");
+            Require(memory.HasCopiedWrites(), "a written view alias needs no write-back");
+            access.bytes(written.buffer)[written.offset + 1] = std::byte{0xee};
+            access.bytes(written.buffer)[written.offset + 7] = std::byte{0xdd};
+            memory.WriteBack();
+            Require(views[5] == 0xee && views[11] == 0xdd && views[4] == 4 && views[12] == 12 && views[40] == 40, "a view alias's stores did not land in guest memory (or rolled back others)");
+        }
+        {
+            GuestBufferMemory memory(aligned);
+            memory.AddWritable(viewsAddress, views.size());
+            memory.AddWritable(viewsAddress + 4, 8);
+            reject([&] { memory.Upload(false); }, "incompatible storage buffer offset alignments");
+        }
     }
     {
         // The cached address space: a second build in an unchanged registry takes the first one's

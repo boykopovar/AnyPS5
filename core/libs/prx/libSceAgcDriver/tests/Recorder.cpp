@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "ViewAliases.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
@@ -970,6 +971,7 @@ int main() {
         closeRaceTests(device, recorder);
         keyProofTests(device, recorder);
         resourceReadTests(device, recorder);
+        RunViewAliasTests(device.GetContext(), recorder);
         storeRunTests(device, recorder);
         unitShadowTests(device, recorder);
         dataWordPositionsTests();

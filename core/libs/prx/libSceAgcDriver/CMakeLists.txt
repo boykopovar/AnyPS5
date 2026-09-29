@@ -175,6 +175,7 @@ configure_windows_unwind(agc_driver_flip_tests)
 
 add_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
+        tests/ViewAliases.cpp
 )
 
 target_include_directories(agc_driver_recorder_tests PRIVATE
