@@ -32,6 +32,9 @@ struct ShaderInfo {
     bool instanceOffsetConflict = false;
     bool hasBitwiseXor = false;
     bool usesDma = false;
+    // Some access stores through the BDA page table (MemoryInfo::gpuDescriptor): the pages it
+    // writes are noted in the fault buffer (BdaAbi::WrittenPageSlots).
+    bool bdaWrites = false;
 
     bool operator==(const ShaderInfo& other) const = default;
 };

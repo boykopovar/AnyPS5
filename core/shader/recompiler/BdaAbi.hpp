@@ -27,7 +27,7 @@ struct Range {
 };
 
 enum class FaultState : std::uint32_t { Empty, Writing, Ready };
-enum class FaultReason : std::uint32_t { Unmapped = 1, Permission, Overflow, InvalidTable, InvalidRectangle, LoopLimit };
+enum class FaultReason : std::uint32_t { Unmapped = 1, Permission, Overflow, InvalidTable, InvalidRectangle, LoopLimit, Unaligned };
 
 struct Fault {
     FaultState state;
@@ -44,6 +44,18 @@ static_assert(std::is_standard_layout_v<Range> && std::is_trivially_copyable_v<R
 static_assert(offsetof(Range, deviceAddress) == 16 && offsetof(Range, permissions) == 24);
 static_assert(std::is_standard_layout_v<Fault> && std::is_trivially_copyable_v<Fault> && sizeof(Fault) == 32);
 static_assert(offsetof(Fault, address) == 8 && offsetof(Fault, instruction) == 24);
+
+// After the Fault record, the fault buffer holds the pages the shader stored to through the table
+// (Write permission), for the host to mark GPU-written once the work completed: an overflow word,
+// then an open-addressed set of page number + 1 (0 is free), probed WrittenPageProbes slots from a
+// multiplicative hash. A store that finds no slot sets the overflow word.
+inline constexpr std::uint32_t WrittenPageShift = 12;
+inline constexpr std::uint32_t WrittenPageSlots = 4096;
+inline constexpr std::uint32_t WrittenPageProbes = 8;
+inline constexpr std::uint32_t WrittenOverflowWord = sizeof(Fault) / sizeof(std::uint32_t);
+inline constexpr std::uint32_t WrittenSlotsWord = WrittenOverflowWord + 1;
+inline constexpr std::size_t FaultBufferBytes = (WrittenSlotsWord + WrittenPageSlots) * sizeof(std::uint32_t);
+static_assert((WrittenPageSlots & (WrittenPageSlots - 1)) == 0);
 
 }
 

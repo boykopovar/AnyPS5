@@ -31,7 +31,13 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     throw std::runtime_error("buffer operation has invalid memory metadata");
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
-                if (memory.kind == ResourceKind::Buffer) {
+                if (memory.gpuDescriptor) {
+                    // The V#'s ADD_TID is known at run time only.
+                    if (program.Resources().stage != IrShaderStage::Compute) {
+                        throw std::runtime_error("GPU-selected buffer descriptors outside compute shaders are not implemented");
+                    }
+                    requirements.subgroupLocalInvocationId = true;
+                } else if (memory.kind == ResourceKind::Buffer) {
                     if (memory.resource >= program.Info().buffers.size()) {
                         throw std::runtime_error("buffer operation has invalid resource metadata");
                     }

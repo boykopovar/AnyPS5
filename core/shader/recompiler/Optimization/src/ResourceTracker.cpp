@@ -96,6 +96,7 @@ public:
         m_info.samplers.clear();
         m_info.sampledPairs.clear();
         m_info.usesDma = false;
+        m_info.bdaWrites = false;
     }
 
     void Run() {
@@ -523,6 +524,34 @@ private:
         source = InternSource(descriptor);
     }
 
+    // A raw dword load or store (1-4 dwords) through a V# the SRT walker cannot compute: the program
+    // loads it at a GPU-computed offset (a descriptor heap) or builds it. No binding holds such a
+    // V#, so the shader decodes it and accesses memory through the BDA page table
+    // (MemoryInfo::gpuDescriptor). Other accesses keep failing in GetHandle.
+    bool TakeGpuDescriptor(IrValue& inst, std::uint32_t memoryIndex) {
+        const IrValue* handle = inst.Argument(0)->Resolve();
+        if (handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) {
+            return false;
+        }
+        DescriptorSource descriptor;
+        MakeSource(*handle, 4u, false, false, descriptor);
+        std::uint32_t badDword = 0;
+        if (ValidateSource(descriptor, badDword)) {
+            return false;
+        }
+        const auto op = inst.Opcode();
+        const bool load = op == IrOpcode::LoadBufferU32 || op == IrOpcode::LoadBufferU32x2 || op == IrOpcode::LoadBufferU32x3 || op == IrOpcode::LoadBufferU32x4;
+        const bool store = op == IrOpcode::StoreBufferU32 || op == IrOpcode::StoreBufferU32x2 || op == IrOpcode::StoreBufferU32x3 || op == IrOpcode::StoreBufferU32x4;
+        auto& memory = m_program.Resources().memoryInfo[memoryIndex];
+        if ((!load && !store) || memory.formatted || memory.typed || memory.dataBits != 32u) {
+            return false;
+        }
+        memory.gpuDescriptor = true;
+        m_info.usesDma = true;
+        m_info.bdaWrites = m_info.bdaWrites || store;
+        return true;
+    }
+
     void ValidateAddressHandle(IrValue* value) const {
         const IrValue* handle = value->Resolve();
         if (handle->Opcode() != IrOpcode::GetAddressResource) {
@@ -681,6 +710,9 @@ private:
         std::uint32_t resource = 0;
 
         if (buffer != BufferAccess::None) {
+            if (TakeGpuDescriptor(inst, flags.index)) {
+                return;
+            }
             GetHandle(inst.Argument(0), IrOpcode::GetBufferResource, 4, handle, source);
             resource = AddBuffer(source, memory, op, flags.pc);
             if (resource == std::numeric_limits<std::uint32_t>::max()) {

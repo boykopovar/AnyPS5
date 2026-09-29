@@ -38,6 +38,9 @@ private:
     // The page table is read-only to the shader, so consecutive builds mapping the same ranges to the
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
+    // The pages stores through the table noted in the fault buffer (BdaAbi::WrittenPageSlots) are
+    // marked GPU-written, and the set emptied; CheckFault does it first.
+    void markWrittenPages() const;
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
     std::size_t tableBytes = 0;

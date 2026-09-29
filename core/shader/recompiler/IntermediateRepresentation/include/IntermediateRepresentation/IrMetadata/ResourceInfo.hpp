@@ -45,6 +45,9 @@ struct MemoryInfo {
     bool idxen = false;
     bool offen = false;
     bool planningOnly = false;
+    // A buffer access whose V# the program computes on the GPU (loaded at a runtime offset, say),
+    // so no binding can hold it: the shader decodes the V# and goes through the BDA page table.
+    bool gpuDescriptor = false;
 
     bool operator==(const MemoryInfo& other) const = default;
 };

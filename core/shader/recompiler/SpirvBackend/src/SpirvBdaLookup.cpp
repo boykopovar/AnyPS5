@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include <bit>
 
 namespace ShaderRecompiler {
 
@@ -17,9 +18,10 @@ void ReturnBdaZeroIf(SpirvEmitterState& state, std::uint32_t condition) {
 }
 
 // (u64 address, u32 bytes, u32 instruction) -> u64 device address of the range holding all the bytes,
-// or 0. With recordFaults the failure is published first; without, the caller retries byte-wise, and
-// the fault is recorded there if the bytes are unmapped for real.
-std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool recordFaults) {
+// or 0; the range must grant `permission`. With recordFaults the failure is published first;
+// without, the caller retries byte-wise, and the fault is recorded there if the bytes are unmapped
+// for real.
+std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool recordFaults, std::uint32_t permission = BdaAbi::Read) {
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);
@@ -103,7 +105,7 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
     fail(binary(spv::OpINotEqual, boolean, BdaLoadWord(state, at(7)), constant(0)), BdaAbi::FaultReason::InvalidTable);
     fail(binary(spv::OpUGreaterThanEqual, boolean, begin, finish), BdaAbi::FaultReason::InvalidTable);
     fail(binary(spv::OpUGreaterThan, boolean, end, finish), BdaAbi::FaultReason::Unmapped);
-    fail(binary(spv::OpIEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(BdaAbi::Read)), constant(0)), BdaAbi::FaultReason::Permission);
+    fail(binary(spv::OpIEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(permission)), constant(0)), BdaAbi::FaultReason::Permission);
     fail(binary(spv::OpIEqual, boolean, base, BdaConstant(state, 0)), BdaAbi::FaultReason::InvalidTable);
     const auto offset = binary(spv::OpISub, u64, address, begin);
     const auto result = binary(spv::OpIAdd, u64, base, offset);
@@ -117,10 +119,56 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
 
 }
 
+// (u64 address) -> void: notes the page of a store through the table in the fault buffer's written
+// set (see BdaAbi::WrittenPageSlots).
+static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto binary = [&](std::uint32_t op, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, op, type, left, right); };
+    const auto voidType = state.module.Type(spv::OpTypeVoid);
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, "note_bda_write");
+    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, voidType, TypeScalarU64(state)));
+    const auto address = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, TypeScalarU64(state), address);
+    EmitLabel(state, state.module.AllocateId());
+    const auto done = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), done, spv::StorageClassFunction);
+    state.module.AddFunction(spv::OpStore, done, ConstantBool(state, false));
+    const auto page = binary(spv::OpIAdd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, BdaAbi::WrittenPageShift))), constant(1));
+    const auto hash = binary(spv::OpShiftRightLogical, u32, binary(spv::OpIMul, u32, page, constant(0x9e3779b1u)), constant(32u - static_cast<std::uint32_t>(std::countr_zero(BdaAbi::WrittenPageSlots))));
+    const auto scope = constant(spv::ScopeDevice);
+    const auto relaxed = constant(spv::MemorySemanticsMaskNone);
+    for (std::uint32_t probe = 0; probe < BdaAbi::WrittenPageProbes; probe++) {
+        const auto pending = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, boolean, pending, done);
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, pending), [&] {
+            const auto slot = binary(spv::OpIAdd, u32, constant(BdaAbi::WrittenSlotsWord), binary(spv::OpBitwiseAnd, u32, binary(spv::OpIAdd, u32, hash, constant(probe)), constant(BdaAbi::WrittenPageSlots - 1u)));
+            const auto previous = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicCompareExchange, u32, previous, BdaWord(state, state.faultBufferVariable, slot), scope, relaxed, relaxed, page, constant(0u));
+            const auto taken = binary(spv::OpLogicalOr, boolean, binary(spv::OpIEqual, boolean, previous, constant(0u)), binary(spv::OpIEqual, boolean, previous, page));
+            state.module.AddFunction(spv::OpStore, done, taken);
+        });
+    }
+    const auto noted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, boolean, noted, done);
+    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, noted), [&] {
+        state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, constant(BdaAbi::WrittenOverflowWord)), scope, relaxed, constant(1u));
+    });
+    state.module.AddFunction(spv::OpReturn);
+    state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
 void DefineGetBdaPointer(SpirvEmitterState& state) {
     if (!state.program.Info().usesDma) return;
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
     if (!BdaByteReadsForced()) state.bdaProbeFunction = DefineBdaLookup(state, "probe_bda_pointer", false);
+    if (state.program.Info().bdaWrites) {
+        state.bdaWritePointerFunction = DefineBdaLookup(state, "get_bda_write_pointer", true, BdaAbi::Write);
+        state.bdaNoteWriteFunction = DefineBdaNoteWrite(state);
+    }
 }
 
 }
