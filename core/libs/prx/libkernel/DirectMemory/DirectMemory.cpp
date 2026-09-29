@@ -6,6 +6,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <set>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -220,8 +221,8 @@ void Trace(const char* format, ...) {
 
 // Direct memory keeps its contents across mappings: titles unmap physical pages and map them again at
 // another address (titles move their pools that way) and read back what they wrote through the old one.
-// ponytail: the contents move by copying at unmap and map, so a physical page mapped at two live
-// addresses throws; a shared section with views (as in Kyty) lifts that but loses write watching.
+// The contents move by copying at unmap and map; a shared section with views (as in Kyty) would alias
+// them for real but loses the write watching of the guest arena.
 struct DirectMapping {
     std::uintptr_t end;
     std::uint64_t phys;
@@ -247,6 +248,51 @@ void SaveContents(std::uintptr_t address, std::size_t len, std::uint64_t phys) {
     }
 }
 
+// A physical page mapped at more than one address has the same contents in every view, and every
+// view lacks write access while it is shared (g_shared).
+// ponytail: a write to a shared page faults; handing the page to the writing view on the fault, with
+// the GPU driver's imports of the other views, is the upgrade if a title writes through an alias.
+std::set<std::uintptr_t> g_shared;
+
+// The views of physPage in g_directMappings.
+std::vector<std::uintptr_t> Views(std::uint64_t physPage) {
+    std::vector<std::uintptr_t> views;
+    for (const auto& [base, mapping] : g_directMappings) {
+        if (physPage >= mapping.phys && physPage < mapping.phys + (mapping.end - base)) views.push_back(base + (physPage - mapping.phys));
+    }
+    return views;
+}
+
+int NativeProtection(std::uintptr_t view) {
+    int prot = 0;
+    if (!GuestProtection(view, &prot)) throw std::runtime_error("direct memory view has no recorded protection");
+    return LinuxProtFromSce(prot);
+}
+
+int SharedProtection(int nativeProt) {
+    return nativeProt & ~PROT_WRITE;
+}
+
+// Takes the shared page out of its sharing; the views left keep sharing it, or the last one gets its
+// own protection back. The views must still hold the same bytes: a write that reached one of them
+// (the GPU writes through its imports of guest memory) would have been lost to the others.
+void Unshare(std::uintptr_t page, std::uint64_t physPage) {
+    const auto others = Views(physPage);
+    if (others.empty()) throw std::runtime_error("shared direct memory page has no other view");
+    ProtectOrThrow(page, PS5_PAGE_SIZE, PROT_READ);
+    ProtectOrThrow(others.front(), PS5_PAGE_SIZE, PROT_READ);
+    if (std::memcmp(reinterpret_cast<const void*>(page), reinterpret_cast<const void*>(others.front()), PS5_PAGE_SIZE) != 0) {
+        char message[160];
+        std::snprintf(message, sizeof(message), "direct memory 0x%llx mapped at 0x%llx and 0x%llx was written through one view; aliased writes are not implemented", static_cast<unsigned long long>(physPage),
+                      static_cast<unsigned long long>(page), static_cast<unsigned long long>(others.front()));
+        throw std::runtime_error(message);
+    }
+    const bool last = others.size() == 1;
+    if (last) g_shared.erase(others.front());
+    const auto prot = NativeProtection(others.front());
+    ProtectOrThrow(others.front(), PS5_PAGE_SIZE, last ? prot : SharedProtection(prot));
+}
+
 // Takes [start, end) out of the direct mappings; with save its bytes stay as the contents of its pages.
 void EraseMappings(std::uintptr_t start, std::uintptr_t end, bool save) {
     auto it = g_directMappings.lower_bound(start);
@@ -256,33 +302,46 @@ void EraseMappings(std::uintptr_t start, std::uintptr_t end, bool save) {
         const auto mapping = it->second;
         it = g_directMappings.erase(it);
         const auto cutStart = std::max(base, start);
-        if (save) SaveContents(cutStart, std::min(mapping.end, end) - cutStart, mapping.phys + (cutStart - base));
+        const auto cutEnd = std::min(mapping.end, end);
         if (base < start) g_directMappings.emplace(base, DirectMapping{start, mapping.phys});
         if (mapping.end > end) it = g_directMappings.emplace(end, DirectMapping{mapping.end, mapping.phys + (end - base)}).first;
-    }
-}
-
-void RequireUnmapped(std::uint64_t phys, std::size_t len, std::uintptr_t address) {
-    for (const auto& [base, mapping] : g_directMappings) {
-        if (mapping.phys < phys + len && phys < mapping.phys + (mapping.end - base)) {
-            char message[192];
-            std::snprintf(message, sizeof(message), "direct memory 0x%llx+0x%zx is already mapped at 0x%llx; mapping it at 0x%llx too is not implemented", static_cast<unsigned long long>(phys), len,
-                          static_cast<unsigned long long>(base), static_cast<unsigned long long>(address));
-            throw std::runtime_error(message);
+        if (g_shared.empty()) {
+            if (save) SaveContents(cutStart, cutEnd - cutStart, mapping.phys + (cutStart - base));
+            continue;
+        }
+        for (auto page = cutStart; page < cutEnd; page += PS5_PAGE_SIZE) {
+            const auto physPage = mapping.phys + (page - base);
+            if (g_shared.erase(page) != 0) Unshare(page, physPage);
+            else if (save) SaveContents(page, PS5_PAGE_SIZE, physPage);
         }
     }
 }
 
 // Records a fresh mapping of phys at address (zero-filled, already protected nativeProt) and brings its contents back.
 void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int nativeProt) {
-    RequireUnmapped(phys, len, address);
+    std::vector<std::pair<std::size_t, std::uintptr_t>> shared;
+    for (const auto& [base, mapping] : g_directMappings) {
+        const auto physEnd = std::min(phys + len, mapping.phys + (mapping.end - base));
+        for (auto page = std::max(phys, mapping.phys); page < physEnd; page += PS5_PAGE_SIZE) shared.emplace_back(page - phys, base + (page - mapping.phys));
+    }
     g_directMappings.emplace(address, DirectMapping{address + len, phys});
     auto it = g_physPages.lower_bound(phys);
     const auto last = g_physPages.lower_bound(phys + len);
-    if (it == last) return;
+    if (it == last && shared.empty()) return;
     ProtectOrThrow(address, len, PROT_READ | PROT_WRITE);
     for (; it != last; it = g_physPages.erase(it)) std::memcpy(reinterpret_cast<void*>(address + (it->first - phys)), it->second.get(), PS5_PAGE_SIZE);
+    for (const auto& [offset, view] : shared) {
+        ProtectOrThrow(view, PS5_PAGE_SIZE, PROT_READ);
+        std::memcpy(reinterpret_cast<void*>(address + offset), reinterpret_cast<const void*>(view), PS5_PAGE_SIZE);
+        ProtectOrThrow(view, PS5_PAGE_SIZE, SharedProtection(NativeProtection(view)));
+        g_shared.insert(view);
+    }
     ProtectOrThrow(address, len, nativeProt);
+    for (const auto& [offset, view] : shared) {
+        ProtectOrThrow(address + offset, PS5_PAGE_SIZE, SharedProtection(nativeProt));
+        g_shared.insert(address + offset);
+    }
+    if (!shared.empty()) Trace("alias %p+0x%zx shares %zu physical pages with older views", reinterpret_cast<void*>(address), len, shared.size());
 }
 
 bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len, int prot, int flags, int64_t physStart = -1) {
@@ -434,7 +493,6 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     }
     if (*addr != nullptr && (flags & GuestMapFixedFlag) != 0) mutation.RequireAvailable(*addr, len);
     std::lock_guard lock(g_directLock);
-    RequireUnmapped(static_cast<std::uint64_t>(physStart), len, reinterpret_cast<std::uintptr_t>(*addr));
     void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
     try {
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0);
@@ -495,6 +553,8 @@ int DoMprotect(const void* addr, size_t len, int prot) {
 #endif
     mutation.Protect(pointer, bytes, (prot & 3) != 0, (prot & 2) != 0, [&] {
         if (mprotect(const_cast<void*>(pointer), bytes, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "mprotect failed");
+        std::lock_guard lock(g_directLock);
+        for (auto it = g_shared.lower_bound(first); it != g_shared.end() && *it < end; ++it) ProtectOrThrow(*it, PS5_PAGE_SIZE, SharedProtection(nativeProtection));
     });
     RecordProtection(pointer, bytes, prot);
     return 0;
