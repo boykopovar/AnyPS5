@@ -112,6 +112,13 @@ bool IsLoopMerge(const IrProgram& program, std::uint32_t block) {
     return false;
 }
 
+bool IsContinueTarget(const IrProgram& program, std::uint32_t block) {
+    for (const auto& info : program.Metadata().blockInfo) {
+        if (info.terminator.loopHeader && info.terminator.continueBlock == block) return true;
+    }
+    return false;
+}
+
 std::uint32_t EmitBranchCondition(SpirvValueEmitContext& ctx, const BlockInfo& info) {
     if (ctx.otherHalf == nullptr || info.terminator.condition == BranchCondition::ScalarInstruction || info.terminator.condition == BranchCondition::GotoVariable) {
         return ctx.Def(info.condition);
@@ -630,9 +637,15 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
         if (info == nullptr) {
             context.Fail("structured control flow block has no terminator metadata");
         }
+        // A continue construct must reach its back edge (the back-edge block post-dominates the
+        // continue target), so a BDA fault in the continue target's instructions does not stop the
+        // invocation; the fault is recorded all the same.
+        const bool stops = state.bdaStopsInvocations;
+        state.bdaStopsInvocations = stops && !IsContinueTarget(program, info->id);
         EmitStructuredBlock(context, functionState, block);
         functionState.blockExitLabels.emplace(block, state.currentLabel);
         EmitStructuredTerminator(context, program, *info);
+        state.bdaStopsInvocations = stops;
     }
     PatchStructuredPhis(context, functionState);
 }
