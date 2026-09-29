@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <cstdio>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -329,6 +331,9 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
             if (type != PORT_TYPE_VIBRATION) {
                 openDevice(port);
             }
+            // APS5_TRACE_AUDIOOUT=1 reports the ports a title opens.
+            static const bool trace = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
+            if (trace) std::fprintf(stderr, "[audioout] port %d: type %d, %u samples at %u Hz, format %d, device %u\n", i + 1, type, len, freq, static_cast<int>(format), static_cast<unsigned>(port.device));
             return i + 1;
         }
     }
@@ -488,6 +493,11 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
             throw std::runtime_error("sceAudioOutGetPortState: unknown port type");
     }
     return 0;
+}
+
+int APS5_VABI sceAudioOutSetMixLevelPadSpk(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 }

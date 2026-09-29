@@ -34,6 +34,11 @@ set(ANYPS5_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 set(CMAKE_EXE_LINKER_FLAGS "")
 add_subdirectory(3rdparty/SDL2)
 set(CMAKE_EXE_LINKER_FLAGS "${ANYPS5_EXE_LINKER_FLAGS}")
+# Prebuilt FFmpeg (AJM's MP3 decoder), downloaded for the submodule's commit as in Kyty.
+set(ARCHITECTURE x86_64)
+add_subdirectory(3rdparty/ffmpeg-core)
+# The system libraries its pkg-config files name, which ffmpeg-core adds only for MSVC.
+target_link_libraries(ffmpeg INTERFACE bcrypt ole32 user32)
 
 set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)

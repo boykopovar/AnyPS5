@@ -33,18 +33,6 @@ int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint6
  return 0;
 }
 
-int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
- (void)info;
- (void)instance;
- (void)bitstream_input;
- (void)bitstream_input_size;
- (void)pcm_output;
- (void)pcm_output_size;
- (void)result;
- AjmStub(__func__);
- return 0;
-}
-
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
  (void)info;
  (void)instance;
@@ -110,20 +98,6 @@ int APS5_VABI sceAjmBatchJobGetResampleInfo(AjmBatchInfo* info, uint32_t instanc
  (void)info;
  (void)instance;
  (void)result;
- AjmStub(__func__);
- return 0;
-}
-
-int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size) {
- (void)info;
- (void)instance;
- (void)flags;
- (void)data_input;
- (void)data_input_size;
- (void)data_output;
- (void)data_output_size;
- (void)sideband_output;
- (void)sideband_output_size;
  AjmStub(__func__);
  return 0;
 }

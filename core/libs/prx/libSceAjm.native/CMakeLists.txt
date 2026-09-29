@@ -27,5 +27,5 @@ target_include_directories(libSceAjm.native PRIVATE
         ${LIBS_INCLUDE_DIR}
         ${LIBATRAC9_DIR}
 )
-target_link_libraries(libSceAjm.native PRIVATE atrac9 libc libkernel)
+target_link_libraries(libSceAjm.native PRIVATE atrac9 ffmpeg libc libkernel)
 configure_windows_unwind(libSceAjm.native)

@@ -1,7 +1,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -19,11 +22,12 @@ static constexpr std::uint64_t ATTRIBUTE_TRACE_EVERY = 2000;
 static constexpr std::uint32_t ATTRIBUTE_DATA = 0;
 static constexpr std::uint32_t ATTRIBUTE_VOLUME = 1;
 
-// data_format bits 8..11 carry the channel count: the title opens 0x100 (mono object ports),
-// 0x200 (stereo) and 0x880 (7.1 bed). The buffers behind them are float, as their spacing shows
-// (1024 bytes per 256-sample mono grain). The low byte's meaning is not known.
+// data_format bits 8..11 carry the channel count, bits 0..6 the sample type (0 float, 1 16-bit
+// integer) and bit 7 the standard 8-channel order, as Kyty decodes it: the titles open 0x100 (mono
+// object ports), 0x200 (stereo), 0x880 (7.1 bed) and 0x201 (a Bink movie's sound).
 static constexpr std::uint32_t FORMAT_CHANNELS_SHIFT = 8;
 static constexpr std::uint32_t FORMAT_CHANNELS_MASK = 0xFu;
+static constexpr std::uint32_t FORMAT_TYPE_MASK = 0x7Fu;
 
 static std::mutex g_portsLock;
 // Grows on demand: the title opens its bed ports plus max_object_ports object ports at once.
@@ -42,8 +46,12 @@ static constexpr float DOWNMIX_GAIN = 0.7071f;
 static void AccumulatePort(const AudioOut2Port& port, float* out, std::uint32_t frames) {
     const auto ch = port.channels;
     const float* volume = port.volume;
+    float in[AUDIO_OUT2_PORT_CHANNELS_MAX];
     for (std::uint32_t frame = 0; frame < frames; frame++) {
-        const float* in = port.data + static_cast<std::size_t>(frame) * ch;
+        const auto first = static_cast<std::size_t>(frame) * ch;
+        for (std::uint32_t c = 0; c < ch; c++) {
+            in[c] = port.int16 ? static_cast<const std::int16_t*>(port.data)[first + c] / 32768.0f : static_cast<const float*>(port.data)[first + c];
+        }
         float left = 0.0f;
         float right = 0.0f;
         if (ch == 1) {
@@ -116,7 +124,12 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     entry.samplingFreq = params->sampling_freq;
     entry.flags = params->flags;
     entry.channels = (params->data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
-    if (entry.channels > AUDIO_OUT2_PORT_CHANNELS_MAX) entry.channels = 0;
+    const auto sampleType = params->data_format & FORMAT_TYPE_MASK;
+    if (entry.channels == 0 || entry.channels > AUDIO_OUT2_PORT_CHANNELS_MAX || sampleType > 1) {
+        entry = AudioOut2Port{};
+        throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%x", params->data_format); return std::string(text); }() + " is not implemented");
+    }
+    entry.int16 = sampleType == 1;
     *port = static_cast<AudioOut2PortHandle>(index) + 1;
     AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u float ch) sampling_freq=%u flags=0x%x user=%llx\n",
         AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(*port), params->port_type, params->data_format,
