@@ -30,7 +30,6 @@ int APS5_VABI sceAgcDriverRegisterResource(uint32_t* resource_handle, uint32_t o
 int APS5_VABI sceAgcDriverRegisterWorkloadStream(uint32_t stream_id, const void* stream) {
  (void)stream_id;
  (void)stream;
- NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 

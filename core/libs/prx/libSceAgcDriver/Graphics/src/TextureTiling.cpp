@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include <string>
 #include <algorithm>
 #include <bit>
 #include <cstddef>
@@ -245,7 +246,7 @@ std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uin
     switch (tileMode) {
         case TextureTileMode::kStandard4KB: return {1u << thick4KB[index][0], 1u << thick4KB[index][1], 1u << thick4KB[index][2]};
         case TextureTileMode::kStandard64KB: return {1u << thick64KB[index][0], 1u << thick64KB[index][1], 1u << thick64KB[index][2]};
-        default: throw std::runtime_error("AGC graphics: 3D textures are only supported linear or in SW_4KB_S / SW_64KB_S");
+        default: throw std::runtime_error("AGC graphics: 3D textures are only supported linear or in SW_4KB_S / SW_64KB_S, not in XOR swizzle " + std::to_string(XorSwizzleMode(tileMode)) + " at " + std::to_string(bytesPerElement) + " bytes per element");
     }
 }
 
@@ -289,6 +290,19 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
 
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
     SurfaceGeometry geometry;
+    if (descriptor.dimension == TextureDimension::k3D && (descriptor.tileMode == TextureTileMode::kD64KBX || descriptor.tileMode == TextureTileMode::kR64KBX)) {
+        // addrlib keeps display and rotated swizzles thin for 3D (only Z and standard ones are thick):
+        // each depth slice is laid out as an array slice, its index XORed in through the equation.
+        Require(descriptor.mipCount == 1, "mipmapped 3D textures are not implemented");
+        const auto depth = descriptor.depthOrLastArray + 1u;
+        geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, 1u);
+        geometry.layers = depth;
+        geometry.imageDepth = depth;
+        geometry.guestBytes = ComputeSurfaceSize(geometry.mips, depth);
+        geometry.layerBytes = geometry.guestBytes / depth;
+        for (const auto& mip : geometry.mips) geometry.sliceLinearBytes = std::max(geometry.sliceLinearBytes, mip.linearOffset + mip.linearSize);
+        return geometry;
+    }
     if (descriptor.dimension == TextureDimension::k3D) {
         Require(descriptor.mipCount == 1, "mipmapped 3D textures are not implemented");
         const auto depth = descriptor.depthOrLastArray + 1u;

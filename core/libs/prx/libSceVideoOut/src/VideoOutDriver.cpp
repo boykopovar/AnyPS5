@@ -59,6 +59,16 @@ public:
         return std::make_shared<RenderingWait>(cfg, index, cfg->bufferReuse[index].Capture());
     }
 
+    void WaitForFlipRoom() override {
+        std::unique_lock queueLock(queue->mutex);
+        const bool room = queue->changed.wait_for(queueLock, std::chrono::seconds(60), [&] {
+            return queue->failure || queue->stopping || cfg->shutdownToken.stop_requested() || queue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
+        });
+        if (queue->failure) std::rethrow_exception(queue->failure);
+        if (queue->stopping || cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
+        require(room, "flip queue stayed full for 60 s: the presenter is not completing flips");
+    }
+
     std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo& info) override {
         // All flip modes are presented at the next vsync.
         require(info.mode >= VIDEO_OUT_FLIP_MODE_VSYNC && info.mode <= 6, "unsupported flip mode");
@@ -70,23 +80,13 @@ public:
         request->outputHandle = info.handle;
         request->flipMode = static_cast<int>(info.mode);
         request->flipArg = info.argument;
-        // Debug aid: APS5_FLIP_QUEUE_WAIT=1 waits for room instead of failing the flip, so a
-        // presenter stall keeps the process alive for a debugger (reported every 5 s).
-        static const bool waitWhenFull = std::getenv("APS5_FLIP_QUEUE_WAIT") != nullptr;
-        if (waitWhenFull) {
-            int waited = 0;
-            while (queue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) {
-                if (cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                if (++waited % 500 == 0) std::fprintf(stderr, "[flip] queue full for %d s; waiting (APS5_FLIP_QUEUE_WAIT)\n", waited / 100);
-            }
-        }
         std::lock_guard queueLock(queue->mutex);
         if (queue->failure) std::rethrow_exception(queue->failure);
         if (queue->stopping || cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
         std::lock_guard lock(cfg->mutex);
         checkConfig(*cfg);
-        require(queue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY, "flip queue full");
+        // The limit was waited for by WaitForFlipRoom before the driver took its lock; concurrent
+        // submitters may overshoot it by their own flips.
         if (info.index >= 0) {
             request->buffer = cfg->buffers[info.index];
             require(request->buffer.Occupied(), "flip buffer is not registered");
@@ -479,6 +479,7 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
                     flipQueue->requests.pop_front();
                 }
             }
+
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_QUIT) {
@@ -504,7 +505,11 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
                 }
                 current->timing->Print(current->outputHandle, current->index, current->flipArg, finished, interval);
             }
-            current.reset();
+            if (current) {
+                current.reset();
+                // processFlip released the flip's reservation: a submitter may be waiting for room.
+                flipQueue->changed.notify_all();
+            }
         }
     } catch (const ProcessShutdown&) {
     } catch (const std::exception& error) {

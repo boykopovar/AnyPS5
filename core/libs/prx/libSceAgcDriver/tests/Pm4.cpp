@@ -342,6 +342,18 @@ void testMemorySynchronization() {
     check(memory.destination == 42, "failed synchronization changed the destination");
 }
 
+void testWriteChangedKeepsUntouchedBytes() {
+    // Write-back stores only the bytes the GPU changed: its other bytes are the snapshot, and the
+    // CPU may have written them since.
+    alignas(256) static std::uint8_t guest[256];
+    std::memset(guest, 0, sizeof(guest));
+    std::vector<std::byte> original(sizeof(guest)), current(sizeof(guest));
+    current[3] = std::byte{7};
+    guest[100] = 0x55;
+    AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest), current, original);
+    check(guest[3] == 7 && guest[100] == 0x55, "write-back rolled back a byte the GPU did not change");
+}
+
 void testEventWrite() {
     for (const auto eventType : {0x07u, 0x0fu, 0x10u}) {
         AgcDriver::Pm4::Validate(makePacket(0x46, {0x400u | eventType}), 0);
@@ -481,6 +493,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         testCatalog();
+        testWriteChangedKeepsUntouchedBytes();
         testRegisters();
         testContextAndBases();
         testIndexedDraw();

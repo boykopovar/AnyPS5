@@ -866,9 +866,10 @@ VkImageView StorageTexture::createView(std::uint32_t mip) const {
     return created;
 }
 
-VkImageView StorageTexture::AttachmentView(VkFormat format) {
+VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip) {
     Require(attachable, "storage image cannot be a color attachment");
-    const auto found = attachmentViews.find(format);
+    Require(mip < descriptor.mipCount, "attachment mip exceeds the storage image");
+    const auto found = attachmentViews.find({format, mip});
     if (found != attachmentViews.end()) return found->second;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -878,10 +879,10 @@ VkImageView StorageTexture::AttachmentView(VkFormat format) {
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
-    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1u, descriptor.baseArray, 1u};
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, descriptor.baseArray, 1u};
     VkImageView created = VK_NULL_HANDLE;
     Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created), "vkCreateImageView attachment");
-    attachmentViews.emplace(format, created);
+    attachmentViews.emplace(std::pair{format, mip}, created);
     return created;
 }
 

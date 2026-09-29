@@ -99,8 +99,10 @@ void stateTests() {
     queue.context[0x91] = 0x30020;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.scissor.offset.x == 3 && state.scissor.offset.y == 1 && state.scissor.extent.width == 29 && state.scissor.extent.height == 2, "scissor intersection changed");
+    // DCC_ENABLE: the target is written uncompressed, its keys at CB_COLOR0_DCC_BASE.
     queue.context[0x31c] |= 0x10000000;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DCC");
+    queue.context[0x325] = 0x1234;
+    Require(AgcDriver::Graphics::DecodeState(queue).color.dccAddress == 0x123400, "DCC key address decode changed");
     queue = makeState();
     queue.context.erase(0x3b8);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
@@ -108,11 +110,14 @@ void stateTests() {
     queue.context[0x3b8] |= 5u << 14u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color tile mode");
     queue = makeState();
+    // A linear width off the 256-byte pitch alignment is padded (rows of 64 texels here).
     queue.context[0x3b0] = (62u << 14u) | 3u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "pitch");
+    Require(AgcDriver::Graphics::DecodeState(queue).color.bytes == 64u * 4u * 4u, "padded linear pitch changed");
     queue = makeState();
+    // Slot 1 written by the shader needs an export format.
     queue.context[0x8e] = 0xff;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "target zero");
+    queue.context[0x8f] = 0xff;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 0");
     queue = makeState();
     queue.context[0x200] = 2;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "depth");
@@ -128,7 +133,7 @@ void stateTests() {
     queue.context[0x1b4] = 2;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(AgcDriver::Graphics::DrawRejection(queue, true).empty(), "precheck rejected the reference state");
-    static_cast<void>(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, state.hasColorTarget, state.color.componentMapping));
+    static_cast<void>(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, AgcDriver::Graphics::ExportMappings(state)));
     AgcDriver::Graphics::RegisterReadLog() = nullptr;
     Require(!log.empty(), "the register facade recorded nothing");
     for (const auto read : log) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a register the decoders read: " + std::string(AgcDriver::Graphics::RegisterBankName(read.bank)) + " " + std::to_string(read.offset));
@@ -233,6 +238,74 @@ void DisabledColorTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
 }
 
+// Depth/stencil tests against a bound surface: Scaleform's mask pass (stencil ALWAYS, add 1) and
+// content pass (stencil EQUAL), as a Scaleform menu draws them.
+void DepthStencilTests() {
+    auto queue = makeState();
+    queue.context[0x000] = 0;
+    queue.context[0x002] = 0;
+    queue.context[0x007] = (1u << 16u) | 3u;
+    queue.context[0x00a] = 7;
+    queue.context[0x00b] = 0;
+    queue.context[0x010] = 0x22900983;
+    queue.context[0x011] = 0x20000181;
+    for (const auto offset : {0x012u, 0x014u}) queue.context[offset] = 0x100;
+    for (const auto offset : {0x013u, 0x015u}) queue.context[offset] = 0x200;
+    queue.context[0x10b] = 0x00050050;
+    queue.context[0x10c] = 0x01ffff01;
+    queue.context[0x10d] = 0x01000001;
+    queue.context[0x200] = 0x00700711;
+    std::vector<AgcDriver::Graphics::RegisterRead> log;
+    AgcDriver::Graphics::RegisterReadLog() = &log;
+    auto state = AgcDriver::Graphics::DecodeState(queue);
+    AgcDriver::Graphics::RegisterReadLog() = nullptr;
+    for (const auto read : log) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a depth register the decoder reads: " + std::to_string(read.offset));
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+    Require(rejection.empty(), "precheck rejected a stencil draw with a surface: " + rejection);
+    Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7, "depth surface decode changed");
+    Require(state.renderExtent.width == 4 && state.renderExtent.height == 2, "render extent ignores the depth surface");
+    Require(!state.depthTest && !state.depthWrite && state.stencilTest, "depth/stencil enables changed");
+    const auto& front = state.stencilFront;
+    Require(front.compareOp == VK_COMPARE_OP_ALWAYS && front.passOp == VK_STENCIL_OP_INCREMENT_AND_CLAMP && front.failOp == VK_STENCIL_OP_KEEP && front.reference == 1 && front.writeMask == 0xff, "stencil mask pass changed");
+    Require(std::memcmp(&state.stencilBack, &front, sizeof(front)) == 0, "back faces without BACKFACE_ENABLE must use the front state");
+    // The content pass: EQUAL to 2, nothing written.
+    queue.context[0x10b] = 0;
+    queue.context[0x10c] = 0x01ffff02;
+    queue.context[0x200] = 0x00200211;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.stencilFront.compareOp == VK_COMPARE_OP_EQUAL && state.stencilFront.reference == 2 && state.stencilFront.passOp == VK_STENCIL_OP_KEEP, "stencil content pass changed");
+    // Clearing to 0 with REPLACE_TEST under ALWAYS.
+    queue.context[0x10b] = 0x00030030;
+    queue.context[0x10c] = 0x01ffff00;
+    queue.context[0x200] = 0x00700771;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.stencilFront.passOp == VK_STENCIL_OP_REPLACE && state.stencilFront.reference == 0 && std::memcmp(&state.stencilBack, &state.stencilFront, sizeof(state.stencilFront)) == 0, "stencil clear pass changed");
+    // BACKFACE_ENABLE: back faces get STENCILFUNC_BF, the _BF operations and DB_STENCILREFMASK_BF.
+    queue.context[0x200] = 0x007007f1;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.stencilBack.compareOp == VK_COMPARE_OP_ALWAYS && state.stencilBack.passOp == VK_STENCIL_OP_KEEP && state.stencilBack.writeMask == 0 && state.stencilBack.reference == 1, "back-face stencil state changed");
+    // REPLACE_OP writing a value the test compares differently has no single Vulkan reference.
+    queue.context[0x10b] = 0x40;
+    queue.context[0x10c] = 0x05ffff02;
+    queue.context[0x200] = 0x00200211;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "stencil replacement");
+    // Adding anything but 1 has no Vulkan operation.
+    queue.context[0x10b] = 0x50;
+    queue.context[0x200] = 0x00700711;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "stencil add/subtract");
+    queue.context[0x10b] = 0;
+    queue.context[0x000] = 1;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
+    // CB_COLOR_VIEW's mip level is bits 26-29.
+    queue = makeState();
+    queue.context[0x31b] = 1u << 26u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "mip exceeds");
+    queue.context[0x31b] = 1u << 13u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "array views");
+}
+
 void DepthClipTests() {
     auto queue = makeState();
     const auto direct = AgcDriver::Graphics::DecodeState(queue);
@@ -261,7 +334,8 @@ void DepthClipTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "inverted viewport depth clamp");
     queue.context[0xb4] = 0;
     for (std::uint32_t bit = 0; bit < 32; ++bit) {
-        if (bit == 19) continue;
+        // DX_CLIP_SPACE_DEF (19) and ZCLIP_NEAR/FAR_DISABLE (26, 27, depth clamping) are decoded.
+        if (bit == 19 || bit == 26 || bit == 27) continue;
         queue.context[0x204] = 1u << bit;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
     }
@@ -1168,6 +1242,7 @@ int main() {
         stateTests();
         hardwareScreenOffsetTests();
         DepthClipTests();
+        DepthStencilTests();
         DisabledColorTests();
         ShaderStageTests();
         InitialContextTests();

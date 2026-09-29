@@ -1,6 +1,7 @@
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -46,6 +47,12 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
     const auto baseAddress = base40 << 8u;
     Require(baseAddress != 0, "guest texture descriptor has a null base address");
+    // A depth surface's contents live on the GPU only; its guest memory is stale.
+    if (DepthSurfaceAt(baseAddress)) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "AGC graphics: sampling depth/stencil surface 0x%llx is not implemented", static_cast<unsigned long long>(baseAddress));
+        throw std::runtime_error(text);
+    }
 
     const auto minLod = (words[1] >> 8u) & 0xfffu;
     const auto format = (words[1] >> 20u) & 0x1ffu;

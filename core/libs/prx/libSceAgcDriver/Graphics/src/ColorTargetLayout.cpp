@@ -32,9 +32,12 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
     require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "AGC graphics: unsupported color element size");
     std::uint32_t paddedHeight = height;
     switch (mode) {
-        case ColorTileMode::Linear:
-            require(width * bytesPerElement % 256u == 0, "AGC graphics: linear surface pitch requires a width aligned to 256 bytes");
+        case ColorTileMode::Linear: {
+            // Rows are padded to 256 bytes, addrlib's linear pitch alignment (linear textures use the same).
+            const auto pitchAlignment = 256u / bytesPerElement;
+            pitch = (width + pitchAlignment - 1u) / pitchAlignment * pitchAlignment;
             break;
+        }
         case ColorTileMode::RenderTarget: {
             // SW_64KB_R_X: 64 KiB blocks of 2^(16 - log2(bpe)) elements, wider than tall for odd powers.
             const auto log2Elements = 16u - static_cast<std::uint32_t>(std::countr_zero(bytesPerElement));

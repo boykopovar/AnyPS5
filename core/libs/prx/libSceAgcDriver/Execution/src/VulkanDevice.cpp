@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -489,6 +490,8 @@ struct VulkanDevice::State {
             // Cached graphics pipelines (with their framebuffers, modules, render passes and layouts)
             // belong to this device and must be destroyed while it lives.
             Graphics::ClearCachedPipelines(device);
+            // Their framebuffers were the last users of the depth surfaces' views.
+            Graphics::ClearDepthSurfaces(device);
             {
                 std::lock_guard pipelines(computePipelinesMutex);
                 computePipelines.clear();
@@ -779,6 +782,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     // Gathers with non-constant offsets (ImageGatherExtended).
     enabled.shaderImageGatherExtended = available.shaderImageGatherExtended;
     if (enabled.shaderImageGatherExtended) state->capabilities.push_back(spv::CapabilityImageGatherExtended);
+    // Sampling with an LOD clamp (image_sample_*_cl) as the MinLod image operand.
+    enabled.shaderResourceMinLod = available.shaderResourceMinLod;
+    if (enabled.shaderResourceMinLod) state->capabilities.push_back(spv::CapabilityMinLod);
     if (enabled.shaderStorageImageWriteWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageWriteWithoutFormat);
     if (enabled.shaderStorageImageReadWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageReadWithoutFormat);
     // Bindless image tables index an image array with a wave-uniform runtime slot.
@@ -1688,17 +1694,24 @@ bool NoResidentPresent() {
 // Debug aid: APS5_DUMP_FRAMES=<n> saves the first n presented display buffers as frame_<index>.bmp,
 // read back by the blit's own submission and written after its fence (RetireSlot), or with
 // APS5_NO_GPU_DUMP=1 decoded from the tiled guest buffer on the CPU, as before.
+// APS5_DUMP_FRAMES_EVERY=<k> dumps every k-th presented frame (up to APS5_DUMP_FRAMES of them)
+// instead of the first ones, to reach screens far into a run.
 struct FrameDumps {
     int limit;
     bool cpu;
+    int every = 1;
     int dumped = 0;
+    std::uint64_t presents = 0;
 };
 
 FrameDumps& Dumps() {
     static FrameDumps dumps{[] {
         const char* value = std::getenv("APS5_DUMP_FRAMES");
         return value ? std::atoi(value) : 0;
-    }(), std::getenv("APS5_NO_GPU_DUMP") != nullptr};
+    }(), std::getenv("APS5_NO_GPU_DUMP") != nullptr, [] {
+        const char* value = std::getenv("APS5_DUMP_FRAMES_EVERY");
+        return value ? std::max(std::atoi(value), 1) : 1;
+    }()};
     return dumps;
 }
 
@@ -1742,7 +1755,7 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
     }
     auto& dumps = Dumps();
     bool dumpFrame = false;
-    if (dumps.dumped < dumps.limit) {
+    if (dumps.dumped < dumps.limit && ++dumps.presents % static_cast<std::uint64_t>(dumps.every) == 0) {
         if (dumps.cpu) {
             const auto full = ReadDisplayBuffer(buffer);
             WriteFrameBmp(dumps.dumped++, buffer.width, buffer.height, full, DumpScale());

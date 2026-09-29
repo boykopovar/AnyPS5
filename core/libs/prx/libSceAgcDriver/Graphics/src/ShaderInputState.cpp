@@ -84,7 +84,7 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
     };
 }
 
-ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, bool hasColorTarget, std::uint8_t colorComponentMapping) {
+ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings) {
     const auto inControl = read(context, spiPsInControl, RegisterBank::Context);
     const auto inputNum = inControl & 0x3Fu;
     if (inputNum > 32u) {
@@ -117,11 +117,6 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     const bool depthExportEnable = (shaderControl & 0x1u) != 0;
     const bool sampleMaskExportEnable = ((shaderControl >> 8u) & 0x1u) != 0;
     const auto zOrder = (shaderControl >> 4u) & 0x3u;
-    std::array<std::uint8_t, 8> targetExportMapping{};
-    targetExportMapping.fill(0xe4u);
-    if (hasColorTarget) {
-        targetExportMapping[0] = colorComponentMapping;
-    }
     return ShaderRecompiler::ShaderPixelStageInfo{
         inputNum,
         interpolatorSettings,
@@ -142,7 +137,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         zOrder == 1u && !pixelKillEnable && !depthExportEnable && !sampleMaskExportEnable,
         ((shaderControl >> 10u) & 0x1u) != 0,
         targetOutputMode,
-        targetExportMapping
+        exportMappings
     };
 }
 

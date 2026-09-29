@@ -40,10 +40,40 @@ struct ColorTarget {
     // DCC metadata of a compressed target (CB_COLOR_INFO DCC_ENABLE), or 0 (see DccMetadata.hpp).
     std::uint64_t dccAddress = 0;
     bool dccAlphaOnMsb = false;
+    // A view of one mip of a mipmapped surface (CB_COLOR_VIEW MIP_LEVEL, CB_COLOR_ATTRIB2 MAX_MIP):
+    // the surface's base, mip 0 extent and mip count, the rendered mip, and whether it lies in the
+    // packed mip tail (which shares one block with the smaller mips, so it is only rendered through
+    // the resident image of the whole chain). `address`, `extent` and `bytes` are the mip's.
+    std::uint64_t surfaceAddress = 0;
+    VkExtent2D surfaceExtent{};
+    std::uint32_t mipCount = 1;
+    std::uint32_t mip = 0;
+    bool mipTail = false;
+};
+
+// The depth/stencil surface a draw with depth or stencil tests renders with (DB_Z_INFO,
+// DB_STENCIL_INFO and their bases). Its image lives on the GPU only (DepthSurface.hpp).
+struct DepthTarget {
+    std::uint64_t address;
+    // The stencil plane, 0 without one.
+    std::uint64_t stencilAddress;
+    VkExtent2D extent;
+    VkFormat format;
+    // DB_DEPTH_CLEAR / DB_STENCIL_CLEAR: what a new image starts as.
+    float clearDepth;
+    std::uint8_t clearStencil;
 };
 
 struct State {
     ShaderStages stages;
+    // Set when the draw tests depth or stencil against a bound surface; the tests below are off otherwise.
+    std::optional<DepthTarget> depth;
+    bool depthTest = false;
+    bool depthWrite = false;
+    VkCompareOp depthCompare = VK_COMPARE_OP_ALWAYS;
+    bool stencilTest = false;
+    VkStencilOpState stencilFront{};
+    VkStencilOpState stencilBack{};
     // MRT slot 0; `colors`/`blends` hold every written slot, attachment i being slot i.
     ColorTarget color;
     std::vector<ColorTarget> colors;
@@ -64,6 +94,8 @@ struct State {
 
 ShaderStages DecodeShaderStages(const QueueState& queue);
 State DecodeState(const QueueState& queue);
+// The component mapping of each MRT slot's export (identity past the written slots).
+std::array<std::uint8_t, 8> ExportMappings(const State& state);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
 // this precheck covers, evaluated without exceptions before the draw is decoded; empty when they
 // pass (DecodeState still checks everything). A register a rule needs that is absent is no verdict.
@@ -99,11 +131,14 @@ struct DrawKeyRange {
     std::uint32_t first;
     std::uint32_t count;
 };
-inline constexpr std::array<DrawKeyRange, 38> DrawKeyRegisters{{
-    // PA_SC_SCREEN_SCISSOR, the window offset/scissor and clip rect, the edge rule, the hardware
-    // screen offset, CB_TARGET_MASK/CB_SHADER_MASK, the generic and viewport 0 scissors, the
-    // viewport 0 depth clamp, the blend constants, the viewport 0 transform.
-    {RegisterBank::Context, 0x00c, 2}, {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 2}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10f, 6},
+inline constexpr std::array<DrawKeyRange, 44> DrawKeyRegisters{{
+    // DB_RENDER_CONTROL, DB_DEPTH_VIEW, DB_DEPTH_SIZE_XY, DB_STENCIL_CLEAR/DB_DEPTH_CLEAR with
+    // PA_SC_SCREEN_SCISSOR, DB_Z_INFO .. DB_STENCIL_WRITE_BASE and their high words; the window
+    // offset/scissor and clip rect, the edge rule, the hardware screen offset, CB_TARGET_MASK/
+    // CB_SHADER_MASK, the generic and viewport 0 scissors, the viewport 0 depth clamp, the blend
+    // constants, DB_STENCIL_CONTROL/DB_STENCILREFMASK(_BF), the viewport 0 transform.
+    {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 1}, {RegisterBank::Context, 0x007, 1}, {RegisterBank::Context, 0x00a, 4}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 4},
+    {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 2}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 6},
     // SPI_PS_INPUT_CNTL_0..31, SPI_PS_INPUT_ENA/ADDR, SPI_PS_IN_CONTROL, SPI_SHADER_POS/Z/COL_FORMAT,
     // CB_BLEND0..7_CONTROL, GE_MAX_OUTPUT_PER_SUBGROUP.
     {RegisterBank::Context, 0x191, 32}, {RegisterBank::Context, 0x1b3, 2}, {RegisterBank::Context, 0x1b6, 1}, {RegisterBank::Context, 0x1c3, 3}, {RegisterBank::Context, 0x1e0, 8}, {RegisterBank::Context, 0x1ff, 1},

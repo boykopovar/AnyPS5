@@ -30,7 +30,11 @@ std::uint64_t address(std::uint32_t low, std::uint32_t high) {
 std::uint32_t registerOffset(std::uint32_t value) {
     require(value != 0xffffffffu, "indirect register sentinel semantics are not implemented");
     const auto offset = value & ~0x70000000u;
-    require(offset <= 0xffffu, "extended register semantics are not implemented");
+    if (offset > 0xffffu) {
+        char what[80];
+        std::snprintf(what, sizeof(what), "extended register semantics are not implemented (offset dword 0x%08x)", value);
+        throw std::runtime_error(what);
+    }
     return offset;
 }
 
@@ -175,8 +179,9 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x22: return "conditional command execution and conditional flip reservation are not implemented";
         case 0x33: case 0x3f: return "nested command buffers, branching and nested flip reservation are not implemented";
         case 0x3c: case 0x93: return {};
-        case 0x39: case 0x59:
+        case 0x39:
             return "cooperative command-queue waits are not implemented";
+        case 0x59: return {};
         case 0x84: case 0x85: case 0x86: case 0x88:
             return "separate CE/DE execution and counter synchronization are not implemented";
         case 0x49: return {};
@@ -341,6 +346,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require(packet.size() - 2 <= 0x10000u - offset, "register range overflow");
             break;
         }
+        case 0x59:
+            // REWIND: bit 31 is the valid flag the CPU sets; the driver waits for it (see Driver).
+            size(2);
+            require((packet[1] & 0x7fffffffu) == 0, "unsupported REWIND payload bits");
+            break;
         case 0x3c: case 0x93: {
             size(opcode == 0x3c ? 7 : 9);
             require((packet[1] & 0x10u) != 0, "register-space WAIT_REG_MEM is not implemented");
@@ -688,6 +698,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             }
             return;
         }
+        case 0x59: break;
         case 0x3c: case 0x93: {
             // The waited-on value is written by the CPU or another queue; poll it like the CP would.
             const auto start = std::chrono::steady_clock::now();

@@ -1365,9 +1365,18 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
     std::size_t lastChanged = 0;
     for (std::size_t at = 0; at < size; at += block) {
         if (!differs(at)) continue;
-        std::memcpy(destination + at, current.data() + at, std::min(block, size - at));
-        firstChanged = std::min(firstChanged, at);
-        lastChanged = std::min(at + block, size);
+        // Only the bytes the GPU changed: the rest of the block holds the snapshot, and storing it
+        // would roll back what the CPU wrote there since (a title lost an object's vtable pointer).
+        const auto blockEnd = std::min(at + block, size);
+        for (std::size_t run = at; run < blockEnd;) {
+            if (current[run] == original[run]) { ++run; continue; }
+            auto runEnd = run + 1;
+            while (runEnd < blockEnd && current[runEnd] != original[runEnd]) ++runEnd;
+            std::memcpy(destination + run, current.data() + run, runEnd - run);
+            firstChanged = std::min(firstChanged, run);
+            lastChanged = std::max(lastChanged, runEnd);
+            run = runEnd;
+        }
     }
     // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
     if (firstChanged < lastChanged) MarkWritten(address + firstChanged, lastChanged - firstChanged);

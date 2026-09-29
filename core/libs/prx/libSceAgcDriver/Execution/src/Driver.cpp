@@ -202,6 +202,10 @@ struct Submission {
     // submission trusts only labels the recorder noted with a newer stamp (see Recorder::NoteLabel).
     std::uint64_t received = 0;
     std::chrono::steady_clock::time_point enqueuedAt{};
+    // The guest commands behind a REWIND (commands stop at it): the title writes them after submitting
+    // and marks the REWIND valid, so they are read only then (Driver::executeRewindTail).
+    const std::uint32_t* rewindTail = nullptr;
+    std::size_t rewindWords = 0;
 };
 
 std::uint32_t readRegister(const Registers& registers, std::uint32_t offset) {
@@ -493,6 +497,117 @@ private:
 
 public:
 
+    // Copies a submission's commands, stopping after the first REWIND: what follows it is read when the
+    // REWIND becomes valid. INDIRECT_BUFFER packets are followed as the CP follows them: a chained one
+    // (bit 20 of its size dword) replaces the rest of its buffer with the target, a call inserts the
+    // target and continues after the packet.
+    static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words) {
+        submission.commands.clear();
+        std::size_t budget = std::size_t{1} << 26u;
+        copySegment(submission, guest, words, budget);
+    }
+
+    // Appends one command segment; true when a REWIND ended the copy.
+    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget) {
+        require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
+        budget -= words;
+        for (std::size_t cursor = 0; cursor < words;) {
+            const auto header = guest[cursor];
+            if (Pm4::FillerPacket(header)) { submission.commands.push_back(header); ++cursor; continue; }
+            const auto count = (header & 0xc0000000u) == 0xc0000000u ? Pm4::PacketWords(header) : words - cursor;
+            if ((header & 0xc0000000u) != 0xc0000000u || count > words - cursor) {
+                // Malformed: copied as is for validate to report with its context.
+                submission.commands.insert(submission.commands.end(), guest + cursor, guest + words);
+                return false;
+            }
+            const auto opcode = (header >> 8u) & 0xffu;
+            if (opcode == 0x3fu) {
+                require(count == 4, "invalid INDIRECT_BUFFER size");
+                const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(guest[cursor + 1] & ~3u) | (static_cast<std::uintptr_t>(guest[cursor + 2] & 0xffffu) << 32u));
+                const std::size_t targetWords = guest[cursor + 3] & 0xfffffu;
+                const bool chain = (guest[cursor + 3] & (1u << 20u)) != 0;
+                GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
+                if (copySegment(submission, target, targetWords, budget)) return true;
+                if (chain) return false;
+                cursor += count;
+                continue;
+            }
+            submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
+            cursor += count;
+            if (opcode == 0x59u) {
+                submission.rewindTail = guest + cursor;
+                submission.rewindWords = words - cursor;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Holds the submitting thread while an output named by a flip in the submission has a full flip
+    // queue (mutex not held: the presenter needs the driver to finish flips).
+    void waitForFlipRoom(const Submission& submission) {
+        for (std::size_t cursor = 0; cursor < submission.commands.size(); cursor += Pm4::PacketWords(submission.commands[cursor])) {
+            if (submission.commands[cursor] != FlipPacketHeader) continue;
+            std::shared_ptr<IVideoOutput> output;
+            {
+                std::lock_guard lock(mutex);
+                const auto found = outputs.find(submission.commands[cursor + 1]);
+                require(found != outputs.end(), "flip references an unregistered video output");
+                output = found->second;
+            }
+            output->WaitForFlipRoom();
+        }
+    }
+
+    // Takes the flip reservations and rendering waits the submission's packets name (mutex held).
+    void reserveOutputs(Submission& submission) {
+        for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+            const auto* words = submission.commands.data() + cursor;
+            if (words[0] == RenderingWaitPacketHeader) {
+                const auto output = outputs.find(words[1]);
+                require(output != outputs.end(), "rendering wait references an unregistered video output");
+                auto wait = output->second->CaptureRenderingWait(words[2]);
+                require(wait != nullptr, "video output returned a null rendering wait");
+                submission.renderingWaits.emplace(cursor, std::move(wait));
+            }
+            if (words[0] == FlipPacketHeader) {
+                const auto output = outputs.find(words[1]);
+                require(output != outputs.end(), "flip references an unregistered video output");
+                const FlipInfo info{words[1], std::bit_cast<std::int32_t>(words[2]), words[3], std::bit_cast<std::int64_t>(static_cast<std::uint64_t>(words[4]) | (static_cast<std::uint64_t>(words[5]) << 32u))};
+                auto request = output->second->Reserve(info);
+                require(request != nullptr, "video output returned a null flip reservation");
+                submission.flips.emplace(cursor, std::move(request));
+            }
+            cursor += Pm4::PacketWords(words[0]);
+        }
+    }
+
+    // REWIND stalls the queue until the CPU marks it valid (sceAgcRewindPatchSetRewindState); the
+    // commands behind it are copied from guest memory only then and run as a continuation.
+    void executeRewindTail(const Submission& stalled) {
+        std::atomic_ref<std::uint32_t> control(*const_cast<std::uint32_t*>(stalled.rewindTail - 1));
+        while ((control.load(std::memory_order_acquire) & 0x80000000u) == 0) {
+            CheckFailure();
+            checkStopping();
+            PollSleep();
+        }
+        Submission tail{};
+        tail.queue = stalled.queue;
+        copyCommands(tail, stalled.rewindTail, stalled.rewindWords);
+        validate(tail.commands, tail.queue, stalled.rewindTail);
+        waitForFlipRoom(tail);
+        {
+            std::lock_guard lock(mutex);
+            rethrowFailure();
+            checkStopping();
+            reserveOutputs(tail);
+            tail.shaders = shaders;
+            tail.serial = stalled.serial;
+            tail.received = ++eventSerial;
+        }
+        execute(tail);
+    }
+
     void Submit(const Packet* packet, std::uint32_t queue) {
         CheckFailure();
         require(queue == 0 || (queue >= 0x20 && queue < 0x58), "unsupported compute queue");
@@ -507,10 +622,11 @@ public:
         if (descriptor.dw_num != 0) {
             require(descriptor.dw_num <= std::numeric_limits<std::size_t>::max() / sizeof(std::uint32_t), "command size overflow");
             GuestMemory::CheckRange(descriptor.addr, static_cast<std::size_t>(descriptor.dw_num) * sizeof(std::uint32_t), alignof(std::uint32_t));
-            submission.commands.assign(descriptor.addr, descriptor.addr + descriptor.dw_num);
+            copyCommands(submission, descriptor.addr, descriptor.dw_num);
         }
         const auto copied = profile ? std::chrono::steady_clock::now() : start;
         validate(submission.commands, queue, descriptor.addr);
+        waitForFlipRoom(submission);
         static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
         if (trace) std::fprintf(stderr, "[gpu] %.1f submit queue=0x%x dwords=%zu at %p\n", TraceMs(), queue, submission.commands.size(), static_cast<const void*>(descriptor.addr));
         const auto validated = profile ? std::chrono::steady_clock::now() : start;
@@ -519,25 +635,7 @@ public:
             rethrowFailure();
             checkStopping();
             require(accepted != std::numeric_limits<std::uint64_t>::max(), "submission serial overflow");
-            for (std::size_t cursor = 0; cursor < submission.commands.size();) {
-                const auto* words = submission.commands.data() + cursor;
-                if (words[0] == RenderingWaitPacketHeader) {
-                    const auto output = outputs.find(words[1]);
-                    require(output != outputs.end(), "rendering wait references an unregistered video output");
-                    auto wait = output->second->CaptureRenderingWait(words[2]);
-                    require(wait != nullptr, "video output returned a null rendering wait");
-                    submission.renderingWaits.emplace(cursor, std::move(wait));
-                }
-                if (words[0] == FlipPacketHeader) {
-                    const auto output = outputs.find(words[1]);
-                    require(output != outputs.end(), "flip references an unregistered video output");
-                    const FlipInfo info{words[1], std::bit_cast<std::int32_t>(words[2]), words[3], std::bit_cast<std::int64_t>(static_cast<std::uint64_t>(words[4]) | (static_cast<std::uint64_t>(words[5]) << 32u))};
-                    auto request = output->second->Reserve(info);
-                    require(request != nullptr, "video output returned a null flip reservation");
-                    submission.flips.emplace(cursor, std::move(request));
-                }
-                cursor += Pm4::PacketWords(words[0]);
-            }
+            reserveOutputs(submission);
             submission.shaders = shaders;
             submission.serial = accepted + 1;
             // Every CPU store the game made before this call precedes the stamp; labels recorded
@@ -3855,13 +3953,19 @@ private:
         if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
         static const bool traceIndirect = std::getenv("APS5_TRACE_INDIRECT_DRAWS") != nullptr;
         if (traceIndirect && drawParameters.indirect) std::fprintf(stderr, "[draw] indirect packet %s args 0x%llx count %u reached\n", Pm4::Name(packet[0]).c_str(), static_cast<unsigned long long>(drawParameters.indirect->arguments), drawParameters.indirect->count);
-        // Depth/stencil-only passes (no color writes, no pixel shader) have no effect without depth
-        // targets, which are not emulated.
+        // A draw without color writes or a pixel shader draws nothing, unless it tests depth or
+        // stencil against a bound surface: such depth-only draws need a pipeline without a
+        // fragment stage, which is not implemented.
         {
             const auto targetMask = queue.context.find(0x8e);
             const auto shaderMask = queue.context.find(0x8f);
             const bool colorWrites = targetMask != queue.context.end() && shaderMask != queue.context.end() && (targetMask->second & shaderMask->second) != 0;
-            if (!colorWrites && !queue.shader.contains(0x8)) return DrawVerdict::Nothing;
+            if (!colorWrites && !queue.shader.contains(0x8)) {
+                const auto word = [&](std::uint32_t offset) { const auto it = queue.context.find(offset); return it == queue.context.end() ? 0u : it->second; };
+                if ((word(0x200) & 3u) == 0 || ((word(0x010) & 3u) == 0 && (word(0x011) & 1u) == 0)) return DrawVerdict::Nothing;
+                rejected = "AGC graphics: depth/stencil-only draws without a pixel shader are not implemented";
+                return DrawVerdict::Rejected;
+            }
         }
         if (drawParameters.indexed) {
             const auto restart = queue.userConfig.find(0x24b);
@@ -4023,7 +4127,7 @@ private:
             }
             append(0x008, 1, Stage::Fragment, 0x00b, 0x00c, Role::Fragment);
             programs.back().firstUserSgpr = 0;
-            product->pixel = Graphics::DecodePixelStageInfo(queue.context, graphics.hasColorTarget, graphics.color.componentMapping);
+            product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(graphics));
             return product;
         };
         if (decode == nullptr || VerifyDrawRecipe()) {
@@ -6054,7 +6158,7 @@ private:
         static const bool submitAtEnd = std::getenv("APS5_SUBMIT_AT_END") != nullptr;
         if (!deferredLabels().labels.empty() || Graphics::Recorder::PendingLabelSince().has_value() || Graphics::Recorder::RecordedWorkSinceSubmit() != 0) {
             auto& costs = submissionCosts(submission.queue);
-            if (!submitAtEnd && submission.queue == 0 && workerQueued() != nullptr && workerQueued()->load(std::memory_order_acquire) != 0) {
+            if (!submitAtEnd && submission.rewindTail == nullptr && submission.queue == 0 && workerQueued() != nullptr && workerQueued()->load(std::memory_order_acquire) != 0) {
                 ++costs.endSkipped;
                 return;
             }
@@ -6066,6 +6170,7 @@ private:
             recordDeferredLabels(localDevice.get(), submission.queue);
             if (localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
         }
+        if (submission.rewindTail != nullptr) executeRewindTail(submission);
     }
 
     // The calling worker's pending count (QueueWorker::queued), set by run(); null off a worker.
