@@ -30,6 +30,7 @@ private:
 
     const RdnaOperand& sourceAt(const RdnaInstruction& inst, std::uint32_t index);
     RdnaOperand destinationOperand(const RdnaInstruction& inst);
+    RdnaOperand accumulatorOperand(const RdnaInstruction& inst);
     RdnaOperand offsetOperand(const RdnaOperand& operand, std::uint32_t offset);
     RdnaOperand scalarDestinationOperand(const RdnaOperand& operand, std::uint32_t offset);
     RdnaOperand plainOperand(const RdnaOperand& operand);

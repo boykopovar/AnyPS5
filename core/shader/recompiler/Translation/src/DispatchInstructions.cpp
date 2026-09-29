@@ -12,7 +12,12 @@ void DispatchInstruction(IrBuilder& builder, const RdnaInstruction& instruction,
     throw std::runtime_error("DispatchInstruction not implemented");
 }
 
-void TranslationContext::TranslateInstruction(const RdnaInstruction& instruction) {
+void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
+    // DPP masks the instruction's VGPR write as well as its source read (row and bank masks, lanes
+    // with no source lane without bound_ctrl keep their value): the destination takes the source's
+    // DPP fields for writeRawU32.
+    RdnaInstruction instruction = decoded;
+    instruction.destination = destinationOperand(decoded);
     currentOpcode = instruction.op;
     currentProgramCounter = instruction.programCounter;
     if (instruction.op == RdnaOpcode::Unknown || instruction.op == RdnaOpcode::Count) {

@@ -100,7 +100,7 @@ bool TranslationContext::float16Binary(const RdnaInstruction& inst, IrOpcode opc
 bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix) {
     std::array<IrValue*, 3> args{};
     for (std::uint32_t index = 0u; index < args.size(); ++index) {
-        const RdnaOperand& operand = accumulator && index == 2u ? inst.destination : sourceAt(inst, index);
+        const RdnaOperand& operand = accumulator && index == 2u ? accumulatorOperand(inst) : sourceAt(inst, index);
         args[index] = mix ? &readMixF32(operand).Value() : &readF16AsF32(operand).Value();
     }
     writeF16(inst.destination, IrF32(ir.Emit(opcode, IrType::F32, {args[0], args[1], args[2]})));
@@ -128,7 +128,7 @@ bool TranslationContext::floatBinary(const RdnaInstruction& inst, IrOpcode opcod
 bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix) {
     std::array<IrValue*, 3> args{};
     for (std::uint32_t index = 0u; index < args.size(); ++index) {
-        const RdnaOperand& operand = accumulator && index == 2u ? inst.destination : sourceAt(inst, index);
+        const RdnaOperand& operand = accumulator && index == 2u ? accumulatorOperand(inst) : sourceAt(inst, index);
         const IrType type = IrOpcodeArgumentType(opcode, index);
         args[index] = type == IrType::F32 && mix ? &readMixF32(operand).Value() : readOperand(operand, type);
     }
