@@ -1,4 +1,5 @@
 #include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -729,6 +730,8 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF32Ubyte0, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VNotB32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VFfblB32, sdwaSelAll(), 0, 0, false},
+    {RdnaOpcode::VFfbhU32, sdwaSelAll(), 0, 0, false},
+    {RdnaOpcode::VBfrevB32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32F16, sdwaSelWords() | sdwaSelFull(), 0, 0, true},
     {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), false},
@@ -796,7 +799,9 @@ void validateVop1Sdwa(const RdnaInstruction& instruction, std::uint32_t destinat
         throw std::invalid_argument("VOP1 SDWA destination selector is not supported");
     }
     if (!isVop1SdwaSourceSupported(instruction.op, sourceSelector, sourceNegate, sourceAbsolute)) {
-        throw std::invalid_argument("VOP1 SDWA source selector is not supported");
+        char text[96];
+        std::snprintf(text, sizeof(text), "VOP1 SDWA source selector %u of opcode 0x%x at pc 0x%x is not supported", sourceSelector, instruction.opcodeId, instruction.programCounter);
+        throw std::invalid_argument(text);
     }
 }
 
