@@ -1,0 +1,1 @@
+aps5_add_guest_test(guest_random SOURCES GuestRandom.cpp LIBS libSceRandom NO_WINDOWS_UNWIND)
