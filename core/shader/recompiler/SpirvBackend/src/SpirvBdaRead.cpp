@@ -16,7 +16,15 @@ void EmitBdaOverflowCheck(SpirvEmitterState& state, std::uint32_t address, std::
     StopBdaInvocationIf(state, overflow);
 }
 
-std::uint32_t EmitBdaByte(SpirvEmitterState& state, std::uint32_t guest, std::uint32_t instruction) {
+// The memory operands of a BDA load or store: Volatile for a coherent access (MemoryInfo::coherent),
+// which must see what other workgroups store while the dispatch runs.
+std::uint32_t BdaAccessMask(const SpirvEmitterState& state, const IrValue& inst) {
+    const auto index = inst.Flags<MemoryFlags>().index;
+    const auto& memory = state.program.Resources().memoryInfo;
+    return spv::MemoryAccessAlignedMask | (index < memory.size() && memory[index].coherent ? spv::MemoryAccessVolatileMask : 0u);
+}
+
+std::uint32_t EmitBdaByte(SpirvEmitterState& state, std::uint32_t guest, std::uint32_t instruction, std::uint32_t accessMask) {
     const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
     const auto bytePointer = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType);
     const auto physical = state.module.AllocateId();
@@ -26,7 +34,7 @@ std::uint32_t EmitBdaByte(SpirvEmitterState& state, std::uint32_t guest, std::ui
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpConvertUToPtr, bytePointer, pointer, physical);
         const auto loaded = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, spv::MemoryAccessAlignedMask, 1u);
+        state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, accessMask, 1u);
         return Unary(state, spv::OpUConvert, TypeU32(state), loaded);
     }
     // Unmapped bytes read as zero; the fault is recorded and every invocation reaches the
@@ -41,7 +49,7 @@ std::uint32_t EmitBdaByte(SpirvEmitterState& state, std::uint32_t guest, std::ui
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpConvertUToPtr, bytePointer, pointer, physical);
     const auto loaded = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, spv::MemoryAccessAlignedMask, 1u);
+    state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, accessMask, 1u);
     const auto widened = Unary(state, spv::OpUConvert, TypeU32(state), loaded);
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
@@ -50,11 +58,11 @@ std::uint32_t EmitBdaByte(SpirvEmitterState& state, std::uint32_t guest, std::ui
     return value;
 }
 
-std::uint32_t EmitBdaBytes(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction) {
+std::uint32_t EmitBdaBytes(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, std::uint32_t accessMask) {
     auto result = ConstantU32(state, 0u);
     for (std::uint32_t byte = 0; byte < bytes; ++byte) {
         const auto guest = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, BdaConstant(state, byte));
-        const auto value = EmitBdaByte(state, guest, instruction);
+        const auto value = EmitBdaByte(state, guest, instruction, accessMask);
         result = Binary(state, spv::OpBitwiseOr, TypeU32(state), result, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), value, ConstantU32(state, byte * 8u)));
     }
     return result;
@@ -130,7 +138,7 @@ std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::
     if (bits == 32u) return EmitBdaDwordReads(ctx, inst, address, 0u, 1u)[0];
     const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
     EmitBdaOverflowCheck(state, address, bits / 8u, instruction);
-    return EmitBdaBytes(state, address, bits / 8u, instruction);
+    return EmitBdaBytes(state, address, bits / 8u, instruction, BdaAccessMask(state, inst));
 }
 
 void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value) {
@@ -146,7 +154,7 @@ void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
         EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u)), [&] {
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, physical);
-            state.module.AddFunction(spv::OpStore, pointer, value, spv::MemoryAccessAlignedMask, 4u);
+            state.module.AddFunction(spv::OpStore, pointer, value, BdaAccessMask(state, inst), 4u);
             state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, address);
         });
     });
@@ -186,7 +194,7 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
             if (!isUsed(dword)) continue;
             if (dword != first) addresses[dword] = dwordAddress(dword);
             EmitBdaOverflowCheck(state, addresses[dword], 4u, instruction);
-            into[dword] = EmitBdaBytes(state, addresses[dword], 4u, instruction);
+            into[dword] = EmitBdaBytes(state, addresses[dword], 4u, instruction, BdaAccessMask(state, inst));
         }
     };
     addresses[first] = dwordAddress(first);
@@ -213,7 +221,7 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, element);
         wideValues[dword] = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeU32(state), wideValues[dword], pointer, spv::MemoryAccessAlignedMask, 4u);
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), wideValues[dword], pointer, BdaAccessMask(state, inst), 4u);
     }
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, byteLabel);

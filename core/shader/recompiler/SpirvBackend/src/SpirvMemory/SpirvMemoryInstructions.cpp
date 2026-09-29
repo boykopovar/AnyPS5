@@ -110,7 +110,8 @@ std::uint32_t LoadWordInBounds(SpirvValueEmitContext& ctx, const MemoryResourceA
     auto& state = ctx.state;
     const auto pointer = EmitMemoryElementPointer(state, resource, index);
     const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+    if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, resource.memoryAccess);
+    else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
     return value;
 }
 
@@ -374,7 +375,8 @@ std::uint32_t FormattedLoad(SpirvValueEmitContext& ctx, const IrValue& inst, con
 
 void StoreWordInBounds(SpirvValueEmitContext& ctx, const MemoryResourceAccess& resource, std::uint32_t index, std::uint32_t data) {
     auto& state = ctx.state;
-    state.module.AddFunction(spv::OpStore, EmitMemoryElementPointer(state, resource, index), data);
+    if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, EmitMemoryElementPointer(state, resource, index), data, resource.memoryAccess);
+    else state.module.AddFunction(spv::OpStore, EmitMemoryElementPointer(state, resource, index), data);
 }
 
 void StoreSubwordInBounds(SpirvValueEmitContext& ctx, const MemoryInfo& mem, const MemoryResourceAccess& resource, std::uint32_t address, std::uint32_t index, std::uint32_t bits, std::uint32_t data) {
@@ -392,8 +394,13 @@ void StoreSubwordInBounds(SpirvValueEmitContext& ctx, const MemoryInfo& mem, con
     };
     if (mem.kind == ResourceKind::Scratch) {
         const auto old = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeU32(state), old, pointer);
-        state.module.AddFunction(spv::OpStore, pointer, merge(old));
+        if (resource.memoryAccess != 0u) {
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), old, pointer, resource.memoryAccess);
+            state.module.AddFunction(spv::OpStore, pointer, merge(old), resource.memoryAccess);
+        } else {
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), old, pointer);
+            state.module.AddFunction(spv::OpStore, pointer, merge(old));
+        }
     } else {
         AtomicUpdate(state, pointer, mem.kind, merge);
     }

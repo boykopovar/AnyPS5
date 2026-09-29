@@ -423,6 +423,7 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     instruction.offen = ((word0 >> 12u) & 1u) != 0u;
     instruction.idxen = ((word0 >> 13u) & 1u) != 0u;
     instruction.glc = ((word0 >> 14u) & 1u) != 0u;
+    instruction.dlc = ((word0 >> 15u) & 1u) != 0u;
     instruction.slc = ((word1 >> 22u) & 1u) != 0u;
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
@@ -462,6 +463,7 @@ RdnaInstruction DecodeRdnaMtbuf(std::uint32_t programCounter, std::span<const st
     instruction.offen = ((word0 >> 12u) & 1u) != 0u;
     instruction.idxen = ((word0 >> 13u) & 1u) != 0u;
     instruction.glc = ((word0 >> 14u) & 1u) != 0u;
+    instruction.dlc = ((word0 >> 15u) & 1u) != 0u;
     instruction.slc = ((word1 >> 22u) & 1u) != 0u;
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);

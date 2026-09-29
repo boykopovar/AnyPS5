@@ -148,6 +148,7 @@ struct RdnaInstruction {
     bool formatted = false;
     bool gds = false;
     bool glc = false;
+    bool dlc = false;
     bool slc = false;
     bool idxen = false;
     bool offen = false;

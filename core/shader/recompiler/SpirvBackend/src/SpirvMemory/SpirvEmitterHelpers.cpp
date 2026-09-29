@@ -356,6 +356,12 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 state.module.AddAnnotation(spv::OpDecorate, state.storageBufferVariable, spv::DecorationAliased);
                 state.module.AddAnnotation(spv::OpDecorate, state.storageBufferU64Variable, spv::DecorationAliased);
             }
+            if (state.requirements.coherentBuffers) {
+                // A coherent load polls what other workgroups store (RDNA stores reach L2 without
+                // GLC too): every alias of the buffers takes part in device-scope visibility.
+                state.module.AddAnnotation(spv::OpDecorate, state.storageBufferVariable, spv::DecorationCoherent);
+                if (state.storageBufferU64Variable != 0u) state.module.AddAnnotation(spv::OpDecorate, state.storageBufferU64Variable, spv::DecorationCoherent);
+            }
             break;
         case DescriptorBindingKind::BdaPagetable:
             state.bdaPagetableVariable = Define(StorageBufferBlockType(state), "bda_pagetable");

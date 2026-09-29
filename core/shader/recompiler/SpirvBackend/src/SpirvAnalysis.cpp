@@ -31,6 +31,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     throw std::runtime_error("buffer operation has invalid memory metadata");
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
+                // Through the BDA table a coherent access is a Volatile load or store (BdaAccessMask).
+                requirements.coherentBuffers = requirements.coherentBuffers || (memory.coherent && !memory.gpuDescriptor);
                 if (memory.gpuDescriptor) {
                     // The V#'s ADD_TID is known at run time only.
                     if (program.Resources().stage != IrShaderStage::Compute) {

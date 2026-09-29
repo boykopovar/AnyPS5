@@ -33,7 +33,8 @@ MemoryInfo bufferMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
-    const MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    memory.coherent = inst.glc || inst.dlc;
     IrOpcode opcode;
     switch (memory.dataBits) {
     case 8u:
@@ -80,7 +81,8 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
-    const MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    memory.coherent = inst.glc || inst.dlc;
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst);
     const IrU32 data = readU32(inst.destination);

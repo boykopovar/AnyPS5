@@ -109,6 +109,8 @@ MemoryResourceAccess PrepareStorageBufferResourceAccess(SpirvEmitterState& state
     access.objectPointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, pointerType, access.objectPointer, variable, ConstantU32(state, arrayIndex));
     access.byteOffset = state.memoryByteOffsets.at(arrayIndex);
+    // A GLC/DLC access polls or publishes what other workgroups see: never cached or combined.
+    access.memoryAccess = mem.coherent ? spv::MemoryAccessVolatileMask : 0u;
     access.length = state.module.AllocateId();
     state.module.AddFunction(spv::OpArrayLength, TypeU32(state), access.length, access.objectPointer, 0u);
     // A null V# binds a placeholder the shader must not touch: nothing is in bounds.

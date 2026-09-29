@@ -18,6 +18,8 @@ struct SpirvRequirements {
     bool functionScratch = false;
     bool pixelValidMask = false;
     bool bufferInt64Atomics = false;
+    // A buffer load or store is coherent (MemoryInfo::coherent): the guest buffers are Coherent.
+    bool coherentBuffers = false;
     std::vector<std::uint32_t> capabilities;
     std::vector<std::string> extensions;
 };

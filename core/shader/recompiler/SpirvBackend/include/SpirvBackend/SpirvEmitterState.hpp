@@ -67,6 +67,8 @@ struct MemoryResourceAccess {
     std::uint32_t indexOffset = 0;
     std::uint32_t byteOffset = 0;
     bool addIndexOffset = false;
+    // Memory operands of the loads and stores: Volatile for a coherent access (MemoryInfo::coherent).
+    std::uint32_t memoryAccess = 0;
 };
 
 struct SpirvEmitterState {
