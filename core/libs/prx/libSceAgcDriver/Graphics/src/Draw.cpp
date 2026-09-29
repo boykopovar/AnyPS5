@@ -503,6 +503,8 @@ void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarg
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[offset], words[offset + 1], words[offset + 2], words[offset + 3]}};
                 const auto address = descriptor.Base48();
                 const auto size = descriptor.GetSize();
+                // A null V# binds nothing (ShaderResources::addGuestBuffer).
+                if (size == 0 || address == 0) continue;
                 Require(!overlap(address, size, target.address, target.bytes), "shader buffer aliases the render target");
                 Require(!overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");
             }

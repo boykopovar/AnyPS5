@@ -507,7 +507,8 @@ void buildResourceSpecialization(const IrResourcePlan& plan, ResourceSnapshot& s
         entry.packedStride = packedStride;
         entry.descriptorFormat = buffer.formatted ? decoded.Format() : IrBufferFormat::Invalid;
         entry.descriptorSwizzle = buffer.formatted ? decoded.DstSelXYZW() : DstSel(4, 5, 6, 7);
-        entry.empty = decoded.GetSize() == 0u;
+        // A V# at address 0 is a slot the shader does not reach (an access faults on hardware).
+        entry.empty = decoded.GetSize() == 0u || decoded.Base48() == 0u;
         result.buffers.push_back(entry);
     }
 
