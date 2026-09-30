@@ -24,6 +24,7 @@ static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 static constexpr int MUTEX_TYPE_ERRORCHECK = 1;
+static constexpr int MUTEX_TYPE_ADAPTIVE = 4;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -53,4 +54,30 @@ int main() {
     Require(scePthreadMutexLock(&mutex) == SCE_KERNEL_ERROR_EDEADLK);
     Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
+
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_ADAPTIVE) == SCE_OK);
+    PthreadMutex adaptive = nullptr;
+    Require(scePthreadMutexInit(&adaptive, &attr, nullptr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadMutexLock(&adaptive) == SCE_OK);
+    Require(scePthreadMutexLock(&adaptive) == SCE_KERNEL_ERROR_EDEADLK);
+    Require(scePthreadMutexUnlock(&adaptive) == SCE_OK);
+    Require(scePthreadMutexDestroy(&adaptive) == SCE_OK);
+
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    PthreadMutex defaulted = nullptr;
+    Require(scePthreadMutexInit(&defaulted, &attr, nullptr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadMutexLock(&defaulted) == SCE_OK);
+    Require(scePthreadMutexLock(&defaulted) == SCE_KERNEL_ERROR_EDEADLK);
+    Require(scePthreadMutexUnlock(&defaulted) == SCE_OK);
+    Require(scePthreadMutexDestroy(&defaulted) == SCE_OK);
+
+    PthreadMutex unattributed = nullptr;
+    Require(scePthreadMutexInit(&unattributed, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadMutexLock(&unattributed) == SCE_OK);
+    Require(scePthreadMutexLock(&unattributed) == SCE_KERNEL_ERROR_EDEADLK);
+    Require(scePthreadMutexUnlock(&unattributed) == SCE_OK);
+    Require(scePthreadMutexDestroy(&unattributed) == SCE_OK);
 }
