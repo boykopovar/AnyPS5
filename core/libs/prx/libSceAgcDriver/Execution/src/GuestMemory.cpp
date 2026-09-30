@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include <memory>
 #include <mutex>
 #include <array>
 #include <chrono>
@@ -19,9 +20,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#else
-#include <fstream>
-#include <sstream>
 #endif
 
 namespace AgcDriver::GuestMemory {
@@ -467,6 +465,56 @@ struct PageRun {
     bool writable;
 };
 
+#ifndef _WIN32
+struct MappedRegion {
+    std::uintptr_t first;
+    std::uintptr_t last;
+    bool readable;
+    bool writable;
+};
+
+struct MapsSnapshot {
+    std::uint64_t generation = 0;
+    std::vector<MappedRegion> regions;
+};
+
+std::shared_ptr<const MapsSnapshot> loadMaps() {
+    std::FILE* file = std::fopen("/proc/self/maps", "r");
+    if (file == nullptr) return nullptr;
+    auto snapshot = std::make_shared<MapsSnapshot>();
+    snapshot->generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    char line[512];
+    while (std::fgets(line, sizeof(line), file) != nullptr) {
+        char* cursor = nullptr;
+        const auto first = static_cast<std::uintptr_t>(std::strtoull(line, &cursor, 16));
+        const bool complete = std::strchr(line, '\n') != nullptr;
+        if (*cursor == '-') {
+            const auto last = static_cast<std::uintptr_t>(std::strtoull(cursor + 1, &cursor, 16));
+            if (*cursor == ' ' && first < last) snapshot->regions.push_back({first, last, cursor[1] == 'r', cursor[1] == 'r' && cursor[2] == 'w'});
+        }
+        if (complete) continue;
+        while (std::fgets(line, sizeof(line), file) != nullptr && std::strchr(line, '\n') == nullptr) {}
+    }
+    std::fclose(file);
+    return snapshot;
+}
+
+std::shared_ptr<const MapsSnapshot> mapsSnapshot(bool reload) {
+    static std::mutex mutex;
+    static std::shared_ptr<const MapsSnapshot> current;
+    std::lock_guard lock(mutex);
+    if (reload || current == nullptr || current->generation != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) current = loadMaps();
+    return current;
+}
+
+const MappedRegion* findRegion(const MapsSnapshot& snapshot, std::uintptr_t address) {
+    const auto it = std::upper_bound(snapshot.regions.begin(), snapshot.regions.end(), address, [](std::uintptr_t value, const MappedRegion& region) { return value < region.first; });
+    if (it == snapshot.regions.begin()) return nullptr;
+    const auto& region = *std::prev(it);
+    return address < region.last ? &region : nullptr;
+}
+#endif
+
 // Calls `emit` with consecutive runs of uniform accessibility covering [address, address + bytes) in
 // order, stopping early when it returns false. Returns false when the address space cannot be queried.
 template <class Emit>
@@ -524,28 +572,21 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         if (!emit(PageRun{cursor, next, readable, writable})) return true;
         cursor = next;
 #else
-        std::ifstream maps("/proc/self/maps");
-        if (!maps.is_open()) return false;
-        std::string line;
-        bool found = false;
-        while (std::getline(maps, line)) {
-            std::istringstream fields(line);
-            std::uintptr_t first = 0;
-            std::uintptr_t last = 0;
-            char separator = 0;
-            std::string permissions;
-            if (!(fields >> std::hex >> first >> separator >> last >> permissions) || separator != '-' || first >= last || permissions.size() < 2) return false;
-            if (last <= cursor || first > cursor) continue;
-            const auto next = std::min(end, last);
-            if (!emit(PageRun{cursor, next, permissions[0] == 'r', permissions[0] == 'r' && permissions[1] == 'w'})) return true;
-            cursor = next;
-            found = true;
-            break;
+        auto snapshot = mapsSnapshot(false);
+        if (snapshot == nullptr) return false;
+        const auto* region = findRegion(*snapshot, cursor);
+        if (region == nullptr || !region->readable) {
+            snapshot = mapsSnapshot(true);
+            if (snapshot == nullptr) return false;
+            region = findRegion(*snapshot, cursor);
         }
-        if (!found) {
+        if (region == nullptr) {
             static_cast<void>(emit(PageRun{cursor, end, false, false}));
             return true;
         }
+        const auto next = std::min(end, region->last);
+        if (!emit(PageRun{cursor, next, region->readable, region->writable})) return true;
+        cursor = next;
 #endif
     }
     return true;
