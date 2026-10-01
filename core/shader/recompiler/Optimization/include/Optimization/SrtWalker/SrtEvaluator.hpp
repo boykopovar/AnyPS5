@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ShaderRecompiler::Detail {
@@ -34,7 +35,7 @@ private:
     Evaluator* _cleanEvaluator = nullptr;
     IrValue* _activeMask = nullptr;
     std::unordered_map<IrValue*, std::uint64_t> _cache;
-    std::vector<IrValue*> _visiting;
+    std::unordered_set<IrValue*> _visiting;
 };
 
 }
