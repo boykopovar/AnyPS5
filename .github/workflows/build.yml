@@ -74,3 +74,8 @@ jobs:
         run: cmake --build build --target libs
       - shell: cmd
         run: ctest --test-dir build --output-on-failure --timeout 120
+      - name: Upload Windows Executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyps5-windows-x64
+          path: build/anyps5.exe
