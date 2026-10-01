@@ -205,7 +205,7 @@ private:
     IrU64 rightMask64(IrU32 count);
     bool sBfmB64(const RdnaInstruction& inst);
     bool sBfeU32(const RdnaInstruction& inst, bool sign);
-    bool sBfeU64(const RdnaInstruction& inst);
+    bool sBfeU64(const RdnaInstruction& inst, bool sign);
     bool vBfeU32(const RdnaInstruction& inst, bool sign);
     bool vBfiB32(const RdnaInstruction& inst);
     bool sBitcmpB32(const RdnaInstruction& inst, bool expected);
