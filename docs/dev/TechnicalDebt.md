@@ -33,6 +33,8 @@ Throughout the project, every function at every stage either **does exactly what
 - [sceSslClose](../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - unknown signature
 - [sceSslGetSerialNumber](../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - unknown signature
 
+- [dreaming-sarah-ppsa02929: 372 NEW NIDs](https://github.com/boykopovar/AnyPS5/pull/265) - announce only, names/signatures unknown, resolve in follow-ups
+
 ### Functional
 
 - [Shader recompilation](../../core/shader/recompiler/Recompiler.cpp) currently occurs right before it was transferred to Vulkan with caching, but should be moved to the [relinker](../../core/relinker/main.cpp) stage. For this purpose, [shader/recompiler](../../core/shader/recompiler) was written completely independently from [libs/prx](../../core/libs/prx).
