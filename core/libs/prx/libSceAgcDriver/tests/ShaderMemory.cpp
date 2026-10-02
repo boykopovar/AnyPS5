@@ -428,6 +428,9 @@ void verifyMeshConfiguration() {
     ShaderMeshInputInfo strip;
     strip.inputPrimitive = 6u;
     require(strip.InputPrimitiveSize() == 3u && strip.InputPrimitiveStep() == 1u && strip.InputVertexCount(21u) == 23u && strip.InputPrimitiveCount(23u) == 21u, "triangle strip subgroup sizes changed");
+    ShaderMeshInputInfo fan;
+    fan.inputPrimitive = 5u;
+    require(fan.InputPrimitiveSize() == 3u && fan.InputPrimitiveStep() == 1u && fan.InputVertexCount(30u) == 32u && fan.InputPrimitiveCount(32u) == 30u && fan.InputPrimitiveCount(2u) == 0u, "triangle fan subgroup sizes changed");
     ShaderMeshInputInfo lines;
     lines.inputPrimitive = 2u;
     ShaderMeshInputInfo points;

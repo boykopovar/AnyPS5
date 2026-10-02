@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -78,6 +79,13 @@ alignas(256) std::array<std::uint16_t, 3 * Triangles> Indices{};
 alignas(256) std::array<Vertex, 3 * Triangles> Ordered{};
 alignas(256) std::array<Vertex, 2 * Columns + 2> Strip{};
 
+constexpr std::uint32_t FanRim = 8;
+constexpr float FanStep = 6.28318530718f / FanRim;
+alignas(256) std::array<Vertex, FanRim + 1> Fan{};
+alignas(256) std::array<Vertex, FanRim + 1> FanScrambled{};
+alignas(256) std::array<std::uint16_t, FanRim + 1> FanIndices{};
+alignas(256) std::array<std::uint16_t, FanRim + 1> FanRestart{};
+
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const void* vertices, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(vertices);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (32u << 16u), count, 0x01016facu};
@@ -107,6 +115,7 @@ struct MeshDraw {
     AgcDriver::Pm4::DrawParameters draw;
     std::array<std::uint32_t, 4> vertexBuffer;
     std::uint32_t geometryPushBytes = ShaderRecompiler::MeshDrawPushOffsetBytes;
+    bool restart = false;
 };
 
 void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
@@ -152,7 +161,8 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
-    state.topology = setup.mesh.inputPrimitive == 6u ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.topology = setup.mesh.inputPrimitive == 6u ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP : setup.mesh.inputPrimitive == 5u ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.primitiveRestart = setup.restart;
     state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
     state.negativeOneToOne = false;
     state.scissor = {{0, 0}, {Width, Height}};
@@ -167,6 +177,21 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
 
 constexpr ShaderRecompiler::MeshConfiguration SmallSubgroup{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u};
 constexpr ShaderRecompiler::MeshConfiguration WideSubgroup{4u, 32u, 96u, 96u, 32u, 128u, 2048u, 0u, 4u};
+
+std::size_t FanPixel(float angle, float radius) {
+    const auto x = static_cast<std::uint32_t>((radius * std::cos(angle) + 1.0f) * 0.5f * Width);
+    const auto y = static_cast<std::uint32_t>(Height - (radius * std::sin(angle) + 1.0f) * 0.5f * Height);
+    return (static_cast<std::size_t>(y) * Width + x) * 4u;
+}
+
+void CheckFan(const char* what) {
+    for (std::uint32_t triangle = 0; triangle + 1u < FanRim; ++triangle) {
+        const auto offset = FanPixel((static_cast<float>(triangle) + 0.5f) * FanStep, 0.5f);
+        Require(PixelIs(offset, TriangleColor(triangle + 1u)), std::string(what) + ": fan triangle " + std::to_string(triangle) + " was not rendered in its first vertex's color, pixel " + PixelText(offset));
+    }
+    Require(PixelIs(FanPixel((static_cast<float>(FanRim) - 0.5f) * FanStep, 0.5f), Background), std::string(what) + ": the fan was closed");
+    Require(PixelIs(0, Background) && PixelIs(Pixels.size() - 4u, Background), std::string(what) + ": the corners changed");
+}
 
 void CheckTriangles(const char* what) {
     for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
@@ -196,6 +221,18 @@ int main() {
             const float y = i % 2u == 0u ? -1.0f : 0.0f;
             Strip[i] = {{x, y, 0.5f, 1.0f}, stripColor};
         }
+        Fan[0] = {{0.0f, 0.0f, 0.5f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}};
+        for (std::uint32_t k = 1; k <= FanRim; ++k) {
+            const auto color = TriangleColor(k);
+            const float angle = static_cast<float>(k - 1u) * FanStep;
+            Fan[k] = {{0.9f * std::cos(angle), 0.9f * std::sin(angle), 0.5f, 1.0f}, {color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, 1.0f}};
+        }
+        for (std::uint32_t k = 0; k <= FanRim; ++k) {
+            FanScrambled[FanRim - k] = Fan[k];
+            FanIndices[k] = static_cast<std::uint16_t>(FanRim - k);
+            FanRestart[k] = FanIndices[k];
+        }
+        FanRestart[FanRim] = 0xffffu;
 
         AgcDriver::VulkanDevice device;
         const auto target = device.Target();
@@ -229,6 +266,25 @@ int main() {
             }
         }
         Require(PixelIs((static_cast<std::size_t>(Height / 4u) * Width + Width / 2u) * 4u, Background), "triangle strip: the upper half changed");
+
+        const ShaderRecompiler::MeshConfiguration fan{5u, 3u, 5u, 9u, 3u, 64u, 1024u, 0u, 4u};
+        ClearPixels();
+        DrawMesh(device, {fan, {0, static_cast<std::uint32_t>(Fan.size()), 0, 1, 0, false}, VertexBufferDescriptor(Fan.data(), static_cast<std::uint32_t>(Fan.size()))});
+        CheckFan("non-indexed triangle fan");
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size()))});
+        CheckFan("indexed triangle fan");
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
+        CheckFan("indexed triangle fan with restart enabled and no restart index");
+        bool refused = false;
+        try {
+            DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanRestart.data()), static_cast<std::uint32_t>(FanRestart.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()).find("primitive restart in a triangle fan") != std::string::npos;
+            if (!refused) throw;
+        }
+        Require(refused, "a triangle fan with a restart index was drawn");
 
         std::puts("Mesh tests passed");
         return 0;

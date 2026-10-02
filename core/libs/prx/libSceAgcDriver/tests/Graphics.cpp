@@ -210,6 +210,34 @@ void ShaderStageTests() {
     auto stages = AgcDriver::Graphics::DecodeState(queue).stages;
     Require(stages.path == AgcDriver::Graphics::ShaderPath::Geometry && stages.mesh && stages.mesh->primitivesPerGroup == 21 && stages.mesh->verticesPerGroup == 63, "geometry assembly changed");
     Require(stages.mesh->maxVertices == 64 && stages.mesh->maxPrimitives == 21 && stages.mesh->threadsPerGroup == 64 && stages.mesh->esgsItemSize == 4, "geometry subgroup outputs changed");
+    {
+        auto fan = makeState();
+        fan.userConfig[0x242] = 5;
+        fan.userConfig[0x24b] = 1;
+        fan.context[0x103] = 0xffffffffu;
+        fan.context[0x2d5] = 0x2030;
+        fan.userConfig[0x25b] = 0x4020;
+        fan.context[0x1ff] = 256;
+        fan.context[0x2ce] = 8;
+        fan.context[0x29b] = 2;
+        fan.context[0x2ab] = 4;
+        fan.shader[0x8a] = 3u << 29u;
+        fan.shader[0x8b] = 3u << 16u;
+        fan.context[0x1b3] = 2;
+        fan.context[0x1b4] = 2;
+        const auto state = AgcDriver::Graphics::DecodeState(fan);
+        Require(AgcDriver::Graphics::DrawRejection(fan, true).empty(), "the precheck rejected an indexed triangle fan with restart into a geometry shader");
+        Require(state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && state.primitiveRestart && state.stages.path == AgcDriver::Graphics::ShaderPath::Geometry && state.stages.mesh, "a triangle fan did not decode as geometry input");
+        const auto& mesh = *state.stages.mesh;
+        Require(mesh.inputPrimitive == 5 && mesh.primitivesPerGroup == 30 && mesh.verticesPerGroup == 32 && mesh.maxVertices == 256 && mesh.maxPrimitives == 192 && mesh.threadsPerGroup == 256 && mesh.esgsItemSize == 4, "triangle fan subgroup assembly changed");
+        fan.userConfig[0x25b] = (3u << 9u) | 3u;
+        Require(AgcDriver::Graphics::DecodeState(fan).stages.mesh->primitivesPerGroup == 1, "a three-vertex subgroup did not take one fan triangle");
+        fan.userConfig[0x25b] = (2u << 9u) | 3u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(fan); }, "invalid geometry subgroup");
+        fan.userConfig[0x25b] = 0x4020;
+        fan.userConfig[0x242] = 3;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(fan); }, "unsupported geometry input or output assembly");
+    }
     queue.context[0x2ab] = 0;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "invalid VGT_ESGS_RING_ITEMSIZE");
     queue.context[0x2ab] = 4;
