@@ -71,6 +71,16 @@ Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value*, const Str
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value*, std::size_t);
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
+std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object*);
+const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value*);
+void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value*, std::int32_t);
+const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value*, std::size_t);
+const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value*, const String*);
+Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value*, std::size_t);
+void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(void*);
+void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(void*, void*, void*);
+void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(void*, std::size_t);
+int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const void*);
 }
 
 static void Check(bool value, int line) {
@@ -253,8 +263,64 @@ static void NullAccess() {
     Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
 }
 
+static void ValueAccess() {
+    for (std::int32_t type = TypeNull; type <= TypeObject; ++type) {
+        Value typed{};
+        _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&typed, type);
+        Require(_ZNK3sce4Json5Value7getTypeEv(&typed) == type);
+        Require(_ZNK3sce4Json5Value5countEv(&typed) == 0);
+        _ZN3sce4Json5ValueD1Ev(&typed);
+    }
+
+    Value root{};
+    _ZN3sce4Json5ValueC1Ev(&root);
+    const char text[] = "{\"list\":[10,20,30],\"name\":\"value\",\"flag\":true}";
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, text, sizeof(text) - 1) == 0);
+    Require(_ZNK3sce4Json6Object4sizeEv(_ZNK3sce4Json5Value9getObjectEv(&root)) == 3);
+
+    String key{};
+    _ZN3sce4Json6StringC1EPKc(&key, "list");
+    const Value* list = _ZNK3sce4Json5Value8getValueERKNS0_6StringE(&root, &key);
+    Require(_ZNK3sce4Json5Value7getTypeEv(list) == TypeArray);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Value8getValueEm(list, 1)) == 20);
+    Require(_ZNK3sce4Json5Value8getValueEm(list, 2) == _ZNK3sce4Json5ValueixEm(list, 2));
+    Require(_ZNK3sce4Json5Value7getTypeEv(_ZNK3sce4Json5Value8getValueEm(list, 3)) == TypeNull);
+
+    Value* mutableList = _ZN3sce4Json5Value10referValueERKNS0_6StringE(&root, &key);
+    Value* element = _ZN3sce4Json5Value10referValueEm(mutableList, 0);
+    Require(element != nullptr);
+    Require(_ZN3sce4Json5Value3setEl(element, 15) == 0);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Value8getValueEm(list, 0)) == 15);
+    Require(_ZN3sce4Json5Value10referValueEm(mutableList, 3) == nullptr);
+    Require(_ZN3sce4Json5Value10referValueEm(&root, 0) == nullptr);
+    _ZN3sce4Json6StringD1Ev(&key);
+
+    String missing{};
+    _ZN3sce4Json6StringC1EPKc(&missing, "missing");
+    Require(_ZNK3sce4Json5Value7getTypeEv(_ZNK3sce4Json5Value8getValueERKNS0_6StringE(&root, &missing)) == TypeNull);
+    _ZN3sce4Json6StringD1Ev(&missing);
+    _ZN3sce4Json5ValueD1Ev(&root);
+
+    alignas(16) std::uint8_t parameter[40];
+    std::memset(parameter, 0xff, sizeof(parameter));
+    _ZN3sce4Json14InitParameter2C1Ev(parameter);
+    int allocator = 0;
+    int userData = 0;
+    _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(parameter, &allocator, &userData);
+    _ZN3sce4Json14InitParameter217setFileBufferSizeEm(parameter, 4096);
+    void* stored[3]{};
+    std::memcpy(stored, parameter, sizeof(stored));
+    Require(stored[0] == &allocator && stored[1] == &userData && reinterpret_cast<std::uintptr_t>(stored[2]) == 4096);
+    alignas(16) std::uint8_t initializer[16]{};
+    Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, parameter) == 0);
+    Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
+    Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+}
+
 int main() {
     ParseAndRoundTrip();
     ObjectsAndArrays();
     NullAccess();
+    ValueAccess();
 }
