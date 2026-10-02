@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <mutex>
 
 // PSN is not emulated: the user is reported as signed out and online queries fail.
 static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
@@ -12,6 +13,10 @@ static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
 
 static std::atomic<int> g_nextRequest{1};
+static std::mutex g_npStateMutex;
+static void* g_gamePresenceCallback = nullptr;
+static void* g_gamePresenceUserData = nullptr;
+static NpContentRestriction g_contentRestriction{};
 
 extern "C" {
 
@@ -28,8 +33,7 @@ int APS5_VABI sceNpCheckNpAvailability(int req_id, const char* user, void* resul
  (void)req_id;
  (void)user;
  (void)result;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpCheckNpReachability(int req_id, int user_id) {
@@ -80,9 +84,8 @@ int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
  (void)user_id;
- (void)np_id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!np_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+ return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
@@ -119,9 +122,9 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
 }
 
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
- (void)callback;
- (void)userdata;
- NotImplemented_nid_no_patch(__func__);
+ std::lock_guard lock(g_npStateMutex);
+ g_gamePresenceCallback = callback;
+ g_gamePresenceUserData = userdata;
 }
 
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
@@ -149,8 +152,9 @@ int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
 }
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
- (void)restriction;
- NotImplemented_nid_no_patch(__func__);
+ if (!restriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
+ std::lock_guard lock(g_npStateMutex);
+ g_contentRestriction = *restriction;
  return 0;
 }
 
