@@ -27,9 +27,8 @@ int APS5_VABI sceNpCheckCallback(void) {
 int APS5_VABI sceNpCheckNpAvailability(int req_id, const char* user, void* result) {
  (void)req_id;
  (void)user;
- (void)result;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+ return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpCheckNpReachability(int req_id, int user_id) {
@@ -80,9 +79,8 @@ int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
  (void)user_id;
- (void)np_id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!np_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+ return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
@@ -121,7 +119,6 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
  (void)callback;
  (void)userdata;
- NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
@@ -150,7 +147,6 @@ int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
  (void)restriction;
- NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
