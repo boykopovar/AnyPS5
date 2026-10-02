@@ -44,6 +44,8 @@ int main(const int argc, char* argv[]) {
 
         auto sourceBytes = fileReader.Read(args.inputPath);
         const std::string absPath = std::filesystem::absolute(args.outputPath).string();
+        if (std::filesystem::exists(absPath) && std::filesystem::equivalent(args.inputPath, absPath))
+            throw Domain::RelinkerException("Output file must not refer to the input file");
 
         std::vector<Codegen::TrampolineSite> trampolines;
         if (args.toIntel) {
