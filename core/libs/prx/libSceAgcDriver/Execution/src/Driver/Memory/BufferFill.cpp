@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include <bit>
 #include <cstdlib>
 #include <optional>
@@ -265,7 +266,10 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
             for (std::size_t done = 0; done < bytes; done += chunk) GuestMemory::Write(base + done, std::span<const std::byte>(block).first(std::min(chunk, bytes - done)), 16);
             phase(FillCpu);
         }
-        if (pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3]) Graphics::NoteDepthMetadataFill(base, bytes, pattern[0]);
+        if (pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3]) {
+            Graphics::NoteDepthMetadataFill(base, bytes, pattern[0]);
+            Graphics::NoteColorMetadataFill(base, bytes, pattern[0]);
+        }
         if (profile) {
             const auto now = std::chrono::steady_clock::now();
             const auto cover = static_cast<std::size_t>(coverage.cover);

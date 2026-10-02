@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -58,7 +59,11 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         }
     }
     if (opcode == 0x50 && packet.size() >= 7) {
-        if (Pm4::DmaSource(packet) == 2 && Pm4::DmaDestination(packet) != 1) Graphics::NoteDepthMetadataFill(packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u), packet[6] & 0x3ffffffu, packet[2]);
+        if (Pm4::DmaSource(packet) == 2 && Pm4::DmaDestination(packet) != 1) {
+            const auto address = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
+            Graphics::NoteDepthMetadataFill(address, packet[6] & 0x3ffffffu, packet[2]);
+            Graphics::NoteColorMetadataFill(address, packet[6] & 0x3ffffffu, packet[2]);
+        }
     }
     if (!drainAll && !endOfPipeInterrupt && (opcode == 0x49 || opcode == 0x37)) {
         if (const auto label = Pm4::DecodeLabelWrite(packet)) {
