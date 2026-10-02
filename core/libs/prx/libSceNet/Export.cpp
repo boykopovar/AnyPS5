@@ -629,6 +629,12 @@ int APS5_VABI sceNetEpollCreate(const char* name, int flags) {
     return id;
 }
 
+APS5_EXPORT("rMyh97BU5pY", sceNetUnknown00);
+int APS5_VABI sceNetUnknown00() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceNetEpollDestroy(int eid) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (g_epolls.erase(eid) == 0) {

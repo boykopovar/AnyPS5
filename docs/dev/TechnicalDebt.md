@@ -33,6 +33,20 @@ Throughout the project, every function at every stage either **does exactly what
 - [__progname](../../core/libs/prx/libkernel/System/src/Process.cpp) (libkernel) - unknown data export
 - [sceSslClose](../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - unknown signature
 - [sceSslGetSerialNumber](../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - unknown signature
+- [wVqxM58sIKs](../../core/libs/prx/libSceNpTrophy2/src/Context.cpp) (libSceNpTrophy2) - unknown name, signature
+- [gwUynkEgNFY](../../core/libs/prx/libSceVoice/Export.cpp) (libSceVoice) - unknown name, signature
+- [hPTXo3bICzI](../../core/libs/prx/libSceHttp/Export.cpp) (libSceHttp) - unknown name, signature
+- [otUQuZa-mv0](../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - unknown name, signature
+- [64nkF7LGk8w](../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown name, signature
+- [uInYhy7xa+U](../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown name, signature
+- [rMyh97BU5pY](../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - unknown name, signature
+- [0hlfW1O4Aa4](../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) - unknown name, signature
+- [GlelR9EEeck](../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) - unknown name, signature
+- [jbj2wBoiCyg](../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) - unknown name, signature
+- [rWSuTWY2JN0](../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) - unknown name, signature
+- [teiItL2boFw](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [lbXTXRG5nyM](../../core/libs/prx/libSceNpSessionSignaling/Export.cpp) (libSceNpSessionSignaling) - unknown name, signature
+- [+Q++Q49a9z8](../../core/libs/prx/libSceNpSessionSignaling/Export.cpp) (libSceNpSessionSignaling) - unknown name, signature
 
 ### Functional
 

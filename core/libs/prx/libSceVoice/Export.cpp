@@ -204,4 +204,10 @@ int APS5_VABI sceVoiceWriteToIPort(uint32_t input_port_id, const void* data, uin
     return 0;
 }
 
+APS5_EXPORT("gwUynkEgNFY", sceVoiceUnknown00);
+int APS5_VABI sceVoiceUnknown00() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

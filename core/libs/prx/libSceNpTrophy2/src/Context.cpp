@@ -30,4 +30,10 @@ int APS5_VABI sceNpTrophy2RegisterContext(int context, int handle, uint64_t opti
     return SCE_NP_TROPHY2_OK;
 }
 
+APS5_EXPORT("wVqxM58sIKs", sceNpTrophy2Unknown00);
+int APS5_VABI sceNpTrophy2Unknown00() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

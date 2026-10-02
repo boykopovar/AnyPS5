@@ -138,4 +138,28 @@ void APS5_VABI _Unlocksyslock_nid_postfix() {
     g_sysLock.unlock();
 }
 
+APS5_EXPORT("0hlfW1O4Aa4", sceLibcUnknown00);
+int APS5_VABI sceLibcUnknown00() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("GlelR9EEeck", sceLibcUnknown01);
+int APS5_VABI sceLibcUnknown01() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("jbj2wBoiCyg", sceLibcUnknown02);
+int APS5_VABI sceLibcUnknown02() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("rWSuTWY2JN0", sceLibcUnknown03);
+int APS5_VABI sceLibcUnknown03() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

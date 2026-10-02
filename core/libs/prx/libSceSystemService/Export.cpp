@@ -115,6 +115,18 @@ int APS5_VABI sceSystemServiceInitializePlayerDialogParam(void* param) {
  return SYSTEM_SERVICE_OK;
 }
 
+APS5_EXPORT("64nkF7LGk8w", sceSystemServiceUnknown00);
+int APS5_VABI sceSystemServiceUnknown00() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+APS5_EXPORT("uInYhy7xa+U", sceSystemServiceUnknown01);
+int APS5_VABI sceSystemServiceUnknown01() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
  if (param == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
