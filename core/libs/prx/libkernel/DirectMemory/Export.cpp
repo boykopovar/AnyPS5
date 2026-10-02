@@ -10,12 +10,17 @@
 #define NOMINMAX
 #include <windows.h>
 #else
+#include <cerrno>
 #include <fstream>
 #include <sstream>
+#include <sys/mman.h>
+#include <sys/resource.h>
 #endif
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <iterator>
 #include <map>
 #include <cstdio>
@@ -401,13 +406,73 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
 
 }
 
+namespace {
+
+#ifdef _WIN32
+std::mutex g_workingSetLock;
+
+bool HostRangeAccessible(std::uintptr_t start, std::uintptr_t end) {
+    for (auto cursor = start; cursor < end;) {
+        MEMORY_BASIC_INFORMATION region{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &region, sizeof(region)) != sizeof(region)) return false;
+        if (region.State != MEM_COMMIT || (region.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) return false;
+        cursor = reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize;
+    }
+    return true;
+}
+
+int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
+    if (!HostRangeAccessible(start, end)) return SCE_KERNEL_ERROR_ENOMEM;
+    auto* const address = reinterpret_cast<void*>(start);
+    const SIZE_T bytes = end - start;
+    std::lock_guard lock(g_workingSetLock);
+    if (VirtualLock(address, bytes)) return 0;
+    if (GetLastError() != ERROR_WORKING_SET_QUOTA) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualLock failed");
+    SIZE_T minimum = 0;
+    SIZE_T maximum = 0;
+    DWORD flags = 0;
+    if (!GetProcessWorkingSetSizeEx(GetCurrentProcess(), &minimum, &maximum, &flags)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "GetProcessWorkingSetSizeEx failed");
+    if (bytes > std::numeric_limits<SIZE_T>::max() - maximum) return SCE_KERNEL_ERROR_EAGAIN;
+    if (!SetProcessWorkingSetSizeEx(GetCurrentProcess(), minimum + bytes, maximum + bytes, flags)) return SCE_KERNEL_ERROR_EAGAIN;
+    if (VirtualLock(address, bytes)) return 0;
+    if (GetLastError() != ERROR_WORKING_SET_QUOTA) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualLock failed");
+    return SCE_KERNEL_ERROR_EAGAIN;
+}
+#else
+int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
+    auto* const address = reinterpret_cast<void*>(start);
+    const std::size_t bytes = end - start;
+    if (::mlock(address, bytes) == 0) return 0;
+    int error = errno;
+    rlimit limit{};
+    if ((error == ENOMEM || error == EPERM || error == EAGAIN) && getrlimit(RLIMIT_MEMLOCK, &limit) == 0 && limit.rlim_cur < limit.rlim_max) {
+        limit.rlim_cur = limit.rlim_max;
+        if (setrlimit(RLIMIT_MEMLOCK, &limit) == 0) {
+            if (::mlock(address, bytes) == 0) return 0;
+            error = errno;
+        }
+    }
+    switch (error) {
+    case ENOMEM: return SCE_KERNEL_ERROR_ENOMEM;
+    case EPERM: return SCE_KERNEL_ERROR_EPERM;
+    case EAGAIN: return SCE_KERNEL_ERROR_EAGAIN;
+    default: throw std::system_error(error, std::generic_category(), "mlock failed");
+    }
+}
+#endif
+
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
-    (void)address;
-    (void)length;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    constexpr std::uintptr_t pageMask = PS5_PAGE_SIZE - 1;
+    const auto first = reinterpret_cast<std::uintptr_t>(address);
+    if (length > UINTPTR_MAX - first || first + length > UINTPTR_MAX - pageMask) return SCE_KERNEL_ERROR_EINVAL;
+    const auto start = first & ~pageMask;
+    const auto end = (first + length + pageMask) & ~pageMask;
+    if (start == end) return 0;
+    return LockHostPages(start, end);
 }
 
 }
