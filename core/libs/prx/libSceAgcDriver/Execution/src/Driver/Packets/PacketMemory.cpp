@@ -136,6 +136,14 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     static const bool drawDrain = std::getenv("APS5_DRAW_DRAIN") != nullptr;
     drawPacket = Pm4::DrawOpcode(opcode);
     sampleDump = opcode == 0x46 && (packet[1] & 0x3fu) == 0x39u;
+    if (sampleDump && !drainAll) {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        if (const auto localDevice = device.Load()) {
+            recordDeferredLabels(localDevice.get(), submission.queue);
+            wroteOnGpu = localDevice->DumpSamplesOnGpu(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u));
+        }
+    }
 
     static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
     const bool drains = drainAll ? ((Pm4::AccessesMemory(header) && opcode != 0x16) || opcode == 0x42 || opcode == 0x46 || opcode == 0x58 || header == FlipPacketHeader)
@@ -195,7 +203,7 @@ void Driver::dumpSampleCounters(std::uint64_t address) {
         auto* recorder = Graphics::Recorder::Active();
         require(recorder != nullptr, "occlusion counters without the command recorder are not implemented");
         recorder->CountSamples();
-        samples = Graphics::Recorder::SamplesPassed();
+        samples = recorder->SamplesTotal();
     }
     constexpr std::uint64_t ready = 1ull << 63u;
     for (std::uint64_t db = 0; db < 16; ++db) {
