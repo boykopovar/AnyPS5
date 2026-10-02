@@ -88,6 +88,16 @@ public:
         return declareConstant(opcode, std::move(key));
     }
 
+    std::uint32_t Constant(std::uint32_t opcode, std::uint32_t type) {
+        const std::uint32_t key[2] = {opcode, type};
+        return interned(key, 2u, [this, opcode, type]() {
+            std::vector<std::uint32_t> keyWords;
+            keyWords.reserve(2u);
+            appendOperands(keyWords, opcode, type);
+            return declareConstant(opcode, std::move(keyWords));
+        });
+    }
+
     template<typename TValue>
     requires wordSized<TValue>
     std::uint32_t Constant(std::uint32_t opcode, std::uint32_t type, TValue value) {
