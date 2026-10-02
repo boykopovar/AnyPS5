@@ -33,6 +33,22 @@ Throughout the project, every function at every stage either **does exactly what
 - [__progname](../../core/libs/prx/libkernel/System/src/Process.cpp) (libkernel) - unknown data export
 - [sceSslClose](../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - unknown signature
 - [sceSslGetSerialNumber](../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - unknown signature
+- [+352WTlGCQI](../../core/libs/prx/libSceTextToSpeech2/Export.cpp) (libSceTextToSpeech2) - unknown name, signature
+- [0moTubWCsTM](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [5Y6nZqIZvBg](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [A+2M7EivuOU](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [aqMiF0AgUYI](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [fX-zOOefbbs](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [hIgrg5h4V6s](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [ihNT-uuEAr4](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [kMBw37oH8nI](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [l4sQYy5wPkc](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [rgtMCOpyBSc](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [veb-YBrOqo0](../../core/libs/prx/libSceVdecsw/Export.cpp) (libSceVdecsw) - unknown name, signature
+- [DoKHmUw1yiQ](../../core/libs/prx/libkernel/System/src/Coredump.cpp) (libkernel) - unknown name, signature
+- [MEJ7tc7ThwM](../../core/libs/prx/libkernel/System/src/Coredump.cpp) (libkernel) - unknown name, signature
+- [Uxqkdta7wEg](../../core/libs/prx/libkernel/System/src/Coredump.cpp) (libkernel) - unknown name, signature
+- [+YX0z-GUSNw](../../core/libs/prx/libkernel/System/src/Coredump.cpp) (libkernel) - unknown name, signature
 
 ### Functional
 

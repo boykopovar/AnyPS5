@@ -30,4 +30,28 @@ int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_
     return 0;
 }
 
+APS5_EXPORT("DoKHmUw1yiQ", sceCoredumpUnknown00);
+int APS5_VABI sceCoredumpUnknown00() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("MEJ7tc7ThwM", sceCoredumpUnknown01);
+int APS5_VABI sceCoredumpUnknown01() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("Uxqkdta7wEg", sceCoredumpUnknown02);
+int APS5_VABI sceCoredumpUnknown02() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("+YX0z-GUSNw", sceCoredumpUnknown03);
+int APS5_VABI sceCoredumpUnknown03() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
