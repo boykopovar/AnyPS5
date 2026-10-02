@@ -415,4 +415,27 @@ int APS5_VABI sceHttpSetRedirectCallback(int id, HttpRedirectCallback cbfunc, vo
     return 0;
 }
 
+APS5_EXPORT("0onIrKx9NIE", sceHttpUnknown02);
+int APS5_VABI sceHttpUnknown02(void) {
+    NotImplemented_nid_no_patch("0onIrKx9NIE");
+    return 0;
+}
+
+APS5_EXPORT("Qq8SfuJJJqE", sceHttpUnknown03);
+int APS5_VABI sceHttpUnknown03(void) {
+    NotImplemented_nid_no_patch("Qq8SfuJJJqE");
+    return 0;
+}
+
+APS5_EXPORT("rGNm+FjIXKk", sceHttpUnknown04);
+int APS5_VABI sceHttpUnknown04(void) {
+    NotImplemented_nid_no_patch("rGNm+FjIXKk");
+    return 0;
+}
+
+APS5_EXPORT("sWQiqKvYTVA", sceHttpUnknown05);
+int APS5_VABI sceHttpUnknown05(void) {
+    NotImplemented_nid_no_patch("sWQiqKvYTVA");
+    return 0;
+}
 }

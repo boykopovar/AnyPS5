@@ -167,4 +167,10 @@ int APS5_VABI sceAppContentAddcontEnqueueDownload(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+APS5_EXPORT("bcolXMmp6qQ", sceAppContentUnknown01);
+int APS5_VABI sceAppContentUnknown01(void) {
+    NotImplemented_nid_no_patch("bcolXMmp6qQ");
+    return 0;
+}
 }

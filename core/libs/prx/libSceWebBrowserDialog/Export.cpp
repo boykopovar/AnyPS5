@@ -79,4 +79,15 @@ int APS5_VABI sceWebBrowserDialogResetCookie() {
     return 0;
 }
 
+APS5_EXPORT("5tRaBjtdTzY", sceWebBrowserDialogUnknown00);
+int APS5_VABI sceWebBrowserDialogUnknown00(void) {
+    NotImplemented_nid_no_patch("5tRaBjtdTzY");
+    return 0;
+}
+
+APS5_EXPORT("T4ucGB8CsnM", sceWebBrowserDialogUnknown01);
+int APS5_VABI sceWebBrowserDialogUnknown01(void) {
+    NotImplemented_nid_no_patch("T4ucGB8CsnM");
+    return 0;
+}
 }

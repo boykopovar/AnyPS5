@@ -780,7 +780,6 @@ int APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(void) 
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 struct InitParameter2 {
     void* allocator;
     void* userData;
@@ -817,4 +816,27 @@ int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {
     return 0;
 }
 
+APS5_EXPORT("Eu95jmqn5Rw", sceJson2Unknown01);
+int APS5_VABI sceJson2Unknown01(void) {
+    NotImplemented_nid_no_patch("Eu95jmqn5Rw");
+    return 0;
+}
+
+APS5_EXPORT("GvGvswb0v34", sceJson2Unknown02);
+int APS5_VABI sceJson2Unknown02(void) {
+    NotImplemented_nid_no_patch("GvGvswb0v34");
+    return 0;
+}
+
+APS5_EXPORT("IXW-z8pggfg", sceJson2Unknown03);
+int APS5_VABI sceJson2Unknown03(void) {
+    NotImplemented_nid_no_patch("IXW-z8pggfg");
+    return 0;
+}
+
+APS5_EXPORT("W72B9ylU2JA", sceJson2Unknown04);
+int APS5_VABI sceJson2Unknown04(void) {
+    NotImplemented_nid_no_patch("W72B9ylU2JA");
+    return 0;
+}
 }

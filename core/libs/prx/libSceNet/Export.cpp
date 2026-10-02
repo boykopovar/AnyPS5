@@ -1257,4 +1257,21 @@ int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
 extern const std::uint8_t in6addr_any_nid_postfix[16] = {};
 extern const std::uint8_t in6addr_loopback_nid_postfix[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
 
+APS5_EXPORT("TCkRD0DWNLg", sceNetUnknown00);
+int APS5_VABI sceNetUnknown00(void) {
+    NotImplemented_nid_no_patch("TCkRD0DWNLg");
+    return 0;
+}
+
+APS5_EXPORT("3CHi1K1wsCQ", sceNetUnknown01);
+int APS5_VABI sceNetUnknown01(void) {
+    NotImplemented_nid_no_patch("3CHi1K1wsCQ");
+    return 0;
+}
+
+APS5_EXPORT("tOrRi-v3AOM", sceNetUnknown02);
+int APS5_VABI sceNetUnknown02(void) {
+    NotImplemented_nid_no_patch("tOrRi-v3AOM");
+    return 0;
+}
 }
