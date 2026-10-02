@@ -231,6 +231,11 @@ std::uint32_t swap32(std::uint32_t v) {
     return (v << 24) | ((v & 0xFF00u) << 8) | ((v >> 8) & 0xFF00u) | (v >> 24);
 }
 
+std::uint64_t swap64(std::uint64_t v) {
+    return (v << 56) | ((v & 0xFF00u) << 40) | ((v & 0xFF0000u) << 24) | ((v & 0xFF000000u) << 8) |
+        ((v >> 8) & 0xFF000000u) | ((v >> 24) & 0xFF0000u) | ((v >> 40) & 0xFF00u) | (v >> 56);
+}
+
 }  // namespace
 
 extern "C" {
@@ -611,6 +616,22 @@ int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
     return native_to_guest_address(native, addr, addrlen) ? 0 : fail(NET_EAFNOSUPPORT);
 }
 
+int APS5_VABI sceNetGetpeername(int s, void* addr, uint32_t* addrlen) {
+    Sock socket;
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        auto it = g_socks.find(s);
+        if (it == g_socks.end()) return fail(NET_EBADF);
+        socket = it->second;
+    }
+    if (!addr || !addrlen) return fail(NET_EINVAL);
+    sockaddr_storage native{};
+    NativeLength native_length = sizeof(native);
+    if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&native), &native_length) != 0)
+        return fail(native_error());
+    return native_to_guest_address(native, addr, addrlen) ? 0 : fail(NET_EAFNOSUPPORT);
+}
+
 int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     (void)info;
     (void)n;
@@ -768,6 +789,8 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
 // Byte order and text conversion.
 uint32_t APS5_VABI sceNetHtonl_nid_postfix(uint32_t host32) { return swap32(host32); }
 uint16_t APS5_VABI sceNetHtons_nid_postfix(uint16_t host16) { return swap16(host16); }
+uint64_t APS5_VABI sceNetHtonll(std::uint64_t host64) { return swap64(host64); }
+uint64_t APS5_VABI sceNetNtohll(std::uint64_t net64) { return swap64(net64); }
 uint32_t APS5_VABI sceNetNtohl_nid_postfix(uint32_t net32) { return swap32(net32); }
 uint16_t APS5_VABI sceNetNtohs_nid_postfix(uint16_t net16) { return swap16(net16); }
 

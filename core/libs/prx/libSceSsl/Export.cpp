@@ -63,4 +63,12 @@ int APS5_VABI sceSslGetSerialNumber() {
  return 0;
 }
 
+int APS5_VABI sceSslLoadCert() {
+    return 0;
+}
+
+int APS5_VABI sceSslGetMemoryPoolStats() {
+    return 0;
+}
+
 }

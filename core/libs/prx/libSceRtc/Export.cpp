@@ -300,6 +300,29 @@ int APS5_VABI sceRtcParseRFC3339(RtcTick* utc, const char* date_time) {
     return addTicks(utc, &local, -offsetMinutes, TICKS_PER_MINUTE);
 }
 
+int APS5_VABI sceRtcParseDateTime(RtcTick* utc, const char* date_time) {
+    if (!utc || !date_time) return SCE_RTC_ERROR_INVALID_POINTER;
+    const char* cursor = date_time;
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+    if (!parseDigits(cursor, 4, year) || *cursor++ != '-' || !parseDigits(cursor, 2, month) || *cursor++ != '-' || !parseDigits(cursor, 2, day)) return SCE_RTC_ERROR_BAD_PARSE;
+    if (*cursor != 'T' && *cursor != 't' && *cursor != ' ') return SCE_RTC_ERROR_BAD_PARSE;
+    ++cursor;
+    if (!parseDigits(cursor, 2, hour) || *cursor++ != ':' || !parseDigits(cursor, 2, minute) || *cursor++ != ':' || !parseDigits(cursor, 2, second)) return SCE_RTC_ERROR_BAD_PARSE;
+    std::uint32_t microsecond = 0;
+    if (*cursor == '.') {
+        ++cursor;
+        std::uint32_t scale = 100000;
+        if (*cursor < '0' || *cursor > '9') return SCE_RTC_ERROR_BAD_PARSE;
+        for (; *cursor >= '0' && *cursor <= '9'; ++cursor, scale /= 10) microsecond += static_cast<std::uint32_t>(*cursor - '0') * scale;
+    }
+    if (*cursor != 0) return SCE_RTC_ERROR_BAD_PARSE;
+    const RtcDateTime time{static_cast<std::uint16_t>(year), static_cast<std::uint16_t>(month), static_cast<std::uint16_t>(day),
+        static_cast<std::uint16_t>(hour), static_cast<std::uint16_t>(minute), static_cast<std::uint16_t>(second), microsecond};
+    if (const int result = validate(&time); result != 0) return result;
+    utc->tick = toTick(time);
+    return 0;
+}
+
 int APS5_VABI sceRtcTickAddTicks(RtcTick* dst, const RtcTick* src, int64_t ticks) {
     return addTicks(dst, src, ticks, 1);
 }
