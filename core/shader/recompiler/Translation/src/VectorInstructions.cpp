@@ -833,6 +833,44 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return float16Ternary(inst, IrOpcode::FPMedTri32, false, false);
     case RdnaOpcode::VFrexpMantF32:
         return vFrexpMantF32(inst);
+    case RdnaOpcode::VAddF64:
+        return float64Operation(inst, IrOpcode::FPAdd64);
+    case RdnaOpcode::VMulF64:
+        return float64Operation(inst, IrOpcode::FPMul64);
+    case RdnaOpcode::VFmaF64:
+        return float64Operation(inst, IrOpcode::FPFma64);
+    case RdnaOpcode::VMinF64:
+        return float64Operation(inst, IrOpcode::FPMin64);
+    case RdnaOpcode::VMaxF64:
+        return float64Operation(inst, IrOpcode::FPMax64);
+    case RdnaOpcode::VLdexpF64:
+        return float64Operation(inst, IrOpcode::FPLdexp64);
+    case RdnaOpcode::VTruncF64:
+        return float64Operation(inst, IrOpcode::FPTrunc64);
+    case RdnaOpcode::VCeilF64:
+        return float64Operation(inst, IrOpcode::FPCeil64);
+    case RdnaOpcode::VRndneF64:
+        return float64Operation(inst, IrOpcode::FPRoundEven64);
+    case RdnaOpcode::VFloorF64:
+        return float64Operation(inst, IrOpcode::FPFloor64);
+    case RdnaOpcode::VFractF64:
+        return float64Operation(inst, IrOpcode::FPFract64);
+    case RdnaOpcode::VFrexpMantF64:
+        return float64Operation(inst, IrOpcode::FPFrexpMant64);
+    case RdnaOpcode::VFrexpExpI32F64:
+        return float64Operation(inst, IrOpcode::FPFrexpExp64);
+    case RdnaOpcode::VCvtF32F64:
+        return float64Operation(inst, IrOpcode::ConvertF32F64);
+    case RdnaOpcode::VCvtF64F32:
+        return float64Operation(inst, IrOpcode::ConvertF64F32);
+    case RdnaOpcode::VCvtF64I32:
+        return float64Operation(inst, IrOpcode::ConvertF64S32);
+    case RdnaOpcode::VCvtF64U32:
+        return float64Operation(inst, IrOpcode::ConvertF64U32);
+    case RdnaOpcode::VCvtI32F64:
+        return float64Operation(inst, IrOpcode::ConvertS32F64);
+    case RdnaOpcode::VCvtU32F64:
+        return float64Operation(inst, IrOpcode::ConvertU32F64);
     case RdnaOpcode::VRcpF32:
         return floatUnary(inst, IrOpcode::FPRecip32);
     case RdnaOpcode::VRcpIflagF32:

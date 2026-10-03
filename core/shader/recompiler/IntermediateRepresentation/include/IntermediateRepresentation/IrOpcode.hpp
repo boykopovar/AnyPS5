@@ -244,6 +244,26 @@ enum class IrOpcode : std::uint16_t {
     FPCeil32,
     FPTrunc32,
     FPFract32,
+    FPAdd64,
+    FPMul64,
+    FPFma64,
+    FPMin64,
+    FPMax64,
+    FPSaturate64,
+    FPLdexp64,
+    FPRoundEven64,
+    FPFloor64,
+    FPCeil64,
+    FPTrunc64,
+    FPFract64,
+    FPFrexpMant64,
+    FPFrexpExp64,
+    ConvertF32F64,
+    ConvertF64F32,
+    ConvertF64S32,
+    ConvertF64U32,
+    ConvertS32F64,
+    ConvertU32F64,
     LaneId,
     WriteLane,
     Permlane16U32,
@@ -407,6 +427,7 @@ struct ExportFlags {
 [[nodiscard]] IrType IrOpcodeType(IrOpcode opcode);
 [[nodiscard]] IrType IrOpcodeArgumentType(IrOpcode opcode, std::size_t index);
 [[nodiscard]] bool IrOpcodeHasSideEffects(IrOpcode opcode);
+[[nodiscard]] bool IsFloat64Opcode(IrOpcode opcode);
 [[nodiscard]] BufferAccess BufferAccessOf(IrOpcode opcode);
 [[nodiscard]] std::uint32_t BufferComponentCount(IrOpcode opcode);
 [[nodiscard]] SharedAccess SharedAccessOf(IrOpcode opcode);

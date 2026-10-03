@@ -52,6 +52,7 @@ private:
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
+    IrU64 readF64(const RdnaOperand& operand);
     IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false);
     IrF32 readF16AsF32(const RdnaOperand& operand);
     IrU32 readF16SourceBits(const RdnaOperand& operand);
@@ -160,6 +161,7 @@ private:
     bool vSatPkU8I16(const RdnaInstruction& inst);
     bool vMulLegacyF32(const RdnaInstruction& inst, bool accumulate);
     void emitFloat16ClassCompare(const RdnaInstruction& inst, bool cmpx);
+    bool float64Operation(const RdnaInstruction& inst, IrOpcode opcode);
     bool vDot2cF32F16(const RdnaInstruction& inst);
     bool vCubeidF32(const RdnaInstruction& inst);
     bool vCubescF32(const RdnaInstruction& inst);

@@ -285,6 +285,26 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("FPCeil32", F32, F32),
     makeMeta("FPTrunc32", F32, F32),
     makeMeta("FPFract32", F32, F32),
+    makeMeta("FPAdd64", U64, U64, U64),
+    makeMeta("FPMul64", U64, U64, U64),
+    makeMeta("FPFma64", U64, U64, U64, U64),
+    makeMeta("FPMin64", U64, U64, U64),
+    makeMeta("FPMax64", U64, U64, U64),
+    makeMeta("FPSaturate64", U64, U64),
+    makeMeta("FPLdexp64", U64, U64, U32),
+    makeMeta("FPRoundEven64", U64, U64),
+    makeMeta("FPFloor64", U64, U64),
+    makeMeta("FPCeil64", U64, U64),
+    makeMeta("FPTrunc64", U64, U64),
+    makeMeta("FPFract64", U64, U64),
+    makeMeta("FPFrexpMant64", U64, U64),
+    makeMeta("FPFrexpExp64", U32, U64),
+    makeMeta("ConvertF32F64", F32, U64),
+    makeMeta("ConvertF64F32", U64, F32),
+    makeMeta("ConvertF64S32", U64, U32),
+    makeMeta("ConvertF64U32", U64, U32),
+    makeMeta("ConvertS32F64", U32, U64),
+    makeMeta("ConvertU32F64", U32, U64),
     makeMeta("LaneId", U32),
     makeMeta("WriteLane", U32, U32, U32, U32),
     makeMeta("Permlane16U32", U32, U32, U32, U32, U1),
@@ -605,6 +625,10 @@ ImageOpcodeInfo ImageOpcodeInfoOf(IrOpcode opcode) {
         default:
             return {};
     }
+}
+
+bool IsFloat64Opcode(IrOpcode opcode) {
+    return opcode >= IrOpcode::FPAdd64 && opcode <= IrOpcode::ConvertU32F64;
 }
 
 bool IrOpcodeHasSideEffects(IrOpcode opcode) {

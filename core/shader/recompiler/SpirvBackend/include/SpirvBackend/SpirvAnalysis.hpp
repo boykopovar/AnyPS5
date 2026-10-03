@@ -19,6 +19,7 @@ struct SpirvRequirements {
     bool functionScratch = false;
     bool pixelValidMask = false;
     bool bufferInt64Atomics = false;
+    bool float64 = false;
     bool coherentBuffers = false;
     std::vector<std::uint32_t> capabilities;
     std::vector<std::string> extensions;
