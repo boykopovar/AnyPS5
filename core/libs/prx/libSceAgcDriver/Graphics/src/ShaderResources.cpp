@@ -2563,6 +2563,9 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             }
             RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers[element], shaderSamplers);
             textures.push_back(std::move(texture));
+            if (Recorder::TransientUploadsOverBudget()) {
+                if (auto* recorder = Recorder::Active()) recorder->SettleTransientUploads();
+            }
             textureFirstLayer.push_back(firstLayer);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             item.imageAllocations.push_back(textures.size() - 1);
@@ -2589,6 +2592,9 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         // The same surface as the previous element: its image was just looked up and refreshed.
         if (sameAsPrevious && StorageDedupeEnabled()) storageTextures.push_back(storageTextures.back());
         else storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes));
+        if (Recorder::TransientUploadsOverBudget()) {
+            if (auto* recorder = Recorder::Active()) recorder->SettleTransientUploads();
+        }
         storageMips.push_back(mip);
         storageKeys.push_back(resource.dccAddress);
         storageFirstLayer.push_back(firstLayer);

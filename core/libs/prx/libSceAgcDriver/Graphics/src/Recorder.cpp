@@ -2192,6 +2192,55 @@ void Recorder::Keep(std::shared_ptr<void> object) {
 }
 
 namespace {
+
+std::atomic<std::uint64_t> liveTransientBytes{0};
+std::atomic<std::uint64_t> transientSettles{0};
+
+std::uint64_t TransientUploadBudget() {
+    static const std::uint64_t budget = [] {
+        const char* text = std::getenv("APS5_UPLOAD_BUDGET_MIB");
+        const auto mib = text != nullptr ? std::strtoull(text, nullptr, 0) : 1024ull;
+        return std::max<std::uint64_t>(mib, 1ull) << 20u;
+    }();
+    return budget;
+}
+
+struct TransientHold {
+    std::shared_ptr<void> object;
+    std::size_t bytes = 0;
+    ~TransientHold() { liveTransientBytes.fetch_sub(bytes, std::memory_order_relaxed); }
+};
+
+}
+
+void Recorder::KeepTransient(std::shared_ptr<void> object, std::size_t bytes) {
+    auto hold = std::make_shared<TransientHold>();
+    hold->object = std::move(object);
+    hold->bytes = bytes;
+    liveTransientBytes.fetch_add(bytes, std::memory_order_relaxed);
+    Keep(std::move(hold));
+}
+
+bool Recorder::TransientUploadsOverBudget() {
+    return liveTransientBytes.load(std::memory_order_relaxed) > TransientUploadBudget();
+}
+
+void Recorder::SettleTransientUploads() {
+    if (!GuestMemory::GpuMutex().HeldByThisThread() || (open == nullptr && inFlight.empty() && DeferredBatches().empty())) return;
+    const auto before = liveTransientBytes.load(std::memory_order_relaxed);
+    Sync();
+    if (!DeferredBatches().empty()) {
+        auto own = std::move(DeferredBatches());
+        DeferredBatches().clear();
+        DestroyDeferred(std::move(own), false);
+    }
+    const auto settles = transientSettles.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (DrawProfiled() && (settles & (settles - 1)) == 0) {
+        std::fprintf(stderr, "[recorder] upload budget: settle %llu released %.0f MiB of transient upload copies (%.0f MiB still live, budget %.0f MiB)\n", static_cast<unsigned long long>(settles), static_cast<double>(before - std::min(before, liveTransientBytes.load(std::memory_order_relaxed))) / 1048576.0, static_cast<double>(liveTransientBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(TransientUploadBudget()) / 1048576.0);
+    }
+}
+
+namespace {
 std::size_t SnapshotPool(Recorder::SnapshotUse use) {
     return use == Recorder::SnapshotUse::Storage ? 0 : 1;
 }

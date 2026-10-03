@@ -311,9 +311,9 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             VkCommandBuffer commands = VK_NULL_HANDLE;
             if (recorder != nullptr) {
                 commands = recorder->Commands();
-                recorder->Keep(staging);
-                recorder->Keep(tiled);
-                recorder->Keep(linear);
+                recorder->KeepTransient(staging, static_cast<std::size_t>(guestBytes));
+                recorder->KeepTransient(tiled, static_cast<std::size_t>(guestBytes));
+                recorder->KeepTransient(linear, static_cast<std::size_t>(linearBytes));
                 recorder->Keep(owned);
             } else {
                 batch = std::make_unique<CommandBatch>(context);
@@ -1478,7 +1478,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             recorder->FlushStoresOverlapping(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
-            recorder->Keep(linear);
+            recorder->KeepTransient(linear, static_cast<std::size_t>(linearBytes));
             // The image itself must outlive the recorded copy: the cache may evict it right after.
             if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
             // The detile reads the tiled bytes from the import when the batch runs.
