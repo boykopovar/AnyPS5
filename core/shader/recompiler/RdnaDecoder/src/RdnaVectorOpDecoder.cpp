@@ -144,6 +144,8 @@ constexpr VectorOpcodeInfo vop1Opcodes[] = {
     {0x41u, RdnaOpcode::VClrexcp},
     {0x42u, RdnaOpcode::VMovreldB32},
     {0x43u, RdnaOpcode::VMovrelsB32},
+    {0x44u, RdnaOpcode::VMovrelsdB32},
+    {0x48u, RdnaOpcode::VMovrelsd2B32},
     {0x50u, RdnaOpcode::VCvtF16U16},
     {0x51u, RdnaOpcode::VCvtF16I16},
     {0x52u, RdnaOpcode::VCvtU16F16},
@@ -165,6 +167,8 @@ constexpr VectorOpcodeInfo vop1Opcodes[] = {
     {0x62u, RdnaOpcode::VSatPkU8I16},
     {0x63u, RdnaOpcode::VCvtNormI16F16},
     {0x64u, RdnaOpcode::VCvtNormU16F16},
+    {0x65u, RdnaOpcode::VSwapB32},
+    {0x68u, RdnaOpcode::VSwaprelB32},
 };
 
 constexpr VectorOpcodeInfo vop3EncodedVop1Opcodes[] = {
@@ -208,6 +212,8 @@ constexpr VectorOpcodeInfo vop3EncodedVop1Opcodes[] = {
     {0x41u, RdnaOpcode::VClrexcp},
     {0x42u, RdnaOpcode::VMovreldB32},
     {0x43u, RdnaOpcode::VMovrelsB32},
+    {0x44u, RdnaOpcode::VMovrelsdB32},
+    {0x48u, RdnaOpcode::VMovrelsd2B32},
     {0x50u, RdnaOpcode::VCvtF16U16},
     {0x51u, RdnaOpcode::VCvtF16I16},
     {0x52u, RdnaOpcode::VCvtU16F16},

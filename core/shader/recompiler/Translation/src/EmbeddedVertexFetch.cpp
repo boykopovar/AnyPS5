@@ -407,8 +407,11 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
             }
             break;
         }
-        if (inst.op == RdnaOpcode::VMovreldB32) {
+        if (inst.op == RdnaOpcode::VMovreldB32 || inst.op == RdnaOpcode::VMovrelsdB32 || inst.op == RdnaOpcode::VMovrelsd2B32 || inst.op == RdnaOpcode::VSwaprelB32) {
             vectorLanes.clear();
+        } else if (inst.op == RdnaOpcode::VSwapB32) {
+            clearVectorLanes(vectorLanes, inst.destination.reg);
+            clearVectorLanes(vectorLanes, inst.source0.reg);
         } else if (inst.op != RdnaOpcode::VWritelaneB32 && isVectorOperand(inst.destination)) {
             for (std::uint32_t i = 0u; i < embeddedFetchDstSize(inst) && inst.destination.reg + i < vgprIsIndex.size(); i++) {
                 clearVectorLanes(vectorLanes, inst.destination.reg + i);

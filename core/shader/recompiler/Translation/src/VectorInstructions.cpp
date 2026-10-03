@@ -53,6 +53,18 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     case RdnaOpcode::VMovreldB32:
         vMovreldB32(inst);
         return true;
+    case RdnaOpcode::VMovrelsdB32:
+        vMovrelsdB32(inst, false, false);
+        return true;
+    case RdnaOpcode::VMovrelsd2B32:
+        vMovrelsdB32(inst, true, false);
+        return true;
+    case RdnaOpcode::VSwaprelB32:
+        vMovrelsdB32(inst, true, true);
+        return true;
+    case RdnaOpcode::VSwapB32:
+        vSwapB32(inst);
+        return true;
     case RdnaOpcode::VReadfirstlaneB32:
         vReadfirstlaneB32(inst);
         return true;

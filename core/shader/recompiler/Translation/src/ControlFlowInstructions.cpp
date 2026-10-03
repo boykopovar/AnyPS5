@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 namespace ShaderRecompiler {
 
@@ -248,33 +249,64 @@ void TranslationContext::sWqm(const RdnaInstruction& inst, bool wide) {
 
 // M0 holds a uniform register offset. Vector registers are SSA values with fixed indices, so an indexed
 // access becomes a select over every register the program references at or past the base.
-void TranslationContext::vMovrelsB32(const RdnaInstruction& inst) {
-    const RdnaOperand& source = sourceAt(inst, 0u);
-    if (source.kind != RdnaOperandKind::VectorRegister) {
-        throw std::runtime_error("v_movrels_b32 source is not a vector register");
+IrU32 TranslationContext::readRelativeVector(const RdnaOperand& base, IrValue& offset, const char* name) {
+    if (base.kind != RdnaOperandKind::VectorRegister) {
+        throw std::runtime_error(std::string(name) + " source is not a vector register");
     }
-    IrValue& offset = ir.GetM0();
-    IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(source.reg)));
-    for (std::uint32_t reg = source.reg + 1u; reg < currentVectorLimit; ++reg) {
-        IrValue& hit = ir.IEqual(offset, ir.Constant(reg - source.reg));
+    IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(base.reg)));
+    for (std::uint32_t reg = base.reg + 1u; reg < currentVectorLimit; ++reg) {
+        IrValue& hit = ir.IEqual(offset, ir.Constant(reg - base.reg));
         result = IrU32(ir.Select(hit, ir.GetVectorReg(static_cast<VectorReg>(reg)), result.Value()));
     }
-    writeRawU32(inst.destination, result);
+    return result;
 }
 
-void TranslationContext::vMovreldB32(const RdnaInstruction& inst) {
-    const RdnaOperand destination = plainOperand(inst.destination);
+void TranslationContext::writeRelativeVector(const RdnaOperand& base, IrValue& offset, IrU32 value, const char* name) {
+    const RdnaOperand destination = plainOperand(base);
     if (destination.kind != RdnaOperandKind::VectorRegister) {
-        throw std::runtime_error("v_movreld_b32 destination is not a vector register");
+        throw std::runtime_error(std::string(name) + " destination is not a vector register");
     }
-    const IrU32 value = readU32(sourceAt(inst, 0u));
-    IrValue& offset = ir.GetM0();
     for (std::uint32_t reg = destination.reg; reg < currentVectorLimit; ++reg) {
         RdnaOperand target = destination;
         target.reg = reg;
         IrValue& hit = ir.IEqual(offset, ir.Constant(reg - destination.reg));
         writeRawU32(target, IrU32(ir.Select(hit, value.Value(), ir.GetVectorReg(static_cast<VectorReg>(reg)))));
     }
+}
+
+void TranslationContext::vMovrelsB32(const RdnaInstruction& inst) {
+    writeRawU32(inst.destination, readRelativeVector(sourceAt(inst, 0u), ir.GetM0(), "v_movrels_b32"));
+}
+
+void TranslationContext::vMovreldB32(const RdnaInstruction& inst) {
+    const IrU32 value = readU32(sourceAt(inst, 0u));
+    writeRelativeVector(inst.destination, ir.GetM0(), value, "v_movreld_b32");
+}
+
+void TranslationContext::vMovrelsdB32(const RdnaInstruction& inst, bool split, bool swap) {
+    const char* name = swap ? "v_swaprel_b32" : split ? "v_movrelsd_2_b32" : "v_movrelsd_b32";
+    IrValue& m0 = ir.GetM0();
+    IrValue& sourceOffset = split ? ir.BitwiseAnd(m0, ir.Constant(0x3ffu)) : m0;
+    IrValue& destinationOffset = split ? ir.BitwiseAnd(ir.ShiftRightLogical(m0, ir.Constant(16u)), ir.Constant(0x3ffu)) : m0;
+    const IrU32 value = readRelativeVector(sourceAt(inst, 0u), sourceOffset, name);
+    if (!swap) {
+        writeRelativeVector(inst.destination, destinationOffset, value, name);
+        return;
+    }
+    const IrU32 previous = readRelativeVector(plainOperand(inst.destination), destinationOffset, name);
+    writeRelativeVector(inst.destination, destinationOffset, value, name);
+    writeRelativeVector(sourceAt(inst, 0u), sourceOffset, previous, name);
+}
+
+void TranslationContext::vSwapB32(const RdnaInstruction& inst) {
+    const RdnaOperand& source = sourceAt(inst, 0u);
+    if (source.kind != RdnaOperandKind::VectorRegister) {
+        throw std::runtime_error("v_swap_b32 source is not a vector register");
+    }
+    const IrU32 value = readU32(source);
+    const IrU32 previous = readU32(plainOperand(inst.destination));
+    writeRawU32(inst.destination, value);
+    writeRawU32(plainOperand(source), previous);
 }
 
 void TranslationContext::vReadfirstlaneB32(const RdnaInstruction& inst) {
