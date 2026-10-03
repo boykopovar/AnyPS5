@@ -1,6 +1,7 @@
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -397,6 +398,32 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
     }
     if ((flags & GuestMapFixed) != 0) {
         ValidateRange(addr, len, alignment);
+#ifdef _WIN32
+        if ((flags & GuestMapNoOverwrite) != 0) {
+            const auto start = reinterpret_cast<std::uintptr_t>(addr);
+            auto cursor = start;
+            while (cursor - start < len) {
+                MEMORY_BASIC_INFORMATION info{};
+                if (VirtualQuery(reinterpret_cast<LPCVOID>(cursor), &info, sizeof(info)) != sizeof(info))
+                    throw std::system_error(EINVAL, std::generic_category(), "No-overwrite range query failed");
+                if (info.State == MEM_FREE) {
+                    cursor = reinterpret_cast<std::uintptr_t>(info.BaseAddress) + info.RegionSize;
+                    continue;
+                }
+                const auto regionEnd = reinterpret_cast<std::uintptr_t>(info.BaseAddress) + info.RegionSize;
+                if (regionEnd <= cursor) throw std::system_error(EINVAL, std::generic_category(), "No-overwrite range query failed");
+                const auto usedEnd = std::min(regionEnd, start + len);
+                const auto usedBegin = std::max(reinterpret_cast<std::uintptr_t>(info.BaseAddress), start);
+                if (info.State != MEM_RESERVE || !GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<void*>(usedBegin), usedEnd - usedBegin)) {
+                    char busy[160];
+                    std::snprintf(busy, sizeof(busy), "No-overwrite range %p+0x%zx is occupied (state=0x%lx prot=0x%lx)", addr, len,
+                        (unsigned long)info.State, (unsigned long)info.Protect);
+                    throw std::system_error(EEXIST, std::generic_category(), busy);
+                }
+                cursor = usedEnd;
+            }
+        }
+#endif
 #if defined(__linux__)
         const int placement = (flags & GuestMapNoOverwrite) != 0 ? MAP_FIXED_NOREPLACE : MAP_FIXED;
 #else
