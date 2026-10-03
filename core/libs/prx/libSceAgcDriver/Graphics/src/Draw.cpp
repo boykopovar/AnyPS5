@@ -769,7 +769,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& mesh = *state.stages.mesh;
         const auto inputSize = mesh.inputPrimitive == 1 ? 1u : mesh.inputPrimitive == 2 ? 2u : 3u;
         Require(draw.indexCount >= inputSize && mesh.primitivesPerGroup != 0, "mesh draw contains no complete primitive");
-        const auto step = mesh.inputPrimitive == 6 ? 1u : inputSize;
+        const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
         const auto primitives = (draw.indexCount - inputSize) / step + 1u;
         inputs.meshGroups = (primitives - 1u) / mesh.primitivesPerGroup + 1u;
         APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u", primitives, inputs.meshGroups);
@@ -801,6 +801,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             KeepDrawInput(context.recorder, draw.indexAddress, copy, use, highest);
         }
         Require(highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
+        Require(!state.stages.mesh || state.stages.mesh->inputPrimitive != 5 || !state.primitiveRestart || highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
         inputs.maxIndex = highest;
         inputs.indices = std::move(copy.buffer);
     }
