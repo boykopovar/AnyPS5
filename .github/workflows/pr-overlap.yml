@@ -30,6 +30,7 @@ jobs:
           python3 tools/pr_overlap.py --base "${{ github.event.repository.default_branch }}" --out "$out"
           marker='<!-- pr-overlap -->'
           for file in "$out"/*.md; do
+            [ -e "$file" ] || continue
             pr=$(basename "$file" .md)
             comment=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
               --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1)

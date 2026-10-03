@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 
-def fixture(extra_tags=()):
+def fixture(extra_tags=(), replace_tags=()):
     image = bytearray(0x1000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
@@ -19,7 +19,11 @@ def fixture(extra_tags=()):
     image[0x210:0x216] = b"\xb8\x2a\x00\x00\x00\xc3"
     struct.pack_into("<QQq", image, 0x700, 0x300, 8, 0x210)
     tags = [(5, 0x600), (10, 1), (6, 0x620), (11, 24),
-            (7, 0x700), (8, 24), (9, 24), *extra_tags, (0, 0)]
+            (7, 0x700), (8, 24), (9, 24)]
+    for tag, value in replace_tags:
+        index = next(index for index, (current, _) in enumerate(tags) if current == tag)
+        tags[index] = (tag, value)
+    tags.extend((*extra_tags, (0, 0)))
     struct.pack_into("<IIQQQQQQ", image, 64,
                      1, 7, 0, 0, 0, len(image), len(image), 0x1000)
     struct.pack_into("<IIQQQQQQ", image, 120,
@@ -34,10 +38,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-plt-") as directory:
         work = Path(directory)
 
-        def convert(name, tags=(), error=None):
+        def convert(name, tags=(), error=None, replace_tags=()):
             source = work / (name + ".elf")
             output = work / (name + ".exe")
-            source.write_bytes(fixture(tags))
+            source.write_bytes(fixture(tags, replace_tags))
             result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
                                     capture_output=True, text=True, timeout=20)
             if error is not None:
@@ -60,6 +64,8 @@ def main():
                 "Unsupported DT_PLTREL")
         convert("unaligned-plt", [(3, 0x300), (2, 1), (20, 7), (23, 0x720)],
                 "Invalid DT_PLTRELSZ")
+        convert("bad-rela-range", [(3, 0x300)], "Relocation table out of bounds",
+            replace_tags=[(7, 0x2000)])
         convert("duplicate-got-variant", [(3, 0x300), (0x61000027, 0x300)],
                 "Both DT_OS_ and DT_ variants")
     print("Optional PLT integration tests passed")
