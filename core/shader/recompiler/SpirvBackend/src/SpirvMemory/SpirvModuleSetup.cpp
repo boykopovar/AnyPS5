@@ -129,9 +129,12 @@ void DefineModule(SpirvEmitterState& state) {
     if (state.cullDistanceVariable != 0) {
         state.module.EmitCapability(spv::CapabilityCullDistance);
     }
-    if (state.layerVariable != 0 || InputVariableForKind(state, StageInputKind::Layer) != 0) {
+    if (state.layerVariable != 0) {
         state.module.RequireVersion(0x00010500u);
         state.module.EmitCapability(spv::CapabilityShaderLayer);
+    }
+    if (InputVariableForKind(state, StageInputKind::Layer) != 0) {
+        state.module.EmitCapability(spv::CapabilityGeometry);
     }
     if (state.viewportIndexVariable != 0) {
         state.module.RequireVersion(0x00010500u);
