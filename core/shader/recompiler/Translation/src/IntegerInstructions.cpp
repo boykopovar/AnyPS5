@@ -344,9 +344,7 @@ bool TranslationContext::vSadU32(const RdnaInstruction& inst) {
     return true;
 }
 
-bool TranslationContext::subwordSad(const RdnaInstruction& inst, std::uint32_t fieldBits, std::uint32_t sumShift, bool masked) {
-    const IrU32 lhs = readU32(sourceAt(inst, 0u));
-    const IrU32 rhs = readU32(sourceAt(inst, 1u));
+IrU32 TranslationContext::byteSad(const IrU32& lhs, const IrU32& rhs, std::uint32_t fieldBits, bool masked) {
     IrU32 sum(ir.Constant(0u));
     for (std::uint32_t offset = 0u; offset < 32u; offset += fieldBits) {
         const IrU32 lhsField(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&lhs.Value(), &ir.Constant(offset), &ir.Constant(fieldBits)}));
@@ -360,12 +358,44 @@ bool TranslationContext::subwordSad(const RdnaInstruction& inst, std::uint32_t f
         }
         sum = IrU32(ir.IAdd(sum.Value(), difference.Value()));
     }
+    return sum;
+}
+
+bool TranslationContext::subwordSad(const RdnaInstruction& inst, std::uint32_t fieldBits, std::uint32_t sumShift, bool masked) {
+    IrU32 sum = byteSad(readU32(sourceAt(inst, 0u)), readU32(sourceAt(inst, 1u)), fieldBits, masked);
     if (sumShift != 0u) {
         sum = IrU32(ir.ShiftLeftLogical(sum.Value(), ir.Constant(sumShift)));
     }
     const IrU32 addend = readU32(sourceAt(inst, 2u));
     const IrU32 result(ir.IAdd(sum.Value(), addend.Value()));
     writeOperand(inst.destination, &result.Value());
+    return true;
+}
+
+bool TranslationContext::vQsadU8(const RdnaInstruction& inst, bool masked, bool wide) {
+    const std::array<IrU32, 2> source = readU32Pair(sourceAt(inst, 0u));
+    const IrU32 reference = readU32(sourceAt(inst, 1u));
+    const auto sad = [&](std::uint32_t shift) {
+        if (shift == 0u) {
+            return byteSad(source[0], reference, 8u, masked);
+        }
+        const IrU32 window(ir.BitwiseOr(ir.ShiftRightLogical(source[0].Value(), ir.Constant(shift)), ir.ShiftLeftLogical(source[1].Value(), ir.Constant(32u - shift))));
+        return byteSad(window, reference, 8u, masked);
+    };
+    const std::array<IrU32, 2> accumulator = readU32Pair(sourceAt(inst, 2u));
+    if (wide) {
+        const std::array<IrU32, 2> accumulatorHigh = readU32Pair(offsetOperand(sourceAt(inst, 2u), 2u));
+        writeU32Pair(inst.destination, {IrU32(ir.IAdd(accumulator[0].Value(), sad(0u).Value())), IrU32(ir.IAdd(accumulator[1].Value(), sad(8u).Value()))});
+        writeU32Pair(offsetOperand(inst.destination, 2u),
+            {IrU32(ir.IAdd(accumulatorHigh[0].Value(), sad(16u).Value())), IrU32(ir.IAdd(accumulatorHigh[1].Value(), sad(24u).Value()))});
+        return true;
+    }
+    const auto packed = [&](const IrU32& addend, std::uint32_t shift) {
+        const IrU32 low(ir.IAdd(addend.Value(), sad(shift).Value()));
+        const IrU32 high(ir.IAdd(ir.ShiftRightLogical(addend.Value(), ir.Constant(16u)), sad(shift + 8u).Value()));
+        return IrU32(ir.BitwiseOr(ir.BitwiseAnd(low.Value(), ir.Constant(0xffffu)), ir.ShiftLeftLogical(high.Value(), ir.Constant(16u))));
+    };
+    writeU32Pair(inst.destination, {packed(accumulator[0], 0u), packed(accumulator[1], 16u)});
     return true;
 }
 

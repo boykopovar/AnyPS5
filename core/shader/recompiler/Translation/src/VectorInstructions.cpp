@@ -1011,6 +1011,12 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return subwordSad(inst, 16u, 0u, false);
     case RdnaOpcode::VMsadU8:
         return subwordSad(inst, 8u, 0u, true);
+    case RdnaOpcode::VQsadPkU16U8:
+        return vQsadU8(inst, false, false);
+    case RdnaOpcode::VMqsadPkU16U8:
+        return vQsadU8(inst, true, false);
+    case RdnaOpcode::VMqsadU32U8:
+        return vQsadU8(inst, true, true);
     case RdnaOpcode::VAdd3U32:
         return vAdd3U32(inst);
     case RdnaOpcode::VBcntU32B32:
