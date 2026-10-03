@@ -94,7 +94,7 @@ int main(const int argc, char* argv[]) {
 
         std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
         if (args.toWindows) {
-            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui);
+            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui, std::filesystem::path(args.inputPath).parent_path() / "sce_sys" / "icon0.png");
         } else {
             patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
                 std::make_shared<Elfpatcher::EntryStubBuilder>(),
