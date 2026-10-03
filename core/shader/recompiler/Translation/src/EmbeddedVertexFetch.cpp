@@ -309,6 +309,11 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                 dst.constant = inst.source0.value;
             }
             break;
+        case RdnaOpcode::SCmovkI32:
+            if (isScalarOperand(inst.destination)) {
+                clearScalarRange(sgprs, inst.destination, 1u);
+            }
+            break;
         default:
             if (isScalarLoad(inst.op)) {
                 if (isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size() && sgprs[scalarSlot(inst.source0)].kind == SgprValueKind::AttributeTable) {

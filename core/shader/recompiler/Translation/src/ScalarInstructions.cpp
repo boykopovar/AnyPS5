@@ -51,8 +51,15 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         scalarSelect64(inst, inst.destination);
         return true;
     case RdnaOpcode::SSetregB32:
+    case RdnaOpcode::SSetregImm32B32:
+    case RdnaOpcode::SVersion:
         emitControlNop();
         return true;
+    case RdnaOpcode::SCmovkI32: {
+        const IrU32 previous = readU32(inst.destination);
+        writeRawU32(inst.destination, IrU32(ir.Select(ir.GetScc(), ir.Constant(inst.source0.value), previous.Value())));
+        return true;
+    }
     case RdnaOpcode::SWaitcnt:
         emitWaitcnt();
         return true;

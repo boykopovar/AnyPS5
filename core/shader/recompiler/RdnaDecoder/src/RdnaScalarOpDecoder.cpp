@@ -159,6 +159,8 @@ RdnaOpcode decodeSopcOpcode(std::uint32_t opcode) {
 RdnaOpcode decodeSopkOpcode(std::uint32_t opcode) {
     switch (opcode) {
         case 0x00u: return RdnaOpcode::SMovkI32;
+        case 0x01u: return RdnaOpcode::SVersion;
+        case 0x02u: return RdnaOpcode::SCmovkI32;
         case 0x03u: return RdnaOpcode::SCmpEqI32;
         case 0x04u: return RdnaOpcode::SCmpLgI32;
         case 0x05u: return RdnaOpcode::SCmpGtI32;
@@ -174,6 +176,7 @@ RdnaOpcode decodeSopkOpcode(std::uint32_t opcode) {
         case 0x0fu: return RdnaOpcode::SAddI32;
         case 0x10u: return RdnaOpcode::SMulkI32;
         case 0x13u: return RdnaOpcode::SSetregB32;
+        case 0x15u: return RdnaOpcode::SSetregImm32B32;
         case 0x17u: return RdnaOpcode::SWaitcnt;
         case 0x18u: return RdnaOpcode::SWaitcnt;
         case 0x19u: return RdnaOpcode::SWaitcnt;
@@ -381,7 +384,20 @@ RdnaInstruction DecodeRdnaSopk(std::uint32_t programCounter, std::span<const std
     instruction.sourceCount = 1;
     SetRdnaRawWords(instruction, code, wordIndex, 1);
 
-    if (instruction.op == RdnaOpcode::SMovkI32) {
+    if (instruction.op == RdnaOpcode::SVersion) {
+        instruction.destination.kind = RdnaOperandKind::Null;
+        instruction.sourceCount = 0;
+        return instruction;
+    }
+    if (instruction.op == RdnaOpcode::SSetregImm32B32) {
+        instruction.destination.kind = RdnaOperandKind::Null;
+        instruction.source1 = instruction.source0;
+        instruction.source0 = DecodeRdnaScalarSource(0xffu, programCounter);
+        instruction.sourceCount = 2;
+        ReadRdnaLiteralOperands(code, wordIndex, instruction);
+        return instruction;
+    }
+    if (instruction.op == RdnaOpcode::SMovkI32 || instruction.op == RdnaOpcode::SCmovkI32) {
         instruction.destination = DecodeRdnaScalarDestination(scalarRegister, programCounter);
         return instruction;
     }
