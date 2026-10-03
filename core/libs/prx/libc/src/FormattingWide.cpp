@@ -28,7 +28,7 @@ bool In(char16_t character, const char* set) {
 }
 
 void AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
-    for (std::size_t index = 0; index < limit && text[index] != '\0';) {
+    for (std::size_t index = 0; out.size() < limit && text[index] != '\0';) {
         const unsigned char lead = static_cast<unsigned char>(text[index]);
         std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
         std::uint32_t code = extra == 3 ? lead & 0x07 : extra == 2 ? lead & 0x0f : extra == 1 ? lead & 0x1f : lead;
@@ -41,6 +41,7 @@ void AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
         if (extra != 0) used = extra + 1;
         index += used;
         if (code >= 0x10000) {
+            if (limit - out.size() < 2) break;
             code -= 0x10000;
             out.push_back(static_cast<char16_t>(0xd800 + (code >> 10)));
             out.push_back(static_cast<char16_t>(0xdc00 + (code & 0x3ff)));
