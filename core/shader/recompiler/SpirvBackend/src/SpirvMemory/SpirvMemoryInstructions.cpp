@@ -720,13 +720,22 @@ void LoadAddressWide(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint3
 
 void StoreAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t bits) {
     const auto& mem = ctx.Memory(inst);
-    if (mem.kind != ResourceKind::Scratch) {
-        ctx.Fail(inst, "must write a scratch resource because physical address stores have no emitter");
-    }
-    if (bits == 32u) {
-        StoreWord(ctx, inst, mem);
-    } else {
-        StoreSubword(ctx, inst, mem, bits);
+    switch (mem.kind) {
+    case ResourceKind::Scratch:
+        if (bits == 32u) {
+            StoreWord(ctx, inst, mem);
+        } else {
+            StoreSubword(ctx, inst, mem, bits);
+        }
+        return;
+    case ResourceKind::Flat:
+    case ResourceKind::Global:
+        EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
+            EmitBdaStore(ctx, inst, GuestAddress(ctx, inst, mem), ctx.Arg(inst, inst.ArgumentCount() - 2u), bits);
+        });
+        return;
+    default:
+        ctx.Fail(inst, "must write a scratch or physical address resource");
     }
 }
 

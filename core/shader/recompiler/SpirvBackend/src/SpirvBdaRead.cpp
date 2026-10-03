@@ -83,6 +83,21 @@ std::uint32_t UsedBdaDwords(const IrValue& inst, std::uint32_t dwords) {
     return used;
 }
 
+void EmitBdaStoreAt(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t pointerType, std::uint32_t value, std::uint32_t instruction, std::uint32_t accessMask) {
+    const auto physical = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, TypeScalarU64(state), physical, state.bdaWritePointerFunction, address, ConstantU32(state, bytes), instruction);
+    EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u)), [&] {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, pointerType, pointer, physical);
+        state.module.AddFunction(spv::OpStore, pointer, value, accessMask, bytes);
+        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, address);
+    });
+}
+
+std::uint32_t BdaAddressUnaligned(SpirvEmitterState& state, std::uint32_t address) {
+    return Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), address, BdaConstant(state, 3u)), BdaConstant(state, 0u));
+}
+
 }
 
 // APS5_BDA_BYTE_READS=1 restores one lookup and one byte load per byte for every read.
@@ -143,17 +158,36 @@ void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
     auto& state = ctx.state;
     if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
     const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
-    const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), address, BdaConstant(state, 3u)), BdaConstant(state, 0u));
+    const auto unaligned = BdaAddressUnaligned(state, address);
     EmitIfCondition(state, unaligned, [&] { RecordBdaFault(state, address, ConstantU32(state, 4u), instruction, BdaAbi::FaultReason::Unaligned); });
     EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), [&] {
-        const auto physical = state.module.AllocateId();
-        state.module.AddFunction(spv::OpFunctionCall, TypeScalarU64(state), physical, state.bdaWritePointerFunction, address, ConstantU32(state, 4u), instruction);
-        EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u)), [&] {
-            const auto pointer = state.module.AllocateId();
-            state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, physical);
-            state.module.AddFunction(spv::OpStore, pointer, value, BdaAccessMask(state, inst), 4u);
-            state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, address);
-        });
+        EmitBdaStoreAt(state, address, 4u, TypePhysicalU32Pointer(state), value, instruction, BdaAccessMask(state, inst));
+    });
+}
+
+void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
+    auto& state = ctx.state;
+    if (bits != 8u && bits != 16u && bits != 32u) ctx.Fail(inst, "unsupported BDA store width");
+    if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
+    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto accessMask = BdaAccessMask(state, inst);
+    const auto storeBytes = [&] {
+        const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
+        const auto bytePointer = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType);
+        for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
+            const auto guest = byte == 0u ? address : Binary(state, spv::OpIAdd, TypeScalarU64(state), address, BdaConstant(state, byte));
+            const auto shifted = byte == 0u ? value : Binary(state, spv::OpShiftRightLogical, TypeU32(state), value, ConstantU32(state, byte * 8u));
+            EmitBdaStoreAt(state, guest, 1u, bytePointer, Unary(state, spv::OpUConvert, byteType, shifted), instruction, accessMask);
+        }
+    };
+    if (bits != 32u) {
+        storeBytes();
+        return;
+    }
+    const auto unaligned = BdaAddressUnaligned(state, address);
+    EmitIfCondition(state, unaligned, storeBytes);
+    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), [&] {
+        EmitBdaStoreAt(state, address, 4u, TypePhysicalU32Pointer(state), value, instruction, accessMask);
     });
 }
 

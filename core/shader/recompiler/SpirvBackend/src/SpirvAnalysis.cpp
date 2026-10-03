@@ -79,8 +79,6 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                         throw std::runtime_error("scratch operation has no per-thread storage");
                     }
                     requirements.functionScratch = true;
-                } else if (addressAccess == AddressAccess::Write) {
-                    throw std::runtime_error("writable FLAT/GLOBAL addresses require GPU ownership tracking");
                 }
             }
             if (BufferAccessOf(inst->Opcode()) != BufferAccess::None) {

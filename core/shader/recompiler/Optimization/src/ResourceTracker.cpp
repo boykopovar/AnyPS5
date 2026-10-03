@@ -749,6 +749,7 @@ private:
                 std::fprintf(stderr, "[bda] %s at pc 0x%08x: %s access, offset %s%s\n", std::string(IrOpcodeName(op)).c_str(), flags.pc, kind, immediateOffset ? "immediate" : "dynamic", memory.kind == ResourceKind::ScalarAddress && !immediateOffset ? " (a register offset is not planned by the SRT walker)" : "");
             }
             m_info.usesDma = true;
+            m_info.bdaWrites = m_info.bdaWrites || addressInfo.access == AddressAccess::Write;
             return;
         }
 

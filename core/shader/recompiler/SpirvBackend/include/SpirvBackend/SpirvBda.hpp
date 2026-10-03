@@ -21,6 +21,7 @@ bool BdaInvocationsMayStop(const IrProgram& program);
 void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition);
 std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bits);
 void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value);
+void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits);
 // Reads the dwords of a 1-4 dword load at address + offset that the program extracts, with one
 // table lookup for the whole span; the per-byte lookups of EmitBdaRead remain the fallback (and
 // the only path under APS5_BDA_BYTE_READS=1). Dwords the program never extracts are neither read
