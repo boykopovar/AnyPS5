@@ -594,6 +594,24 @@ std::array<std::uint32_t, 4> MeshIndexBufferDescriptor(const Pm4::DrawParameters
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, static_cast<std::uint32_t>(bytes), RawWord3};
 }
 
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount) {
+    const auto inputSize = mesh.inputPrimitive == 1 ? 1u : mesh.inputPrimitive == 2 ? 2u : 3u;
+    const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
+    Require(mesh.primitivesPerGroup != 0, "mesh draw contains no complete primitive");
+    return {indexCount, inputSize, step, mesh.primitivesPerGroup, context.meshLimits.maxMeshWorkGroupCount[0], context.meshLimits.maxMeshWorkGroupCount[1], context.meshLimits.maxMeshWorkGroupTotalCount};
+}
+
+MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules) {
+    const auto first = record.firstVertexOrIndex;
+    const auto effective = first < rules.indexCount ? std::min(record.count, rules.indexCount - first) : 0u;
+    std::uint32_t groups = 0;
+    if (effective >= rules.inputSize && record.instances != 0) {
+        groups = (effective - rules.inputSize) / rules.step / rules.primitivesPerGroup + 1u;
+        if (groups > rules.maxGroups || record.instances > rules.maxInstances || groups > rules.maxTotal / record.instances) groups = 0;
+    }
+    return {groups, groups != 0 ? record.instances : 0u, groups != 0 ? 1u : 0u, effective, first};
+}
+
 std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>> DrawCopiedWriters() {
     // Never destroyed: a completion action of a batch still in flight at static teardown may erase from it.
     static auto* const writers = new std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>>(std::make_shared<std::vector<std::shared_ptr<ShaderResources>>>());
@@ -744,7 +762,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         }
     }
     if (args == nullptr) Require(draw.indexCount != 0 && draw.instanceCount != 0, "zero-count indexed draws are unsupported");
-    else Require(!state.stages.mesh && !state.stages.tessellation && !state.rectList, "indirect draw on a non-vertex path must be resolved by the driver");
+    else Require((!state.stages.mesh || draw.indexed) && !state.stages.tessellation && !state.rectList, "indirect draw on a non-vertex path must be resolved by the driver");
     inputs.indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
     const auto indexBytes = inputs.indexBytes;
     APS5_LOG_OUT_DEBUG("Index buffer bytes=%llu", static_cast<unsigned long long>(indexBytes));
@@ -769,11 +787,13 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& mesh = *state.stages.mesh;
         const auto inputSize = mesh.inputPrimitive == 1 ? 1u : mesh.inputPrimitive == 2 ? 2u : 3u;
         Require(draw.indexCount >= inputSize && mesh.primitivesPerGroup != 0, "mesh draw contains no complete primitive");
-        const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
-        const auto primitives = (draw.indexCount - inputSize) / step + 1u;
-        inputs.meshGroups = (primitives - 1u) / mesh.primitivesPerGroup + 1u;
-        APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u", primitives, inputs.meshGroups);
-        Require(inputs.meshGroups <= context.meshLimits.maxMeshWorkGroupCount[0] && draw.instanceCount <= context.meshLimits.maxMeshWorkGroupCount[1] && static_cast<std::uint64_t>(inputs.meshGroups) * draw.instanceCount <= context.meshLimits.maxMeshWorkGroupTotalCount, "mesh draw exceeds workgroup count limits");
+        if (args == nullptr) {
+            const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
+            const auto primitives = (draw.indexCount - inputSize) / step + 1u;
+            inputs.meshGroups = (primitives - 1u) / mesh.primitivesPerGroup + 1u;
+            APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u", primitives, inputs.meshGroups);
+            Require(inputs.meshGroups <= context.meshLimits.maxMeshWorkGroupCount[0] && draw.instanceCount <= context.meshLimits.maxMeshWorkGroupCount[1] && static_cast<std::uint64_t>(inputs.meshGroups) * draw.instanceCount <= context.meshLimits.maxMeshWorkGroupTotalCount, "mesh draw exceeds workgroup count limits");
+        }
     }
     if (state.stages.tessellation) Require(draw.indexCount % state.stages.tessellation->inputControlPoints == 0, "incomplete tessellation patch");
     // Viewport and scissor are dynamic pipeline state, so their limits are checked here per draw.
@@ -933,6 +953,10 @@ struct IndirectRecord {
 // GPU-side indirect draw from `argumentBuffer` or the CPU-read records with the driver's rules.
 void recordDrawCommands(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset) {
     const auto* args = indirect != nullptr ? indirect->args : nullptr;
+    if (state.stages.mesh && args != nullptr) {
+        context.Function<PFN_vkCmdDrawMeshTasksIndirectEXT>("vkCmdDrawMeshTasksIndirectEXT")(commands, argumentBuffer, argumentOffset, 1, sizeof(VkDrawMeshTasksIndirectCommandEXT));
+        return;
+    }
     if (state.stages.mesh) {
         APS5_LOG_OUT_DEBUG("vkCmdDrawMeshTasksEXT groups=%u instances=%u", inputs.meshGroups, draw.instanceCount);
         context.Function<PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT")(commands, inputs.meshGroups, draw.instanceCount, 1);
@@ -1013,6 +1037,24 @@ bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, R
     argumentBuffer = scratch->Handle();
     argumentOffset = 0;
     return true;
+}
+
+std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier) {
+    const auto* args = indirect.args;
+    const auto rules = MeshArgumentRulesFor(context, *state.stages.mesh, draw.indexCount);
+    auto arguments = std::make_shared<Buffer>(context, ShaderRecompiler::MeshArgumentBytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    if (indirect.path == IndirectDrawPath::Gpu && recorder != nullptr && indirect.argumentImport->address != 0) {
+        const std::array<std::uint32_t, 7> words{rules.indexCount, rules.inputSize, rules.step, rules.primitivesPerGroup, rules.maxGroups, rules.maxInstances, rules.maxTotal};
+        if (recorder->RecordMeshArguments(commands, indirect.argumentImport->address + (args->arguments - indirect.argumentImport->base), arguments->DeviceAddress(), words)) {
+            countBarrier(2);
+            if (recorded) recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
+            return arguments;
+        }
+    }
+    const auto record = !indirect.records.empty() ? indirect.records.front() : Pm4::ReadDrawArguments(*args, 0);
+    const auto resolved = ResolveMeshArguments(record, rules);
+    std::memcpy(arguments->Bytes().data(), &resolved, sizeof(resolved));
+    return arguments;
 }
 
 // Debug aid: APS5_CHECK_INDIRECT_ARGS=1 reads the records of a GPU-side draw back on the CPU once
@@ -1113,7 +1155,7 @@ struct RecordedDraw {
     VkShaderStageFlags pushStages = 0;
 };
 
-void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes, VkShaderStageFlags stages) {
+void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes, VkShaderStageFlags stages, VkDeviceAddress meshArguments = 0) {
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
     if (bytes == nullptr) {
         resources.PatchPushConstants(block);
@@ -1123,7 +1165,9 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
         pipeline.PushConstants(commands, stages, block);
         return;
     }
-    const std::array<std::uint32_t, ShaderRecompiler::MeshDrawPushBytes / 4> words{draw.indexCount, draw.firstVertex, draw.firstInstance, draw.indexed ? draw.indexSize : 0u, 0u, 0u};
+    const auto firstVertex = draw.indirect ? draw.indirect->vertexConstant : draw.firstVertex;
+    const auto firstInstance = draw.indirect ? draw.indirect->instanceConstant : draw.firstInstance;
+    const std::array<std::uint32_t, ShaderRecompiler::MeshDrawPushBytes / 4> words{draw.indexCount, firstVertex, firstInstance, draw.indexed ? draw.indexSize : 0u, static_cast<std::uint32_t>(meshArguments), static_cast<std::uint32_t>(meshArguments >> 32u)};
     static_assert(ShaderRecompiler::MeshDrawPushOffsetBytes + ShaderRecompiler::MeshDrawPushBytes == PipelinePushConstantBytes);
     std::memcpy(block.data() + ShaderRecompiler::MeshDrawPushOffsetBytes, words.data(), sizeof(words));
     pipeline.PushConstants(commands, stages | VK_SHADER_STAGE_MESH_BIT_EXT, block);
@@ -1247,7 +1291,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (recorder->HasQueuedStores() && (resources.HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     const auto drawBindings = resources.PrepareDrawBindings(*recorder);
     const bool capture = CaptureInputsEnabled();
-    const bool continued = !capture && !readsTarget && !gpuIndirect && recorder->ContinuesRenderPass(passKey);
+    const bool meshIndirect = state.stages.mesh && args != nullptr;
+    const bool continued = !capture && !readsTarget && !gpuIndirect && !meshIndirect && recorder->ContinuesRenderPass(passKey);
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
     const auto commands = continued ? recorder->CommandsInRenderPass() : recorder->Commands();
@@ -1266,6 +1311,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         recorder->NoteAccess(CommandClass::Draw, Recorder::Access{reads, resources.GpuWrites(), images, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | inputs.shaderStages, resources.HoldsLease()});
     }
     std::unique_ptr<DeviceBuffer> scratch;
+    std::shared_ptr<Buffer> meshArguments;
     VkBuffer argumentBuffer = VK_NULL_HANDLE;
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
@@ -1276,7 +1322,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | inputs.shaderStages, 0, 1, &before, 0, nullptr, 0, nullptr);
         countBarrier(1);
         APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
-        if (gpuIndirect) rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+        if (meshIndirect) {
+            meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier);
+            argumentBuffer = meshArguments->Handle();
+        } else if (gpuIndirect) {
+            rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+        }
         // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
         // layout, which a lean draw renders in: no transitions.
         APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
@@ -1290,9 +1341,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     }
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages);
+    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset);
+    if (meshArguments != nullptr) recorder->Keep(meshArguments);
     if (args != nullptr) CountIndirectDraw(record.indirect->path, record.indirect->readMs, rewritten);
     auto checkRecords = indirectRecordCheck(record.indirect);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
@@ -1694,7 +1746,13 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         countBarrier();
     }
     APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
-    if (gpuIndirect) rewritten = recordIndirectArguments(context, commands, recorder, recorded, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+    std::shared_ptr<Buffer> meshArguments;
+    if (state.stages.mesh && args != nullptr) {
+        meshArguments = recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier);
+        argumentBuffer = meshArguments->Handle();
+    } else if (gpuIndirect) {
+        rewritten = recordIndirectArguments(context, commands, recorder, recorded, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+    }
     for (auto& binding : targets) {
         if (binding.resident != nullptr) {
             imageBarrier(context, commands, binding.resident->Image(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
@@ -1721,9 +1779,10 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0);
+    pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset);
+    if (meshArguments != nullptr && recorded) recorder->Keep(meshArguments);
     if (args != nullptr) CountIndirectDraw(indirect.path, indirect.readMs, rewritten);
     auto checkRecords = indirectRecordCheck(args != nullptr ? &indirect : nullptr);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");

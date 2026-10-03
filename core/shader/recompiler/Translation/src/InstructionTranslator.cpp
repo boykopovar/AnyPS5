@@ -252,6 +252,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         const auto draw = [&entryIr](std::uint32_t index) -> IrValue& {
             return entryIr.Emit(IrOpcode::MeshDrawParameter, IrOpcodeType(IrOpcode::MeshDrawParameter), {&entryIr.Constant(index)});
         };
+        const auto argument = [&entryIr](std::uint32_t index) -> IrValue& {
+            return entryIr.Emit(IrOpcode::MeshArgument, IrOpcodeType(IrOpcode::MeshArgument), {&entryIr.Constant(index)});
+        };
         const auto minimum = [&entryIr](IrValue& lhs, IrValue& rhs) -> IrValue& {
             return entryIr.Emit(IrOpcode::UMin32, IrOpcodeType(IrOpcode::UMin32), {&lhs, &rhs});
         };
@@ -262,7 +265,10 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& firstPrimitive = entryIr.IMul(builtin(StageInputKind::WorkgroupId, 0u), u32(mesh.primitivesPerGroup));
         IrValue& step = u32(stepCount);
         IrValue& firstVertex = entryIr.IMul(firstPrimitive, step);
-        IrValue& vertices = minimum(subtractSaturate(draw(0u), firstVertex), u32(mesh.verticesPerGroup));
+        IrValue& indirect = entryIr.INotEqual(entryIr.BitwiseOr(draw(MeshArgumentAddressDword), draw(MeshArgumentAddressDword + 1u)), u32(0u));
+        IrValue& indexCount = entryIr.Select(indirect, argument(MeshArgumentIndexCountDword), draw(0u));
+        IrValue& firstIndex = argument(MeshArgumentFirstIndexDword);
+        IrValue& vertices = minimum(subtractSaturate(indexCount, firstVertex), u32(mesh.verticesPerGroup));
         IrValue& primitives = entryIr.Select(entryIr.ULessThan(vertices, u32(size)), u32(0u), entryIr.IAdd(entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&subtractSaturate(vertices, u32(size)), &step}), u32(1u)));
         entryIr.SetScalarReg(static_cast<ScalarReg>(2), entryIr.BitwiseOr(entryIr.ShiftLeftLogical(vertices, u32(12u)), entryIr.ShiftLeftLogical(primitives, u32(22u))));
         IrValue& wave = entryIr.ShiftRightLogical(local, u32(6u));
@@ -288,7 +294,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& inputVertex = fan ? entryIr.Select(entryIr.IEqual(local, u32(0u)), u32(0u), entryIr.IAdd(firstVertex, local)) : entryIr.IAdd(firstVertex, local);
         IrValue& indexBytes = draw(3u);
         IrValue& indexed = entryIr.INotEqual(indexBytes, u32(0u));
-        IrValue& byteOffset = entryIr.IMul(inputVertex, indexBytes);
+        IrValue& byteOffset = entryIr.IMul(entryIr.IAdd(inputVertex, firstIndex), indexBytes);
         IrValue& indexResource = entryIr.Emit(IrOpcode::GetBufferResource, IrOpcodeType(IrOpcode::GetBufferResource), {&entryIr.GetUserData(static_cast<ScalarReg>(4)), &entryIr.GetUserData(static_cast<ScalarReg>(5)), &entryIr.GetUserData(static_cast<ScalarReg>(6)), &entryIr.GetUserData(static_cast<ScalarReg>(7))});
         const std::uint32_t memoryIndex = static_cast<std::uint32_t>(program.Resources().memoryInfo.size());
         program.Resources().memoryInfo.push_back(MemoryInfo{.kind = ResourceKind::Buffer, .resource = 1u, .offen = true});

@@ -161,14 +161,17 @@ void CheckBindings(const IrProgram& program, const BindingAllocationResult& bind
 
 void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
     module.EmitCapability(spv::CapabilityShader);
-    if (program.Info().usesDma) {
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh;
+    if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
-        module.EmitCapability(spv::CapabilityStorageBuffer8BitAccess);
         module.EmitExtension("SPV_KHR_physical_storage_buffer");
+    }
+    if (program.Info().usesDma) {
+        module.EmitCapability(spv::CapabilityStorageBuffer8BitAccess);
         module.EmitExtension("SPV_KHR_8bit_storage");
     }
-    module.AddMemoryModel(program.Info().usesDma ? spv::AddressingModelPhysicalStorageBuffer64 : spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+    module.AddMemoryModel(physical ? spv::AddressingModelPhysicalStorageBuffer64 : spv::AddressingModelLogical, spv::MemoryModelGLSL450);
 }
 
 void DefineInputs(SpirvEmitterState& state) {

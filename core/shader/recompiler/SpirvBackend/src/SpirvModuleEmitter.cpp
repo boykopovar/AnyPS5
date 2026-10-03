@@ -2,6 +2,7 @@
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
+#include "SpirvBackend/SpirvBda.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -984,6 +985,41 @@ std::uint32_t EmitMeshDrawParameter(SpirvValueEmitContext& ctx, const IrValue& i
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, TypeU32(state), result, pointer);
     return result;
+}
+
+std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto index = inst.Argument(0)->ImmediateU32();
+    if (state.program.Resources().stage != IrShaderStage::Mesh || index >= MeshArgumentBytes / 4u) {
+        ctx.Fail(inst, "invalid mesh argument");
+    }
+    const auto push = [&](std::uint32_t dword) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, MeshDrawPushOffsetBytes / 4u + dword));
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+        return Unary(state, spv::OpUConvert, TypeScalarU64(state), value);
+    };
+    const auto low = push(MeshArgumentAddressDword);
+    const auto high = push(MeshArgumentAddressDword + 1u);
+    const auto address = Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), low, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), high, ConstantU32(state, 32u)));
+    const auto present = Binary(state, spv::OpINotEqual, TypeBool(state), address, BdaConstant(state, 0u));
+    const auto before = state.currentLabel;
+    const auto loadLabel = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, present, loadLabel, merge);
+    EmitLabel(state, loadLabel);
+    const auto element = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, BdaConstant(state, 4ull * index));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeU32(state)), pointer, element);
+    const auto loaded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), loaded, pointer, spv::MemoryAccessAlignedMask, 4u);
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeU32(state), value, loaded, loadLabel, ConstantU32(state, 0u), before);
+    return value;
 }
 
 std::uint32_t EmitGetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {

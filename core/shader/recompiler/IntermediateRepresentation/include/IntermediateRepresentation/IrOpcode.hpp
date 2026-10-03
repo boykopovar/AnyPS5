@@ -78,6 +78,7 @@ enum class IrOpcode : std::uint16_t {
     ShaderClock,
     RealtimeClock,
     MeshDrawParameter,
+    MeshArgument,
     MeshAllocate,
     TessellationBase,
     GetTessellationAttribute,

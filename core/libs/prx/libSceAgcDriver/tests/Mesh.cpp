@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -251,6 +252,39 @@ int main() {
             CheckTriangles((std::string("non-indexed triangle list, ") + name).c_str());
         }
 
+        constexpr std::size_t recordBlockBytes = 65536;
+        auto* record = static_cast<std::uint32_t*>(std::aligned_alloc(65536, recordBlockBytes));
+        Require(record != nullptr, "cannot allocate the indirect record block");
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(record, recordBlockBytes, true, true);
+        }
+        const auto drawIndirect = [&](std::uint32_t count, std::uint32_t instances, std::uint32_t first) {
+            const std::array<std::uint32_t, 5> words{count, instances, first, 0u, 0u};
+            std::copy(words.begin(), words.end(), record);
+            AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true};
+            draw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{reinterpret_cast<std::uintptr_t>(record), 0x25u, 20u, 20u, 1u, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
+            ClearPixels();
+            DrawMesh(device, {WideSubgroup, draw, VertexBufferDescriptor(Scrambled.data(), static_cast<std::uint32_t>(Scrambled.size()))});
+        };
+        drawIndirect(static_cast<std::uint32_t>(Indices.size()), 1, 0);
+        CheckTriangles("indirect indexed triangle list");
+        drawIndirect(3u * 10u, 1, 3u * 5u);
+        for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+            const auto offset = CellPixel(triangle);
+            const bool drawn = triangle >= 5u && triangle < 15u;
+            Require(drawn ? PixelIs(offset, TriangleColor(triangle)) : PixelIs(offset, Background), "indirect index range: triangle " + std::to_string(triangle) + " pixel " + PixelText(offset));
+        }
+        drawIndirect(1000u, 1, 3u * (Triangles - 2u));
+        for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+            const auto offset = CellPixel(triangle);
+            Require(triangle >= Triangles - 2u ? PixelIs(offset, TriangleColor(triangle)) : PixelIs(offset, Background), "indirect index count past the buffer: triangle " + std::to_string(triangle) + " pixel " + PixelText(offset));
+        }
+        for (const auto& [count, instances, first] : {std::array<std::uint32_t, 3>{static_cast<std::uint32_t>(Indices.size()), 0u, 0u}, std::array<std::uint32_t, 3>{0u, 1u, 0u}, std::array<std::uint32_t, 3>{3u, 1u, static_cast<std::uint32_t>(Indices.size())}}) {
+            drawIndirect(count, instances, first);
+            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) Require(PixelIs(CellPixel(triangle), Background), "an empty indirect record drew triangle " + std::to_string(triangle));
+        }
+
         ClearPixels();
         DrawMesh(device, {SmallSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), 0});
         CheckTriangles("mesh program without push data");
@@ -285,6 +319,13 @@ int main() {
             if (!refused) throw;
         }
         Require(refused, "a triangle fan with a restart index was drawn");
+        const std::array<std::uint32_t, 5> fanWords{static_cast<std::uint32_t>(FanIndices.size()), 1u, 0u, 0u, 0u};
+        std::copy(fanWords.begin(), fanWords.end(), record);
+        AgcDriver::Pm4::DrawParameters fanDraw{reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true};
+        fanDraw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{reinterpret_cast<std::uintptr_t>(record), 0x25u, 20u, 20u, 1u, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
+        ClearPixels();
+        DrawMesh(device, {fan, fanDraw, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size()))});
+        CheckFan("indirect indexed triangle fan");
 
         std::puts("Mesh tests passed");
         return 0;
