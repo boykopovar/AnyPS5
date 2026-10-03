@@ -631,6 +631,14 @@ bool IsBufferMemoryOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::BufferLoadDwordx3:
         case RdnaOpcode::BufferStoreByte:
         case RdnaOpcode::BufferStoreShort:
+        case RdnaOpcode::BufferLoadUbyteD16:
+        case RdnaOpcode::BufferLoadUbyteD16Hi:
+        case RdnaOpcode::BufferLoadSbyteD16:
+        case RdnaOpcode::BufferLoadSbyteD16Hi:
+        case RdnaOpcode::BufferLoadShortD16:
+        case RdnaOpcode::BufferLoadShortD16Hi:
+        case RdnaOpcode::BufferStoreByteD16Hi:
+        case RdnaOpcode::BufferStoreShortD16Hi:
         case RdnaOpcode::BufferStoreDwordx2:
         case RdnaOpcode::BufferStoreDwordx3:
         case RdnaOpcode::BufferAtomicSwap:
@@ -652,6 +660,24 @@ bool IsBufferMemoryOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::TbufferLoadFormatXy:
         case RdnaOpcode::TbufferLoadFormatXyz:
         case RdnaOpcode::TbufferLoadFormatXyzw:
+        case RdnaOpcode::TbufferLoadFormatD16X:
+        case RdnaOpcode::TbufferLoadFormatD16Xy:
+        case RdnaOpcode::TbufferLoadFormatD16Xyz:
+        case RdnaOpcode::TbufferLoadFormatD16Xyzw:
+        case RdnaOpcode::BufferLoadFormatD16X:
+        case RdnaOpcode::BufferLoadFormatD16Xy:
+        case RdnaOpcode::BufferLoadFormatD16Xyz:
+        case RdnaOpcode::BufferLoadFormatD16Xyzw:
+        case RdnaOpcode::BufferLoadFormatD16HiX:
+        case RdnaOpcode::TbufferStoreFormatD16X:
+        case RdnaOpcode::TbufferStoreFormatD16Xy:
+        case RdnaOpcode::TbufferStoreFormatD16Xyz:
+        case RdnaOpcode::TbufferStoreFormatD16Xyzw:
+        case RdnaOpcode::BufferStoreFormatD16X:
+        case RdnaOpcode::BufferStoreFormatD16Xy:
+        case RdnaOpcode::BufferStoreFormatD16Xyz:
+        case RdnaOpcode::BufferStoreFormatD16Xyzw:
+        case RdnaOpcode::BufferStoreFormatD16HiX:
         case RdnaOpcode::TbufferStoreFormatX:
         case RdnaOpcode::TbufferStoreFormatXy:
         case RdnaOpcode::TbufferStoreFormatXyz:
