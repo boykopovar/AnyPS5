@@ -213,6 +213,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilityInt64 ||
                     capability == spv::CapabilityInt16 ||
                     capability == spv::CapabilityFloat16 ||
+                    capability == spv::CapabilityFloat64 ||
                     capability == spv::CapabilityStorageBuffer8BitAccess ||
                     capability == spv::CapabilityPhysicalStorageBufferAddresses ||
                     capability == spv::CapabilitySampledImageArrayDynamicIndexing ||
@@ -280,6 +281,11 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 for (std::size_t i = 5; i < count; ++i) Require(module.interface.insert(instruction[i]).second, "duplicate SPIR-V interface ID");
                 break;
             case spv::OpExecutionMode:
+                if (count == 4 && instruction[2] == spv::ExecutionModeSignedZeroInfNanPreserve) {
+                    Require(instruction[3] == 32u || instruction[3] == 64u, "SignedZeroInfNanPreserve requires Float32 or Float64");
+                    executionModeTargets.insert(instruction[1]);
+                    break;
+                }
                 Require(count >= 3 && module.modes.emplace(instruction[2], std::vector<std::uint32_t>(instruction.begin() + 3, instruction.end())).second, "duplicate or malformed execution mode");
                 executionModeTargets.insert(instruction[1]);
                 if (instruction[2] == spv::ExecutionModeOriginUpperLeft) upperLeft = true;
@@ -338,10 +344,6 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     Require(entries == 1 && memoryModels == 1, "SPIR-V must contain one entry point and memory model");
     Require(entryPoint != 0 && std::all_of(executionModeTargets.begin(), executionModeTargets.end(), [&](auto target) { return target == entryPoint; }), "execution mode refers to a different entry point");
     Require(!fragment || upperLeft, "fragment coordinates must use an upper-left origin");
-    if (const auto preserve = module.modes.find(spv::ExecutionModeSignedZeroInfNanPreserve); preserve != module.modes.end()) {
-        Require(preserve->second == std::vector<std::uint32_t>{32u}, "SignedZeroInfNanPreserve requires Float32");
-        module.modes.erase(preserve);
-    }
     const auto mode = [&](std::uint32_t name, std::vector<std::uint32_t> operands) {
         const auto it = module.modes.find(name);
         Require(it != module.modes.end() && it->second == operands, "missing or incompatible shader execution mode");
