@@ -223,6 +223,7 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
     depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
     depth.clearDepth = readFloat(cx, 0x00b);
     depth.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
+    if (const auto htile = find(cx, 0x005); htile != cx.end() && htile->second != 0) depth.htileAddress = base(0x005, 0x01e);
     result.depth = depth;
     result.depthTest = (depthControl & 2u) != 0;
     result.depthWrite = result.depthTest && (depthControl & 4u) != 0 && !depthReadOnly;
