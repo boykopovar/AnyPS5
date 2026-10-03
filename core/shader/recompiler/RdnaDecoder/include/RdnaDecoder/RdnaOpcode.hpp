@@ -698,6 +698,8 @@ enum class RdnaOpcode : std::uint16_t {
     DsXorB32,
     DsXorRtnB32,
     DsWrxchgRtnB32,
+    DsWrxchg2RtnB32,
+    DsWrxchg2st64RtnB32,
     DsMinF32,
     DsMaxF32,
     DsSwizzleB32,

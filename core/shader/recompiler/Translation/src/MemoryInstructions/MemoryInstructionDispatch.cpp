@@ -241,6 +241,9 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::DsWrite2B64:
     case RdnaOpcode::DsWrite2st64B64:
         return dsWrite2(inst);
+    case RdnaOpcode::DsWrxchg2RtnB32:
+    case RdnaOpcode::DsWrxchg2st64RtnB32:
+        return dsWrxchg2(inst);
     case RdnaOpcode::DsWriteB8:
     case RdnaOpcode::DsWriteB16:
     case RdnaOpcode::DsWriteB16D16Hi:

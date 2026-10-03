@@ -42,6 +42,24 @@ bool TranslationContext::dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, 
     return true;
 }
 
+bool TranslationContext::dsWrxchg2(const RdnaInstruction& inst) {
+    MemoryInfo first = sharedMemoryInfoFromInstruction(inst);
+    first.dataDwords = 1u;
+    first.componentCount = 1u;
+    MemoryInfo second = first;
+    second.offset = first.secondaryOffset;
+    const IrU32 address = readU32(inst.source0);
+    const IrU32 firstValue = readU32(inst.source1);
+    const IrU32 secondValue = readU32(inst.source2);
+    IrValue& active = ir.GetExec();
+    const IrOpcode opcode = IrOpcode::SharedAtomicSwap32;
+    IrValue& firstOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &firstValue.Value(), &active}, addMemoryInfo(first, inst.programCounter));
+    IrValue& secondOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &secondValue.Value(), &active}, addMemoryInfo(second, inst.programCounter));
+    writeOperand(inst.destination, &firstOld);
+    writeOperand(offsetOperand(inst.destination, 1u), &secondOld);
+    return true;
+}
+
 IrValue* TranslationContext::loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory, std::uint32_t pc) {
     IrOpcode opcode;
     switch (width) {

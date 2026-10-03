@@ -88,6 +88,7 @@ private:
     bool bufferAtomic(const RdnaInstruction& inst, IrOpcode opcode);
     bool imageAtomic(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
+    bool dsWrxchg2(const RdnaInstruction& inst);
     bool flatLoad(const RdnaInstruction& inst);
     bool flatStore(const RdnaInstruction& inst);
     bool imageGetResinfo(const RdnaInstruction& inst);
