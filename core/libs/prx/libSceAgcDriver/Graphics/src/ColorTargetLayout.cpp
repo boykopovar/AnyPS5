@@ -3,6 +3,7 @@
 #include <bit>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 
 namespace AgcDriver::Graphics {
@@ -27,6 +28,39 @@ ColorTileMode DecodeColorTileMode(std::uint32_t attrib3) {
     return static_cast<ColorTileMode>(mode);
 }
 
+namespace {
+
+struct SwizzleTables {
+    std::vector<std::uint32_t> x;
+    std::vector<std::uint32_t> y;
+};
+
+const SwizzleTables& renderTargetTables(std::uint32_t bytesPerElement, std::uint32_t blockWidth, std::uint32_t blockHeight) {
+    static std::once_flag once[5];
+    static SwizzleTables tables[5];
+    const auto index = static_cast<std::size_t>(std::countr_zero(bytesPerElement));
+    std::call_once(once[index], [&] {
+        const auto* equation = FindTextureSwizzleEquation(27u, bytesPerElement);
+        require(equation != nullptr, "AGC graphics: no SW_64KB_R_X equation for the color element size");
+        auto& table = tables[index];
+        table.x.resize(blockWidth);
+        table.y.resize(blockHeight);
+        for (std::uint32_t x = 0; x < blockWidth; ++x) {
+            std::uint32_t offset = 0;
+            for (std::uint32_t bit = 0; bit < 16u; ++bit) offset |= parity(x & equation->bits[bit] & 0xfffu) << bit;
+            table.x[x] = offset;
+        }
+        for (std::uint32_t y = 0; y < blockHeight; ++y) {
+            std::uint32_t offset = 0;
+            for (std::uint32_t bit = 0; bit < 16u; ++bit) offset |= parity((y << 12u) & equation->bits[bit] & 0xfff000u) << bit;
+            table.y[y] = offset;
+        }
+    });
+    return tables[index];
+}
+
+}
+
 ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, ColorTileMode mode, std::uint32_t bytesPerElement) : width(width), height(height), pitch(width), mode(mode), bytes(0), elementBytes(bytesPerElement) {
     require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "AGC graphics: invalid color surface extent");
     require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "AGC graphics: unsupported color element size");
@@ -44,20 +78,9 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             blockHeight = 1u << (log2Elements / 2u);
             pitch = (width + blockWidth - 1u) / blockWidth * blockWidth;
             paddedHeight = (height + blockHeight - 1u) / blockHeight * blockHeight;
-            const auto* equation = FindTextureSwizzleEquation(27u, bytesPerElement);
-            require(equation != nullptr, "AGC graphics: no SW_64KB_R_X equation for the color element size");
-            xOffsets.resize(blockWidth);
-            yOffsets.resize(blockHeight);
-            for (std::uint32_t x = 0; x < blockWidth; ++x) {
-                std::uint32_t offset = 0;
-                for (std::uint32_t bit = 0; bit < 16u; ++bit) offset |= parity(x & equation->bits[bit] & 0xfffu) << bit;
-                xOffsets[x] = offset;
-            }
-            for (std::uint32_t y = 0; y < blockHeight; ++y) {
-                std::uint32_t offset = 0;
-                for (std::uint32_t bit = 0; bit < 16u; ++bit) offset |= parity((y << 12u) & equation->bits[bit] & 0xfff000u) << bit;
-                yOffsets[y] = offset;
-            }
+            const auto& tables = renderTargetTables(bytesPerElement, blockWidth, blockHeight);
+            xOffsets = tables.x.data();
+            yOffsets = tables.y.data();
             break;
         }
         default: throw std::runtime_error("AGC graphics: unsupported color tile mode");

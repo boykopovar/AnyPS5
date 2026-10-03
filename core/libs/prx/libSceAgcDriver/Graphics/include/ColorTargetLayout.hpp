@@ -37,8 +37,8 @@ private:
     std::uint32_t blockWidth = 1;
     std::uint32_t blockHeight = 1;
     // The XOR swizzle is linear over GF(2), so a block offset is xOffsets[x] ^ yOffsets[y].
-    std::vector<std::uint32_t> xOffsets;
-    std::vector<std::uint32_t> yOffsets;
+    const std::uint32_t* xOffsets = nullptr;
+    const std::uint32_t* yOffsets = nullptr;
 };
 
 }
