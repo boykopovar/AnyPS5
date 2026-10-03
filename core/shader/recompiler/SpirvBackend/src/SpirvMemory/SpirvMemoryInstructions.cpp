@@ -326,6 +326,8 @@ std::uint32_t LoadFormattedComponent(SpirvValueEmitContext& ctx, const MemoryInf
     auto& state = ctx.state;
     const auto source = ResolveOutputSource(ctx, mem, info, outputComponent);
     if (source.kind != SpirvFormattedSourceKind::Memory) {
+        const bool integer = info.type == SpirvFormatComponentType::Uint || info.type == SpirvFormatComponentType::Sint;
+        if (mem.d16 && source.kind == SpirvFormattedSourceKind::One && !integer) return ConstantU32(state, 0x3c00u);
         return FormattedConstant(ctx, info, source.kind);
     }
     const auto component = source.component;
@@ -344,12 +346,13 @@ std::uint32_t LoadFormattedComponent(SpirvValueEmitContext& ctx, const MemoryInf
     } else {
         raw = loadSubword(component, bits, signedType);
     }
-    return NormalizeFormatComponent(state, info, component, raw);
+    return mem.d16 ? EmitD16FormatComponent(state, info, component, raw) : NormalizeFormatComponent(state, info, component, raw);
 }
 
 std::uint32_t FormattedLoadPrepared(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, std::uint32_t outputComponent, const MemoryResourceAccess& resource) {
     const auto info = MemoryFormatInfo(ctx.state, mem);
     if (info.type == SpirvFormatComponentType::Unknown) {
+        if (mem.d16) ctx.Fail(inst, "is a D16 format load with an unknown buffer format");
         return LoadWordPrepared(ctx, inst, RebaseRawComponent(mem, outputComponent), resource);
     }
     return LoadFormattedComponent(ctx, mem, info, outputComponent, [&](std::uint32_t component) {

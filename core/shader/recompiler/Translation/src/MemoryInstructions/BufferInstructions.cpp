@@ -1,5 +1,6 @@
 #include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
+#include <array>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
@@ -75,6 +76,40 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
     } else {
         for (std::uint32_t component = 0u; component < memory.dataDwords; ++component) {
             writeOperand(offsetOperand(inst.destination, component), &ir.CompositeExtract(loaded, component));
+        }
+    }
+    return true;
+}
+
+bool TranslationContext::bufferLoadFormatD16(const RdnaInstruction& inst) {
+    MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    memory.coherent = inst.glc || inst.dlc;
+    memory.d16 = true;
+    static constexpr std::array<IrOpcode, 4> opcodes{IrOpcode::LoadBufferU32, IrOpcode::LoadBufferU32x2, IrOpcode::LoadBufferU32x3, IrOpcode::LoadBufferU32x4};
+    const std::uint32_t count = memory.dataDwords;
+    if (count == 0u || count > opcodes.size()) {
+        return false;
+    }
+    const IrOpcode opcode = opcodes[count - 1u];
+    IrValue* resource = getBufferResource(memory);
+    const BufferAddress address = readBufferAddress(inst);
+    IrValue& exec = ir.GetExec();
+    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
+    if (count == 1u) {
+        writeRawU32(inst.destination, IrU32(loaded));
+        return true;
+    }
+    std::array<IrValue*, 4> halves{};
+    for (std::uint32_t component = 0u; component < count; ++component) {
+        halves[component] = &ir.CompositeExtract(loaded, component);
+    }
+    for (std::uint32_t component = 0u; component < count; component += 2u) {
+        RdnaOperand target = offsetOperand(inst.destination, component / 2u);
+        if (component + 1u == count) {
+            target.sdwaSel = 4u;
+            writeRawU32(target, IrU32(*halves[component]));
+        } else {
+            writeRawU32(target, IrU32(ir.BitwiseOr(*halves[component], ir.ShiftLeftLogical(*halves[component + 1u], ir.Constant(16u)))));
         }
     }
     return true;
