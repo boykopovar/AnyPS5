@@ -24,6 +24,14 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
         key ^= value;
         key *= 0x100000001b3ull;
     }
+    if (request.graphics.has_value()) {
+        for (const auto& linked : request.graphics->linkedPrograms) {
+            for (const auto value : {static_cast<std::uint64_t>(linked.role), linked.binary.codeAddress}) {
+                key ^= value;
+                key *= 0x100000001b3ull;
+            }
+        }
+    }
     auto& memos = *snapshot.handles;
     {
         std::lock_guard lock(memos.mutex);
@@ -53,7 +61,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     try {
         handle = ShaderRecompiler::ResolveSource(request);
     } catch (const std::exception& error) {
-        if (FailureMemo() && request.shader.stage == ShaderRecompiler::ShaderStage::Compute) {
+        if (FailureMemo()) {
             std::lock_guard lock(memos.mutex);
             memos.entries[memos.next] = {key, nullptr, std::make_shared<const std::string>(error.what())};
             memos.next = (memos.next + 1) % memos.entries.size();
