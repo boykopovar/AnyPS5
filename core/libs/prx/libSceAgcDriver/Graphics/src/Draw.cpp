@@ -452,7 +452,7 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
         add(state.rectList);
         add(state.topology);
         add(state.cullMode);
-        add(state.colors.size());
+        add(state.blends.size());
         add(context.subgroup.subgroupSize);
         add(context.subgroup.supportedStages);
         add(context.subgroup.supportedOperations);
@@ -1229,6 +1229,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         passKey *= 1099511628211ull;
     };
     for (const auto view : record.targetViews) mix(reinterpret_cast<std::uint64_t>(view));
+    if (state.blends.size() != state.colors.size()) {
+        mix(state.blends.size());
+        for (const auto& color : state.colors) mix(color.slot);
+    }
     mix(state.renderExtent.width);
     mix(state.renderExtent.height);
     const bool readsTarget = std::any_of(record.targets.begin(), record.targets.end(), [&](const std::shared_ptr<StorageTexture>& target) { return resources.ReadsImage(target.get()); });
@@ -1464,7 +1468,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             }
         }
         timer.phase(PhaseReadTarget);
-        binding.target = std::make_unique<RenderTarget>(context, color, state.blends[index].blendEnable != 0);
+        binding.target = std::make_unique<RenderTarget>(context, color, state.blends.at(color.slot).blendEnable != 0);
         targetViews.push_back(binding.target->View());
     }
     if (state.depth) targetViews.push_back(DepthSurfaceView(context, *state.depth));
