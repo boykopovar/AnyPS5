@@ -8,6 +8,37 @@ namespace ShaderRecompiler {
 
 namespace {
 
+RdnaOperand d16Half(RdnaOperand operand, RdnaOpcode opcode) {
+    switch (opcode) {
+        case RdnaOpcode::BufferLoadUbyteD16:
+        case RdnaOpcode::BufferLoadSbyteD16:
+        case RdnaOpcode::BufferLoadShortD16:
+        case RdnaOpcode::FlatLoadUbyteD16:
+        case RdnaOpcode::FlatLoadSbyteD16:
+        case RdnaOpcode::FlatLoadShortD16:
+        case RdnaOpcode::DsReadU8D16:
+        case RdnaOpcode::DsReadI8D16:
+        case RdnaOpcode::DsReadU16D16: operand.sdwaSel = 4u; break;
+        case RdnaOpcode::BufferLoadUbyteD16Hi:
+        case RdnaOpcode::BufferLoadSbyteD16Hi:
+        case RdnaOpcode::BufferLoadShortD16Hi:
+        case RdnaOpcode::BufferStoreByteD16Hi:
+        case RdnaOpcode::BufferStoreShortD16Hi:
+        case RdnaOpcode::FlatLoadUbyteD16Hi:
+        case RdnaOpcode::FlatLoadSbyteD16Hi:
+        case RdnaOpcode::FlatLoadShortD16Hi:
+        case RdnaOpcode::FlatStoreByteD16Hi:
+        case RdnaOpcode::FlatStoreShortD16Hi:
+        case RdnaOpcode::DsReadU8D16Hi:
+        case RdnaOpcode::DsReadI8D16Hi:
+        case RdnaOpcode::DsReadU16D16Hi:
+        case RdnaOpcode::DsWriteB8D16Hi:
+        case RdnaOpcode::DsWriteB16D16Hi: operand.sdwaSel = 5u; break;
+        default: break;
+    }
+    return operand;
+}
+
 struct MemoryOpcodeInfo {
     std::uint32_t encoding;
     RdnaOpcode opcode;
@@ -54,6 +85,14 @@ constexpr MemoryOpcodeInfo mubufOpcodes[] = {
     {0x1du, RdnaOpcode::BufferStoreDwordx2, 2, 32, false, false, false},
     {0x1eu, RdnaOpcode::BufferStoreDwordx4, 4, 32, false, false, false},
     {0x1fu, RdnaOpcode::BufferStoreDwordx3, 3, 32, false, false, false},
+    {0x20u, RdnaOpcode::BufferLoadUbyteD16, 1, 8, false, false, false},
+    {0x21u, RdnaOpcode::BufferLoadUbyteD16Hi, 1, 8, false, false, false},
+    {0x22u, RdnaOpcode::BufferLoadSbyteD16, 1, 8, true, false, false},
+    {0x23u, RdnaOpcode::BufferLoadSbyteD16Hi, 1, 8, true, false, false},
+    {0x24u, RdnaOpcode::BufferLoadShortD16, 1, 16, false, false, false},
+    {0x25u, RdnaOpcode::BufferLoadShortD16Hi, 1, 16, false, false, false},
+    {0x19u, RdnaOpcode::BufferStoreByteD16Hi, 1, 8, false, false, false},
+    {0x1bu, RdnaOpcode::BufferStoreShortD16Hi, 1, 16, false, false, false},
     {0x30u, RdnaOpcode::BufferAtomicSwap, 1, 32, false, false, false},
     {0x31u, RdnaOpcode::BufferAtomicCmpswap, 1, 32, false, false, false},
     {0x32u, RdnaOpcode::BufferAtomicAdd, 1, 32, false, false, false},
@@ -97,6 +136,14 @@ constexpr MemoryOpcodeInfo flatOpcodes[] = {
     {0x1du, RdnaOpcode::FlatStoreDwordx2, 2, 32, false, false, false},
     {0x1eu, RdnaOpcode::FlatStoreDwordx4, 4, 32, false, false, false},
     {0x1fu, RdnaOpcode::FlatStoreDwordx3, 3, 32, false, false, false},
+    {0x20u, RdnaOpcode::FlatLoadUbyteD16, 1, 8, false, false, false},
+    {0x21u, RdnaOpcode::FlatLoadUbyteD16Hi, 1, 8, false, false, false},
+    {0x22u, RdnaOpcode::FlatLoadSbyteD16, 1, 8, true, false, false},
+    {0x23u, RdnaOpcode::FlatLoadSbyteD16Hi, 1, 8, true, false, false},
+    {0x24u, RdnaOpcode::FlatLoadShortD16, 1, 16, false, false, false},
+    {0x25u, RdnaOpcode::FlatLoadShortD16Hi, 1, 16, false, false, false},
+    {0x19u, RdnaOpcode::FlatStoreByteD16Hi, 1, 8, false, false, false},
+    {0x1bu, RdnaOpcode::FlatStoreShortD16Hi, 1, 16, false, false, false},
 };
 
 constexpr MemoryOpcodeInfo dsOpcodes[] = {
@@ -160,7 +207,12 @@ constexpr MemoryOpcodeInfo dsOpcodes[] = {
     {0x76u, RdnaOpcode::DsReadB64, 2, 32, false, false, false},
     {0x77u, RdnaOpcode::DsRead2B64, 4, 32, false, false, false},
     {0x78u, RdnaOpcode::DsRead2st64B64, 4, 32, false, false, false},
+    {0xa0u, RdnaOpcode::DsWriteB8D16Hi, 1, 8, false, false, false},
     {0xa1u, RdnaOpcode::DsWriteB16D16Hi, 1, 16, false, false, false},
+    {0xa2u, RdnaOpcode::DsReadU8D16, 1, 8, false, false, false},
+    {0xa3u, RdnaOpcode::DsReadU8D16Hi, 1, 8, false, false, false},
+    {0xa4u, RdnaOpcode::DsReadI8D16, 1, 8, true, false, false},
+    {0xa5u, RdnaOpcode::DsReadI8D16Hi, 1, 8, true, false, false},
     {0xa6u, RdnaOpcode::DsReadU16D16, 1, 16, false, false, false},
     {0xa7u, RdnaOpcode::DsReadU16D16Hi, 1, 16, false, false, false},
     {0xb0u, RdnaOpcode::DsWriteAddtidB32, 1, 32, false, false, false},
@@ -282,6 +334,7 @@ bool isDsWriteOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::DsWriteB8:
         case RdnaOpcode::DsWriteB16:
         case RdnaOpcode::DsWriteB16D16Hi:
+        case RdnaOpcode::DsWriteB8D16Hi:
         case RdnaOpcode::DsWrite2B32:
         case RdnaOpcode::DsWrite2st64B32:
         case RdnaOpcode::DsWrite2B64:
@@ -358,6 +411,8 @@ bool isFlatStoreOpcode(RdnaOpcode opcode) {
     switch (opcode) {
         case RdnaOpcode::FlatStoreByte:
         case RdnaOpcode::FlatStoreShort:
+        case RdnaOpcode::FlatStoreByteD16Hi:
+        case RdnaOpcode::FlatStoreShortD16Hi:
         case RdnaOpcode::FlatStoreDword:
         case RdnaOpcode::FlatStoreDwordx2:
         case RdnaOpcode::FlatStoreDwordx3:
@@ -503,7 +558,7 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    instruction.destination = vectorRegister(vdata);
+    instruction.destination = d16Half(vectorRegister(vdata), instruction.op);
     instruction.source0 = vectorRegister(vaddr);
     instruction.source1 = scalarDescriptorBase(srsrc * 4u, 4u, "MUBUF resource descriptor register range overflow");
     instruction.source2 = scalarSource(soffsetCode);
@@ -586,7 +641,7 @@ RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    instruction.destination = vectorRegister(isFlatStoreOpcode(instruction.op) ? data : vdst);
+    instruction.destination = d16Half(vectorRegister(isFlatStoreOpcode(instruction.op) ? data : vdst), instruction.op);
     instruction.source0 = vectorRegister(addr);
     if (seg == 0u || saddr == 0x7Du || saddr == 0x7Fu) {
         if (addr == 255u) {
@@ -654,17 +709,9 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
         instruction.secondaryOffset = offset1 * 512u;
     }
 
-    instruction.destination = vectorRegister(vdst);
-    if (instruction.op == RdnaOpcode::DsReadU16D16) {
-        instruction.destination.sdwaSel = 4u;
-    } else if (instruction.op == RdnaOpcode::DsReadU16D16Hi) {
-        instruction.destination.sdwaSel = 5u;
-    }
+    instruction.destination = d16Half(vectorRegister(vdst), instruction.op);
     instruction.source0 = vectorRegister(addr);
-    instruction.source1 = vectorRegister(data0);
-    if (instruction.op == RdnaOpcode::DsWriteB16D16Hi) {
-        instruction.source1.sdwaSel = 5u;
-    }
+    instruction.source1 = isDsWriteOpcode(instruction.op) ? d16Half(vectorRegister(data0), instruction.op) : vectorRegister(data0);
     instruction.source2 = vectorRegister(data1);
     instruction.sourceCount = dsSourceCount(instruction.op);
     return instruction;
