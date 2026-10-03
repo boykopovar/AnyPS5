@@ -14,6 +14,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include "prx/libc/include/GuestArena.hpp"
 #endif
 
 static constexpr int32_t SCE_OK = 0;
@@ -98,7 +99,7 @@ static void CompletePendingSuspend() {
 
 #ifdef _WIN32
 
-extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load);
+extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load, const StackBounds* bounds);
 extern "C" void Aps5FiberTrampoline_nid_no_patch();
 
 asm(R"(
@@ -127,8 +128,14 @@ Aps5FiberSwitchStack_nid_no_patch:
     movaps %xmm15, 0x90(%rsp)
     stmxcsr 0xa0(%rsp)
     fnstcw 0xa4(%rsp)
+    mov 0x00(%r8), %rax
+    mov 0x08(%r8), %r9
+    mov 0x10(%r8), %r10
     mov %rsp, (%rcx)
     mov %rdx, %rsp
+    mov %rax, %gs:0x08
+    mov %r9, %gs:0x10
+    mov %r10, %gs:0x1478
     movaps 0x00(%rsp), %xmm6
     movaps 0x10(%rsp), %xmm7
     movaps 0x20(%rsp), %xmm8
@@ -186,9 +193,17 @@ static void SetBounds(const StackBounds& bounds) {
     *reinterpret_cast<void**>(teb + 0x1478) = bounds.deallocation;
 }
 
+static void PinStack(const void* context, std::uint64_t bytes) {
+    GuestArena::GuestArenaPinWritable_nid_postfix(context, static_cast<std::size_t>(bytes));
+}
+
+static void UnpinStack(const void* context, std::uint64_t bytes) {
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(context, static_cast<std::size_t>(bytes));
+}
+
 #else
 
-extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load);
+extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load, const StackBounds* bounds);
 extern "C" void Aps5FiberTrampoline_nid_no_patch();
 
 asm(R"(
@@ -243,6 +258,10 @@ static StackBounds CurrentBounds() {
 }
 
 static void SetBounds(const StackBounds&) {}
+
+static void PinStack(const void*, std::uint64_t) {}
+
+static void UnpinStack(const void*, std::uint64_t) {}
 
 #endif
 
@@ -301,8 +320,8 @@ static void Resume(Fiber* target, void** save, std::uint64_t argOnRun) {
     }
     ThreadState().current = target;
     ThreadState().transfer = argOnRun;
-    SetBounds(FiberBounds(target));
-    Aps5FiberSwitchStack_nid_no_patch(save, target->savedStack);
+    const auto bounds = FiberBounds(target);
+    Aps5FiberSwitchStack_nid_no_patch(save, target->savedStack, &bounds);
 }
 
 extern "C" {
@@ -330,6 +349,7 @@ int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const
         auto* words = static_cast<std::uint64_t*>(addr_context);
         std::fill(words, words + size_context / sizeof(std::uint64_t), FIBER_CONTEXT_FILL);
     }
+    PinStack(addr_context, size_context);
     if (TraceFibers()) std::fprintf(stderr, "[fiber] init %s object=%p context=%p+0x%llx entry=%p\n", fiber->name, static_cast<void*>(object), addr_context, static_cast<unsigned long long>(size_context), reinterpret_cast<void*>(entry));
     return SCE_OK;
 }
@@ -340,6 +360,7 @@ int32_t APS5_VABI sceFiberFinalize(FiberObject* object) {
     const auto state = fiber->state.load(std::memory_order_acquire);
     if (state == FiberState::Running || state == FiberState::Suspending) return SCE_FIBER_ERROR_STATE;
     fiber->magic = 0;
+    UnpinStack(fiber->context, fiber->contextSize);
     return SCE_OK;
 }
 
@@ -389,8 +410,8 @@ int32_t APS5_VABI sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_o
     ThreadState().pendingSuspend = self;
     ThreadState().current = nullptr;
     ThreadState().transfer = arg_on_return;
-    SetBounds(ThreadState().threadBounds);
-    Aps5FiberSwitchStack_nid_no_patch(&self->savedStack, ThreadState().threadStack);
+    const auto bounds = ThreadState().threadBounds;
+    Aps5FiberSwitchStack_nid_no_patch(&self->savedStack, ThreadState().threadStack, &bounds);
     CompletePendingSuspend();
     if (arg_on_run) *arg_on_run = ThreadState().transfer;
     return SCE_OK;
