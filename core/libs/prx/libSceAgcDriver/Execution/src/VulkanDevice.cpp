@@ -1020,6 +1020,7 @@ void VulkanDevice::PrepareForReplacement() {
     Graphics::FlushCachedTextures(state->device);
     Graphics::PublishAllShadows(state->context, Graphics::PublishReason::Teardown);
     WaitIdle();
+    Graphics::DestroyShadows(state->device);
 }
 
 void VulkanDevice::WaitIdle() {
