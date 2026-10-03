@@ -107,4 +107,10 @@ int APS5_VABI sceAppContentUnknown00(void) {
     NotImplemented_nid_no_patch("7gxh+5QubhY");
     return 0;
 }
+
+APS5_EXPORT("bcolXMmp6qQ", sceAppContentUnknown01);
+int APS5_VABI sceAppContentUnknown01(void) {
+    NotImplemented_nid_no_patch("bcolXMmp6qQ");
+    return 0;
+}
 }

@@ -171,4 +171,25 @@ std::uint64_t APS5_VABI libcCyberUnknown16(void) {
     NotImplemented_nid_no_patch("vEaqE-7IZYc");
     return 0;
 }
+
+APS5_EXPORT("P41kTWUS3EI", libcDeathUnknown00);
+int APS5_VABI libcDeathUnknown00(void) {
+    NotImplemented_nid_no_patch("P41kTWUS3EI");
+    return 0;
+}
+
+APS5_EXPORT("oIRFTjoILbg", libcDeathUnknown01);
+int APS5_VABI libcDeathUnknown01(void) {
+    NotImplemented_nid_no_patch("oIRFTjoILbg");
+    return 0;
+}
+
+// Deathloop import with an out-of-range library suffix; neighboring CRT
+// imports in middleware binaries point at libc. Single caller passes 0
+// and ignores the result.
+APS5_EXPORT("tQNolUV1q5A", libcDeathUnknown02);
+int APS5_VABI libcDeathUnknown02(void) {
+    NotImplemented_nid_no_patch("tQNolUV1q5A");
+    return 0;
+}
 }
