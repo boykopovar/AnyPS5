@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 #include "prx/libc/include/GuestArena.hpp"
 #include <atomic>
 #include <chrono>
@@ -27,6 +28,8 @@ void Report(const char* format, ...) {
     DWORD written = 0;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(length), &written, nullptr);
 }
+
+void ReportAllThreads();
 
 void DescribeAddress(std::uint64_t address, char* buffer, std::size_t size) {
     HMODULE module = nullptr;
@@ -330,7 +333,73 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         }
     }
     std::fflush(stderr);
+    ReportAllThreads();
+    std::fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void ReportThreadContext(const CONTEXT* context, DWORD threadId, const char* name) {
+    char line[MAX_PATH + 64];
+    Report("  thread %lu '%s': rip ", static_cast<unsigned long>(threadId), name ? name : "");
+    DescribeAddress(context->Rip, line, sizeof(line));
+    Report("%s rsp 0x%016llx rbp 0x%016llx\n", line, static_cast<unsigned long long>(context->Rsp), static_cast<unsigned long long>(context->Rbp));
+    std::uint64_t frame = context->Rbp;
+    for (int depth = 0; depth < 12 && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8); ++depth) {
+        const auto returnAddress = reinterpret_cast<const std::uint64_t*>(frame)[1];
+        if (!IsExecutable(returnAddress)) break;
+        DescribeAddress(returnAddress, line, sizeof(line));
+        Report("    #%d %s\n", depth, line);
+        const auto next = reinterpret_cast<const std::uint64_t*>(frame)[0];
+        if (next <= frame) break;
+        frame = next;
+    }
+}
+
+void ReportAllThreads() {
+    const DWORD current = GetCurrentThreadId();
+    const DWORD pid = GetCurrentProcessId();
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    Report("  all threads:\n");
+    if (!Thread32First(snapshot, &entry)) {
+        CloseHandle(snapshot);
+        return;
+    }
+    do {
+        if (entry.th32OwnerProcessID != pid || entry.th32ThreadID == current) continue;
+        HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+        if (!thread) continue;
+        char name[128] = "";
+        PWSTR description = nullptr;
+        if (SUCCEEDED(GetThreadDescription(thread, &description)) && description) {
+            WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
+            LocalFree(description);
+        }
+        if (SuspendThread(thread) == static_cast<DWORD>(-1)) {
+            CloseHandle(thread);
+            continue;
+        }
+        CONTEXT context{};
+        context.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(thread, &context)) {
+            ReportThreadContext(&context, entry.th32ThreadID, name);
+        }
+        ResumeThread(thread);
+        CloseHandle(thread);
+    } while (Thread32Next(snapshot, &entry));
+    CloseHandle(snapshot);
+}
+
+DWORD WINAPI HangWatchdog(LPVOID param) {
+    const auto seconds = static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(param));
+    Sleep(static_cast<DWORD>(seconds * 1000ull));
+    Report("\nFATAL: hang watchdog fired after %llu s; dumping all threads\n", seconds);
+    ReportAllThreads();
+    std::fflush(stderr);
+    std::abort();
+    return 0;
 }
 
 // abort() and the UCRT's invalid-parameter path end the process with a silent fast fail
@@ -344,6 +413,7 @@ void ReportBacktrace(const char* what) {
         DescribeAddress(reinterpret_cast<std::uint64_t>(frames[i]), line, sizeof(line));
         Report("    #%u %s\n", static_cast<unsigned>(i), line);
     }
+    ReportAllThreads();
     std::fflush(stderr);
 }
 
@@ -370,6 +440,10 @@ const bool g_crashReportInstalled = [] {
     std::signal(SIGABRT, AbortSignalHandler);
     _set_invalid_parameter_handler(InvalidParameterHandler);
     InstallWatch();
+    if (const char* hang = std::getenv("APS5_HANG_DUMP_SECS")) {
+        const auto seconds = static_cast<unsigned long long>(std::atoll(hang));
+        if (seconds > 0) CreateThread(nullptr, 0, HangWatchdog, reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(seconds)), 0, nullptr);
+    }
     return true;
 }();
 
