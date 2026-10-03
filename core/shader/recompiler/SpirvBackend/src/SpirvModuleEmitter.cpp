@@ -923,6 +923,23 @@ void EmitProgram(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpStore, state.pixelValidMaskVariable, ConstantU32(state, 1u));
     }
     EmitMemoryOffsets(state);
+    if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->quadPixelMask != 0xfu) {
+        const auto coordinate = [&](std::uint32_t component) {
+            const auto value = Unary(state, spv::OpBitcast, TypeF32(state), EmitBuiltinU32(state, StageInputKind::FragCoord, component));
+            return EmitBinaryU32(state, spv::OpBitwiseAnd, Unary(state, spv::OpConvertFToU, TypeU32(state), value), ConstantU32(state, 1u));
+        };
+        const auto quad = EmitBinaryU32(state, spv::OpBitwiseOr, coordinate(0u), EmitBinaryU32(state, spv::OpShiftLeftLogical, coordinate(1u), ConstantU32(state, 1u)));
+        const auto bit = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, ConstantU32(state, state.inputInfo.pixel->quadPixelMask), quad), ConstantU32(state, 1u));
+        const auto uncovered = state.module.AllocateId();
+        state.module.AddFunction(spv::OpIEqual, TypeBool(state), uncovered, bit, ConstantU32(state, 0u));
+        const auto killLabel = state.module.AllocateId();
+        const auto mergeLabel = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, uncovered, killLabel, mergeLabel);
+        EmitLabel(state, killLabel);
+        state.module.AddFunction(spv::OpKill);
+        EmitLabel(state, mergeLabel);
+    }
     if (program.BlockOrder().empty()) {
         if (state.pixelValidMaskVariable != 0u) {
             const auto maskValue = state.module.AllocateId();
