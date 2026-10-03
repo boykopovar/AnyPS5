@@ -750,24 +750,31 @@ std::uint32_t SpirvAtomicOpcode(IrOpcode opcode) {
         return spv::OpAtomicExchange;
     case IrOpcode::BufferAtomicIAdd32:
     case IrOpcode::SharedAtomicIAdd32:
+    case IrOpcode::BufferAtomicIAdd64:
         return spv::OpAtomicIAdd;
     case IrOpcode::BufferAtomicISub32:
     case IrOpcode::SharedAtomicISub32:
+    case IrOpcode::BufferAtomicISub64:
         return spv::OpAtomicISub;
     case IrOpcode::BufferAtomicSMin32:
     case IrOpcode::SharedAtomicSMin32:
+    case IrOpcode::BufferAtomicSMin64:
         return spv::OpAtomicSMin;
     case IrOpcode::BufferAtomicUMin32:
     case IrOpcode::SharedAtomicUMin32:
+    case IrOpcode::BufferAtomicUMin64:
         return spv::OpAtomicUMin;
     case IrOpcode::BufferAtomicSMax32:
     case IrOpcode::SharedAtomicSMax32:
+    case IrOpcode::BufferAtomicSMax64:
         return spv::OpAtomicSMax;
     case IrOpcode::BufferAtomicUMax32:
     case IrOpcode::SharedAtomicUMax32:
+    case IrOpcode::BufferAtomicUMax64:
         return spv::OpAtomicUMax;
     case IrOpcode::BufferAtomicAnd32:
     case IrOpcode::SharedAtomicAnd32:
+    case IrOpcode::BufferAtomicAnd64:
         return spv::OpAtomicAnd;
     case IrOpcode::BufferAtomicOr32:
     case IrOpcode::BufferAtomicOr64:
@@ -775,6 +782,7 @@ std::uint32_t SpirvAtomicOpcode(IrOpcode opcode) {
         return spv::OpAtomicOr;
     case IrOpcode::BufferAtomicXor32:
     case IrOpcode::SharedAtomicXor32:
+    case IrOpcode::BufferAtomicXor64:
         return spv::OpAtomicXor;
     default:
         throw std::runtime_error("SpirvAtomicOpcode: opcode has no SPIR-V atomic instruction");
@@ -916,17 +924,83 @@ std::uint32_t BufferAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst) {
         return EmitValueOrDefaultIfCondition(state, EmitMemoryElementInBounds(state, resource, index), TypeU64(state), ConstantU64(state, 0u), [&]() {
             const auto value = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 2u));
             const auto old = state.module.AllocateId();
-            state.module.AddFunction(SpirvAtomicOpcode(inst.Opcode()), TypeScalarU64(state), old, EmitStorageBufferElementPointer(state, resource, index, TypeStorageBufferU64ElementPointer(state)), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), value);
+            const auto pointer = EmitStorageBufferElementPointer(state, resource, index, TypeStorageBufferU64ElementPointer(state));
+            if (inst.Opcode() == IrOpcode::BufferAtomicCmpSwap64) {
+                const auto desired = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 3u));
+                state.module.AddFunction(spv::OpAtomicCompareExchange, TypeScalarU64(state), old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), desired, value);
+            } else {
+                state.module.AddFunction(SpirvAtomicOpcode(inst.Opcode()), TypeScalarU64(state), old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), value);
+            }
             EmitDeviceAtomicMemoryBarrier(state);
             return Unary(state, spv::OpBitcast, TypeU64(state), old);
         });
     });
 }
 
+struct AtomicFloatBits {
+    SpirvEmitterState& state;
+    bool wide;
+    std::uint32_t type() const { return wide ? TypeScalarU64(state) : TypeU32(state); }
+    std::uint32_t constant(std::uint64_t value) const {
+        return wide ? state.module.Constant(spv::OpConstant, TypeScalarU64(state), static_cast<std::uint32_t>(value), static_cast<std::uint32_t>(value >> 32u)) : ConstantU32(state, static_cast<std::uint32_t>(value));
+    }
+    std::uint64_t sign() const { return wide ? 0x8000000000000000ull : 0x80000000ull; }
+    std::uint64_t quiet() const { return wide ? 0x0008000000000000ull : 0x00400000ull; }
+    std::uint64_t infinity() const { return wide ? 0x7ff0000000000000ull : 0x7f800000ull; }
+    std::uint32_t op(spv::Op opcode, std::uint32_t lhs, std::uint32_t rhs) const { return Binary(state, opcode, type(), lhs, rhs); }
+    std::uint32_t test(spv::Op opcode, std::uint32_t lhs, std::uint32_t rhs) const { return Binary(state, opcode, TypeBool(state), lhs, rhs); }
+    std::uint32_t select(std::uint32_t condition, std::uint32_t lhs, std::uint32_t rhs) const { return Select(state, type(), condition, lhs, rhs); }
+    std::uint32_t magnitude(std::uint32_t value) const { return op(spv::OpBitwiseAnd, value, constant(sign() - 1u)); }
+    std::uint32_t nan(std::uint32_t value) const { return test(spv::OpUGreaterThan, magnitude(value), constant(infinity())); }
+    std::uint32_t signalingNan(std::uint32_t value) const {
+        return Binary(state, spv::OpLogicalAnd, TypeBool(state), nan(value), test(spv::OpIEqual, op(spv::OpBitwiseAnd, value, constant(quiet())), constant(0u)));
+    }
+    std::uint32_t orderKey(std::uint32_t value) const {
+        const auto negative = test(spv::OpINotEqual, op(spv::OpBitwiseAnd, value, constant(sign())), constant(0u));
+        return select(negative, Unary(state, spv::OpNot, type(), value), op(spv::OpBitwiseOr, value, constant(sign())));
+    }
+    std::uint32_t equal(std::uint32_t lhs, std::uint32_t rhs) const {
+        const auto same = Binary(state, spv::OpLogicalAnd, TypeBool(state), test(spv::OpIEqual, lhs, rhs), Unary(state, spv::OpLogicalNot, TypeBool(state), nan(lhs)));
+        const auto zeros = test(spv::OpIEqual, magnitude(op(spv::OpBitwiseOr, lhs, rhs)), constant(0u));
+        return Binary(state, spv::OpLogicalOr, TypeBool(state), same, zeros);
+    }
+    std::uint32_t minMax(std::uint32_t old, std::uint32_t source, bool maxValue) const {
+        const auto better = test(maxValue ? spv::OpUGreaterThan : spv::OpULessThan, orderKey(source), orderKey(old));
+        auto result = select(better, source, old);
+        result = select(nan(old), source, result);
+        result = select(nan(source), old, result);
+        result = select(Binary(state, spv::OpLogicalAnd, TypeBool(state), nan(source), nan(old)), source, result);
+        result = select(signalingNan(old), op(spv::OpBitwiseOr, old, constant(quiet())), result);
+        return select(signalingNan(source), op(spv::OpBitwiseOr, source, constant(quiet())), result);
+    }
+};
+
 std::uint32_t BufferFloatAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, bool maxValue) {
     return EmitAtomicUpdate(ctx, inst, BufferMemory(ctx, inst), [maxValue](SpirvEmitterState& state, std::uint32_t old, std::uint32_t value) {
-        return EmitFloatAtomicReplacement(state, old, value, maxValue);
+        return AtomicFloatBits{state, false}.minMax(old, value, maxValue);
     });
+}
+
+template<typename TReplacement>
+std::uint32_t BufferAtomic64Update(SpirvValueEmitContext& ctx, const IrValue& inst, TReplacement&& replacement) {
+    auto& state = ctx.state;
+    const auto& mem = BufferMemory(ctx, inst);
+    return EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), TypeU64(state), ConstantU64(state, 0u), [&]() {
+        const auto resource = PrepareStorageBufferResourceAccess(state, mem, state.storageBufferU64Variable, TypeStorageBufferU64Pointer(state));
+        const auto byteAddress = Binary(state, spv::OpIAdd, TypeU32(state), ByteAddress(ctx, inst, mem), resource.byteOffset);
+        const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byteAddress, ConstantU32(state, 3u));
+        return EmitValueOrDefaultIfCondition(state, EmitMemoryElementInBounds(state, resource, index), TypeU64(state), ConstantU64(state, 0u), [&]() {
+            const auto pointer = EmitStorageBufferElementPointer(state, resource, index, TypeStorageBufferU64ElementPointer(state));
+            const auto old = AtomicUpdateTyped(state, pointer, ResourceKind::Buffer, TypeScalarU64(state), [&](std::uint32_t observed) {
+                return replacement(observed);
+            });
+            return Unary(state, spv::OpBitcast, TypeU64(state), old);
+        });
+    });
+}
+
+std::uint32_t ScalarU64Argument(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t fromEnd) {
+    return Unary(ctx.state, spv::OpBitcast, TypeScalarU64(ctx.state), ctx.Arg(inst, inst.ArgumentCount() - fromEnd));
 }
 
 template<typename TReplacement>
@@ -1401,6 +1475,98 @@ std::uint32_t EmitSharedAtomicWrap32(SpirvValueEmitContext& ctx, const IrValue& 
     return SharedAtomicUpdate(ctx, inst, [&](SpirvEmitterState& state, std::uint32_t old) {
         const auto wraps = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), old, limit);
         return Select(state, TypeU32(state), wraps, Binary(state, spv::OpISub, TypeU32(state), old, limit), Binary(state, spv::OpIAdd, TypeU32(state), old, step));
+    });
+}
+
+std::uint32_t EmitBufferAtomicInc32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return EmitAtomicUpdate(ctx, inst, BufferMemory(ctx, inst), AtomicIncrement);
+}
+
+std::uint32_t EmitBufferAtomicDec32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return EmitAtomicUpdate(ctx, inst, BufferMemory(ctx, inst), AtomicDecrement);
+}
+
+std::uint32_t EmitBufferAtomicIAdd64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicISub64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicSMin64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicUMin64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicSMax64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicUMax64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicAnd64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicXor64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicCmpSwap64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return BufferAtomic64(ctx, inst);
+}
+
+std::uint32_t EmitBufferAtomicFCmpSwap32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto desired = ctx.Arg(inst, inst.ArgumentCount() - 3u);
+    const auto comparator = ctx.Arg(inst, inst.ArgumentCount() - 2u);
+    const auto& mem = BufferMemory(ctx, inst);
+    return EmitAtomicAccess(ctx, inst, mem, [&](std::uint32_t pointer) {
+        return AtomicUpdate(ctx.state, pointer, mem.kind, [&](std::uint32_t old) {
+            const AtomicFloatBits bits{ctx.state, false};
+            return bits.select(bits.equal(old, comparator), desired, old);
+        });
+    });
+}
+
+std::uint32_t EmitBufferAtomicFCmpSwap64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto desired = ScalarU64Argument(ctx, inst, 3u);
+    const auto comparator = ScalarU64Argument(ctx, inst, 2u);
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) {
+        const AtomicFloatBits bits{ctx.state, true};
+        return bits.select(bits.equal(old, comparator), desired, old);
+    });
+}
+
+std::uint32_t EmitBufferAtomicFMin64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto value = ScalarU64Argument(ctx, inst, 2u);
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true}.minMax(old, value, false); });
+}
+
+std::uint32_t EmitBufferAtomicFMax64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto value = ScalarU64Argument(ctx, inst, 2u);
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true}.minMax(old, value, true); });
+}
+
+std::uint32_t EmitBufferAtomicInc64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto limit = ScalarU64Argument(ctx, inst, 2u);
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) {
+        const AtomicFloatBits bits{ctx.state, true};
+        return bits.select(bits.test(spv::OpUGreaterThanEqual, old, limit), bits.constant(0u), bits.op(spv::OpIAdd, old, bits.constant(1u)));
+    });
+}
+
+std::uint32_t EmitBufferAtomicDec64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto limit = ScalarU64Argument(ctx, inst, 2u);
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) {
+        const AtomicFloatBits bits{ctx.state, true};
+        const auto wrap = Binary(ctx.state, spv::OpLogicalOr, TypeBool(ctx.state), bits.test(spv::OpIEqual, old, bits.constant(0u)), bits.test(spv::OpUGreaterThan, old, limit));
+        return bits.select(wrap, limit, bits.op(spv::OpISub, old, bits.constant(1u)));
     });
 }
 

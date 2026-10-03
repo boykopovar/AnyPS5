@@ -112,28 +112,6 @@ void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, semantics));
 }
 
-std::uint32_t EmitFloatAtomicReplacement(SpirvEmitterState& state, std::uint32_t old, std::uint32_t source, bool maxValue) {
-    struct OrderedBits {
-        std::uint32_t nan;
-        std::uint32_t zero;
-        std::uint32_t key;
-    };
-    const auto classify = [&](std::uint32_t bits) {
-        const auto cls = EmitClassifyF32Bits(state, bits);
-        const auto negative = EmitCompareU32Constant(state, spv::OpINotEqual, EmitAndConstant(state, bits, 0x80000000u), 0u);
-        const auto negativeKey = state.module.AllocateId();
-        state.module.AddFunction(spv::OpNot, TypeU32(state), negativeKey, bits);
-        const auto positiveKey = EmitBinaryU32(state, spv::OpBitwiseXor, bits, ConstantU32(state, 0x80000000u));
-        return OrderedBits{cls.nan, cls.zero, EmitSelectValueU32(state, negative, negativeKey, positiveKey)};
-    };
-    const auto sourceClass = classify(source);
-    const auto oldClass = classify(old);
-    const auto unordered = EmitLogicalOrBool(state, EmitLogicalOrBool(state, sourceClass.nan, oldClass.nan), EmitLogicalAndBool(state, sourceClass.zero, oldClass.zero));
-    const auto compare = state.module.AllocateId();
-    state.module.AddFunction(maxValue ? spv::OpUGreaterThan : spv::OpULessThan, TypeBool(state), compare, sourceClass.key, oldClass.key);
-    return EmitSelectValueU32(state, EmitLogicalAndBool(state, EmitLogicalNotBool(state, unordered), compare), source, old);
-}
-
 std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t subid, std::uint32_t control) {
     if ((control & 0xc000u) == 0xc000u) {
         const std::uint32_t mask = control & 0x1fu;

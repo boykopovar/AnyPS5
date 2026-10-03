@@ -107,7 +107,6 @@ bool IsSignedFormatComponent(SpirvFormatComponentType type);
 std::uint32_t EmitUFloatToF32Bits(SpirvEmitterState& state, std::uint32_t raw, std::uint32_t bits);
 std::uint32_t NormalizeFormatComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t raw);
 void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state);
-std::uint32_t EmitFloatAtomicReplacement(SpirvEmitterState& state, std::uint32_t old, std::uint32_t source, bool maxValue);
 std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t subid, std::uint32_t control);
 std::uint32_t EmitAndConstant(SpirvEmitterState& state, std::uint32_t value, std::uint32_t mask);
 std::uint32_t EmitShiftRightConstant(SpirvEmitterState& state, std::uint32_t value, std::uint32_t shift);
@@ -211,7 +210,7 @@ std::uint32_t EmitValueIfElse(SpirvEmitterState& state, std::uint32_t condition,
 }
 
 template<typename TFunction>
-std::uint32_t AtomicUpdate(SpirvEmitterState& state, std::uint32_t pointer, ResourceKind kind, TFunction&& function) {
+std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer, ResourceKind kind, std::uint32_t type, TFunction&& function) {
     const auto scope = kind == ResourceKind::Lds ? spv::ScopeWorkgroup : spv::ScopeDevice;
     const auto memory = [&]() {
         switch (kind) {
@@ -232,12 +231,12 @@ std::uint32_t AtomicUpdate(SpirvEmitterState& state, std::uint32_t pointer, Reso
     const auto exchanged = state.module.AllocateId();
     state.module.AddFunction(spv::OpBranch, preheader);
     EmitLabel(state, preheader);
-    state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
+    state.module.AddFunction(spv::OpAtomicLoad, type, initial, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone));
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, header);
-    state.module.AddFunction(spv::OpPhi, TypeU32(state), observed, initial, preheader, exchanged, cont);
+    state.module.AddFunction(spv::OpPhi, type, observed, initial, preheader, exchanged, cont);
     const auto next = function(observed);
-    state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), exchanged, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), next, observed);
+    state.module.AddFunction(spv::OpAtomicCompareExchange, type, exchanged, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), next, observed);
     const auto success = state.module.AllocateId();
     state.module.AddFunction(spv::OpIEqual, TypeBool(state), success, exchanged, observed);
     state.module.AddFunction(spv::OpLoopMerge, merge, cont, spv::LoopControlMaskNone);
@@ -247,6 +246,11 @@ std::uint32_t AtomicUpdate(SpirvEmitterState& state, std::uint32_t pointer, Reso
     EmitLabel(state, merge);
     state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory));
     return observed;
+}
+
+template<typename TFunction>
+std::uint32_t AtomicUpdate(SpirvEmitterState& state, std::uint32_t pointer, ResourceKind kind, TFunction&& function) {
+    return AtomicUpdateTyped(state, pointer, kind, TypeU32(state), std::forward<TFunction>(function));
 }
 
 }
