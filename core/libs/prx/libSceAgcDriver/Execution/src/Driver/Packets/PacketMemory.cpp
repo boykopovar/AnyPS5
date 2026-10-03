@@ -5,6 +5,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include <cstdlib>
 #include <cstring>
 
@@ -52,6 +54,15 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
             } else if (reason == 1) {
                 wroteOnGpu = true;
             }
+        }
+    }
+    if (opcode == 0x50 && packet.size() >= 7) {
+        const auto source = ((packet[1] >> 29u) & 3u) | ((packet[6] >> 24u) & 4u) | ((packet[6] >> 25u) & 8u);
+        const auto destination = ((packet[1] >> 20u) & 3u) | ((packet[6] >> 25u) & 4u) | ((packet[6] >> 26u) & 8u);
+        if (source == 2 && destination != 1) {
+            const auto address = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
+            Graphics::NoteDepthMetadataFill(address, packet[6] & 0x3ffffffu, packet[2]);
+            Graphics::NoteColorMetadataFill(address, packet[6] & 0x3ffffffu, packet[2]);
         }
     }
     if (!drainAll && !endOfPipeInterrupt && (opcode == 0x49 || opcode == 0x37)) {
