@@ -29,7 +29,7 @@ Python 3 is optional; without it some relinker tests are not registered.
 The [pull request template](.github/pull_request_template.md) is the checklist for these rules.
 
 - One branch per topic, based on current `main`. Follow-up work goes in a new pull request, not into an open one.
-- Before starting, check that no open pull request already implements the same functions.
+- Before starting, check that no open pull request already implements the same functions. In Claude Code, [`/find-task`](.claude/skills/find-task/SKILL.md) proposes a task that passes this check.
 - Keep the branch up to date with `main` and resolve conflicts yourself; rebasing and force-pushing is fine.
 - If a pull request needs another one first, say so in the description (`Depends on #N`).
 - Run the tests before opening the pull request and describe what was tested (OS, title or homebrew).

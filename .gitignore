@@ -57,6 +57,8 @@ build-wasm/
 
 .idea/
 .vscode/
+.claude/*
+!.claude/skills/
 
 .venv/
 venv/
