@@ -48,6 +48,7 @@ int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock) {
 
 int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) {
     auto* lock = RequireRwlock(rwlock, __func__);
+    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EBUSY;
     return lock->_lock.try_lock_shared() ? SCE_OK : SCE_KERNEL_ERROR_EBUSY;
 }
 
@@ -68,7 +69,7 @@ int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock) {
 
 int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) {
     auto* lock = RequireRwlock(rwlock, __func__);
-    if (!lock->_lock.try_lock()) return SCE_KERNEL_ERROR_EBUSY;
+    if (OwnsWrite(lock) || !lock->_lock.try_lock()) return SCE_KERNEL_ERROR_EBUSY;
     lock->_writer.store(std::this_thread::get_id(), std::memory_order_release);
     return SCE_OK;
 }
