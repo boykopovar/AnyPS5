@@ -29,7 +29,7 @@ OPCODE_VARIANTS = {
     "SAddI32": ("S_ADDK_I32",),
     "SCmpLeU32": ("S_CMPK_LE_U32",),
     "SCmpLtI32": ("S_CMPK_LT_I32",),
-    "SWaitcnt": ("S_WAITCNT_VSCNT",),
+    "SWaitcnt": ("S_WAITCNT_VSCNT", "S_WAITCNT_VMCNT", "S_WAITCNT_EXPCNT", "S_WAITCNT_LGKMCNT"),
     "VAddI32": ("V_ADD_CO_U32",),
     "VSubrevI32": ("V_SUBREV_CO_U32",),
     "ImageSample": ("IMAGE_SAMPLE_L", "IMAGE_SAMPLE_B", "IMAGE_SAMPLE_C_LZ", "IMAGE_SAMPLE_L_O"),
