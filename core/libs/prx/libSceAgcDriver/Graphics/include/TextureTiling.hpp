@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURETILING_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -34,17 +35,18 @@ std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uin
 // row (TileMipLayout), except the tail mips, which share one block. Throws for linear tiling.
 std::array<std::uint32_t, 3> ThinBlockLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement);
 
-// Single-mip 3D surface. Each depth slice z is detiled from slab z / blockDepth (slabBytes apart) with the
-// swizzle's slice input set to z, into linear slices sliceLinearBytes apart.
+// 3D surface. Each slab holds the whole mip chain, smallest level first. Depth slice z of a level is detiled
+// from slab z / blockDepth (slabBytes apart) with the swizzle's slice input set to z, into linear
+// slices sliceLinearBytes apart.
 struct ThickLayout {
-    TileMipLayout mip;
+    std::vector<TileMipLayout> mips;
     std::uint32_t depth;
     std::uint32_t blockDepth;
     std::uint64_t slabBytes;
     std::uint64_t sliceLinearBytes;
     std::uint64_t guestBytes;
 };
-ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth);
+ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth, std::uint32_t mipCount);
 
 // Guest surface as the texture upload/write-back loops walk it: array layers of thin surfaces, or the
 // depth slices of a volume (which Vulkan holds as one layer with extent depth).
@@ -63,6 +65,7 @@ struct SurfaceGeometry {
     std::uint64_t LinearLayerOffset(std::uint32_t layer) const { return static_cast<std::uint64_t>(layer) * sliceLinearBytes; }
     std::uint32_t CopyLayer(std::uint32_t layer) const { return imageDepth > 1 ? 0u : layer; }
     std::int32_t CopyDepth(std::uint32_t layer) const { return imageDepth > 1 ? static_cast<std::int32_t>(layer) : 0; }
+    bool HasLayer(std::uint32_t level, std::uint32_t layer) const { return imageDepth <= 1 || layer < std::max(imageDepth >> level, 1u); }
 };
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
 
