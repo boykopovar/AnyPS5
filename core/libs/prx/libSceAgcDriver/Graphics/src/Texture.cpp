@@ -660,7 +660,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
 
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         // Sampled views of other same-size formats (sRGB, reinterpretations) read the image directly.
-        imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+        imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT : 0u) | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
         imageInfo.imageType = ImageTypeFor(descriptor.dimension);
         imageInfo.format = vkFormat;
         imageInfo.extent = {descriptor.width, descriptor.height, geometry.imageDepth};
@@ -672,7 +672,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         {
             VkFormatProperties properties{};
             context.formatProperties(context.physical, vkFormat, &properties);
-            attachable = descriptor.dimension == TextureDimension::k2D && (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0;
+            attachable = (descriptor.dimension == TextureDimension::k2D || descriptor.dimension == TextureDimension::k3D) && (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0;
             if (attachable) imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         }
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -912,10 +912,12 @@ VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer) const
     return created;
 }
 
-VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip) {
+VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, std::uint32_t depthSlice) {
     Require(attachable, "storage image cannot be a color attachment");
     Require(mip < descriptor.mipCount, "attachment mip exceeds the storage image");
-    const auto found = attachmentViews.find({format, mip});
+    const bool volume = descriptor.dimension == TextureDimension::k3D;
+    Require(depthSlice == 0 || (volume && mip == 0 && depthSlice <= descriptor.depthOrLastArray), "attachment slice is outside the storage image");
+    const auto found = attachmentViews.find({format, mip, depthSlice});
     if (found != attachmentViews.end()) return found->second;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -925,10 +927,10 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip) {
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
-    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, descriptor.baseArray, 1u};
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, volume ? depthSlice : descriptor.baseArray, 1u};
     VkImageView created = VK_NULL_HANDLE;
     Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created), "vkCreateImageView attachment");
-    attachmentViews.emplace(std::pair{format, mip}, created);
+    attachmentViews.emplace(std::tuple{format, mip, depthSlice}, created);
     return created;
 }
 
