@@ -9,7 +9,8 @@
 
 extern "C" {
 void* APS5_VABI _Znwm_nid_postfix(std::size_t);
-void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*);
+void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
+void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
 void APS5_VABI _ZdlPv_nid_postfix(void*);
 void APS5_VABI _ZdaPv_nid_postfix(void*);
 void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
@@ -23,6 +24,7 @@ std::size_t lastAlignment = 0;
 unsigned initializes = 0;
 unsigned frees = 0;
 bool fail = false;
+bool throwAllocation = false;
 bool recurse = false;
 
 void require(bool condition) {
@@ -41,6 +43,7 @@ void APS5_VABI finalize() { require(initializes == 1); }
 
 void* APS5_VABI allocate(std::size_t bytes) {
     lastSize = bytes;
+    if (throwAllocation) throw std::runtime_error("allocation callback failed");
     if (recurse) return ApplicationHeapAllocate_nid_no_patch(bytes);
     return fail ? nullptr : storage.data();
 }
@@ -175,6 +178,8 @@ int main(int argc, char** argv) {
     require(ApplicationHeapRealign_nid_no_patch(storage.data(), 48, 32) == storage.data() && lastSize == 48 && lastAlignment == 32);
     reject([] { ApplicationHeapRealign_nid_no_patch(storage.data(), 16, 4096); });
     fail = true;
+    require(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);
+    require(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);
     reject([] { _Znwm_nid_postfix(8); });
     reject([] { ApplicationHeapAlign_nid_no_patch(4, 64); });
     reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
@@ -182,6 +187,13 @@ int main(int argc, char** argv) {
     reject([&] { ApplicationHeapPosixAlign_nid_no_patch(&unchanged, 64, 64); });
     require(unchanged == storage.data());
     fail = false;
+    throwAllocation = true;
+    require(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);
+    require(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);
+    throwAllocation = false;
+    require(_ZnwmRKSt9nothrow_t_nid_postfix(16, nullptr) == storage.data() && lastSize == 16);
+    require(_ZnwmRKSt9nothrow_t_nid_postfix(0, nullptr) == storage.data() && lastSize == 1);
+    require(_ZnamRKSt9nothrow_t_nid_postfix(0, nullptr) == storage.data() && lastSize == 1);
     recurse = true;
     reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
     recurse = false;

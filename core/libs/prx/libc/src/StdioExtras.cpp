@@ -77,12 +77,20 @@ void* APS5_VABI _Znam_nid_postfix(std::size_t size) {
     return Allocate(size);
 }
 
-void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) {
-    return Allocate(size);
+void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
+    try {
+        return Allocate(size);
+    } catch (...) {
+        return nullptr;
+    }
 }
 
-void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) {
-    return Allocate(size);
+void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
+    try {
+        return Allocate(size);
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 void APS5_VABI _ZdlPv_nid_postfix(void* pointer) {
