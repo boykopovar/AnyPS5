@@ -402,6 +402,8 @@ struct RecompileResult {
 };
 
 [[nodiscard]] RecompileResult Recompile(const RecompileRequest& request);
+void PrepareSource(const RecompileRequest& request);
+[[nodiscard]] std::uint64_t FrontEndBuilds();
 
 // The resource plan, snapshot and specialization a driver captured for the request (see
 // CaptureResources in Optimization/ResourceProgram.hpp): this overload reuses them instead of

@@ -36,6 +36,7 @@ void Driver::stop() {
         }
     }
     changed.notify_all();
+    preparation.Stop();
     for (auto& [queue, worker] : workers) {
         if (worker.thread.joinable()) worker.thread.join();
     }

@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -794,6 +795,68 @@ void ResourceMaterializer::Apply(IrProgram& program, const ResourceSpecializatio
     resources.memoryInfo = std::move(memoryInfo);
 }
 
+namespace {
+
+void ownPlanValues(IrResourcePlan& plan) {
+    std::vector<IrValue**> roots;
+    for (auto& source : plan.descriptorSources) {
+        for (auto& dword : source.dwords) roots.push_back(&dword);
+    }
+    for (auto& read : plan.srtReads) roots.push_back(&read.value);
+    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
+    for (auto& value : plan.uniformFill.values) roots.push_back(&value);
+
+    std::unordered_map<const IrValue*, IrValue*> clones;
+    std::vector<const IrValue*> order;
+    std::vector<const IrValue*> pending;
+    for (const auto* root : roots) {
+        if (*root != nullptr) pending.push_back(*root);
+    }
+    while (!pending.empty()) {
+        const auto* value = pending.back();
+        pending.pop_back();
+        if (!clones.emplace(value, nullptr).second) continue;
+        order.push_back(value);
+        for (const auto* argument : value->Arguments()) {
+            if (argument != nullptr) pending.push_back(argument);
+        }
+    }
+    for (const auto* value : order) {
+        auto clone = std::make_unique<IrValue>(value->Opcode(), value->Type(), value->Id());
+        clone->SetFlags(value->Flags<std::uint64_t>());
+        if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
+        clone->SetRegister(value->Register());
+        clones[value] = clone.get();
+        plan.valueStorage.push_back(std::move(clone));
+    }
+    std::unordered_map<const IrBlock*, IrBlock*> blocks;
+    const auto blockFor = [&](const IrBlock* block) {
+        auto& clone = blocks[block];
+        if (clone == nullptr) {
+            plan.blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
+            clone = plan.blockStorage.back().get();
+        }
+        return clone;
+    };
+    for (const auto* value : order) {
+        auto* clone = clones.at(value);
+        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+            const auto* argument = value->Argument(index);
+            auto* mapped = argument == nullptr ? nullptr : clones.at(argument);
+            if (value->IsPhi()) {
+                clone->AddPhiOperand(blockFor(value->PhiBlock(index)), mapped);
+            } else {
+                clone->AddArgument(mapped);
+            }
+        }
+    }
+    for (auto* root : roots) {
+        if (*root != nullptr) *root = clones.at(*root);
+    }
+}
+
+}
+
 IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const {
     const IrResourcePlan& source = program.Resources();
     if (!source.resourceTrackingComplete || !source.srtPlanComplete) {
@@ -814,6 +877,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.resourceTrackingComplete = source.resourceTrackingComplete;
     plan.info = source.info;
     plan.uniformFill = source.uniformFill;
+    ownPlanValues(plan);
     const auto addSource = [&plan](std::uint32_t index) {
         if (index >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan resource references an unknown descriptor source");

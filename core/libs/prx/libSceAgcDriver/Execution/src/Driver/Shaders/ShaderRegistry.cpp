@@ -98,7 +98,9 @@ void Driver::RegisterShader(const Shader* shader) {
 
     if (shaders == nullptr) shaders = std::make_shared<ShaderRegistry>();
     else if (shaders.use_count() != 1) shaders = std::make_shared<ShaderRegistry>(*shaders);
-    shaders->insert_or_assign(address, std::make_shared<const ShaderSnapshot>(std::move(snapshot)));
+    auto registered = std::make_shared<const ShaderSnapshot>(std::move(snapshot));
+    shaders->insert_or_assign(address, registered);
+    preparation.Enqueue(*shader, std::move(registered));
 }
 
 }
