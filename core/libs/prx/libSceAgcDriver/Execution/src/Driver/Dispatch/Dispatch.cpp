@@ -61,7 +61,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
         {(packet[4] & 0x8000u) != 0 ? 32u : 64u, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        localDevice->Target(),
+        localDevice->ComputeTarget((packet[4] & 0x8000u) != 0 ? 32u : 64u),
         {0, 0, 0, 128}
     };
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
