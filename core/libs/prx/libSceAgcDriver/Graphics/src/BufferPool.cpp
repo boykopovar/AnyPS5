@@ -17,16 +17,18 @@ bool sharedTiers() {
 
 }
 
-BufferPool::BufferPool(const Context& context) : device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")) {
+BufferPool::BufferPool(const Context& context) : device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), maxSlots(std::max<std::size_t>(1, std::min<std::size_t>(MaxSlots(), context.limits.maxMemoryAllocationCount / 6u))) {
     smallTier.budget = smallBudget;
     largeTier.budget = budget;
     deviceTier.budget = DeviceBudget();
 }
 
 BufferPool::~BufferPool() {
-    for (const auto& slot : smallTier.free) destroy(slot.allocation);
-    for (const auto& slot : largeTier.free) destroy(slot.allocation);
-    for (const auto& slot : deviceTier.free) destroy(slot.allocation);
+    for (auto* tier : {&smallTier, &largeTier, &deviceTier}) {
+        for (const auto& [key, slots] : tier->free) {
+            for (const auto& slot : slots) destroy(slot.allocation);
+        }
+    }
 }
 
 VkDeviceSize BufferPool::DeviceBudget() {
@@ -66,31 +68,32 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
         const auto now = std::chrono::steady_clock::now();
         if (now - lastReport > std::chrono::seconds(10)) {
             lastReport = now;
-            std::fprintf(stderr, "[bufferpool] small: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB); large: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB)%s; device: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)\n", static_cast<unsigned long long>(smallTier.hits), static_cast<unsigned long long>(smallTier.misses), static_cast<unsigned long long>(smallTier.evictions), smallTier.free.size(), smallTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(largeTier.hits), static_cast<unsigned long long>(largeTier.misses), static_cast<unsigned long long>(largeTier.evictions), largeTier.free.size(), largeTier.retainedBytes / 1048576.0, sharedTiers() ? " (shared)" : "", static_cast<unsigned long long>(deviceTier.hits), static_cast<unsigned long long>(deviceTier.misses), static_cast<unsigned long long>(deviceTier.evictions), deviceTier.free.size(), deviceTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(deviceTier.budget >> 20u));
+            std::fprintf(stderr, "[bufferpool] small: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB); large: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB)%s; device: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)\n", static_cast<unsigned long long>(smallTier.hits), static_cast<unsigned long long>(smallTier.misses), static_cast<unsigned long long>(smallTier.evictions), smallTier.slots, smallTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(largeTier.hits), static_cast<unsigned long long>(largeTier.misses), static_cast<unsigned long long>(largeTier.evictions), largeTier.slots, largeTier.retainedBytes / 1048576.0, sharedTiers() ? " (shared)" : "", static_cast<unsigned long long>(deviceTier.hits), static_cast<unsigned long long>(deviceTier.misses), static_cast<unsigned long long>(deviceTier.evictions), deviceTier.slots, deviceTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(deviceTier.budget >> 20u));
         }
     }
     auto& tier = tierFor(capacity, properties);
-    for (auto it = tier.free.begin(); it != tier.free.end(); ++it) {
-        const auto& allocation = it->allocation;
-        if (allocation.bytes != capacity || allocation.usage != usage || allocation.properties != properties) continue;
-        auto result = allocation;
-        tier.retainedBytes -= allocation.allocationBytes;
-        *it = std::move(tier.free.back());
-        tier.free.pop_back();
-        ++tier.hits;
-        return result;
+    const auto found = tier.free.find({capacity, usage, properties});
+    if (found == tier.free.end() || found->second.empty()) {
+        ++tier.misses;
+        return std::nullopt;
     }
-    ++tier.misses;
-    return std::nullopt;
+    auto result = found->second.back().allocation;
+    found->second.pop_back();
+    if (found->second.empty()) tier.free.erase(found);
+    --tier.slots;
+    tier.retainedBytes -= result.allocationBytes;
+    ++tier.hits;
+    return result;
 }
 
 void BufferPool::evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted) {
-    const auto oldest = std::min_element(tier.free.begin(), tier.free.end(), [](const Slot& left, const Slot& right) { return left.lastUse < right.lastUse; });
+    const auto oldest = std::min_element(tier.free.begin(), tier.free.end(), [](const auto& left, const auto& right) { return left.second.front().lastUse < right.second.front().lastUse; });
     // First: a throw here leaves the slot retained and counted.
-    evicted.push_back(oldest->allocation);
-    tier.retainedBytes -= oldest->allocation.allocationBytes;
-    *oldest = std::move(tier.free.back());
-    tier.free.pop_back();
+    evicted.push_back(oldest->second.front().allocation);
+    tier.retainedBytes -= oldest->second.front().allocation.allocationBytes;
+    oldest->second.pop_front();
+    if (oldest->second.empty()) tier.free.erase(oldest);
+    --tier.slots;
     ++tier.evictions;
 }
 
@@ -115,9 +118,9 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
         if (allocation.allocationBytes > tier.budget) {
             evicted.push_back(allocation);
         } else {
-            const auto maxSlots = MaxSlots();
-            while (!tier.free.empty() && (tier.retainedBytes + allocation.allocationBytes > tier.budget || tier.free.size() >= maxSlots)) evictOldest(tier, evicted);
-            tier.free.push_back({allocation, ++clock});
+            while (tier.slots != 0 && (tier.retainedBytes + allocation.allocationBytes > tier.budget || tier.slots >= maxSlots)) evictOldest(tier, evicted);
+            tier.free[{allocation.bytes, allocation.usage, allocation.properties}].push_back({allocation, ++clock});
+            ++tier.slots;
             tier.retainedBytes += allocation.allocationBytes;
         }
     } catch (...) {
