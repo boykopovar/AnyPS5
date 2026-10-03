@@ -6,6 +6,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <optional>
 #include <vector>
 
 #include <ft2build.h>
@@ -21,7 +24,7 @@ constexpr std::uint8_t STYLE_FRAME_FLAG_WEIGHT = 0x04;
 constexpr float POINTS_PER_INCH = 72.0f;
 
 struct FontState {
-    std::vector<unsigned char> faceData;
+    std::shared_ptr<const std::vector<unsigned char>> faceData;
     FT_Face face = nullptr;
     float scaleW = 16.0f;
     float scaleH = 16.0f;
@@ -48,6 +51,11 @@ struct GeneratedGlyph {
     bool outlineInitialized = false;
 };
 
+struct SystemFontFile {
+    std::filesystem::path path;
+    std::uint32_t subFontIndex = 0;
+};
+
 struct RenderSurfaceSystemUse {
     FontStyleFrame* styleframe;
     float catchedScale;
@@ -70,12 +78,18 @@ void** EntryObjectSlot(FontCtxEntry* entry, std::uint32_t modeLow);
 FontCtxEntry* AcquireFontCtxEntry(void* ctx, std::uint32_t index, std::uint32_t modeLow, FontObj** outObject, std::uint32_t* outLockWord);
 void ReleaseFontCtxEntryLock(FontCtxEntry* entry, std::uint32_t modeLow, std::uint32_t lockWord);
 FontObj* FindSubFont(FontObj* head, std::uint32_t subFontIndex);
+void* FontContext(const FontLibNative* library, const FontHandleNative* font);
 void ReleaseFontObjectsForHandle(FontHandleNative* font);
 
 FontState* TryGetState(FontHandle handle);
 FontState& ResetState(FontHandle handle);
 void RemoveState(FontHandle handle);
-void LoadStateFace(FontState& state, std::vector<unsigned char> bytes, std::uint32_t subFontIndex);
+void LoadStateFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes, std::uint32_t subFontIndex);
+
+bool IsSystemFontSet(std::uint32_t fontSetType);
+std::vector<SystemFontFile> SystemFontCandidates(std::uint32_t fontSetType);
+std::filesystem::path SystemFontDirectory();
+std::optional<SystemFontFile> FindSystemFontFile(std::uint32_t fontSetType);
 
 void TrackGeneratedGlyph(FontGlyph glyph);
 bool ForgetGeneratedGlyph(FontGlyph glyph);

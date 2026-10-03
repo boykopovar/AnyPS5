@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -26,6 +27,8 @@ struct FtLibraryContext {
     const FontMemoryInterface* iface;
     FT_Memory memory;
     FT_Library library;
+    FT_Memory hostMemory;
+    FT_Library hostLibrary;
 };
 
 void* FtAlloc(FT_Memory memory, long size) {
@@ -56,6 +59,42 @@ void* FtRealloc(FT_Memory memory, long currentSize, long newSize, void* block) {
     if (block && currentSize > 0) std::memcpy(result, block, static_cast<std::size_t>(std::min(currentSize, newSize)));
     FtFree(memory, block);
     return result;
+}
+
+void* HostAlloc(FT_Memory, long size) {
+    return size > 0 ? std::malloc(static_cast<std::size_t>(size)) : nullptr;
+}
+
+void HostFree(FT_Memory, void* block) {
+    std::free(block);
+}
+
+void* HostRealloc(FT_Memory, long, long newSize, void* block) {
+    if (newSize <= 0) {
+        std::free(block);
+        return nullptr;
+    }
+    return std::realloc(block, static_cast<std::size_t>(newSize));
+}
+
+FT_Library SystemFontLibrary(FtLibraryContext* ctx) {
+    if (ctx->hostLibrary) return ctx->hostLibrary;
+    auto* hostMemory = static_cast<FT_Memory>(ctx->iface->alloc(ctx->allocCtx, sizeof(FT_MemoryRec_)));
+    if (!hostMemory) return nullptr;
+    std::memset(hostMemory, 0, sizeof(*hostMemory));
+    hostMemory->user = ctx;
+    hostMemory->alloc = &HostAlloc;
+    hostMemory->free = &HostFree;
+    hostMemory->realloc = &HostRealloc;
+    FT_Library hostLibrary = nullptr;
+    if (FT_New_Library(hostMemory, &hostLibrary) != 0 || !hostLibrary) {
+        ctx->iface->dealloc(ctx->allocCtx, hostMemory);
+        return nullptr;
+    }
+    FT_Add_Default_Modules(hostLibrary);
+    ctx->hostMemory = hostMemory;
+    ctx->hostLibrary = hostLibrary;
+    return hostLibrary;
 }
 
 void WriteU16(std::uint8_t* out, std::size_t offset, std::uint16_t value) {
@@ -131,6 +170,14 @@ int APS5_VABI LibraryTerm(FontLibNative* library) {
         FT_Done_Library(ctx->library);
         ctx->library = nullptr;
     }
+    if (ctx->hostLibrary) {
+        FT_Done_Library(ctx->hostLibrary);
+        ctx->hostLibrary = nullptr;
+    }
+    if (ctx->hostMemory) {
+        freeFn(library->alloc_ctx, ctx->hostMemory);
+        ctx->hostMemory = nullptr;
+    }
     if (ctx->memory) {
         freeFn(library->alloc_ctx, ctx->memory);
         ctx->memory = nullptr;
@@ -162,12 +209,15 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
     }
     auto* ctx = static_cast<FtLibraryContext*>(library->fontset_registry);
     if (!ctx || !ctx->library) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    const bool systemSet = (library->sysfont_flags & SYSFONT_FLAG_SYSTEM_SET) != 0;
+    FT_Library* ftLibrary = systemSet ? &ctx->hostLibrary : &ctx->library;
+    if (systemSet && !SystemFontLibrary(ctx)) return SCE_FONT_ERROR_ALLOCATION_FAILED;
     FT_Face face = nullptr;
     FT_Error error;
     if (fromMemory) {
-        error = FT_New_Memory_Face(ctx->library, static_cast<const FT_Byte*>(fontAddress), static_cast<FT_Long>(fontSize), static_cast<FT_Long>(subFontIndex), &face);
+        error = FT_New_Memory_Face(*ftLibrary, static_cast<const FT_Byte*>(fontAddress), static_cast<FT_Long>(fontSize), static_cast<FT_Long>(subFontIndex), &face);
     } else {
-        error = FT_New_Face(ctx->library, static_cast<const char*>(fontAddress), static_cast<FT_Long>(subFontIndex), &face);
+        error = FT_New_Face(*ftLibrary, static_cast<const char*>(fontAddress), static_cast<FT_Long>(subFontIndex), &face);
     }
     if (error != 0 || !face) {
         if (fromMemory || error == FT_Err_Unknown_File_Format) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
@@ -186,7 +236,7 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
     obj->next = *inoutFontObj;
     if (obj->next) obj->next->prev = obj;
     obj->ft_face = face;
-    obj->ft_ctx_0x58 = &ctx->library;
+    obj->ft_ctx_0x58 = ftLibrary;
     *inoutFontObj = obj;
     return SCE_FONT_OK;
 }
