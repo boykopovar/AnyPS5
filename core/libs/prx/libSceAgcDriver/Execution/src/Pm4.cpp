@@ -10,7 +10,21 @@
 #include <stdexcept>
 #include <string>
 
+extern "C" void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
+
 namespace AgcDriver::Pm4 {
+
+std::uint64_t GdsAddress() {
+    static const std::uint64_t address = [] {
+        constexpr int ReadWrite = 0x3;
+        constexpr int PrivateAnonymous = 0x1002;
+        void* mapped = mmap_nid_postfix(nullptr, GdsBytes, ReadWrite, PrivateAnonymous, -1, 0);
+        if (mapped == nullptr || mapped == reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1))) throw std::runtime_error("cannot allocate the global data share");
+        return reinterpret_cast<std::uint64_t>(mapped);
+    }();
+    return address;
+}
+
 namespace {
 
 std::string ToHex(std::uint32_t value) {
@@ -99,17 +113,6 @@ std::vector<std::byte> copySource(std::uint64_t source, std::size_t bytes, bool 
 }
 
 constexpr std::uint32_t DmaSelectGds = 1;
-constexpr std::size_t GdsBytes = 0x10000;
-
-struct GdsStorage {
-    std::mutex mutex;
-    std::array<std::byte, GdsBytes> bytes{};
-};
-
-GdsStorage& Gds() {
-    static GdsStorage storage;
-    return storage;
-}
 
 bool gdsRange(std::uint64_t offset, std::size_t bytes) {
     return offset <= GdsBytes && bytes <= GdsBytes - offset;
@@ -118,9 +121,7 @@ bool gdsRange(std::uint64_t offset, std::size_t bytes) {
 std::vector<std::byte> dmaSourceBytes(std::span<const std::uint32_t> packet) {
     const std::size_t bytes = packet[6] & 0x3ffffffu;
     if (dmaSource(packet) != DmaSelectGds) return copySource(address(packet[2], packet[3]), bytes, dmaSource(packet) == 2);
-    auto& gds = Gds();
-    std::lock_guard lock(gds.mutex);
-    return {gds.bytes.begin() + packet[2], gds.bytes.begin() + packet[2] + bytes};
+    return copySource(GdsAddress() + packet[2], bytes, false);
 }
 
 void copyMemory(std::uint64_t source, std::uint64_t destination, std::size_t bytes, bool immediate) {
@@ -766,13 +767,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             const std::size_t bytes = packet[6] & 0x3ffffffu;
             if (bytes == 0) return;
             auto data = dmaSourceBytes(packet);
-            if (dmaDestination(packet) == DmaSelectGds) {
-                auto& gds = Gds();
-                std::lock_guard lock(gds.mutex);
-                std::copy(data.begin(), data.end(), gds.bytes.begin() + packet[4]);
-                return;
-            }
-            const auto destination = address(packet[4], packet[5]);
+            const auto destination = dmaDestination(packet) == DmaSelectGds ? GdsAddress() + packet[4] : address(packet[4], packet[5]);
             GuestMemory::CheckRange(reinterpret_cast<void*>(destination), bytes, 1, true);
             GuestMemory::Write(destination, data);
             return;
