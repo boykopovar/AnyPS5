@@ -44,6 +44,7 @@ struct DecodedImage {
     bool fmask = false;
     bool depthBits = false;
     bool depthUnorm16 = false;
+    bool empty = false;
 };
 
 ShaderBufferResource decodeBufferDescriptor(const DescriptorValue& value) {
@@ -55,6 +56,18 @@ ShaderBufferResource decodeBufferDescriptor(const DescriptorValue& value) {
         result.fields[i] = value.dwords[i];
     }
     return result;
+}
+
+std::uint32_t imageBaseLevel(const DescriptorValue& descriptor) {
+    return (descriptor.dwords[3] >> 12u) & 0xfu;
+}
+
+std::uint32_t imageLastLevel(const DescriptorValue& descriptor) {
+    return (descriptor.dwords[3] >> 16u) & 0xfu;
+}
+
+std::uint32_t imageMaxMip(const DescriptorValue& descriptor) {
+    return (descriptor.dwords[5] >> 4u) & 0xfu;
 }
 
 bool nullImageDescriptor(const DescriptorValue& descriptor) {
@@ -111,9 +124,9 @@ bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
         return false;
     }
     if (type == ImageType::Color2DMsaa || type == ImageType::Color2DMsaaArray) {
-        const auto baseLevel = (descriptor.dwords[3] >> 12u) & 0xfu;
-        const auto fragments = (descriptor.dwords[3] >> 16u) & 0xfu;
-        const auto maxMip = (descriptor.dwords[5] >> 4u) & 0xfu;
+        const auto baseLevel = imageBaseLevel(descriptor);
+        const auto fragments = imageLastLevel(descriptor);
+        const auto maxMip = imageMaxMip(descriptor);
         return baseLevel == 0u && fragments >= 1u && fragments <= 3u && (r128 || maxMip == fragments);
     }
     return true;
@@ -123,8 +136,8 @@ std::uint32_t storageMipCount(const ImageResource& base, const DescriptorValue& 
     if (base.mipMode != ImageMipMode::DynamicStorage || nullImageDescriptor(descriptor)) {
         return 1u;
     }
-    const auto mipBase = (descriptor.dwords[3] >> 12u) & 0xfu;
-    const auto mipLast = (descriptor.dwords[3] >> 16u) & 0xfu;
+    const auto mipBase = imageBaseLevel(descriptor);
+    const auto mipLast = imageLastLevel(descriptor);
     return mipBase <= mipLast ? mipLast - mipBase + 1u : 0u;
 }
 
@@ -139,6 +152,9 @@ DecodedImage decodeImageDescriptor(const DescriptorValue& descriptor, const Imag
         decoded.dimension = RdnaImageDimension::Dim2D;
         decoded.cube = false;
         return decoded;
+    }
+    if (descriptor.dwordCount == 8u && base.mipMode != ImageMipMode::DynamicStorage) {
+        decoded.empty = imageBaseLevel(descriptor) > imageMaxMip(descriptor);
     }
     if (base.resourceClass == ImageResourceClass::None || (base.atomic && base.resourceClass != ImageResourceClass::Storage)) {
         throw std::runtime_error("image resource has an invalid class");
@@ -533,6 +549,7 @@ void buildResourceSpecialization(const IrResourcePlan& plan, ResourceSnapshot& s
         entry.fmask = decoded.fmask;
         entry.depthBits = decoded.depthBits;
         entry.depthUnorm16 = decoded.depthUnorm16;
+        entry.empty = decoded.empty;
         result.images.push_back(entry);
     }
 
@@ -619,6 +636,7 @@ void ResourceMaterializer::Apply(IrProgram& program, const ResourceSpecializatio
         image.cube = source.cube;
         image.depthBits = source.depthBits;
         image.depthUnorm16 = source.depthUnorm16;
+        image.empty = source.empty;
         image.indirectResources.clear();
     }
     for (std::uint32_t index = 0; index < images.size(); index++) {
@@ -884,7 +902,7 @@ bool ResourceSpecialization::Buffer::operator==(const Buffer& other) const {
 }
 
 bool ResourceSpecialization::Image::operator==(const Image& other) const {
-    return numericClass == other.numericClass && dimension == other.dimension && mipCount == other.mipCount && conversionFormat == other.conversionFormat && shaderSwizzle == other.shaderSwizzle && indirectRoot == other.indirectRoot && indirectMappingOffset == other.indirectMappingOffset && indirectSearchIterations == other.indirectSearchIterations && cube == other.cube && fmask == other.fmask && depthBits == other.depthBits && depthUnorm16 == other.depthUnorm16;
+    return numericClass == other.numericClass && dimension == other.dimension && mipCount == other.mipCount && conversionFormat == other.conversionFormat && shaderSwizzle == other.shaderSwizzle && indirectRoot == other.indirectRoot && indirectMappingOffset == other.indirectMappingOffset && indirectSearchIterations == other.indirectSearchIterations && cube == other.cube && fmask == other.fmask && depthBits == other.depthBits && depthUnorm16 == other.depthUnorm16 && empty == other.empty;
 }
 
 bool ResourceSpecialization::operator==(const ResourceSpecialization& other) const {

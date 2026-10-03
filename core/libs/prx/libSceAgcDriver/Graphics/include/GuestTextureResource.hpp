@@ -61,11 +61,14 @@ struct GuestTextureResource {
     std::uint64_t dccAddress = 0;
     bool dccAlphaOnMsb = false;
     std::uint32_t minLod = 0;
+    bool emptyView = false;
+    std::uint32_t emptyBaseLevel = 0;
 };
 
 float EffectiveMinLod(const GuestTextureResource& resource);
 
 GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words);
+void RequireLevelsPresent(const GuestTextureResource& resource);
 bool MatchesGuestDimension(ShaderRecompiler::DescriptorImageShape shape, TextureDimension dimension);
 
 }

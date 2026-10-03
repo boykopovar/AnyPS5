@@ -129,7 +129,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     } catch (const std::exception& error) {
         throw std::runtime_error(std::string(error.what()) + describe());
     }
-    Require(baseLevel <= maxMip, "guest texture descriptor starts past the surface's last mip level" + describe());
+    const bool emptyView = baseLevel > maxMip;
     // Views may name levels past MAX_MIP (a 512x512 view through 1x1 over a 9-level surface); the
     // hardware never addresses them, so the view ends at the surface's last level.
     lastLevel = std::min(lastLevel, maxMip);
@@ -164,7 +164,9 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     result.depthOrLastArray = depth;
     result.baseArray = baseArray;
     result.mipCount = maxMip + 1u;
-    result.baseLevel = baseLevel;
+    result.baseLevel = emptyView ? maxMip : baseLevel;
+    result.emptyView = emptyView;
+    result.emptyBaseLevel = emptyView ? baseLevel : 0u;
     result.lastLevel = lastLevel;
     result.tileMode = tileMode;
     result.dimension = dimension;
@@ -182,6 +184,11 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
 float EffectiveMinLod(const GuestTextureResource& resource) {
     if (resource.minLod <= resource.baseLevel * 256u) return 0.0f;
     return std::min(static_cast<float>(resource.minLod) / 256.0f, static_cast<float>(resource.lastLevel));
+}
+
+void RequireLevelsPresent(const GuestTextureResource& resource) {
+    if (!resource.emptyView) return;
+    throw std::runtime_error("AGC graphics: guest texture descriptor starts past the surface's last mip level (format " + std::to_string(resource.format) + ", " + std::to_string(resource.width) + "x" + std::to_string(resource.height) + ", mip " + std::to_string(resource.emptyBaseLevel) + " of " + std::to_string(resource.mipCount) + ")");
 }
 
 bool MatchesGuestDimension(ShaderRecompiler::DescriptorImageShape shape, TextureDimension dimension) {

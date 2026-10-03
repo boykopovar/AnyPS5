@@ -269,6 +269,22 @@ void RunGuestTextureResourceTests() {
     const auto partial = DecodeTextureResource(pack(partialMips));
     Require(partial.lastLevel == 1 && partial.mipCount == 3, "a view over part of the mip chain decoded wrongly");
 
+    Fields pastLast = base;
+    pastLast.width = 64;
+    pastLast.height = 64;
+    pastLast.maxMip = 5;
+    pastLast.baseLevel = 6;
+    pastLast.lastLevel = 6;
+    const auto empty = DecodeTextureResource(pack(pastLast));
+    Require(empty.emptyView && empty.emptyBaseLevel == 6, "a view starting past MAX_MIP was not marked empty");
+    Require(empty.baseLevel == 5 && empty.lastLevel == 5 && empty.mipCount == 6, "an empty view was not clamped to the surface's last mip level");
+    reject([&] { RequireLevelsPresent(empty); }, "starts past the surface's last mip level");
+    pastLast.baseLevel = 5;
+    pastLast.lastLevel = 5;
+    const auto lastLevel = DecodeTextureResource(pack(pastLast));
+    Require(!lastLevel.emptyView && lastLevel.baseLevel == 5 && lastLevel.emptyBaseLevel == 0, "a view of the surface's last mip level was marked empty");
+    RequireLevelsPresent(lastLevel);
+
     std::array<std::uint32_t, 4> shortWords{};
     reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");
 

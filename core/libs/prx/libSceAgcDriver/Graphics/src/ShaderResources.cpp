@@ -512,6 +512,14 @@ std::array<std::uint32_t, 8> SurfaceKey(const Context& context, const GuestTextu
 }
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
+void NoteDroppedStores(const GuestTextureResource& resource) {
+    static std::mutex mutex;
+    static std::set<std::pair<std::uint64_t, std::uint32_t>> reported;
+    std::lock_guard lock(mutex);
+    if (!reported.insert({resource.baseAddress, resource.emptyBaseLevel}).second) return;
+    std::fprintf(stderr, "[gpu] storage image view of surface 0x%llx starts at mip %u, past its last mip %u: the shader's stores to it are dropped\n", static_cast<unsigned long long>(resource.baseAddress), resource.emptyBaseLevel, resource.mipCount - 1u);
+}
+
 std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip, std::uint64_t guestBytes) {
     if (DepthSurfaceAt(resource.baseAddress)) {
         char text[112];
@@ -1630,6 +1638,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
                     for (std::uint32_t element = 0; element < binding.count; ++element) {
                         const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
                         const auto resource = DecodeTextureResource(words);
+                        RequireLevelsPresent(resource);
                         const VkComponentMapping components{ComponentSwizzleFor(resource.dstSelX), ComponentSwizzleFor(resource.dstSelY), ComponentSwizzleFor(resource.dstSelZ), ComponentSwizzleFor(resource.dstSelW)};
                         if (textureIndex >= textures.size() || cachedTexture(context, words, resource, components, 0, !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element)) != textures[textureIndex]) return false;
                         ++textureIndex;
@@ -2453,6 +2462,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
             const auto* record = nextRecord();
             const auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
+            RequireLevelsPresent(resource);
             const bool firstLayer = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray;
             if (!firstLayer && !MatchesGuestDimension(*binding.imageShape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the shader's declared image shape (shape " + std::to_string(static_cast<int>(*binding.imageShape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
             const VkComponentMapping components{ComponentSwizzleFor(resource.dstSelX), ComponentSwizzleFor(resource.dstSelY), ComponentSwizzleFor(resource.dstSelZ), ComponentSwizzleFor(resource.dstSelW)};
@@ -2494,7 +2504,11 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         storageKeys.push_back(resource.dccAddress);
         storageFirstLayer.push_back(firstLayer);
         // Images the shader only reads have nothing to store back.
-        storageWritten.push_back(element >= binding.imageWritten.size() || binding.imageWritten[element]);
+        if (resource.emptyView) {
+            Require(sameAsPrevious == false && mipOffset == 0, "AGC graphics: dynamic-mip storage writes to an image view past its surface's last mip level are not implemented");
+            NoteDroppedStores(resource);
+        }
+        storageWritten.push_back(!resource.emptyView && (element >= binding.imageWritten.size() || binding.imageWritten[element]));
         describedRanges.push_back({"storage", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
         item.imageAllocations.push_back(storageTextures.size() - 1);
     }

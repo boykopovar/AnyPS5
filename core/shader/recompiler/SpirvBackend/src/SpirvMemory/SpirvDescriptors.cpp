@@ -149,6 +149,9 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
     if (imageResource.resourceClass != ImageResourceClass::Sampled) {
         FailEmit("sampled image descriptor requested for a non-sampled image");
     }
+    if (imageResource.empty) {
+        FailEmit("reading an image view that starts past its surface's last mip level is not implemented");
+    }
     const auto kind = DescriptorBindingForImage(imageResource);
     const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
     const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
@@ -197,6 +200,9 @@ std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint3
     if (image.resourceClass != ImageResourceClass::Storage) {
         FailEmit("storage image descriptor requested for a non-storage image");
     }
+    if (image.empty) {
+        FailEmit("reading an image view that starts past its surface's last mip level is not implemented");
+    }
     const auto kind = DescriptorBindingForImage(image);
     const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image));
@@ -208,6 +214,10 @@ void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std
     const auto& image = state.program.Info().images.at(resource);
     if (image.resourceClass != ImageResourceClass::Storage) {
         FailEmit("storage image write requested for a non-storage image");
+    }
+    if (image.empty) {
+        if (image.atomic) FailEmit("atomics on an image view that starts past its surface's last mip level are not implemented");
+        return;
     }
     if (!image.atomic) {
         state.module.EmitCapability(spv::CapabilityStorageImageWriteWithoutFormat);
