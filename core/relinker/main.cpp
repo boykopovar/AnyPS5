@@ -3,6 +3,7 @@
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
+#include <elfpatcher/linux/LinuxDesktopEntryWriter.hpp>
 #include <elfpatcher/general/SegmentFilter.hpp>
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
@@ -114,6 +115,10 @@ int main(const int argc, char* argv[]) {
             std::cout << "Guest module: " << artifact.Path.string() << '\n';
         }
         fileWriter.Write(absPath, executableBytes);
+        if (!args.toWindows) {
+            const auto desktopEntry = Elfpatcher::Linux::LinuxDesktopEntryWriter().Write(std::filesystem::path(args.inputPath).parent_path() / "sce_sys", absPath);
+            if (!desktopEntry.empty()) std::cout << "Desktop entry: " << desktopEntry.string() << '\n';
+        }
         std::cout << "External prx references: " << result.RegistryEntries.size() << "\nOutput file: " << absPath << '\n';
         std::cout << "Expected runtime layout (relative to the output executable):\n"
                   << std::filesystem::path(absPath).filename().string() << "\n"
