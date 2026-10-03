@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -54,6 +55,8 @@ public:
     static std::size_t Capacity(std::size_t bytes);
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void Put(const BufferAllocation& allocation) noexcept;
+    VkDeviceSize Trim() noexcept;
+    std::pair<VkDeviceSize, VkDeviceSize> RetainedBytes();
 
 private:
     struct Slot {
