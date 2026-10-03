@@ -326,6 +326,8 @@ std::uint32_t LoadFormattedComponent(SpirvValueEmitContext& ctx, const MemoryInf
     auto& state = ctx.state;
     const auto source = ResolveOutputSource(ctx, mem, info, outputComponent);
     if (source.kind != SpirvFormattedSourceKind::Memory) {
+        const bool integer = info.type == SpirvFormatComponentType::Uint || info.type == SpirvFormatComponentType::Sint;
+        if (mem.d16 && source.kind == SpirvFormattedSourceKind::One && !integer) return ConstantU32(state, 0x3c00u);
         return FormattedConstant(ctx, info, source.kind);
     }
     const auto component = source.component;
@@ -344,12 +346,13 @@ std::uint32_t LoadFormattedComponent(SpirvValueEmitContext& ctx, const MemoryInf
     } else {
         raw = loadSubword(component, bits, signedType);
     }
-    return NormalizeFormatComponent(state, info, component, raw);
+    return mem.d16 ? EmitD16FormatComponent(state, info, component, raw) : NormalizeFormatComponent(state, info, component, raw);
 }
 
 std::uint32_t FormattedLoadPrepared(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, std::uint32_t outputComponent, const MemoryResourceAccess& resource) {
     const auto info = MemoryFormatInfo(ctx.state, mem);
     if (info.type == SpirvFormatComponentType::Unknown) {
+        if (mem.d16) ctx.Fail(inst, "is a D16 format load with an unknown buffer format");
         return LoadWordPrepared(ctx, inst, RebaseRawComponent(mem, outputComponent), resource);
     }
     return LoadFormattedComponent(ctx, mem, info, outputComponent, [&](std::uint32_t component) {
@@ -431,31 +434,6 @@ void StoreWord(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo
     });
 }
 
-void FormattedStorePrepared(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, std::uint32_t component, const MemoryResourceAccess& resource, std::uint32_t data) {
-    const auto info = MemoryFormatInfo(ctx.state, mem);
-    if (info.type == SpirvFormatComponentType::Unknown) {
-        StoreWordPrepared(ctx, inst, RebaseRawComponent(mem, component), resource, data);
-        return;
-    }
-    if (component >= info.componentCount) {
-        return;
-    }
-    const auto bits = info.componentBits[component];
-    const auto componentMem = RebaseFormattedComponent(mem, info, component);
-    if (bits == 8u || bits == 16u) {
-        StoreSubwordPrepared(ctx, inst, componentMem, resource, bits, data);
-    } else {
-        StoreWordPrepared(ctx, inst, componentMem, resource, data);
-    }
-}
-
-void FormattedStore(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem) {
-    EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
-        const auto resource = PrepareMemoryResourceAccess(ctx.state, mem);
-        FormattedStorePrepared(ctx, inst, mem, 0u, resource, ctx.Arg(inst, inst.ArgumentCount() - 2u));
-    });
-}
-
 struct PreparedFormattedMemory {
     SpirvBufferFormatInfo info;
     MemoryResourceAccess resource;
@@ -483,7 +461,7 @@ PreparedFormattedMemory PrepareFormattedMemory(SpirvValueEmitContext& ctx, const
             }
         }
     } else {
-        for (std::uint32_t component = 0; component < std::min(components, plan.info.componentCount); component++) {
+        for (std::uint32_t component = 0; component < plan.info.componentCount; component++) {
             required.at(component) = true;
         }
     }
@@ -549,16 +527,50 @@ std::uint32_t FormattedOutOfBoundsValue(SpirvValueEmitContext& ctx, const Memory
     return ConstructU32Composite(state, components, values);
 }
 
-void StoreFormattedInBounds(SpirvValueEmitContext& ctx, const MemoryInfo& mem, const PreparedFormattedMemory& plan, std::uint32_t component, std::uint32_t data) {
-    if (component >= plan.info.componentCount) {
+void StoreFormattedElement(SpirvValueEmitContext& ctx, const MemoryInfo& mem, const PreparedFormattedMemory& plan, const std::array<std::uint32_t, 4>& data, std::uint32_t components) {
+    auto& state = ctx.state;
+    const auto& info = plan.info;
+    std::array<std::uint32_t, 4> encoded{};
+    for (std::uint32_t component = 0; component < info.componentCount; component++) {
+        encoded.at(component) = component < components ? EmitFormatStoreComponent(state, info, component, data.at(component)) : ConstantU32(state, 0u);
+    }
+    if (info.packedBitfield) {
+        auto word = ConstantU32(state, 0u);
+        for (std::uint32_t component = 0; component < info.componentCount; component++) {
+            const std::uint32_t mask = (1u << info.componentBits[component]) - 1u;
+            word = EmitOrU32(state, word, EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitAndConstant(state, encoded.at(component), mask), ConstantU32(state, info.componentBitOffset[component])));
+        }
+        StoreWordInBounds(ctx, plan.resource, plan.indices.at(0), word);
         return;
     }
-    const auto bits = plan.info.componentBits[component];
-    if (bits == 8u || bits == 16u) {
-        StoreSubwordInBounds(ctx, mem, plan.resource, plan.addresses.at(component), plan.indices.at(component), bits, data);
-    } else {
-        StoreWordInBounds(ctx, plan.resource, plan.indices.at(component), data);
+    for (std::uint32_t component = 0; component < info.componentCount; component++) {
+        const auto bits = info.componentBits[component];
+        if (bits == 8u || bits == 16u) {
+            StoreSubwordInBounds(ctx, mem, plan.resource, plan.addresses.at(component), plan.indices.at(component), bits, encoded.at(component));
+        } else {
+            StoreWordInBounds(ctx, plan.resource, plan.indices.at(component), encoded.at(component));
+        }
     }
+}
+
+void StoreFormattedValues(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, const MemoryResourceAccess& resource, const SpirvBufferFormatInfo& info, const std::array<std::uint32_t, 4>& data, std::uint32_t components) {
+    const auto plan = PrepareFormattedMemory(ctx, inst, mem, resource, info, components, FormattedAccess::Store);
+    EmitIfCondition(ctx.state, plan.inBounds, [&]() {
+        StoreFormattedElement(ctx, mem, plan, data, components);
+    });
+}
+
+void FormattedStore(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem) {
+    EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
+        const auto resource = PrepareMemoryResourceAccess(ctx.state, mem);
+        const auto info = MemoryFormatInfo(ctx.state, mem);
+        const auto data = ctx.Arg(inst, inst.ArgumentCount() - 2u);
+        if (info.type == SpirvFormatComponentType::Unknown) {
+            StoreWordPrepared(ctx, inst, RebaseRawComponent(mem, 0u), resource, data);
+            return;
+        }
+        StoreFormattedValues(ctx, inst, mem, resource, info, {data, 0u, 0u, 0u}, 1u);
+    });
 }
 
 std::uint32_t LoadWideBuffer(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, std::uint32_t components) {
@@ -591,14 +603,12 @@ void StoreWideBuffer(SpirvValueEmitContext& ctx, const IrValue& inst, const Memo
         const auto composite = ctx.Arg(inst, inst.ArgumentCount() - 2u);
         const auto info = MemoryFormatInfo(state, mem);
         if (info.type != SpirvFormatComponentType::Unknown) {
-            const auto plan = PrepareFormattedMemory(ctx, inst, mem, resource, info, components, FormattedAccess::Store);
-            EmitIfCondition(state, plan.inBounds, [&]() {
-                for (std::uint32_t component = 0; component < components; component++) {
-                    const auto data = state.module.AllocateId();
-                    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), data, composite, component);
-                    StoreFormattedInBounds(ctx, mem, plan, component, data);
-                }
-            });
+            std::array<std::uint32_t, 4> data{};
+            for (std::uint32_t component = 0; component < components; component++) {
+                data.at(component) = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), data.at(component), composite, component);
+            }
+            StoreFormattedValues(ctx, inst, mem, resource, info, data, components);
             return;
         }
         for (std::uint32_t component = 0; component < components; component++) {

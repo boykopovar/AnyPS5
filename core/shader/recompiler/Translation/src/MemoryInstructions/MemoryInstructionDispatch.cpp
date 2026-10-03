@@ -53,6 +53,12 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::BufferLoadSbyte:
     case RdnaOpcode::BufferLoadUshort:
     case RdnaOpcode::BufferLoadSshort:
+    case RdnaOpcode::BufferLoadUbyteD16:
+    case RdnaOpcode::BufferLoadUbyteD16Hi:
+    case RdnaOpcode::BufferLoadSbyteD16:
+    case RdnaOpcode::BufferLoadSbyteD16Hi:
+    case RdnaOpcode::BufferLoadShortD16:
+    case RdnaOpcode::BufferLoadShortD16Hi:
     case RdnaOpcode::BufferLoadDword:
     case RdnaOpcode::BufferLoadDwordx2:
     case RdnaOpcode::BufferLoadDwordx3:
@@ -62,6 +68,16 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::TbufferLoadFormatXyz:
     case RdnaOpcode::TbufferLoadFormatXyzw:
         return bufferLoad(inst);
+    case RdnaOpcode::BufferLoadFormatD16X:
+    case RdnaOpcode::BufferLoadFormatD16Xy:
+    case RdnaOpcode::BufferLoadFormatD16Xyz:
+    case RdnaOpcode::BufferLoadFormatD16Xyzw:
+    case RdnaOpcode::BufferLoadFormatD16HiX:
+    case RdnaOpcode::TbufferLoadFormatD16X:
+    case RdnaOpcode::TbufferLoadFormatD16Xy:
+    case RdnaOpcode::TbufferLoadFormatD16Xyz:
+    case RdnaOpcode::TbufferLoadFormatD16Xyzw:
+        return bufferLoadFormatD16(inst);
 
     case RdnaOpcode::BufferStoreFormatX:
     case RdnaOpcode::BufferStoreFormatXy:
@@ -69,6 +85,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::BufferStoreFormatXyzw:
     case RdnaOpcode::BufferStoreByte:
     case RdnaOpcode::BufferStoreShort:
+    case RdnaOpcode::BufferStoreByteD16Hi:
+    case RdnaOpcode::BufferStoreShortD16Hi:
     case RdnaOpcode::BufferStoreDword:
     case RdnaOpcode::BufferStoreDwordx2:
     case RdnaOpcode::BufferStoreDwordx3:
@@ -114,6 +132,12 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::FlatLoadSbyte:
     case RdnaOpcode::FlatLoadUshort:
     case RdnaOpcode::FlatLoadSshort:
+    case RdnaOpcode::FlatLoadUbyteD16:
+    case RdnaOpcode::FlatLoadUbyteD16Hi:
+    case RdnaOpcode::FlatLoadSbyteD16:
+    case RdnaOpcode::FlatLoadSbyteD16Hi:
+    case RdnaOpcode::FlatLoadShortD16:
+    case RdnaOpcode::FlatLoadShortD16Hi:
     case RdnaOpcode::FlatLoadDword:
     case RdnaOpcode::FlatLoadDwordx2:
     case RdnaOpcode::FlatLoadDwordx3:
@@ -121,6 +145,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return flatLoad(inst);
     case RdnaOpcode::FlatStoreByte:
     case RdnaOpcode::FlatStoreShort:
+    case RdnaOpcode::FlatStoreByteD16Hi:
+    case RdnaOpcode::FlatStoreShortD16Hi:
     case RdnaOpcode::FlatStoreDword:
     case RdnaOpcode::FlatStoreDwordx2:
     case RdnaOpcode::FlatStoreDwordx3:
@@ -231,6 +257,10 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::DsReadU16:
     case RdnaOpcode::DsReadU16D16:
     case RdnaOpcode::DsReadU16D16Hi:
+    case RdnaOpcode::DsReadU8D16:
+    case RdnaOpcode::DsReadU8D16Hi:
+    case RdnaOpcode::DsReadI8D16:
+    case RdnaOpcode::DsReadI8D16Hi:
     case RdnaOpcode::DsReadB32:
     case RdnaOpcode::DsReadB64:
     case RdnaOpcode::DsReadB96:
@@ -244,6 +274,7 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::DsWriteB8:
     case RdnaOpcode::DsWriteB16:
     case RdnaOpcode::DsWriteB16D16Hi:
+    case RdnaOpcode::DsWriteB8D16Hi:
     case RdnaOpcode::DsWriteB32:
     case RdnaOpcode::DsWriteB64:
     case RdnaOpcode::DsWriteB96:
