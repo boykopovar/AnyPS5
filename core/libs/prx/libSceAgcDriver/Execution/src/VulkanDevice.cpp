@@ -831,6 +831,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     if (enabled.shaderImageGatherExtended) state->capabilities.push_back(spv::CapabilityImageGatherExtended);
     enabled.shaderResourceMinLod = available.shaderResourceMinLod;
     if (enabled.shaderResourceMinLod) state->capabilities.push_back(spv::CapabilityMinLod);
+    enabled.shaderClipDistance = available.shaderClipDistance;
+    enabled.shaderCullDistance = available.shaderCullDistance;
     if (enabled.shaderStorageImageWriteWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageWriteWithoutFormat);
     if (enabled.shaderStorageImageReadWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageReadWithoutFormat);
     // Bindless image tables index an image array with a wave-uniform runtime slot.

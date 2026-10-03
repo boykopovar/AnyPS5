@@ -156,6 +156,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         vertexStorage = ShaderVertexInputInfo{};
         vertexStorage.logicalStage = _toIrShaderStage(stage);
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;
+        vertexStorage.paClVsOutCntl = vertex.paClVsOutCntl;
         vertexStorage.fetchExternal = false;
         vertexStorage.fetchAttribReg = static_cast<int>(vertex.fetchAttribReg);
         vertexStorage.fetchBufferReg = static_cast<int>(vertex.fetchBufferReg);

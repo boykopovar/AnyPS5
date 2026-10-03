@@ -142,6 +142,7 @@ struct ShaderVertexStageInfo {
     std::uint32_t fetchAttribReg;
     std::uint32_t fetchBufferReg;
     bool fetchEmbedded;
+    std::uint32_t paClVsOutCntl = 0;
 };
 
 struct GuestContext {

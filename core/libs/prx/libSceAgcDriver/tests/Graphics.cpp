@@ -539,6 +539,18 @@ void metadataPassTests() {
     Require(texels(0x5a5a5a5au), "a pass over a target without DCC changed its texels");
 }
 
+void clipDistanceTests() {
+    auto queue = makeState();
+    queue.context[0x207] = 0x0040000f;
+    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "four clip distances were rejected by the precheck");
+    queue.context[0x207] = 0x004001ff;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "more than eight clip and cull distances");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("more than eight") != std::string::npos, "nine clip distances passed the precheck");
+}
+
 void DepthClipTests() {
     auto queue = makeState();
     const auto direct = AgcDriver::Graphics::DecodeState(queue);
@@ -1124,6 +1136,11 @@ struct ModuleShape {
     std::uint32_t parameterLocation = 0;
     bool rectParameters = false;
     bool secondTarget = false;
+    bool sampleId = false;
+    bool layer = false;
+    bool fragDepth = false;
+    std::uint32_t sampleMaskLength = 0;
+    std::uint32_t clipDistanceLength = 0;
 };
 
 void emit(std::vector<std::uint32_t>& out, spv::Op op, std::initializer_list<std::uint32_t> operands) {
@@ -1187,6 +1204,52 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
         emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassInput, vector});
         emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassInput});
         emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, shape.barycentricNoPerspective ? spv::BuiltInBaryCoordNoPerspKHR : spv::BuiltInBaryCoordKHR});
+        extraInterface.push_back(variable);
+    }
+    if (shape.sampleId || shape.layer) {
+        const auto intType = id();
+        const auto pointer = id();
+        emit(declarations, spv::OpTypeInt, {intType, 32, 1});
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassInput, intType});
+        for (const auto [wanted, builtin] : {std::pair{shape.sampleId, spv::BuiltInSampleId}, std::pair{shape.layer, spv::BuiltInLayer}}) {
+            if (!wanted) continue;
+            const auto variable = id();
+            emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassInput});
+            emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, static_cast<std::uint32_t>(builtin)});
+            emit(annotations, spv::OpDecorate, {variable, spv::DecorationFlat});
+            extraInterface.push_back(variable);
+        }
+    }
+    if (shape.fragDepth) {
+        const auto pointer = id();
+        const auto variable = id();
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassOutput, floatType});
+        emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassOutput});
+        emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, spv::BuiltInFragDepth});
+        extraInterface.push_back(variable);
+    }
+    if (shape.sampleMaskLength != 0) {
+        const auto length = id();
+        const auto array = id();
+        const auto pointer = id();
+        const auto variable = id();
+        emit(declarations, spv::OpConstant, {uintType, length, shape.sampleMaskLength});
+        emit(declarations, spv::OpTypeArray, {array, uintType, length});
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassOutput, array});
+        emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassOutput});
+        emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, spv::BuiltInSampleMask});
+        extraInterface.push_back(variable);
+    }
+    if (shape.clipDistanceLength != 0) {
+        const auto length = id();
+        const auto array = id();
+        const auto pointer = id();
+        const auto variable = id();
+        emit(declarations, spv::OpConstant, {uintType, length, shape.clipDistanceLength});
+        emit(declarations, spv::OpTypeArray, {array, floatType, length});
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassOutput, array});
+        emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassOutput});
+        emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, spv::BuiltInClipDistance});
         extraInterface.push_back(variable);
     }
     if (shape.perVertex) {
@@ -1256,6 +1319,9 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     emit(function, spv::OpFunctionEnd, {});
     std::vector<std::uint32_t> words{spv::MagicNumber, 0x10300, 0, next, 0};
     emit(words, spv::OpCapability, {spv::CapabilityShader});
+    if (shape.sampleId) emit(words, spv::OpCapability, {spv::CapabilitySampleRateShading});
+    if (shape.layer) emit(words, spv::OpCapability, {spv::CapabilityGeometry});
+    if (shape.clipDistanceLength != 0) emit(words, spv::OpCapability, {spv::CapabilityClipDistance});
     if (shape.barycentric) {
         emit(words, spv::OpCapability, {spv::CapabilityFragmentBarycentricKHR});
         const std::string extension = "SPV_KHR_fragment_shader_barycentric";
@@ -1272,6 +1338,7 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     words[entryPointOffset] += static_cast<std::uint32_t>(extraInterface.size()) << 16u;
     words.insert(words.end(), extraInterface.begin(), extraInterface.end());
     if (shape.fragment) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeOriginUpperLeft});
+    if (shape.fragDepth) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeDepthReplacing});
     words.insert(words.end(), annotations.begin(), annotations.end());
     words.insert(words.end(), declarations.begin(), declarations.end());
     words.insert(words.end(), function.begin(), function.end());
@@ -1446,6 +1513,18 @@ void validationTests() {
             AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, true);
             expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "fragmentShaderBarycentric");
         }
+        pixel.spirv = makeModule({.fragment = true, .sampleId = true, .layer = true, .fragDepth = true, .sampleMaskLength = 1});
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false);
+        pixel.spirv = makeModule({.fragment = true, .sampleMaskLength = 2});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported fragment built-in");
+        pixel.spirv = makeModule({.fragment = true});
+        vertex.spirv = makeModule({.parameterOutput = true, .clipDistanceLength = 4});
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false);
+        vertex.spirv = makeModule({.parameterOutput = true, .clipDistanceLength = 9});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "clip or cull distance");
+        vertex.spirv = makeModule({.parameterOutput = true, .sampleId = true});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability 35");
+        vertex.spirv = makeModule({.parameterOutput = true});
         pixel.spirv = makeModule({.fragment = true, .barycentric = true, .barycentricComponents = 4});
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, true); }, "invalid barycentric built-in");
         pixel.spirv = makeModule({.fragment = true, .barycentric = true, .perVertex = true, .perVertexLength = 2});
@@ -1670,6 +1749,7 @@ int main() {
         DepthStencilTests();
         DisabledColorTests();
         metadataPassTests();
+        clipDistanceTests();
         ShaderStageTests();
         PixelInputLayoutTests();
         InitialContextTests();
