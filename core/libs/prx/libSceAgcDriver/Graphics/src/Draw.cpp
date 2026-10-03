@@ -42,7 +42,7 @@ std::uint32_t GuestFormatFor(VkFormat format, std::uint32_t elementBytes) {
 
 // The color buffer as a single-mip 2D surface descriptor (tile mode SW_64KB_R_X).
 GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
-    Require(color.tileMode == ColorTileMode::RenderTarget, "only 64 KiB tiled color targets are resident");
+    Require(color.tileMode == ColorTileMode::RenderTarget || color.tileMode == ColorTileMode::Standard4KB, "only 4 KiB standard and 64 KiB tiled color targets are resident");
     const bool chain = color.mipCount > 1;
     GuestTextureResource surface{};
     surface.baseAddress = chain ? color.surfaceAddress : color.address;
@@ -53,7 +53,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.mipCount = color.mipCount;
     surface.baseLevel = 0;
     surface.lastLevel = color.mipCount - 1;
-    surface.tileMode = TextureTileMode::kR64KBX;
+    surface.tileMode = ColorTextureTileMode(color.tileMode);
     surface.dimension = TextureDimension::k2D;
     surface.format = GuestFormatFor(color.format, color.elementBytes);
     surface.dstSelX = 4;
@@ -1415,7 +1415,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         timer.phase(PhaseSetup);
         // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
         static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
-        if (binding.gpuTiling && residentTargets) {
+        if ((binding.gpuTiling || (color.tileMode == ColorTileMode::Standard4KB && context.detiler != nullptr)) && residentTargets) {
             // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
             // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
             // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
@@ -1969,7 +1969,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         Require(IsDccClear(keys), std::string("CB metadata pass over DCC keys that are ") + DccKeysName(keys) + " (per-block metadata is not modeled)");
         const auto texel = clearTexel(color, keys);
         std::shared_ptr<StorageTexture> resident;
-        if (color.tileMode == ColorTileMode::RenderTarget && context.detiler != nullptr) {
+        if ((color.tileMode == ColorTileMode::RenderTarget || color.tileMode == ColorTileMode::Standard4KB) && context.detiler != nullptr) {
             try {
                 resident = CachedStorageSurface(context, SurfaceForTarget(color));
             } catch (const std::exception&) {
