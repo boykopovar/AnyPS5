@@ -396,6 +396,10 @@ RdnaOpcode cacheControlOpcode(RdnaInstructionFamily family, std::uint32_t opcode
             case 0x1fu: return RdnaOpcode::SGl1Inv;
             case 0x20u: return RdnaOpcode::SDcacheInv;
             case 0x21u: return RdnaOpcode::SDcacheWb;
+            case 0x26u: return RdnaOpcode::SAtcProbe;
+            case 0x27u: return RdnaOpcode::SAtcProbeBuffer;
+            case 0x28u: return RdnaOpcode::SDcacheDiscard;
+            case 0x29u: return RdnaOpcode::SDcacheDiscardX2;
             default: return RdnaOpcode::Invalid;
         }
     }

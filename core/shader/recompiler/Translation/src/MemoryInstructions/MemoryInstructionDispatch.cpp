@@ -14,6 +14,10 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::SGl1Inv:
     case RdnaOpcode::SDcacheInv:
     case RdnaOpcode::SDcacheWb:
+    case RdnaOpcode::SAtcProbe:
+    case RdnaOpcode::SAtcProbeBuffer:
+    case RdnaOpcode::SDcacheDiscard:
+    case RdnaOpcode::SDcacheDiscardX2:
     case RdnaOpcode::BufferGl0Inv:
     case RdnaOpcode::BufferGl1Inv:
         emitControlNop();

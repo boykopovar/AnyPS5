@@ -17,6 +17,7 @@ Throughout the project, every function at every stage either **does exactly what
 - [libSceNpCommerce](../../core/libs/prx/libSceNpCommerce/Export.cpp) - the PS Store icon show/hide calls do nothing
 - [sceVideoOutOpen](../../core/libs/prx/libSceVideoOut/src/Output.cpp) validates the priority and CPU affinity that the open param requests for the VideoOut service thread but does not apply them: the port's present and vblank threads are host threads, and guest priorities and affinities do not reach host scheduling
 - The shader recompiler [skips baryctric coordinates](../../core/shader/recompiler/Recompiler.cpp) (is not even passed to SpirvTargetOptions at row 212).
+- The shader recompiler [ignores `s_round_mode`](../../core/shader/recompiler/Translation/src/ScalarInstructions.cpp): float operations keep rounding to nearest even after it selects another rounding mode.
 - [libSceAvPlayer](../../core/libs/prx/libSceAvPlayer/Export.cpp): `sceAvPlayerSetLogCallback` accepts a callback that is never called, as the player produces no log messages, and `sceAvPlayerSetAvailableBandwidth` has no effect, as it governs HLS sources, which `sceAvPlayerAddSource` does not implement.
 - [sceAvPlayerSetTrickSpeed](../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) with a negative speed runs the clock backwards but delivers no frames; when a forward speed is set again, playback resumes from the rewound time.
 
