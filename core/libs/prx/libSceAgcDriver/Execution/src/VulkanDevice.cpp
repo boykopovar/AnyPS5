@@ -193,6 +193,8 @@ struct VulkanDevice::State {
     bool imageViewMinLod = false;
     bool maintenance8 = false;
     bool depthClamp = false;
+    bool depthBounds = false;
+    bool depthBiasClamp = false;
     bool occlusionQueryPrecise = false;
     VkDeviceSize hostImportAlignment = 0;
     bool depthRangeUnrestricted = false;
@@ -821,6 +823,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     // PA_CL_CLIP_CNTL near/far clip disable maps to depth clamping.
     enabled.depthClamp = available.depthClamp;
     state->depthClamp = enabled.depthClamp == VK_TRUE;
+    enabled.depthBounds = available.depthBounds;
+    state->depthBounds = enabled.depthBounds == VK_TRUE;
+    enabled.depthBiasClamp = available.depthBiasClamp;
+    state->depthBiasClamp = enabled.depthBiasClamp == VK_TRUE;
     enabled.occlusionQueryPrecise = available.occlusionQueryPrecise;
     state->occlusionQueryPrecise = enabled.occlusionQueryPrecise == VK_TRUE;
     // Recompiled storage-image access declares no format (the guest descriptor decides it).
@@ -2230,6 +2236,8 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.samplerCache = state->samplerCache.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;
+    context.depthBounds = state->depthBounds;
+    context.depthBiasClamp = state->depthBiasClamp;
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
     context.emptyBuffer = state->emptyBuffer ? state->emptyBuffer->Handle() : VK_NULL_HANDLE;

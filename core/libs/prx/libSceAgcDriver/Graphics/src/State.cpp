@@ -165,12 +165,35 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
     result.depthTest = (depthControl & 2u) != 0;
     result.depthWrite = result.depthTest && (depthControl & 4u) != 0 && !depthReadOnly;
     result.depthCompare = static_cast<VkCompareOp>((depthControl >> 4u) & 7u);
+    result.depthBoundsTest = (depthControl & 8u) != 0;
+    if (result.depthBoundsTest) {
+        Require(zFormat != 0, "depth bounds without a depth plane");
+        result.minDepthBounds = readFloat(cx, 0x008);
+        result.maxDepthBounds = readFloat(cx, 0x009);
+    }
     result.stencilTest = (depthControl & 1u) != 0;
     if (result.stencilTest) {
         const auto ops = read(cx, 0x10b);
         result.stencilFront = stencilFace((depthControl >> 8u) & 7u, ops, read(cx, 0x10c), stencilReadOnly);
         result.stencilBack = (depthControl & 0x80u) != 0 ? stencilFace((depthControl >> 20u) & 7u, ops >> 12u, read(cx, 0x10d), stencilReadOnly) : result.stencilFront;
     }
+}
+
+void decodeDepthBias(const Registers& cx, std::uint32_t raster, State& result) {
+    const bool front = (result.cullMode & VK_CULL_MODE_FRONT_BIT) == 0;
+    const bool back = (result.cullMode & VK_CULL_MODE_BACK_BIT) == 0;
+    const bool frontBias = (raster & 0x800u) != 0;
+    const bool backBias = (raster & 0x1000u) != 0;
+    if (!(front && frontBias) && !(back && backBias)) return;
+    if (front && back && (frontBias != backBias || read(cx, 0x2e0) != read(cx, 0x2e2) || read(cx, 0x2e1) != read(cx, 0x2e3))) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "depth bias differing between front and back faces"));
+    const bool d16 = result.depth->format == VK_FORMAT_D16_UNORM || result.depth->format == VK_FORMAT_D16_UNORM_S8_UINT;
+    const auto format = find(cx, 0x2de) == cx.end() ? (d16 ? 0xf0u : 0x1e9u) : read(cx, 0x2de);
+    if (format != (d16 ? 0xf0u : 0x1e9u)) throw std::runtime_error("AGC graphics: " + zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
+    const auto scale = front && frontBias ? 0x2e0u : 0x2e2u;
+    result.depthBias = true;
+    result.depthBiasSlope = readFloat(cx, scale) / 16.0f;
+    result.depthBiasConstant = readFloat(cx, scale + 1u);
+    result.depthBiasClamp = readFloat(cx, 0x2df);
 }
 
 bool depthPassThrough(std::uint32_t depthControl) {
@@ -415,7 +438,7 @@ State DecodeState(const QueueState& queue) {
     zero(cx, 0x207, ~LayerExports, "clip distances, layer, viewport or auxiliary vertex exports");
     {
         const auto depthControl = read(cx, 0x200);
-        if ((depthControl & 3u) != 0 && depthSurfaceBound(cx)) {
+        if ((depthControl & 0xbu) != 0 && depthSurfaceBound(cx)) {
             decodeDepth(cx, depthControl, result);
         } else if (depthPassThrough(depthControl)) {
             static bool reported = false;
@@ -432,7 +455,8 @@ State DecodeState(const QueueState& queue) {
         } else {
             if ((effectiveDepthControl(depthControl) & DepthControlMask) != 0) zero(cx, 0x200, DepthControlMask, "depth, stencil or conditional color writes");
         }
-        Require((depthControl & 0xc0000008u) == 0, "depth bounds or depth-conditional color writes are unsupported");
+        Require((depthControl & 8u) == 0 || result.depth.has_value(), "depth bounds without a depth surface");
+        Require((depthControl & 0xc0000000u) == 0, "depth-conditional color writes are unsupported");
     }
     zero(cx, 0x203, ShaderControlMask, "depth export, shader coverage or ordered fragment execution");
     zero(cx, 0x2dc, AlphaToCoverageMask, "alpha-to-coverage");
@@ -454,10 +478,11 @@ State DecodeState(const QueueState& queue) {
     const auto raster = read(cx, 0x205);
     // Bits 5-10 give the front/back polygon type (2 = filled triangles), which POLY_MODE (bit 3) turns on
     // explicitly; KEEP_TOGETHER_ENABLE (bit 24) only affects primitive distribution across the chip.
-    const auto rasterMode = raster & ~0x7u & ~(1u << 24u);
-    Require(rasterMode == 0 || rasterMode == 0x240u || rasterMode == 0x248u, "polygon mode, depth bias, provoking vertex or nonstandard rasterization is unsupported");
+    const auto rasterMode = raster & ~0x7u & ~(1u << 24u) & ~0x1800u;
+    if (rasterMode != 0 && rasterMode != 0x240u && rasterMode != 0x248u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "polygon mode, depth bias, provoking vertex or nonstandard rasterization"));
     result.cullMode = ((raster & 1u) != 0 ? VK_CULL_MODE_FRONT_BIT : 0u) | ((raster & 2u) != 0 ? VK_CULL_MODE_BACK_BIT : 0u);
     if (result.rectList) result.cullMode = VK_CULL_MODE_NONE;
+    if ((raster & 0x1800u) != 0 && result.depth) decodeDepthBias(cx, raster, result);
     result.frontFace = (raster & 4u) != 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     APS5_LOG_OUT_DEBUG("Raster=0x%x cullMode=0x%x frontFace=%u negativeOneToOne=%u", raster, static_cast<unsigned>(result.cullMode), static_cast<unsigned>(result.frontFace), result.negativeOneToOne ? 1u : 0u);
     const auto shaderMask = read(cx, 0x8f);
@@ -702,9 +727,10 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     }
     if (auto reason = nonzero(cx, 0x207, ~LayerExports, "clip distances, layer, viewport or auxiliary vertex exports"); !reason.empty()) return reason;
     if (value(cx, 0x200, word)) {
-        const bool surface = (word & 3u) != 0 && depthSurfaceBound(cx);
+        const bool surface = (word & 0xbu) != 0 && depthSurfaceBound(cx);
         if (!surface && !depthPassThrough(word) && !IgnoreDepthTest() && (effectiveDepthControl(word) & DepthControlMask) != 0) return zeroMessage(0x200, word, "depth, stencil or conditional color writes");
-        if (auto reason = require((word & 0xc0000008u) == 0, "depth bounds or depth-conditional color writes are unsupported"); !reason.empty()) return reason;
+        if (auto reason = require((word & 8u) == 0 || surface, "depth bounds without a depth surface"); !reason.empty()) return reason;
+        if (auto reason = require((word & 0xc0000000u) == 0, "depth-conditional color writes are unsupported"); !reason.empty()) return reason;
     }
     if (auto reason = nonzero(cx, 0x203, ShaderControlMask, "depth export, shader coverage or ordered fragment execution"); !reason.empty()) return reason;
     if (auto reason = nonzero(cx, 0x2dc, AlphaToCoverageMask, "alpha-to-coverage"); !reason.empty()) return reason;

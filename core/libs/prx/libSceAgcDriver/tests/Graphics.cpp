@@ -451,6 +451,45 @@ void DepthStencilTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "array views");
 }
 
+void DepthBoundsBiasTests() {
+    const auto bits = [](float value) {
+        std::uint32_t word = 0;
+        std::memcpy(&word, &value, sizeof(word));
+        return word;
+    };
+    auto queue = makeState();
+    queue.context[0x000] = 0;
+    queue.context[0x002] = 0;
+    queue.context[0x007] = (1u << 16u) | 3u;
+    queue.context[0x00a] = 0;
+    queue.context[0x00b] = 0;
+    queue.context[0x010] = 0x22900983;
+    queue.context[0x011] = 0x20000180;
+    for (const auto offset : {0x012u, 0x014u}) queue.context[offset] = 0x100;
+    queue.context[0x200] = 0x0000006e;
+    queue.context[0x008] = bits(0.25f);
+    queue.context[0x009] = bits(0.75f);
+    auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthTest && state.depthBoundsTest && state.minDepthBounds == 0.25f && state.maxDepthBounds == 0.75f, "depth bounds decode changed");
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+    Require(rejection.empty(), "precheck rejected depth bounds with a depth surface: " + rejection);
+    queue.context[0x205] = 0x00001a48u;
+    queue.context[0x2df] = bits(0.5f);
+    for (const auto offset : {0x2e0u, 0x2e2u}) queue.context[offset] = bits(32.0f);
+    for (const auto offset : {0x2e1u, 0x2e3u}) queue.context[offset] = bits(4.0f);
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthBias && state.depthBiasSlope == 2.0f && state.depthBiasConstant == 4.0f && state.depthBiasClamp == 0.5f, "depth bias decode changed");
+    queue.context[0x2e3] = bits(8.0f);
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "differing between front and back");
+    queue.context[0x205] = 0x00001a4au;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthBias && state.depthBiasConstant == 4.0f, "culled back faces must not constrain the front depth bias");
+    queue.context[0x2de] = 0x1f0u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "units other than the depth format");
+}
+
 alignas(256) std::array<std::uint8_t, 4> dccKeys{};
 
 void metadataPassTests() {
@@ -1663,11 +1702,21 @@ int main() {
             draw.indexAddress = 0;
             draw.flags = 1;
             expectFailure([&] { AgcDriver::Graphics::Draw(context, state, draw, {}); }, "draw modifiers");
+            auto bounded = state;
+            bounded.depthBoundsTest = true;
+            bounded.minDepthBounds = 0.25f;
+            AgcDriver::Graphics::ValidateDepthBounds(context, bounded);
+            bounded.minDepthBounds = 1.5f;
+            expectFailure([&] { AgcDriver::Graphics::ValidateDepthBounds(context, bounded); }, "depth bounds outside [0, 1]");
+            auto unrestricted = context;
+            unrestricted.depthRangeUnrestricted = true;
+            AgcDriver::Graphics::ValidateDepthBounds(unrestricted, bounded);
         }
         stateTests();
         hardwareScreenOffsetTests();
         DepthClipTests();
         DepthStencilTests();
+        DepthBoundsBiasTests();
         DisabledColorTests();
         metadataPassTests();
         ShaderStageTests();
