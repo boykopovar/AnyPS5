@@ -174,7 +174,17 @@ void verifyBindlessTable() {
 
     struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
     static Texture textures[2];
-    std::array<std::array<std::uint32_t, 8>, 4> heap{};
+    struct alignas(4096) GuestTables {
+        std::array<std::array<std::uint32_t, 8>, 4> heap{};
+        std::array<std::array<std::uint32_t, 4>, 3> materials{};
+        std::array<std::uint32_t, 4> output{};
+        std::array<std::uint32_t, 16> srt{};
+    };
+    static GuestTables guest;
+    auto& heap = guest.heap;
+    auto& materials = guest.materials;
+    auto& output = guest.output;
+    auto& srt = guest.srt;
     const auto makeTexture = [&](std::uint32_t entry, const Texture& texture) {
         const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
         heap[entry] = {static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
@@ -182,13 +192,11 @@ void verifyBindlessTable() {
     makeTexture(0, textures[0]);
     makeTexture(1, textures[1]);
     heap[3] = heap[0];
-    std::array<std::array<std::uint32_t, 4>, 3> materials{{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u, 0u, 0u}}};
-    std::array<std::uint32_t, 4> output{};
+    materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u, 0u, 0u}}};
     const auto bufferDescriptor = [](const void* base, std::uint32_t stride, std::uint32_t records) {
         const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
         return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), records, 0xfacu};
     };
-    std::array<std::uint32_t, 16> srt{};
     const auto fillSrt = [&](std::uint32_t heapRecords) {
         const auto heapV = bufferDescriptor(heap.data(), 32u, heapRecords);
         const auto materialV = bufferDescriptor(materials.data(), 16u, 3u);
@@ -716,9 +724,14 @@ void verifyWaveUniformValues() {
 
 void verifyTwoLaneUniformValues() {
     using namespace ShaderRecompiler;
-    static std::array<std::uint32_t, 64> output{};
+    struct alignas(4096) GuestTables {
+        std::array<std::uint32_t, 64> output{};
+        std::array<std::uint32_t, 8> srt{};
+    };
+    static GuestTables guest;
+    auto& output = guest.output;
     const auto outputBase = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
-    static std::array<std::uint32_t, 8> srt{};
+    auto& srt = guest.srt;
     srt = {6u, 7u, 0u, 0u, static_cast<std::uint32_t>(outputBase), static_cast<std::uint32_t>((outputBase >> 32u) & 0xffffu), 64u, 0xfacu};
     const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
@@ -786,8 +799,15 @@ int main() {
         require(optimizedSpirv == ValidateAndOptimizeSpirv(minimalSpirv, 0x00401001u, 0x00010000u), "SPIR-V optimization is not deterministic");
 #endif
         const std::array<std::uint32_t, 8> code{0xf4040004u, 0xfa000000u, 0xf4000080u, 0xfa000000u, 0x7e000202u, 0xf80008cfu, 0u, 0xbf810000u};
-        std::uint32_t payload = 0x3f800000u;
-        std::uint64_t table = reinterpret_cast<std::uintptr_t>(&payload);
+        struct alignas(4096) GuestTables {
+            std::uint32_t payload = 0;
+            std::uint64_t table = 0;
+        };
+        static GuestTables guest;
+        auto& payload = guest.payload;
+        payload = 0x3f800000u;
+        auto& table = guest.table;
+        table = reinterpret_cast<std::uintptr_t>(&payload);
         const auto address = reinterpret_cast<std::uintptr_t>(&table);
         const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
         RecompileRequest request{};
