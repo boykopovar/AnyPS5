@@ -1164,6 +1164,25 @@ bool VulkanDevice::AfterRecordedWork(std::function<void()> action, bool reapFirs
     return state->recorder->AfterRecordedWork(std::move(action));
 }
 
+bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
+    if (!state->recorder) return false;
+    auto& recorder = *state->recorder;
+    constexpr std::size_t bytes = 15 * 16 + 8;
+    if (OpportunisticReap()) recorder.Reap();
+    if (state->CopiedWriterOverlaps(address, bytes) || (Graphics::Recorder::PendingCompletionLabels() != 0 && recorder.CompletionLabelIn(address, bytes))) return false;
+    const auto context = graphicsContext();
+    Graphics::StorageTexture::FlushPending(address, bytes, nullptr, "occlusion counter dump", Graphics::PublishScope::PartialUnits);
+    const auto* import = Graphics::HostImportFor(context, address, bytes);
+    if (import == nullptr || import->address == 0) return false;
+    if (Graphics::AnyShadowedOverlaps(address, bytes)) Graphics::PublishShadow(address, bytes, Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
+    recorder.FlushStoresOverlapping(address, bytes);
+    recorder.FlushKeyStoresOverlapping(address, bytes);
+    if (!recorder.DumpSamples(import->address + (address - import->base))) return false;
+    recorder.NotePendingWrite(address, bytes);
+    GuestMemory::MarkWritten(address, bytes);
+    return true;
+}
+
 bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::span<const std::uint32_t, 4> pattern) {
     if (!state->recorder || bytes == 0 || bytes % 16 != 0 || address % 16 != 0) return false;
     auto& recorder = *state->recorder;

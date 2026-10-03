@@ -270,7 +270,7 @@ void Driver::execute(const Submission& submission) {
                 }
             }); });
             finishDrawPacket(drawn);
-        } else if (sampleDump) {
+        } else if (sampleDump && !wroteOnGpu) {
             dumpSampleCounters(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u));
         } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
             if (!wroteOnGpu) {
@@ -281,7 +281,7 @@ void Driver::execute(const Submission& submission) {
             }
             if (endOfPipeInterrupt && !interruptDeferred) AgcDriverDeliverEopInterrupt(submission.queue);
         }
-        if (drawPacket) Graphics::Recorder::CountRecordedWork();
+        if (drawPacket || (sampleDump && wroteOnGpu)) Graphics::Recorder::CountRecordedWork();
         cursor += count;
     }
 

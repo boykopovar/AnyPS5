@@ -107,7 +107,17 @@ void materializeRegisterClear(const Context& context, const ColorTarget& color, 
     if (CurrentDccKeys(color.dccAddress, color.bytes) != DccKeys::ClearRegister) return;
     const auto texel = clearTexel(color, DccKeys::ClearRegister);
     const char* refusal = nullptr;
-    if (clearToTexel(resident, texel, color.elementBytes, refusal)) {
+    bool cleared = clearToTexel(resident, texel, color.elementBytes, refusal);
+    const auto keyBytes = static_cast<std::size_t>(color.bytes / 256);
+    if (!cleared && keyBytes != 0) {
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(color.dccAddress, keyBytes)) {
+            Recorder::CountSync(2);
+            recorder->SyncThrough(color.dccAddress, keyBytes);
+            if (CurrentDccKeys(color.dccAddress, color.bytes) != DccKeys::ClearRegister) return;
+            cleared = clearToTexel(resident, texel, color.elementBytes, refusal);
+        }
+    }
+    if (cleared) {
         MarkDccUncompressed(context, color.dccAddress, color.bytes);
         return;
     }
@@ -931,6 +941,7 @@ struct IndirectRecord {
 // The draw commands of one draw: the vertex and index buffer binds, then the direct draw, the
 // GPU-side indirect draw from `argumentBuffer` or the CPU-read records with the driver's rules.
 void recordDrawCommands(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset) {
+    if (context.recorder != nullptr) context.recorder->NoteSampledDraw();
     const auto* args = indirect != nullptr ? indirect->args : nullptr;
     if (state.stages.mesh) {
         APS5_LOG_OUT_DEBUG("vkCmdDrawMeshTasksEXT groups=%u instances=%u", inputs.meshGroups, draw.instanceCount);

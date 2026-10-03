@@ -1830,6 +1830,68 @@ void importWindowTests(const Device& device, Recorder& recorder) {
 #endif
 }
 
+void sampleDumpTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress) {
+        std::cout << "host imports or buffer device addresses unavailable: occlusion counter dumps on the GPU not tested\n";
+        return;
+    }
+    constexpr std::size_t bytes = 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the occlusion counter block");
+    auto* words = static_cast<std::uint64_t*>(block);
+    constexpr std::uint64_t untouched = 0xaaaaaaaaaaaaaaaaull;
+    std::fill(words, words + 64, untouched);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{context, block, address};
+    const auto* import = HostImportFor(context, address, bytes);
+    if (import == nullptr || import->address == 0) {
+        std::cout << "host import of the occlusion counter block refused: occlusion counter dumps on the GPU not tested\n";
+        return;
+    }
+    const auto target = import->address + (address - import->base);
+    recorder.Sync();
+    constexpr std::uint64_t ready = 1ull << 63u;
+    Require(recorder.DumpSamples(target), "the occlusion counters were not dumped on the GPU");
+    Require(words[0] == untouched && !recorder.Idle(), "the occlusion counter dump waited for the GPU or landed before its batch ran");
+    recorder.Sync();
+    const auto begin = recorder.SamplesTotal();
+    for (std::size_t db = 0; db < 16; ++db) {
+        Require(words[db * 2] == ((db == 0 ? begin : 0) | ready), "an occlusion counter dump stored the wrong value");
+        Require(words[db * 2 + 1] == untouched, "an occlusion counter dump stored over the next counter");
+    }
+    Require(recorder.DumpSamples(target + 8), "the second occlusion counter dump was not made on the GPU");
+    recorder.Submit();
+    recorder.Sync();
+    for (std::size_t db = 0; db < 16; ++db) {
+        Require(words[db * 2 + 1] == ((db == 0 ? begin : 0) | ready), "the counters changed with nothing drawn between two dumps");
+        Require(words[db * 2] == ((db == 0 ? begin : 0) | ready), "the second dump stored over the first");
+    }
+    Require(recorder.SamplesTotal() == begin, "the sample total moved with nothing drawn");
+    for (int i = 0; i < 40; ++i) Require(recorder.DumpSamples(target), "a dump past one batch's query slots was not made on the GPU");
+    recorder.Sync();
+    Require(words[0] == (begin | ready) && recorder.SamplesTotal() == begin, "dumps past one batch's query slots moved the total");
+}
+
 void metadataPassTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -2350,6 +2412,7 @@ int main() {
         minLodTests(device, recorder);
         firstLayerViewTests(device, recorder);
         metadataPassTests(device, recorder);
+        sampleDumpTests(device, recorder);
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/shaders/SampleCounter_spv.h"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
@@ -169,6 +170,48 @@ std::mutex liveRecordersMutex;
 std::vector<std::uint64_t> liveRecorders;
 std::atomic<std::uint64_t> nextRecorderId{1};
 std::atomic<std::uint64_t> samplesPassed{0};
+constexpr std::uint32_t SampleFoldCapacity = 64;
+constexpr std::uint32_t SampleCounterPushBytes = 24;
+
+struct SamplePoolCache {
+    VkDevice device;
+    PFN_vkDestroyQueryPool destroy;
+    std::mutex mutex;
+    std::vector<VkQueryPool> free;
+    bool closed = false;
+    void put(VkQueryPool pool) {
+        {
+            std::lock_guard lock(mutex);
+            if (!closed && free.size() < 256) {
+                free.push_back(pool);
+                return;
+            }
+        }
+        destroy(device, pool, nullptr);
+    }
+    VkQueryPool take() {
+        std::lock_guard lock(mutex);
+        if (free.empty()) return VK_NULL_HANDLE;
+        const auto pool = free.back();
+        free.pop_back();
+        return pool;
+    }
+    void close() {
+        std::lock_guard lock(mutex);
+        closed = true;
+        for (const auto pool : free) destroy(device, pool, nullptr);
+        free.clear();
+    }
+};
+
+struct SamplePool {
+    SamplePool(std::shared_ptr<SamplePoolCache> cache, VkQueryPool pool) : cache(std::move(cache)), pool(pool) {}
+    SamplePool(const SamplePool&) = delete;
+    SamplePool& operator=(const SamplePool&) = delete;
+    ~SamplePool() { cache->put(pool); }
+    std::shared_ptr<SamplePoolCache> cache;
+    VkQueryPool pool;
+};
 
 bool RecorderAlive(std::uint64_t id) {
     std::lock_guard lock(liveRecordersMutex);
@@ -1094,6 +1137,13 @@ Recorder::~Recorder() {
         std::lock_guard tableLock(labelTableMutex);
         if (labelTableOwner == this) labelTableOwner = nullptr;
     }
+    if (sampleCounterState > 0) {
+        samplesPassed.store(SamplesTotal(), std::memory_order_release);
+        if (samplePools != nullptr) std::static_pointer_cast<SamplePoolCache>(samplePools)->close();
+        context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, samplePipeline, nullptr);
+        context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, sampleLayout, nullptr);
+        sampleCounter.reset();
+    }
     for (auto& [commands, fence] : spare) {
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &commands);
         context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
@@ -1807,26 +1857,158 @@ void Recorder::EndGpuTiming(std::uint32_t index, std::uint64_t bytes) {
 
 void Recorder::CountSamples() {
     GuestMemory::AssertGpuLockHeld("Recorder::CountSamples");
+    gpuSampleCounter();
     countingSamples = true;
     if (open == nullptr || open->samples != VK_NULL_HANDLE) return;
     if (open->renderPass.open) endOpenRenderPass();
     beginSamples(*open);
 }
 
-std::uint64_t Recorder::SamplesPassed() {
-    return samplesPassed.load(std::memory_order_acquire);
+std::uint64_t Recorder::SamplesTotal() {
+    if (sampleCounterState <= 0) return samplesPassed.load(std::memory_order_acquire);
+    std::uint64_t total = 0;
+    std::memcpy(&total, sampleCounter->Bytes().data(), sizeof(total));
+    for (const auto& segment : pendingSamples) {
+        std::uint64_t samples = 0;
+        Check(context.Function<PFN_vkGetQueryPoolResults>("vkGetQueryPoolResults")(context.device, segment.handle, 0, 1, sizeof(samples), &samples, sizeof(samples), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT), "vkGetQueryPoolResults occlusion");
+        total += samples;
+    }
+    pendingSamples.clear();
+    std::memcpy(sampleCounter->Bytes().data(), &total, sizeof(total));
+    return total;
+}
+
+void Recorder::NoteSampledDraw() {
+    if (open != nullptr && open->sampleActive) open->samplesDrawn = true;
+}
+
+bool Recorder::gpuSampleCounter() {
+    if (sampleCounterState != 0) return sampleCounterState > 0;
+    sampleCounterState = -1;
+    if (!context.bufferDeviceAddress) return false;
+    VkShaderModule module = VK_NULL_HANDLE;
+    try {
+        sampleCounter = std::make_unique<Buffer>(context, 16 + 8 * SampleFoldCapacity, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        std::memset(sampleCounter->Bytes().data(), 0, sampleCounter->Bytes().size());
+        const auto initial = samplesPassed.load(std::memory_order_acquire);
+        std::memcpy(sampleCounter->Bytes().data(), &initial, sizeof(initial));
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes};
+        VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &push;
+        Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &sampleLayout), "vkCreatePipelineLayout sample counter");
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = sizeof(SAMPLE_COUNTER_SPV);
+        moduleInfo.pCode = SAMPLE_COUNTER_SPV;
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule sample counter");
+        VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        pipelineInfo.stage.module = module;
+        pipelineInfo.stage.pName = "main";
+        pipelineInfo.layout = sampleLayout;
+        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &samplePipeline), "vkCreateComputePipelines sample counter");
+        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+    } catch (const std::exception& error) {
+        if (module != VK_NULL_HANDLE) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+        if (sampleLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, sampleLayout, nullptr);
+        sampleLayout = VK_NULL_HANDLE;
+        sampleCounter.reset();
+        std::fprintf(stderr, "[gpu] occlusion counter dumps drain the device: %s\n", error.what());
+        return false;
+    }
+    sampleCounterState = 1;
+    return true;
+}
+
+void Recorder::endSamples(Batch& batch) {
+    if (!batch.sampleActive) return;
+    context.Function<PFN_vkCmdEndQuery>("vkCmdEndQuery")(batch.commands, batch.samples, 0);
+    batch.sampleActive = false;
+    if (sampleCounterState > 0 && batch.samplesDrawn) pendingSamples.push_back({batch.samplePool, batch.samples});
+    batch.samplesDrawn = false;
+}
+
+void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
+    const auto commands = batch.commands;
+    const auto copy = context.Function<PFN_vkCmdCopyQueryPoolResults>("vkCmdCopyQueryPoolResults");
+    const auto bind = context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
+    const auto push = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
+    const auto dispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
+    std::size_t done = 0;
+    do {
+        const auto count = static_cast<std::uint32_t>(std::min<std::size_t>(SampleFoldCapacity, pendingSamples.size() - done));
+        if (done != 0) recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto& segment = pendingSamples[done + i];
+            copy(commands, segment.handle, 0, 1, sampleCounter->Handle(), 16 + 8 * i, 8, VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+            if (segment.pool != nullptr) batch.kept.push_back(segment.pool);
+        }
+        done += count;
+        const bool last = done == pendingSamples.size();
+        recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, samplePipeline);
+        struct {
+            VkDeviceAddress counter;
+            VkDeviceAddress target;
+            std::uint32_t count;
+            std::uint32_t store;
+        } parameters{sampleCounter->DeviceAddress(), target, count, last && target != 0 ? 1u : 0u};
+        static_assert(sizeof(parameters) == SampleCounterPushBytes);
+        push(commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
+        dispatch(commands, 1, 1, 1);
+    } while (done < pendingSamples.size());
+    recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_HOST_READ_BIT);
+    CountBarriers(CommandClass::Copy, 2);
+    pendingSamples.clear();
+}
+
+bool Recorder::DumpSamples(VkDeviceAddress target) {
+    GuestMemory::AssertGpuLockHeld("Recorder::DumpSamples");
+    if (target == 0 || !gpuSampleCounter()) return false;
+    countingSamples = true;
+    Commands();
+    endSamples(*open);
+    foldSamples(*open, target);
+    if (open->samplePool != nullptr) open->kept.push_back(std::move(open->samplePool));
+    open->samplePool.reset();
+    open->samples = VK_NULL_HANDLE;
+    beginSamples(*open);
+    return true;
 }
 
 void Recorder::beginSamples(Batch& batch) {
-    VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-    info.queryType = VK_QUERY_TYPE_OCCLUSION;
-    info.queryCount = 1;
-    Check(context.Function<PFN_vkCreateQueryPool>("vkCreateQueryPool")(context.device, &info, nullptr, &batch.samples), "vkCreateQueryPool occlusion");
+    auto cache = std::static_pointer_cast<SamplePoolCache>(samplePools);
+    if (sampleCounterState > 0 && cache == nullptr) {
+        cache = std::make_shared<SamplePoolCache>();
+        cache->device = context.device;
+        cache->destroy = context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool");
+        samplePools = cache;
+    }
+    batch.samples = sampleCounterState > 0 ? cache->take() : VK_NULL_HANDLE;
+    if (batch.samples == VK_NULL_HANDLE) {
+        VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        info.queryType = VK_QUERY_TYPE_OCCLUSION;
+        info.queryCount = 1;
+        Check(context.Function<PFN_vkCreateQueryPool>("vkCreateQueryPool")(context.device, &info, nullptr, &batch.samples), "vkCreateQueryPool occlusion");
+    }
+    if (sampleCounterState > 0) {
+        try {
+            batch.samplePool = std::make_shared<SamplePool>(cache, batch.samples);
+        } catch (...) {
+            cache->put(batch.samples);
+            batch.samples = VK_NULL_HANDLE;
+            throw;
+        }
+    }
     context.Function<PFN_vkCmdResetQueryPool>("vkCmdResetQueryPool")(batch.commands, batch.samples, 0, 1);
     context.Function<PFN_vkCmdBeginQuery>("vkCmdBeginQuery")(batch.commands, batch.samples, 0, context.occlusionQueryPrecise ? VK_QUERY_CONTROL_PRECISE_BIT : 0u);
+    batch.sampleActive = true;
+    batch.samplesDrawn = false;
 }
 
 void Recorder::readSamples(Batch& batch) {
+    if (sampleCounterState > 0) return;
     if (batch.samples == VK_NULL_HANDLE || !batch.submitted) return;
     std::uint64_t samples = 0;
     Check(context.Function<PFN_vkGetQueryPoolResults>("vkGetQueryPoolResults")(context.device, batch.samples, 0, 1, sizeof(samples), &samples, sizeof(samples), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT), "vkGetQueryPoolResults occlusion");
@@ -2279,6 +2461,17 @@ bool Recorder::PendingLabelIn(std::uint64_t address, std::size_t bytes) const {
     return false;
 }
 
+bool Recorder::CompletionLabelIn(std::uint64_t address, std::size_t bytes) const {
+    std::lock_guard tableLock(labelTableMutex);
+    if (bytes == 0) return false;
+    const auto end = address + bytes;
+    for (auto it = labels.lower_bound(address); it != labels.end() && it->first < end; ++it) {
+        if (it->second.behindCompletion) return true;
+    }
+    if (const auto first = queuedLabels.lower_bound(address); first != queuedLabels.end() && first->first < end) return true;
+    return false;
+}
+
 std::optional<Recorder::LabelHit> Recorder::lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const {
     if (refusal != nullptr) *refusal = LabelRefusal::None;
     if ((labels.empty() && queuedLabels.empty()) || (bytes != 4 && bytes != 8) || address % 4 != 0) return std::nullopt;
@@ -2440,7 +2633,8 @@ void Recorder::Submit() {
     GuestMemory::AssertGpuLockHeld("Recorder::Submit");
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass();
-    if (open->samples != VK_NULL_HANDLE) context.Function<PFN_vkCmdEndQuery>("vkCmdEndQuery")(open->commands, open->samples, 0);
+    endSamples(*open);
+    if (pendingSamples.size() >= SampleFoldCapacity) foldSamples(*open, 0);
     const bool hostReadCovered = (open->run.open || !open->run.queued.empty()) && closeStoreRun(true);
     if (BarrierValidate()) validateBatchEnds.fetch_add(1, std::memory_order_relaxed);
     if (open->hostReadOwed && !hostReadCovered) {
@@ -3017,8 +3211,9 @@ void Recorder::release(Batch& batch) noexcept {
         if (batch.queries != VK_NULL_HANDLE) context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, batch.queries, nullptr);
     }
     batch.queries = VK_NULL_HANDLE;
-    if (batch.samples != VK_NULL_HANDLE) context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, batch.samples, nullptr);
+    if (batch.samples != VK_NULL_HANDLE && batch.samplePool == nullptr) context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, batch.samples, nullptr);
     batch.samples = VK_NULL_HANDLE;
+    batch.samplePool.reset();
     // A completed (or never submitted) batch's objects are kept for reuse: the fence is signaled or
     // untouched, so resetting it cannot block, and the command buffer is no longer pending.
     if (batch.commands != VK_NULL_HANDLE && batch.fence != VK_NULL_HANDLE && spare.size() < 64 && function(resetFences, "vkResetFences")(context.device, 1, &batch.fence) == VK_SUCCESS) {

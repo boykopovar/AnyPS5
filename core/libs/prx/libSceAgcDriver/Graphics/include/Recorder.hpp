@@ -176,7 +176,9 @@ public:
     // Submits and waits for every batch, running completions in order.
     void Sync();
     void CountSamples();
-    static std::uint64_t SamplesPassed();
+    std::uint64_t SamplesTotal();
+    bool DumpSamples(VkDeviceAddress target);
+    void NoteSampledDraw();
     // Waits only for the batches up to the newest one that writes the range (submitting the open
     // batch when it is that one); later batches stay in flight. Fences of one queue signal in
     // submission order, so completions still run in order. Debug aid: APS5_NO_SYNC_THROUGH=1 syncs all.
@@ -273,6 +275,7 @@ public:
     // inside [address, address + bytes): a range query for large ranges (a fill of megabytes),
     // where a per-dword lookup would not do.
     bool PendingLabelIn(std::uint64_t address, std::size_t bytes) const;
+    bool CompletionLabelIn(std::uint64_t address, std::size_t bytes) const;
     // PendingLabel of the active recorder WITHOUT GuestMemory::GpuMutex: the table has a small mutex
     // of its own (every mutation holds both), so a WAIT_REG_MEM consults it without queueing behind
     // device work. Nothing is done under the table mutex but the lookup (it never takes the GPU mutex).
@@ -501,6 +504,9 @@ private:
         std::chrono::steady_clock::time_point submittedAt{};
         VkQueryPool queries = VK_NULL_HANDLE;
         VkQueryPool samples = VK_NULL_HANDLE;
+        std::shared_ptr<void> samplePool;
+        bool sampleActive = false;
+        bool samplesDrawn = false;
         std::vector<std::uint64_t> timedKeys;
         std::vector<std::uint64_t> timedBytes;
         // The whole-batch timed range (BatchTimingKey) and its stamps once read (see Completed).
@@ -599,7 +605,20 @@ private:
     void readGpuTiming(Batch& batch);
     void beginSamples(Batch& batch);
     void readSamples(Batch& batch);
+    bool gpuSampleCounter();
+    void endSamples(Batch& batch);
+    void foldSamples(Batch& batch, VkDeviceAddress target);
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+    };
+    std::vector<SampleSegment> pendingSamples;
     bool countingSamples = false;
+    int sampleCounterState = 0;
+    std::unique_ptr<Buffer> sampleCounter;
+    VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
+    VkPipeline samplePipeline = VK_NULL_HANDLE;
+    std::shared_ptr<void> samplePools;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
