@@ -458,6 +458,7 @@ constexpr VectorOpcodeInfo vop3Opcodes[] = {
     {0x357u, RdnaOpcode::VMed3F16},
     {0x358u, RdnaOpcode::VMed3I16},
     {0x359u, RdnaOpcode::VMed3U16},
+    {0x35fu, RdnaOpcode::VDivFixupF16},
     {0x15au, RdnaOpcode::VSadU8},
     {0x15bu, RdnaOpcode::VSadHiU8},
     {0x15cu, RdnaOpcode::VSadU16},
@@ -639,6 +640,7 @@ bool isPermlaneOpcode(RdnaOpcode opcode) {
 
 bool isNativeVop3F16TernaryOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VMin3F16 || opcode == RdnaOpcode::VMax3F16 || opcode == RdnaOpcode::VMed3F16 ||
+        opcode == RdnaOpcode::VDivFixupF16 ||
         opcode == RdnaOpcode::VFmaF16;
 }
 

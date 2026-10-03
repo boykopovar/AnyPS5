@@ -63,6 +63,38 @@ bool TranslationContext::float16Unary(const RdnaInstruction& inst, IrOpcode opco
     return true;
 }
 
+bool TranslationContext::vDivFixupF16(const RdnaInstruction& inst) {
+    std::array<IrU32, 3> bits{};
+    std::array<IrU32, 3> magnitude{};
+    for (std::uint32_t index = 0u; index < bits.size(); ++index) {
+        const RdnaOperand& operand = sourceAt(inst, index);
+        const IrU32 source = readF16SourceBits(operand);
+        bits[index] = IrU32(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&source.Value(), &ir.Constant(operand.opSel ? 16u : 0u), &ir.Constant(16u)}));
+        if (operand.absolute) {
+            bits[index] = IrU32(ir.BitwiseAnd(bits[index].Value(), ir.Constant(0x7fffu)));
+        }
+        if (operand.negate) {
+            bits[index] = IrU32(ir.BitwiseXor(bits[index].Value(), ir.Constant(0x8000u)));
+        }
+        magnitude[index] = IrU32(ir.BitwiseAnd(bits[index].Value(), ir.Constant(0x7fffu)));
+    }
+    const auto isNan = [&](std::uint32_t index) { return IrU1(ir.UGreaterThan(magnitude[index].Value(), ir.Constant(0x7c00u))); };
+    const auto isInf = [&](std::uint32_t index) { return IrU1(ir.IEqual(magnitude[index].Value(), ir.Constant(0x7c00u))); };
+    const auto isZero = [&](std::uint32_t index) { return IrU1(ir.IEqual(magnitude[index].Value(), ir.Constant(0u))); };
+    const IrU32 sign(ir.BitwiseAnd(ir.BitwiseXor(bits[1].Value(), bits[2].Value()), ir.Constant(0x8000u)));
+    const IrU32 infinity(ir.BitwiseOr(sign.Value(), ir.Constant(0x7c00u)));
+    IrU32 result(ir.Select(isNan(0u).Value(), infinity.Value(), ir.BitwiseOr(sign.Value(), magnitude[0].Value())));
+    result = IrU32(ir.Select(ir.LogicalOr(isInf(1u).Value(), isZero(2u).Value()), sign.Value(), result.Value()));
+    result = IrU32(ir.Select(ir.LogicalOr(isZero(1u).Value(), isInf(2u).Value()), infinity.Value(), result.Value()));
+    const IrU1 bothZero(ir.LogicalAnd(isZero(1u).Value(), isZero(2u).Value()));
+    const IrU1 bothInf(ir.LogicalAnd(isInf(1u).Value(), isInf(2u).Value()));
+    result = IrU32(ir.Select(ir.LogicalOr(bothZero.Value(), bothInf.Value()), ir.Constant(0xfe00u), result.Value()));
+    result = IrU32(ir.Select(isNan(1u).Value(), ir.BitwiseOr(bits[1].Value(), ir.Constant(0x0200u)), result.Value()));
+    result = IrU32(ir.Select(isNan(2u).Value(), ir.BitwiseOr(bits[2].Value(), ir.Constant(0x0200u)), result.Value()));
+    write16Bits(inst.destination, result);
+    return true;
+}
+
 bool TranslationContext::float16Trig(const RdnaInstruction& inst, IrOpcode opcode) {
     const IrF32 argument = readF16AsF32(sourceAt(inst, 0u));
     const IrU32 magnitude(ir.BitwiseAnd(ir.BitCastU32(argument.Value()), ir.Constant(0x7fffffffu)));

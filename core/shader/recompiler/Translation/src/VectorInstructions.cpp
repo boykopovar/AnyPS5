@@ -831,6 +831,8 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return float16Ternary(inst, IrOpcode::FPMaxTri32, false, false);
     case RdnaOpcode::VMed3F16:
         return float16Ternary(inst, IrOpcode::FPMedTri32, false, false);
+    case RdnaOpcode::VDivFixupF16:
+        return vDivFixupF16(inst);
     case RdnaOpcode::VFrexpMantF32:
         return vFrexpMantF32(inst);
     case RdnaOpcode::VRcpF32:

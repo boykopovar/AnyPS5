@@ -145,6 +145,7 @@ private:
     bool packedFloat16(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool quietSnan);
     bool float16Unary(const RdnaInstruction& inst, IrOpcode opcode, bool invalidNegative);
     bool float16Trig(const RdnaInstruction& inst, IrOpcode opcode);
+    bool vDivFixupF16(const RdnaInstruction& inst);
     bool float16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
