@@ -1000,7 +1000,9 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     case RdnaOpcode::VMadU32U24:
         return integer24(inst, false, true);
     case RdnaOpcode::VMadU64U32:
-        return vMadU64U32(inst);
+        return vMad64x32(inst, false);
+    case RdnaOpcode::VMadI64I32:
+        return vMad64x32(inst, true);
     case RdnaOpcode::VSadU32:
         return vSadU32(inst);
     case RdnaOpcode::VSadU8:

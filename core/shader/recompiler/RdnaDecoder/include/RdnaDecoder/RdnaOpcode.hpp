@@ -58,6 +58,7 @@ enum class RdnaOpcode : std::uint16_t {
     VMulLoU32,
     VMulHiU32,
     VMadU64U32,
+    VMadI64I32,
     VSadU32,
     VSadU8,
     VSadHiU8,

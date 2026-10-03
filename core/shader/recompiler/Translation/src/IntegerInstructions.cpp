@@ -312,12 +312,12 @@ bool TranslationContext::integer24(const RdnaInstruction& inst, bool sign, bool 
     return true;
 }
 
-bool TranslationContext::vMadU64U32(const RdnaInstruction& inst) {
+bool TranslationContext::vMad64x32(const RdnaInstruction& inst, bool sign) {
     const IrU32 lhs = readU32(sourceAt(inst, 0u));
     const IrU32 rhs = readU32(sourceAt(inst, 1u));
     const std::array<IrU32, 2> add = extractU64(readU64(sourceAt(inst, 2u)));
     const IrU32 mulLow(ir.IMul(lhs.Value(), rhs.Value()));
-    const IrU32 mulHigh(ir.Emit(IrOpcode::UMulHi, IrType::U32, {&lhs.Value(), &rhs.Value()}));
+    const IrU32 mulHigh(ir.Emit(sign ? IrOpcode::SMulHi : IrOpcode::UMulHi, IrType::U32, {&lhs.Value(), &rhs.Value()}));
     const IrU32 low(ir.IAdd(mulLow.Value(), add[0].Value()));
     const IrU1 carryLow(ir.ULessThan(low.Value(), mulLow.Value()));
     const IrU32 high0(ir.IAdd(mulHigh.Value(), add[1].Value()));
@@ -328,7 +328,14 @@ bool TranslationContext::vMadU64U32(const RdnaInstruction& inst) {
     const IrU64 result(ir.ConstructU64(low.Value(), high.Value()));
     writeOperand(inst.destination, &result.Value());
     if (inst.destination2.kind != RdnaOperandKind::Null && inst.destination2.kind != RdnaOperandKind::Unknown) {
-        writeMask(inst.destination2, IrU1(ir.LogicalOr(carry0.Value(), carry1.Value())));
+        const IrU1 carry(ir.LogicalOr(carry0.Value(), carry1.Value()));
+        if (!sign) {
+            writeMask(inst.destination2, carry);
+            return true;
+        }
+        const IrU32 signsDiffer(ir.ShiftRightLogical(ir.BitwiseXor(mulHigh.Value(), add[1].Value()), ir.Constant(31u)));
+        const IrU32 carryU32(ir.Select(carry.Value(), ir.Constant(1u), ir.Constant(0u)));
+        writeMask(inst.destination2, IrU1(ir.INotEqual(signsDiffer.Value(), carryU32.Value())));
     }
     return true;
 }

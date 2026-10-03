@@ -158,7 +158,7 @@ std::uint32_t decodedDstSize(const RdnaInstruction& inst) {
 }
 
 std::uint32_t embeddedFetchDstSize(const RdnaInstruction& inst) {
-    return inst.op == RdnaOpcode::VMadU64U32 ? 2u : decodedDstSize(inst);
+    return inst.op == RdnaOpcode::VMadU64U32 || inst.op == RdnaOpcode::VMadI64I32 ? 2u : decodedDstSize(inst);
 }
 
 // How many consecutive SGPRs a scalar operand of the instruction names, over-estimated where the

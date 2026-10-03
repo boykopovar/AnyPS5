@@ -430,6 +430,7 @@ constexpr VectorOpcodeInfo vop3Opcodes[] = {
     {0x142u, RdnaOpcode::VMadI32I24},
     {0x143u, RdnaOpcode::VMadU32U24},
     {0x176u, RdnaOpcode::VMadU64U32},
+    {0x177u, RdnaOpcode::VMadI64I32},
     {0x144u, RdnaOpcode::VCubeidF32},
     {0x145u, RdnaOpcode::VCubescF32},
     {0x146u, RdnaOpcode::VCubetcF32},
@@ -630,7 +631,7 @@ bool isVop3BCarryOutOpcode(RdnaOpcode opcode) {
 }
 
 bool isVop3BMadU64Opcode(RdnaOpcode opcode) {
-    return opcode == RdnaOpcode::VMadU64U32;
+    return opcode == RdnaOpcode::VMadU64U32 || opcode == RdnaOpcode::VMadI64I32;
 }
 
 bool isPermlaneOpcode(RdnaOpcode opcode) {
