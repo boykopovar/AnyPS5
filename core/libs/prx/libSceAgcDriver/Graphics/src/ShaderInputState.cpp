@@ -25,6 +25,7 @@ constexpr std::uint32_t spiPsInputAddr = 0x1B4;
 constexpr std::uint32_t spiPsInControl = 0x1B6;
 constexpr std::uint32_t dbShaderControl = 0x203;
 constexpr std::uint32_t spiShaderColFormat = 0x1C5;
+constexpr std::uint32_t defaultPixelInputs = 0x2u;
 
 std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBank bank) {
     NoteRegisterRead(bank, offset);
@@ -35,6 +36,12 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
         throw std::runtime_error(text);
     }
     return it->second;
+}
+
+std::uint32_t readOr(const Registers& registers, std::uint32_t offset, RegisterBank bank, std::uint32_t fallback) {
+    NoteRegisterRead(bank, offset);
+    const auto it = registers.find(offset);
+    return it == registers.end() ? fallback : it->second;
 }
 
 template <typename T> T _readHeaderPod(std::span<const std::byte> header, std::uint64_t headerAddress, const void* pointer) {
@@ -90,8 +97,8 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     if (inputNum > 32u) {
         throw std::runtime_error("AGC graphics: SPI_PS_IN_CONTROL input count exceeds 32");
     }
-    const auto ena = read(context, spiPsInputEna, RegisterBank::Context);
-    const auto addr = read(context, spiPsInputAddr, RegisterBank::Context);
+    const auto ena = readOr(context, spiPsInputEna, RegisterBank::Context, defaultPixelInputs);
+    const auto addr = readOr(context, spiPsInputAddr, RegisterBank::Context, defaultPixelInputs);
     const auto activeInputs = ena & addr;
     using ShaderRecompiler::PixelInput;
     using ShaderRecompiler::PixelInputBit;
@@ -114,7 +121,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     if (((shaderControl >> 13u) & 0x3u) != 0) {
         throw std::runtime_error("AGC graphics: DB_SHADER_CONTROL.CONSERVATIVE_Z_EXPORT is unsupported");
     }
-    const auto colFormat = read(context, spiShaderColFormat, RegisterBank::Context);
+    const auto colFormat = readOr(context, spiShaderColFormat, RegisterBank::Context, 0u);
     std::array<std::uint8_t, 8> targetOutputMode{};
     for (std::uint32_t i = 0; i < 8u; ++i) {
         targetOutputMode[i] = static_cast<std::uint8_t>((colFormat >> (4u * i)) & 0xFu);

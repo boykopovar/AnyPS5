@@ -724,14 +724,6 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     std::uint32_t targetMask = 0, shaderMask = 0;
     if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, (targetMask & shaderMask) != 0)) return colorControlMessage(word);
     if (auto reason = nonzero(cx, 0x1c4, ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
-    // The pixel stage decode (ShaderInputState.cpp) reads these after DecodeState and the program
-    // prepare; a bank without them fails there with this message.
-    for (const auto offset : {0x1b3u, 0x1b4u, 0x1c5u}) {
-        if (find(cx, offset) != cx.end()) continue;
-        char text[64];
-        std::snprintf(text, sizeof(text), "AGC graphics: missing register at DWORD 0x%x", offset);
-        return text;
-    }
     return {};
 }
 

@@ -161,6 +161,15 @@ void stateTests() {
     log.clear();
     static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
     Require(log.empty(), "the register facade recorded without a log");
+    queue = makeState();
+    queue.context.erase(0x1b3);
+    queue.context.erase(0x1b4);
+    Require(AgcDriver::Graphics::DrawRejection(queue, true).empty(), "a bank without SPI_PS_INPUT_ENA/ADDR was rejected");
+    state = AgcDriver::Graphics::DecodeState(queue);
+    queue.context.erase(0x1c5);
+    const auto unset = AgcDriver::Graphics::DecodePixelStageInfo(queue.context, AgcDriver::Graphics::ExportMappings(state));
+    Require(unset.inputAddr == ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCenter), "unset pixel inputs did not read as PERSP_CENTER_ENA");
+    for (const auto mode : unset.targetOutputMode) Require(mode == 0, "an unset SPI_SHADER_COL_FORMAT exported a color");
 }
 
 void hardwareScreenOffsetTests() {
