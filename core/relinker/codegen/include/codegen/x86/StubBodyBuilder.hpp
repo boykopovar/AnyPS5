@@ -17,6 +17,18 @@ struct LoweredBody {
 
 using StubConstant = std::array<std::uint8_t, 16>;
 
+struct MemoryOperand {
+    std::vector<std::uint8_t> Prefixes;
+    std::uint8_t RexIndexBase;
+    std::uint8_t Mod;
+    std::uint8_t Rm;
+    std::uint8_t Sib;
+    std::int32_t Displacement;
+    bool StackBase;
+};
+
+[[nodiscard]] MemoryOperand DecodeMemoryOperand(const std::uint8_t* data, std::size_t length, std::size_t modRmOffset, std::uint8_t rex, std::vector<std::uint8_t> prefixes);
+
 void EmitSse(std::vector<std::uint8_t>& out, std::uint8_t prefix, std::initializer_list<std::uint8_t> opcode, std::uint8_t dst, std::uint8_t src);
 void EmitShiftImm(std::vector<std::uint8_t>& out, std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
 
@@ -27,6 +39,7 @@ public:
     void ShiftImm(std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
     void ShiftDwordImm(std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
     void RipOperand(std::initializer_list<std::uint8_t> opcode, std::uint8_t reg, const StubConstant& constant);
+    void Load(std::uint8_t reg, const MemoryOperand& operand);
     void Spill(std::uint8_t reg);
     void Restore(std::uint8_t reg);
     void Raw(std::span<const std::uint8_t> bytes);
@@ -42,6 +55,7 @@ private:
     std::vector<std::uint8_t> _bytes;
     std::vector<Fixup> _fixups;
     std::vector<StubConstant> _constants;
+    std::size_t _stackDepth = 0;
 };
 
 }

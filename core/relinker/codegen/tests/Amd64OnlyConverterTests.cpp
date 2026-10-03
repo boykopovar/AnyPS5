@@ -169,7 +169,16 @@ void sha256Operands() {
     check({0x0F, 0x38, 0xCB, 0xCA}, Codegen::Sha256Operation::Rnds2, 1, 2);
     check({0x45, 0x0F, 0x38, 0xCC, 0xE1}, Codegen::Sha256Operation::Msg1, 12, 9);
     check({0x44, 0x0F, 0x38, 0xCD, 0xC0}, Codegen::Sha256Operation::Msg2, 8, 0);
-    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xCC, 0x08}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "SHA-256 memory operand was accepted");
+    const Bytes memory = {0x65, 0x67, 0x44, 0x0F, 0x38, 0xCD, 0x54, 0x8C, 0xF0};
+    const auto decoded = Codegen::DecodeSha256(memory.data(), memory.size());
+    require(decoded.Operation == Codegen::Sha256Operation::Msg2 && decoded.Destination == 10 && decoded.Memory && decoded.Memory->Prefixes == Bytes{0x65, 0x67} && decoded.Memory->Mod == 1 && decoded.Memory->Rm == 4 && decoded.Memory->Sib == 0x8C && decoded.Memory->Displacement == -16 && decoded.Memory->StackBase, "SHA-256 memory operand was decoded incorrectly");
+    const Bytes r12Base = {0x41, 0x0F, 0x38, 0xCC, 0x14, 0x24};
+    require(!Codegen::DecodeSha256(r12Base.data(), r12Base.size()).Memory->StackBase, "R12 base was decoded as RSP");
+    const Bytes absolute = {0x0F, 0x38, 0xCC, 0x14, 0x25, 0x78, 0x56, 0x34, 0x12};
+    const auto noBase = Codegen::DecodeSha256(absolute.data(), absolute.size());
+    require(!noBase.Memory->StackBase && noBase.Memory->Displacement == 0x12345678, "SIB without a base was decoded incorrectly");
+    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xCC, 0x15, 0, 0, 0, 0}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "SHA-256 RIP-relative operand was accepted");
+    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xCC, 0x54, 0x24}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "Truncated SHA-256 memory operand was accepted");
     requireFailure([] { const Bytes bytes = {0x66, 0x0F, 0x38, 0xCB, 0xCA}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "Prefixed 0F 38 CB was decoded as SHA-256");
     requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xC9, 0xCA}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "SHA-1 was decoded as SHA-256");
     check({0x41, 0x2E, 0x0F, 0x38, 0xCC, 0xCA}, Codegen::Sha256Operation::Msg1, 1, 2);
@@ -357,7 +366,12 @@ void converterSha256() {
     requireFailure([&] { (void)converter->Convert(beforeReturn, {segmentHeader(text.size())}); }, "Short SHA-256 instruction followed by a return was relocated");
     auto memoryForm = file;
     memoryForm[0x20F] = 0x28;
-    require(failureOffset([&] { (void)converter->Convert(memoryForm, {segmentHeader(text.size())}); }, "SHA-256 memory form was accepted") == 0x20C, "SHA-256 operand failure does not carry the file offset");
+    const auto memoryResult = converter->Convert(memoryForm, {segmentHeader(text.size())});
+    require(memoryResult.Trampolines.size() == 2 && memoryResult.Reports[1].InstructionName == "SHA256MSG2", "SHA-256 memory form was not lowered through a stub");
+    auto ripRelative = file;
+    const Bytes ripMessage = {0x0F, 0x38, 0xCD, 0x2D, 0x00, 0x00, 0x00, 0x00, 0xC3};
+    std::copy(ripMessage.begin(), ripMessage.end(), ripRelative.begin() + 0x20C);
+    require(failureOffset([&] { (void)converter->Convert(ripRelative, {segmentHeader(text.size() + 3)}); }, "SHA-256 RIP-relative form was accepted") == 0x20C, "SHA-256 operand failure does not carry the file offset");
 }
 
 void converterMonitorWait() {
@@ -606,20 +620,29 @@ std::array<std::uint64_t, 2> runRegisterFormStub(const Bytes& site, const std::u
     alignas(16) std::uint64_t out[2] = {};
     alignas(16) std::uint64_t scratchIn[2] = {kStubScratch[0], kStubScratch[1]};
     alignas(16) std::uint64_t scratchOut[2] = {};
+    alignas(16) std::uint64_t spareIn[2] = {kStubScratch[1], kStubScratch[0]};
+    alignas(16) std::uint64_t spareOut[2] = {};
     asm volatile(
         "movdqu (%[scratch]), %%xmm0\n\t"
+        "movdqu (%[spare]), %%xmm1\n\t"
         "movdqu (%[dst]), %%xmm2\n\t"
         "movdqu (%[ctl]), %%xmm5\n\t"
+        "mov %[ctl], %%rcx\n\t"
+        "mov %[ctl], %%r12\n\t"
+        "mov $16, %%eax\n\t"
         "sub $128, %%rsp\n\t"
+        "movdqu %%xmm5, 0x10(%%rsp)\n\t"
         "call *%[code]\n\t"
         "add $128, %%rsp\n\t"
         "movdqu %%xmm2, (%[out])\n\t"
         "movdqu %%xmm0, (%[scratchOut])\n\t"
+        "movdqu %%xmm1, (%[spareOut])\n\t"
         :
-        : [scratch] "r"(scratchIn), [dst] "r"(destinationIn), [ctl] "r"(sourceIn), [code] "r"(code), [out] "r"(out), [scratchOut] "r"(scratchOut)
-        : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "memory", "cc");
+        : [scratch] "r"(scratchIn), [spare] "r"(spareIn), [dst] "r"(destinationIn), [ctl] "r"(sourceIn), [code] "r"(code), [out] "r"(out), [scratchOut] "r"(scratchOut), [spareOut] "r"(spareOut)
+        : "rax", "rcx", "r12", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "memory", "cc");
     munmap(code, 4096);
     require(scratchOut[0] == scratchIn[0] && scratchOut[1] == scratchIn[1], "Register form stub clobbered a scratch register");
+    require(spareOut[0] == spareIn[0] && spareOut[1] == spareIn[1], "Stub clobbered xmm1");
     return {out[0], out[1]};
 }
 
@@ -648,6 +671,8 @@ void sha256Execution() {
         const Bytes same = {0x0F, 0x38, opcode, 0xD2};
         require(runRegisterFormStub(distinct, state, words) == sha256Reference(opcode, state, words, kStubScratch), "SHA-256 stub computed the wrong result");
         require(runRegisterFormStub(same, state, state) == sha256Reference(opcode, state, state, kStubScratch), "SHA-256 stub with equal operands computed the wrong result");
+        for (const auto& memory : {Bytes{0x0F, 0x38, opcode, 0x11}, Bytes{0x0F, 0x38, opcode, 0x54, 0x24, 0x18}, Bytes{0x0F, 0x38, opcode, 0x54, 0x04, 0x08}, Bytes{0x2E, 0x41, 0x0F, 0x38, opcode, 0x14, 0x24}, Bytes{0x0F, 0x38, opcode, 0x91, 0x00, 0x00, 0x00, 0x00}})
+            require(runRegisterFormStub(memory, state, words) == sha256Reference(opcode, state, words, kStubScratch), "SHA-256 memory form stub computed the wrong result");
     }
 }
 
