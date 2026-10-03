@@ -173,6 +173,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     if (roots.empty()) throw Domain::RelinkerException("Code analysis: no code entry points");
     std::set<std::uint64_t> instructions;
     const Codegen::X64InstructionDecoder decoder;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> skipped;
+    std::set<std::uint64_t> staticTargets;
     for (const auto& [begin, end] : functions) {
         const auto offset = fileOffset(begin, end - begin);
         for (auto address = begin; address < end;) {
@@ -180,14 +182,34 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             try {
                 info = decoder.DecodeInstruction(bytes.data() + offset + address - begin, end - address);
             } catch (const Codegen::CodegenException& error) {
-                throw Domain::RelinkerException(std::string("Code analysis: ") + error.what(), address);
+                const auto tailBytes = end - address;
+                bool tailHasFsPrefix = false;
+                for (auto probe = address; probe < end; ++probe) {
+                    if (bytes[offset + probe - begin] == 0x64) {
+                        tailHasFsPrefix = true;
+                        break;
+                    }
+                }
+                if (tailBytes > 15 || tailHasFsPrefix)
+                    throw Domain::RelinkerException(std::string("Code analysis: ") + error.what(), address);
+                skipped.emplace_back(address, end);
+                break;
             }
             if (info.Length == 0 || info.Length > end - address)
                 throw Domain::RelinkerException("Code analysis: instruction crosses function boundary", address);
             instructions.insert(address);
-            if (info.HasBranchTarget && !info.HasRipRelativeDisp)
-                addRoot(address + info.Length + static_cast<std::uint64_t>(info.BranchDisp));
+            if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
+                const auto target = address + info.Length + static_cast<std::uint64_t>(info.BranchDisp);
+                staticTargets.insert(target);
+                addRoot(target);
+            }
             address += info.Length;
+        }
+    }
+    for (const auto target : staticTargets) {
+        for (const auto& [skipBegin, skipEnd] : skipped) {
+            if (skipBegin <= target && target < skipEnd)
+                throw Domain::RelinkerException("Code analysis: branch into skipped range tail", target);
         }
     }
     std::size_t previousRoots = 0;
@@ -211,7 +233,35 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     } while (roots.size() != previousRoots);
     std::uint64_t previousEnd = 0;
     for (const auto address : instructions) {
-        if (address < previousEnd) throw Domain::RelinkerException("Code analysis: overlapping instruction boundaries", address);
+        if (address < previousEnd) {
+            std::uint64_t spanEnd = previousEnd;
+            try {
+                for (const auto& header : headers) {
+                    if (header.Type != 1 || (header.Flags & 1) == 0 || address < header.MappedAddress || address - header.MappedAddress >= header.FileSize) continue;
+                    const auto offset = address - header.MappedAddress;
+                    const auto length = decoder.DecodeInstruction(bytes.data() + header.Offset + offset, header.FileSize - offset).Length;
+                    if (length == 0 || length > header.FileSize - offset) break;
+                    spanEnd = std::max(spanEnd, address + length);
+                    break;
+                }
+            } catch (const Codegen::CodegenException&) {
+            }
+            bool spanHasFsPrefix = false;
+            for (const auto& header : headers) {
+                if (header.Type != 1 || (header.Flags & 1) == 0 || previousEnd < header.MappedAddress || previousEnd - header.MappedAddress >= header.FileSize) continue;
+                const auto base = header.Offset + previousEnd - header.MappedAddress;
+                for (auto probe = base; probe < base + (spanEnd - previousEnd) && probe < bytes.size(); ++probe) {
+                    if (bytes[probe] == 0x64) {
+                        spanHasFsPrefix = true;
+                        break;
+                    }
+                }
+                break;
+            }
+            if (spanHasFsPrefix) throw Domain::RelinkerException("Code analysis: overlapping instruction boundaries", address);
+            previousEnd = spanEnd;
+            continue;
+        }
         for (const auto& header : headers) {
             if (header.Type != 1 || (header.Flags & 1) == 0 || address < header.MappedAddress || address - header.MappedAddress >= header.FileSize) continue;
             const auto offset = address - header.MappedAddress;
