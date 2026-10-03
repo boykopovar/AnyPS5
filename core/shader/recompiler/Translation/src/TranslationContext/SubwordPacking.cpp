@@ -157,7 +157,7 @@ void TranslationContext::write16Bits(const RdnaOperand& operand, IrU32 value) {
 }
 
 void TranslationContext::writeF16(const RdnaOperand& operand, IrF32 value) {
-    const IrF16 half(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&value.Value()}));
+    const IrF16 half(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&applyF16ResultModifiers(operand, value).Value()}));
     const IrU16 bits(ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&half.Value()}));
     write16Bits(operand, IrU32(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&bits.Value()})));
 }

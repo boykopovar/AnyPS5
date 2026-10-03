@@ -145,8 +145,8 @@ void TranslationContext::vCvtOffF32I4(const RdnaInstruction& inst) {
 }
 
 void TranslationContext::vCvtPkrtzF16F32(const RdnaInstruction& inst) {
-    const IrF32 lhs = applyF32ResultModifiers(inst.destination, IrF32(*readOperand(sourceAt(inst, 0u), IrType::F32)));
-    const IrF32 rhs = applyF32ResultModifiers(inst.destination, IrF32(*readOperand(sourceAt(inst, 1u), IrType::F32)));
+    const IrF32 lhs(*readOperand(sourceAt(inst, 0u), IrType::F32));
+    const IrF32 rhs(*readOperand(sourceAt(inst, 1u), IrType::F32));
     const IrU32 result(ir.Emit(IrOpcode::PackFloat2x16Rtz, IrType::U32, {&lhs.Value(), &rhs.Value()}));
     writeOperand(inst.destination, &result.Value());
 }

@@ -56,7 +56,7 @@ bool TranslationContext::float16Unary(const RdnaInstruction& inst, IrOpcode opco
         return true;
     }
     const IrU1 negative(ir.Emit(IrOpcode::FPOrdLessThan32, IrType::U1, {&argument.Value(), &ir.ConstantF32(0.0f)}));
-    const IrF32 modified = applyF32ResultModifiers(inst.destination, result);
+    const IrF32 modified = applyF16ResultModifiers(inst.destination, result);
     const IrU32 bits = packHalf2x16(modified, IrF32(ir.ConstantF32(0.0f)));
     const IrU32 invalid(ir.Constant(inst.destination.clamp ? 0u : 0xfe00u));
     write16Bits(inst.destination, IrU32(ir.Select(negative.Value(), invalid.Value(), bits.Value())));
@@ -83,7 +83,7 @@ bool TranslationContext::float16Trig(const RdnaInstruction& inst, IrOpcode opcod
         result = selectF32(quarterCycle, zero, raw);
     }
     const IrU1 infinite(ir.IEqual(magnitude.Value(), ir.Constant(0x7f800000u)));
-    const IrF32 modified = applyF32ResultModifiers(inst.destination, result);
+    const IrF32 modified = applyF16ResultModifiers(inst.destination, result);
     const IrU32 bits = packHalf2x16(modified, zero);
     const IrU32 invalid(ir.Constant(inst.destination.clamp ? 0u : 0xfe00u));
     write16Bits(inst.destination, IrU32(ir.Select(infinite.Value(), invalid.Value(), bits.Value())));
