@@ -228,4 +228,14 @@ bool TranslationContext::dsBpermuteB32(const RdnaInstruction& inst) {
     return true;
 }
 
+bool TranslationContext::dsPermuteB32(const RdnaInstruction& inst) {
+    const IrU32 index = readU32(inst.source0);
+    IrValue& address = ir.IAdd(index.Value(), ir.Constant(inst.memoryOffset));
+    const IrU32 value = readU32(inst.source1);
+    IrValue& active = ir.GetExec();
+    IrValue& result = ir.Emit(IrOpcode::PermuteU32, IrOpcodeType(IrOpcode::PermuteU32), {&value.Value(), &address, &active});
+    writeOperand(inst.destination, &result);
+    return true;
+}
+
 }

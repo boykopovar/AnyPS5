@@ -153,6 +153,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 break;
             }
             case IrOpcode::SwizzleU32:
+            case IrOpcode::PermuteU32:
             case IrOpcode::BpermuteU32: {
                 requirements.subgroupBallot = true;
                 requirements.subgroupShuffle = true;

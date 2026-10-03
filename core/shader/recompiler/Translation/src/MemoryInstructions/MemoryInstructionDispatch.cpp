@@ -211,6 +211,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsSwizzleB32(inst);
     case RdnaOpcode::DsBpermuteB32:
         return dsBpermuteB32(inst);
+    case RdnaOpcode::DsPermuteB32:
+        return dsPermuteB32(inst);
     case RdnaOpcode::DsConsume:
         return dsAppendConsume(inst, IrOpcode::DataConsume);
     case RdnaOpcode::DsAppend:

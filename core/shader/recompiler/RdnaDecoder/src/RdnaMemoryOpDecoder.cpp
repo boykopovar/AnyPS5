@@ -165,6 +165,7 @@ constexpr MemoryOpcodeInfo dsOpcodes[] = {
     {0xa7u, RdnaOpcode::DsReadU16D16Hi, 1, 16, false, false, false},
     {0xb0u, RdnaOpcode::DsWriteAddtidB32, 1, 32, false, false, false},
     {0xb1u, RdnaOpcode::DsReadAddtidB32, 1, 32, false, false, false},
+    {0xb2u, RdnaOpcode::DsPermuteB32, 1, 32, false, false, false},
     {0xb3u, RdnaOpcode::DsBpermuteB32, 1, 32, false, false, false},
     {0xdeu, RdnaOpcode::DsWriteB96, 3, 32, false, false, false},
     {0xdfu, RdnaOpcode::DsWriteB128, 4, 32, false, false, false},
@@ -346,6 +347,7 @@ std::uint32_t dsSourceCount(RdnaOpcode opcode) {
         case RdnaOpcode::DsMinF32:
         case RdnaOpcode::DsMaxF32: return 2u;
         case RdnaOpcode::DsNop: return 0u;
+        case RdnaOpcode::DsPermuteB32:
         case RdnaOpcode::DsBpermuteB32: return 2u;
         case RdnaOpcode::DsReadAddtidB32:
         case RdnaOpcode::DsConsume:
@@ -621,7 +623,7 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
     if (info.opcode == RdnaOpcode::DsSwizzleB32 && combinedOffset >= 0xE000u) {
         throw std::runtime_error("DS swizzle FFT mode is not supported");
     }
-    if (gds && (info.opcode == RdnaOpcode::DsSwizzleB32 || info.opcode == RdnaOpcode::DsBpermuteB32 || info.opcode == RdnaOpcode::DsWriteAddtidB32 || info.opcode == RdnaOpcode::DsReadAddtidB32)) {
+    if (gds && (info.opcode == RdnaOpcode::DsSwizzleB32 || info.opcode == RdnaOpcode::DsBpermuteB32 || info.opcode == RdnaOpcode::DsPermuteB32 || info.opcode == RdnaOpcode::DsWriteAddtidB32 || info.opcode == RdnaOpcode::DsReadAddtidB32)) {
         throw std::runtime_error("DS lane operation is available only for LDS");
     }
     if (info.opcode == RdnaOpcode::DsWriteAddtidB32 && data1 != 0u) {

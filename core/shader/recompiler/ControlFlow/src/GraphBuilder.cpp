@@ -53,6 +53,8 @@ std::uint32_t estimatedSpirvWords(const RdnaInstruction& instruction) {
     case RdnaOpcode::DsSwizzleB32:
     case RdnaOpcode::DsBpermuteB32:
         return 120u;
+    case RdnaOpcode::DsPermuteB32:
+        return 1200u;
     case RdnaOpcode::ImageBvhIntersectRay:
         return 2000u;
     default:
