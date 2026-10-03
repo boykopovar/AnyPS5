@@ -3,6 +3,7 @@
 #include <nid/NidPatcherUtils.hpp>
 #include <nid/NidCompute.hpp>
 #include <algorithm>
+#include <unordered_map>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -420,41 +421,48 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         uses.push_back(SymbolNameUse{i, sym.st_name, newValue});
     }
 
-    std::vector<std::uint8_t> newDynStr;
-    newDynStr.push_back(0u);
-
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> oldToNewOffset;
-    for (const auto& use : uses) {
+    std::vector<std::pair<std::uint32_t, std::string>> names;
+    const auto addName = [&](std::uint32_t oldOffset, std::string value) {
         const auto existing = std::find_if(
-            oldToNewOffset.begin(), oldToNewOffset.end(),
-            [&](const auto& entry) { return entry.first == use.oldNameOffset; }
+            names.begin(), names.end(),
+            [&](const auto& entry) { return entry.first == oldOffset; }
         );
-        if (existing != oldToNewOffset.end()) continue;
-
-        const auto newOffset = static_cast<std::uint32_t>(newDynStr.size());
-        newDynStr.insert(newDynStr.end(), use.newValue.begin(), use.newValue.end());
-        newDynStr.push_back(0u);
-        oldToNewOffset.emplace_back(use.oldNameOffset, newOffset);
-    }
+        if (existing == names.end()) names.emplace_back(oldOffset, std::move(value));
+    };
+    for (const auto& use : uses) addName(use.oldNameOffset, use.newValue);
 
     std::vector<std::uint32_t> preservedOffsets = CollectDynamicNameOffsets(elf, ehdr);
     const std::vector<std::uint32_t> verneedOffsets = CollectVerneedNameOffsets(elf, ehdr);
     preservedOffsets.insert(preservedOffsets.end(), verneedOffsets.begin(), verneedOffsets.end());
+    for (const auto oldOffset : preservedOffsets) addName(oldOffset, ReadCStr(origDynStr, oldOffset));
 
-    for (const auto oldOffset : preservedOffsets) {
-        const auto existing = std::find_if(
-            oldToNewOffset.begin(), oldToNewOffset.end(),
-            [&](const auto& entry) { return entry.first == oldOffset; }
-        );
-        if (existing != oldToNewOffset.end()) continue;
+    std::vector<std::string> values;
+    for (const auto& name : names) values.push_back(name.second);
+    std::sort(values.begin(), values.end(), [](const std::string& left, const std::string& right) {
+        return std::lexicographical_compare(right.rbegin(), right.rend(), left.rbegin(), left.rend());
+    });
+    values.erase(std::unique(values.begin(), values.end()), values.end());
 
-        const std::string preservedValue = ReadCStr(origDynStr, oldOffset);
-
-        const auto newOffset = static_cast<std::uint32_t>(newDynStr.size());
-        newDynStr.insert(newDynStr.end(), preservedValue.begin(), preservedValue.end());
+    std::vector<std::uint8_t> newDynStr;
+    newDynStr.push_back(0u);
+    std::unordered_map<std::string, std::uint32_t> valueOffsets;
+    const std::string* previous = nullptr;
+    std::uint32_t previousOffset = 0u;
+    for (const auto& value : values) {
+        if (previous && previous->size() >= value.size() &&
+            previous->compare(previous->size() - value.size(), value.size(), value) == 0) {
+            valueOffsets.emplace(value, previousOffset + static_cast<std::uint32_t>(previous->size() - value.size()));
+            continue;
+        }
+        previousOffset = static_cast<std::uint32_t>(newDynStr.size());
+        previous = &value;
+        valueOffsets.emplace(value, previousOffset);
+        newDynStr.insert(newDynStr.end(), value.begin(), value.end());
         newDynStr.push_back(0u);
-        oldToNewOffset.emplace_back(oldOffset, newOffset);
     }
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> oldToNewOffset;
+    for (const auto& name : names) oldToNewOffset.emplace_back(name.first, valueOffsets.at(name.second));
 
     if (newDynStr.size() > dynStrSize) {
         throw std::runtime_error(
