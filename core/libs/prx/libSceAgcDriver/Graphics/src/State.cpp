@@ -1,5 +1,6 @@
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -137,7 +138,7 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
 void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result) {
     zero(cx, 0x000, 0x00001f9fu, "depth/stencil clear, copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
     const auto view = read(cx, 0x002);
-    zero(cx, 0x002, ~0x03000000u, "depth array slices or mips (DB_DEPTH_VIEW)");
+    zero(cx, 0x002, 0x3c000000u, "depth mips (DB_DEPTH_VIEW MIP_LEVEL)");
     zero(cx, 0x010, 0x000f100cu, "multisampled, partially resident or mipmapped depth (DB_Z_INFO)");
     zero(cx, 0x011, 0x00001000u, "partially resident stencil (DB_STENCIL_INFO)");
     const auto zFormat = read(cx, 0x010) & 3u;
@@ -158,6 +159,10 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
     Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == depth.stencilAddress, "stencil read and written at different addresses is unsupported");
     const auto size = read(cx, 0x007);
     depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
+    if (const auto slice = view & 0x1fffu; slice != 0) {
+        if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, zFormat == 1 ? 2u : 4u);
+        if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, 1u);
+    }
     depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
     depth.clearDepth = readFloat(cx, 0x00b);
     depth.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
@@ -465,18 +470,11 @@ State DecodeState(const QueueState& queue) {
     // matters where the shader exports.
     const auto targetMask = read(cx, 0x8e) & shaderMask;
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
-    // MRT slots 0..n-1 become attachments 0..n-1; a slot between written slots must be written too.
     std::uint32_t slotCount = 0;
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
         if (((targetMask >> (4u * slot)) & 0xfu) != 0) slotCount = slot + 1;
     }
-    for (std::uint32_t slot = 0; slot < slotCount; ++slot) {
-        if (((targetMask >> (4u * slot)) & 0xfu) == 0) {
-            std::ostringstream message;
-            message << "AGC graphics: color targets with gaps are unsupported: CB_TARGET_MASK=0x" << std::hex << targetMask << ", CB_SHADER_MASK=0x" << shaderMask;
-            throw std::runtime_error(message.str());
-        }
-    }
+    const auto written = [&](std::uint32_t slot) { return ((targetMask >> (4u * slot)) & 0xfu) != 0; };
     result.hasColorTarget = slotCount != 0;
     APS5_LOG_OUT_DEBUG("hasColorTarget=%u slots=%u", result.hasColorTarget ? 1u : 0u, slotCount);
 
@@ -489,12 +487,13 @@ State DecodeState(const QueueState& queue) {
     // exports that PA_CL_VS_OUT_CNTL validation above already limits to ignored layer/viewport data.
     Require((read(cx, 0x1c3) & 0xfu) == 4, "additional position exports are unsupported");
     for (std::uint32_t slot = 0; slot < slotCount; ++slot) {
+        if (!written(slot)) continue;
         // Export formats only matter for the targets the draw writes.
         const auto slotExport = (exportFormat >> (4u * slot)) & 0xfu;
         if (slotExport == 0 || slotExport == 7 || slotExport == 8 || slotExport > 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " is unsupported");
         const auto color = DecodeColorBuffer(cx, slot);
         APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
-        if (slot == 0) {
+        if (result.colors.empty()) {
             result.renderExtent = color.extent;
         } else {
             result.renderExtent = {std::min(result.renderExtent.width, color.extent.width), std::min(result.renderExtent.height, color.extent.height)};
@@ -536,12 +535,14 @@ State DecodeState(const QueueState& queue) {
     intersect(result.scissor, cx, 0x90, false);
     if ((read(cx, 0x292) & 2u) != 0) intersect(result.scissor, cx, 0x94, false);
     APS5_LOG_OUT_DEBUG("Scissor offset=(%d,%d) extent=%ux%u", result.scissor.offset.x, result.scissor.offset.y, result.scissor.extent.width, result.scissor.extent.height);
-    for (std::uint32_t slot = 0; slot < result.colors.size(); ++slot) {
+    result.blends.assign(slotCount, VkPipelineColorBlendAttachmentState{});
+    for (const auto& color : result.colors) {
+        const auto slot = color.slot;
         const auto blend = read(cx, 0x1e0 + slot);
         APS5_LOG_OUT_DEBUG("Blend %u control=0x%x", slot, blend);
         Require((blend & 0x0000e000u) == 0, "reserved blend control bits");
         VkPipelineColorBlendAttachmentState state{};
-        const auto mapping = result.colors[slot].componentMapping;
+        const auto mapping = color.componentMapping;
         const auto exportedMask = (targetMask >> (4u * slot)) & 0xfu;
         for (std::uint32_t component = 0; component < 4; ++component) {
             if (((exportedMask >> ((mapping >> (2u * component)) & 3u)) & 1u) != 0) state.colorWriteMask |= 1u << component;
@@ -563,9 +564,9 @@ State DecodeState(const QueueState& queue) {
             }
             for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
         }
-        result.blends.push_back(state);
+        result.blends[slot] = state;
     }
-    if (!result.blends.empty()) result.blend = result.blends.front();
+    if (!result.colors.empty()) result.blend = result.blends[result.colors.front().slot];
     APS5_LOG_OUT_DEBUG("DecodeState done colorTarget=%u render=%ux%u topology=%u", result.hasColorTarget ? 1u : 0u, result.renderExtent.width, result.renderExtent.height, static_cast<unsigned>(result.topology));
     return result;
 }
@@ -573,13 +574,16 @@ State DecodeState(const QueueState& queue) {
 std::array<std::uint8_t, 8> ExportMappings(const State& state) {
     std::array<std::uint8_t, 8> mappings{};
     mappings.fill(0xe4u);
-    for (std::size_t slot = 0; slot < state.colors.size() && slot < mappings.size(); ++slot) mappings[slot] = state.colors[slot].componentMapping;
+    for (const auto& color : state.colors) {
+        if (color.slot < mappings.size()) mappings[color.slot] = color.componentMapping;
+    }
     return mappings;
 }
 
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     const auto stride = slot * 0xfu;
     ColorTarget color{};
+    color.slot = slot;
     const auto info = read(cx, 0x31c + stride);
     const auto number = (info >> 8u) & 7u;
     const auto swap = (info >> 11u) & 3u;

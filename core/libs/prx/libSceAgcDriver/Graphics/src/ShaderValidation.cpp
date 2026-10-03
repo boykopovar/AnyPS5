@@ -514,9 +514,7 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         }
         previous = current;
     }
-    // One float4 color per MRT attachment. A pixel shader may also export no color at all when it
-    // writes storage images or buffers instead; its attachments are then left untouched.
-    const auto attachments = std::max<std::size_t>(state.colors.size(), 1u);
+    const auto attachments = std::max<std::size_t>(state.blends.size(), 1u);
     std::set<std::uint32_t> locations;
     for (const auto& [location, signature] : previous.outputs) {
         if (location >= attachments) continue;

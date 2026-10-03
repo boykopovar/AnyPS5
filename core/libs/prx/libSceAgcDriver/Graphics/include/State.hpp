@@ -47,6 +47,7 @@ struct ColorTarget {
     std::uint32_t mip = 0;
     bool mipTail = false;
     std::array<std::uint32_t, 2> clearWords{};
+    std::uint32_t slot = 0;
 };
 
 struct DepthTarget {
@@ -67,7 +68,6 @@ struct State {
     bool stencilTest = false;
     VkStencilOpState stencilFront{};
     VkStencilOpState stencilBack{};
-    // MRT slot 0; `colors`/`blends` hold every written slot, attachment i being slot i.
     ColorTarget color;
     std::vector<ColorTarget> colors;
     std::vector<VkPipelineColorBlendAttachmentState> blends;
