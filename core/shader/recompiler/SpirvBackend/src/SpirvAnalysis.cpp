@@ -68,6 +68,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             if (BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
             }
+            if (IsFloat64Opcode(inst->Opcode())) {
+                requirements.float64 = true;
+            }
             const auto addressAccess = AddressOpcodeInfoOf(inst->Opcode()).access;
             if (addressAccess != AddressAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;

@@ -213,6 +213,7 @@ RdnaOpcode decodeSoppOpcode(std::uint32_t opcode) {
         case 0x21u: return RdnaOpcode::SClause;
         case 0x22u: return RdnaOpcode::SWaitIdle;
         case 0x23u: return RdnaOpcode::SWaitcntDepctr;
+        case 0x25u: return RdnaOpcode::SDenormMode;
         case 0x28u: return RdnaOpcode::STtracedata;
         default: throw std::invalid_argument("unsupported SOPP opcode " + std::to_string(opcode));
     }
@@ -230,7 +231,8 @@ bool isSoppWaitOpcode(RdnaOpcode opcode) {
         opcode == RdnaOpcode::SSleep || opcode == RdnaOpcode::SSetprio || opcode == RdnaOpcode::SSendmsg ||
         opcode == RdnaOpcode::STrap || opcode == RdnaOpcode::STtracedata || opcode == RdnaOpcode::SInstPrefetch ||
         opcode == RdnaOpcode::SClause || opcode == RdnaOpcode::SCbranchCdbg || opcode == RdnaOpcode::SIcacheInv ||
-        opcode == RdnaOpcode::SIncperflevel || opcode == RdnaOpcode::SDecperflevel || opcode == RdnaOpcode::SWaitIdle;
+        opcode == RdnaOpcode::SIncperflevel || opcode == RdnaOpcode::SDecperflevel || opcode == RdnaOpcode::SWaitIdle ||
+        opcode == RdnaOpcode::SDenormMode;
 }
 
 std::uint32_t scalarDestinationDwordCount(RdnaOpcode opcode) {

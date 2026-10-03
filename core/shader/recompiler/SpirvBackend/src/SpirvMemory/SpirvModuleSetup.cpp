@@ -166,6 +166,13 @@ void DefineModule(SpirvEmitterState& state) {
     state.module.EmitCapability(spv::CapabilitySignedZeroInfNanPreserve);
     state.module.EmitExtension("SPV_KHR_float_controls");
     state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 32u);
+    if (state.requirements.float64) {
+        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) == state.supportedCapabilities.end()) {
+            throw std::runtime_error("64-bit float instructions need the Float64 capability, which the device lacks");
+        }
+        state.module.EmitCapability(spv::CapabilityFloat64);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 64u);
+    }
     if (const auto* workgroup = ShaderWorkgroupInput(state)) {
         const std::uint32_t derivativeDefault = state.requirements.computeDerivatives ? 2u : 1u;
         std::uint32_t localX = workgroup->threadsNum[0] != 0u ? workgroup->threadsNum[0] : derivativeDefault;

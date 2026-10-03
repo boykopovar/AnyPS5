@@ -19,6 +19,7 @@ Throughout the project, every function at every stage either **does exactly what
 - The shader recompiler [skips baryctric coordinates](../../core/shader/recompiler/Recompiler.cpp) (is not even passed to SpirvTargetOptions at row 212).
 - [libSceAvPlayer](../../core/libs/prx/libSceAvPlayer/Export.cpp): `sceAvPlayerSetLogCallback` accepts a callback that is never called, as the player produces no log messages, and `sceAvPlayerSetAvailableBandwidth` has no effect, as it governs HLS sources, which `sceAvPlayerAddSource` does not implement.
 - [sceAvPlayerSetTrickSpeed](../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) with a negative speed runs the clock backwards but delivers no frames; when a forward speed is set again, playback resumes from the rewound time.
+- The shader recompiler [ignores `s_denorm_mode`](../../core/shader/recompiler/Translation/src/ScalarInstructions.cpp): denormals follow the Vulkan driver's float controls, not the mode the shader sets (the f32 division macro switches it around its Newton-Raphson steps).
 
 ### Unknown function info
 
