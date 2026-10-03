@@ -80,6 +80,23 @@ public:
     DepthSurface(const DepthSurface&) = delete;
     DepthSurface& operator=(const DepthSurface&) = delete;
 
+    void ApplyFastClear() {
+        if (!fastCleared) return;
+        fastCleared = false;
+        auto* recorder = Recorder::Active();
+        std::unique_ptr<CommandBatch> batch;
+        if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+        const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
+        constexpr VkAccessFlags access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, access, VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkClearDepthStencilValue clear{clearDepth, clearStencil};
+        context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, access);
+        if (batch) batch->SubmitAndWait();
+        else Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+    }
+
     std::shared_ptr<Texture> Sampled(std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components) {
         std::array<std::uint32_t, 12> key{};
         std::copy_n(words.begin(), std::min<std::size_t>(words.size(), 8), key.begin());
@@ -105,6 +122,9 @@ public:
         return texture;
     }
 
+    bool fastCleared = false;
+    float clearDepth = 0.0f;
+    std::uint8_t clearStencil = 0;
     const Context context;
     const DepthTarget target;
     VkImage image = VK_NULL_HANDLE;
@@ -144,7 +164,12 @@ std::vector<std::unique_ptr<DepthSurface>>& surfaces() {
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) {
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
-        if (surface->context.device == context.device && sameSurface(surface->target, target)) return surface->view;
+        if (surface->context.device == context.device && sameSurface(surface->target, target)) {
+            surface->clearDepth = target.clearDepth;
+            surface->clearStencil = target.clearStencil;
+            surface->ApplyFastClear();
+            return surface->view;
+        }
     }
     surfaces().push_back(std::make_unique<DepthSurface>(context, target));
     return surfaces().back()->view;
@@ -161,7 +186,20 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
         return surface->context.device == context.device && (surface->target.address == resource.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == resource.baseAddress));
     });
-    return found == list.rend() ? nullptr : (*found)->Sampled(words, resource, components);
+    if (found == list.rend()) return nullptr;
+    (*found)->ApplyFastClear();
+    return (*found)->Sampled(words, resource, components);
+}
+
+void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    if ((pattern & 0xfu) != 0) return;
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        const auto htile = surface->target.htileAddress;
+        if (htile == 0 || htile < address || htile >= address + bytes) continue;
+        const auto tiles = static_cast<std::uint64_t>((surface->target.extent.width + 7u) / 8u) * ((surface->target.extent.height + 7u) / 8u);
+        if (address + bytes - htile >= tiles * 4u) surface->fastCleared = true;
+    }
 }
 
 bool DepthSurfaceAt(std::uint64_t address) {
