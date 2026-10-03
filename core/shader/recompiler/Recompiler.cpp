@@ -476,13 +476,19 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     };
     const auto mixWords = [&](std::span<const std::uint32_t> words) {
         mix(words.size());
-        for (const auto word : words) mix(word);
+        // Two words per multiply instead of one: same words hashed, half the FNV rounds.
+        std::size_t i = 0;
+        for (; i + 1 < words.size(); i += 2) mix(static_cast<std::uint64_t>(words[i]) | (static_cast<std::uint64_t>(words[i + 1]) << 32u));
+        for (; i < words.size(); ++i) mix(words[i]);
     };
     const auto mixDescriptors = [&](const std::vector<DescriptorValue>& values) {
         mix(values.size());
         for (const auto& value : values) {
             mix(value.dwordCount);
-            for (std::uint32_t i = 0; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
+            const auto count = std::min(value.dwordCount, static_cast<std::uint32_t>(value.dwords.size()));
+            std::uint32_t i = 0;
+            for (; i + 1 < count; i += 2) mix(static_cast<std::uint64_t>(value.dwords[i]) | (static_cast<std::uint64_t>(value.dwords[i + 1]) << 32u));
+            for (; i < count; ++i) mix(value.dwords[i]);
         }
     };
     mixDescriptors(snapshot.buffers);
@@ -541,16 +547,18 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
     {
         std::lock_guard lock(source.mutex);
         const auto found = source.memoIndex.find(index);
+        bool hit = false;
         if (found != source.memoIndex.end()) {
             if (found->second->variantId == variant->result.variantId && found->second->hash == hash) {
                 source.memo.splice(source.memo.begin(), source.memo, found->second);
                 shared = found->second->result;
+                hit = true;
             } else {
                 source.memo.erase(found->second);
                 source.memoIndex.erase(found);
             }
         }
-        if (source.memoIndex.find(index) == source.memoIndex.end()) {
+        if (!hit) {
             source.memo.push_front({variant->result.variantId, hash, shared});
             source.memoIndex.emplace(index, source.memo.begin());
             while (source.memo.size() > ResultMemoEntries) {
