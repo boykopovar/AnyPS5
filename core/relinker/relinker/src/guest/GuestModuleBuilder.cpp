@@ -126,6 +126,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         addHost(std::string(start, end));
     }
     for (const auto& image : images) for (const auto& dependency : image.Dependencies) addHost(dependency);
+    // addHost skipped libc.prx because the title bundles it, but the host PRX libraries still need the host copy:
+    // the guest copy has a different DT_SONAME, and a DT_RUNPATH does not apply to a dependency's own dependencies.
+    if (!windows && guestNames.contains("libc.prx") && uniqueHosts.contains("libSceLibcInternal.prx") && uniqueHosts.insert("libc.prx").second) hostLibraries.push_back("libc.prx");
     dynamic.DynamicSegmentData.clear();
     const auto addNeeded = [&](const std::string& name) {
         Io::AppendU64(dynamic.DynamicSegmentData, 1);

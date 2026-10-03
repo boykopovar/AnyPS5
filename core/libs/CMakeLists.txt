@@ -40,6 +40,10 @@ set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_subdirectory(${LIBC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/prx/libc)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 configure_windows_unwind(libc)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # A title that bundles its own libc.prx exports the same NIDs and is loaded first; without this it takes over the host libc's own references.
+    target_link_options(libc PRIVATE -Wl,-Bsymbolic)
+endif()
 
 set(UNPATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs/unpatched)
 set(PATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs)
