@@ -277,6 +277,30 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::ImageSampleDO:
     case RdnaOpcode::ImageSampleLzO:
     case RdnaOpcode::ImageSampleO:
+    case RdnaOpcode::ImageSampleCd:
+    case RdnaOpcode::ImageSampleCdCl:
+    case RdnaOpcode::ImageSampleCCd:
+    case RdnaOpcode::ImageSampleCCdCl:
+    case RdnaOpcode::ImageSampleCdO:
+    case RdnaOpcode::ImageSampleCdClO:
+    case RdnaOpcode::ImageSampleCCdO:
+    case RdnaOpcode::ImageSampleCCdClO:
+    case RdnaOpcode::ImageSampleDG16:
+    case RdnaOpcode::ImageSampleDClG16:
+    case RdnaOpcode::ImageSampleCDG16:
+    case RdnaOpcode::ImageSampleCDClG16:
+    case RdnaOpcode::ImageSampleDOG16:
+    case RdnaOpcode::ImageSampleDClOG16:
+    case RdnaOpcode::ImageSampleCDOG16:
+    case RdnaOpcode::ImageSampleCDClOG16:
+    case RdnaOpcode::ImageSampleCdG16:
+    case RdnaOpcode::ImageSampleCdClG16:
+    case RdnaOpcode::ImageSampleCCdG16:
+    case RdnaOpcode::ImageSampleCCdClG16:
+    case RdnaOpcode::ImageSampleCdOG16:
+    case RdnaOpcode::ImageSampleCdClOG16:
+    case RdnaOpcode::ImageSampleCCdOG16:
+    case RdnaOpcode::ImageSampleCCdClOG16:
         return imageSample(inst);
     case RdnaOpcode::ImageGather4Lz:
     case RdnaOpcode::ImageGather4C:

@@ -73,7 +73,11 @@ enum RdnaImageSampleFlag : std::uint32_t {
     RdnaImageSampleFlagCd = 1u << 8u,
     RdnaImageSampleFlagGatherHorizontal = 1u << 9u,
     RdnaImageSampleFlagAdjust = 1u << 10u,
+    RdnaImageSampleFlagG16 = 1u << 11u,
 };
+
+inline constexpr std::uint32_t RdnaImageSampleGradientCountShift = 12u;
+inline constexpr std::uint32_t RdnaImageSampleGradientCountMask = 3u << RdnaImageSampleGradientCountShift;
 
 inline constexpr std::uint32_t MaxRdnaInstructionRawWords = 5;
 inline constexpr std::uint32_t MaxRdnaImageNsaAddressComponents = 12;
