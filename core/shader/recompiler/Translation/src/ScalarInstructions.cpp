@@ -376,6 +376,7 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SIcacheInv:
     case RdnaOpcode::SIncperflevel:
     case RdnaOpcode::SDecperflevel:
+    case RdnaOpcode::SDenormMode:
         emitControlNop();
         return true;
     case RdnaOpcode::SWaitcntDepctr:

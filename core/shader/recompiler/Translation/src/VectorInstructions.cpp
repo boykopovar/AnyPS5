@@ -872,6 +872,12 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return floatBinary(inst, IrOpcode::FPMin32, false);
     case RdnaOpcode::VMaxF32:
         return floatBinary(inst, IrOpcode::FPMax32, false);
+    case RdnaOpcode::VDivScaleF32:
+        return vDivScaleF32(inst);
+    case RdnaOpcode::VDivFmasF32:
+        return vDivFmasF32(inst);
+    case RdnaOpcode::VDivFixupF32:
+        return vDivFixupF32(inst);
     case RdnaOpcode::VLdexpF32:
         return floatBinary(inst, IrOpcode::FPLdexp, false);
     case RdnaOpcode::VMacF32:

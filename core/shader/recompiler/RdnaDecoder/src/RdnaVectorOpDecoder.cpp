@@ -505,6 +505,9 @@ constexpr VectorOpcodeInfo vop3Opcodes[] = {
     {0x362u, RdnaOpcode::VLdexpF32},
     {0x312u, RdnaOpcode::VCvtPknormI16F16},
     {0x313u, RdnaOpcode::VCvtPknormU16F16},
+    {0x15fu, RdnaOpcode::VDivFixupF32},
+    {0x16du, RdnaOpcode::VDivScaleF32},
+    {0x16fu, RdnaOpcode::VDivFmasF32},
     {0x363u, RdnaOpcode::VBfmB32},
     {0x364u, RdnaOpcode::VBcntU32B32},
     {0x365u, RdnaOpcode::VMbcntLoU32B32},
@@ -630,7 +633,7 @@ bool isVop3BCarryOutOpcode(RdnaOpcode opcode) {
 }
 
 bool isVop3BMadU64Opcode(RdnaOpcode opcode) {
-    return opcode == RdnaOpcode::VMadU64U32;
+    return opcode == RdnaOpcode::VMadU64U32 || opcode == RdnaOpcode::VDivScaleF32;
 }
 
 bool isPermlaneOpcode(RdnaOpcode opcode) {
@@ -1653,6 +1656,8 @@ bool supportsNativeVop3SourceModifiers(RdnaOpcode opcode) {
         case RdnaOpcode::VMin3F32:
         case RdnaOpcode::VMax3F32:
         case RdnaOpcode::VMed3F32:
+        case RdnaOpcode::VDivFmasF32:
+        case RdnaOpcode::VDivFixupF32:
         case RdnaOpcode::VLdexpF32: return true;
         default: return false;
     }
@@ -1713,7 +1718,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, bool permlane, bool carryInOut,
     }
     if (carryInOut || scalarDst) {
         const bool floatCompare = scalarDst && isVopcFloatCompareOpcode(opcode);
-        if (clamp != 0u || omod != 0u || (neg != 0u && !floatCompare)) {
+        if (clamp != 0u || omod != 0u || (neg != 0u && !floatCompare && opcode != RdnaOpcode::VDivScaleF32)) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;
@@ -1993,6 +1998,9 @@ RdnaInstruction DecodeRdnaVop3(std::uint32_t programCounter, std::span<const std
         instruction.source1 = DecodeRdnaScalarSource(src1, programCounter);
         instruction.source2 = DecodeRdnaScalarSource(src2, programCounter);
         instruction.sourceCount = 3;
+        if (instruction.op == RdnaOpcode::VDivScaleF32) {
+            applyNativeVop3SourceModifiers(instruction, 0u, neg);
+        }
         ReadRdnaLiteralOperands(code, wordIndex, instruction);
         return instruction;
     }

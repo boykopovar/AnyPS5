@@ -150,6 +150,9 @@ private:
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool floatTernary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
+    bool vDivScaleF32(const RdnaInstruction& inst);
+    bool vDivFmasF32(const RdnaInstruction& inst);
+    bool vDivFixupF32(const RdnaInstruction& inst);
     bool vFrexpMantF32(const RdnaInstruction& inst);
     IrU32 readF16Bits(const RdnaOperand& operand);
     IrU32 normF16(IrU32 bits, bool signedValue);
