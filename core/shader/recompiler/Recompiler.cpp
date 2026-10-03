@@ -90,7 +90,14 @@ ShaderStageInputInfo RequestInputInfo(const RecompileRequest& request) {
 
 }
 
+namespace {
+
+std::atomic<std::uint64_t> frontEndBuilds{0};
+
+}
+
 IrProgram PrepareResourceProgram(const RecompileRequest& request) {
+    frontEndBuilds.fetch_add(1, std::memory_order_relaxed);
     const auto stageKind = toShaderStageKind(request.shader.stage);
     const auto inputInfo = RequestInputInfo(request);
 
@@ -601,6 +608,16 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     }
 }
 
+}
+
+void PrepareSource(const RecompileRequest& request) {
+    if (!request.useCache) throw std::runtime_error("ShaderRecompiler::PrepareSource: the request bypasses the cache");
+    static_cast<void>(RequestInputInfo(request));
+    static_cast<void>(getSource(request));
+}
+
+std::uint64_t FrontEndBuilds() {
+    return frontEndBuilds.load(std::memory_order_relaxed);
 }
 
 std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request) {
