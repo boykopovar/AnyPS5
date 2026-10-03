@@ -103,6 +103,28 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return bufferAtomic(inst, IrOpcode::BufferAtomicOr32);
     case RdnaOpcode::BufferAtomicOrX2:
         return bufferAtomic(inst, IrOpcode::BufferAtomicOr64);
+    case RdnaOpcode::BufferAtomicInc:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicInc32);
+    case RdnaOpcode::BufferAtomicDec:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicDec32);
+    case RdnaOpcode::BufferAtomicCmpswapX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicCmpSwap64);
+    case RdnaOpcode::BufferAtomicAddX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicIAdd64);
+    case RdnaOpcode::BufferAtomicSubX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicISub64);
+    case RdnaOpcode::BufferAtomicSminX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicSMin64);
+    case RdnaOpcode::BufferAtomicUminX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicUMin64);
+    case RdnaOpcode::BufferAtomicSmaxX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicSMax64);
+    case RdnaOpcode::BufferAtomicUmaxX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicUMax64);
+    case RdnaOpcode::BufferAtomicAndX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicAnd64);
+    case RdnaOpcode::BufferAtomicXorX2:
+        return bufferAtomic(inst, IrOpcode::BufferAtomicXor64);
     case RdnaOpcode::BufferAtomicXor:
         return bufferAtomic(inst, IrOpcode::BufferAtomicXor32);
     case RdnaOpcode::BufferAtomicFmin:

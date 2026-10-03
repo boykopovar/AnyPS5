@@ -334,6 +334,17 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("BufferAtomicXor32", U32, BufferResource, U32, U32, U32, U32, U1),
     makeMeta("BufferAtomicFMin32", U32, BufferResource, U32, U32, U32, U32, U1),
     makeMeta("BufferAtomicFMax32", U32, BufferResource, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicInc32", U32, BufferResource, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicDec32", U32, BufferResource, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicIAdd64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicISub64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicSMin64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicUMin64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicSMax64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicUMax64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicAnd64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicXor64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicCmpSwap64", U64, BufferResource, U32, U32, U32, U64, U64, U1),
     makeMeta("LoadSharedU8", U8, U32, U1),
     makeMeta("LoadSharedU16", U16, U32, U1),
     makeMeta("LoadSharedU32", U32, U32, U1),
@@ -460,6 +471,17 @@ BufferAccess BufferAccessOf(IrOpcode opcode) {
         case IrOpcode::BufferAtomicXor32:
         case IrOpcode::BufferAtomicFMin32:
         case IrOpcode::BufferAtomicFMax32:
+        case IrOpcode::BufferAtomicInc32:
+        case IrOpcode::BufferAtomicDec32:
+        case IrOpcode::BufferAtomicIAdd64:
+        case IrOpcode::BufferAtomicISub64:
+        case IrOpcode::BufferAtomicSMin64:
+        case IrOpcode::BufferAtomicUMin64:
+        case IrOpcode::BufferAtomicSMax64:
+        case IrOpcode::BufferAtomicUMax64:
+        case IrOpcode::BufferAtomicAnd64:
+        case IrOpcode::BufferAtomicXor64:
+        case IrOpcode::BufferAtomicCmpSwap64:
             return BufferAccess::Atomic;
         default:
             return BufferAccess::None;
@@ -470,6 +492,15 @@ std::uint32_t BufferComponentCount(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::BufferAtomicSwap64:
         case IrOpcode::BufferAtomicOr64:
+        case IrOpcode::BufferAtomicIAdd64:
+        case IrOpcode::BufferAtomicISub64:
+        case IrOpcode::BufferAtomicSMin64:
+        case IrOpcode::BufferAtomicUMin64:
+        case IrOpcode::BufferAtomicSMax64:
+        case IrOpcode::BufferAtomicUMax64:
+        case IrOpcode::BufferAtomicAnd64:
+        case IrOpcode::BufferAtomicXor64:
+        case IrOpcode::BufferAtomicCmpSwap64:
         case IrOpcode::LoadBufferU32x2:
         case IrOpcode::StoreBufferU32x2:
             return 2u;

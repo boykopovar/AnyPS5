@@ -147,7 +147,11 @@ bool TranslationContext::bufferAtomic(const RdnaInstruction& inst, IrOpcode opco
         const IrU32 desired = readU32(inst.destination);
         const IrU32 comparator = readU32(offsetOperand(inst.destination, 1u));
         result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &desired.Value(), &comparator.Value(), &exec}, flags);
-    } else if (opcode == IrOpcode::BufferAtomicSwap64 || opcode == IrOpcode::BufferAtomicOr64) {
+    } else if (opcode == IrOpcode::BufferAtomicCmpSwap64) {
+        const IrU64 desired = readU64(inst.destination);
+        const IrU64 comparator = readU64(offsetOperand(inst.destination, 2u));
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &desired.Value(), &comparator.Value(), &exec}, flags);
+    } else if (IrOpcodeType(opcode) == IrType::U64) {
         const IrU64 value = readU64(inst.destination);
         result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &value.Value(), &exec}, flags);
     } else {
