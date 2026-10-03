@@ -210,7 +210,7 @@ bool IsPixelParameterFlat(const ShaderPixelInputInfo& pixel, std::uint32_t input
 }
 
 void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pixel, ShaderInfo& info) {
-    if (pixel->HasPositionInput()) {
+    if (pixel->HasPositionInput() || pixel->quadPixelMask != 0xf) {
         AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
     }
     if (pixel->psFrontFace) {

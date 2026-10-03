@@ -61,7 +61,7 @@ struct DecodeSideband {
 void TestMp3(std::uint32_t context) {
     std::uint32_t instance = 0;
     Require(sceAjmInstanceCreate(context, 0, 0, &instance) == 0);
-    std::vector<std::uint8_t> batch(4096);
+    std::vector<std::uint8_t> batch(0x40);
     std::vector<std::int16_t> pcm(1152);
     std::size_t offset = 0;
     std::int16_t peak = 0;

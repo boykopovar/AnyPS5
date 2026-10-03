@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -33,6 +34,7 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
 // Whether a storage image of the guest format takes DCC clear `keys` as a GPU clear (see
 // StorageTexture::upload); false for integer formats and non-clear keys.
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
+bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear);
 
 // A sampled texture's own VkImage with its memory, shared with the recorder while a recorded upload
 // still writes it (see the snapshot constructor), so the texture may go before the batch completes.
@@ -40,13 +42,11 @@ struct OwnedImage {
     OwnedImage(const Context& context, VkImage image, VkDeviceMemory memory) : context(context), image(image), memory(memory) {}
     OwnedImage(const OwnedImage&) = delete;
     OwnedImage& operator=(const OwnedImage&) = delete;
-    ~OwnedImage() {
-        if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-        if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
-    }
+    ~OwnedImage();
     Context context;
     VkImage image;
     VkDeviceMemory memory;
+    VkDeviceSize bytes = 0;
 };
 
 class Texture {
@@ -57,7 +57,7 @@ public:
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
     // CanCopyFrom says whether the two descriptors address the same surface compatibly.
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
-    Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components);
+    Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
     static bool CanCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
     ~Texture();
     Texture(const Texture&) = delete;
@@ -76,10 +76,13 @@ public:
     // the source image's own (snapshots, views over other metadata); one per cache entry, so every
     // object binding the texture shares it. Under GuestMemory::GpuMutex only.
     DccKeyProof& KeyProof() const { return keyProof; }
+    bool RefreshedPerUse() const { return refreshedPerUse; }
+    void MarkRefreshedPerUse() { refreshedPerUse = true; }
 
 private:
     void release() noexcept;
     void createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
+    bool refreshedPerUse = false;
 
     // Held by value: cached textures outlive the Context of the draw that created them.
     Context context;
@@ -116,7 +119,7 @@ public:
     // Render targets live in the same images: draws attach mip 0 through a view of the color
     // buffer's format and mark the image dirty like a storage write.
     bool Attachable() const { return attachable; }
-    VkImageView AttachmentView(VkFormat format, std::uint32_t mip = 0);
+    VkImageView AttachmentView(VkFormat format, std::uint32_t mip = 0, std::uint32_t depthSlice = 0);
     void WriteBack();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
@@ -250,6 +253,7 @@ public:
     // False, naming why, when the copy must be a transfer.
     bool CopyFrom(StorageTexture& source, const char*& refusal);
     VkImage Image() const { return image; }
+    VkFormat StorageFormat() const { return storageFormat; }
     const GuestTextureResource& Descriptor() const { return descriptor; }
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
@@ -409,12 +413,13 @@ private:
     bool lent = false;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize memoryBytes = 0;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;
     std::map<std::uint32_t, VkImageView> firstLayerViews;
     bool attachable = false;
-    std::map<std::pair<VkFormat, std::uint32_t>, VkImageView> attachmentViews;
+    std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;

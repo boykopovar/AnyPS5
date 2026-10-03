@@ -295,7 +295,7 @@ void TranslationContext::vWritelaneB32(const RdnaInstruction& inst) {
     const IrU32 lane = readU32(sourceAt(inst, 1u));
     const IrU32 previous = readRawU32(plainOperand(inst.destination));
     const IrU32 result(ir.Emit(IrOpcode::WriteLane, IrType::U32, {&value.Value(), &lane.Value(), &previous.Value()}));
-    writeRawU32(inst.destination, result);
+    ir.SetVectorReg(static_cast<VectorReg>(inst.destination.reg), result.Value());
 }
 
 void TranslationContext::vPermlane16B32(const RdnaInstruction& inst, bool x16) {

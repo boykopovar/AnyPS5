@@ -26,6 +26,19 @@ struct HandleMemos {
     std::atomic<std::uint32_t> poisoned{0};
 };
 
+template<typename Action>
+struct UnwindAction {
+    Action action;
+    int exceptions = std::uncaught_exceptions();
+    ~UnwindAction() {
+        if (std::uncaught_exceptions() <= exceptions) return;
+        try {
+            action();
+        } catch (...) {
+        }
+    }
+};
+
 struct ShaderSnapshot {
     std::uint64_t codeAddress;
     std::uint64_t headerAddress;

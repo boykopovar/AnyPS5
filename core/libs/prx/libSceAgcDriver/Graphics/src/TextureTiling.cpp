@@ -255,35 +255,54 @@ std::array<std::uint32_t, 3> ThinBlockLayout(TextureTileMode tileMode, std::uint
     return {block.blockSize, block.blockWidth, block.blockHeight};
 }
 
-ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth) {
+ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth, std::uint32_t mipCount) {
     Require(width != 0 && height != 0 && depth != 0, "cannot compute layout for a zero-sized 3D texture");
+    Require(mipCount != 0 && mipCount <= 16u, "3D texture mip count is out of range");
     const auto bytesPerElement = BytesPerElement(format);
     Require(BlockWidth(format) == 1u && BlockHeight(format) == 1u, "block-compressed 3D textures are not implemented");
     ThickLayout result{};
     result.depth = depth;
-    auto& mip = result.mip;
-    mip.width = width;
-    mip.height = height;
-    mip.tail = false;
-    if (tileMode == TextureTileMode::kLinear) {
-        const auto paddedWidth = AlignUp(width, CalcLinearBlockWidth(bytesPerElement));
-        mip.blocksPerRow = paddedWidth;
-        mip.pitchBytes = paddedWidth * bytesPerElement;
-        mip.tiledSize = static_cast<std::uint64_t>(mip.pitchBytes) * height;
-        result.blockDepth = 1;
-        result.slabBytes = mip.tiledSize;
-    } else {
-        const auto block = ThickBlockExtent(tileMode, bytesPerElement);
-        const auto paddedWidth = AlignUp(width, block[0]);
-        const auto paddedHeight = AlignUp(height, block[1]);
-        mip.blocksPerRow = paddedWidth / block[0];
-        mip.pitchBytes = paddedWidth * bytesPerElement;
-        result.blockDepth = block[2];
-        result.slabBytes = static_cast<std::uint64_t>(mip.blocksPerRow) * (paddedHeight / block[1]) * (tileMode == TextureTileMode::kStandard4KB ? 4096u : 65536u);
-        mip.tiledSize = result.slabBytes;
+    result.mips.resize(mipCount);
+    std::array<std::uint32_t, 3> block{CalcLinearBlockWidth(bytesPerElement), 1u, 1u};
+    std::uint32_t blockBytes = 0;
+    if (tileMode != TextureTileMode::kLinear) {
+        block = ThickBlockExtent(tileMode, bytesPerElement);
+        blockBytes = tileMode == TextureTileMode::kStandard4KB ? 4096u : 65536u;
+        const auto log2BlockBytes = static_cast<std::uint32_t>(std::countr_zero(blockBytes));
+        const auto tailWidth = log2BlockBytes % 3u == 1u ? block[0] >> 1u : block[0];
+        const auto tailHeight = log2BlockBytes % 3u == 0u ? block[1] >> 1u : block[1];
+        const auto effectiveLog2 = log2BlockBytes - (log2BlockBytes - 8u) / 3u;
+        const auto maxTailLevels = effectiveLog2 <= 11u ? 1u + (1u << (effectiveLog2 - 9u)) : effectiveLog2 - 4u;
+        for (std::uint32_t level = 0; mipCount > 1 && level < mipCount; ++level)
+            Require(std::max(width >> level, 1u) > tailWidth || std::max(height >> level, 1u) > tailHeight || mipCount - level > maxTailLevels, "3D texture mip tails are not implemented");
     }
-    mip.linearSize = static_cast<std::uint64_t>(mip.pitchBytes) * height;
-    result.sliceLinearBytes = mip.linearSize;
+    result.blockDepth = block[2];
+    std::uint64_t tiledOffset = 0;
+    std::uint64_t linearOffset = 0;
+    for (auto level = mipCount; level-- > 0;) {
+        auto& mip = result.mips[level];
+        mip.width = std::max(width >> level, 1u);
+        mip.height = std::max(height >> level, 1u);
+        mip.tail = false;
+        mip.tailX = 0;
+        mip.tailY = 0;
+        const auto paddedWidth = AlignUp(mip.width, block[0]);
+        mip.pitchBytes = paddedWidth * bytesPerElement;
+        if (tileMode == TextureTileMode::kLinear) {
+            mip.blocksPerRow = paddedWidth;
+            mip.tiledSize = static_cast<std::uint64_t>(mip.pitchBytes) * mip.height;
+        } else {
+            mip.blocksPerRow = paddedWidth / block[0];
+            mip.tiledSize = static_cast<std::uint64_t>(mip.blocksPerRow) * (AlignUp(mip.height, block[1]) / block[1]) * blockBytes;
+        }
+        mip.linearSize = static_cast<std::uint64_t>(mip.pitchBytes) * mip.height;
+        mip.tiledOffset = tiledOffset;
+        mip.linearOffset = linearOffset;
+        tiledOffset += mip.tiledSize;
+        linearOffset += mip.linearSize;
+    }
+    result.slabBytes = tiledOffset;
+    result.sliceLinearBytes = linearOffset;
     result.guestBytes = result.slabBytes * ((depth + result.blockDepth - 1u) / result.blockDepth);
     return result;
 }
@@ -291,9 +310,8 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
     SurfaceGeometry geometry;
     if (descriptor.dimension == TextureDimension::k3D && (descriptor.tileMode == TextureTileMode::kD64KBX || descriptor.tileMode == TextureTileMode::kR64KBX)) {
-        Require(descriptor.mipCount == 1, "mipmapped 3D textures are not implemented");
         const auto depth = descriptor.depthOrLastArray + 1u;
-        geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, 1u);
+        geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount);
         geometry.layers = depth;
         geometry.imageDepth = depth;
         geometry.guestBytes = ComputeSurfaceSize(geometry.mips, depth);
@@ -302,10 +320,9 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
         return geometry;
     }
     if (descriptor.dimension == TextureDimension::k3D) {
-        Require(descriptor.mipCount == 1, "mipmapped 3D textures are not implemented");
         const auto depth = descriptor.depthOrLastArray + 1u;
-        const auto thick = ComputeThickLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, depth);
-        geometry.mips = {thick.mip};
+        const auto thick = ComputeThickLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, depth, descriptor.mipCount);
+        geometry.mips = thick.mips;
         geometry.layers = depth;
         geometry.imageDepth = depth;
         geometry.guestBytes = thick.guestBytes;

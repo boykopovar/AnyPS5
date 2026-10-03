@@ -42,8 +42,7 @@ bool Evaluator::EvaluateWide(IrValue* raw, std::uint64_t& result) {
     if (_activeMask != nullptr && IsRuntimeSelect(inst->Opcode()) && inst->ArgumentCount() == 3 && inst->Argument(0)->Resolve() == _activeMask) {
         return EvaluateWide(inst->Argument(1), result);
     }
-    if (const auto found = _cache.find(inst); found != _cache.end()) {
-        result = found->second;
+    if (_cache.Find(inst, result)) {
         return true;
     }
     if (std::find(_visiting.begin(), _visiting.end(), inst) != _visiting.end()) {
@@ -58,7 +57,7 @@ bool Evaluator::EvaluateWide(IrValue* raw, std::uint64_t& result) {
         if (debug) std::fprintf(stderr, "[srt] cannot evaluate %s (%zu arguments)\n", std::string(IrOpcodeName(inst->Opcode())).c_str(), inst->ArgumentCount());
         return false;
     }
-    _cache.emplace(inst, out);
+    _cache.Insert(inst, out);
     result = out;
     return true;
 }

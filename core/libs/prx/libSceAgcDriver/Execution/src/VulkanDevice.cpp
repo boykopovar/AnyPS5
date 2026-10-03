@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -193,6 +194,8 @@ struct VulkanDevice::State {
     bool imageViewMinLod = false;
     bool maintenance8 = false;
     bool depthClamp = false;
+    bool depthBounds = false;
+    bool depthBiasClamp = false;
     bool occlusionQueryPrecise = false;
     VkDeviceSize hostImportAlignment = 0;
     bool depthRangeUnrestricted = false;
@@ -498,6 +501,7 @@ struct VulkanDevice::State {
             // belong to this device and must be destroyed while it lives.
             Graphics::ClearCachedPipelines(device);
             Graphics::ClearDepthSurfaces(device);
+            Graphics::ClearMultisampleTargets(device);
             {
                 std::lock_guard pipelines(computePipelinesMutex);
                 computePipelines.clear();
@@ -821,6 +825,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     // PA_CL_CLIP_CNTL near/far clip disable maps to depth clamping.
     enabled.depthClamp = available.depthClamp;
     state->depthClamp = enabled.depthClamp == VK_TRUE;
+    enabled.depthBounds = available.depthBounds;
+    state->depthBounds = enabled.depthBounds == VK_TRUE;
+    enabled.depthBiasClamp = available.depthBiasClamp;
+    state->depthBiasClamp = enabled.depthBiasClamp == VK_TRUE;
     enabled.occlusionQueryPrecise = available.occlusionQueryPrecise;
     state->occlusionQueryPrecise = enabled.occlusionQueryPrecise == VK_TRUE;
     // Recompiled storage-image access declares no format (the guest descriptor decides it).
@@ -831,6 +839,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     if (enabled.shaderImageGatherExtended) state->capabilities.push_back(spv::CapabilityImageGatherExtended);
     enabled.shaderResourceMinLod = available.shaderResourceMinLod;
     if (enabled.shaderResourceMinLod) state->capabilities.push_back(spv::CapabilityMinLod);
+    enabled.sampleRateShading = available.sampleRateShading;
+    enabled.geometryShader = available.geometryShader;
+    if (enabled.geometryShader) state->capabilities.push_back(spv::CapabilityGeometry);
+    enabled.shaderClipDistance = available.shaderClipDistance;
+    enabled.shaderCullDistance = available.shaderCullDistance;
     if (enabled.shaderStorageImageWriteWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageWriteWithoutFormat);
     if (enabled.shaderStorageImageReadWithoutFormat) state->capabilities.push_back(spv::CapabilityStorageImageReadWithoutFormat);
     // Bindless image tables index an image array with a wave-uniform runtime slot.
@@ -1020,6 +1033,11 @@ void VulkanDevice::PrepareForReplacement() {
     Graphics::FlushCachedTextures(state->device);
     Graphics::PublishAllShadows(state->context, Graphics::PublishReason::Teardown);
     WaitIdle();
+    Graphics::DestroyShadows(state->device);
+}
+
+std::uint64_t VulkanDevice::RelieveMemory() {
+    return Graphics::RelieveGpuMemory(graphicsContext());
 }
 
 void VulkanDevice::WaitIdle() {
@@ -2230,6 +2248,8 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.samplerCache = state->samplerCache.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;
+    context.depthBounds = state->depthBounds;
+    context.depthBiasClamp = state->depthBiasClamp;
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
     context.emptyBuffer = state->emptyBuffer ? state->emptyBuffer->Handle() : VK_NULL_HANDLE;

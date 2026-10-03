@@ -30,6 +30,7 @@ struct HostImport {
     // Identity for the life of this import (see HostImportSerial); 0 until first asked for.
     std::uint64_t serial = 0;
     bool unwatched = false;
+    mutable std::uint64_t lastUse = 0;
 };
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
@@ -45,6 +46,9 @@ struct ImportProbe {
 ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
+
+std::uint64_t RelieveGpuMemory(const Context& context);
+std::uint64_t HostImportLimit();
 
 // The host import of the registered allocation containing [address, address + bytes), made on demand
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in
@@ -342,6 +346,7 @@ private:
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while
     // no import was destroyed since.
     std::uint64_t importsEpoch = 0;
+    std::uint64_t importFloor = 0;
     std::vector<Region> regions;
     // Whether `regions` is in ascending address order (true right after AcquireRegistered, whose
     // regions follow the registry's order), so AddSnapshot can search instead of scanning.

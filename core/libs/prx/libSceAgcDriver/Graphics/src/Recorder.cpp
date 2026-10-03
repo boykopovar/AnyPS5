@@ -1270,6 +1270,15 @@ std::uint64_t Recorder::ReapsWithWork() {
     return holdCounters.reapsWithWork;
 }
 
+bool Recorder::WaitForReleases(std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (deferredPending.load(std::memory_order_acquire) != 0) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
 VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
     ensureOpen();
     // Work recorded after a draw's render pass or an inline store run must see their writes: the

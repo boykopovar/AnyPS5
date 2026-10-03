@@ -183,6 +183,7 @@ struct ShaderPixelInputInfo {
     bool psSampleShading = false;
     bool psEarlyZ = false;
     bool psExecuteOnNoop = false;
+    std::uint8_t quadPixelMask = 0xf;
     ShaderStageRuntime stage;
 
     bool HasPositionInput() const {

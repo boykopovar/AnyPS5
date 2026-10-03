@@ -28,6 +28,7 @@ namespace {
 using AgcDriver::Graphics::Require;
 
 alignas(256) std::array<std::byte, 1024> colorMemory{};
+alignas(256) std::array<std::byte, 2048> sliceMemory{};
 
 AgcDriver::QueueState makeState() {
     AgcDriver::QueueState queue;
@@ -120,7 +121,7 @@ void stateTests() {
     queue.context.erase(0x3b8);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
     queue = makeState();
-    queue.context[0x3b8] |= 5u << 14u;
+    queue.context[0x3b8] |= 1u << 14u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color tile mode");
     queue = makeState();
     queue.context[0x3b0] = (62u << 14u) | 3u;
@@ -402,6 +403,8 @@ void DepthStencilTests() {
     queue.context[0x011] = 0x20000181;
     for (const auto offset : {0x012u, 0x014u}) queue.context[offset] = 0x100;
     for (const auto offset : {0x013u, 0x015u}) queue.context[offset] = 0x200;
+    queue.context[0x005] = 0x300;
+    queue.context[0x01e] = 0x1;
     queue.context[0x10b] = 0x00050050;
     queue.context[0x10c] = 0x01ffff01;
     queue.context[0x10d] = 0x01000001;
@@ -415,7 +418,7 @@ void DepthStencilTests() {
     queue.context[0x1b4] = 2;
     const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
     Require(rejection.empty(), "precheck rejected a stencil draw with a surface: " + rejection);
-    Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7, "depth surface decode changed");
+    Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7 && state.depth->htileAddress == 0x10000030000ull, "depth surface decode changed");
     Require(state.renderExtent.width == 4 && state.renderExtent.height == 2, "render extent ignores the depth surface");
     Require(!state.depthTest && !state.depthWrite && state.stencilTest, "depth/stencil enables changed");
     const auto& front = state.stencilFront;
@@ -448,7 +451,52 @@ void DepthStencilTests() {
     queue.context[0x31b] = 1u << 26u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "mip exceeds");
     queue.context[0x31b] = 1u << 13u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "array views");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "several array slices");
+    const auto sliced = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
+    queue.context[0x318] = static_cast<std::uint32_t>(sliced >> 8u);
+    queue.context[0x390] = static_cast<std::uint32_t>(sliced >> 40u);
+    queue.context[0x31b] = 1u | (1u << 13u);
+    const auto slice = AgcDriver::Graphics::DecodeState(queue);
+    Require(slice.color.address == sliced + 1024u && slice.color.bytes == 1024u, "a color view of one slice did not move the target by one slice");
+}
+
+void DepthBoundsBiasTests() {
+    const auto bits = [](float value) {
+        std::uint32_t word = 0;
+        std::memcpy(&word, &value, sizeof(word));
+        return word;
+    };
+    auto queue = makeState();
+    queue.context[0x000] = 0;
+    queue.context[0x002] = 0;
+    queue.context[0x007] = (1u << 16u) | 3u;
+    queue.context[0x00a] = 0;
+    queue.context[0x00b] = 0;
+    queue.context[0x010] = 0x22900983;
+    queue.context[0x011] = 0x20000180;
+    for (const auto offset : {0x012u, 0x014u}) queue.context[offset] = 0x100;
+    queue.context[0x200] = 0x0000006e;
+    queue.context[0x008] = bits(0.25f);
+    queue.context[0x009] = bits(0.75f);
+    auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthTest && state.depthBoundsTest && state.minDepthBounds == 0.25f && state.maxDepthBounds == 0.75f, "depth bounds decode changed");
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+    Require(rejection.empty(), "precheck rejected depth bounds with a depth surface: " + rejection);
+    queue.context[0x205] = 0x00001a48u;
+    queue.context[0x2df] = bits(0.5f);
+    for (const auto offset : {0x2e0u, 0x2e2u}) queue.context[offset] = bits(32.0f);
+    for (const auto offset : {0x2e1u, 0x2e3u}) queue.context[offset] = bits(4.0f);
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthBias && state.depthBiasSlope == 2.0f && state.depthBiasConstant == 4.0f && state.depthBiasClamp == 0.5f, "depth bias decode changed");
+    queue.context[0x2e3] = bits(8.0f);
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "differing between front and back");
+    queue.context[0x205] = 0x00001a4au;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthBias && state.depthBiasConstant == 4.0f, "culled back faces must not constrain the front depth bias");
+    queue.context[0x2de] = 0x1f0u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "units other than the depth format");
 }
 
 alignas(256) std::array<std::uint8_t, 4> dccKeys{};
@@ -537,6 +585,86 @@ void metadataPassTests() {
     pass->targets[0].dccAddress = 0;
     AgcDriver::Graphics::RunColorMetadataPass(context, *pass);
     Require(texels(0x5a5a5a5au), "a pass over a target without DCC changed its texels");
+}
+
+void multisampleTests() {
+    using AgcDriver::Graphics::ColorMetadataPass;
+    using AgcDriver::Graphics::DecodeColorMetadataPass;
+    using AgcDriver::Graphics::DecodeState;
+    const auto multisampled = [] {
+        auto queue = makeState();
+        queue.context[0x2f8] = 0x00100001;
+        queue.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
+        queue.context[0x31d] = 0x9000;
+        queue.context[0x1b3] = 2;
+        queue.context[0x1b4] = 2;
+        return queue;
+    };
+    auto queue = multisampled();
+    auto state = DecodeState(queue);
+    Require(state.samples == 2 && state.colors.size() == 1 && state.colors[0].samples == 2 && state.colors[0].cmaskAddress == 0, "2x multisampling did not decode");
+    const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+    Require(rejection.empty(), "the precheck refused 2x multisampling: " + rejection);
+    queue.context[0x302] = 0x44cc;
+    expectFailure([&] { DecodeState(queue); }, "nonstandard sample locations");
+    queue = multisampled();
+    queue.context[0x31d] = 0x1000;
+    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples");
+    queue.context[0x31d] = 0;
+    expectFailure([&] { DecodeState(queue); }, "sample count differs");
+    queue = multisampled();
+    queue.context[0x292] = 2;
+    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE");
+    queue = multisampled();
+    queue.context[0x2f8] |= 0x10;
+    expectFailure([&] { DecodeState(queue); }, "coverage conversion");
+    queue = multisampled();
+    queue.context[0x31c] |= 0x6000;
+    queue.context[0x31f] = 0x1234;
+    Require(DecodeState(queue).colors[0].cmaskAddress == 0x123400, "the CMASK address of a multisampled target did not decode");
+    queue = makeState();
+    queue.context[0x31c] |= 0x4000;
+    expectFailure([&] { DecodeState(queue); }, "color compression");
+
+    queue = multisampled();
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0xcc0030;
+    for (const auto offset : {0x318u, 0x31bu, 0x31cu, 0x390u}) queue.context[offset + (offset >= 0x390u ? 1u : 0xfu)] = queue.context[offset];
+    queue.context[0x32c] = 0;
+    queue.context[0x3b1] = queue.context[0x3b0];
+    queue.context[0x3b9] = queue.context[0x3b8];
+    auto pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->mode == ColorMetadataPass::Mode::Resolve && pass->source.has_value() && pass->source->samples == 2 && pass->targets.size() == 1 && pass->targets[0].samples == 1, "a CB resolve of a multisampled target did not decode");
+    queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
+}
+
+void clipDistanceTests() {
+    auto queue = makeState();
+    queue.context[0x207] = 0x0040000f;
+    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "four clip distances were rejected by the precheck");
+    queue.context[0x207] = 0x004001ff;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "more than eight clip and cull distances");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("more than eight") != std::string::npos, "nine clip distances passed the precheck");
+}
+
+void quadPixelMaskTests() {
+    auto queue = makeState();
+    queue.context[0x30e] = 0xffff0000u;
+    queue.context[0x30f] = 0u;
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "a single-sample quad pixel mask was refused by the precheck");
+    Require(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, {}).quadPixelMask == 0x2u, "PA_SC_AA_MASK did not decode to the covered quad pixel");
+    queue = makeState();
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    Require(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, {}).quadPixelMask == 0xfu, "full sample masks did not cover the whole quad");
 }
 
 void DepthClipTests() {
@@ -1124,6 +1252,11 @@ struct ModuleShape {
     std::uint32_t parameterLocation = 0;
     bool rectParameters = false;
     bool secondTarget = false;
+    bool sampleId = false;
+    bool layer = false;
+    bool fragDepth = false;
+    std::uint32_t sampleMaskLength = 0;
+    std::uint32_t clipDistanceLength = 0;
 };
 
 void emit(std::vector<std::uint32_t>& out, spv::Op op, std::initializer_list<std::uint32_t> operands) {
@@ -1187,6 +1320,52 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
         emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassInput, vector});
         emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassInput});
         emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, shape.barycentricNoPerspective ? spv::BuiltInBaryCoordNoPerspKHR : spv::BuiltInBaryCoordKHR});
+        extraInterface.push_back(variable);
+    }
+    if (shape.sampleId || shape.layer) {
+        const auto intType = id();
+        const auto pointer = id();
+        emit(declarations, spv::OpTypeInt, {intType, 32, 1});
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassInput, intType});
+        for (const auto [wanted, builtin] : {std::pair{shape.sampleId, spv::BuiltInSampleId}, std::pair{shape.layer, spv::BuiltInLayer}}) {
+            if (!wanted) continue;
+            const auto variable = id();
+            emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassInput});
+            emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, static_cast<std::uint32_t>(builtin)});
+            emit(annotations, spv::OpDecorate, {variable, spv::DecorationFlat});
+            extraInterface.push_back(variable);
+        }
+    }
+    if (shape.fragDepth) {
+        const auto pointer = id();
+        const auto variable = id();
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassOutput, floatType});
+        emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassOutput});
+        emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, spv::BuiltInFragDepth});
+        extraInterface.push_back(variable);
+    }
+    if (shape.sampleMaskLength != 0) {
+        const auto length = id();
+        const auto array = id();
+        const auto pointer = id();
+        const auto variable = id();
+        emit(declarations, spv::OpConstant, {uintType, length, shape.sampleMaskLength});
+        emit(declarations, spv::OpTypeArray, {array, uintType, length});
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassOutput, array});
+        emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassOutput});
+        emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, spv::BuiltInSampleMask});
+        extraInterface.push_back(variable);
+    }
+    if (shape.clipDistanceLength != 0) {
+        const auto length = id();
+        const auto array = id();
+        const auto pointer = id();
+        const auto variable = id();
+        emit(declarations, spv::OpConstant, {uintType, length, shape.clipDistanceLength});
+        emit(declarations, spv::OpTypeArray, {array, floatType, length});
+        emit(declarations, spv::OpTypePointer, {pointer, spv::StorageClassOutput, array});
+        emit(declarations, spv::OpVariable, {pointer, variable, spv::StorageClassOutput});
+        emit(annotations, spv::OpDecorate, {variable, spv::DecorationBuiltIn, spv::BuiltInClipDistance});
         extraInterface.push_back(variable);
     }
     if (shape.perVertex) {
@@ -1256,6 +1435,9 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     emit(function, spv::OpFunctionEnd, {});
     std::vector<std::uint32_t> words{spv::MagicNumber, 0x10300, 0, next, 0};
     emit(words, spv::OpCapability, {spv::CapabilityShader});
+    if (shape.sampleId) emit(words, spv::OpCapability, {spv::CapabilitySampleRateShading});
+    if (shape.layer) emit(words, spv::OpCapability, {spv::CapabilityGeometry});
+    if (shape.clipDistanceLength != 0) emit(words, spv::OpCapability, {spv::CapabilityClipDistance});
     if (shape.barycentric) {
         emit(words, spv::OpCapability, {spv::CapabilityFragmentBarycentricKHR});
         const std::string extension = "SPV_KHR_fragment_shader_barycentric";
@@ -1272,6 +1454,7 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     words[entryPointOffset] += static_cast<std::uint32_t>(extraInterface.size()) << 16u;
     words.insert(words.end(), extraInterface.begin(), extraInterface.end());
     if (shape.fragment) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeOriginUpperLeft});
+    if (shape.fragDepth) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeDepthReplacing});
     words.insert(words.end(), annotations.begin(), annotations.end());
     words.insert(words.end(), declarations.begin(), declarations.end());
     words.insert(words.end(), function.begin(), function.end());
@@ -1446,6 +1629,18 @@ void validationTests() {
             AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, true);
             expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "fragmentShaderBarycentric");
         }
+        pixel.spirv = makeModule({.fragment = true, .sampleId = true, .layer = true, .fragDepth = true, .sampleMaskLength = 1});
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false);
+        pixel.spirv = makeModule({.fragment = true, .sampleMaskLength = 2});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported fragment built-in");
+        pixel.spirv = makeModule({.fragment = true});
+        vertex.spirv = makeModule({.parameterOutput = true, .clipDistanceLength = 4});
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false);
+        vertex.spirv = makeModule({.parameterOutput = true, .clipDistanceLength = 9});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "clip or cull distance");
+        vertex.spirv = makeModule({.parameterOutput = true, .sampleId = true});
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability 35");
+        vertex.spirv = makeModule({.parameterOutput = true});
         pixel.spirv = makeModule({.fragment = true, .barycentric = true, .barycentricComponents = 4});
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, true); }, "invalid barycentric built-in");
         pixel.spirv = makeModule({.fragment = true, .barycentric = true, .perVertex = true, .perVertexLength = 2});
@@ -1663,13 +1858,26 @@ int main() {
             draw.indexAddress = 0;
             draw.flags = 1;
             expectFailure([&] { AgcDriver::Graphics::Draw(context, state, draw, {}); }, "draw modifiers");
+            auto bounded = state;
+            bounded.depthBoundsTest = true;
+            bounded.minDepthBounds = 0.25f;
+            AgcDriver::Graphics::ValidateDepthBounds(context, bounded);
+            bounded.minDepthBounds = 1.5f;
+            expectFailure([&] { AgcDriver::Graphics::ValidateDepthBounds(context, bounded); }, "depth bounds outside [0, 1]");
+            auto unrestricted = context;
+            unrestricted.depthRangeUnrestricted = true;
+            AgcDriver::Graphics::ValidateDepthBounds(unrestricted, bounded);
         }
         stateTests();
         hardwareScreenOffsetTests();
         DepthClipTests();
         DepthStencilTests();
+        DepthBoundsBiasTests();
         DisabledColorTests();
         metadataPassTests();
+        multisampleTests();
+        clipDistanceTests();
+        quadPixelMaskTests();
         ShaderStageTests();
         PixelInputLayoutTests();
         InitialContextTests();

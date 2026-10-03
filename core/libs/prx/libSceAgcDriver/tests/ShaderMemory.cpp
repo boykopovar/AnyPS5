@@ -4,6 +4,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include "Optimization/SrtWalker/SrtEvaluator.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -79,6 +80,27 @@ void verifyRegisterSources() {
     secondVector.SetRegister({RegisterBank::Vector, 1});
     require(!EquivalentValue(plan, &firstVector, &secondVector), "different vector registers were merged");
     require(!EquivalentValue(plan, &samplerRegister, &firstVector), "different register types were merged");
+}
+
+void verifyEvaluatedValues() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    for (std::uint32_t id = 0; id < 1000u; id++) {
+        values.push_back(std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, id));
+    }
+    Detail::EvaluatedValues table;
+    std::uint64_t found = 0;
+    require(!table.Find(values.front().get(), found), "evaluated values: an empty table found a value");
+    for (std::uint32_t id = 0; id < values.size(); id++) {
+        table.Insert(values[id].get(), std::uint64_t{id} * 3u);
+    }
+    for (std::uint32_t id = 0; id < values.size(); id++) {
+        require(table.Find(values[id].get(), found) && found == std::uint64_t{id} * 3u, "evaluated values: a value was lost when the table grew");
+    }
+    table.Insert(values[7].get(), 0u);
+    require(table.Find(values[7].get(), found) && found == 21u, "evaluated values: a second insert replaced the first value");
+    IrValue absent(IrOpcode::Void, IrType::U32, 1000u);
+    require(!table.Find(&absent, found), "evaluated values: a value that was never inserted was found");
 }
 
 // The pure flat slots of a hand-built plan (Detail::ComputePureFlatSlots): a slot is pure unless
@@ -442,6 +464,38 @@ void verifyMeshConfiguration() {
     request.graphics = GraphicsCompileContext{0u, {}, mesh, std::nullopt, {}};
     const auto replay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(request));
     require(replay.request.graphics.has_value() && replay.request.graphics->mesh.has_value() && replay.request.graphics->mesh->esgsItemSize == 12u && replay.request.graphics->mesh->primitivesPerGroup == 21u, "mesh configuration was lost in serialization");
+    {
+        RecompileRequest vertex{};
+        vertex.shader = {ShaderStage::Vertex, 0x10000u, code, 0, {}};
+        vertex.context.waveSize = 64;
+        ShaderVertexStageInfo info{};
+        info.paClVsOutCntl = 0x0040000fu;
+        vertex.context.vertex = info;
+        const auto back = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(vertex));
+        require(back.request.context.vertex.has_value() && back.request.context.vertex->paClVsOutCntl == 0x0040000fu, "PA_CL_VS_OUT_CNTL was lost in serialization");
+        std::vector<std::uint64_t> clipped;
+        RecompileCacheKey::Build(vertex, clipped);
+        vertex.context.vertex->paClVsOutCntl = 0;
+        std::vector<std::uint64_t> unclipped;
+        RecompileCacheKey::Build(vertex, unclipped);
+        require(clipped != unclipped, "PA_CL_VS_OUT_CNTL is not part of the recompile cache key");
+    }
+    {
+        RecompileRequest fragment{};
+        fragment.shader = {ShaderStage::Fragment, 0x10000u, code, 0, {}};
+        fragment.context.waveSize = 64;
+        ShaderPixelStageInfo info{};
+        info.quadPixelMask = 0x2u;
+        fragment.context.pixel = info;
+        const auto back = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(fragment));
+        require(back.request.context.pixel.has_value() && back.request.context.pixel->quadPixelMask == 0x2u, "the quad pixel mask was lost in serialization");
+        std::vector<std::uint64_t> masked;
+        RecompileCacheKey::Build(fragment, masked);
+        fragment.context.pixel->quadPixelMask = 0xfu;
+        std::vector<std::uint64_t> full;
+        RecompileCacheKey::Build(fragment, full);
+        require(masked != full, "the quad pixel mask is not part of the recompile cache key");
+    }
     std::vector<std::uint64_t> key;
     RecompileCacheKey::Build(request, key);
     const auto first = key;
@@ -757,6 +811,7 @@ int main() {
     try {
         using namespace ShaderRecompiler;
         verifyRegisterSources();
+        verifyEvaluatedValues();
         verifyPureFlatSlots();
         verifyBindlessTable();
         verifyProgramCounterRelativeData();

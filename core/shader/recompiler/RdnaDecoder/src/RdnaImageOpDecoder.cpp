@@ -117,9 +117,6 @@ void validateFlags(std::uint32_t flags) {
     if ((flags & ~known) != 0u) {
         throw std::runtime_error("unknown image address flags");
     }
-    if ((flags & RdnaImageSampleFlagCd) != 0u) {
-        throw std::runtime_error("unsupported image coarse derivative (_cd) address layout");
-    }
     const auto lodModes = flags & (RdnaImageSampleFlagLod | RdnaImageSampleFlagBias | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLevelZero);
     if (std::popcount(lodModes) > 1) {
         throw std::runtime_error("conflicting image LOD modes");

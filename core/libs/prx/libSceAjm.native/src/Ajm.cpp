@@ -136,18 +136,34 @@ struct JobHeader {
     std::uint8_t parameters[16];
 };
 
+struct PackedJob {
+    std::uint8_t kind;
+    std::uint8_t inputCount;
+    std::uint8_t outputCount;
+    std::uint8_t parameterSize;
+    std::uint32_t instance;
+    std::uint64_t flags;
+    void* sideband;
+    std::uint32_t sidebandSize;
+    std::uint32_t bytes;
+};
+static_assert(sizeof(PackedJob) == 32);
+
 int Append(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs, const AjmBuffer* outputs) {
     if (!info || !info->p_buffer) return SCE_AJM_ERROR_INVALID_PARAMETER;
-    const std::size_t bytes = sizeof(JobHeader) + (header.inputCount + header.outputCount) * sizeof(AjmBuffer);
-    if (bytes > info->size - info->offset) return SCE_AJM_ERROR_OUT_OF_RESOURCES;
+    if (header.inputCount > 0xffu || header.outputCount > 0xffu || header.parameterSize > sizeof(header.parameters) || header.sidebandSize > 0xffffffffu) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    const std::size_t parameterBytes = (header.parameterSize + 7u) & ~std::size_t{7};
+    const std::size_t bytes = sizeof(PackedJob) + (header.inputCount + header.outputCount) * sizeof(AjmBuffer) + parameterBytes;
+    if (info->offset > info->size || bytes > info->size - info->offset) return SCE_AJM_ERROR_OUT_OF_RESOURCES;
     auto* cursor = static_cast<std::uint8_t*>(info->p_buffer) + info->offset;
-    JobHeader record = header;
-    record.bytes = static_cast<std::uint32_t>(bytes);
+    const PackedJob record{static_cast<std::uint8_t>(header.kind), static_cast<std::uint8_t>(header.inputCount), static_cast<std::uint8_t>(header.outputCount), static_cast<std::uint8_t>(header.parameterSize), header.instance, header.flags, header.sideband, static_cast<std::uint32_t>(header.sidebandSize), static_cast<std::uint32_t>(bytes)};
     std::memcpy(cursor, &record, sizeof(record));
     cursor += sizeof(record);
     if (header.inputCount) std::memcpy(cursor, inputs, header.inputCount * sizeof(AjmBuffer));
     cursor += header.inputCount * sizeof(AjmBuffer);
     if (header.outputCount) std::memcpy(cursor, outputs, header.outputCount * sizeof(AjmBuffer));
+    cursor += header.outputCount * sizeof(AjmBuffer);
+    if (header.parameterSize) std::memcpy(cursor, header.parameters, header.parameterSize);
     info->offset += bytes;
     return 0;
 }
@@ -670,6 +686,7 @@ int APS5_VABI sceAjmBatchJobClearContext(AjmBatchInfo* info, uint32_t instance, 
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instance, const void* gapless_decode, int reset, void* result) {
     auto header = MakeHeader(JobKind::SetGaplessDecode, instance, result, sizeof(SidebandResult));
     if (gapless_decode) std::memcpy(header.parameters, gapless_decode, sizeof(SidebandGaplessDecode));
+    header.parameterSize = gapless_decode ? sizeof(SidebandGaplessDecode) : 0;
     header.flags = reset ? 1 : 0;
     return Append(info, header, nullptr, nullptr);
 }
@@ -704,12 +721,25 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
     AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(info->offset), static_cast<unsigned long long>(info->size));
     const auto* cursor = static_cast<const std::uint8_t*>(info->p_buffer);
     const auto* end = cursor + info->offset;
+    std::vector<AjmBuffer> buffers;
     while (cursor < end) {
-        JobHeader job;
-        std::memcpy(&job, cursor, sizeof(job));
-        const auto* buffers = reinterpret_cast<const AjmBuffer*>(cursor + sizeof(JobHeader));
-        Execute(job, buffers, buffers + job.inputCount);
-        cursor += job.bytes;
+        PackedJob record;
+        std::memcpy(&record, cursor, sizeof(record));
+        JobHeader job{};
+        job.kind = static_cast<JobKind>(record.kind);
+        job.bytes = record.bytes;
+        job.instance = record.instance;
+        job.flags = record.flags;
+        job.sideband = record.sideband;
+        job.sidebandSize = record.sidebandSize;
+        job.inputCount = record.inputCount;
+        job.outputCount = record.outputCount;
+        job.parameterSize = record.parameterSize;
+        buffers.resize(record.inputCount + record.outputCount);
+        if (!buffers.empty()) std::memcpy(buffers.data(), cursor + sizeof(record), buffers.size() * sizeof(AjmBuffer));
+        if (record.parameterSize) std::memcpy(job.parameters, cursor + sizeof(record) + buffers.size() * sizeof(AjmBuffer), record.parameterSize);
+        Execute(job, buffers.data(), buffers.data() + job.inputCount);
+        cursor += record.bytes;
     }
     if (error) std::memset(error, 0, sizeof(*error));
     *batch = g_nextBatch.fetch_add(1, std::memory_order_relaxed);
