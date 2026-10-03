@@ -180,7 +180,8 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
     for (std::uint32_t loadIndex = index - 3u; loadIndex-- > 5u;) {
         const auto& load = program.instructions[loadIndex];
         if (load.op != RdnaOpcode::SLoadDwordx2) {
-            if (load.op == RdnaOpcode::SWaitcnt) continue;
+            if (load.op == RdnaOpcode::SWaitcnt || load.op == RdnaOpcode::SWaitcntVmcnt ||
+                load.op == RdnaOpcode::SWaitcntExpcnt || load.op == RdnaOpcode::SWaitcntLgkmcnt) continue;
             if (load.family == RdnaInstructionFamily::VOP1 || load.family == RdnaInstructionFamily::VOP2 ||
                 load.family == RdnaInstructionFamily::VOP3 || load.family == RdnaInstructionFamily::VOPC) {
                 if (load.destination.kind != RdnaOperandKind::ScalarRegister && load.destination2.kind != RdnaOperandKind::ScalarRegister) continue;

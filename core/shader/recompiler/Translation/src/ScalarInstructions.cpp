@@ -54,6 +54,9 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         emitControlNop();
         return true;
     case RdnaOpcode::SWaitcnt:
+    case RdnaOpcode::SWaitcntVmcnt:
+    case RdnaOpcode::SWaitcntExpcnt:
+    case RdnaOpcode::SWaitcntLgkmcnt:
         emitWaitcnt();
         return true;
     case RdnaOpcode::SAndSaveexecB32:
