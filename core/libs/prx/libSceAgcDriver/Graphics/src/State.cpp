@@ -85,6 +85,12 @@ bool depthSurfaceBound(const Registers& cx) {
     return (z != cx.end() && (z->second & 3u) != 0) || (stencil != cx.end() && (stencil->second & 1u) != 0);
 }
 
+bool depthPlanesAbsent(const Registers& cx) {
+    const auto z = find(cx, 0x010);
+    const auto stencil = find(cx, 0x011);
+    return z != cx.end() && stencil != cx.end() && (z->second & 3u) == 0 && (stencil->second & 1u) == 0;
+}
+
 VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint32_t refMask, bool readOnly) {
     VkStencilOpState face{};
     face.compareOp = static_cast<VkCompareOp>(compare);
@@ -143,8 +149,8 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
     const auto zFormat = read(cx, 0x010) & 3u;
     const bool stencil = (read(cx, 0x011) & 1u) != 0;
     Require(zFormat != 2, "Z_24 depth is unsupported");
-    Require(zFormat != 0 || (depthControl & 2u) == 0, "depth test without a depth plane");
-    Require(stencil || (depthControl & 1u) == 0, "stencil test without a stencil plane");
+    if (zFormat == 0) depthControl &= ~6u;
+    if (!stencil) depthControl &= ~1u;
     const auto base = [&](std::uint32_t low, std::uint32_t highOffset) {
         const auto high = find(cx, highOffset);
         return (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, low)) << 8u);
@@ -417,7 +423,7 @@ State DecodeState(const QueueState& queue) {
         const auto depthControl = read(cx, 0x200);
         if ((depthControl & 3u) != 0 && depthSurfaceBound(cx)) {
             decodeDepth(cx, depthControl, result);
-        } else if (depthPassThrough(depthControl)) {
+        } else if (depthPassThrough(depthControl) || ((depthControl & 3u) != 0 && depthPlanesAbsent(cx))) {
             static bool reported = false;
             if (!reported) {
                 reported = true;
@@ -703,7 +709,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (auto reason = nonzero(cx, 0x207, ~LayerExports, "clip distances, layer, viewport or auxiliary vertex exports"); !reason.empty()) return reason;
     if (value(cx, 0x200, word)) {
         const bool surface = (word & 3u) != 0 && depthSurfaceBound(cx);
-        if (!surface && !depthPassThrough(word) && !IgnoreDepthTest() && (effectiveDepthControl(word) & DepthControlMask) != 0) return zeroMessage(0x200, word, "depth, stencil or conditional color writes");
+        if (!surface && !((word & 3u) != 0 && depthPlanesAbsent(cx)) && !depthPassThrough(word) && !IgnoreDepthTest() && (effectiveDepthControl(word) & DepthControlMask) != 0) return zeroMessage(0x200, word, "depth, stencil or conditional color writes");
         if (auto reason = require((word & 0xc0000008u) == 0, "depth bounds or depth-conditional color writes are unsupported"); !reason.empty()) return reason;
     }
     if (auto reason = nonzero(cx, 0x203, ShaderControlMask, "depth export, shader coverage or ordered fragment execution"); !reason.empty()) return reason;
