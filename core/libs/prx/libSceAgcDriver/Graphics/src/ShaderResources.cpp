@@ -280,6 +280,18 @@ std::shared_ptr<StorageTexture> sampledStorageSource(const Context& context, con
 }
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
+std::uint64_t TextureCacheBudget(const Context& context) {
+    static const std::uint64_t budget = [&] {
+        if (const char* text = std::getenv("APS5_TEXTURE_CACHE_MIB")) return std::max<std::uint64_t>(std::strtoull(text, nullptr, 10), 1ull) << 20u;
+        VkDeviceSize deviceLocal = 0;
+        for (std::uint32_t heap = 0; heap < context.memory.memoryHeapCount; ++heap) {
+            if ((context.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) deviceLocal = std::max(deviceLocal, context.memory.memoryHeaps[heap].size);
+        }
+        return std::max<std::uint64_t>(2048ull << 20u, deviceLocal / 4u);
+    }();
+    return budget;
+}
+
 std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false) {
     CaptureTrace::Log("sampled-lookup address=%llx width=%u height=%u dcc=%llx", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, static_cast<unsigned long long>(resource.dccAddress));
     if (auto depth = DepthSurfaceTexture(context, words, resource, components)) return depth;
@@ -438,7 +450,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, entry.bytes, depthCompare);
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
     }
-    constexpr std::uint64_t budget = 2048ull << 20u;
+    const std::uint64_t budget = TextureCacheBudget(context);
     while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) eraseTexture(cache, std::prev(cache.entries.end()));
     cache.bytes += entry.accounted;
     auto texture = entry.texture;
@@ -605,7 +617,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     // APS5_NO_KEEP_NEW_STORAGE=1 leaves the image to its cache entry alone, as before.
     static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
     if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
-    constexpr std::uint64_t budget = 2048ull << 20u;
+    const std::uint64_t budget = TextureCacheBudget(context);
     while (!cache.entries.empty() && cache.bytes + entry.texture->GuestBytes() > budget) evictStorage(cache, std::prev(cache.entries.end()));
     cache.bytes += entry.texture->GuestBytes();
     auto texture = entry.texture;
