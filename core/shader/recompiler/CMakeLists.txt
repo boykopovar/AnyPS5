@@ -211,6 +211,7 @@ function(add_shader_recompiler target runtimeTarget)
             HashBytes
             PixelInput
             PixelInputBit
+            PrepareSource
             ReadWholeFile
             Recompile
             RecompileCacheKey::ContextHash

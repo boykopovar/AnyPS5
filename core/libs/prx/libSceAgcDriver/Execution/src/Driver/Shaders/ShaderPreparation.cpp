@@ -82,7 +82,7 @@ void ShaderPreparation::prepare(const Pending& entry) const {
         const ShaderRecompiler::RecompileRequest request{
             {ShaderRecompiler::ShaderStage::Compute, snapshot.codeAddress, snapshot.code, snapshot.headerAddress, snapshot.header},
             {entry.waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
-            localDevice->Target(),
+            localDevice->ComputeTarget(entry.waveSize),
             {0, 0, 0, 128}
         };
         ShaderRecompiler::PrepareSource(request);
