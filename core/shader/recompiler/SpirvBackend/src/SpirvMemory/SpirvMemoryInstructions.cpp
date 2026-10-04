@@ -787,6 +787,11 @@ std::uint32_t LoadGpuDescriptorFormatted(SpirvValueEmitContext& ctx, const IrVal
         }
         std::array<std::uint32_t, 8> selected{};
         for (std::uint32_t selector = 0; selector < 8u; selector++) {
+            if (selector == 2u || selector == 3u) {
+                // Reserved DST_SEL values; a V# naming one reads zero.
+                selected[selector] = ConstantU32(state, 0u);
+                continue;
+            }
             const auto source = ResolveFormattedSource(info, selector);
             if (source.kind == SpirvFormattedSourceKind::Memory && selected[4u + source.component] != 0u) {
                 selected[selector] = selected[4u + source.component];
@@ -815,10 +820,18 @@ std::uint32_t LoadGpuDescriptorFormatted(SpirvValueEmitContext& ctx, const IrVal
     } else {
         // One switch arm per buffer format the conversions know; any other FORMAT reads zeros.
         std::vector<SpirvBufferFormatInfo> formats;
-        for (std::uint32_t format = 1; format < 128u; format++) {
-            const auto info = GetFormatInfo(static_cast<IrBufferFormat>(format));
-            if (info.type != SpirvFormatComponentType::Unknown && info.componentCount != 0u) formats.push_back(info);
-        }
+        static const std::vector<SpirvBufferFormatInfo> known = [] {
+            std::vector<SpirvBufferFormatInfo> result;
+            for (std::uint32_t format = 1; format < 128u; format++) {
+                try {
+                    const auto info = GetFormatInfo(static_cast<IrBufferFormat>(format));
+                    if (info.type != SpirvFormatComponentType::Unknown && info.componentCount != 0u) result.push_back(info);
+                } catch (const std::exception&) {
+                }
+            }
+            return result;
+        }();
+        formats = known;
         const auto format = Select(state, u32, inBounds, EmitBitFieldUExtract(state, word3, ConstantU32(state, 12u), ConstantU32(state, 7u)), zero);
         const auto defaultLabel = state.module.AllocateId();
         const auto mergeLabel = state.module.AllocateId();
