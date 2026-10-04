@@ -129,6 +129,7 @@ int APS5_VABI sceNpEntitlementAccessRequestConsumeUnifiedEntitlement(void) {
 }
 
 
+
 int APS5_VABI sceNpEntitlementAccessRequestConsumeServiceEntitlement(void) {
  return SCE_NP_ERROR_SIGNED_OUT;
 }
@@ -175,9 +176,8 @@ int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList() {
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
-APS5_EXPORT("5LiMEPuW0DQ", sceNpEntitlementAccessUnknown00);
-int APS5_VABI sceNpEntitlementAccessUnknown00(void) {
-    NotImplemented_nid_no_patch("5LiMEPuW0DQ");
+int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 }

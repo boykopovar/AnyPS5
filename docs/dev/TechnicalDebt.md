@@ -242,6 +242,23 @@ Throughout the project, every function at every stage either **does exactly what
 - [snwprintf_s](../../core/libs/prx/libc/src/FormattingWide.cpp) (libc) - follows C11 K.3.9.1.3 with `RSIZE_MAX` assumed to be `SIZE_MAX >> 1`. A runtime-constraint violation only returns a negative value: `set_constraint_handler_s` is not exported and the console's default handler is unknown. An invalid multibyte `%s` argument is copied byte by byte instead of being reported as an encoding error, as in `vswprintf`
 - [libSceUlt ulthreads](../../core/libs/prx/libSceUlt/Export.cpp) - `_sceUltUlthreadRuntimeOptParamInitialize`, `_sceUltUlthreadRuntimeCreate` and `_sceUltUlthreadCreate` are assumed to take the same arguments as the existing exports without the underscore, including the trailing build version. `sceUltUlthreadTryJoin` is assumed to return `ULT_ERROR_BUSY` while the ulthread runs, and `sceUltUlthreadRuntimeDestroy` to return `ULT_ERROR_BUSY` while an ulthread created on the runtime is not joined. Neither error has been confirmed on PS5 hardware
 - [libSceUlt queues](../../core/libs/prx/libSceUlt/Export.cpp) - the added `sceUltQueuePop`, `sceUltQueueTryPush`, `sceUltQueueDestroy` and `sceUltQueueDataResourcePoolDestroy` signatures are inferred from the existing push/pop and object APIs. Queue destruction is assumed to reject blocked callers with `ULT_ERROR_BUSY` and otherwise discard queued data; pool exhaustion returns `ULT_ERROR_AGAIN`. These rules, alignment checks and shared slot limits have not been confirmed on PS5 hardware or a title. Non-null queue and data-pool option parameters throw because their layouts are unknown.
+- [AC1FtjqMCL0](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [0iEKNAvT600](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [2cELEBPdYQ0](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [5xYxiOtOccA](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [6W+shIH315Q](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [7ilObq815O4](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [7iq7Hfs8HBk](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [AMJZhpC+siY](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [E9XkHowt+dY](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [GADjreszOgM](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [Giyg2xGrXDU](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [KC3y21wrqzc](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [Qb8wS4GZUsw](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [aAQZSjb2fho](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [pnz21I6VjDs](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [qk043QPsrZU](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [uDGXwUKqi8s](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
 - [LinuxProtFromSce](../../core/libs/prx/libkernel/DirectMemory/DirectMemory.cpp) (libkernel) - protection bits 0x100 and 0x200 are accepted and assumed not to affect host CPU access; host protection is derived only from the read, write and execute bits
 - [_sceUlobjmgrRegisterObject](../../core/libs/prx/ulobjmgr/Export.cpp) (ulobjmgr) - parameters taken from shadPS4 (PS4): a nonzero 64-bit object, a nonzero 32-bit kind and a 32-bit id output; the meaning of the first two and the PS5 signature are unverified. The id bound of `_sceUlobjmgrUnregisterObject` (below 0x4000) and the raw `EINVAL` (22) return also come from shadPS4
 - [sceShareGetCurrentStatus](../../core/libs/prx/libSceShare/Export.cpp) (libSceShare) - validation (feature flag non-zero, status non-null) and the all-zero 16-byte status taken from the [KytyPS5](https://github.com/KytyPS5/KytyPS5) reimplementation, not confirmed on a PS5 title; the meaning of the recording status values is unknown

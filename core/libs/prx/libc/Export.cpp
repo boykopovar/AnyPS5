@@ -102,21 +102,18 @@ std::uint64_t APS5_VABI _Cnd_wait_nid_postfix() {
     return 0;
 }
 
-APS5_EXPORT("P41kTWUS3EI", libcUnknown_P41kTWUS3EI);
-int APS5_VABI libcUnknown_P41kTWUS3EI(void) {
-    NotImplemented_nid_no_patch("P41kTWUS3EI");
+int APS5_VABI scePthreadGetschedparam(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-APS5_EXPORT("oIRFTjoILbg", libcUnknown_oIRFTjoILbg);
-int APS5_VABI libcUnknown_oIRFTjoILbg(void) {
-    NotImplemented_nid_no_patch("oIRFTjoILbg");
+int APS5_VABI scePthreadSetschedparam(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-APS5_EXPORT("tQNolUV1q5A", libcUnknown_tQNolUV1q5A);
-int APS5_VABI libcUnknown_tQNolUV1q5A(void) {
-    NotImplemented_nid_no_patch("tQNolUV1q5A");
+int APS5_VABI swscanf_s_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 }

@@ -816,27 +816,23 @@ int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {
     return 0;
 }
 
-APS5_EXPORT("Eu95jmqn5Rw", sceJson2Unknown01);
-int APS5_VABI sceJson2Unknown01(void) {
-    NotImplemented_nid_no_patch("Eu95jmqn5Rw");
+int APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-APS5_EXPORT("GvGvswb0v34", sceJson2Unknown02);
-int APS5_VABI sceJson2Unknown02(void) {
-    NotImplemented_nid_no_patch("GvGvswb0v34");
+int APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-APS5_EXPORT("IXW-z8pggfg", sceJson2Unknown03);
-int APS5_VABI sceJson2Unknown03(void) {
-    NotImplemented_nid_no_patch("IXW-z8pggfg");
+int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-APS5_EXPORT("W72B9ylU2JA", sceJson2Unknown04);
-int APS5_VABI sceJson2Unknown04(void) {
-    NotImplemented_nid_no_patch("W72B9ylU2JA");
+int APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 }

@@ -1262,16 +1262,4 @@ int APS5_VABI sceNetUnknown00(void) {
     NotImplemented_nid_no_patch("TCkRD0DWNLg");
     return 0;
 }
-
-APS5_EXPORT("3CHi1K1wsCQ", sceNetUnknown01);
-int APS5_VABI sceNetUnknown01(void) {
-    NotImplemented_nid_no_patch("3CHi1K1wsCQ");
-    return 0;
-}
-
-APS5_EXPORT("tOrRi-v3AOM", sceNetUnknown02);
-int APS5_VABI sceNetUnknown02(void) {
-    NotImplemented_nid_no_patch("tOrRi-v3AOM");
-    return 0;
-}
 }
