@@ -7,6 +7,7 @@ function(add_sce_font_library target)
             ${fontDir}/src/Render.cpp
             ${fontDir}/src/State.cpp
             ${fontDir}/src/Style.cpp
+            ${fontDir}/src/SystemFont.cpp
             ${fontDir}/src/Text.cpp
             ${fontDir}/src/Unimplemented.cpp
     )

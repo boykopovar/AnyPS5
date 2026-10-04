@@ -193,6 +193,10 @@ Font::FontObj* Font::FindSubFont(FontObj* head, std::uint32_t subFontIndex) {
     return nullptr;
 }
 
+void* Font::FontContext(const FontLibNative* library, const FontHandleNative* font) {
+    return font->open_info.fontset_flags != 0 ? library->sysfonts_ctx : library->external_fonts_ctx;
+}
+
 void Font::ReleaseFontObjectsForHandle(FontHandleNative* font) {
     auto* library = static_cast<FontLibNative*>(font->library);
     if (!library || library->magic != LIBRARY_MAGIC || !library->sys_driver || !library->sys_driver->close) return;
@@ -201,7 +205,7 @@ void Font::ReleaseFontObjectsForHandle(FontHandleNative* font) {
     const std::uint32_t modeLow = font->flags & 0x0Fu;
     FontObj* head = nullptr;
     std::uint32_t lockWord = 0;
-    auto* entry = AcquireFontCtxEntry(library->external_fonts_ctx, fontId, modeLow, &head, &lockWord);
+    auto* entry = AcquireFontCtxEntry(FontContext(library, font), fontId, modeLow, &head, &lockWord);
     if (!entry) return;
     FontObj* match = FindSubFont(head, font->open_info.sub_font_index);
     const std::uint32_t openFlag = lockWord & OPEN_BIT;
@@ -243,16 +247,16 @@ void Font::RemoveState(FontHandle handle) {
     fontStates.erase(handle);
 }
 
-void Font::LoadStateFace(FontState& state, std::vector<unsigned char> bytes, std::uint32_t subFontIndex) {
+void Font::LoadStateFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes, std::uint32_t subFontIndex) {
     if (state.face) {
         FT_Done_Face(state.face);
         state.face = nullptr;
     }
     state.faceData = std::move(bytes);
     const FT_Library library = HostFreeTypeLibrary();
-    if (!library || state.faceData.empty()) return;
+    if (!library || !state.faceData || state.faceData->empty()) return;
     FT_Face face = nullptr;
-    if (FT_New_Memory_Face(library, state.faceData.data(), static_cast<FT_Long>(state.faceData.size()), static_cast<FT_Long>(subFontIndex), &face) != 0) return;
+    if (FT_New_Memory_Face(library, state.faceData->data(), static_cast<FT_Long>(state.faceData->size()), static_cast<FT_Long>(subFontIndex), &face) != 0) return;
     FT_Select_Charmap(face, FT_ENCODING_UNICODE);
     state.face = face;
 }

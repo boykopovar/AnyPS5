@@ -212,7 +212,7 @@ int Font::ComputeHorizontalLayout(FontHandle handle, const StyleStateBlock* styl
     auto* font = GetNativeFont(handle);
     if (!font) return fail();
     auto* library = static_cast<FontLibNative*>(font->library);
-    if (!library || !library->external_fonts_ctx) return fail();
+    if (!library || !FontContext(library, font)) return fail();
     const SysDriver* driver = library->sys_driver;
     if (!driver || !driver->set_char_with_dpi || !driver->set_char_default_dpi || !driver->compute_layout || !style) return fail();
     const std::uint32_t modeLow = font->flags & 0x0Fu;
@@ -226,7 +226,7 @@ int Font::ComputeHorizontalLayout(FontHandle handle, const StyleStateBlock* styl
     if (static_cast<std::int32_t>(fontId) >= 0) {
         FontObj* head = nullptr;
         std::uint32_t lockWord = 0;
-        auto* entry = AcquireFontCtxEntry(library->external_fonts_ctx, fontId, modeLow, &head, &lockWord);
+        auto* entry = AcquireFontCtxEntry(FontContext(library, font), fontId, modeLow, &head, &lockWord);
         if (!entry) return fail();
         FontObj* match = FindSubFont(head, font->open_info.sub_font_index);
         int rc = SCE_FONT_ERROR_FATAL;
@@ -288,7 +288,7 @@ int Font::ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style,
     };
     auto* font = GetNativeFont(handle);
     auto* library = font ? static_cast<FontLibNative*>(font->library) : nullptr;
-    if (!library || !library->external_fonts_ctx || !library->sys_driver) return fail(SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    if (!library || !FontContext(library, font) || !library->sys_driver) return fail(SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     const SysDriver* driver = library->sys_driver;
     const std::uint32_t modeLow = font->flags & 0x0Fu;
     const std::uint32_t fontId = font->open_info.ctx_entry_index;
@@ -303,7 +303,7 @@ int Font::ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style,
     if (static_cast<std::int32_t>(fontId) >= 0) {
         FontObj* head = nullptr;
         std::uint32_t lockWord = 0;
-        auto* entry = AcquireFontCtxEntry(library->external_fonts_ctx, fontId, modeLow, &head, &lockWord);
+        auto* entry = AcquireFontCtxEntry(FontContext(library, font), fontId, modeLow, &head, &lockWord);
         FontObj* obj = FindSubFont(head, font->open_info.sub_font_index);
         if (!entry || !obj) {
             if (entry) ReleaseFontCtxEntryLock(entry, modeLow, lockWord);
@@ -454,7 +454,7 @@ int Font::RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRe
     const StyleStateBlock* style = ResolveSurfaceStyleState(&font->cached_style.state, surface, surfaceStyle);
     FontObj* obj = nullptr;
     std::uint32_t lockWord = 0;
-    auto* entry = AcquireFontCtxEntry(library->external_fonts_ctx, font->open_info.ctx_entry_index, modeLow, &obj, &lockWord);
+    auto* entry = AcquireFontCtxEntry(FontContext(library, font), font->open_info.ctx_entry_index, modeLow, &obj, &lockWord);
     obj = FindSubFont(obj, font->open_info.sub_font_index);
     if (!entry || !obj) {
         if (entry) ReleaseFontCtxEntryLock(entry, modeLow, lockWord);
