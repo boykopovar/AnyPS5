@@ -81,13 +81,14 @@ public:
     DepthSurface& operator=(const DepthSurface&) = delete;
 
     void ApplyFastClear() {
-        if (!fastCleared) return;
-        fastCleared = false;
+        const auto aspects = pendingClear & (VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u));
+        pendingClear = 0;
+        if (aspects == 0) return;
         auto* recorder = Recorder::Active();
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
-        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
+        const VkImageSubresourceRange range{aspects, 0, 1, 0, 1};
         constexpr VkAccessFlags access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, access, VK_ACCESS_TRANSFER_WRITE_BIT);
         const VkClearDepthStencilValue clear{clearDepth, clearStencil};
@@ -122,7 +123,7 @@ public:
         return texture;
     }
 
-    bool fastCleared = false;
+    VkImageAspectFlags pendingClear = 0;
     float clearDepth = 0.0f;
     std::uint8_t clearStencil = 0;
     const Context context;
@@ -199,14 +200,25 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     return (*found)->Sampled(words, resource, components);
 }
 
+VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile) {
+    VkImageAspectFlags cleared = (pattern & 0xfu) == 0 ? VK_IMAGE_ASPECT_DEPTH_BIT : 0u;
+    if (stencilInHtile && ((pattern >> 8u) & 0x3u) == 0) cleared |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    return cleared;
+}
+
+bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes) {
+    if (htile == 0 || htile < address || htile >= address + bytes) return false;
+    const auto tiles = static_cast<std::uint64_t>((extent.width + 7u) / 8u) * ((extent.height + 7u) / 8u);
+    return address + bytes - htile >= tiles * 4u;
+}
+
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
-    if ((pattern & 0xfu) != 0) return;
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
-        const auto htile = surface->target.htileAddress;
-        if (htile == 0 || htile < address || htile >= address + bytes) continue;
-        const auto tiles = static_cast<std::uint64_t>((surface->target.extent.width + 7u) / 8u) * ((surface->target.extent.height + 7u) / 8u);
-        if (address + bytes - htile >= tiles * 4u) surface->fastCleared = true;
+        const auto& target = surface->target;
+        if (!HtileFillCovers(target.htileAddress, target.extent, address, bytes)) continue;
+        const VkImageAspectFlags written = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+        surface->pendingClear = (surface->pendingClear & ~written) | HtileFillClears(pattern, target.htileStencil);
     }
 }
 
