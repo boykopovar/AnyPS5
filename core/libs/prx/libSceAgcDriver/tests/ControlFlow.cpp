@@ -934,6 +934,15 @@ done:
          {0x7e080500u, 0x8f048404u, 0xf4280200u, 0x08000000u, 0xbf8cc07fu, 0xe0002000u, 0x80020100u, 0xbf8c3f70u, 0xe0700000u, 0x80000100u,
           0xbf810000u},
          Split::None},
+        {"dword atomic through a V# read from a table at a lane's index", R"(
+  v_readfirstlane_b32 s4, v0
+  s_lshl_b32 s4, s4, 4
+  s_buffer_load_dwordx4 s[8:11], s[0:3], s4
+  s_waitcnt lgkmcnt(0)
+  buffer_atomic_or v1, v0, s[8:11], 0 idxen
+  s_endpgm)",
+         {0x7e080500u, 0x8f048404u, 0xf4280200u, 0x08000000u, 0xbf8cc07fu, 0xe0e82000u, 0x80020100u, 0xbf810000u},
+         Split::None},
     };
     int failures = 0;
     for (const auto& program : programs) {

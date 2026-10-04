@@ -742,15 +742,12 @@ const MemoryInfo& BufferMemory(SpirvValueEmitContext& ctx, const IrValue& inst) 
     if (mem.kind != ResourceKind::Buffer) {
         ctx.Fail(inst, "must access a buffer resource");
     }
-    if (mem.gpuDescriptor) {
-        ctx.Fail(inst, "accesses a GPU-selected V# in a way only raw dword loads and stores support");
+    if (mem.gpuDescriptor && BufferAccessOf(inst.Opcode()) != BufferAccess::Atomic) {
+        ctx.Fail(inst, "accesses a GPU-selected V# in a way only raw dword loads, stores and dword atomics support");
     }
     return mem;
 }
 
-// A format load through a V# the shader selected at run time: the element is read through BDA and
-// converted for the format in the V#'s FORMAT field, switched on at run time, then swizzled by its
-// DST_SEL fields. A typed (tbuffer) load takes its format from the instruction and is not swizzled.
 std::uint32_t LoadGpuDescriptorFormatted(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t components) {
     auto& state = ctx.state;
     const auto& mem = ctx.Memory(inst);
@@ -764,7 +761,6 @@ std::uint32_t LoadGpuDescriptorFormatted(SpirvValueEmitContext& ctx, const IrVal
         inBounds = valid;
     });
     const auto word3 = ctx.Arg(*inst.Argument(0)->Resolve(), 3);
-    // The output components for one format, sources resolved for each possible DST_SEL value.
     const auto convert = [&](const SpirvBufferFormatInfo& info) {
         const auto at = [&](std::uint32_t component) {
             return Binary(state, spv::OpIAdd, u64, element, ConstantDeviceAddress(state, GetFormatComponentByteOffset(info, component)));
@@ -788,7 +784,6 @@ std::uint32_t LoadGpuDescriptorFormatted(SpirvValueEmitContext& ctx, const IrVal
         std::array<std::uint32_t, 8> selected{};
         for (std::uint32_t selector = 0; selector < 8u; selector++) {
             if (selector == 2u || selector == 3u) {
-                // Reserved DST_SEL values; a V# naming one reads zero.
                 selected[selector] = ConstantU32(state, 0u);
                 continue;
             }
@@ -818,7 +813,6 @@ std::uint32_t LoadGpuDescriptorFormatted(SpirvValueEmitContext& ctx, const IrVal
             results[output] = EmitValueOrZeroIfCondition(state, inBounds, [&] { return convert(info)[output]; });
         }
     } else {
-        // One switch arm per buffer format the conversions know; any other FORMAT reads zeros.
         std::vector<SpirvBufferFormatInfo> formats;
         static const std::vector<SpirvBufferFormatInfo> known = [] {
             std::vector<SpirvBufferFormatInfo> result;
@@ -1099,6 +1093,23 @@ void NoteBufferAtomicSite(bool zeroSkip, bool zeroLoad) {
 
 std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem) {
     auto& state = ctx.state;
+    if (mem.gpuDescriptor) {
+        return EmitValueOrZeroIfCondition(state, ActiveArgument(ctx, inst), [&] {
+            std::uint32_t guest = 0;
+            std::uint32_t inBounds = 0;
+            ForEachGpuDescriptorDword(ctx, inst, mem, 1u, [&](std::uint32_t, std::uint32_t address, std::uint32_t valid) {
+                guest = address;
+                inBounds = valid;
+            });
+            return EmitValueOrZeroIfCondition(state, inBounds, [&] {
+                return EmitBdaAtomic(ctx, inst, guest, 4u, [&](std::uint32_t pointer) {
+                    const auto old = EmitAtomicOperation(ctx, inst, pointer, spv::ScopeDevice);
+                    EmitDeviceAtomicMemoryBarrier(state);
+                    return old;
+                });
+            });
+        });
+    }
     const bool lds = mem.kind == ResourceKind::Lds;
     const std::uint32_t scope = lds ? spv::ScopeWorkgroup : spv::ScopeDevice;
     // Buffer atomic arguments are {resource, index, offset, soffset, value, exec}. A non-zero

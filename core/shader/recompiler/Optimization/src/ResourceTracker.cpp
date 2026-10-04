@@ -804,14 +804,14 @@ private:
         const auto op = inst.Opcode();
         const bool load = op == IrOpcode::LoadBufferU32 || op == IrOpcode::LoadBufferU32x2 || op == IrOpcode::LoadBufferU32x3 || op == IrOpcode::LoadBufferU32x4 || op == IrOpcode::ReadConstBuffer;
         const bool store = op == IrOpcode::StoreBufferU32 || op == IrOpcode::StoreBufferU32x2 || op == IrOpcode::StoreBufferU32x3 || op == IrOpcode::StoreBufferU32x4;
+        const bool atomic = BufferAccessOf(op) == BufferAccess::Atomic && inst.Type() != IrType::U64;
         auto& memory = m_program.Resources().memoryInfo[memoryIndex];
-        // Format loads convert the element for the FORMAT of the V# at run time; format stores are not taken.
-        if ((!load && !store) || ((memory.formatted || memory.typed) && (store || memory.d16)) || memory.dataBits != 32u) {
+        if ((!load && !store && !atomic) || ((memory.formatted || memory.typed) && (!load || memory.d16)) || memory.dataBits != 32u) {
             return false;
         }
         memory.gpuDescriptor = true;
         m_info.usesDma = true;
-        m_info.bdaWrites = m_info.bdaWrites || store;
+        m_info.bdaWrites = m_info.bdaWrites || store || atomic;
         return true;
     }
 
