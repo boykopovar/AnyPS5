@@ -252,6 +252,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ShaderClock: return Invoke(EmitShaderClock, ctx, inst);
         case IrOpcode::RealtimeClock: return Invoke(EmitRealtimeClock, ctx, inst);
         case IrOpcode::MeshDrawParameter: return Invoke(EmitMeshDrawParameter, ctx, inst);
+        case IrOpcode::MeshArgument: return Invoke(EmitMeshArgument, ctx, inst);
         case IrOpcode::MeshAllocate: return Invoke(EmitMeshAllocate, ctx, inst);
         case IrOpcode::TessellationBase: return Invoke(EmitTessellationBase, ctx, inst);
         case IrOpcode::GetTessellationAttribute: return Invoke(EmitGetTessellationAttribute, ctx, inst);

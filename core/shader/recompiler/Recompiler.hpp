@@ -238,6 +238,10 @@ struct TessellationConfiguration {
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
 inline constexpr std::uint32_t MeshDrawPushBytes = 24;
+inline constexpr std::uint32_t MeshArgumentAddressDword = 4;
+inline constexpr std::uint32_t MeshArgumentIndexCountDword = 3;
+inline constexpr std::uint32_t MeshArgumentFirstIndexDword = 4;
+inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 
 struct GraphicsDrawParameters {

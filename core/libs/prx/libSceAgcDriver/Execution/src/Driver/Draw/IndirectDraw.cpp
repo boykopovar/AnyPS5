@@ -19,7 +19,10 @@ std::optional<Graphics::IndirectDrawPath> Driver::classifyIndirectDraw(const Sha
     using Path = Graphics::IndirectDrawPath;
     const auto support = localDevice->DrawIndirectSupport();
     const auto fail = [&](Path reason) { if (!indirectCpu) indirectCpu = reason; };
-    if (graphics.stages.path != Graphics::ShaderPath::Vertex || graphics.rectList) fail(Path::NonVertexPath);
+    constexpr std::uint32_t NoLocation = 0x280u;
+    const bool meshPath = graphics.stages.mesh.has_value() && !graphics.stages.tessellation && !graphics.rectList;
+    const bool meshGpuSide = meshPath && drawParameters.indexed && indirect.count == 1 && !indirect.countIndirect && indirect.baseVertexLocation == NoLocation && indirect.startInstanceLocation == NoLocation && (!indirect.drawIndexEnabled || indirect.drawIndexLocation == NoLocation);
+    if ((graphics.stages.path != Graphics::ShaderPath::Vertex || graphics.rectList) && !meshGpuSide) fail(Path::NonVertexPath);
     if (indirect.drawIndexEnabled && indirect.drawIndexSgpr >= 0) fail(Path::DrawIndex);
     if (indirect.countIndirect && !support.count) fail(Path::FeatureGap);
     if (indirect.countIndirect && indirect.count > 1 && !support.multi) fail(Path::FeatureGap);
