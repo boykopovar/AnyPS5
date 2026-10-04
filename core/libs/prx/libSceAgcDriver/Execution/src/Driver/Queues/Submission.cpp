@@ -88,10 +88,18 @@ void Driver::reserveOutputs(Submission& submission) {
 
 void Driver::executeRewindTail(const Submission& stalled) {
     std::atomic_ref<std::uint32_t> control(*const_cast<std::uint32_t*>(stalled.rewindTail - 1));
-    while ((control.load(std::memory_order_acquire) & 0x80000000u) == 0) {
-        CheckFailure();
-        checkStopping();
-        PollSleep();
+    if ((control.load(std::memory_order_acquire) & 0x80000000u) == 0) {
+        noteWaitBlocked(stalled.queue, reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1), true);
+        struct BlockedWait {
+            Driver& driver;
+            std::uint32_t queue;
+            ~BlockedWait() { driver.noteWaitBlocked(queue, 0, false); }
+        } blocked{*this, stalled.queue};
+        while ((control.load(std::memory_order_acquire) & 0x80000000u) == 0) {
+            CheckFailure();
+            checkStopping();
+            PollSleep();
+        }
     }
     Submission tail{};
     tail.queue = stalled.queue;
@@ -173,8 +181,48 @@ void Driver::SuspendPoint() {
     changed.notify_all();
 }
 
+bool Driver::waitFree(const Submission& submission) {
+    if (submission.queue == 0 || submission.suspend || !submission.flips.empty() || !submission.renderingWaits.empty() || submission.rewindTail != nullptr) return false;
+    for (std::size_t at = 0; at < submission.commands.size(); at += std::max<std::size_t>(1, Pm4::PacketWords(submission.commands[at]))) {
+        const auto header = submission.commands[at];
+        const auto opcode = (header >> 8u) & 0xffu;
+        if ((header >> 30u) == 3u && (opcode == 0x3c || opcode == 0x93)) return false;
+    }
+    return true;
+}
+
+bool Driver::queue0Before(std::uint64_t received) const {
+    if (queue0Executing != 0 && queue0Executing < received) return true;
+    const auto worker = workers.find(0);
+    if (worker == workers.end()) return false;
+    for (const auto& pending : worker->second.pending) {
+        if (pending.suspend) continue;
+        return pending.received < received;
+    }
+    return false;
+}
+
+bool Driver::orderReleased(std::uint32_t queue, std::uint64_t received) const {
+    if (!queue0Before(received)) return true;
+    const auto awaited = queue0Awaited.load(std::memory_order_acquire);
+    if (awaited == 0) return false;
+    if (workers.at(queue).unfinishedWrites.contains(awaited & ~std::uint64_t{3})) return true;
+    return runningWorkers.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
+}
+
+void Driver::noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool blocked) {
+    if (blocked) runningWorkers.fetch_sub(1, std::memory_order_acq_rel);
+    else runningWorkers.fetch_add(1, std::memory_order_acq_rel);
+    if (queue == 0) queue0Awaited.store(blocked ? awaited : 0, std::memory_order_release);
+    if (blocked && orderHolders.load(std::memory_order_acquire) != 0) {
+        std::lock_guard lock(mutex);
+        changed.notify_all();
+    }
+}
+
 void Driver::enqueue(Submission submission) {
     const auto queue = submission.queue;
+    submission.waitFree = waitFree(submission);
     auto& worker = workers[queue];
     for (const auto dword : submission.labelWrites) ++worker.unfinishedWrites[dword];
     worker.pending.push_back(std::move(submission));

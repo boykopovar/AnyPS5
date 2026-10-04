@@ -295,6 +295,53 @@ void testLabelHeldAtSubmission() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testWaitFreeSubmissionAfterEarlierQueue0Work() {
+    alignas(64) static volatile std::uint32_t first = 0, second = 0;
+    constexpr std::uint32_t writes = 20000;
+    std::vector<std::uint32_t> words;
+    for (std::uint32_t i = 1; i <= writes; ++i) {
+        const auto write = writeData(&first, i);
+        words.insert(words.end(), write.begin(), write.end());
+    }
+    submit(0, words);
+    submit(0x20, commands(writeData(&second, 1)));
+    waitFor(&second, 1, "the wait-free submission never ran");
+    check(first == writes, "a wait-free submission ran before queue 0's earlier submission finished");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testWaitFreeSubmissionQueue0WaitsOn() {
+    alignas(64) static volatile std::uint32_t label = 0, done = 0;
+    submit(0, commands(waitEqual(&label, 1), writeData(&done, 1)));
+    submit(0x20, commands(writeData(&label, 1)));
+    check(waitFor(&done, 1, "queue 0 never passed the wait the held submission satisfies") < std::chrono::milliseconds(500), "queue 0's wait on a held wait-free submission's label was not released at once");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testWaitFreeSubmissionBehindHeldOne() {
+    alignas(64) static volatile std::uint32_t other = 0, label = 0, done = 0;
+    submit(0, commands(waitEqual(&label, 1), writeData(&done, 1)));
+    submit(0x20, commands(writeData(&other, 1)));
+    submit(0x20, commands(writeData(&label, 1)));
+    check(waitFor(&done, 1, "queue 0 never passed the wait a later submission of the held queue satisfies") < std::chrono::milliseconds(500), "queue 0's wait on a label stored behind a held submission was not released at once");
+    check(other == 1, "the held submission did not run before the one behind it");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testWaitFreeSubmissionTheCpuWaitsFor() {
+    alignas(64) static volatile std::uint32_t stored = 0, flag = 0, done = 0;
+    submit(0, commands(waitEqual(&flag, 1), writeData(&done, 1)));
+    submit(0x20, commands(writeData(&stored, 1)));
+    std::thread title([] {
+        waitFor(&stored, 1, "the held submission never ran while queue 0 waited on the CPU");
+        flag = 1;
+    });
+    const auto waited = waitFor(&done, 1, "queue 0 never passed a wait the CPU satisfies after the held submission");
+    title.join();
+    check(waited < std::chrono::milliseconds(500), "a held submission the CPU waits for was not released while queue 0 waited on the CPU");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -324,6 +371,10 @@ int main() {
         testEndOfPipeLabelsWithoutWork();
         testLabelHeldAtSubmission();
         testWideLabelStoredSinceSubmission();
+        testWaitFreeSubmissionAfterEarlierQueue0Work();
+        testWaitFreeSubmissionQueue0WaitsOn();
+        testWaitFreeSubmissionBehindHeldOne();
+        testWaitFreeSubmissionTheCpuWaitsFor();
         testWorkerFailure();
         check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("required shader register") != std::string::npos, "shutdown lost worker failure");
         std::puts("AGC driver submit tests passed");

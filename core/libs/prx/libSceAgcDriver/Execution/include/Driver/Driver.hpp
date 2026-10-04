@@ -74,6 +74,10 @@ private:
     void enqueue(Submission submission);
     void noteHeldAtSubmit(Submission& submission, std::size_t cursor);
     static void forgetUnfinishedWrites(QueueWorker& worker, const Submission& submission);
+    static bool waitFree(const Submission& submission);
+    bool queue0Before(std::uint64_t received) const;
+    bool orderReleased(std::uint32_t queue, std::uint64_t received) const;
+    void noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool blocked);
     void reportPresents(double waitedMs, std::size_t inFlight);
     static bool stampValidate();
     static bool dataHits();
@@ -288,6 +292,10 @@ private:
     bool resetGraphics = false;
 
     std::uint32_t idleWaiters = 0;
+    std::uint64_t queue0Executing = 0;
+    std::atomic<std::uint32_t> orderHolders{0};
+    std::atomic<std::uint32_t> runningWorkers{0};
+    std::atomic<std::uint64_t> queue0Awaited{0};
 
     std::atomic<std::uint64_t> evidenceReads{0};
     std::atomic<std::uint64_t> evidenceValidations{0};
