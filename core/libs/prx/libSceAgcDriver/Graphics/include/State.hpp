@@ -66,6 +66,7 @@ struct DepthTarget {
     float clearDepth;
     std::uint8_t clearStencil;
     std::uint64_t htileAddress = 0;
+    bool htileStencil = false;
 };
 
 struct State {
