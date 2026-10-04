@@ -28,6 +28,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Environment.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
