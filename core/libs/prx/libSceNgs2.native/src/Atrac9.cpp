@@ -81,7 +81,7 @@ static void DecodeSuperframe(Ngs2Voice& voice, Ngs2Block& block) {
     std::size_t consumed = 0;
     for (std::uint32_t frame = 0; frame < atrac9.framesInSuperframe; frame++, end += frameValues) {
         int used = 0;
-        const int status = Atrac9DecodeF32(atrac9.decoder.get(), superframe + consumed, atrac9.window.data() + end, &used, 0);
+        const int status = Atrac9DecodeF32(atrac9.decoder.get(), superframe + consumed, static_cast<int>(atrac9.superframeBytes - consumed), atrac9.window.data() + end, &used, 0);
         consumed += static_cast<std::size_t>(std::max(used, 0));
         if (status != 0 || consumed > atrac9.superframeBytes) throw std::runtime_error("NGS2: ATRAC9 decode failed with " + Ngs2Hex(static_cast<std::uint32_t>(status)));
     }

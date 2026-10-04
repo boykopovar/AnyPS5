@@ -162,8 +162,8 @@ public:
         for (int frame = 0; frame < info.framesInSuperframe; ++frame) {
             int used = 0;
             const int status = wordSize == WORD_SIZE_FLOAT
-                ? Atrac9DecodeF32(handle, data + offset, reinterpret_cast<float*>(pcm + result.produced), &used, 0)
-                : Atrac9Decode(handle, data + offset, reinterpret_cast<short*>(pcm + result.produced), &used, 0);
+                ? Atrac9DecodeF32(handle, data + offset, static_cast<int>(superframeSize - offset), reinterpret_cast<float*>(pcm + result.produced), &used, 0)
+                : Atrac9Decode(handle, data + offset, static_cast<int>(superframeSize - offset), reinterpret_cast<short*>(pcm + result.produced), &used, 0);
             if (status != 0 || used <= 0 || offset + static_cast<std::size_t>(used) > superframeSize) {
                 Reset();
                 return {DecodeStatus::InvalidData};

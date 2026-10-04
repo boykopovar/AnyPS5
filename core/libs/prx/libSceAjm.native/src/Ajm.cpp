@@ -375,9 +375,9 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         }
         int used = 0;
         switch (encoding) {
-        case 0: decodeStatus = Atrac9Decode(instance.decoder, input.data() + consumed, reinterpret_cast<short*>(pcm.data()), &used, 0); break;
-        case 1: decodeStatus = Atrac9DecodeS32(instance.decoder, input.data() + consumed, reinterpret_cast<int*>(pcm.data()), &used, 0); break;
-        default: decodeStatus = Atrac9DecodeF32(instance.decoder, input.data() + consumed, reinterpret_cast<float*>(pcm.data()), &used, 0); break;
+        case 0: decodeStatus = Atrac9Decode(instance.decoder, input.data() + consumed, static_cast<int>(instance.superframeRemaining), reinterpret_cast<short*>(pcm.data()), &used, 0); break;
+        case 1: decodeStatus = Atrac9DecodeS32(instance.decoder, input.data() + consumed, static_cast<int>(instance.superframeRemaining), reinterpret_cast<int*>(pcm.data()), &used, 0); break;
+        default: decodeStatus = Atrac9DecodeF32(instance.decoder, input.data() + consumed, static_cast<int>(instance.superframeRemaining), reinterpret_cast<float*>(pcm.data()), &used, 0); break;
         }
         if (decodeStatus != 0 || used <= 0 || static_cast<std::uint32_t>(used) > instance.superframeRemaining) {
             result |= AJM_RESULT_INVALID_DATA;
