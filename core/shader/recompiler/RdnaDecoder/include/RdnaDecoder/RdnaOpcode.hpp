@@ -242,6 +242,7 @@ enum class RdnaOpcode : std::uint16_t {
     SMulHiI32,
     SMulkI32,
     SBfeU64,
+    SBfeI64,
     SBfmB32,
     SBfmB64,
     SCselectB32,
