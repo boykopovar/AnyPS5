@@ -113,6 +113,12 @@ void stateTests() {
     queue.context[0x91] = 0x30020;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.scissor.offset.x == 3 && state.scissor.offset.y == 1 && state.scissor.extent.width == 29 && state.scissor.extent.height == 2, "scissor intersection changed");
+    queue.context[0x90] = 0x10003;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.scissor.offset.x == 3 && state.scissor.offset.y == 1 && state.scissor.extent.width == 29 && state.scissor.extent.height == 2, "a scissor that applies the zero window offset changed");
+    queue.context[0x90] = 0x80008000;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "scissor reserved bits");
+    queue.context[0x90] = 0x80010003;
     queue.context[0x31c] |= 0x10000000;
     queue.context[0x325] = 0x1234;
     Require(AgcDriver::Graphics::DecodeState(queue).color.dccAddress == 0x123400, "DCC key address decode changed");
