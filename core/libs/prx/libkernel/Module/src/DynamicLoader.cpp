@@ -79,7 +79,49 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             Error(message); return nullptr;
         }
 #else
-        const auto resolved = path ? ResolvePath_nid_no_patch(path).string() : std::string{};
+        auto resolved = path ? ResolvePath_nid_no_patch(path).string() : std::string{};
+        // On by default: this is what the Windows branch does, and without it the title never gets
+        // its managed runtime resident, so every later stage is missing. APS5_GUEST_PRX_REMAP=0
+        // turns it off to compare against the pre-remap behaviour.
+        static const bool mapGuestPrx = std::getenv("APS5_GUEST_PRX_REMAP") == nullptr ||
+            std::strcmp(std::getenv("APS5_GUEST_PRX_REMAP"), "0") != 0;
+        if (path && *path && mapGuestPrx) {
+            // Same rule as the Windows branch: the converted file is "<name>.prx.guest.prx" next to
+            // the executable, and titles ask for modules with their own spelling of the name, so the
+            // lookup has to ignore case the way Windows' filesystem does.
+            const auto lower = [](std::string text) {
+                for (auto& c : text)
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                return text;
+            };
+            const auto exe = [] {
+                std::error_code ignored;
+                auto self = std::filesystem::read_symlink("/proc/self/exe", ignored);
+                return ignored ? std::filesystem::path{} : self.parent_path();
+            }();
+            if (!exe.empty()) {
+                const auto wanted = lower(std::filesystem::path(resolved).filename().string() + ".guest.prx");
+                for (const char* directory : {"app0/sce_module", "sce_module"}) {
+                    const auto parent = exe / directory;
+                    const auto exact = parent / (std::filesystem::path(resolved).filename().string() + ".guest.prx");
+                    std::error_code ignored;
+                    if (std::filesystem::exists(exact, ignored)) {
+                        resolved = exact.string();
+                        break;
+                    }
+                    if (!std::filesystem::is_directory(parent, ignored)) continue;
+                    bool found = false;
+                    for (const auto& entry : std::filesystem::directory_iterator(parent, ignored)) {
+                        if (entry.is_regular_file() && lower(entry.path().filename().string()) == wanted) {
+                            resolved = entry.path().string();
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+        }
         const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) |
             ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
