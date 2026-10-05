@@ -7,8 +7,29 @@ if(BUILD_TESTING)
     target_link_libraries(input_configuration_tests PRIVATE anyps5_input)
     add_test(NAME input_configuration COMMAND input_configuration_tests)
 endif()
+
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/3rdparty/imgui)
+add_library(anyps5_input_editor STATIC
+    InputEditor.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdlrenderer2.cpp
+)
+target_include_directories(anyps5_input_editor PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+target_link_libraries(anyps5_input_editor PUBLIC anyps5_input)
+set_target_properties(anyps5_input_editor PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+add_executable(anyps5-input-config main.cpp)
+target_link_libraries(anyps5-input-config PRIVATE anyps5_input_editor)
+
 if(BUILD_TESTING)
     add_test_executable(input_controller_tests tests/Controllers.cpp)
     target_link_libraries(input_controller_tests PRIVATE anyps5_input)
     add_test(NAME input_controllers COMMAND input_controller_tests)
+    add_test_executable(input_editor_tests tests/Editor.cpp)
+    target_link_libraries(input_editor_tests PRIVATE anyps5_input_editor)
+    add_test(NAME input_editor COMMAND input_editor_tests)
+    set_tests_properties(input_editor PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()

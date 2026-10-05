@@ -165,7 +165,10 @@ std::vector<Pad::InputBinding> InputConfig::LoadKeyboard(const std::filesystem::
             if (overriddenActions.insert(normalizedAction).second) {
                 std::erase_if(bindings, [action](const InputBinding& existing) { return matchesAction(existing, *action); });
             }
-            if (disabled) continue;
+            if (disabled) {
+                std::erase_if(bindings, [action](const InputBinding& existing) { return matchesAction(existing, *action); });
+                continue;
+            }
             const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const InputBinding& existing) {
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
                     existing.control == binding.control && existing.button == binding.button &&
