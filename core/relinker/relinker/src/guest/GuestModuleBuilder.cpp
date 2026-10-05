@@ -65,7 +65,12 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         for (const auto& symbol : image.Symbols) {
             if (symbol.Section == 0 || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
             const auto [existing, inserted] = exports.emplace(symbol.Name, images.size());
-            if (!inserted) throw Domain::RelinkerException("Duplicate guest export after stripping #: " + symbol.Name + " in " + images.at(existing->second).SourcePath.string() + " and " + path.string());
+            if (inserted) continue;
+            const auto& previous = *std::find_if(images.at(existing->second).Symbols.begin(), images.at(existing->second).Symbols.end(), [&](const auto& candidate) { return candidate.Section != 0 && candidate.Name == symbol.Name && (candidate.Info >> 4) != 0 && candidate.Visibility != 1 && candidate.Visibility != 2; });
+            const bool previousWeak = (previous.Info >> 4) == 2;
+            const bool currentWeak = (symbol.Info >> 4) == 2;
+            if ((!previousWeak && !currentWeak) || (previous.Info & 15) != (symbol.Info & 15)) throw Domain::RelinkerException("Duplicate guest export after stripping #: " + symbol.Name + " in " + images.at(existing->second).SourcePath.string() + " and " + path.string());
+            if (previousWeak && !currentWeak) existing->second = images.size();
         }
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);

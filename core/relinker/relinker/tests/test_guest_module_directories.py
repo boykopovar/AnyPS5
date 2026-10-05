@@ -8,14 +8,14 @@ import tempfile
 from test_guest_intel_trampolines import PLAIN_SITE, elf_loads, guest_fixture, main_fixture
 
 
-def module_with_symbol(exported):
+def module_with_symbol(exported, weak=False):
     image = guest_fixture(PLAIN_SITE)
     name = b"\0shared#A#B\0"
     image[0x800:0x800 + len(name)] = name
     struct.pack_into("<Q", image, 0x618, len(name))
     struct.pack_into("<Q", image, 0x628, 0x2280)
     struct.pack_into("<IIIII", image, 0x840, 1, 2, 1, 0, 0)
-    struct.pack_into("<IBBHQQ", image, 0x898, 1, 0x12, 0,
+    struct.pack_into("<IBBHQQ", image, 0x898, 1, 0x22 if weak else 0x12, 0,
                      1 if exported else 0, 0x1000 if exported else 0, 1 if exported else 0)
     if not exported:
         struct.pack_into("<Q", image, 0x668, 24)
@@ -124,6 +124,16 @@ def main():
             result, output = convert(case, windows)
             assert result.returncode == 2 and "Duplicate guest export" in result.stderr, result.stderr
             assert not output.exists() and not (case / "app0").exists(), output
+
+            for weak in ((True, True), (True, False), (False, True)):
+                case = work / f"{windows}-weak-{weak[0]}-{weak[1]}"
+                for name, flag in zip(("sce_module", "prx"), weak):
+                    (case / name).mkdir(parents=True)
+                    (case / name / f"{name}.prx").write_bytes(module_with_symbol(True, flag))
+                (case / "prx" / "consumer.prx").write_bytes(module_with_symbol(False))
+                result, output = convert(case, windows)
+                assert result.returncode == 0 and output.exists(), result.stderr
+                assert len(list((case / "app0").rglob("*.guest.prx"))) == 3, case
     print("Guest module directory integration tests passed")
 
 
