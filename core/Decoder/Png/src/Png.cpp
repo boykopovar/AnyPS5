@@ -26,7 +26,7 @@ namespace {
 constexpr std::array<std::uint8_t, 8> SIGNATURE = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
 constexpr std::size_t CHUNK_OVERHEAD = 12;
 constexpr std::size_t IHDR_SIZE = 13;
-constexpr std::uint32_t MAX_DIMENSION = 0x7FFFFFFF;
+constexpr std::uint32_t MAX_DIMENSION = 16384;
 constexpr std::uint8_t FILTER_TYPE_COUNT = 5;
 constexpr std::array<std::uint8_t, 5> COLOR_TYPE_BY_CHANNELS = {0, 0, 4, 2, 6};
 constexpr std::array<std::uint32_t, 256> CRC_TABLE = [] {
@@ -155,9 +155,17 @@ std::optional<Image> Decode(std::span<const std::uint8_t> png) {
     stbi_uc* decoded = stbi_load_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, &channels, 4);
     if (!decoded) return std::nullopt;
 
+    if (width <= 0 || height <= 0 ||
+        static_cast<std::uint32_t>(width) > MAX_DIMENSION ||
+        static_cast<std::uint32_t>(height) > MAX_DIMENSION) {
+        stbi_image_free(decoded);
+        return std::nullopt;
+    }
+
+    const std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> guard(decoded, stbi_image_free);
+
     Image image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), {}};
-    image.pixels.assign(decoded, decoded + static_cast<std::size_t>(image.width) * image.height * 4);
-    stbi_image_free(decoded);
+    image.pixels.assign(guard.get(), guard.get() + static_cast<std::size_t>(image.width) * image.height * 4);
     return image;
 }
 

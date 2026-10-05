@@ -200,7 +200,7 @@ def treemap(title, data, left):
     parts = [text(left + 4, 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)]
     for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
         total = group["done"] + group["todo"]
-        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%)</title>')
+        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({(100 * group["done"] / total) if total else 0:.0f}%)</title>')
         for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
             parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
         parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')

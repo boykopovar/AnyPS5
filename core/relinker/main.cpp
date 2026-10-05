@@ -21,6 +21,8 @@
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <map>
 #include <codegen/CodegenException.hpp>
+#include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -38,7 +40,7 @@ int main(const int argc, char* argv[]) {
 
     try {
         auto extension = std::filesystem::path(args.outputPath).extension().string();
-        for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
+        for (auto& character : extension) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
         if (!args.toWindows && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";
         Io::FileReader fileReader;
         Io::FileWriter fileWriter;
@@ -86,7 +88,7 @@ int main(const int argc, char* argv[]) {
         for (const auto& patch : result.Patches) {
             if (patch.Offset > sourceBytes.size() || patch.Bytes.size() > sourceBytes.size() - patch.Offset)
                 throw Domain::RelinkerException("Relinker patch exceeds source image", patch.Offset);
-            for (std::size_t index = 0; index < patch.Bytes.size(); ++index) sourceBytes[patch.Offset + index] = patch.Bytes[index];
+            std::memcpy(sourceBytes.data() + patch.Offset, patch.Bytes.data(), patch.Bytes.size());
         }
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;

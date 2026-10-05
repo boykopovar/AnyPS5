@@ -4,6 +4,7 @@
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <string>
 
@@ -75,6 +76,9 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("Linux target does not support --windows-diagnostics");
 
+    if (sourceElf.size() < kEhdrPhNumOffset + sizeof(std::uint16_t))
+        throw Domain::RelinkerException("Source ELF buffer is too small to contain a valid ELF header");
+
     std::vector<std::uint8_t> buf = sourceElf;
 
     buf[kEhdrOsAbiOffset] = 0;
@@ -85,9 +89,12 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     _byteWriter->WriteU16(buf, kEhdrShNumOffset, 0);
     _byteWriter->WriteU16(buf, kEhdrShStrNdxOffset, 0);
 
-    const std::uint64_t phOff = *reinterpret_cast<const std::uint64_t*>(buf.data() + kEhdrPhOffOffset);
-    const std::uint16_t phEntSize = *reinterpret_cast<const std::uint16_t*>(buf.data() + kEhdrPhEntSizeOffset);
-    const std::uint16_t phNum = *reinterpret_cast<const std::uint16_t*>(buf.data() + kEhdrPhNumOffset);
+    std::uint64_t phOff = 0;
+    std::memcpy(&phOff, buf.data() + kEhdrPhOffOffset, sizeof(phOff));
+    std::uint16_t phEntSize = 0;
+    std::memcpy(&phEntSize, buf.data() + kEhdrPhEntSizeOffset, sizeof(phEntSize));
+    std::uint16_t phNum = 0;
+    std::memcpy(&phNum, buf.data() + kEhdrPhNumOffset, sizeof(phNum));
 
     const auto alignBuf = [](std::vector<std::uint8_t>& b, std::size_t alignment) {
         while (b.size() % alignment != 0)
@@ -154,7 +161,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (std::uint8_t b : dynSegBuf)
         buf.push_back(b);
 
-    const std::uint64_t realEntryVaddr = *reinterpret_cast<const std::uint64_t*>(buf.data() + kEhdrEntryOffset);
+    std::uint64_t realEntryVaddr = 0;
+    std::memcpy(&realEntryVaddr, buf.data() + kEhdrEntryOffset, sizeof(realEntryVaddr));
     const auto stubOff = static_cast<std::uint64_t>(buf.size());
     const auto stubVaddr = vaddrOfExtraBlockOffset(stubOff);
     const auto stubBytes = _entryStubBuilder->BuildEntryStub(stubVaddr, realEntryVaddr);

@@ -33,7 +33,7 @@ def open_prs(base):
         prs[pr["number"]] = {
             "ref": f"refs/pr/{pr['number']}",
             "sha": pr["headRefOid"],
-            "author": pr["author"]["login"],
+            "author": pr["author"]["login"] if pr.get("author") else "ghost",
             "depends": {int(n) for n in re.findall(r"#(\d+)", depends.group(1))} if depends else set(),
         }
     return prs
@@ -48,7 +48,9 @@ def merge(*args):
     result = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", *args],
                             capture_output=True, text=True)
     lines = result.stdout.splitlines()
-    return lines[0], set(lines[1:]) if result.returncode else set()
+    if not lines:
+        return "", set()
+    return lines[0], set(lines[1:]) if result.returncode == 0 else set()
 
 
 def scan(pr):
@@ -61,7 +63,7 @@ def scan(pr):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)
-    diff = git("diff", "-U0", "--no-color", old, new, "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", old, new, "--", "core/libs/prx/**/*.cpp")
     pr["exports"] = {m.group(1) for m in map(EXPORT.match, diff.splitlines())
                      if m and not m.group(1).endswith("_nid_no_patch")}
 

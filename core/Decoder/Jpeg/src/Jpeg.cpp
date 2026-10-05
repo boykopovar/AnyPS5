@@ -2,6 +2,7 @@
 
 #include <climits>
 #include <cstddef>
+#include <memory>
 #include <stdexcept>
 
 #define STB_IMAGE_WRITE_STATIC
@@ -55,6 +56,7 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg) {
     int channels = 0;
     if (!stbi_info_from_memory(jpeg.data(), static_cast<int>(jpeg.size()), &width, &height, &channels)) return std::nullopt;
     if (width <= 0 || height <= 0 || channels <= 0) return std::nullopt;
+    if (static_cast<std::uint32_t>(width) > MAX_DIMENSION || static_cast<std::uint32_t>(height) > MAX_DIMENSION) return std::nullopt;
     return Header{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), static_cast<std::uint32_t>(channels)};
 }
 
@@ -67,9 +69,17 @@ std::optional<Image> Decode(std::span<const std::uint8_t> jpeg) {
     stbi_uc* decoded = stbi_load_from_memory(jpeg.data(), static_cast<int>(jpeg.size()), &width, &height, &channels, 0);
     if (!decoded) return std::nullopt;
 
+    if (width <= 0 || height <= 0 || channels <= 0 ||
+        static_cast<std::uint32_t>(width) > MAX_DIMENSION ||
+        static_cast<std::uint32_t>(height) > MAX_DIMENSION) {
+        stbi_image_free(decoded);
+        return std::nullopt;
+    }
+
+    const std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> guard(decoded, stbi_image_free);
+
     Image image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), static_cast<std::uint32_t>(channels), {}};
-    image.pixels.assign(decoded, decoded + static_cast<std::size_t>(image.width) * image.height * image.channels);
-    stbi_image_free(decoded);
+    image.pixels.assign(guard.get(), guard.get() + static_cast<std::size_t>(image.width) * image.height * image.channels);
     return image;
 }
 

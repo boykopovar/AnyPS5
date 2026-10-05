@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import shutil
 import tarfile
@@ -18,7 +19,7 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = list(libraries)
     if platform == "windows":
-        runtime = Path("C:/winlibs/mingw64/bin")
+        runtime = Path(os.environ.get("WINLIBS_BIN", "C:/winlibs/mingw64/bin"))
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
     binary = build / "core/relinker" / executable
     for file in [*files, binary]:
