@@ -139,16 +139,41 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
         std::vector<std::shared_ptr<Module>> search;
         {
             std::lock_guard lock(modulesMutex);
-            if (handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
+            if (handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2)) || handle == nullptr) {
                 for (const auto& [key, module] : modules) if (module->global) search.push_back(module);
             } else {
                 auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
-                if (found == modules.end()) { Error("dlsym: invalid or unsupported module handle"); return nullptr; }
-                search.push_back(found->second);
+                if (found == modules.end()) {
+                    // Handle 0 is the main program on PS5, and modules the dynamic loader pulled in
+                    // through DT_NEEDED never appear in this table, so an unknown handle is normal:
+                    // fall through to the process-wide lookup below instead of failing here.
+                    if (handle != nullptr) { Error("dlsym: unsupported module handle"); return nullptr; }
+                } else {
+                    search.push_back(found->second);
+                }
             }
         }
         for (const auto& module : search) if (auto* result = FindSymbol(*module, name)) return result;
-        Error("dlsym: symbol not found in supported module scope");
+#ifndef _WIN32
+        // Titles pass handle 0 (RTLD_DEFAULT) for a process-wide lookup. Modules the dynamic loader
+        // pulled in through DT_NEEDED never appear in `modules`, so ask the real loader as well - by
+        // the plain name and by its NID, which is how the guest libraries export their API. glibc
+        // searches the executable first, which matches "handle 0 is the main program" on PS5.
+        if (handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
+            if (auto* result = ::dlsym(RTLD_DEFAULT, name)) return result;
+            const auto nid = Nid::ComputeNid(name, "");
+            if (auto* result = ::dlsym(RTLD_DEFAULT, nid.c_str())) return result;
+        }
+#endif
+        // A miss on a plain name is ambiguous: the guest may have asked for something that exists
+        // only under its NID, or for a runtime symbol no module exports at all. Naming the computed
+        // NID and the handle separates "wrong module in scope" from "not implemented here".
+        const auto missingNid = Nid::ComputeNid(name, "");
+        char missing[192];
+        std::snprintf(missing, sizeof(missing),
+            "dlsym: symbol not found in supported module scope (asked=\"%s\" nid=%s handle=%s)",
+            name, missingNid.c_str(), handle ? (std::to_string(reinterpret_cast<std::uintptr_t>(handle))).c_str() : "default");
+        Error(missing);
         return nullptr;
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }

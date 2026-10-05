@@ -227,3 +227,24 @@ int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment
     *pointer = result;
     return 0;
 }
+
+extern "C" {
+
+// The title's managed runtime resolves these by name at run time (an RTLD_DEFAULT-style dlsym)
+// instead of importing them, so without them it gets a null scripting allocator and leaves managed
+// objects unconstructed. Alignment-first, matching the application-heap primitive each one wraps;
+// the guards match the reference implementation (KytyPS5's KernelApplicationHeapGetMem): alignment
+// is floored at 0x10 and a non-power-of-two alignment is rejected, which also self-tests the
+// argument order - a size would rarely be a power of two, so a misread ABI surfaces as a null
+// return instead of a plausible pointer the guest then writes `bytes` through.
+void* APS5_VABI scriptingGetMem(std::size_t alignment, std::size_t bytes) {
+    if (alignment < 0x10u) alignment = 0x10u;
+    if ((alignment & (alignment - 1u)) != 0u) return nullptr;
+    return GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+}
+
+void APS5_VABI scriptingFreeMem(void* pointer) {
+    GuestHeap::GuestHeapFree_nid_postfix(pointer);
+}
+
+}
