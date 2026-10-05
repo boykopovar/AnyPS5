@@ -349,7 +349,10 @@ bool InputConfig::Editor::HandleEvent(const SDL_Event& event) {
     if (!captureInput) ImGui_ImplSDL2_ProcessEvent(&event);
     if (state->captureAction >= 0) {
         std::string source;
-        if (event.type == SDL_KEYDOWN && event.key.windowID == WindowId() && !event.key.repeat) source = std::string("KEY:") + SDL_GetScancodeName(event.key.keysym.scancode);
+        if (event.type == SDL_KEYDOWN && event.key.windowID == WindowId() && !event.key.repeat) {
+            try { source = BindingName({event.key.keysym.scancode, Pad::MouseButton::None, Pad::InputControl::Button}); }
+            catch (const std::exception& failure) { state->error = failure.what(); }
+        }
         if (event.type == SDL_MOUSEBUTTONDOWN && event.button.windowID == WindowId()) {
             Pad::InputBinding binding{SDL_SCANCODE_UNKNOWN, static_cast<Pad::MouseButton>(event.button.button), Pad::InputControl::Button};
             try { source = BindingName(binding); } catch (const std::exception& failure) { state->error = failure.what(); }

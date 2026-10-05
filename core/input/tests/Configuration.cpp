@@ -1,4 +1,5 @@
 #include "InputConfiguration.hpp"
+#include "SDL_keyboard.h"
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -30,7 +31,17 @@ int main() {
         const auto serialized = InputConfig::SerializeKeyboard(loaded);
         InputConfig::WriteAtomic(path, serialized);
         Require(InputConfig::SerializeKeyboard(InputConfig::LoadKeyboard(path)) == serialized);
-        InputConfig::WriteAtomic(path, "Cross=NONE\n");
+        std::vector<Pad::InputBinding> allKeys;
+        for (int code = 1; code < SDL_NUM_SCANCODES; ++code) {
+            const auto scancode = static_cast<SDL_Scancode>(code);
+            if (SDL_GetScancodeName(scancode)[0] != '\0') allKeys.push_back({scancode, Pad::MouseButton::None, Pad::InputControl::Button, Pad::PadButton::Cross});
+        }
+        const auto allKeyText = InputConfig::SerializeKeyboard(allKeys);
+        InputConfig::WriteAtomic(path, allKeyText);
+        Require(InputConfig::SerializeKeyboard(InputConfig::LoadKeyboard(path)) == allKeyText);
+        InputConfig::WriteAtomic(path, "Cross=SCANCODE:-1\n");
+        Reject([&] { InputConfig::LoadKeyboard(path); });
+        InputConfig::WriteAtomic(path, "Cross=KEY:F\nCross=NONE\n");
         for (const auto& binding : InputConfig::LoadKeyboard(path)) Require(binding.button != Pad::PadButton::Cross);
         InputConfig::WriteAtomic(path, "ToggleFullscreen=MOUSE:Left\n");
         Reject([&] { InputConfig::LoadKeyboard(path); });

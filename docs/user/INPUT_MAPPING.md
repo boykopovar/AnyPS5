@@ -9,6 +9,7 @@ Each non-empty line has the form `Action = Type:Value`. Action names are case-in
 Supported input sources are:
 
 - `KEY:Return`, `KEY:Space`, or another key name accepted by SDL.
+- `SCANCODE:51` for an SDL scancode whose key name contains a comment marker, such as semicolon.
 - `MOUSE:Left`, `MOUSE:Middle`, `MOUSE:Right`, `MOUSE:X1`, or `MOUSE:X2`.
 - `WHEEL:Up` or `WHEEL:Down` for pad buttons.
 

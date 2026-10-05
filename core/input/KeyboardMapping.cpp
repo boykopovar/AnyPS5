@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -95,6 +96,14 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
     const auto value = trim(source.substr(separator + 1));
     if (value.empty()) throw std::runtime_error("source value is empty");
 
+    if (type == "SCANCODE") {
+        int numeric = 0;
+        const auto parsed = std::from_chars(value.data(), value.data() + value.size(), numeric);
+        if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || numeric <= SDL_SCANCODE_UNKNOWN || numeric >= SDL_NUM_SCANCODES || SDL_GetScancodeName(static_cast<SDL_Scancode>(numeric))[0] == '\0') {
+            throw std::runtime_error("invalid SDL scancode '" + std::string(value) + "'");
+        }
+        return {static_cast<SDL_Scancode>(numeric), Pad::MouseButton::None, action.control, action.button, 0};
+    }
     if (type == "KEY") {
         const std::string keyName(value);
         const auto key = SDL_GetScancodeFromName(keyName.c_str());
@@ -114,7 +123,7 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         if (direction == "DOWN") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, -1};
         throw std::runtime_error("mouse wheel direction must be UP or DOWN");
     }
-    throw std::runtime_error("source type must be KEY, MOUSE or WHEEL");
+    throw std::runtime_error("source type must be KEY, SCANCODE, MOUSE or WHEEL");
 }
 
 [[noreturn]] void invalidLine(const std::filesystem::path& path, std::size_t line, const std::string& reason) {
@@ -194,7 +203,12 @@ std::span<const InputConfig::Action> InputConfig::Actions() {
 }
 
 std::string InputConfig::BindingName(const Pad::InputBinding& binding) {
-    if (binding.key != SDL_SCANCODE_UNKNOWN) return std::string("KEY:") + SDL_GetScancodeName(binding.key);
+    if (binding.key != SDL_SCANCODE_UNKNOWN) {
+        const std::string_view name = SDL_GetScancodeName(binding.key);
+        if (name.empty()) throw std::runtime_error("Input: unknown SDL scancode");
+        if (name.find_first_of("#;\r\n") != name.npos || SDL_GetScancodeFromName(std::string(name).c_str()) != binding.key) return "SCANCODE:" + std::to_string(binding.key);
+        return std::string("KEY:") + std::string(name);
+    }
     if (binding.wheelDirection != 0) return binding.wheelDirection > 0 ? "WHEEL:Up" : "WHEEL:Down";
     switch (binding.mouseButton) {
         case Pad::MouseButton::Left: return "MOUSE:Left";
