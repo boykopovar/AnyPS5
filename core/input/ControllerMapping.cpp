@@ -234,6 +234,11 @@ std::string InputConfig::SerializeDatabase(const std::vector<std::string>& mappi
 void InputConfig::ApplyDatabase(const std::vector<std::string>& mappings) {
     for (const auto& mapping : mappings) ValidateMapping(mapping);
     for (const auto& mapping : mappings) {
+        const auto platform = mapping.find("platform:");
+        if (platform != mapping.npos) {
+            const auto end = mapping.find(',', platform);
+            if (mapping.substr(platform + 9, end - platform - 9) != SDL_GetPlatform()) continue;
+        }
         if (SDL_GameControllerAddMapping(mapping.c_str()) < 0) throw std::runtime_error(std::string("Input: SDL mapping failed: ") + SDL_GetError());
     }
 }
