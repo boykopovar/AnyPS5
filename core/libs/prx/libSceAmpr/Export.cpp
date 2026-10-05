@@ -802,112 +802,112 @@ int APS5_VABI sceAmprAmmWaitCommandBufferCompletion(std::uint32_t id) {
     return AmmSubmitted_nid_no_patch(id) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 }
 
-int APS5_VABI _ZNSt8ios_base7_AddstdEPS_(void) {
+int APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZSt16_Throw_Cpp_errori(void) {
+int APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Thrd_join(void) {
+int APS5_VABI _Thrd_join_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt4_Pad8_ReleaseEv(void) {
+int APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt4_PadC2Ev(void) {
+int APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt4_PadD2Ev(void) {
+int APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Thrd_id(void) {
+int APS5_VABI _Thrd_id_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread(void) {
+int APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE(void) {
+int APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Cnd_signal(void) {
+int APS5_VABI _Cnd_signal_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Unlock_shared_ptr_spin_lock(void) {
+int APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Cnd_init_with_name(void) {
+int APS5_VABI _Cnd_init_with_name_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZTVN10__cxxabiv120__function_type_infoE(void) {
+int APS5_VABI _ZTVN10__cxxabiv120__function_type_infoE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE(void) {
+int APS5_VABI _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE_(void) {
+int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE(void) {
+int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZTVN10__cxxabiv119__pointer_type_infoE(void) {
+int APS5_VABI _ZTVN10__cxxabiv119__pointer_type_infoE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZTVSt12bad_weak_ptr(void) {
+int APS5_VABI _ZTVSt12bad_weak_ptr_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5_(void) {
+int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Lock_shared_ptr_spin_lock(void) {
+int APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNSt12bad_weak_ptrD1Ev(void) {
+int APS5_VABI _ZNSt12bad_weak_ptrD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _Thrd_sleep(void) {
+int APS5_VABI _Thrd_sleep_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -917,7 +917,7 @@ int APS5_VABI wcstombs_s_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI __cxa_call_unexpected(void) {
+int APS5_VABI __cxa_call_unexpected_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
