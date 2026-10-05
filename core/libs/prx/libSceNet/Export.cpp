@@ -1257,9 +1257,4 @@ int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
 extern const std::uint8_t in6addr_any_nid_postfix[16] = {};
 extern const std::uint8_t in6addr_loopback_nid_postfix[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
 
-APS5_EXPORT("TCkRD0DWNLg", sceNetUnknown00);
-int APS5_VABI sceNetUnknown00(void) {
-    NotImplemented_nid_no_patch("TCkRD0DWNLg");
-    return 0;
-}
 }
