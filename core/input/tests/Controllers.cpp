@@ -59,6 +59,13 @@ int main() {
         SDL_JoystickSetVirtualAxis(joystick, 4, 32767);
         SDL_GameControllerUpdate();
         Require(InputConfig::SampleController(controller, profile).analogButtonsL2 == 255, "full trigger incorrect");
+        auto digitalMapping = mapping;
+        digitalMapping.replace(digitalMapping.find("lefttrigger:a4"), std::string("lefttrigger:a4").size(), "lefttrigger:b10");
+        InputConfig::ApplyDatabase({digitalMapping});
+        SDL_JoystickSetVirtualButton(joystick, 10, 1); SDL_GameControllerUpdate();
+        Require(InputConfig::SampleController(controller, InputConfig::ControllerProfile{}).analogButtonsL2 == 255, "digital trigger press not converted to analog");
+        SDL_JoystickSetVirtualButton(joystick, 10, 0); SDL_GameControllerUpdate();
+        Require(InputConfig::SampleController(controller, InputConfig::ControllerProfile{}).analogButtonsL2 == 0, "digital trigger release not converted to analog");
         profile.axes[4] = {SDL_CONTROLLER_AXIS_INVALID, true};
         Require(InputConfig::SampleController(controller, profile).analogButtonsL2 == 0, "disabled trigger active");
         const auto configPath = directory / "anyps5-controller.ini";

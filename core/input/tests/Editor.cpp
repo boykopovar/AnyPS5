@@ -79,6 +79,14 @@ int main() {
             Click(editor, 70, 102);
             const auto mappings = InputConfig::LoadDatabase(directory / "anyps5-gamecontrollerdb.txt");
             Require(mappings.size() == 1 && mappings.front().find("a:b2,") != std::string::npos, "confirmed physical mapping was not saved");
+            const int triggerStep = static_cast<int>(SDL_CONTROLLER_BUTTON_MAX) + static_cast<int>(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+            for (int step = 1; step < triggerStep; ++step) Click(editor, 260, 255);
+            Click(editor, 100, 255);
+            button = {}; button.type = SDL_JOYBUTTONDOWN; button.jbutton.which = SDL_JoystickGetDeviceInstanceID(device); button.jbutton.button = 3;
+            editor.HandleEvent(button); editor.Render();
+            Click(editor, 50, 311); Click(editor, 70, 102);
+            const auto digitalMappings = InputConfig::LoadDatabase(directory / "anyps5-gamecontrollerdb.txt");
+            Require(digitalMappings.size() == 1 && digitalMappings.front().find("lefttrigger:b3,") != std::string::npos, "digital trigger capture was not saved");
             SDL_SetWindowSize(window, 640, 480); Frame(editor);
             SDL_Event close{};
             close.type = SDL_WINDOWEVENT; close.window.windowID = id; close.window.event = SDL_WINDOWEVENT_CLOSE;

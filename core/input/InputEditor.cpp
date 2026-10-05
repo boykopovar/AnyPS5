@@ -383,8 +383,9 @@ bool InputConfig::Editor::HandleEvent(const SDL_Event& event) {
     if (state->rawCapture && state->joystick) {
         std::string source;
         const bool axisTarget = state->wizardStep >= SDL_CONTROLLER_BUTTON_MAX;
-        if (!axisTarget && event.type == SDL_JOYBUTTONDOWN && event.jbutton.which == instance) source = "b" + std::to_string(event.jbutton.button);
-        if (!axisTarget && event.type == SDL_JOYHATMOTION && event.jhat.which == instance && (event.jhat.value == 1 || event.jhat.value == 2 || event.jhat.value == 4 || event.jhat.value == 8)) source = "h" + std::to_string(event.jhat.hat) + "." + std::to_string(event.jhat.value);
+        const bool digitalTarget = !axisTarget || state->wizardStep >= static_cast<int>(SDL_CONTROLLER_BUTTON_MAX) + static_cast<int>(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        if (digitalTarget && event.type == SDL_JOYBUTTONDOWN && event.jbutton.which == instance) source = "b" + std::to_string(event.jbutton.button);
+        if (digitalTarget && event.type == SDL_JOYHATMOTION && event.jhat.which == instance && (event.jhat.value == 1 || event.jhat.value == 2 || event.jhat.value == 4 || event.jhat.value == 8)) source = "h" + std::to_string(event.jhat.hat) + "." + std::to_string(event.jhat.value);
         if (event.type == SDL_JOYAXISMOTION && event.jaxis.which == instance && event.jaxis.axis < state->neutral.size()) {
             const int resting = state->neutral[event.jaxis.axis];
             const int value = event.jaxis.value;
