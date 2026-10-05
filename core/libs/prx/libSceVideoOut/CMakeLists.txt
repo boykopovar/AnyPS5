@@ -8,7 +8,6 @@ add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MouseInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyboardInput.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/InputMapping.cpp
 )
 
 target_include_directories(libSceVideoOut PRIVATE
@@ -16,7 +15,7 @@ target_include_directories(libSceVideoOut PRIVATE
         ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
         ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
 )
-target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libScePad libSceMouse libSceKeyboard libc libkernel SDL2-static)
+target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libScePad libSceMouse libSceKeyboard libc libkernel SDL2-static anyps5_input)
 if(WIN32)
     target_link_libraries(libSceVideoOut PRIVATE comctl32)
 endif()

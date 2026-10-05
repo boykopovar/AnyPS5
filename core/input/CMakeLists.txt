@@ -1,0 +1,10 @@
+add_library(anyps5_input STATIC KeyboardMapping.cpp AtomicFile.cpp ControllerMapping.cpp)
+target_include_directories(anyps5_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/core/libs)
+target_link_libraries(anyps5_input PUBLIC SDL2-static)
+set_target_properties(anyps5_input PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+if(BUILD_TESTING)
+    add_test_executable(input_configuration_tests tests/Configuration.cpp)
+    target_link_libraries(input_configuration_tests PRIVATE anyps5_input)
+    add_test(NAME input_configuration COMMAND input_configuration_tests)
+endif()
+
