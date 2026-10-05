@@ -33,18 +33,6 @@ int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint6
  return 0;
 }
 
-int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
- (void)info;
- (void)instance;
- (void)bitstream_input;
- (void)bitstream_input_size;
- (void)pcm_output;
- (void)pcm_output_size;
- (void)result;
- AjmStub(__func__);
- return 0;
-}
-
 int APS5_VABI sceAjmBatchJobDecodeSplit(AjmBatchInfo* info, uint32_t instance, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* result) {
  (void)info;
  (void)instance;
@@ -64,23 +52,6 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
  (void)pcm_input_size;
  (void)bitstream_output;
  (void)bitstream_output_size;
- (void)result;
- AjmStub(__func__);
- return 0;
-}
-
-int APS5_VABI sceAjmBatchJobGetCodecInfo(AjmBatchInfo* info, uint32_t instance, void* result, size_t result_size) {
- (void)info;
- (void)instance;
- (void)result;
- (void)result_size;
- AjmStub(__func__);
- return 0;
-}
-
-int APS5_VABI sceAjmBatchJobGetGaplessDecode(AjmBatchInfo* info, uint32_t instance, void* result) {
- (void)info;
- (void)instance;
  (void)result;
  AjmStub(__func__);
  return 0;
@@ -127,11 +98,6 @@ const char* APS5_VABI sceAjmStrError(int error) {
  (void)error;
  AjmStub(__func__);
  return nullptr;
-}
-
-int APS5_VABI sceAjmDecMp3ParseFrame() {
- AjmStub(__func__);
- return 0;
 }
 
 }

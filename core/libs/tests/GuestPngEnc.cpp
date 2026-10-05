@@ -1,8 +1,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -83,6 +85,32 @@ int main() {
             }
         }
     }
+
+    constexpr std::uint32_t rowSize = 16 * 4;
+    std::vector<std::uint8_t> rows(rowSize * 6);
+    std::uint32_t noise = 12345;
+    for (std::uint32_t y = 0; y < 6; ++y) {
+        for (std::uint32_t i = 0; i < rowSize; ++i) {
+            noise = noise * 1103515245u + 12345u;
+            rows[y * rowSize + i] = y == 2 ? static_cast<std::uint8_t>(noise >> 16) : static_cast<std::uint8_t>(i / 4 * 8);
+        }
+    }
+    std::copy_n(rows.begin() + 2 * rowSize, rowSize, rows.begin() + 3 * rowSize);
+    PngEncEncodeParam filtered{rows.data(), png.data(), static_cast<std::uint32_t>(rows.size()), static_cast<std::uint32_t>(png.size()),
+                               16, 6, rowSize, 0, 19, 8, 0, 0, 6};
+    const auto encodeWith = [&](std::uint16_t filterType) {
+        filtered.filter_type = filterType;
+        const int size = scePngEncEncode(handle, &filtered, nullptr);
+        Require(size > 0);
+        return std::vector<std::uint8_t>(png.begin(), png.begin() + size);
+    };
+    using namespace Decoder::Png;
+    const std::pair<std::uint16_t, std::uint8_t> filterSets[] = {
+        {0, FILTER_NONE}, {1, FILTER_SUB}, {2, FILTER_UP}, {4, FILTER_AVERAGE}, {8, FILTER_PAETH},
+        {3, FILTER_SUB | FILTER_UP}, {6, FILTER_UP | FILTER_AVERAGE}, {9, FILTER_SUB | FILTER_PAETH},
+        {14, FILTER_UP | FILTER_AVERAGE | FILTER_PAETH}, {15, FILTER_ALL}};
+    for (const auto& [filterType, filters] : filterSets) Require(encodeWith(filterType) == Encode(rows, 16, 6, 4, {6, filters}));
+    Require(encodeWith(3) != encodeWith(1) && encodeWith(3) != encodeWith(2) && encodeWith(15) != encodeWith(14));
 
     encode.png_mem_size = 20;
     PngEncOutputInfo info{1, 1};

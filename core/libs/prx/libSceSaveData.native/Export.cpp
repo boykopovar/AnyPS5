@@ -219,7 +219,15 @@ static int deleteSave(const SaveDataDelete* del) {
     if (del == nullptr || del->dir_name == nullptr) {
         throw std::runtime_error("sceSaveDataDelete: null argument");
     }
-    const std::string path = save_root() + "/" + std::string(del->dir_name->data);
+    const auto* nameEnd = static_cast<const char*>(std::memchr(del->dir_name->data, '\0', sizeof(del->dir_name->data)));
+    if (nameEnd == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    const std::string dirName(del->dir_name->data, static_cast<std::size_t>(nameEnd - del->dir_name->data));
+    if (dirName.empty() || dirName == "." || dirName == ".." || dirName.find_first_of("/\\:") != std::string::npos) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    const std::string path = save_root() + "/" + dirName;
     if (std::filesystem::is_directory(path)) {
         std::filesystem::remove_all(path);
     }
@@ -569,7 +577,9 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
     if (set_param->param != nullptr) {
         std::vector<char> pd(sizeof(SaveDataParam));
         std::memcpy(pd.data(), set_param->param, sizeof(SaveDataParam));
-        write_file_replace(mem_path(set_param->user_id, set_param->slot_id, "param"), pd);
+        if (!write_file_replace(mem_path(set_param->user_id, set_param->slot_id, "param"), pd)) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
     }
     return SAVE_DATA_OK;
 }
@@ -689,16 +699,24 @@ int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_
     return rc;
 }
 
-
-APS5_EXPORT("RjMlsR8EXrw", sceSaveDataUnknown00);
-int APS5_VABI sceSaveDataUnknown00(void) {
-    NotImplemented_nid_no_patch("RjMlsR8EXrw");
-    return 0;
+int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* mount, SaveDataMountResult* mount_result) {
+    const int rc = transferringMount(mount, mount_result);
+    SAVEDATA_TRACE("transferringMountPs4 -> 0x%08x", static_cast<unsigned>(rc));
+    return rc;
 }
 
-APS5_EXPORT("X4MYzukPc3g", sceSaveDataUnknown01);
-int APS5_VABI sceSaveDataUnknown01(void) {
-    NotImplemented_nid_no_patch("X4MYzukPc3g");
-    return 0;
+static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
+    if (cond == nullptr || result == nullptr) {
+        throw std::runtime_error("sceSaveDataDirNameSearchPs4: null argument");
+    }
+    result->hit_num = 0;
+    result->set_num = 0;
+    return SAVE_DATA_OK;
+}
+
+int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
+    const int rc = dirNameSearchPs4(cond, result);
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond->user_id, static_cast<unsigned>(rc));
+    return rc;
 }
 }

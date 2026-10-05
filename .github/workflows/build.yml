@@ -40,6 +40,7 @@ jobs:
       - run: ctest --test-dir build --output-on-failure --timeout 120 --repeat until-fail:3
         env:
           ANYPS5_REQUIRE_VULKAN: 1
+          GALLIUM_OVERRIDE_CPU_CAPS: avx
 
   windows:
     runs-on: windows-latest

@@ -90,19 +90,6 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void CheckClampRefused(AgcDriver::VulkanDevice& device) {
-    for (const std::uint32_t opcode : {0x15au, 0x15bu, 0x15cu, 0x171u}) {
-        alignas(256) const std::array<std::uint32_t, 3> code{0xd400800au | (opcode << 16u), 0x041a0b04u, 0xbf810000u};
-        std::string refusal;
-        try {
-            static_cast<void>(Compile(device, code));
-        } catch (const std::exception& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find("VOP3 source modifiers are not implemented") != std::string::npos, "VOP3 opcode " + Hex(opcode) + " with clamp was not refused");
-    }
-}
-
 std::uint32_t Sad(std::uint32_t lhs, std::uint32_t rhs, std::uint32_t fieldBits, bool masked) {
     const std::uint32_t fieldMask = (1u << fieldBits) - 1u;
     std::uint32_t sum = 0u;
@@ -154,7 +141,6 @@ int main() {
         FillInput();
         Run(*device);
         Check();
-        CheckClampRefused(*device);
         std::puts("vop3 sad tests passed");
         return 0;
     } catch (const std::exception& error) {

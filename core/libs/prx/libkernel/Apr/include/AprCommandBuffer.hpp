@@ -33,6 +33,9 @@ enum class Opcode : std::uint32_t {
     WriteAddressFromTimeCounter = 7,
     WriteAddressFromCounter = 8,
     WriteAddressFromCounterPair = 9,
+    PushMarker = 10,
+    PopMarker = 11,
+    SetMarker = 12,
 };
 
 struct CommandHeader {
@@ -85,6 +88,10 @@ struct WriteAddressFromCounterCommand {
     std::uint64_t address;
     std::uint32_t counter0;
     std::uint32_t counter1;
+};
+
+struct MarkerCommand {
+    CommandHeader header;
 };
 
 }

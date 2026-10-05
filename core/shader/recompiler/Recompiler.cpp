@@ -19,6 +19,7 @@
 #include "Optimization/include/Optimization/ConstantFolder.hpp"
 #include "Optimization/include/Optimization/DeadCodeEliminator.hpp"
 #include "Optimization/include/Optimization/DescriptorBindingBuilder.hpp"
+#include "Optimization/include/Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/include/Optimization/ReadLaneEliminator.hpp"
 #include "Optimization/include/Optimization/RequestMemoryView.hpp"
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
@@ -155,6 +156,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
         deadCodeEliminator.Eliminate(program);
     }
 
+    constexpr MaskedSelectEliminator maskedSelectEliminator;
+    if (maskedSelectEliminator.Eliminate(program).removedSelects != 0u) {
+        deadCodeEliminator.Eliminate(program);
+    }
+
     constexpr SrtWalker srtWalker;
     srtWalker.BuildPlan(program);
     deadCodeEliminator.Eliminate(program);
@@ -188,6 +194,7 @@ struct SourceEntry {
     // rethrown: the front end ran every pass before failing, ~13 ms per dispatch of a shader the
     // title issues every frame (0x1048947300 at the intro video). APS5_NO_FAILURE_MEMO=1 rebuilds.
     std::exception_ptr planFailure;
+    std::unique_ptr<IrProgram> program;
     std::vector<std::shared_ptr<const CompiledVariant>> variants;
     // The result memo, most recently used first, at most ResultMemoEntries (under mutex).
     std::list<ResultMemoEntry> memo;
@@ -197,15 +204,14 @@ struct SourceEntry {
 namespace {
 
 struct ResourceProgram {
-    explicit ResourceProgram(const RecompileRequest& request) : program(PrepareResourceProgram(request)), plan(ResourceMaterializer{}.ExtractPlan(program)) {}
+    explicit ResourceProgram(const RecompileRequest& request) : program(std::make_unique<IrProgram>(PrepareResourceProgram(request))), plan(std::make_shared<const IrResourcePlan>(ResourceMaterializer{}.ExtractPlan(*program))) {}
 
-    IrProgram program;
-    IrResourcePlan plan;
+    std::unique_ptr<IrProgram> program;
+    std::shared_ptr<const IrResourcePlan> plan;
 };
 
 std::shared_ptr<const IrResourcePlan> makeResourcePlan(const RecompileRequest& request) {
-    const auto resource = std::make_shared<ResourceProgram>(request);
-    return std::shared_ptr<const IrResourcePlan>(resource, &resource->plan);
+    return ResourceProgram(request).plan;
 }
 
 struct SourceKeyHash {
@@ -263,7 +269,9 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
             static const bool memoFailures = std::getenv("APS5_NO_FAILURE_MEMO") == nullptr;
             if (memoFailures && source->planFailure) std::rethrow_exception(source->planFailure);
             try {
-                source->plan = makeResourcePlan(request);
+                ResourceProgram resource(request);
+                source->plan = std::move(resource.plan);
+                source->program = std::move(resource.program);
             } catch (...) {
                 if (memoFailures) source->planFailure = std::current_exception();
                 throw;
@@ -307,6 +315,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     targetOptions.bdaAbiVersion = request.target.bdaAbiVersion;
     targetOptions.supportedCapabilities = request.target.supportedCapabilities;
     targetOptions.supportedExtensions = request.target.supportedExtensions;
+    targetOptions.nonConstantImageOffsets = request.target.nonConstantImageOffsets;
 
     constexpr SpirvEmitter spirvEmitter;
     RecompileResult result;
@@ -314,11 +323,12 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
 
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    result.spirv = ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion);
+    result.spirv = ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets);
 #endif
 
     result.bdaAbiVersion = program.Info().usesDma ? request.target.bdaAbiVersion : 0u;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
+    result.hostSubgroupSize = HostSubgroupSize(request);
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
     result.vertexOffsetShared = program.Info().vertexOffsetShared;
@@ -388,10 +398,12 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         }
     }
     if (variant == nullptr) {
-        auto program = PrepareResourceProgram(request);
+        auto program = source.program != nullptr ? std::move(*source.program) : PrepareResourceProgram(request);
+        source.program.reset();
         variant = std::make_shared<const CompiledVariant>(compileVariant(request, std::move(program), snapshot, specialization));
         if (disk) ShaderDiskCache::Store(std::move(diskKey), variant);
     }
+    source.program.reset();
     source.variants.push_back(variant);
     return variant;
 }

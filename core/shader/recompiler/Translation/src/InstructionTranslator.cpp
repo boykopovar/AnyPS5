@@ -153,6 +153,10 @@ void includeInstructionVectorRegisters(const RdnaInstruction& instruction, std::
     includeVector(instruction.source1);
     includeVector(instruction.source2);
     includeVector(instruction.source3);
+    if (instruction.family == RdnaInstructionFamily::FLAT) {
+        const bool compare = instruction.op == RdnaOpcode::FlatAtomicCmpswap || instruction.op == RdnaOpcode::FlatAtomicCmpswapX2 || instruction.op == RdnaOpcode::FlatAtomicFcmpswap || instruction.op == RdnaOpcode::FlatAtomicFcmpswapX2;
+        includeVector(instruction.source2, std::max(instruction.dataDwordCount, 1u) * (compare ? 2u : 1u));
+    }
     if (instruction.family == RdnaInstructionFamily::DS) {
         switch (instruction.op) {
         case RdnaOpcode::DsWriteB64:
@@ -194,6 +198,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
     }
 
     IrValue* initialExec = &entryIr.ConstantBool(true);
+    if (options.stage == ShaderStageKind::Pixel) {
+        initialExec = &entryIr.IEqual(builtin(StageInputKind::HelperInvocation), entryIr.Constant(0u));
+    }
     std::uint32_t totalThreads = 0;
     const auto* workgroup = shaderWorkgroupInput(options.stage, options.inputInfo);
     if (workgroup != nullptr) {
@@ -240,12 +247,17 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         if (options.waveSize != 64u || mesh.primitivesPerGroup == 0u || mesh.verticesPerGroup != mesh.InputVertexCount(mesh.primitivesPerGroup) || mesh.verticesPerGroup > totalThreads || mesh.primitivesPerGroup > totalThreads || totalThreads % 64u != 0u || totalThreads > 15u * 64u || mesh.esgsItemSize == 0u || mesh.esgsItemSize * mesh.verticesPerGroup > 0xffffu) {
             throw std::runtime_error("mesh shader translation configuration is not supported (wave " + std::to_string(options.waveSize) + ", primitives per group " + std::to_string(mesh.primitivesPerGroup) + ", vertices per group " + std::to_string(mesh.verticesPerGroup) + ", threads " + std::to_string(totalThreads) + ", ESGS item size " + std::to_string(mesh.esgsItemSize) + ")");
         }
+        constexpr std::uint32_t kTriFanPrimitiveType = 5u;
         constexpr std::uint32_t kTriStripPrimitiveType = 6u;
+        const bool fan = mesh.inputPrimitive == kTriFanPrimitiveType;
         const auto u32 = [&entryIr](std::uint32_t value) -> IrValue& {
             return entryIr.Constant(value);
         };
         const auto draw = [&entryIr](std::uint32_t index) -> IrValue& {
             return entryIr.Emit(IrOpcode::MeshDrawParameter, IrOpcodeType(IrOpcode::MeshDrawParameter), {&entryIr.Constant(index)});
+        };
+        const auto argument = [&entryIr](std::uint32_t index) -> IrValue& {
+            return entryIr.Emit(IrOpcode::MeshArgument, IrOpcodeType(IrOpcode::MeshArgument), {&entryIr.Constant(index)});
         };
         const auto minimum = [&entryIr](IrValue& lhs, IrValue& rhs) -> IrValue& {
             return entryIr.Emit(IrOpcode::UMin32, IrOpcodeType(IrOpcode::UMin32), {&lhs, &rhs});
@@ -257,7 +269,10 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& firstPrimitive = entryIr.IMul(builtin(StageInputKind::WorkgroupId, 0u), u32(mesh.primitivesPerGroup));
         IrValue& step = u32(stepCount);
         IrValue& firstVertex = entryIr.IMul(firstPrimitive, step);
-        IrValue& vertices = minimum(subtractSaturate(draw(0u), firstVertex), u32(mesh.verticesPerGroup));
+        IrValue& indirect = entryIr.INotEqual(entryIr.BitwiseOr(draw(MeshArgumentAddressDword), draw(MeshArgumentAddressDword + 1u)), u32(0u));
+        IrValue& indexCount = entryIr.Select(indirect, argument(MeshArgumentIndexCountDword), draw(0u));
+        IrValue& firstIndex = argument(MeshArgumentFirstIndexDword);
+        IrValue& vertices = minimum(subtractSaturate(indexCount, firstVertex), u32(mesh.verticesPerGroup));
         IrValue& primitives = entryIr.Select(entryIr.ULessThan(vertices, u32(size)), u32(0u), entryIr.IAdd(entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&subtractSaturate(vertices, u32(size)), &step}), u32(1u)));
         entryIr.SetScalarReg(static_cast<ScalarReg>(2), entryIr.BitwiseOr(entryIr.ShiftLeftLogical(vertices, u32(12u)), entryIr.ShiftLeftLogical(primitives, u32(22u))));
         IrValue& wave = entryIr.ShiftRightLogical(local, u32(6u));
@@ -269,9 +284,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& parity = mesh.inputPrimitive == kTriStripPrimitiveType ? entryIr.BitwiseAnd(entryIr.IAdd(firstPrimitive, local), u32(1u)) : u32(0u);
         IrValue& vertex = entryIr.IMul(local, step);
         IrValue& item = u32(mesh.esgsItemSize);
-        IrValue& first = entryIr.IMul(entryIr.IAdd(vertex, parity), item);
-        IrValue& second = size >= 2u ? entryIr.IMul(entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity), item) : u32(0u);
-        IrValue& third = size == 3u ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : u32(0u);
+        IrValue& first = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item) : entryIr.IMul(entryIr.IAdd(vertex, parity), item);
+        IrValue& second = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : size >= 2u ? entryIr.IMul(entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity), item) : u32(0u);
+        IrValue& third = fan ? u32(0u) : size == 3u ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : u32(0u);
         entryIr.SetVectorReg(static_cast<VectorReg>(0), entryIr.BitwiseOr(entryIr.BitwiseAnd(first, u32(0xffffu)), entryIr.ShiftLeftLogical(second, u32(16u))));
         entryIr.SetVectorReg(static_cast<VectorReg>(1), entryIr.BitwiseAnd(third, u32(0xffffu)));
         entryIr.SetVectorReg(static_cast<VectorReg>(2), entryIr.IAdd(firstPrimitive, local));
@@ -280,10 +295,10 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         if (options.userDataBaseRegister != 0u || options.userDataCount < 8u) {
             throw std::runtime_error("mesh shader translation requires the merged program's eight hidden user words");
         }
-        IrValue& inputVertex = entryIr.IAdd(firstVertex, local);
+        IrValue& inputVertex = fan ? entryIr.Select(entryIr.IEqual(local, u32(0u)), u32(0u), entryIr.IAdd(firstVertex, local)) : entryIr.IAdd(firstVertex, local);
         IrValue& indexBytes = draw(3u);
         IrValue& indexed = entryIr.INotEqual(indexBytes, u32(0u));
-        IrValue& byteOffset = entryIr.IMul(inputVertex, indexBytes);
+        IrValue& byteOffset = entryIr.IMul(entryIr.IAdd(inputVertex, firstIndex), indexBytes);
         IrValue& indexResource = entryIr.Emit(IrOpcode::GetBufferResource, IrOpcodeType(IrOpcode::GetBufferResource), {&entryIr.GetUserData(static_cast<ScalarReg>(4)), &entryIr.GetUserData(static_cast<ScalarReg>(5)), &entryIr.GetUserData(static_cast<ScalarReg>(6)), &entryIr.GetUserData(static_cast<ScalarReg>(7))});
         const std::uint32_t memoryIndex = static_cast<std::uint32_t>(program.Resources().memoryInfo.size());
         program.Resources().memoryInfo.push_back(MemoryInfo{.kind = ResourceKind::Buffer, .resource = 1u, .offen = true});

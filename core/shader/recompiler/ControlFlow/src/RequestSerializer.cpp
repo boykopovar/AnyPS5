@@ -677,7 +677,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(5u);
+    writer.WriteU32(6u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -692,6 +692,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
             writer.WriteU32(value);
         }
     }
+    writer.WriteBool(request.target.nonConstantImageOffsets);
     return base64Encode(buffer);
 }
 
@@ -700,7 +701,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 5u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 6u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -716,6 +717,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
             value = reader.ReadU32();
         }
     }
+    if (version >= 6u) result.request.target.nonConstantImageOffsets = reader.ReadBool();
     return result;
 }
 

@@ -15,13 +15,8 @@ std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
     const std::uint64_t realEntryVaddr
 ) const {
     std::vector<std::uint8_t> s;
-    s.push_back(kStubOpPopRax);
-    _appendBytes(s, kStubOpMovRbxRsp, sizeof(kStubOpMovRbxRsp));
-    _appendBytes(s, kStubOpSubRsp0x30, sizeof(kStubOpSubRsp0x30));
-    _appendBytes(s, kStubOpAndRsp0xf0, sizeof(kStubOpAndRsp0xf0));
-    _appendBytes(s, kStubOpMovDwordPtrRsp, sizeof(kStubOpMovDwordPtrRsp));
-    _appendBytes(s, kStubOpMovQwordPtrRsp8Rbx, sizeof(kStubOpMovQwordPtrRsp8Rbx));
     _appendBytes(s, kStubOpMovRdiRsp, sizeof(kStubOpMovRdiRsp));
+    _appendBytes(s, kStubOpAndRsp0xf0, sizeof(kStubOpAndRsp0xf0));
     _appendBytes(s, kStubOpXorRsiRsi, sizeof(kStubOpXorRsiRsi));
     const std::uint64_t callInsnVaddr = stubVaddr + s.size();
     const std::uint64_t callNextVaddr = callInsnVaddr + kStubCallInstructionSize;

@@ -1,21 +1,30 @@
 #include <io/ByteWriter.hpp>
 #include <cstring>
+#include <stdexcept>
 
 namespace Io {
 
 void ByteWriter::WriteU8(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint8_t v) const {
+    if (offset >= buf.size())
+        throw std::out_of_range("ByteWriter::WriteU8 out of bounds");
     buf[offset] = v;
 }
 
 void ByteWriter::WriteU16(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint16_t v) const {
+    if (offset > buf.size() || buf.size() - offset < 2)
+        throw std::out_of_range("ByteWriter::WriteU16 out of bounds");
     std::memcpy(buf.data() + offset, &v, 2);
 }
 
 void ByteWriter::WriteU32(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint32_t v) const {
+    if (offset > buf.size() || buf.size() - offset < 4)
+        throw std::out_of_range("ByteWriter::WriteU32 out of bounds");
     std::memcpy(buf.data() + offset, &v, 4);
 }
 
 void ByteWriter::WriteU64(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint64_t v) const {
+    if (offset > buf.size() || buf.size() - offset < 8)
+        throw std::out_of_range("ByteWriter::WriteU64 out of bounds");
     std::memcpy(buf.data() + offset, &v, 8);
 }
 

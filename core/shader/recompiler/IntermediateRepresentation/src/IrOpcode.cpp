@@ -116,7 +116,10 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("ReferenceU32", Void, U32),
     makeMeta("GetUserData", U32, ScalarReg),
     makeMeta("GetShaderBase", U64),
+    makeMeta("ShaderClock", U64),
+    makeMeta("RealtimeClock", U64),
     makeMeta("MeshDrawParameter", U32, U32),
+    makeMeta("MeshArgument", U32, U32),
     makeMeta("MeshAllocate", Void, U32),
     makeMeta("TessellationBase", U32, U32),
     makeMeta("GetTessellationAttribute", U32, U32, U32, U1),
@@ -177,8 +180,6 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("CompositeExtractU32x3", U32, U32x3, U32),
     makeMeta("CompositeExtractU32x4", U32, U32x4, U32),
     makeMeta("PackHalf2x16", U32, F32x2),
-    makeMeta("PackSnorm2x16", U32, F32x2),
-    makeMeta("PackUnorm2x16", U32, F32x2),
     makeMeta("PackFloat2x16Rtz", U32, F32, F32),
     makeMeta("FPAbs32", F32, F32),
     makeMeta("FPNeg32", F32, F32),
@@ -262,6 +263,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("FPAdd32", F32, F32, F32),
     makeMeta("FPSub32", F32, F32, F32),
     makeMeta("FPFma32", F32, F32, F32, F32),
+    makeMeta("FPMad32", F32, F32, F32, F32),
     makeMeta("FPMul32", F32, F32, F32),
     makeMeta("FPMin32", F32, F32, F32),
     makeMeta("FPMax32", F32, F32, F32),
@@ -276,16 +278,41 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("FPCos", F32, F32),
     makeMeta("FPExp2", F32, F32),
     makeMeta("FPLog2", F32, F32),
-    makeMeta("FPLdexp", F32, F32, U32),
     makeMeta("FPRoundEven32", F32, F32),
     makeMeta("FPFloor32", F32, F32),
     makeMeta("FPCeil32", F32, F32),
     makeMeta("FPTrunc32", F32, F32),
     makeMeta("FPFract32", F32, F32),
+    makeMeta("FPAdd64", U64, U64, U64),
+    makeMeta("FPMul64", U64, U64, U64),
+    makeMeta("FPFma64", U64, U64, U64, U64),
+    makeMeta("FPFmaScale64", U64, U64, U64, U64, U32),
+    makeMeta("FPMin64", U64, U64, U64),
+    makeMeta("FPMax64", U64, U64, U64),
+    makeMeta("FPSaturate64", U64, U64),
+    makeMeta("FPLdexp64", U64, U64, U32),
+    makeMeta("FPRoundEven64", U64, U64),
+    makeMeta("FPFloor64", U64, U64),
+    makeMeta("FPCeil64", U64, U64),
+    makeMeta("FPTrunc64", U64, U64),
+    makeMeta("FPFract64", U64, U64),
+    makeMeta("FPFrexpMant64", U64, U64),
+    makeMeta("FPFrexpExp64", U32, U64),
+    makeMeta("FPRcp64", U64, U64),
+    makeMeta("FPRsq64", U64, U64),
+    makeMeta("FPSqrt64", U64, U64),
+    makeMeta("FPTrigPreop64", U64, U64, U32),
+    makeMeta("ConvertF32F64", F32, U64),
+    makeMeta("ConvertF64F32", U64, F32),
+    makeMeta("ConvertF64S32", U64, U32),
+    makeMeta("ConvertF64U32", U64, U32),
+    makeMeta("ConvertS32F64", U32, U64),
+    makeMeta("ConvertU32F64", U32, U64),
     makeMeta("LaneId", U32),
     makeMeta("WriteLane", U32, U32, U32, U32),
-    makeMeta("Permlane16U32", U32, U32, U32, U32, U1),
+    makeMeta("Permlane16U32", U32, U32, U32, U32, U1, U32),
     makeMeta("BpermuteU32", U32, U32, U32, U1),
+    makeMeta("PermuteU32", U32, U32, U32, U1),
     makeMeta("GetSrtResource", SrtResource),
     makeMeta("GetBufferResource", BufferResource, U32, U32, U32, U32),
     makeMeta("GetAddressResource", AddressResource, U32, U32),
@@ -304,6 +331,39 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("StoreAddressU8", Void, AddressResource, U32, U32, U8, U1),
     makeMeta("StoreAddressU16", Void, AddressResource, U32, U32, U16, U1),
     makeMeta("StoreAddressU32", Void, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicSwap32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicCmpSwap32", U32, AddressResource, U32, U32, U32, U32, U1),
+    makeMeta("AddressAtomicIAdd32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicISub32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicSMin32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicUMin32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicSMax32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicUMax32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicAnd32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicOr32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicXor32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicInc32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicDec32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicUSubSat32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicSwap64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicCmpSwap64", U64, AddressResource, U32, U32, U64, U64, U1),
+    makeMeta("AddressAtomicIAdd64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicISub64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicSMin64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicUMin64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicSMax64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicUMax64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicAnd64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicOr64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicXor64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicFCmpSwap32", U32, AddressResource, U32, U32, U32, U32, U1),
+    makeMeta("AddressAtomicFMin32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicFMax32", U32, AddressResource, U32, U32, U32, U1),
+    makeMeta("AddressAtomicFCmpSwap64", U64, AddressResource, U32, U32, U64, U64, U1),
+    makeMeta("AddressAtomicFMin64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicFMax64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicInc64", U64, AddressResource, U32, U32, U64, U1),
+    makeMeta("AddressAtomicDec64", U64, AddressResource, U32, U32, U64, U1),
     makeMeta("LoadBufferU8", U8, BufferResource, U32, U32, U32, U1),
     makeMeta("LoadBufferU16", U16, BufferResource, U32, U32, U32, U1),
     makeMeta("LoadBufferU32", U32, BufferResource, U32, U32, U32, U1),
@@ -331,6 +391,24 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("BufferAtomicXor32", U32, BufferResource, U32, U32, U32, U32, U1),
     makeMeta("BufferAtomicFMin32", U32, BufferResource, U32, U32, U32, U32, U1),
     makeMeta("BufferAtomicFMax32", U32, BufferResource, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicInc32", U32, BufferResource, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicDec32", U32, BufferResource, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicUSubSat32", U32, BufferResource, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicIAdd64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicISub64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicSMin64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicUMin64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicSMax64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicUMax64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicAnd64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicXor64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicCmpSwap64", U64, BufferResource, U32, U32, U32, U64, U64, U1),
+    makeMeta("BufferAtomicFCmpSwap32", U32, BufferResource, U32, U32, U32, U32, U32, U1),
+    makeMeta("BufferAtomicFCmpSwap64", U64, BufferResource, U32, U32, U32, U64, U64, U1),
+    makeMeta("BufferAtomicFMin64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicFMax64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicInc64", U64, BufferResource, U32, U32, U32, U64, U1),
+    makeMeta("BufferAtomicDec64", U64, BufferResource, U32, U32, U32, U64, U1),
     makeMeta("LoadSharedU8", U8, U32, U1),
     makeMeta("LoadSharedU16", U16, U32, U1),
     makeMeta("LoadSharedU32", U32, U32, U1),
@@ -343,8 +421,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("WriteSharedU32x2", Void, U32, U32, U32, U1),
     makeMeta("WriteSharedU32x3", Void, U32, U32, U32, U32, U1),
     makeMeta("WriteSharedU32x4", Void, U32, U32, U32, U32, U32, U1),
-    makeMeta("SharedAtomicFMin32", Void, U32, U32, U32, U1),
-    makeMeta("SharedAtomicFMax32", Void, U32, U32, U32, U1),
+    makeMeta("SharedAtomicFMin32", U32, U32, U32, U1),
+    makeMeta("SharedAtomicFMax32", U32, U32, U32, U1),
     makeMeta("SharedAtomicSwap32", U32, U32, U32, U1),
     makeMeta("SharedAtomicIAdd32", U32, U32, U32, U1),
     makeMeta("SharedAtomicISub32", U32, U32, U32, U1),
@@ -357,6 +435,30 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("SharedAtomicAnd32", U32, U32, U32, U1),
     makeMeta("SharedAtomicOr32", U32, U32, U32, U1),
     makeMeta("SharedAtomicXor32", U32, U32, U32, U1),
+    makeMeta("SharedAtomicRsub32", U32, U32, U32, U1),
+    makeMeta("SharedAtomicFAdd32", U32, U32, U32, U1),
+    makeMeta("SharedAtomicCmpst32", U32, U32, U32, U32, U1),
+    makeMeta("SharedAtomicCmpstF32", U32, U32, U32, U32, U1),
+    makeMeta("SharedAtomicMskor32", U32, U32, U32, U32, U1),
+    makeMeta("SharedAtomicWrap32", U32, U32, U32, U32, U1),
+    makeMeta("SharedAtomicSwap64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicIAdd64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicISub64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicRsub64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicInc64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicDec64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicSMin64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicUMin64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicSMax64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicUMax64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicAnd64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicOr64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicXor64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicFMin64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicFMax64", U64, U32, U64, U1),
+    makeMeta("SharedAtomicCmpst64", U64, U32, U64, U64, U1),
+    makeMeta("SharedAtomicCmpstF64", U64, U32, U64, U64, U1),
+    makeMeta("SharedAtomicMskor64", U64, U32, U64, U64, U1),
     makeMeta("DataAppend", U32, U32, U1, U32, U32),
     makeMeta("DataConsume", U32, U32, U1, U32, U32),
     makeMeta("SwizzleU32", U32, U32, U32, U1),
@@ -373,6 +475,15 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("ImageAtomicAnd32", U32, ImageResource, ImageAddress, U32, U1),
     makeMeta("ImageAtomicOr32", U32, ImageResource, ImageAddress, U32, U1),
     makeMeta("ImageAtomicXor32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicCmpSwap32", U32, ImageResource, ImageAddress, U32, U32, U1),
+    makeMeta("ImageAtomicISub32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicSMin32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicSMax32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicInc32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicDec32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicFCmpSwap32", U32, ImageResource, ImageAddress, U32, U32, U1),
+    makeMeta("ImageAtomicFMin32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicFMax32", U32, ImageResource, ImageAddress, U32, U1),
     makeMeta("GetAttribute", U32, U32, U32),
     makeMeta("GetInterpolationParameter", U32, U32, U32, U32),
     makeMeta("SetAttribute", Void, U32x4, U1),
@@ -445,6 +556,24 @@ BufferAccess BufferAccessOf(IrOpcode opcode) {
         case IrOpcode::BufferAtomicXor32:
         case IrOpcode::BufferAtomicFMin32:
         case IrOpcode::BufferAtomicFMax32:
+        case IrOpcode::BufferAtomicInc32:
+        case IrOpcode::BufferAtomicDec32:
+        case IrOpcode::BufferAtomicUSubSat32:
+        case IrOpcode::BufferAtomicIAdd64:
+        case IrOpcode::BufferAtomicISub64:
+        case IrOpcode::BufferAtomicSMin64:
+        case IrOpcode::BufferAtomicUMin64:
+        case IrOpcode::BufferAtomicSMax64:
+        case IrOpcode::BufferAtomicUMax64:
+        case IrOpcode::BufferAtomicAnd64:
+        case IrOpcode::BufferAtomicXor64:
+        case IrOpcode::BufferAtomicCmpSwap64:
+        case IrOpcode::BufferAtomicFCmpSwap32:
+        case IrOpcode::BufferAtomicFCmpSwap64:
+        case IrOpcode::BufferAtomicFMin64:
+        case IrOpcode::BufferAtomicFMax64:
+        case IrOpcode::BufferAtomicInc64:
+        case IrOpcode::BufferAtomicDec64:
             return BufferAccess::Atomic;
         default:
             return BufferAccess::None;
@@ -455,6 +584,20 @@ std::uint32_t BufferComponentCount(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::BufferAtomicSwap64:
         case IrOpcode::BufferAtomicOr64:
+        case IrOpcode::BufferAtomicIAdd64:
+        case IrOpcode::BufferAtomicISub64:
+        case IrOpcode::BufferAtomicSMin64:
+        case IrOpcode::BufferAtomicUMin64:
+        case IrOpcode::BufferAtomicSMax64:
+        case IrOpcode::BufferAtomicUMax64:
+        case IrOpcode::BufferAtomicAnd64:
+        case IrOpcode::BufferAtomicXor64:
+        case IrOpcode::BufferAtomicCmpSwap64:
+        case IrOpcode::BufferAtomicFCmpSwap64:
+        case IrOpcode::BufferAtomicFMin64:
+        case IrOpcode::BufferAtomicFMax64:
+        case IrOpcode::BufferAtomicInc64:
+        case IrOpcode::BufferAtomicDec64:
         case IrOpcode::LoadBufferU32x2:
         case IrOpcode::StoreBufferU32x2:
             return 2u;
@@ -501,6 +644,30 @@ SharedAccess SharedAccessOf(IrOpcode opcode) {
         case IrOpcode::SharedAtomicAnd32:
         case IrOpcode::SharedAtomicOr32:
         case IrOpcode::SharedAtomicXor32:
+        case IrOpcode::SharedAtomicRsub32:
+        case IrOpcode::SharedAtomicFAdd32:
+        case IrOpcode::SharedAtomicCmpst32:
+        case IrOpcode::SharedAtomicCmpstF32:
+        case IrOpcode::SharedAtomicMskor32:
+        case IrOpcode::SharedAtomicWrap32:
+        case IrOpcode::SharedAtomicSwap64:
+        case IrOpcode::SharedAtomicIAdd64:
+        case IrOpcode::SharedAtomicISub64:
+        case IrOpcode::SharedAtomicRsub64:
+        case IrOpcode::SharedAtomicInc64:
+        case IrOpcode::SharedAtomicDec64:
+        case IrOpcode::SharedAtomicSMin64:
+        case IrOpcode::SharedAtomicUMin64:
+        case IrOpcode::SharedAtomicSMax64:
+        case IrOpcode::SharedAtomicUMax64:
+        case IrOpcode::SharedAtomicAnd64:
+        case IrOpcode::SharedAtomicOr64:
+        case IrOpcode::SharedAtomicXor64:
+        case IrOpcode::SharedAtomicFMin64:
+        case IrOpcode::SharedAtomicFMax64:
+        case IrOpcode::SharedAtomicCmpst64:
+        case IrOpcode::SharedAtomicCmpstF64:
+        case IrOpcode::SharedAtomicMskor64:
             return SharedAccess::Atomic;
         case IrOpcode::DataAppend:
             return SharedAccess::Append;
@@ -515,6 +682,24 @@ std::uint32_t SharedComponentCount(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::LoadSharedU32x2:
         case IrOpcode::WriteSharedU32x2:
+        case IrOpcode::SharedAtomicSwap64:
+        case IrOpcode::SharedAtomicIAdd64:
+        case IrOpcode::SharedAtomicISub64:
+        case IrOpcode::SharedAtomicRsub64:
+        case IrOpcode::SharedAtomicInc64:
+        case IrOpcode::SharedAtomicDec64:
+        case IrOpcode::SharedAtomicSMin64:
+        case IrOpcode::SharedAtomicUMin64:
+        case IrOpcode::SharedAtomicSMax64:
+        case IrOpcode::SharedAtomicUMax64:
+        case IrOpcode::SharedAtomicAnd64:
+        case IrOpcode::SharedAtomicOr64:
+        case IrOpcode::SharedAtomicXor64:
+        case IrOpcode::SharedAtomicFMin64:
+        case IrOpcode::SharedAtomicFMax64:
+        case IrOpcode::SharedAtomicCmpst64:
+        case IrOpcode::SharedAtomicCmpstF64:
+        case IrOpcode::SharedAtomicMskor64:
             return 2u;
         case IrOpcode::LoadSharedU32x3:
         case IrOpcode::WriteSharedU32x3:
@@ -547,6 +732,41 @@ AddressOpcodeInfo AddressOpcodeInfoOf(IrOpcode opcode) {
             return {AddressAccess::Write, 16u};
         case IrOpcode::StoreAddressU32:
             return {AddressAccess::Write, 32u};
+        case IrOpcode::AddressAtomicSwap32:
+        case IrOpcode::AddressAtomicCmpSwap32:
+        case IrOpcode::AddressAtomicIAdd32:
+        case IrOpcode::AddressAtomicISub32:
+        case IrOpcode::AddressAtomicSMin32:
+        case IrOpcode::AddressAtomicUMin32:
+        case IrOpcode::AddressAtomicSMax32:
+        case IrOpcode::AddressAtomicUMax32:
+        case IrOpcode::AddressAtomicAnd32:
+        case IrOpcode::AddressAtomicOr32:
+        case IrOpcode::AddressAtomicXor32:
+        case IrOpcode::AddressAtomicInc32:
+        case IrOpcode::AddressAtomicDec32:
+        case IrOpcode::AddressAtomicUSubSat32:
+        case IrOpcode::AddressAtomicFCmpSwap32:
+        case IrOpcode::AddressAtomicFMin32:
+        case IrOpcode::AddressAtomicFMax32:
+            return {AddressAccess::Atomic, 32u};
+        case IrOpcode::AddressAtomicSwap64:
+        case IrOpcode::AddressAtomicCmpSwap64:
+        case IrOpcode::AddressAtomicIAdd64:
+        case IrOpcode::AddressAtomicISub64:
+        case IrOpcode::AddressAtomicSMin64:
+        case IrOpcode::AddressAtomicUMin64:
+        case IrOpcode::AddressAtomicSMax64:
+        case IrOpcode::AddressAtomicUMax64:
+        case IrOpcode::AddressAtomicAnd64:
+        case IrOpcode::AddressAtomicOr64:
+        case IrOpcode::AddressAtomicXor64:
+        case IrOpcode::AddressAtomicFCmpSwap64:
+        case IrOpcode::AddressAtomicFMin64:
+        case IrOpcode::AddressAtomicFMax64:
+        case IrOpcode::AddressAtomicInc64:
+        case IrOpcode::AddressAtomicDec64:
+            return {AddressAccess::Atomic, 32u, 2u};
         default:
             return {};
     }
@@ -574,10 +794,23 @@ ImageOpcodeInfo ImageOpcodeInfoOf(IrOpcode opcode) {
         case IrOpcode::ImageAtomicAnd32:
         case IrOpcode::ImageAtomicOr32:
         case IrOpcode::ImageAtomicXor32:
+        case IrOpcode::ImageAtomicCmpSwap32:
+        case IrOpcode::ImageAtomicISub32:
+        case IrOpcode::ImageAtomicSMin32:
+        case IrOpcode::ImageAtomicSMax32:
+        case IrOpcode::ImageAtomicInc32:
+        case IrOpcode::ImageAtomicDec32:
+        case IrOpcode::ImageAtomicFCmpSwap32:
+        case IrOpcode::ImageAtomicFMin32:
+        case IrOpcode::ImageAtomicFMax32:
             return {ImageAccess::Atomic, ImageResourceClass::Storage, false};
         default:
             return {};
     }
+}
+
+bool IsFloat64Opcode(IrOpcode opcode) {
+    return opcode >= IrOpcode::FPAdd64 && opcode <= IrOpcode::ConvertU32F64;
 }
 
 bool IrOpcodeHasSideEffects(IrOpcode opcode) {
@@ -589,7 +822,8 @@ bool IrOpcodeHasSideEffects(IrOpcode opcode) {
     if (sharedAccess == SharedAccess::Write || sharedAccess == SharedAccess::Atomic || sharedAccess == SharedAccess::Append || sharedAccess == SharedAccess::Consume) {
         return true;
     }
-    if (AddressOpcodeInfoOf(opcode).access == AddressAccess::Write) {
+    const AddressAccess addressAccess = AddressOpcodeInfoOf(opcode).access;
+    if (addressAccess == AddressAccess::Write || addressAccess == AddressAccess::Atomic) {
         return true;
     }
     const ImageAccess imageAccess = ImageOpcodeInfoOf(opcode).access;

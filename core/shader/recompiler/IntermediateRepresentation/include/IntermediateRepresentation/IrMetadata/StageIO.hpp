@@ -35,6 +35,7 @@ enum class StageInputKind {
     GlobalInvocationId,
     DispatchThreadLimit,
     Parameter,
+    HelperInvocation,
 };
 
 enum class StageOutputKind {

@@ -22,6 +22,7 @@ namespace {
 using namespace ShaderRecompiler;
 
 enum class Split {
+    None,
     Clone,
     Route
 };
@@ -192,7 +193,9 @@ std::size_t recompile(const std::string& name, std::span<const std::uint32_t> co
 void verifyProgram(const Program& program) {
     const std::string name(program.name);
     const auto result = verifyGraph(name, program.code);
-    if (program.split == Split::Clone) {
+    if (program.split == Split::None) {
+        require(result.clonedInstructions == 0 && result.routeVariables == 0, name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+    } else if (program.split == Split::Clone) {
         require(result.clonedInstructions != 0 && result.routeVariables == 0, name + ": expected a clone, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else {
         require(result.clonedInstructions <= program.clonedLimit && result.routeVariables != 0, name + ": expected routing with at most " + std::to_string(program.clonedLimit) + " cloned instructions, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
@@ -594,6 +597,65 @@ early_exit:
           0xbf86000au, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0700000u, 0x80000100u,
           0xbf810000u, 0xbefe0480u, 0xbf810000u},
          Split::Clone},
+        {"early exit arm beside a branch to the parent's merge", R"(
+  v_mov_b32 v1, 0
+  s_cmp_eq_u32 s2, 64
+  s_cbranch_scc1 join
+  v_add_nc_u32 v1, 1, v0
+  s_cmp_eq_u32 s3, 0
+  s_cbranch_scc1 early_exit
+join:
+  v_cmp_gt_u32 vcc, 8, v0
+  s_cbranch_vccnz store
+  v_add_nc_u32 v1, 2, v1
+store:
+  buffer_store_dword v1, off, s[0:3], 0
+  s_endpgm
+early_exit:
+  s_mov_b64 exec, 0
+  s_endpgm)",
+         {0x7e020280u, 0xbf06c002u, 0xbf850003u, 0x4a020081u, 0xbf068003u, 0xbf850006u, 0x7d880088u, 0xbf870001u, 0x4a020282u, 0xe0700000u,
+          0x80000100u, 0xbf810000u, 0xbefe0480u, 0xbf810000u},
+         Split::None},
+        {"return block entered from the return block after it", R"(
+  v_mov_b32 v1, 0
+  s_cmp_eq_u32 s2, 64
+  s_cbranch_scc0 later
+  v_add_nc_u32 v1, 1, v0
+  buffer_store_dword v1, off, s[0:3], 0
+  s_endpgm
+middle:
+  v_add_nc_u32 v1, 2, v0
+  buffer_store_dword v1, off, s[0:3], 0
+  s_endpgm
+later:
+  s_cmp_eq_u32 s3, 0
+  s_cbranch_scc1 middle
+  v_add_nc_u32 v1, 3, v0
+  buffer_store_dword v1, off, s[0:3], 0
+  s_endpgm)",
+         {0x7e020280u, 0xbf06c002u, 0xbf840008u, 0x4a020081u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x4a020082u, 0xe0700000u, 0x80000100u,
+          0xbf810000u, 0xbf068003u, 0xbf85fffau, 0x4a020083u, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         Split::None},
+        {"loop body between an early return and the loop test", R"(
+  s_mov_b32 s8, 0
+  v_mov_b32 v1, 0
+  s_cmp_eq_u32 s2, 64
+  s_cbranch_scc0 test
+  v_add_nc_u32 v1, 1, v0
+  buffer_store_dword v1, off, s[0:3], 0
+  s_endpgm
+body:
+  v_add_nc_u32 v1, 2, v1
+  s_add_u32 s8, s8, 16
+test:
+  s_cmp_lt_u32 s8, 64
+  s_cbranch_scc1 body
+  buffer_store_dword v1, off, s[0:3], 0
+  s_endpgm)",
+         {0xbe880380u, 0x7e020280u, 0xbf06c002u, 0xbf840006u, 0x4a020081u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x4a020282u, 0x80089008u,
+          0xbf0ac008u, 0xbf85fffcu, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         Split::None},
     };
     int failures = 0;
     for (const auto& program : programs) {

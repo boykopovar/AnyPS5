@@ -4,7 +4,19 @@
 
 #include <cstdint>
 #include <cstring>
+#include <random>
+#include <stdexcept>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr std::uint32_t Config = 0xFE7007F0;
 static constexpr std::uint32_t SuperframeBytes = 256;
@@ -37,7 +49,7 @@ static std::vector<float> Reference() {
     int offset = 0;
     for (std::uint32_t frame = 0; frame < 4; frame++) {
         int used = 0;
-        Require(Atrac9DecodeF32(decoder, Superframe + offset, pcm.data() + frame * 256, &used, 0) == 0);
+        Require(Atrac9DecodeF32(decoder, Superframe + offset, static_cast<int>(SuperframeBytes) - offset, pcm.data() + frame * 256, &used, 0) == 0);
         offset += used;
     }
     Atrac9ReleaseHandle(decoder);
@@ -178,11 +190,52 @@ static void TestCalcBlock() {
     Require(sceNgs2CalcWaveformBlock(&silent, 0, 1, &block) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
 }
 
+static std::uint8_t* SuperframeBeforeGuardPage() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* region = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    DWORD previous = 0;
+    Require(region != nullptr && VirtualProtect(region + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* region = static_cast<std::uint8_t*>(mapping);
+    Require(mprotect(region + page, page, PROT_NONE) == 0);
+#endif
+    auto* superframe = region + page - SuperframeBytes;
+    std::mt19937 random(50);
+    for (std::uint32_t i = 0; i < SuperframeBytes; i++) superframe[i] = static_cast<std::uint8_t>(random());
+    return superframe;
+}
+
+static void TestCorruptSuperframeAtPageEnd() {
+    const auto* superframe = SuperframeBeforeGuardPage();
+    const auto system = CreateSystem();
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_ATRAC9, 1, 48000, Config, 0, 0}});
+    const Ngs2WaveformBlock block{0, SuperframeBytes, 0, 0, SuperframeSamples, 0, 0};
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, superframe, 0, 1, &block});
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+    Patch(voice, Mastering(system, 1));
+    bool rejected = false;
+    try {
+        Render(system, Grain);
+    } catch (const std::runtime_error& error) {
+        rejected = std::strstr(error.what(), "ATRAC9 decode failed") != nullptr;
+    }
+    Require(rejected);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 int main() {
     const auto reference = Reference();
     TestSkipAndBlockEnd(reference);
     TestRepeatAndState(reference);
     TestParse();
     TestCalcBlock();
+    TestCorruptSuperframeAtPageEnd();
     return 0;
 }

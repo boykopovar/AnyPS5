@@ -1,0 +1,20 @@
+add_library(ulobjmgr SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(ulobjmgr PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(ulobjmgr)
+
+if(MINGW)
+    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
+        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+    endforeach()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_ulobjmgr_tests ${LIBS_INCLUDE_DIR}/tests/GuestUlobjmgr.cpp)
+    target_include_directories(guest_ulobjmgr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ulobjmgr_tests PRIVATE ulobjmgr)
+    add_test(NAME guest_ulobjmgr COMMAND guest_ulobjmgr_tests)
+    if(WIN32)
+        set_tests_properties(guest_ulobjmgr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:ulobjmgr>")
+    endif()
+endif()

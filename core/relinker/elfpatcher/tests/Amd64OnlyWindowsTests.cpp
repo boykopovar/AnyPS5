@@ -344,6 +344,150 @@ void executeSha256(const Harness& harness, const Codegen::IAmd64OnlyInstructionM
     }
 }
 
+struct Sha1Memory {
+    std::uint8_t ModRm;
+    Bytes Tail;
+    std::optional<std::uint8_t> Slot;
+    const char* Name;
+};
+
+const std::array<Sha1Memory, 4> kSha1Memory = {{
+    {0x03, {}, std::uint8_t{0}, "[rbx]"},
+    {0x43, {0x70}, std::uint8_t{7}, "[rbx+0x70]"},
+    {0x83, {0xF0, 0x00, 0x00, 0x00}, std::uint8_t{15}, "[rbx+0xf0]"},
+    {0x44, {0x24, 0xF0}, std::nullopt, "[rsp-0x10]"}}};
+
+struct Sha1Step {
+    std::uint8_t Opcode;
+    std::uint8_t Destination;
+    std::uint8_t Source;
+    std::uint8_t Immediate = 0;
+    bool Memory = false;
+};
+
+Bytes encodeSha1(const Sha1Step& step) {
+    Bytes bytes;
+    const auto rex = static_cast<std::uint8_t>(0x40 | (step.Destination >= 8 ? 4 : 0) | (!step.Memory && step.Source >= 8 ? 1 : 0));
+    if (rex != 0x40) bytes.push_back(rex);
+    bytes.insert(bytes.end(), {0x0F, static_cast<std::uint8_t>(step.Opcode == 0xCC ? 0x3A : 0x38), step.Opcode});
+    if (step.Memory) {
+        const auto& memory = kSha1Memory[step.Source];
+        bytes.push_back(static_cast<std::uint8_t>(memory.ModRm | ((step.Destination & 7) << 3)));
+        bytes.insert(bytes.end(), memory.Tail.begin(), memory.Tail.end());
+    } else {
+        bytes.push_back(static_cast<std::uint8_t>(0xC0 | ((step.Destination & 7) << 3) | (step.Source & 7)));
+    }
+    if (step.Opcode == 0xCC) bytes.push_back(step.Immediate);
+    return bytes;
+}
+
+std::uint32_t rotl(const std::uint32_t value, const unsigned count) {
+    return (value << count) | (value >> (32 - count));
+}
+
+void sha1Reference(const Sha1Step& step, const State& input, std::uint8_t (&xmm)[16][16]) {
+    std::uint32_t x[4];
+    std::uint32_t y[4];
+    std::uint32_t r[4];
+    std::memcpy(x, xmm[step.Destination], sizeof(x));
+    if (!step.Memory) {
+        std::memcpy(y, xmm[step.Source], sizeof(y));
+    } else if (const auto slot = kSha1Memory[step.Source].Slot) {
+        std::memcpy(y, input.Xmm[*slot], sizeof(y));
+    } else {
+        const std::uint64_t canary[2] = {kCanary, kCanary};
+        std::memcpy(y, canary, sizeof(y));
+    }
+    if (step.Opcode == 0xC8) {
+        r[0] = y[0];
+        r[1] = y[1];
+        r[2] = y[2];
+        r[3] = y[3] + rotl(x[3], 30);
+    } else if (step.Opcode == 0xC9) {
+        r[0] = x[0] ^ y[2];
+        r[1] = x[1] ^ y[3];
+        r[2] = x[2] ^ x[0];
+        r[3] = x[3] ^ x[1];
+    } else if (step.Opcode == 0xCA) {
+        r[3] = rotl(x[3] ^ y[2], 1);
+        r[2] = rotl(x[2] ^ y[1], 1);
+        r[1] = rotl(x[1] ^ y[0], 1);
+        r[0] = rotl(x[0] ^ r[3], 1);
+    } else {
+        constexpr std::uint32_t keys[4] = {0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xCA62C1D6};
+        const auto function = step.Immediate & 3;
+        std::uint32_t a = x[3], b = x[2], c = x[1], d = x[0], e = 0;
+        for (int round = 0; round < 4; ++round) {
+            std::uint32_t f = b ^ c ^ d;
+            if (function == 0) f = (b & c) ^ (~b & d);
+            if (function == 2) f = (b & c) ^ (b & d) ^ (c & d);
+            const auto next = f + rotl(a, 5) + y[3 - round] + e + keys[function];
+            e = d; d = c; c = rotl(b, 30); b = a; a = next;
+        }
+        r[0] = d;
+        r[1] = c;
+        r[2] = b;
+        r[3] = a;
+    }
+    std::memcpy(xmm[step.Destination], r, sizeof(r));
+}
+
+std::string describeSha1(const std::vector<Sha1Step>& steps) {
+    std::string text;
+    for (const auto& step : steps) {
+        text += std::string(step.Opcode == 0xCC ? "sha1rnds4" : step.Opcode == 0xC8 ? "sha1nexte" : step.Opcode == 0xC9 ? "sha1msg1" : "sha1msg2") + " xmm" + std::to_string(step.Destination) + ", ";
+        text += step.Memory ? std::string(kSha1Memory[step.Source].Name) : "xmm" + std::to_string(step.Source);
+        if (step.Opcode == 0xCC) text += ", " + std::to_string(step.Immediate);
+        text += "; ";
+    }
+    return text;
+}
+
+void executeSha1(const Harness& harness, const Codegen::IAmd64OnlyInstructionMatcher& matcher, const std::vector<Sha1Step>& steps, std::mt19937_64& random, const int images) {
+    std::vector<Bytes> sites;
+    for (const auto& step : steps) sites.push_back(encodeSha1(step));
+    const std::vector<std::span<const std::uint8_t>> spans(sites.begin(), sites.end());
+    const auto match = steps.size() == 1 ? matcher.Match(sites[0].data(), sites[0].size()) : matcher.MatchSequence(spans, {});
+    require(match.has_value() && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "SHA-1 was not lowered through a stub: " + describeSha1(steps));
+    std::uint16_t written = 0;
+    for (const auto& step : steps) written = static_cast<std::uint16_t>(written | (1u << step.Destination));
+    const std::array<std::uint64_t, 4> flags = {0x202, 0x203, 0x246, 0xAC7};
+    for (int image = 0; image < images; ++image) {
+        State input{};
+        for (auto& lane : input.Xmm) for (auto& byte : lane) byte = static_cast<std::uint8_t>(random());
+        input.FlagsIn = flags[static_cast<std::size_t>(image) % flags.size()];
+        State state = input;
+        harness.Run(match->StubBody, match->ReturnBranchOffset, state);
+        ++g_executions;
+        State expected = input;
+        for (const auto& step : steps) sha1Reference(step, input, expected.Xmm);
+        for (unsigned reg = 0; reg < 16; ++reg)
+            if (((written >> reg) & 1) != 0) require(std::memcmp(state.Xmm[reg], expected.Xmm[reg], 16) == 0, "Lowered SHA-1 computed the wrong xmm" + std::to_string(reg) + ": " + describeSha1(steps));
+        requireEnvironment(input, state, written, describeSha1(steps));
+    }
+}
+
+void sha1Execution(const Harness& harness, const Codegen::IAmd64OnlyInstructionMatcher& matcher, std::mt19937_64& random) {
+    const std::array<std::uint8_t, 4> opcodes = {0xCC, 0xC8, 0xC9, 0xCA};
+    for (const auto opcode : opcodes) {
+        for (std::uint8_t dst = 0; dst < 16; ++dst) {
+            for (std::uint8_t src = 0; src < 16; ++src)
+                executeSha1(harness, matcher, {{opcode, dst, src, static_cast<std::uint8_t>(random())}}, random, 2);
+            for (std::uint8_t memory = 0; memory < kSha1Memory.size(); ++memory)
+                for (std::uint8_t function = 0; function < 4; ++function)
+                    executeSha1(harness, matcher, {{opcode, dst, memory, static_cast<std::uint8_t>((random() & 0xFC) | function), true}}, random, 2);
+        }
+    }
+    for (int sequence = 0; sequence < 256; ++sequence) {
+        std::vector<Sha1Step> steps(2 + random() % 2);
+        for (auto& step : steps) {
+            const bool memory = random() % 2 == 0;
+            step = {opcodes[random() % opcodes.size()], static_cast<std::uint8_t>(random() % 16), static_cast<std::uint8_t>(random() % (memory ? kSha1Memory.size() : 16)), static_cast<std::uint8_t>(random()), memory};
+        }
+        executeSha1(harness, matcher, steps, random, 2);
+    }
+}
+
 void clzeroExecution(const Harness& harness, const Codegen::IAmd64OnlyInstructionMatcher& matcher, std::mt19937_64& random) {
     const Bytes plain = {0x0F, 0x01, 0xFC};
     const Bytes addressSize32 = {0x67, 0x0F, 0x01, 0xFC};
@@ -418,6 +562,7 @@ void cpuExecution() {
         executeSha256(harness, *matcher, steps, random, 2);
     }
     clzeroExecution(harness, *matcher, random);
+    sha1Execution(harness, *matcher, random);
 }
 
 Bytes elfFixture(const Bytes& text) {

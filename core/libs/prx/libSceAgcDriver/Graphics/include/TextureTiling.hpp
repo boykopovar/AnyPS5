@@ -2,8 +2,10 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURETILING_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -33,18 +35,24 @@ std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uin
 // (the detiler's blockExtent). A mip's tiled bytes are its blocks in row-major order, blocksPerRow per
 // row (TileMipLayout), except the tail mips, which share one block. Throws for linear tiling.
 std::array<std::uint32_t, 3> ThinBlockLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement);
+// The bytes of a thin mip (mip-relative [begin, end), ascending and merged) that hold one of its
+// elements each: its whole tile blocks (every element of the block inside the mip), or its rows
+// without the pitch padding when linear. A tail mip has none (its block also holds the other tail
+// levels and their padding). A retile of the mip writes every byte of these and no other.
+std::vector<std::pair<std::uint64_t, std::uint64_t>> CoveredMipBytes(TextureTileMode tileMode, std::uint32_t bytesPerElement, const TileMipLayout& mip);
 
-// Single-mip 3D surface. Each depth slice z is detiled from slab z / blockDepth (slabBytes apart) with the
+// 3D surface. Each slab holds the whole mip chain: the mip tail block, if any, then the other levels from the
+// smallest to level 0. Depth slice z of a level is detiled from slab z / blockDepth (slabBytes apart) with the
 // swizzle's slice input set to z, into linear slices sliceLinearBytes apart.
 struct ThickLayout {
-    TileMipLayout mip;
+    std::vector<TileMipLayout> mips;
     std::uint32_t depth;
     std::uint32_t blockDepth;
     std::uint64_t slabBytes;
     std::uint64_t sliceLinearBytes;
     std::uint64_t guestBytes;
 };
-ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth);
+ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth, std::uint32_t mipCount);
 
 // Guest surface as the texture upload/write-back loops walk it: array layers of thin surfaces, or the
 // depth slices of a volume (which Vulkan holds as one layer with extent depth).
@@ -63,8 +71,10 @@ struct SurfaceGeometry {
     std::uint64_t LinearLayerOffset(std::uint32_t layer) const { return static_cast<std::uint64_t>(layer) * sliceLinearBytes; }
     std::uint32_t CopyLayer(std::uint32_t layer) const { return imageDepth > 1 ? 0u : layer; }
     std::int32_t CopyDepth(std::uint32_t layer) const { return imageDepth > 1 ? static_cast<std::int32_t>(layer) : 0; }
+    bool HasLayer(std::uint32_t level, std::uint32_t layer) const { return imageDepth <= 1 || layer < std::max(imageDepth >> level, 1u); }
 };
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
+bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);
 
 }
 

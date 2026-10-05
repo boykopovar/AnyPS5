@@ -7,7 +7,7 @@
 
 namespace ShaderRecompiler {
 
-std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_t> spirv, std::uint32_t vulkanVersion, std::uint32_t spirvVersion) {
+std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_t> spirv, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, bool allowOffsetTextureOperand) {
     spv_target_env environment;
     const auto apiVersion = vulkanVersion & ~0xfffu;
     std::uint32_t maxSpirvVersion = 0;
@@ -35,7 +35,9 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
     spvtools::SpirvTools tools(environment);
     if (!tools.IsValid()) throw std::runtime_error("SPIRV-Tools: cannot create validator");
     tools.SetMessageConsumer(consumer);
-    if (!tools.Validate(spirv.data(), spirv.size())) {
+    spvtools::ValidatorOptions validatorOptions;
+    validatorOptions.SetAllowOffsetTextureOperand(allowOffsetTextureOperand);
+    if (!tools.Validate(spirv.data(), spirv.size(), validatorOptions)) {
         throw std::runtime_error("SPIR-V validation before optimization failed:\n" + diagnostics);
     }
     spvtools::Optimizer optimizer(environment);
@@ -77,13 +79,14 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
     spvtools::OptimizerOptions options;
     options.set_preserve_bindings(true);
     options.set_preserve_spec_constants(true);
+    options.set_validator_options(validatorOptions);
     std::vector<std::uint32_t> optimized;
     diagnostics.clear();
     if (!optimizer.Run(spirv.data(), spirv.size(), &optimized, options)) {
         throw std::runtime_error("SPIR-V optimization failed:\n" + diagnostics);
     }
     diagnostics.clear();
-    if (!tools.Validate(optimized.data(), optimized.size())) {
+    if (!tools.Validate(optimized.data(), optimized.size(), validatorOptions)) {
         throw std::runtime_error("SPIR-V validation after optimization failed:\n" + diagnostics);
     }
     return optimized;

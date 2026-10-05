@@ -28,6 +28,25 @@ IrU64 TranslationContext::readU64(const RdnaOperand& operand) {
     return IrU64(ir.ConstructU64(pair[0].Value(), pair[1].Value()));
 }
 
+std::array<IrU32, 2> TranslationContext::readF64Bits(const RdnaOperand& operand) {
+    std::array<IrU32, 2> bits{IrU32(ir.Constant(0u)), IrU32(ir.Constant(operand.value))};
+    if (operand.kind == RdnaOperandKind::FloatInlineConstant && operand.value == 0x3e22f983u) {
+        bits = {IrU32(ir.Constant(0x6dc9c882u)), IrU32(ir.Constant(0x3fc45f30u))};
+    } else if (operand.kind != RdnaOperandKind::LiteralConstant) {
+        RdnaOperand source = operand;
+        source.absolute = false;
+        source.negate = false;
+        bits = readU32Pair(source);
+    }
+    if (operand.absolute) {
+        bits[1] = IrU32(ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x7fffffffu)));
+    }
+    if (operand.negate) {
+        bits[1] = IrU32(ir.BitwiseXor(bits[1].Value(), ir.Constant(0x80000000u)));
+    }
+    return bits;
+}
+
 std::array<IrU32, 2> TranslationContext::extractU64(IrU64 value) {
     return {IrU32(ir.CompositeExtract(value.Value(), 0u)), IrU32(ir.CompositeExtract(value.Value(), 1u))};
 }
@@ -138,7 +157,7 @@ void TranslationContext::write16Bits(const RdnaOperand& operand, IrU32 value) {
 }
 
 void TranslationContext::writeF16(const RdnaOperand& operand, IrF32 value) {
-    const IrF16 half(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&value.Value()}));
+    const IrF16 half(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&applyF16ResultModifiers(operand, value).Value()}));
     const IrU16 bits(ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&half.Value()}));
     write16Bits(operand, IrU32(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&bits.Value()})));
 }

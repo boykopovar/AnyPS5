@@ -162,4 +162,27 @@ int APS5_VABI atexit_nid_postfix(GuestExitCallback func) {
     return result;
 }
 
+namespace {
+std::mutex quickExitMutex;
+std::vector<GuestExitCallback> quickExitCallbacks;
+}
+
+int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func) {
+    if (func == nullptr)
+        return 0;
+    std::lock_guard lock(quickExitMutex);
+    quickExitCallbacks.push_back(func);
+    return 0;
+}
+
+[[noreturn]] void APS5_VABI quick_exit_nid_postfix(int status) {
+    std::vector<GuestExitCallback> callbacks;
+    {
+        std::lock_guard lock(quickExitMutex);
+        callbacks = std::move(quickExitCallbacks);
+    }
+    for (auto it = callbacks.rbegin(); it != callbacks.rend(); ++it) (*it)();
+    _Exit_nid_postfix(status);
+}
+
 }

@@ -96,6 +96,8 @@ bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
 // holds will store), without reading memory.
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value);
 std::size_t WaitAwaitedBytes(std::span<const std::uint32_t> packet);
+std::size_t ConditionalWords(std::span<const std::uint32_t> packet);
+std::uint32_t ReadCondition(std::span<const std::uint32_t> packet);
 // A label write (RELEASE_MEM with a data select, WRITE_DATA to memory): the destination and the
 // bytes it stores, so the write can be recorded on the GPU behind the work it signals. Packets
 // without a memory destination decode to nothing. No allocation per label (tens of thousands per
@@ -124,6 +126,12 @@ struct StoreWrite {
     std::span<const std::byte> Bytes() const { return ownedBytes.empty() ? viewBytes : std::span<const std::byte>(ownedBytes); }
 };
 std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, const QueueState& queue, std::size_t limit);
+struct MemoryCopy {
+    std::uint64_t source;
+    std::uint64_t destination;
+    std::size_t bytes;
+};
+std::optional<MemoryCopy> DecodeMemoryCopy(std::span<const std::uint32_t> packet);
 // A DISPATCH_INDIRECT's arguments: the guest address of its three group-count dwords (no memory
 // access, so the GPU can read them in place: VulkanDevice::DispatchIndirect), the DISPATCH_DIRECT
 // packet made by reading them there (through the checked guest memory path, which waits for

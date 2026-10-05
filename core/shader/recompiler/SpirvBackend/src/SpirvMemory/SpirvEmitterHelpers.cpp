@@ -36,6 +36,7 @@ std::uint32_t BuiltInForInput(StageInputKind kind) {
     case StageInputKind::InstanceIndex: return spv::BuiltInInstanceIndex;
     case StageInputKind::FragCoord: return spv::BuiltInFragCoord;
     case StageInputKind::FrontFacing: return spv::BuiltInFrontFacing;
+    case StageInputKind::HelperInvocation: return spv::BuiltInHelperInvocation;
     case StageInputKind::Layer: return spv::BuiltInLayer;
     case StageInputKind::SampleId: return spv::BuiltInSampleId;
     case StageInputKind::BaryCoordSmooth: return spv::BuiltInBaryCoordKHR;
@@ -160,14 +161,17 @@ void CheckBindings(const IrProgram& program, const BindingAllocationResult& bind
 
 void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
     module.EmitCapability(spv::CapabilityShader);
-    if (program.Info().usesDma) {
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh;
+    if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
-        module.EmitCapability(spv::CapabilityStorageBuffer8BitAccess);
         module.EmitExtension("SPV_KHR_physical_storage_buffer");
+    }
+    if (program.Info().usesDma) {
+        module.EmitCapability(spv::CapabilityStorageBuffer8BitAccess);
         module.EmitExtension("SPV_KHR_8bit_storage");
     }
-    module.AddMemoryModel(program.Info().usesDma ? spv::AddressingModelPhysicalStorageBuffer64 : spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+    module.AddMemoryModel(physical ? spv::AddressingModelPhysicalStorageBuffer64 : spv::AddressingModelLogical, spv::MemoryModelGLSL450);
 }
 
 void DefineInputs(SpirvEmitterState& state) {
@@ -229,6 +233,7 @@ void DefineInputs(SpirvEmitterState& state) {
             type = TypeF32Vector(state, 3u);
             break;
         case StageInputKind::FrontFacing:
+        case StageInputKind::HelperInvocation:
             type = TypeBool(state);
             break;
         case StageInputKind::Parameter:

@@ -1,0 +1,23 @@
+add_library(libSceLibcInternal SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceLibcInternal PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceLibcInternal PRIVATE ${CMAKE_DL_LIBS})
+configure_windows_unwind(libSceLibcInternal)
+
+if(MINGW)
+    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
+        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+    endforeach()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_thread_atexit_tests ${LIBS_INCLUDE_DIR}/tests/GuestThreadAtexit.cpp)
+    target_include_directories(guest_thread_atexit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_thread_atexit_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_thread_atexit_tests)
+    add_test(NAME guest_thread_atexit COMMAND guest_thread_atexit_tests)
+    set_tests_properties(guest_thread_atexit PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_thread_atexit PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()

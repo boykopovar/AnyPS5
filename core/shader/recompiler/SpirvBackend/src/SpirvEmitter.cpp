@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvEmitterState.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvModuleSetup.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -119,7 +120,7 @@ std::uint32_t SpirvValueEmitContext::Ballot(const IrValue* predicate) {
     const auto low = state.module.AllocateId();
     state.module.AddFunction(spv::OpGroupNonUniformBallot, ballotType, low, scope, otherHalf == nullptr || half == 0u ? Def(predicate) : otherHalf->Def(predicate));
     if (otherHalf == nullptr) {
-        return low;
+        return EmitWaveBallot(state, low);
     }
     const auto high = state.module.AllocateId();
     const auto lowWord = state.module.AllocateId();
@@ -158,7 +159,7 @@ std::uint32_t SpirvValueEmitContext::Shuffle(const IrValue& inst, std::size_t in
     const auto scope = ConstantU32(state, spv::ScopeSubgroup);
     const auto low = state.module.AllocateId();
     if (otherHalf == nullptr) {
-        state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, low, scope, Arg(inst, index), lane);
+        state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, low, scope, Arg(inst, index), EmitHostSubgroupLane(state, lane));
         return low;
     }
     const auto physicalLane = EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u));
@@ -246,8 +247,12 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.spirvVersion = target.spirvVersion;
     state.supportedCapabilities = target.supportedCapabilities;
     state.supportedExtensions = target.supportedExtensions;
+    state.nonConstantImageOffsets = target.nonConstantImageOffsets;
+    state.splitSubgroup = program.WaveSize() == 32u && target.subgroupSize > 32u;
+    if (state.splitSubgroup && (state.requirements.subgroupBallot || state.requirements.subgroupShuffle)) state.requirements.subgroupLocalInvocationId = true;
     const auto* workgroup = ShaderWorkgroupInputFor(state);
     state.laneCount = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u ? 2u : 1u;
+    if (state.laneCount == 2u) state.sharedLaneValues = WaveUniformValues(program);
     if (program.Resources().stage == IrShaderStage::Compute && workgroup != nullptr) {
         // The key comes from a subgroup ballot (ReadFirstLane), so the slot is uniform over the
         // workgroup only when the workgroup is one wave held by one host subgroup; a wave64 program

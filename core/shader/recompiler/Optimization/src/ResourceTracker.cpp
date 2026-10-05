@@ -2,11 +2,13 @@
 #include "Optimization/SrtWalker.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
+#include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <string>
@@ -106,6 +108,7 @@ public:
         if (!m_program.Resources().srtPlanComplete) {
             fail("SRT plan is not ready");
         }
+        SplitDescriptorPhis();
         PlanIndirectImages();
         for (auto& block : m_program.Blocks()) {
             for (IrValue* inst : block->Instructions()) {
@@ -470,6 +473,269 @@ private:
         });
     }
 
+    static constexpr std::uint32_t phiSearchDepth = 8u;
+
+    static bool SplittableImageRead(const IrValue& inst) {
+        switch (inst.Opcode()) {
+            case IrOpcode::ImageSampleRaw:
+            case IrOpcode::ImageGatherRaw:
+            case IrOpcode::ImageQueryLod:
+            case IrOpcode::ImageQueryDimensions:
+            case IrOpcode::ImageRead: return inst.Type() == IrType::U32x4;
+            default: return false;
+        }
+    }
+
+    void CollectDescriptorPhis(IrValue* value, std::vector<IrValue*>& phis, std::uint32_t depth) const {
+        value = value->Resolve();
+        if (value->HasImmediate()) {
+            return;
+        }
+        if (value->IsPhi()) {
+            if (ResolveInvariantPhi(m_program.Resources(), value) == nullptr && std::ranges::find(phis, value) == phis.end()) {
+                phis.push_back(value);
+            }
+            return;
+        }
+        if (depth == 0u || !Detail::IsRuntimeUniformOp(value->Opcode())) {
+            return;
+        }
+        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+            CollectDescriptorPhis(value->Argument(index), phis, depth - 1u);
+        }
+    }
+
+    static IrValue* PhiIncoming(const IrValue& phi, const IrBlock* predecessor) {
+        for (std::size_t index = 0; index < phi.ArgumentCount(); index++) {
+            if (phi.PhiBlock(index) == predecessor) {
+                return phi.Argument(index);
+            }
+        }
+        return nullptr;
+    }
+
+    IrValue* EmitBefore(IrValue& position, IrOpcode op, IrType type, std::span<IrValue* const> arguments, std::uint64_t flags = 0) {
+        IrValue& value = m_program.CreateValue(op, type, flags);
+        for (IrValue* argument : arguments) {
+            value.AddArgument(argument);
+        }
+        position.Parent()->InsertInstructionBefore(&position, &value);
+        return &value;
+    }
+
+    IrValue* EmitCopy(const IrValue& original, std::span<IrValue* const> arguments, IrValue& position) {
+        return EmitBefore(position, original.Opcode(), original.Type(), arguments, original.Flags<std::uint64_t>());
+    }
+
+    IrValue* Rematerialize(IrValue* value, IrValue& position, bool emit, std::uint32_t depth) {
+        value = value->Resolve();
+        if (value->HasImmediate()) {
+            return value;
+        }
+        if (value->IsPhi()) {
+            IrValue* invariant = ResolveInvariantPhi(m_program.Resources(), value);
+            return invariant == nullptr || invariant->IsPhi() ? nullptr : Rematerialize(invariant, position, emit, depth);
+        }
+        if (depth == 0u) {
+            return nullptr;
+        }
+        const auto op = value->Opcode();
+        const bool register_ = op == IrOpcode::GetUserData;
+        const bool argumentless = (op == IrOpcode::GetShaderBase || op == IrOpcode::GetSrtResource) && value->ArgumentCount() == 0u;
+        const bool srtRead = op == IrOpcode::ReadConst && value->ArgumentCount() == 2u && value->Argument(0)->Resolve()->Opcode() == IrOpcode::GetSrtResource && value->Argument(1)->Resolve()->HasImmediate();
+        if (!register_ && !argumentless && !srtRead && !Detail::IsRuntimeUniformOp(op)) {
+            return nullptr;
+        }
+        std::vector<IrValue*> arguments;
+        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+            IrValue* argument = register_ ? value->Argument(index) : Rematerialize(value->Argument(index), position, emit, depth - 1u);
+            if (argument == nullptr) {
+                return nullptr;
+            }
+            arguments.push_back(argument);
+        }
+        return emit ? EmitCopy(*value, arguments, position) : value;
+    }
+
+    IrValue* SubstituteEdge(IrValue* value, const IrBlock* predecessor, IrValue& position, bool emit, std::uint32_t depth) {
+        value = value->Resolve();
+        std::vector<IrValue*> phis;
+        CollectDescriptorPhis(value, phis, depth);
+        if (phis.empty()) {
+            return value;
+        }
+        if (value->IsPhi()) {
+            IrValue* incoming = PhiIncoming(*value, predecessor);
+            return incoming == nullptr ? nullptr : Rematerialize(incoming, position, emit, phiSearchDepth);
+        }
+        std::vector<IrValue*> arguments;
+        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+            IrValue* argument = SubstituteEdge(value->Argument(index), predecessor, position, emit, depth - 1u);
+            if (argument == nullptr) {
+                return nullptr;
+            }
+            arguments.push_back(argument);
+        }
+        return emit ? EmitCopy(*value, arguments, position) : value;
+    }
+
+    IrValue& EdgeSelector(IrBlock& block, const std::vector<bool>& edges) {
+        for (const auto& selector : m_edgeSelectors) {
+            if (selector.block == &block && selector.edges == edges) {
+                return *selector.value;
+            }
+        }
+        IrValue& phi = m_program.CreateValue(IrOpcode::Phi, IrType::Bool);
+        const auto& predecessors = block.Predecessors();
+        for (std::size_t index = 0; index < predecessors.size(); index++) {
+            phi.AddPhiOperand(predecessors[index], &m_builder.ConstantBool(edges[index]));
+        }
+        block.InsertInstructionBefore(nullptr, &phi);
+        m_edgeSelectors.push_back({&block, edges, &phi});
+        return phi;
+    }
+
+    void SplitDescriptorPhi(IrValue& inst) {
+        const auto info = ImageOpcodeInfoOf(inst.Opcode());
+        const std::uint32_t handleCount = info.needsSampler ? 2u : 1u;
+        if (inst.ArgumentCount() < handleCount) {
+            return;
+        }
+        std::array<IrValue*, 2> handles {};
+        std::array<bool, 2> split {};
+        std::vector<IrValue*> phis;
+        for (std::uint32_t slot = 0; slot < handleCount; slot++) {
+            IrValue* handle = inst.Argument(slot)->Resolve();
+            const auto expected = slot == 0u ? IrOpcode::GetImageResource : IrOpcode::GetSamplerResource;
+            if (handle->Opcode() != expected || handle->ArgumentCount() != (slot == 0u ? 8u : 4u)) {
+                return;
+            }
+            handles[slot] = handle;
+            std::vector<IrValue*> handlePhis;
+            for (std::size_t dword = 0; dword < handle->ArgumentCount(); dword++) {
+                CollectDescriptorPhis(handle->Argument(dword), handlePhis, phiSearchDepth);
+            }
+            split[slot] = !handlePhis.empty();
+            for (IrValue* phi : handlePhis) {
+                if (std::ranges::find(phis, phi) == phis.end()) {
+                    phis.push_back(phi);
+                }
+            }
+        }
+        if (phis.empty()) {
+            return;
+        }
+        IrBlock* block = phis.front()->Parent();
+        if (block == nullptr || inst.Parent() == nullptr) {
+            return;
+        }
+        const auto& predecessors = block->Predecessors();
+        if (predecessors.size() < 2u) {
+            return;
+        }
+        for (const IrValue* phi : phis) {
+            if (phi->Parent() != block || phi->PhiBlockCount() != predecessors.size()) {
+                return;
+            }
+            for (const IrBlock* predecessor : predecessors) {
+                if (PhiIncoming(*phi, predecessor) == nullptr) {
+                    return;
+                }
+            }
+        }
+
+        std::vector<std::uint32_t> edgeArm(predecessors.size());
+        std::vector<const IrBlock*> arms;
+        for (std::size_t edge = 0; edge < predecessors.size(); edge++) {
+            std::uint32_t arm = 0;
+            for (; arm < arms.size(); arm++) {
+                const bool same = std::ranges::all_of(phis, [&](const IrValue* phi) {
+                    return EquivalentValue(m_program.Resources(), PhiIncoming(*phi, predecessors[edge]), PhiIncoming(*phi, arms[arm]));
+                });
+                if (same) {
+                    break;
+                }
+            }
+            if (arm == arms.size()) {
+                arms.push_back(predecessors[edge]);
+            }
+            edgeArm[edge] = arm;
+        }
+        for (const IrBlock* arm : arms) {
+            for (std::uint32_t slot = 0; slot < handleCount; slot++) {
+                for (std::size_t dword = 0; split[slot] && dword < handles[slot]->ArgumentCount(); dword++) {
+                    if (SubstituteEdge(handles[slot]->Argument(dword), arm, inst, false, phiSearchDepth) == nullptr) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        std::vector<IrValue*> copies;
+        const auto flags = inst.Flags<MemoryFlags>();
+        const auto memory = m_program.Resources().memoryInfo.at(flags.index);
+        for (std::uint32_t arm = 0; arm < arms.size(); arm++) {
+            std::vector<IrValue*> arguments(inst.Arguments().begin(), inst.Arguments().end());
+            for (std::uint32_t slot = 0; slot < handleCount; slot++) {
+                if (!split[slot]) {
+                    continue;
+                }
+                std::vector<IrValue*> dwords;
+                for (std::size_t dword = 0; dword < handles[slot]->ArgumentCount(); dword++) {
+                    dwords.push_back(SubstituteEdge(handles[slot]->Argument(dword), arms[arm], inst, true, phiSearchDepth));
+                }
+                arguments[slot] = EmitCopy(*handles[slot], dwords, inst);
+            }
+            auto copyFlags = flags;
+            if (arm != 0u) {
+                copyFlags.index = static_cast<std::uint32_t>(m_program.Resources().memoryInfo.size());
+                m_program.Resources().memoryInfo.push_back(memory);
+            }
+            std::uint64_t rawFlags = 0;
+            std::memcpy(&rawFlags, &copyFlags, sizeof(copyFlags));
+            copies.push_back(EmitBefore(inst, inst.Opcode(), inst.Type(), arguments, rawFlags));
+        }
+
+        IrValue* result = copies.back();
+        if (copies.size() > 1u) {
+            std::array<IrValue*, 4> components {};
+            for (std::uint32_t component = 0; component < components.size(); component++) {
+                const auto extract = [&](IrValue* vector) {
+                    const std::array<IrValue*, 2> arguments {vector, &m_builder.Constant(component)};
+                    return EmitBefore(inst, IrOpcode::CompositeExtractU32x4, IrType::U32, arguments);
+                };
+                IrValue* selected = extract(copies.back());
+                for (std::uint32_t arm = static_cast<std::uint32_t>(copies.size()) - 1u; arm-- > 0u;) {
+                    std::vector<bool> edges(edgeArm.size());
+                    for (std::size_t edge = 0; edge < edgeArm.size(); edge++) {
+                        edges[edge] = edgeArm[edge] == arm;
+                    }
+                    const std::array<IrValue*, 3> arguments {&EdgeSelector(*block, edges), extract(copies[arm]), selected};
+                    selected = EmitBefore(inst, IrOpcode::SelectU32, IrType::U32, arguments);
+                }
+                components[component] = selected;
+            }
+            result = EmitBefore(inst, IrOpcode::CompositeConstructU32x4, IrType::U32x4, components);
+        }
+        inst.ReplaceAllUsesWith(result);
+        inst.Invalidate();
+        inst.Parent()->RemoveInstruction(&inst);
+    }
+
+    void SplitDescriptorPhis() {
+        std::vector<IrValue*> candidates;
+        for (auto& block : m_program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (SplittableImageRead(*inst)) {
+                    candidates.push_back(inst);
+                }
+            }
+        }
+        for (IrValue* inst : candidates) {
+            SplitDescriptorPhi(*inst);
+        }
+    }
+
     void PlanIndirectImages() {
         // Kill switch: APS5_NO_BINDLESS_IMAGES=1 leaves table-loaded T#s unplanned (GetHandle then
         // rejects them as before).
@@ -595,7 +861,7 @@ private:
         const bool depth = (memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0;
         for (std::uint32_t i = 0; i < m_info.images.size(); i++) {
             auto& image = m_info.images[i];
-            if (image.source == source && image.resourceClass == resourceClass && image.dimension == memory.imageDimension && image.mipMode == mip && image.depthCompare == depth && image.r128 == memory.imageR128) {
+            if (image.source == source && image.resourceClass == resourceClass && image.dimension == memory.imageDimension && image.mipMode == mip && image.depthCompare == depth && image.r128 == memory.imageR128 && image.packed == memory.imagePacked) {
                 Merge(image, op, pc);
                 return i;
             }
@@ -611,6 +877,7 @@ private:
         image.mipMode = mip;
         image.depthCompare = depth;
         image.r128 = memory.imageR128;
+        image.packed = memory.imagePacked;
         Merge(image, op, pc);
         m_info.images.push_back(image);
         return static_cast<std::uint32_t>(m_info.images.size() - 1);
@@ -749,6 +1016,7 @@ private:
                 std::fprintf(stderr, "[bda] %s at pc 0x%08x: %s access, offset %s%s\n", std::string(IrOpcodeName(op)).c_str(), flags.pc, kind, immediateOffset ? "immediate" : "dynamic", memory.kind == ResourceKind::ScalarAddress && !immediateOffset ? " (a register offset is not planned by the SRT walker)" : "");
             }
             m_info.usesDma = true;
+            m_info.bdaWrites = m_info.bdaWrites || addressInfo.access == AddressAccess::Write || addressInfo.access == AddressAccess::Atomic;
             return;
         }
 
@@ -822,6 +1090,12 @@ private:
     // APS5_TRACE_BDA: address accesses seen by Collect (the first bdaTraceLimit are printed).
     unsigned m_bdaTraces = 0;
     std::vector<IndirectImagePlan> m_indirectImages;
+    struct EdgeSelectorEntry {
+        IrBlock* block = nullptr;
+        std::vector<bool> edges;
+        IrValue* value = nullptr;
+    };
+    std::vector<EdgeSelectorEntry> m_edgeSelectors;
 };
 
 }

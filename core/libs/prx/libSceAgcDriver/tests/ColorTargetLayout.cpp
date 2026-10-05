@@ -1,5 +1,6 @@
 #include "BdaTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -26,7 +27,7 @@ void RunColorTargetLayoutTests() {
     reject([] { DecodeColorTileMode(0x4dc6c001); });
     reject([] { DecodeColorTileMode(0x4dc6e000); });
     reject([] { DecodeColorTileMode(0xcdc6c000); });
-    reject([] { DecodeColorTileMode(0x09014000); });
+    reject([] { DecodeColorTileMode(0x09004000); });
     reject([] { ColorTargetLayout(0, 1, ColorTileMode::RenderTarget); });
     const ColorTargetLayout padded(63, 2, ColorTileMode::Linear);
     Require(padded.Bytes() == 512 && padded.LinearBytes() == 504 && padded.Offset(0, 1) == 256, "linear rows are not padded to 256 bytes");
@@ -37,6 +38,18 @@ void RunColorTargetLayoutTests() {
     Require(layout.Offset(128, 0) == 65536 && layout.Offset(0, 128) == 3 * 65536, "block raster order is incorrect");
     Require(layout.Offset(16, 0) == 0x2200 && layout.Offset(0, 8) == 0x1100, "render-target XOR addressing is incorrect");
     Require(layout.Offset(256, 0) == 2 * 65536, "third block address is incorrect");
+    Require(DecodeColorTileMode(0x4dc14000) == ColorTileMode::Standard4KB, "4 KiB standard color descriptor was rejected");
+    const ColorTargetLayout standard(256, 256, ColorTileMode::Standard4KB);
+    Require(standard.Bytes() == ComputeSurfaceSize(ComputeElementMipLayout(TextureTileMode::kStandard4KB, 4, 256, 256, 1), 1) && standard.Alignment() == 4096, "4 KiB standard color layout differs from the texture layout");
+    Require(standard.Offset(32, 0) == 4096 && standard.Offset(0, 32) == 8 * 4096 && standard.Offset(1, 0) == 4 && standard.Offset(0, 1) == 16, "4 KiB standard block or element addressing is incorrect");
+    std::vector<bool> standardSeen(1024);
+    for (std::uint32_t y = 0; y < 32; ++y) {
+        for (std::uint32_t x = 0; x < 32; ++x) {
+            const auto address = standard.Offset(x, y);
+            Require(address < 4096 && address % 4 == 0 && !standardSeen[address / 4], "4 KiB standard block aliases or leaves its texels");
+            standardSeen[address / 4] = true;
+        }
+    }
     reject([&] { layout.Offset(257, 0); });
     std::vector<std::byte> tiled(layout.Bytes(), std::byte{0x5a});
     std::vector<std::byte> linear(layout.LinearBytes());

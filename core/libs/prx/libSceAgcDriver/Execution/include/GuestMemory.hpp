@@ -74,6 +74,8 @@ bool UnchangedSinceAll(std::span<const UnchangedQuery> queries);
 // Returns the generation the blocks were stamped with (0 when the arena is not write-watched):
 // UnchangedSince(range, it) holds until the next store over the range.
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
+std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
+bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
 // returns the current generation instead. A guest write landing between two collects of the same
 // epoch is seen by the next epoch, which is the ordering real hardware gives a CPU write made while a

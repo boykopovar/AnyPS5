@@ -22,13 +22,16 @@ constexpr std::uint32_t Garbage = 0xabcd1234u;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 45> SdwaCode{
+alignas(256) constexpr std::array<std::uint32_t, 63> SdwaCode{
     0x34020082, 0x34060083, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
     0x7e1402ff, 0xabcd1234, 0x7e1602ff, 0xabcd1234, 0x7e1802ff, 0xabcd1234, 0x7e1a02ff, 0xabcd1234,
-    0x7e1c02ff, 0xabcd1234, 0x7e1e02ff, 0xabcd1234, 0xbf8c3f70, 0x7e1414f9, 0x00060604, 0x7e161504,
+    0x7e1c02ff, 0xabcd1234, 0x7e1e02ff, 0xabcd1234, 0x7e2002ff, 0xabcd1234, 0x7e2202ff, 0xabcd1234,
+    0x7e2402ff, 0xabcd1234, 0xbf8c3f70, 0x7e1414f9, 0x00060604, 0x7e161504,
     0x7e1814f9, 0x00061505, 0x7e1a14f9, 0x00060604, 0x7e1c14f9, 0x00060605, 0xd746000d, 0x0435210e,
-    0x641e0cf9, 0x05040606, 0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03,
-    0xe070200c, 0x80010d03, 0xe0702010, 0x80010f03, 0xbf810000,
+    0x641e0cf9, 0x05040606, 0x7e2002f9, 0x00061004, 0x7e2202f9, 0x00061204, 0x7e2402f9, 0x00060104,
+    0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03,
+    0xe070200c, 0x80010d03, 0xe0702010, 0x80010f03, 0xe0702014, 0x80011003, 0xe0702018, 0x80011103,
+    0xe070201c, 0x80011203, 0xbf810000,
 };
 
 float Quarter(std::uint32_t index) {
@@ -99,6 +102,10 @@ void Check() {
         Require(out[2] == ((b << 16u) | (Garbage & 0xffffu)), where(2) + ", expected " + Hex((b << 16u) | (Garbage & 0xffffu)) + ": dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE must keep the low half");
         Require(out[3] == (a | (b << 16u)), where(3) + ", expected " + Hex(a | (b << 16u)) + ": two padded conversions packed with v_lshl_add_u32");
         Require(out[4] == sum, where(4) + ", expected " + Hex(sum) + ": v_add_f16_sdwa dst_sel:DWORD dst_unused:UNUSED_PAD must zero the high half");
+        const auto low = in[0] & 0xffu;
+        Require(out[5] == ((Garbage & 0xffffff00u) | low), where(5) + ", expected " + Hex((Garbage & 0xffffff00u) | low) + ": v_mov_b32_sdwa dst_sel:BYTE_0 dst_unused:UNUSED_PRESERVE must keep the other bytes");
+        Require(out[6] == ((Garbage & 0xff00ffffu) | (low << 16u)), where(6) + ", expected " + Hex((Garbage & 0xff00ffffu) | (low << 16u)) + ": v_mov_b32_sdwa dst_sel:BYTE_2 dst_unused:UNUSED_PRESERVE must keep the other bytes");
+        Require(out[7] == (low << 8u), where(7) + ", expected " + Hex(low << 8u) + ": v_mov_b32_sdwa dst_sel:BYTE_1 dst_unused:UNUSED_PAD must zero the other bytes");
     }
 }
 

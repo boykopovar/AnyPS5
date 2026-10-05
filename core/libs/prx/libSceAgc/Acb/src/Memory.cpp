@@ -31,8 +31,7 @@ std::uint32_t* APS5_VABI sceAgcAcbDmaData(CommandBuffer* buf, std::uint8_t dst, 
 }
 
 std::uint32_t APS5_VABI sceAgcAcbDmaDataGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 28;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbAtomicMem(CommandBuffer* buf, std::uint8_t atomicOp, std::uint8_t command, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t srcData, std::uint64_t compareData, std::uint16_t loopInterval) {
@@ -48,14 +47,7 @@ std::uint32_t APS5_VABI sceAgcAcbAtomicGdsGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbPrimeUtcl2(CommandBuffer* buf, const volatile void* address, std::uint32_t sizeInBytes) {
-    const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
-    auto* packet = Agc::Command::Allocate(buf, 5, __func__);
-    packet[0] = Agc::Command::Header(0x10u, 5);
-    packet[1] = 0;
-    packet[2] = static_cast<std::uint32_t>(guestAddress);
-    packet[3] = static_cast<std::uint32_t>(guestAddress >> 32u);
-    packet[4] = sizeInBytes;
-    return packet;
+    return Agc::Command::WritePrimeUtcl2(buf, address, sizeInBytes, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcAcbPrimeUtcl2GetSize() {

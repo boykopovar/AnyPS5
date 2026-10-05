@@ -8,10 +8,12 @@
 namespace {
 std::atomic<int> g_status{0};
 
+constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
 constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int COMMON_DIALOG_RESULT_OK = 0;
 constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
+constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 constexpr int BUTTON_ID_OK = 1;
 }
@@ -19,6 +21,12 @@ constexpr int BUTTON_ID_OK = 1;
 extern "C" {
 
 int SceMsgDialogNativeModuleLoaded_nid_no_patch = 1;
+
+int APS5_VABI sceMsgDialogClose(void) {
+ int expected = COMMON_DIALOG_STATUS_RUNNING;
+ if (!g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_FINISHED)) return COMMON_DIALOG_ERROR_NOT_RUNNING;
+ return 0;
+}
 
 int APS5_VABI sceMsgDialogGetResult(MsgDialogResult* result) {
  const int status = g_status.load();

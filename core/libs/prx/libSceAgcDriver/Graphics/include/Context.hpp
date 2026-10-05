@@ -54,6 +54,8 @@ struct DeviceFunctions {
     PFN_vkCmdEndRenderPass cmdEndRenderPass = nullptr;
     PFN_vkCmdSetViewport cmdSetViewport = nullptr;
     PFN_vkCmdSetScissor cmdSetScissor = nullptr;
+    PFN_vkCmdSetDepthBounds cmdSetDepthBounds = nullptr;
+    PFN_vkCmdSetDepthBias cmdSetDepthBias = nullptr;
     PFN_vkCmdBindVertexBuffers cmdBindVertexBuffers = nullptr;
     PFN_vkCmdBindIndexBuffer cmdBindIndexBuffer = nullptr;
     PFN_vkCmdDraw cmdDraw = nullptr;
@@ -119,6 +121,8 @@ struct Context {
     bool multiDrawIndirect = false;
     bool drawIndirectCount = false;
     bool occlusionQueryPrecise = false;
+    bool depthBounds = false;
+    bool depthBiasClamp = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
@@ -131,6 +135,7 @@ struct Context {
     bool descriptorIndexing = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool pipelineExecutableInfo = false;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

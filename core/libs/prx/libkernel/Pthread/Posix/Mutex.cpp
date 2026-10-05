@@ -14,7 +14,6 @@
 namespace {
 
 constexpr int POSIX_EINVAL = 22;
-constexpr int POSIX_MUTEX_ADAPTIVE_NP = 4;
 constexpr int POSIX_PRIO_PROTECT = 2;
 constexpr std::uintptr_t POSIX_ADAPTIVE_MUTEX_INITIALIZER = 1;
 
@@ -29,7 +28,7 @@ void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
     PthreadMutex current = slot.load(std::memory_order_acquire);
     if (!_isStaticInitializer(current)) return;
     auto* created = new PthreadMutexPrivate();
-    created->_type = reinterpret_cast<std::uintptr_t>(current) == POSIX_ADAPTIVE_MUTEX_INITIALIZER ? MutexType::Normal : MutexType::ErrorCheck;
+    created->_type = reinterpret_cast<std::uintptr_t>(current) == POSIX_ADAPTIVE_MUTEX_INITIALIZER ? MutexType::Adaptive : MutexType::ErrorCheck;
     if (!slot.compare_exchange_strong(current, created, std::memory_order_acq_rel, std::memory_order_acquire))
         delete created;
 }
@@ -96,11 +95,6 @@ int APS5_VABI pthread_mutexattr_setprotocol_nid_postfix(PthreadMutexattr* attr, 
 }
 
 int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int type) {
-    if (type == POSIX_MUTEX_ADAPTIVE_NP) {
-        if (!attr || !*attr) throw std::runtime_error("pthread_mutexattr_settype: null attr");
-        (*attr)->type = MutexType::Normal;
-        return 0;
-    }
     return PosixThread::ToErrno(scePthreadMutexattrSettype(attr, type));
 }
 

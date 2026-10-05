@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <list>
 #include <mutex>
@@ -37,9 +38,22 @@ static constexpr int VIDEO_OUT_ERROR_UNAVAILABLE_OUTPUT_MODE = -2144796647;
 static constexpr int VIDEO_OUT_ERROR_INVALID_EVENT = -2144796659;
 
 static constexpr int VIDEO_OUT_BUS_TYPE_MAIN = 0;
-static constexpr std::uint32_t VIDEO_OUT_OPEN_PARAM_SIZE = 16;
 static constexpr int VIDEO_OUT_BUS_TYPE_OVERLAY = 1;
 static constexpr int VIDEO_OUT_BUS_TYPE_SUB = 2;
+
+static constexpr std::uint32_t VIDEO_OUT_OPEN_PARAM_FIRST_WORD = 16;
+static constexpr std::int32_t VIDEO_OUT_SERVICE_THREAD_PRIORITY_HIGHEST = 256;
+static constexpr std::int32_t VIDEO_OUT_SERVICE_THREAD_PRIORITY_LOWEST = 767;
+static constexpr std::uint64_t VIDEO_OUT_SERVICE_THREAD_AFFINITY_ALL = 0x1FFF;
+
+struct VideoOutOpenParam {
+    std::uint32_t firstWord;
+    std::uint32_t setPriority;
+    std::int32_t priority;
+    std::uint32_t setAffinity;
+    std::uint64_t affinity;
+};
+static_assert(offsetof(VideoOutOpenParam, affinity) == 16);
 
 static constexpr int VIDEO_OUT_BUFFER_NUM_MAX = 16;
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX = 4;
@@ -48,6 +62,8 @@ static constexpr std::size_t VIDEO_OUT_FLIP_QUEUE_CAPACITY = 16;
 
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED = 0;
 static constexpr int VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED = 1;
+static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE = 0;
+static constexpr std::uint64_t VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY = 8;
 
 static constexpr int VIDEO_OUT_EVENT_FLIP = 0;
 static constexpr int VIDEO_OUT_EVENT_VBLANK = 1;

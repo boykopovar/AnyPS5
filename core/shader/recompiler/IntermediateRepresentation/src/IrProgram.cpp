@@ -18,6 +18,45 @@ namespace {
     throw std::runtime_error(message);
 }
 
+template<typename TNode>
+class IdIndex {
+public:
+    bool emplace(const TNode* node, std::size_t index) {
+        const auto id = static_cast<std::size_t>(node->Id());
+        if (id >= nodes.size()) {
+            nodes.resize(id + 1u, nullptr);
+            indices.resize(id + 1u, 0u);
+        }
+        if (nodes[id] == nullptr) {
+            nodes[id] = node;
+            indices[id] = index;
+            return true;
+        }
+        if (nodes[id] == node) {
+            return false;
+        }
+        return others.emplace(node, index).second;
+    }
+
+    [[nodiscard]] bool contains(const TNode* node) const {
+        return owns(node) || others.contains(node);
+    }
+
+    [[nodiscard]] std::size_t at(const TNode* node) const {
+        return owns(node) ? indices[node->Id()] : others.at(node);
+    }
+
+private:
+    [[nodiscard]] bool owns(const TNode* node) const {
+        const auto id = static_cast<std::size_t>(node->Id());
+        return id < nodes.size() && nodes[id] == node;
+    }
+
+    std::vector<const TNode*> nodes;
+    std::vector<std::size_t> indices;
+    std::unordered_map<const TNode*, std::size_t> others;
+};
+
 bool isRegisterStatePseudo(IrOpcode opcode) {
     switch (opcode) {
         case IrOpcode::GetThreadBitScalarRegister:
@@ -314,15 +353,15 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
     if (blockOrder.size() != blockInfo.size() || blockOrder.size() != blockStorage.size()) {
         fail("value IR block storage is inconsistent");
     }
-    std::unordered_map<const IrBlock*, std::size_t> blockIndices;
+    IdIndex<IrBlock> blockIndices;
     std::unordered_map<std::uint32_t, const IrBlock*> blocksById;
-    std::unordered_map<const IrValue*, std::size_t> instructionPositions;
+    IdIndex<IrValue> instructionPositions;
     for (std::size_t blockIndex = 0; blockIndex < blockOrder.size(); blockIndex++) {
         const auto* block = blockOrder[blockIndex];
         if (block == nullptr || blockStorage[blockIndex] == nullptr || block != blockStorage[blockIndex].get()) {
             fail("value IR block pointer is inconsistent");
         }
-        if (!blockIndices.emplace(block, blockIndex).second) {
+        if (!blockIndices.emplace(block, blockIndex)) {
             fail("value IR block pointer is duplicated");
         }
         if (blockInfo[blockIndex].id == InvalidControlFlowId) {
@@ -333,7 +372,7 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
         }
         std::size_t position = 0;
         for (const auto* inst : block->Instructions()) {
-            if (!instructionPositions.emplace(inst, position++).second) {
+            if (!instructionPositions.emplace(inst, position++)) {
                 fail("value IR instruction is duplicated");
             }
         }

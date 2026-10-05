@@ -24,6 +24,14 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
         key ^= value;
         key *= 0x100000001b3ull;
     }
+    if (request.graphics.has_value()) {
+        for (const auto& linked : request.graphics->linkedPrograms) {
+            for (const auto value : {static_cast<std::uint64_t>(linked.role), linked.binary.codeAddress}) {
+                key ^= value;
+                key *= 0x100000001b3ull;
+            }
+        }
+    }
     auto& memos = *snapshot.handles;
     {
         std::lock_guard lock(memos.mutex);
@@ -53,7 +61,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     try {
         handle = ShaderRecompiler::ResolveSource(request);
     } catch (const std::exception& error) {
-        if (FailureMemo() && request.shader.stage == ShaderRecompiler::ShaderStage::Compute) {
+        if (FailureMemo()) {
             std::lock_guard lock(memos.mutex);
             memos.entries[memos.next] = {key, nullptr, std::make_shared<const std::string>(error.what())};
             memos.next = (memos.next + 1) % memos.entries.size();
@@ -67,6 +75,22 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     memos.entries[memos.next] = {key, handle, nullptr};
     memos.next = (memos.next + 1) % memos.entries.size();
     return handle;
+}
+
+alignas(256) static const std::uint32_t NullPixelCode[64] = {0xbf810000u};
+static const Shader NullPixelShader = [] {
+    Shader shader{};
+    shader.file_header = 0x34333231u;
+    shader.version = 0x18u;
+    shader.code = NullPixelCode;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(NullPixelCode);
+    shader.type = 1;
+    return shader;
+}();
+
+std::uint64_t NullPixelProgramAddress() {
+    return reinterpret_cast<std::uintptr_t>(NullPixelCode);
 }
 
 void Driver::RegisterShader(const Shader* shader) {
@@ -99,6 +123,13 @@ void Driver::RegisterShader(const Shader* shader) {
     if (shaders == nullptr) shaders = std::make_shared<ShaderRegistry>();
     else if (shaders.use_count() != 1) shaders = std::make_shared<ShaderRegistry>(*shaders);
     shaders->insert_or_assign(address, std::make_shared<const ShaderSnapshot>(std::move(snapshot)));
+    if (shaders->find(NullPixelProgramAddress()) == shaders->end()) {
+        ShaderSnapshot null{NullPixelProgramAddress(), reinterpret_cast<std::uintptr_t>(&NullPixelShader), NullPixelShader.type, {}, {}};
+        null.code.assign(std::begin(NullPixelCode), std::end(NullPixelCode));
+        null.header.resize(sizeof(Shader));
+        std::memcpy(null.header.data(), &NullPixelShader, sizeof(Shader));
+        shaders->insert_or_assign(NullPixelProgramAddress(), std::make_shared<const ShaderSnapshot>(std::move(null)));
+    }
 }
 
 }

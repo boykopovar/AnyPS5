@@ -90,12 +90,12 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words)
     Require(!pointPreclamp, "guest sampler descriptor uses point preclamping which is not implemented");
     Require(!anisoOverride, "guest sampler descriptor uses an anisotropy override which is not implemented");
     Require(!blendZeroPrt, "guest sampler descriptor uses PRT blend-zero which is not implemented");
-    Require(mipFilter <= 2u, "guest sampler descriptor uses an unknown mip filter " + std::to_string(mipFilter));
+    if (mipFilter > 2u) Require(false, "guest sampler descriptor uses an unknown mip filter " + std::to_string(mipFilter));
 
     const auto aniso = isAnisoFilter(xyMagFilter) || isAnisoFilter(xyMinFilter);
     auto anisoRatio = 1.0f;
     if (aniso) {
-        Require(maxAnisoRatio <= 4u, "guest sampler descriptor uses an unknown anisotropy ratio " + std::to_string(maxAnisoRatio));
+        if (maxAnisoRatio > 4u) Require(false, "guest sampler descriptor uses an unknown anisotropy ratio " + std::to_string(maxAnisoRatio));
         const std::array ratios{1.0f, 2.0f, 4.0f, 8.0f, 16.0f};
         anisoRatio = ratios[maxAnisoRatio];
     }

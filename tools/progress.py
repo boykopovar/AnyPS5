@@ -10,7 +10,7 @@ PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
-DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?\{")
+DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 STUB = "NotImplemented_nid_no_patch"
 STUB_WRAPPER = re.compile(r"\bstatic\s+(?:\[\[noreturn\]\]\s+)?void\s+(\w+)\s*\([^;{]*\)\s*\{")
 FLAT_SEGMENTS = ("GLOBAL_", "SCRATCH_")
@@ -26,13 +26,33 @@ OPCODE_ALIASES = {
     "VMadMixhiF16": "V_FMA_MIXHI_F16",
 }
 OPCODE_VARIANTS = {
+    "SEndpgm": ("S_ENDPGM_SAVED", "S_ENDPGM_ORDERED_PS_DONE"),
+    "VFmaF32": ("V_FMA_MIX_F32",),
     "SAddI32": ("S_ADDK_I32",),
-    "SCmpLeU32": ("S_CMPK_LE_U32",),
+    "SCmpEqI32": ("S_CMPK_EQ_I32",),
+    "SCmpLgI32": ("S_CMPK_LG_I32",),
+    "SCmpGtI32": ("S_CMPK_GT_I32",),
+    "SCmpGeI32": ("S_CMPK_GE_I32",),
     "SCmpLtI32": ("S_CMPK_LT_I32",),
-    "SWaitcnt": ("S_WAITCNT_VSCNT",),
+    "SCmpLeI32": ("S_CMPK_LE_I32",),
+    "SCmpEqU32": ("S_CMPK_EQ_U32",),
+    "SCmpLgU32": ("S_CMPK_LG_U32",),
+    "SCmpGtU32": ("S_CMPK_GT_U32",),
+    "SCmpGeU32": ("S_CMPK_GE_U32",),
+    "SCmpLtU32": ("S_CMPK_LT_U32",),
+    "SCmpLeU32": ("S_CMPK_LE_U32",),
+    "SWaitcnt": ("S_WAITCNT_VSCNT", "S_WAITCNT_VMCNT", "S_WAITCNT_EXPCNT", "S_WAITCNT_LGKMCNT"),
+    "STtracedata": ("S_TTRACEDATA_IMM",),
+    "SCbranchCdbg": ("S_CBRANCH_CDBGSYS", "S_CBRANCH_CDBGUSER", "S_CBRANCH_CDBGSYS_OR_USER", "S_CBRANCH_CDBGSYS_AND_USER"),
     "VAddI32": ("V_ADD_CO_U32",),
+    "VSubI32": ("V_SUB_CO_U32",),
     "VSubrevI32": ("V_SUBREV_CO_U32",),
-    "ImageSample": ("IMAGE_SAMPLE_L", "IMAGE_SAMPLE_B", "IMAGE_SAMPLE_C_LZ", "IMAGE_SAMPLE_L_O"),
+    "VMacF32": ("V_FMAC_F32",),
+    "VMadmkF32": ("V_FMAMK_F32",),
+    "VMadakF32": ("V_FMAAK_F32",),
+    "VMacLegacyF32": ("V_FMAC_LEGACY_F32",),
+    "VMadLegacyF32": ("V_FMA_LEGACY_F32",),
+    "ImageSample": ("IMAGE_SAMPLE_L", "IMAGE_SAMPLE_B", "IMAGE_SAMPLE_C_LZ", "IMAGE_SAMPLE_L_O", "IMAGE_SAMPLE_D_CL_O"),
 }
 REPORT_ROWS = 100
 PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30

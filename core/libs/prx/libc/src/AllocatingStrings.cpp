@@ -30,6 +30,10 @@ char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit) {
     }
 }
 
+char* APS5_VABI strdup_nid_postfix(const char* source) {
+    return strndup_nid_postfix(source, static_cast<std::size_t>(-1));
+}
+
 int APS5_VABI asprintf_nid_postfix(char** destination, const char* format, ...) {
     if (!destination) { errno = 22; return -1; }
     *destination = nullptr;

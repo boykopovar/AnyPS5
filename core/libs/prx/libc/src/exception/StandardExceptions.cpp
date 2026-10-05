@@ -267,6 +267,12 @@ void APS5_VABI _ZNSt11regex_errorC1ERKS__nid_postfix(LibcException::ExceptionObj
 void APS5_VABI _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { LibcException::Copy(self, source, _ZTVSt11regex_error_nid_postfix); }
 LibcException::ExceptionObject* APS5_VABI _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
+LibcException::TypeRecord _ZTISt11range_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St11range_error", &_ZTISt13runtime_error_nid_postfix};
+LibcException::ExceptionVtable _ZTVSt11range_error_nid_postfix {0, &_ZTISt11range_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+void APS5_VABI _ZNSt11range_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
+void APS5_VABI _ZNSt11range_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
+void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
+
 LibcException::TypeRecord _ZTINSt8ios_base7failureE_nid_postfix {LibcException::SingleTypeVtable + 2, "NSt8ios_base7failureE", &_ZTISt12system_error_nid_postfix};
 LibcException::ExceptionVtable _ZTVNSt8ios_base7failureE_nid_postfix {0, &_ZTINSt8ios_base7failureE_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
 void APS5_VABI _ZNSt8ios_base7failureD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
@@ -281,6 +287,7 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12out_of_range_nid_postfix, message); }
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12length_error_nid_postfix, message); }
 [[noreturn]] void APS5_VABI _ZSt18_Xinvalid_argumentPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt16invalid_argument_nid_postfix, message); }
+[[noreturn]] void APS5_VABI _ZSt13_Xrange_errorPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt11range_error_nid_postfix, message); }
 [[noreturn]] void APS5_VABI _ZSt19_Xbad_function_callv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt17bad_function_call_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt13_Xregex_errorNSt15regex_constants10error_typeE_nid_postfix(std::regex_constants::error_type code) {
     struct RegexObject { LibcException::ExceptionObject base; std::regex_constants::error_type code; };

@@ -6,12 +6,20 @@
 
 using namespace ShaderRecompiler;
 static void Require(bool value) { if (!value) throw std::runtime_error("ray tracing miss regression"); }
-int main() {
-    const std::array<std::uint32_t, 2> code{0xF1981F01u, 0x00000000u};
+struct Form {
+    std::uint32_t word0;
+    std::uint32_t word1;
+    RdnaOpcode opcode;
+    std::uint32_t addressDwords;
+};
+static void Check(const Form& form) {
+    const std::array<std::uint32_t, 2> code{form.word0, form.word1};
     const RdnaInstruction instruction = DecodeRdnaMimg(0u, code, 0u);
-    Require(instruction.op == RdnaOpcode::ImageBvhIntersectRay);
+    Require(instruction.op == form.opcode);
     Require(instruction.family == RdnaInstructionFamily::MIMG);
     Require(IsImageOpcode(instruction.op));
+    Require(instruction.imageAddressComponents == form.addressDwords);
+    Require(GetRdnaImageAddressDwordCount(instruction.imageSampleFlags, instruction.imageAddressComponents) == form.addressDwords);
     IrProgram program;
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
@@ -26,8 +34,14 @@ int main() {
         Require(thrown);
     } else {
         context.TranslateInstruction(instruction);
-        if (RayTracingMiss()) {
-            for (auto* value : block.Instructions()) Require(value->Opcode() != IrOpcode::ImageBvhIntersectRay);
-        }
+        bool emitted = false;
+        for (auto* value : block.Instructions()) emitted = emitted || value->Opcode() == IrOpcode::ImageBvhIntersectRay;
+        Require(emitted != RayTracingMiss());
     }
+}
+int main() {
+    Check({0xF1981F01u, 0x00000000u, RdnaOpcode::ImageBvhIntersectRay, 11u});
+    Check({0xF1981F01u, 0x40000000u, RdnaOpcode::ImageBvhIntersectRay, 8u});
+    Check({0xF19C1F01u, 0x00000000u, RdnaOpcode::ImageBvh64IntersectRay, 12u});
+    Check({0xF19C1F01u, 0x40000000u, RdnaOpcode::ImageBvh64IntersectRay, 9u});
 }

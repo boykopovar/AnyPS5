@@ -1,0 +1,21 @@
+add_library(libSceAmpr SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAmpr PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAmpr)
+
+if(MINGW)
+    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
+        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+    endforeach()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_ampr_tests ${LIBS_INCLUDE_DIR}/tests/GuestAmpr.cpp)
+    target_include_directories(guest_ampr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ampr_tests PRIVATE libSceAmpr libkernel libc)
+    configure_windows_unwind(guest_ampr_tests)
+    add_test(NAME guest_ampr_markers COMMAND guest_ampr_tests)
+    if(WIN32)
+        set_tests_properties(guest_ampr_markers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAmpr>")
+    endif()
+endif()

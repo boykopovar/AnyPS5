@@ -31,8 +31,7 @@ int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_
 }
 
 
-APS5_EXPORT("5nc2gdLNsok", sceCoredumpUnknown00);
-int APS5_VABI sceCoredumpUnknown00(void) {
+int APS5_VABI sceCoredumpAttachUserFile(void) {
     NotImplemented_nid_no_patch("5nc2gdLNsok");
     return 0;
 }
@@ -43,26 +42,22 @@ int APS5_VABI sceCoredumpUnknown01(void) {
     return 0;
 }
 
-APS5_EXPORT("MEJ7tc7ThwM", sceCoredumpUnknown02);
-int APS5_VABI sceCoredumpUnknown02(void) {
+int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(void) {
     NotImplemented_nid_no_patch("MEJ7tc7ThwM");
     return 0;
 }
 
-APS5_EXPORT("Uxqkdta7wEg", sceCoredumpUnknown03);
-int APS5_VABI sceCoredumpUnknown03(void) {
+int APS5_VABI sceCoredumpSetUserDataType(void) {
     NotImplemented_nid_no_patch("Uxqkdta7wEg");
     return 0;
 }
 
-APS5_EXPORT("dei8oUx6DbU", sceCoredumpUnknown04);
-int APS5_VABI sceCoredumpUnknown04(void) {
+int APS5_VABI sceCoredumpDebugTextOut(void) {
     NotImplemented_nid_no_patch("dei8oUx6DbU");
     return 0;
 }
 
-APS5_EXPORT("kK0DUW1Ukgc", sceCoredumpUnknown05);
-int APS5_VABI sceCoredumpUnknown05(void) {
+int APS5_VABI sceCoredumpGetStopInfoCpu(void) {
     NotImplemented_nid_no_patch("kK0DUW1Ukgc");
     return 0;
 }

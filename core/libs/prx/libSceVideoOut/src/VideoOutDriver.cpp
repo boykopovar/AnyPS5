@@ -165,10 +165,9 @@ void FlipRequest::GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>& frameT
     queue->changed.notify_all();
     // The worker is done once the request is queued: hardware does not stall the command processor
     // on a flip, and the title observes completion through flipPendingNum, which processFlip drops
-    // once the presentation is queued behind the frame's GPU work (up to APS5_FLIP_INFLIGHT
-    // presentations may still be executing then, see Driver::Present). A presentation failure
-    // reaches the worker through ReportFailure at its next packet. Debug aid: APS5_SYNC_FLIP=1
-    // parks the worker until the presenter is done, as before.
+    // once the frame's GPU work and its presentation have completed (see Driver::Present). A
+    // presentation failure reaches the worker through ReportFailure at its next packet. Debug aid:
+    // APS5_SYNC_FLIP=1 parks the worker until the presenter is done, as before.
     static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
     if (!syncFlip) return;
     std::unique_lock lock(cfg->mutex);
@@ -200,6 +199,7 @@ VideoOutDriver& VideoOutDriver::Get() {
 }
 
 VideoOutDriver::VideoOutDriver() {
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
         throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError());
     }
@@ -394,6 +394,7 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
         req.cfg->vblankCond.wait(lock, req.cfg->shutdownToken, [&] { return req.cfg->vblankStatus.count >= target || req.cfg->failure || req.cfg->closing; });
         timing.Mark("vblank_wait");
         checkConfig(*req.cfg);
+        req.cfg->lastFlipVblank = req.cfg->vblankStatus.count;
     }
     require(req.width != 0 && req.height != 0 && req.width <= static_cast<uint32_t>(std::numeric_limits<int>::max()) && req.height <= static_cast<uint32_t>(std::numeric_limits<int>::max()), "invalid window dimensions");
     window.Ensure(req.width, req.height);
@@ -444,7 +445,6 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     require(req.cfg->flipStatus.count != std::numeric_limits<uint64_t>::max(), "flip counter overflow");
     triggerEvents(*req.cfg, VIDEO_OUT_EVENT_FLIP, reinterpret_cast<void*>(req.flipArg));
     ++req.cfg->flipStatus.count;
-    req.cfg->lastFlipVblank = req.cfg->vblankStatus.count;
     req.cfg->flipStatus.processTime = sceKernelGetProcessTime();
     req.cfg->flipStatus.processTimeCounter = sceKernelGetProcessTimeCounter();
     req.cfg->flipStatus.flipArg = req.flipArg;

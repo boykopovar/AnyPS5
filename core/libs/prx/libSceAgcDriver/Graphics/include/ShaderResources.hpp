@@ -12,6 +12,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -30,6 +31,7 @@ std::shared_ptr<StorageTexture> CachedStorageSurface(const Context& context, con
 // Whether `image` is still the storage cache's image of its surface (what CachedStorageSurface
 // would return); a true answer counts as a use for the cache's eviction order, as a lookup would.
 bool StorageImageCached(const Context& context, const StorageTexture* image);
+bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddress);
 
 // Defined in Texture.cpp beside the pending-results registry, for the fast Revalidate below: whether
 // a storage image other than `except` has results pending in [address, address + bytes).
@@ -114,7 +116,14 @@ public:
         std::vector<Snapshot> snapshots;
         ~DrawBindings();
     };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder) const;
+    struct MovedBuffer {
+        std::size_t allocation;
+        std::uint64_t address;
+        std::size_t size;
+        std::vector<std::uint32_t> words;
+    };
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const;
     void WriteBack();
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs
@@ -155,7 +164,7 @@ public:
     // Without `dataWords` the ShaderData and FlattenedSrt descriptor words stay out of the key
     // (their count and size remain): a compute template then serves dispatches whose constants
     // differ, and the hit refreshes its data buffers with the dispatch's words (RefreshData).
-    static std::vector<std::uint32_t> ContentKey(const CompiledShader& shader, bool dataWords = true);
+    static std::vector<std::uint32_t> ContentKey(const CompiledShader& shader, bool dataWords = true, bool movableBuffers = false);
     // Records the shader's ShaderData and FlattenedSrt words into this object's data buffers
     // (vkCmdUpdateBuffer, a transfer write the caller's pre-dispatch barrier makes visible; a
     // buffer already holding the words is left alone). Returns whether anything was recorded. With
@@ -399,8 +408,10 @@ private:
     std::vector<bool> textureFirstLayer;
     std::vector<std::shared_ptr<StorageTexture>> storageTextures;
     std::vector<std::uint32_t> storageMips;
+    std::vector<std::uint64_t> storageKeys;
     std::vector<bool> storageFirstLayer;
     std::vector<bool> storageWritten;
+    std::vector<bool> storageAtomic;
     std::vector<std::shared_ptr<Sampler>> samplers;
     bool reusable = false;
     std::vector<DirectRegion> directRegions;

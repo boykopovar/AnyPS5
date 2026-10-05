@@ -80,7 +80,12 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     auto nextRva = image.GetEndRva();
     std::array<PeDirectory, 16> directories{};
     std::uint32_t tlsIndex = 0;
-    directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex);
+    try {
+        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex);
+    } catch (Domain::RelinkerException& error) {
+        error.InputPath = guest.SourcePath.string();
+        throw;
+    }
     WindowsTrampolineBuilder().Build(guest.Trampolines, image, sections, nextRva);
     for (const auto& [target, rva] : tlsModules) {
         if (tlsIndex == 0) throw Domain::RelinkerException("Guest TLS relocation has no TLS block", target);

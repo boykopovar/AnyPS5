@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <limits>
 #include <set>
+#include <span>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -145,6 +147,50 @@ inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute&
     const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
     Require(address != 0 && required <= std::numeric_limits<std::uint64_t>::max() - address, "invalid vertex buffer address range");
     return static_cast<std::size_t>(required);
+}
+
+struct VertexFetch {
+    std::uint64_t begin;
+    std::uint64_t end;
+    std::uint32_t stride;
+    std::uint32_t fetchIndex;
+    std::uint32_t alignment;
+};
+
+struct VertexCopyPlan {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> copies;
+    std::vector<std::size_t> copyOf;
+    std::vector<std::uint64_t> offsets;
+};
+
+inline VertexCopyPlan PlanVertexCopies(std::span<const VertexFetch> fetches) {
+    VertexCopyPlan plan;
+    plan.copyOf.assign(fetches.size(), 0);
+    plan.offsets.assign(fetches.size(), 0);
+    std::vector<std::size_t> order(fetches.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        const auto& x = fetches[a];
+        const auto& y = fetches[b];
+        if (x.stride != y.stride) return x.stride < y.stride;
+        if (x.fetchIndex != y.fetchIndex) return x.fetchIndex < y.fetchIndex;
+        return x.begin < y.begin;
+    });
+    std::size_t lead = fetches.size();
+    for (const auto i : order) {
+        const auto& fetch = fetches[i];
+        Require(fetch.begin < fetch.end && fetch.alignment != 0, "empty vertex fetch range");
+        const bool joins = lead != fetches.size() && fetch.stride != 0 && fetches[lead].stride == fetch.stride && fetches[lead].fetchIndex == fetch.fetchIndex && fetch.begin - fetches[lead].begin < fetch.stride && (fetch.begin - fetches[lead].begin) % fetch.alignment == 0;
+        if (!joins) {
+            lead = i;
+            plan.copies.emplace_back(fetch.begin, fetch.end);
+        }
+        auto& copy = plan.copies.back();
+        copy.second = std::max(copy.second, fetch.end);
+        plan.copyOf[i] = plan.copies.size() - 1;
+        plan.offsets[i] = fetch.begin - copy.first;
+    }
+    return plan;
 }
 
 }

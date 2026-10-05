@@ -13,6 +13,7 @@ int APS5_VABI scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool);
 int APS5_VABI scePadInit_nid_postfix(void);
 int APS5_VABI scePadSetTiltCorrectionState(int, bool);
 int APS5_VABI scePadResetOrientation(int);
+int APS5_VABI scePadSetAngularVelocityDeadbandState(int, bool);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -60,4 +61,6 @@ int main() {
     Require(scePadClose_nid_postfix(handle) == 0);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
     Require(scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(true) == 0);
+    Require(scePadSetAngularVelocityDeadbandState(handle, false) == 0);
+    Require(scePadSetAngularVelocityDeadbandState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
 }

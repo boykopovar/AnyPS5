@@ -1,6 +1,13 @@
 #ifndef CORE_LIBS_PRX_LIBSCEULT_SCEULTTYPES_HPP
 #define CORE_LIBS_PRX_LIBSCEULT_SCEULTTYPES_HPP
 
+#include <condition_variable>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <vector>
+#include "SceTypes.hpp"
+
 constexpr int ULT_OK = 0;
 constexpr int ULT_ERROR_NULL = -2139029503;
 constexpr int ULT_ERROR_ALIGNMENT = -2139029502;
@@ -30,6 +37,12 @@ struct UltResourcePoolState {
 };
 
 struct UltQueueDataPoolState {
+    std::mutex _mutex;
+    std::condition_variable _spaceAvailable;
+    std::vector<std::uint8_t> _data;
+    std::vector<std::uint32_t> _next;
+    std::uint32_t _free = UINT32_MAX;
+    std::uint32_t _queues = 0;
     std::uint32_t _numData = 0;
     std::uint64_t _dataSize = 0;
     std::uint32_t _numQueueObject = 0;
@@ -38,12 +51,13 @@ struct UltQueueDataPoolState {
 };
 
 struct UltQueueState {
-    std::mutex _mutex;
-    std::deque<std::vector<std::uint8_t>> _items;
+    std::shared_ptr<UltQueueDataPoolState> _pool;
+    std::condition_variable _dataAvailable;
+    std::uint32_t _head = UINT32_MAX;
+    std::uint32_t _tail = UINT32_MAX;
+    std::uint32_t _waiters = 0;
+    bool _alive = true;
     std::uint64_t _dataSize = 0;
-    std::uint32_t _capacity = 0;
-    void* _waitingPool = nullptr;
-    void* _dataPool = nullptr;
 };
 
 struct UltRuntimeState {

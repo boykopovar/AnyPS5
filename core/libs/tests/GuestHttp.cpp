@@ -7,11 +7,17 @@
 
 extern "C" {
 int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
+int APS5_VABI sceHttpSetInflateGZIPEnabled(int, int);
 int APS5_VABI sceHttpUriBuild(char*, std::size_t*, std::size_t, const SceHttpUriElement*, std::uint32_t);
 int APS5_VABI sceHttpUriEscape(char*, std::size_t*, std::size_t, const char*);
 int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
 int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
 int APS5_VABI sceHttpReadData(int, void*, std::size_t);
+int APS5_VABI sceHttpCreateRequest2(int, const char*, const char*, std::uint64_t);
+int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
+int APS5_VABI sceHttpsLoadCert(int, int, void*, void*, void*);
+int APS5_VABI sceHttpGetLastErrno(int, int*);
+int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -91,4 +97,63 @@ int main() {
 
     char data[16];
     Require(sceHttpReadData(1, data, sizeof(data)) == network);
+
+    Require(sceHttpCreateRequest2(1, "GET", "/", 0) > 0);
+    Require(sceHttpSetInflateGZIPEnabled(1, 0) == 0);
+    Require(sceHttpSetInflateGZIPEnabled(1, 1) == 0);
+    Require(sceHttpSetInflateGZIPEnabled(1, 2) == invalidValue);
+    Require(sceHttpSetInflateGZIPEnabled(1, -1) == invalidValue);
+    Require(sceHttpsEnableOption(1, 0) == 0);
+    Require(sceHttpsLoadCert(1, 0, nullptr, nullptr, nullptr) == 0);
+    int httpErrno = -1;
+    Require(sceHttpGetLastErrno(1, &httpErrno) == 0);
+    Require(httpErrno == 0);
+    Require(sceHttpGetLastErrno(1, nullptr) == invalidValue);
+
+    constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
+    constexpr int parseInvalidValue = static_cast<int>(0x804321FE);
+    std::int32_t major = -1;
+    std::int32_t minor = -1;
+    std::int32_t code = -1;
+    const char* phrase = nullptr;
+    std::size_t phraseLength = 0;
+    auto parse = [&](const char* line, std::size_t length) {
+        return sceHttpParseStatusLine(line, length, &major, &minor, &code, &phrase, &phraseLength);
+    };
+
+    const char* response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+    Require(parse(response, std::strlen(response)) == 17);
+    Require(major == 1 && minor == 1 && code == 200);
+    Require(phrase == response + 12 && phraseLength == 3 && std::strncmp(phrase, " OK", 3) == 0);
+
+    const char* lineFeedOnly = "HTTP/10.25 404 Not Found\n";
+    Require(parse(lineFeedOnly, std::strlen(lineFeedOnly)) == 25);
+    Require(major == 10 && minor == 25 && code == 404);
+    Require(phrase == lineFeedOnly + 14 && phraseLength == 10);
+
+    const char* noPhrase = "HTTP/2.0 204\r\n";
+    Require(parse(noPhrase, std::strlen(noPhrase)) == 14);
+    Require(major == 2 && minor == 0 && code == 204);
+    Require(phrase == noPhrase + 12 && phraseLength == 0);
+
+    phrase = nullptr;
+    phraseLength = 0;
+    Require(parse(nullptr, 17) == parseInvalidResponse);
+    Require(sceHttpParseStatusLine(response, 17, nullptr, &minor, &code, &phrase, &phraseLength) == parseInvalidValue);
+    Require(sceHttpParseStatusLine(response, 17, &major, &minor, &code, &phrase, nullptr) == parseInvalidValue);
+    major = -1;
+    minor = -1;
+    Require(parse("HTTX/1.1 200 OK\n", 16) == parseInvalidResponse);
+    Require(major == 0 && minor == 0);
+    Require(parse("HTTP/1.1", 7) == parseInvalidResponse);
+    Require(parse("HTTP/123", 8) == parseInvalidResponse);
+    Require(parse("HTTP/x.1 200 OK\n", 16) == parseInvalidResponse);
+    Require(parse("HTTP/1 200 OK\n", 14) == parseInvalidResponse);
+    Require(parse("HTTP/1. 200 OK\n", 15) == parseInvalidResponse);
+    Require(parse("HTTP/1.1/200 OK\n", 16) == parseInvalidResponse);
+    Require(parse("HTTP/1.1 2x0 OK\n", 16) == parseInvalidResponse);
+    Require(parse("HTTP/1.1 20", 11) == parseInvalidResponse);
+    Require(parse(response, 15) == parseInvalidResponse);
+    Require(parse(response, 16) == parseInvalidResponse);
+    Require(phrase == nullptr && phraseLength == 0);
 }

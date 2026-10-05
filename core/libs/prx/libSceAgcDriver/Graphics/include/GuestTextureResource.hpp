@@ -61,6 +61,7 @@ struct GuestTextureResource {
     std::uint64_t dccAddress = 0;
     bool dccAlphaOnMsb = false;
     std::uint32_t minLod = 0;
+    std::uint32_t allocatedMipCount = 0;
 };
 
 float EffectiveMinLod(const GuestTextureResource& resource);

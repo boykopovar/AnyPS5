@@ -1,4 +1,4 @@
-add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Uri.cpp)
+add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Parse.cpp src/Uri.cpp)
 target_include_directories(libSceHttp PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceHttp)
 

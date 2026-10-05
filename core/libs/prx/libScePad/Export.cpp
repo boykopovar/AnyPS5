@@ -171,10 +171,9 @@ int APS5_VABI scePadResetOrientation(int handle) {
 }
 
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
- (void)handle;
- (void)enable;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (enable) NotImplemented_nid_no_patch(__func__);
+ return PAD_OK;
 }
 
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {

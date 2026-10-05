@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -44,6 +45,7 @@ struct DecodedImage {
     bool fmask = false;
     bool depthBits = false;
     bool depthUnorm16 = false;
+    IrBufferFormat packedFormat = IrBufferFormat::Invalid;
 };
 
 ShaderBufferResource decodeBufferDescriptor(const DescriptorValue& value) {
@@ -149,20 +151,26 @@ DecodedImage decodeImageDescriptor(const DescriptorValue& descriptor, const Imag
     decoded.dimension = descriptorDimension(descriptor, base.dimension);
     decoded.cube = descriptorIsCube(descriptor);
     const auto format = rawImageFormat(descriptor);
-    if (base.atomic && format != IrBufferFormat::Format32UInt) {
-        throw std::runtime_error("atomic image descriptor uses an unsupported format");
+    if (base.atomic && format != IrBufferFormat::Format32UInt && format != IrBufferFormat::Format32SInt && format != IrBufferFormat::Format32Float) {
+        throw std::runtime_error("atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
     decoded.fmask = IsFmaskTextureFormat(format);
     if (decoded.fmask && (storage || base.depthCompare || base.indirectRoot != ImageResource::NoIndirectImage)) {
         throw std::runtime_error("FMASK requires a direct sampled image load");
     }
+    if (base.packed) {
+        if (base.indirectRoot != ImageResource::NoIndirectImage || (!storage && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle)) {
+            throw std::runtime_error("packed image access requires a direct image, with identity swizzle when sampled");
+        }
+        decoded.packedFormat = format;
+    }
     decoded.conversionFormat = RemapTextureFormat(format) != format ? format : IrBufferFormat::Invalid;
     if (storage || decoded.conversionFormat != IrBufferFormat::Invalid) {
         decoded.shaderSwizzle = descriptorImageSwizzle(descriptor);
     }
     const bool rawSintStorage = storage && format == IrBufferFormat::Format32SInt && base.written && !base.read && !base.atomic;
-    decoded.numericClass = SampledTextureNumericClass(format);
+    decoded.numericClass = base.atomic ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
     if (!storage && !base.depthCompare && IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) {
         decoded.depthBits = true;
         decoded.depthUnorm16 = DepthBitsTextureWidth(descriptor.dwords[1], descriptor.dwords[3]) == 16u;
@@ -289,6 +297,9 @@ void resolveTableImage(const IrResourcePlan& plan, std::uint32_t imageIndex, con
     }
     if (image.resourceClass != ImageResourceClass::Sampled) {
         rejectTable(BindlessRejection::Storage, "bindless storage image tables are unsupported");
+    }
+    if (image.packed) {
+        throw std::runtime_error("bindless packed image tables are unsupported");
     }
     const auto slots = ResourceMaterializer::BindlessSlots();
     DescriptorValue heapValue;
@@ -533,6 +544,7 @@ void buildResourceSpecialization(const IrResourcePlan& plan, ResourceSnapshot& s
         entry.fmask = decoded.fmask;
         entry.depthBits = decoded.depthBits;
         entry.depthUnorm16 = decoded.depthUnorm16;
+        entry.packedFormat = decoded.packedFormat;
         result.images.push_back(entry);
     }
 
@@ -619,6 +631,7 @@ void ResourceMaterializer::Apply(IrProgram& program, const ResourceSpecializatio
         image.cube = source.cube;
         image.depthBits = source.depthBits;
         image.depthUnorm16 = source.depthUnorm16;
+        image.packedFormat = source.packedFormat;
         image.indirectResources.clear();
     }
     for (std::uint32_t index = 0; index < images.size(); index++) {
@@ -794,6 +807,68 @@ void ResourceMaterializer::Apply(IrProgram& program, const ResourceSpecializatio
     resources.memoryInfo = std::move(memoryInfo);
 }
 
+namespace {
+
+void ownPlanValues(IrResourcePlan& plan) {
+    std::vector<IrValue**> roots;
+    for (auto& source : plan.descriptorSources) {
+        for (auto& dword : source.dwords) roots.push_back(&dword);
+    }
+    for (auto& read : plan.srtReads) roots.push_back(&read.value);
+    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
+    for (auto& value : plan.uniformFill.values) roots.push_back(&value);
+
+    std::unordered_map<const IrValue*, IrValue*> clones;
+    std::vector<const IrValue*> order;
+    std::vector<const IrValue*> pending;
+    for (const auto* root : roots) {
+        if (*root != nullptr) pending.push_back(*root);
+    }
+    while (!pending.empty()) {
+        const auto* value = pending.back();
+        pending.pop_back();
+        if (!clones.emplace(value, nullptr).second) continue;
+        order.push_back(value);
+        for (const auto* argument : value->Arguments()) {
+            if (argument != nullptr) pending.push_back(argument);
+        }
+    }
+    for (const auto* value : order) {
+        auto clone = std::make_unique<IrValue>(value->Opcode(), value->Type(), value->Id());
+        clone->SetFlags(value->Flags<std::uint64_t>());
+        if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
+        clone->SetRegister(value->Register());
+        clones[value] = clone.get();
+        plan.valueStorage.push_back(std::move(clone));
+    }
+    std::unordered_map<const IrBlock*, IrBlock*> blocks;
+    const auto blockFor = [&](const IrBlock* block) {
+        auto& clone = blocks[block];
+        if (clone == nullptr) {
+            plan.blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
+            clone = plan.blockStorage.back().get();
+        }
+        return clone;
+    };
+    for (const auto* value : order) {
+        auto* clone = clones.at(value);
+        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+            const auto* argument = value->Argument(index);
+            auto* mapped = argument == nullptr ? nullptr : clones.at(argument);
+            if (value->IsPhi()) {
+                clone->AddPhiOperand(blockFor(value->PhiBlock(index)), mapped);
+            } else {
+                clone->AddArgument(mapped);
+            }
+        }
+    }
+    for (auto* root : roots) {
+        if (*root != nullptr) *root = clones.at(*root);
+    }
+}
+
+}
+
 IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const {
     const IrResourcePlan& source = program.Resources();
     if (!source.resourceTrackingComplete || !source.srtPlanComplete) {
@@ -814,6 +889,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.resourceTrackingComplete = source.resourceTrackingComplete;
     plan.info = source.info;
     plan.uniformFill = source.uniformFill;
+    ownPlanValues(plan);
     const auto addSource = [&plan](std::uint32_t index) {
         if (index >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan resource references an unknown descriptor source");
@@ -884,7 +960,7 @@ bool ResourceSpecialization::Buffer::operator==(const Buffer& other) const {
 }
 
 bool ResourceSpecialization::Image::operator==(const Image& other) const {
-    return numericClass == other.numericClass && dimension == other.dimension && mipCount == other.mipCount && conversionFormat == other.conversionFormat && shaderSwizzle == other.shaderSwizzle && indirectRoot == other.indirectRoot && indirectMappingOffset == other.indirectMappingOffset && indirectSearchIterations == other.indirectSearchIterations && cube == other.cube && fmask == other.fmask && depthBits == other.depthBits && depthUnorm16 == other.depthUnorm16;
+    return numericClass == other.numericClass && dimension == other.dimension && mipCount == other.mipCount && conversionFormat == other.conversionFormat && shaderSwizzle == other.shaderSwizzle && indirectRoot == other.indirectRoot && indirectMappingOffset == other.indirectMappingOffset && indirectSearchIterations == other.indirectSearchIterations && cube == other.cube && fmask == other.fmask && depthBits == other.depthBits && depthUnorm16 == other.depthUnorm16 && packedFormat == other.packedFormat;
 }
 
 bool ResourceSpecialization::operator==(const ResourceSpecialization& other) const {

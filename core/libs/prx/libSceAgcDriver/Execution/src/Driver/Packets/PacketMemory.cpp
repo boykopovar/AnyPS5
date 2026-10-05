@@ -4,12 +4,14 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace AgcDriver::DriverDetail {
 
-bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue, std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode, bool& wroteOnGpu, bool& endOfPipeInterrupt, bool& drawPacket, bool& sampleDump) {
+bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue, std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode, bool& wroteOnGpu, bool& endOfPipeInterrupt, bool& interruptDeferred, bool& drawPacket, bool& sampleDump) {
     static const bool drainAll = std::getenv("APS5_DRAIN_ALL") != nullptr;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     wroteOnGpu = false;
@@ -17,6 +19,42 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     bool orderedAlready = false;
 
     endOfPipeInterrupt = opcode == 0x49 && ((packet[2] >> 24u) & 7u) != 0;
+    interruptDeferred = false;
+    if (!drainAll && endOfPipeInterrupt) {
+        const auto label = Pm4::DecodeLabelWrite(packet);
+        const bool storesNothing = (packet[2] >> 29u) == 0 || (packet[3] | (static_cast<std::uint64_t>(packet[4]) << 32u)) == 0;
+        if (label.has_value() || storesNothing) {
+            bumpEpoch(&EpochBumps::drains);
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            const auto localDevice = device.Load();
+            recordDeferredLabels(localDevice.get(), submission.queue);
+            const bool workOpen = Graphics::Recorder::RecordedWorkSinceSubmit() != 0;
+            int reason = localDevice != nullptr ? 0 : 1;
+            if (label.has_value()) {
+                const auto bytes = label->Bytes();
+                const auto stamp = ++eventSerial;
+                reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
+                if (reason == 1) GuestMemory::Write(label->address, bytes, 4);
+                if (reason == 0 || reason == 1 || reason == 5 || reason == 6) {
+                    noteLabelStore(label->address, bytes, stamp);
+                    Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
+                }
+                countLabelOutcome(reason);
+                ++immediateLabels;
+            } else {
+                ++noOpLabels;
+            }
+            if (reason == 0 || reason == 5 || reason == 6) {
+                const auto queueId = submission.queue;
+                interruptDeferred = localDevice->AfterRecordedWork([queueId] { AgcDriverDeliverEopInterrupt(queueId); }, submission.queue == 0);
+                if (interruptDeferred && workOpen) localDevice->SubmitRecorded(submission.queue == 0);
+                wroteOnGpu = true;
+            } else if (reason == 1) {
+                wroteOnGpu = true;
+            }
+        }
+    }
     if (!drainAll && !endOfPipeInterrupt && (opcode == 0x49 || opcode == 0x37)) {
         if (const auto label = Pm4::DecodeLabelWrite(packet)) {
             const auto bytes = label->Bytes();
@@ -93,12 +131,35 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
             }
         }
+        if (drained && opcode == 0x50) {
+            const auto copy = Pm4::DecodeMemoryCopy(packet);
+            if (copy.has_value() && copy->bytes > gpuStoreLimit && GuestMemory::Accessible(reinterpret_cast<const void*>(copy->source), copy->bytes) && GuestMemory::Accessible(reinterpret_cast<const void*>(copy->destination), copy->bytes, true)) {
+                GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Copy);
+                std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                if (const auto localDevice = device.Load()) {
+                    recordDeferredLabels(localDevice.get(), submission.queue);
+                    const auto outcome = localDevice->CopyBuffer(copy->destination, copy->source, copy->bytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0, submission.queue, [](std::span<const std::byte>, std::uint64_t) {});
+                    if (outcome.path == 1 || outcome.path == 3) {
+                        wroteOnGpu = true;
+                        drained = false;
+                    }
+                }
+            }
+        }
         if (drained) ++storesDrained;
     }
 
     static const bool drawDrain = std::getenv("APS5_DRAW_DRAIN") != nullptr;
     drawPacket = Pm4::DrawOpcode(opcode);
     sampleDump = opcode == 0x46 && (packet[1] & 0x3fu) == 0x39u;
+    if (sampleDump && !drainAll) {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        if (const auto localDevice = device.Load()) {
+            recordDeferredLabels(localDevice.get(), submission.queue);
+            wroteOnGpu = localDevice->DumpSamplesOnGpu(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u));
+        }
+    }
 
     static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
     const bool drains = drainAll ? ((Pm4::AccessesMemory(header) && opcode != 0x16) || opcode == 0x42 || opcode == 0x46 || opcode == 0x58 || header == FlipPacketHeader)
@@ -158,7 +219,7 @@ void Driver::dumpSampleCounters(std::uint64_t address) {
         auto* recorder = Graphics::Recorder::Active();
         require(recorder != nullptr, "occlusion counters without the command recorder are not implemented");
         recorder->CountSamples();
-        samples = Graphics::Recorder::SamplesPassed();
+        samples = recorder->SamplesTotal();
     }
     constexpr std::uint64_t ready = 1ull << 63u;
     for (std::uint64_t db = 0; db < 16; ++db) {

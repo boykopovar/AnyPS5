@@ -52,7 +52,7 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     if (owned && mutex->_type != MutexType::Recursive) {
         if (tryOnly)
             return sceBusy;
-        if (mutex->_type == MutexType::ErrorCheck)
+        if (mutex->_type == MutexType::ErrorCheck || mutex->_type == MutexType::Adaptive)
             return sceDeadlock;
         throw std::runtime_error("Mutex is already owned by the current thread");
     }
@@ -90,7 +90,7 @@ extern "C" {
 int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) {
     if (!attr)
         throw std::invalid_argument("Mutex attribute pointer is null");
-    *attr = new PthreadMutexattrPrivate{MutexType::Normal};
+    *attr = new PthreadMutexattrPrivate{MutexType::ErrorCheck};
     return 0;
 }
 
@@ -109,7 +109,7 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
     case 1: (*attr)->type = MutexType::ErrorCheck; break;
     case 2: (*attr)->type = MutexType::Recursive; break;
     case 3: (*attr)->type = MutexType::Normal; break;
-    case 4: (*attr)->type = MutexType::Normal; break;
+    case 4: (*attr)->type = MutexType::Adaptive; break;
     default: throw std::invalid_argument("Invalid mutex type");
     }
     return 0;

@@ -166,14 +166,15 @@ std::uint32_t _counter(std::uint32_t index) {
 }
 
 bool _waitSatisfied(std::uint32_t compare, std::uint64_t value, std::uint64_t reference) {
+    constexpr std::uint64_t sign = std::uint64_t{1} << 63u;
     switch (compare) {
-        case 0: return true;
-        case 1: return value < reference;
-        case 2: return value <= reference;
-        case 3: return value == reference;
-        case 4: return value != reference;
-        case 5: return value >= reference;
-        case 6: return value > reference;
+        case 0: return value == reference;
+        case 1: return value > reference;
+        case 2: return value < reference;
+        case 3: return value != reference;
+        case 4: return value - reference < sign;
+        case 5: return (value ^ sign) > (reference ^ sign);
+        case 6: return (value ^ sign) < (reference ^ sign);
         default: throw std::runtime_error("APR: wait compare function " + std::to_string(compare) + " not implemented");
     }
 }
@@ -194,6 +195,9 @@ void _execute(const Apr::CommandBufferObject& buffer) {
         if (header.bytes < sizeof(header) || cursor + header.bytes > buffer.offset) throw std::runtime_error("APR: malformed command");
         switch (header.opcode) {
         case Apr::Opcode::Nop:
+        case Apr::Opcode::PushMarker:
+        case Apr::Opcode::PopMarker:
+        case Apr::Opcode::SetMarker:
             break;
         case Apr::Opcode::ReadFile: {
             Apr::ReadFileCommand command;

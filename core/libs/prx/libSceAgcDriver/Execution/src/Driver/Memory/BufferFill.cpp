@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <bit>
@@ -192,7 +193,8 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
             ++cpuFills;
 
             localDevice->WaitIdle();
-            static thread_local std::vector<std::byte> block;
+            static thread_local std::vector<std::byte>* blockSlot = nullptr;
+            auto& block = ShaderRecompiler::ThreadOwned(blockSlot);
             const auto chunk = std::min<std::size_t>(bytes, 1u << 20u);
             block.resize(chunk);
             for (std::size_t at = 0; at < chunk; at += 16) std::memcpy(block.data() + at, pattern.data(), 16);

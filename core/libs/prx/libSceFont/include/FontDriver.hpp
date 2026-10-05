@@ -23,6 +23,7 @@ constexpr std::uint16_t STYLE_FRAME_MAGIC = 0x0F09;
 constexpr std::uint32_t LOCK_BIT = 0x80000000u;
 constexpr std::uint32_t OPEN_BIT = 0x40000000u;
 constexpr std::uint32_t COUNT_MASK = 0x0FFFFFFFu;
+constexpr std::uint64_t SYSFONT_FLAG_SYSTEM_SET = 0x100u;
 
 constexpr std::size_t HORIZONTAL_LAYOUT_SIZE = 0x30;
 constexpr std::size_t HORIZONTAL_LINE_ADVANCE = 0x00;

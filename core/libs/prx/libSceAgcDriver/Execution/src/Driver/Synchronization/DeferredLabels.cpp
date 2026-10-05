@@ -2,13 +2,14 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "ThreadOwned.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
 
 DeferredLabels& deferredLabels() {
-    static thread_local DeferredLabels deferred;
-    return deferred;
+    static thread_local DeferredLabels* deferred = nullptr;
+    return ShaderRecompiler::ThreadOwned(deferred);
 }
 
 bool DeferLabels() {
@@ -91,7 +92,8 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
     auto& deferred = deferredLabels();
     if (deferred.labels.empty()) return;
 
-    static thread_local std::vector<DeferredLabel> labels;
+    static thread_local std::vector<DeferredLabel>* recording = nullptr;
+    auto& labels = ShaderRecompiler::ThreadOwned(recording);
     labels.clear();
     labels.swap(deferred.labels);
     struct Clear {

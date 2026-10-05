@@ -1,6 +1,8 @@
 #include "../include/Pthread.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <stdexcept>
 
@@ -9,34 +11,41 @@ static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int SCE_KERNEL_ERROR_EAGAIN = 0x80020023;
 static constexpr int MAX_KEYS = 512;
 static constexpr int DESTRUCTOR_ITERATIONS = 4;
+static constexpr std::uint64_t FREE_KEY = 0;
 
 using GuestKeyDestructor = void (APS5_VABI*)(void*);
 
 struct KeySlot {
-    bool used = false;
+    std::atomic<std::uint64_t> sequence{FREE_KEY};
     GuestKeyDestructor destructor = nullptr;
+};
+
+struct ThreadValue {
+    void* value = nullptr;
+    std::uint64_t sequence = FREE_KEY;
 };
 
 static std::mutex g_keyLock;
 static std::array<KeySlot, MAX_KEYS> g_keys;
+static std::uint64_t g_lastSequence = FREE_KEY;
 
 struct ThreadValues {
-    std::array<void*, MAX_KEYS> values{};
+    std::array<ThreadValue, MAX_KEYS> values{};
 
     ~ThreadValues() {
         for (int round = 0; round < DESTRUCTOR_ITERATIONS; ++round) {
             bool called = false;
             for (int key = 0; key < MAX_KEYS; ++key) {
-                void* value = values[key];
-                if (!value) continue;
+                const ThreadValue entry = values[key];
+                if (!entry.value) continue;
                 GuestKeyDestructor destructor;
                 {
                     std::lock_guard lock(g_keyLock);
-                    destructor = g_keys[key].used ? g_keys[key].destructor : nullptr;
+                    destructor = g_keys[key].sequence.load(std::memory_order_relaxed) == entry.sequence ? g_keys[key].destructor : nullptr;
                 }
-                values[key] = nullptr;
+                values[key] = {};
                 if (destructor) {
-                    destructor(value);
+                    destructor(entry.value);
                     called = true;
                 }
             }
@@ -47,20 +56,15 @@ struct ThreadValues {
 
 static thread_local ThreadValues g_values;
 
-static bool IsValidKey(PthreadKey key) {
-    if (key < 0 || key >= MAX_KEYS) return false;
-    std::lock_guard lock(g_keyLock);
-    return g_keys[key].used;
-}
-
 extern "C" {
 
 int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor) {
     if (!key) throw std::runtime_error("scePthreadKeyCreate: null key");
     std::lock_guard lock(g_keyLock);
     for (int index = 0; index < MAX_KEYS; ++index) {
-        if (!g_keys[index].used) {
-            g_keys[index] = {true, reinterpret_cast<GuestKeyDestructor>(destructor)};
+        if (g_keys[index].sequence.load(std::memory_order_relaxed) == FREE_KEY) {
+            g_keys[index].destructor = reinterpret_cast<GuestKeyDestructor>(destructor);
+            g_keys[index].sequence.store(++g_lastSequence, std::memory_order_release);
             *key = index;
             return SCE_OK;
         }
@@ -71,19 +75,23 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
 int APS5_VABI scePthreadKeyDelete(PthreadKey key) {
     if (key < 0 || key >= MAX_KEYS) return SCE_KERNEL_ERROR_EINVAL;
     std::lock_guard lock(g_keyLock);
-    if (!g_keys[key].used) return SCE_KERNEL_ERROR_EINVAL;
-    g_keys[key] = {};
+    if (g_keys[key].sequence.load(std::memory_order_relaxed) == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
+    g_keys[key].sequence.store(FREE_KEY, std::memory_order_release);
+    g_keys[key].destructor = nullptr;
     return SCE_OK;
 }
 
 void* APS5_VABI scePthreadGetspecific(PthreadKey key) {
     if (key < 0 || key >= MAX_KEYS) return nullptr;
-    return g_values.values[key];
+    const ThreadValue& entry = g_values.values[key];
+    return entry.sequence == g_keys[key].sequence.load(std::memory_order_acquire) ? entry.value : nullptr;
 }
 
 int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value) {
-    if (!IsValidKey(key)) return SCE_KERNEL_ERROR_EINVAL;
-    g_values.values[key] = value;
+    if (key < 0 || key >= MAX_KEYS) return SCE_KERNEL_ERROR_EINVAL;
+    const std::uint64_t sequence = g_keys[key].sequence.load(std::memory_order_acquire);
+    if (sequence == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
+    g_values.values[key] = {value, sequence};
     return SCE_OK;
 }
 

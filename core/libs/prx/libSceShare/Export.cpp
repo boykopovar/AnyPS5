@@ -5,6 +5,13 @@
 
 // Capture and sharing are not emulated; policy and parameter calls are accepted.
 
+namespace {
+
+constexpr std::int32_t ERROR_NOT_SUPPORTED = static_cast<std::int32_t>(0x81960007);
+constexpr std::int32_t REQUEST_ID_INVALID = -1;
+
+}
+
 extern "C" {
 
 int APS5_VABI sceShareCaptureScreenshot(const void* param, int32_t* req_id) {
@@ -85,10 +92,12 @@ int APS5_VABI sceShareUnregisterContentEventCallback(void* callback) {
     return 0;
 }
 
-APS5_EXPORT("GQTObcITIXI", sceShareUnknown_GQTObcITIXI);
-int32_t APS5_VABI sceShareUnknown_GQTObcITIXI(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceShareCaptureScreenshotExtended(const void* extended_param, int32_t* req_id) {
+    (void)extended_param;
+    if (req_id != nullptr) {
+        *req_id = REQUEST_ID_INVALID;
+    }
+    return ERROR_NOT_SUPPORTED;
 }
 
 }

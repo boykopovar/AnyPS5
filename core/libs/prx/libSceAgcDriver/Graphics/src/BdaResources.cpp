@@ -262,7 +262,7 @@ void BdaResources::CheckFault() const {
             ShaderRecompiler::BdaAbi::Range range{};
             std::memcpy(&range, bytes.data() + sizeof(header) + index * sizeof(range), sizeof(range));
             if (report.address < range.begin || report.address >= range.end) continue;
-            message << std::hex << "; the store hit 0x" << range.begin << "+0x" << range.end - range.begin << ", read-only in the BDA table: stores through GPU-selected descriptors reach only writable ranges imported in place, not ones served by a mirror or a copy (past APS5_HOST_IMPORT_MIB, or refused by the driver)";
+            message << std::hex << "; the store hit 0x" << range.begin << "+0x" << range.end - range.begin << ", read-only in the BDA table: stores through GPU-selected descriptors and FLAT/GLOBAL addresses reach only writable ranges imported in place, not ones served by a mirror or a copy (past APS5_HOST_IMPORT_MIB, or refused by the driver)";
             break;
         }
     }
@@ -276,7 +276,7 @@ namespace AgcDriver::Graphics {
 void BdaResources::markWrittenPages() const {
     namespace Abi = ShaderRecompiler::BdaAbi;
     auto* words = reinterpret_cast<std::uint32_t*>(fault->Bytes().data());
-    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " pages stored to through GPU-selected buffer descriptors in one use are not implemented");
+    Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " pages stored to through the BDA table in one use are not implemented");
     bool any = false;
     for (std::uint32_t slot = 0; slot < Abi::WrittenPageSlots; ++slot) {
         const auto page = words[Abi::WrittenSlotsWord + slot];

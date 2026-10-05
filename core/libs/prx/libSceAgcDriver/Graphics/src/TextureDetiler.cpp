@@ -119,7 +119,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         values[21] = extent[1];
     } else if (const auto mode = XorSwizzleMode(tileMode); mode != 0) {
         const auto* equation = FindTextureSwizzleEquation(mode, elementBytes);
-        Require(equation != nullptr, "no swizzle equation for tile mode " + std::to_string(mode) + " at " + std::to_string(elementBytes) + " bytes per element");
+        if (equation == nullptr) Require(false, "no swizzle equation for tile mode " + std::to_string(mode) + " at " + std::to_string(elementBytes) + " bytes per element");
         values[2] = 2u;
         std::copy(equation->bits.begin(), equation->bits.end(), values.begin() + 4);
     }
@@ -152,7 +152,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     Require(layout.tiledSize != 0 && layout.linearSize != 0, "texture detiling requires a non-empty mip layout");
     const auto columnEnd = window.columnEnd != 0 ? std::min(window.columnEnd, layout.width) : layout.width;
     const auto rowEnd = window.rowEnd != 0 ? std::min(window.rowEnd, layout.height) : layout.height;
-    Require(window.columnBegin < columnEnd && window.rowBegin < rowEnd, "texture detiling window lies outside the mip: columns " + std::to_string(window.columnBegin) + ".." + std::to_string(columnEnd) + ", rows " + std::to_string(window.rowBegin) + ".." + std::to_string(rowEnd) + " of " + std::to_string(layout.width) + "x" + std::to_string(layout.height));
+    if (!(window.columnBegin < columnEnd && window.rowBegin < rowEnd)) Require(false, "texture detiling window lies outside the mip: columns " + std::to_string(window.columnBegin) + ".." + std::to_string(columnEnd) + ", rows " + std::to_string(window.rowBegin) + ".." + std::to_string(rowEnd) + " of " + std::to_string(layout.width) + "x" + std::to_string(layout.height));
     const auto target = pipeline(tileMode, elementBytes, retile, thick);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;

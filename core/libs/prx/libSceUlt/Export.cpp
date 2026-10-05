@@ -3,9 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -23,7 +24,7 @@ std::mutex gMutex;
 std::unordered_map<void*, std::shared_ptr<UltMutexState>> gMutexes;
 std::unordered_map<void*, std::shared_ptr<UltSemaphoreState>> gSemaphores;
 std::unordered_map<void*, UltResourcePoolState> gResourcePools;
-std::unordered_map<void*, UltQueueDataPoolState> gQueueDataPools;
+std::unordered_map<void*, std::shared_ptr<UltQueueDataPoolState>> gQueueDataPools;
 std::unordered_map<void*, std::shared_ptr<UltQueueState>> gQueues;
 std::unordered_map<void*, UltRuntimeState> gRuntimes;
 std::unordered_map<void*, std::shared_ptr<UltUlthreadState>> gUlthreads;
@@ -50,6 +51,59 @@ int queueGetState(void* queue, std::shared_ptr<UltQueueState>* out) {
     }
     *out = it->second;
     return ULT_OK;
+}
+
+int QueueTransfer(void* queue, void* data, const void* source, bool push, bool blocking) {
+    std::shared_ptr<UltQueueState> state;
+    if (int result = queueGetState(queue, &state); result != ULT_OK) return result;
+    if ((push ? source : data) == nullptr) return ULT_ERROR_NULL;
+    auto& pool = *state->_pool;
+    std::unique_lock lock(pool._mutex);
+    if (!state->_alive) return ULT_ERROR_STATE;
+    const auto ready = [&] { return !state->_alive || (push ? pool._free : state->_head) != UINT32_MAX; };
+    if (!ready()) {
+        if (!blocking) return ULT_ERROR_AGAIN;
+        ++state->_waiters;
+        try {
+            (push ? pool._spaceAvailable : state->_dataAvailable).wait(lock, ready);
+        } catch (...) {
+            --state->_waiters;
+            throw;
+        }
+        --state->_waiters;
+        if (!state->_alive) return ULT_ERROR_STATE;
+    }
+    if (push) {
+        const auto slot = pool._free;
+        std::memcpy(pool._data.data() + slot * pool._dataSize, source, state->_dataSize);
+        pool._free = pool._next[slot];
+        pool._next[slot] = UINT32_MAX;
+        if (state->_tail == UINT32_MAX) state->_head = slot;
+        else pool._next[state->_tail] = slot;
+        state->_tail = slot;
+    } else {
+        const auto slot = state->_head;
+        std::memcpy(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
+        state->_head = pool._next[slot];
+        if (state->_head == UINT32_MAX) state->_tail = UINT32_MAX;
+        pool._next[slot] = pool._free;
+        pool._free = slot;
+    }
+    lock.unlock();
+    if (push) state->_dataAvailable.notify_one();
+    else pool._spaceAvailable.notify_one();
+    return ULT_OK;
+}
+
+void ReleaseQueue(UltQueueState& state) {
+    auto& pool = *state._pool;
+    if (state._tail != UINT32_MAX) {
+        pool._next[state._tail] = pool._free;
+        pool._free = state._head;
+    }
+    state._head = state._tail = UINT32_MAX;
+    state._alive = false;
+    --pool._queues;
 }
 
 void* APS5_VABI ulthreadRunner(void* arg) {
@@ -79,8 +133,15 @@ int APS5_VABI sceUltFinalize() {
         gSemaphores.clear();
         gMutexes.clear();
         gResourcePools.clear();
-        gQueueDataPools.clear();
+        for (auto& entry : gQueues) {
+            auto& state = *entry.second;
+            std::lock_guard stateLock(state._pool->_mutex);
+            ReleaseQueue(state);
+            state._dataAvailable.notify_all();
+            state._pool->_spaceAvailable.notify_all();
+        }
         gQueues.clear();
+        gQueueDataPools.clear();
         gRuntimes.clear();
         gUlthreads.clear();
     }
@@ -162,38 +223,71 @@ int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name,
 }
 
 std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t numData, std::uint64_t dataSize, std::uint32_t numQueueObject) {
-    const std::uint64_t dataArea = static_cast<std::uint64_t>(numData) * alignUp(dataSize, 8u);
-    const std::uint64_t queueArea = static_cast<std::uint64_t>(numQueueObject) * 512u;
+    if (dataSize > UINT64_MAX - 7u) throw std::out_of_range("ULT queue data size overflow");
+    const auto stride = alignUp(dataSize, 8u);
+    const auto queueArea = static_cast<std::uint64_t>(numQueueObject) * 512u;
+    if (stride != 0 && numData > (UINT64_MAX - queueArea) / stride) {
+        throw std::out_of_range("ULT queue work area size overflow");
+    }
+    const std::uint64_t dataArea = static_cast<std::uint64_t>(numData) * stride;
     return alignUp(dataArea + queueArea, 8u);
 }
 
 int APS5_VABI sceUltQueueDataResourcePoolCreate(void* pool, const char* name, std::uint32_t numData, std::uint64_t dataSize, std::uint32_t numQueueObject, void* waitingQueueResourcePool, void* workArea, const void* optParam, std::uint32_t buildVersion) {
     (void)name;
-    (void)optParam;
     (void)buildVersion;
     if (pool == nullptr) {
         return ULT_ERROR_NULL;
     }
+    if ((reinterpret_cast<std::uintptr_t>(pool) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
+    if (numData == 0 || numQueueObject == 0 || dataSize == 0 ||
+        dataSize > std::numeric_limits<std::size_t>::max() / numData) return ULT_ERROR_RANGE;
+    if (optParam != nullptr) NotImplemented_nid_no_patch("sceUltQueueDataResourcePoolCreate: optParam");
     std::lock_guard<std::mutex> lock(gMutex);
     if (waitingQueueResourcePool != nullptr && gResourcePools.find(waitingQueueResourcePool) == gResourcePools.end()) {
         return ULT_ERROR_INVALID;
     }
+    if (gQueueDataPools.contains(pool)) return ULT_ERROR_STATE;
+    auto state = std::make_shared<UltQueueDataPoolState>();
+    state->_numData = numData;
+    state->_dataSize = dataSize;
+    state->_numQueueObject = numQueueObject;
+    state->_waitingPool = waitingQueueResourcePool;
+    state->_workArea = workArea;
+    state->_data.resize(numData * dataSize);
+    state->_next.resize(numData);
+    for (std::uint32_t slot = 0; slot < numData; ++slot) {
+        state->_next[slot] = slot + 1u < numData ? slot + 1u : UINT32_MAX;
+    }
+    state->_free = 0;
+    gQueueDataPools.emplace(pool, std::move(state));
     std::memset(pool, 0, 512);
-    gQueueDataPools[pool] = {numData, dataSize, numQueueObject, waitingQueueResourcePool, workArea};
+    return ULT_OK;
+}
+
+int APS5_VABI sceUltQueueDataResourcePoolDestroy(void* pool) {
+    if (pool == nullptr) return ULT_ERROR_NULL;
+    std::lock_guard lock(gMutex);
+    const auto it = gQueueDataPools.find(pool);
+    if (it == gQueueDataPools.end()) return ULT_ERROR_STATE;
+    auto state = it->second;
+    std::lock_guard stateLock(state->_mutex);
+    if (state->_queues != 0) return ULT_ERROR_BUSY;
+    gQueueDataPools.erase(it);
     return ULT_OK;
 }
 
 int APS5_VABI sceUltQueueCreate(void* queue, const char* name, std::uint64_t dataSize, void* waitingQueueResourcePool, void* queueDataResourcePool, const void* optParam, std::uint32_t buildVersion) {
     (void)name;
-    (void)optParam;
     (void)buildVersion;
     if (queue == nullptr) {
         return ULT_ERROR_NULL;
     }
+    if ((reinterpret_cast<std::uintptr_t>(queue) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
+    if (dataSize == 0) return ULT_ERROR_RANGE;
+    if (optParam != nullptr) NotImplemented_nid_no_patch("sceUltQueueCreate: optParam");
     auto state = std::make_shared<UltQueueState>();
     state->_dataSize = dataSize;
-    state->_waitingPool = waitingQueueResourcePool;
-    state->_dataPool = queueDataResourcePool;
     std::lock_guard<std::mutex> lock(gMutex);
     auto dataPoolIt = gQueueDataPools.find(queueDataResourcePool);
     if (dataPoolIt == gQueueDataPools.end()) {
@@ -202,48 +296,48 @@ int APS5_VABI sceUltQueueCreate(void* queue, const char* name, std::uint64_t dat
     if (waitingQueueResourcePool != nullptr && gResourcePools.find(waitingQueueResourcePool) == gResourcePools.end()) {
         return ULT_ERROR_INVALID;
     }
-    state->_capacity = dataPoolIt->second._numData;
+    if (gQueues.contains(queue)) return ULT_ERROR_STATE;
+    state->_pool = dataPoolIt->second;
+    auto& pool = *state->_pool;
+    std::lock_guard stateLock(pool._mutex);
+    if (dataSize > pool._dataSize || waitingQueueResourcePool != pool._waitingPool) return ULT_ERROR_INVALID;
+    if (pool._queues == pool._numQueueObject) return ULT_ERROR_AGAIN;
+    gQueues.emplace(queue, std::move(state));
+    ++pool._queues;
     std::memset(queue, 0, 512);
-    gQueues[queue] = std::move(state);
     return ULT_OK;
 }
 
 int APS5_VABI sceUltQueuePush(void* queue, const void* data) {
-    std::shared_ptr<UltQueueState> state;
-    if (int ret = queueGetState(queue, &state); ret != ULT_OK) {
-        return ret;
-    }
-    if (data == nullptr && state->_dataSize != 0) {
-        return ULT_ERROR_NULL;
-    }
-    std::lock_guard<std::mutex> lock(state->_mutex);
-    if (state->_capacity != 0 && state->_items.size() >= state->_capacity) {
-        return ULT_OK;
-    }
-    auto& item = state->_items.emplace_back(static_cast<std::size_t>(state->_dataSize));
-    if (!item.empty()) {
-        std::memcpy(item.data(), data, item.size());
-    }
-    return ULT_OK;
+    return QueueTransfer(queue, nullptr, data, true, true);
+}
+
+int APS5_VABI sceUltQueueTryPush(void* queue, const void* data) {
+    return QueueTransfer(queue, nullptr, data, true, false);
+}
+
+int APS5_VABI sceUltQueuePop(void* queue, void* data) {
+    return QueueTransfer(queue, data, nullptr, false, true);
 }
 
 int APS5_VABI sceUltQueueTryPop(void* queue, void* data) {
-    std::shared_ptr<UltQueueState> state;
-    if (int ret = queueGetState(queue, &state); ret != ULT_OK) {
-        return ret;
+    return QueueTransfer(queue, data, nullptr, false, false);
+}
+
+int APS5_VABI sceUltQueueDestroy(void* queue) {
+    if (queue == nullptr) return ULT_ERROR_NULL;
+    std::lock_guard lock(gMutex);
+    const auto it = gQueues.find(queue);
+    if (it == gQueues.end()) return ULT_ERROR_STATE;
+    auto state = it->second;
+    auto& pool = *state->_pool;
+    {
+        std::lock_guard stateLock(pool._mutex);
+        if (state->_waiters != 0) return ULT_ERROR_BUSY;
+        ReleaseQueue(*state);
+        gQueues.erase(it);
     }
-    if (data == nullptr && state->_dataSize != 0) {
-        return ULT_ERROR_NULL;
-    }
-    std::lock_guard<std::mutex> lock(state->_mutex);
-    if (state->_items.empty()) {
-        return ULT_ERROR_AGAIN;
-    }
-    auto item = std::move(state->_items.front());
-    state->_items.pop_front();
-    if (!item.empty()) {
-        std::memcpy(data, item.data(), item.size());
-    }
+    pool._spaceAvailable.notify_all();
     return ULT_OK;
 }
 

@@ -53,7 +53,10 @@ std::uint32_t estimatedSpirvWords(const RdnaInstruction& instruction) {
     case RdnaOpcode::DsSwizzleB32:
     case RdnaOpcode::DsBpermuteB32:
         return 120u;
+    case RdnaOpcode::DsPermuteB32:
+        return 1200u;
     case RdnaOpcode::ImageBvhIntersectRay:
+    case RdnaOpcode::ImageBvh64IntersectRay:
         return 2000u;
     default:
         break;
@@ -124,7 +127,7 @@ bool resolveSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex, st
         if (getProgramCounter.op == RdnaOpcode::SGetpcB64 && getProgramCounter.destination.kind == RdnaOperandKind::ScalarRegister && getProgramCounter.destination.reg == pcRegister && arithmetic.destination.kind == RdnaOperandKind::ScalarRegister && arithmetic.destination.reg == pcRegister) {
             std::uint32_t immediate = 0;
             const bool adds = arithmetic.op == RdnaOpcode::SAddU32 || arithmetic.op == RdnaOpcode::SAddI32;
-            const bool subtracts = arithmetic.op == RdnaOpcode::SSubU32 || arithmetic.op == RdnaOpcode::SSubI32;
+            const bool subtracts = (arithmetic.op == RdnaOpcode::SSubU32 || arithmetic.op == RdnaOpcode::SSubI32) && isRegister(arithmetic.source0, RdnaOperandKind::ScalarRegister, pcRegister);
             if ((adds || subtracts) && (isRegister(arithmetic.source0, RdnaOperandKind::ScalarRegister, pcRegister) || isRegister(arithmetic.source1, RdnaOperandKind::ScalarRegister, pcRegister)) && (isImmediate(arithmetic.source0, immediate) || isImmediate(arithmetic.source1, immediate))) {
                 const auto base = instructionEndProgramCounter(getProgramCounter);
                 target = (adds ? base + immediate : base - immediate) & ~3u;

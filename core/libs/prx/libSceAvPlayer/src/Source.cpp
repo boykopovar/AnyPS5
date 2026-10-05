@@ -32,6 +32,7 @@ constexpr std::uint32_t VideoBufferAlignment = 0x100;
 constexpr std::uint32_t AudioBufferAlignment = 0x10;
 constexpr std::uint32_t AudioChunkSamples = 1024;
 constexpr std::uint32_t AudioMaxChannels = 8;
+constexpr std::uint32_t VideoDecodeAheadFrames = 4;
 constexpr std::size_t VideoPacketLimit = 30;
 constexpr std::size_t AudioPacketLimit = 8;
 constexpr std::size_t AudioOnlyPacketLimit = 30;
@@ -326,6 +327,7 @@ public:
                 return result;
             }
         }
+        addVideoDecodeAheadBuffers();
         const auto start = startOffset;
         startOffset = 0;
         seek(start);
@@ -605,7 +607,7 @@ private:
             bufferHeight = AlignUp(static_cast<std::uint32_t>(decoder.context->height), VideoHeightAlignment);
             decoder.bufferSize = pitch * bufferHeight * 3 / 2;
             count = settings.videoBuffers;
-            decoder.retained = count > 3 ? count - 3 : 0;
+            decoder.retained = settings.videoBuffers > 3 ? settings.videoBuffers - 3 : 0;
             texture = true;
             alignment = VideoBufferAlignment;
         } else {
@@ -622,6 +624,27 @@ private:
             decoder.free.push_back(static_cast<std::uint8_t*>(buffer));
         }
         return SCE_OK;
+    }
+
+    void addVideoDecodeAheadBuffers() {
+        if (video.stream < 0) return;
+
+        const auto& memory = settings.memory;
+        std::vector<std::uint8_t*> extra;
+        extra.reserve(VideoDecodeAheadFrames);
+        for (std::uint32_t index = 0; index < VideoDecodeAheadFrames; ++index) {
+            auto* buffer = static_cast<std::uint8_t*>(memory.allocate_texture(
+                memory.object_ptr, VideoBufferAlignment, video.bufferSize));
+            if (!buffer) {
+                for (auto* allocated : extra) memory.deallocate_texture(memory.object_ptr, allocated);
+                return;
+            }
+            extra.push_back(buffer);
+        }
+        for (auto* buffer : extra) {
+            video.allocated.push_back(buffer);
+            video.free.push_back(buffer);
+        }
     }
 
     void releaseDecoders() {

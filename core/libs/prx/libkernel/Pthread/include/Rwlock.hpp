@@ -12,8 +12,10 @@ int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockatt
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock);
+int APS5_VABI scePthreadRwlockTimedrdlock(PthreadRwlock* rwlock, KernelUseconds usec);
 int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock);
+int APS5_VABI scePthreadRwlockTimedwrlock(PthreadRwlock* rwlock, KernelUseconds usec);
 int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
 
 }

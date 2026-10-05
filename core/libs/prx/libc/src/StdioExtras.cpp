@@ -5,7 +5,6 @@
 #include <cstring>
 
 #include "prx/libc/include/FileStream.hpp"
-#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -103,7 +102,7 @@ void APS5_VABI _ZdaPvm_nid_postfix(void* pointer, std::size_t) {
 
 void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alignment) {
     (void)alignment;
-    GuestHeap::GuestHeapFree_nid_postfix(pointer);
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
 }
 
 }

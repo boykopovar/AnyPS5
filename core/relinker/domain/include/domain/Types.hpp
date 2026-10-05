@@ -82,6 +82,7 @@ struct DynamicTag {
 
 struct RelinkerException : std::runtime_error {
     FileByteOffset FailureOffset;
+    std::string InputPath;
 
     explicit RelinkerException(const std::string& message, const FileByteOffset failureOffset = 0)
         : std::runtime_error(message), FailureOffset(failureOffset) {}

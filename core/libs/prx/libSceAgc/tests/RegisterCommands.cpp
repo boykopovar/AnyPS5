@@ -21,6 +21,10 @@ std::uint32_t APS5_VABI sceAgcDcbSetUcRegistersIndirectGetSize(std::uint32_t);
 int APS5_VABI sceAgcSetCxRegIndirectPatchSetNumRegisters(std::uint32_t*, std::uint32_t);
 int APS5_VABI sceAgcSetShRegIndirectPatchSetNumRegisters(std::uint32_t*, std::uint32_t);
 int APS5_VABI sceAgcSetUcRegIndirectPatchSetNumRegisters(std::uint32_t*, std::uint32_t);
+std::uint32_t* APS5_VABI sceAgcCbSetShRegistersDirect(CommandBuffer*, const volatile ShaderRegister*, std::uint32_t);
+std::uint32_t* APS5_VABI sceAgcCbSetUcRegistersDirect(CommandBuffer*, const volatile ShaderRegister*, std::uint32_t);
+std::uint32_t APS5_VABI sceAgcCbSetShRegistersDirectGetSize(std::uint32_t);
+std::uint32_t APS5_VABI sceAgcCbSetUcRegistersDirectGetSize(std::uint32_t);
 }
 
 namespace {
@@ -101,12 +105,60 @@ void testIndirect() {
     }
 }
 
+void testDirectList() {
+    constexpr std::uint32_t sentinel = 0xabcdef01u;
+    constexpr std::uint32_t wordSize = sizeof(std::uint32_t);
+    const std::array writers{sceAgcCbSetShRegistersDirect, sceAgcCbSetUcRegistersDirect};
+    const std::array sizes{sceAgcCbSetShRegistersDirectGetSize, sceAgcCbSetUcRegistersDirectGetSize};
+    const std::array opcodes{0x7600u, 0x7900u};
+    const std::array<ShaderRegister, 4> scattered{{{0x12u, 1}, {0x11u, 2}, {0x20u, 3}, {0xffffu, 4}}};
+    const std::array<ShaderRegister, 4> adjacent{{{0x10u, 5}, {0x11u, 6}, {0x12u, 7}, {0x13u, 8}}};
+    const std::array<ShaderRegister, 4> paired{{{0x10u, 5}, {0x11u, 6}, {0x20u, 7}, {0x21u, 8}}};
+    for (std::size_t i = 0; i < writers.size(); ++i) {
+        const auto single = 0xc0010000u | opcodes[i];
+        for (std::uint32_t count = 1; count <= scattered.size(); ++count) {
+            const auto words = sizes[i](count) / wordSize;
+            Storage storage;
+            check(sizes[i](count) % wordSize == 0 && words != 0 && words <= storage.words.size(), "register list size is not a usable word count");
+            storage.words.fill(sentinel);
+            storage.buffer.cursor_down = storage.buffer.cursor_up + words;
+            auto* packet = writers[i](&storage.buffer, scattered.data(), count);
+            check(packet == storage.words.data() && storage.buffer.cursor_up == storage.buffer.cursor_down, "separate registers do not fill the queried size");
+            for (std::uint32_t reg = 0; reg < count; ++reg) {
+                const std::array expected{single, scattered[reg].offset, scattered[reg].value};
+                check(std::equal(expected.begin(), expected.end(), packet + reg * expected.size()), "incorrect register list packet");
+            }
+            check(std::all_of(storage.words.begin() + words, storage.words.end(), [](std::uint32_t word) { return word == sentinel; }), "register list overwrote following words");
+            Storage shortStorage;
+            shortStorage.buffer.cursor_down = shortStorage.buffer.cursor_up + words - 1u;
+            expectFailure([&] { writers[i](&shortStorage.buffer, scattered.data(), count); });
+        }
+        const auto limit = sizes[i](4) / wordSize;
+        Storage merged;
+        merged.buffer.cursor_down = merged.buffer.cursor_up + limit;
+        const std::array<std::uint32_t, 6> expectedMerged{0xc0040000u | opcodes[i], 0x10u, 5, 6, 7, 8};
+        auto* packet = writers[i](&merged.buffer, adjacent.data(), 4);
+        check(std::equal(expectedMerged.begin(), expectedMerged.end(), packet) && merged.buffer.cursor_up == packet + expectedMerged.size(), "adjacent registers were not merged into one range");
+        Storage split;
+        split.buffer.cursor_down = split.buffer.cursor_up + limit;
+        const std::array<std::uint32_t, 8> expectedSplit{0xc0020000u | opcodes[i], 0x10u, 5, 6, 0xc0020000u | opcodes[i], 0x20u, 7, 8};
+        packet = writers[i](&split.buffer, paired.data(), 4);
+        check(std::equal(expectedSplit.begin(), expectedSplit.end(), packet) && split.buffer.cursor_up == packet + expectedSplit.size(), "register pairs were not written as two ranges");
+        check(sizes[i](0) == 0, "an empty register list has a size");
+        check(sizes[i](0x15555555u) == 0xfffffffcu, "largest register list size mismatch");
+        for (const auto count : {0x15555556u, 0x40000000u, 0xffffffffu}) {
+            expectFailure([&] { sizes[i](count); });
+        }
+    }
+}
+
 }
 
 int main() {
     try {
         testDirect();
         testIndirect();
+        testDirectList();
         std::puts("AGC register command tests passed");
         return 0;
     } catch (const std::exception& error) {

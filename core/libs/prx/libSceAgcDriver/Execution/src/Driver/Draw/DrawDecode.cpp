@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 
@@ -15,6 +16,8 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         return (static_cast<std::uint64_t>(readRegister(queue.shader, base)) << 8u) | (static_cast<std::uint64_t>(high) << 40u);
     };
     const auto prepare = [&](std::uint64_t address, std::uint8_t type, Stage stage, std::uint32_t rsrc2, std::uint32_t userDataBase) {
+        const bool nullPixel = address == 0 && stage == Stage::Fragment;
+        if (nullPixel) address = NullPixelProgramAddress();
         auto it = submission.shaders->upper_bound(address);
         require(it != submission.shaders->begin(), "graphics program does not belong to a registered shader");
         --it;
@@ -22,7 +25,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         require(address - snapshot.codeAddress < snapshot.code.size() * sizeof(std::uint32_t), "graphics program is outside registered shader code");
         require(snapshot.type == type, "graphics program refers to an incompatible shader binary type");
         Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, rsrc2);
-        const auto resources = readRegister(queue.shader, rsrc2);
+        const auto resources = nullPixel && !queue.shader.contains(rsrc2) ? 0u : readRegister(queue.shader, rsrc2);
         const auto userCount = ((resources >> 1u) & 0x1fu) | (((resources >> 27u) & 1u) << 5u);
         require(userCount <= 32, "graphics user SGPR count exceeds the register bank");
         const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
@@ -86,9 +89,14 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         } else {
             append(0xc8, 2, Stage::Vertex, 0x8b, 0x8c, Role::Main);
         }
+        const bool nullPixel = Graphics::PixelProgramUnset(queue);
+        if (nullPixel) {
+            const auto rejection = Graphics::NullPixelProgramRejection(queue);
+            require(rejection.empty(), rejection.c_str());
+        }
         append(0x008, 1, Stage::Fragment, 0x00b, 0x00c, Role::Fragment);
         programs.back().firstUserSgpr = 0;
-        product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(graphics));
+        product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(graphics), nullPixel);
         return product;
     }
 }

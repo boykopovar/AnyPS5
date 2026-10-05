@@ -1,5 +1,5 @@
-#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
@@ -82,12 +82,12 @@ size_t APS5_VABI strlcpy_nid_postfix(char* dest, const char* src, size_t size) {
     return srcLen;
 }
 
-long APS5_VABI strtol_nid_postfix(const char* str, char** endptr, int base) {
-    return std::strtol(str, endptr, base);
+std::int64_t APS5_VABI strtol_nid_postfix(const char* str, char** endptr, int base) {
+    return std::strtoll(str, endptr, base);
 }
 
-unsigned long APS5_VABI strtoul_nid_postfix(const char* str, char** endptr, int base) {
-    return std::strtoul(str, endptr, base);
+std::uint64_t APS5_VABI strtoul_nid_postfix(const char* str, char** endptr, int base) {
+    return std::strtoull(str, endptr, base);
 }
 
 long long APS5_VABI strtoll_nid_postfix(const char* str, char** endptr, int base) {
@@ -111,6 +111,10 @@ long double APS5_VABI strtold_nid_postfix(const char* str, char** endptr) {
 
 int APS5_VABI atoi_nid_postfix(const char* str) {
     return std::atoi(str);
+}
+
+std::div_t APS5_VABI div_nid_postfix(int numerator, int denominator) {
+    return std::div(numerator, denominator);
 }
 
 const wchar_t* APS5_VABI wmemchr_nid_postfix(const wchar_t* s, wchar_t c, size_t n) {
@@ -153,13 +157,6 @@ int APS5_VABI strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) 
     }
     if (!n) return 0;
     return static_cast<unsigned char>(*s1) - static_cast<unsigned char>(*s2);
-}
-
-char* APS5_VABI strdup_nid_postfix(const char* s) {
-    std::size_t len = std::strlen(s) + 1;
-    char* copy = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(len));
-    std::memcpy(copy, s, len);
-    return copy;
 }
 
 int APS5_VABI bcmp_nid_postfix(const void* s1, const void* s2, size_t n) {

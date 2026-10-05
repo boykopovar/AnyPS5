@@ -170,6 +170,28 @@ static void ParseAndRoundTrip() {
     _ZN3sce4Json5ValueD1Ev(&root);
 }
 
+static std::string Nested(std::size_t depth, bool objects) {
+    std::string text;
+    for (std::size_t i = 0; i < depth; ++i) text += objects ? "{\"a\":" : "[";
+    text += "1";
+    for (std::size_t i = 0; i < depth; ++i) text += objects ? "}" : "]";
+    return text;
+}
+
+static void NestingDepth() {
+    Value root{};
+    _ZN3sce4Json5ValueC1Ev(&root);
+    for (const bool objects : {false, true}) {
+        const std::string accepted = Nested(512, objects);
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, accepted.c_str(), accepted.size()) == 0);
+        for (const std::size_t depth : {std::size_t{513}, std::size_t{100000}}) {
+            const std::string rejected = Nested(depth, objects);
+            Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, rejected.c_str(), rejected.size()) < 0);
+        }
+    }
+    _ZN3sce4Json5ValueD1Ev(&root);
+}
+
 static void ObjectsAndArrays() {
     Object object{};
     _ZN3sce4Json6ObjectC1Ev(&object);
@@ -255,6 +277,7 @@ static void NullAccess() {
 
 int main() {
     ParseAndRoundTrip();
+    NestingDepth();
     ObjectsAndArrays();
     NullAccess();
 }

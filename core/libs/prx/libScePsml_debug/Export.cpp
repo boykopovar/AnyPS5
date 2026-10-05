@@ -3,7 +3,32 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr std::int32_t SCE_PSML_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x8A810001);
+
+}
+
 extern "C" {
+
+std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement1100(void* requirement, const void* param) {
+ (void)requirement;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
+}
+
+std::int32_t APS5_VABI scePsmlMfsrCreateContext1100(void** context, const void* param) {
+ (void)context;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
+}
+
+std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1100(void* context, void* commandBuffer, const void* param) {
+ (void)context;
+ (void)commandBuffer;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
+}
 
 APS5_EXPORT("+2KpvixvL6E", scePsmlUnknown__P2KpvixvL6E);
 int APS5_VABI scePsmlUnknown__P2KpvixvL6E() {
@@ -11,14 +36,12 @@ int APS5_VABI scePsmlUnknown__P2KpvixvL6E() {
  return 0;
 }
 
-APS5_EXPORT("3WVD91e12ZQ", scePsmlUnknown_3WVD91e12ZQ);
-int APS5_VABI scePsmlUnknown_3WVD91e12ZQ() {
+int APS5_VABI scePsmlMfsrInit() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("AHalTX9wFZY", scePsmlUnknown_AHalTX9wFZY);
-int APS5_VABI scePsmlUnknown_AHalTX9wFZY() {
+int APS5_VABI scePsmlMfsrGetDispatchMfsrPacketSizeInDwords() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -47,8 +70,7 @@ int APS5_VABI scePsmlUnknown_GJY0MvuTcs8() {
  return 0;
 }
 
-APS5_EXPORT("JaLBe0P3jSU", scePsmlUnknown_JaLBe0P3jSU);
-int APS5_VABI scePsmlUnknown_JaLBe0P3jSU() {
+int APS5_VABI scePsmlMfsrReleaseContext() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

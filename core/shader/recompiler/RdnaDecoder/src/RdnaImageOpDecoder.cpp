@@ -40,7 +40,31 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x35u, RdnaOpcode::ImageSampleBO, "image_sample_b_o", RdnaImageSampleFlagBias | RdnaImageSampleFlagOffset, true, false, false},
     {0x37u, RdnaOpcode::ImageSampleLzO, "image_sample_lz_o", RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, true, false, false},
     {0x38u, RdnaOpcode::ImageSampleCO, "image_sample_c_o", RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset, true, false, false},
-    {0x68u, RdnaOpcode::ImageSample, "image_sample_cd", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagCd, true, false, false},
+    {0x68u, RdnaOpcode::ImageSampleCd, "image_sample_cd", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagCd, true, false, false},
+    {0x69u, RdnaOpcode::ImageSampleCdCl, "image_sample_cd_cl", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagCd, true, false, false},
+    {0x6au, RdnaOpcode::ImageSampleCCd, "image_sample_c_cd", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagCd, true, false, false},
+    {0x6bu, RdnaOpcode::ImageSampleCCdCl, "image_sample_c_cd_cl", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagCd, true, false, false},
+    {0x6cu, RdnaOpcode::ImageSampleCdO, "image_sample_cd_o", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd, true, false, false},
+    {0x6du, RdnaOpcode::ImageSampleCdClO, "image_sample_cd_cl_o", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd, true, false, false},
+    {0x6eu, RdnaOpcode::ImageSampleCCdO, "image_sample_c_cd_o", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd, true, false, false},
+    {0x6fu, RdnaOpcode::ImageSampleCCdClO, "image_sample_c_cd_cl_o", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd, true, false, false},
+    {0xa2u, RdnaOpcode::ImageSampleDG16, "image_sample_d_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagG16, true, false, false},
+    {0xa3u, RdnaOpcode::ImageSampleDClG16, "image_sample_d_cl_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagG16, true, false, false},
+    {0xaau, RdnaOpcode::ImageSampleCDG16, "image_sample_c_d_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagG16, true, false, false},
+    {0xabu, RdnaOpcode::ImageSampleCDClG16, "image_sample_c_d_cl_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagG16, true, false, false},
+    {0xb2u, RdnaOpcode::ImageSampleDOG16, "image_sample_d_o_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset | RdnaImageSampleFlagG16, true, false, false},
+    {0xb3u, RdnaOpcode::ImageSampleDClOG16, "image_sample_d_cl_o_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagOffset | RdnaImageSampleFlagG16, true, false, false},
+    {0xbau, RdnaOpcode::ImageSampleCDOG16, "image_sample_c_d_o_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset | RdnaImageSampleFlagG16, true, false, false},
+    {0xbbu, RdnaOpcode::ImageSampleCDClOG16, "image_sample_c_d_cl_o_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagOffset | RdnaImageSampleFlagG16, true, false, false},
+    {0xe8u, RdnaOpcode::ImageSampleCdG16, "image_sample_cd_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0xe9u, RdnaOpcode::ImageSampleCdClG16, "image_sample_cd_cl_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0xeau, RdnaOpcode::ImageSampleCCdG16, "image_sample_c_cd_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0xebu, RdnaOpcode::ImageSampleCCdClG16, "image_sample_c_cd_cl_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0xecu, RdnaOpcode::ImageSampleCdOG16, "image_sample_cd_o_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0xedu, RdnaOpcode::ImageSampleCdClOG16, "image_sample_cd_cl_o_g16", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0xeeu, RdnaOpcode::ImageSampleCCdOG16, "image_sample_c_cd_o_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0xefu, RdnaOpcode::ImageSampleCCdClOG16, "image_sample_c_cd_cl_o_g16", RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagOffset | RdnaImageSampleFlagCd | RdnaImageSampleFlagG16, true, false, false},
+    {0x33u, RdnaOpcode::ImageSample, "image_sample_d_cl_o", RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagOffset, true, false, false},
     {0xa0u, RdnaOpcode::ImageSample, "image_sample_a", RdnaImageSampleFlagAdjust, true, false, false},
     {0xa1u, RdnaOpcode::ImageSample, "image_sample_cl_a", RdnaImageSampleFlagLodClamp | RdnaImageSampleFlagAdjust, true, false, false},
     {0xa5u, RdnaOpcode::ImageSample, "image_sample_b_a", RdnaImageSampleFlagBias | RdnaImageSampleFlagAdjust, true, false, false},
@@ -88,13 +112,29 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x18u, RdnaOpcode::ImageAtomicAnd, nullptr, 0, false, false, true},
     {0x19u, RdnaOpcode::ImageAtomicOr, nullptr, 0, false, false, true},
     {0x1au, RdnaOpcode::ImageAtomicXor, nullptr, 0, false, false, true},
+    {0x10u, RdnaOpcode::ImageAtomicCmpswap, nullptr, 0, false, false, true},
+    {0x12u, RdnaOpcode::ImageAtomicSub, nullptr, 0, false, false, true},
+    {0x14u, RdnaOpcode::ImageAtomicSmin, nullptr, 0, false, false, true},
+    {0x16u, RdnaOpcode::ImageAtomicSmax, nullptr, 0, false, false, true},
+    {0x1bu, RdnaOpcode::ImageAtomicInc, nullptr, 0, false, false, true},
+    {0x1cu, RdnaOpcode::ImageAtomicDec, nullptr, 0, false, false, true},
+    {0x1du, RdnaOpcode::ImageAtomicFcmpswap, nullptr, 0, false, false, true},
+    {0x1eu, RdnaOpcode::ImageAtomicFmin, nullptr, 0, false, false, true},
+    {0x1fu, RdnaOpcode::ImageAtomicFmax, nullptr, 0, false, false, true},
     {0x00u, RdnaOpcode::ImageLoad, nullptr, 0, false, false, false},
     {0x01u, RdnaOpcode::ImageLoadMip, nullptr, 0, false, false, false},
+    {0x02u, RdnaOpcode::ImageLoadPck, nullptr, 0, false, false, false},
+    {0x03u, RdnaOpcode::ImageLoadPckSgn, nullptr, 0, false, false, false},
+    {0x04u, RdnaOpcode::ImageLoadMipPck, nullptr, 0, false, false, false},
+    {0x05u, RdnaOpcode::ImageLoadMipPckSgn, nullptr, 0, false, false, false},
     {0x08u, RdnaOpcode::ImageStore, nullptr, 0, false, false, false},
     {0x09u, RdnaOpcode::ImageStoreMip, nullptr, 0, false, false, false},
+    {0x0au, RdnaOpcode::ImageStorePck, nullptr, 0, false, false, false},
+    {0x0bu, RdnaOpcode::ImageStoreMipPck, nullptr, 0, false, false, false},
     {0x0eu, RdnaOpcode::ImageGetResinfo, nullptr, 0, false, false, false},
     {0x60u, RdnaOpcode::ImageGetLod, nullptr, 0, false, false, false},
     {0xe6u, RdnaOpcode::ImageBvhIntersectRay, "image_bvh_intersect_ray", 0, false, false, false},
+    {0xe7u, RdnaOpcode::ImageBvh64IntersectRay, "image_bvh64_intersect_ray", 0, false, false, false},
 };
 
 const ImageOpcodeInfo& lookupOpcode(std::uint32_t opcode) {
@@ -107,12 +147,12 @@ const ImageOpcodeInfo& lookupOpcode(std::uint32_t opcode) {
 }
 
 void validateFlags(std::uint32_t flags) {
-    constexpr std::uint32_t known = (1u << 11u) - 1u;
+    constexpr std::uint32_t known = ((1u << 12u) - 1u) | RdnaImageSampleGradientCountMask;
     if ((flags & ~known) != 0u) {
         throw std::runtime_error("unknown image address flags");
     }
-    if ((flags & RdnaImageSampleFlagCd) != 0u) {
-        throw std::runtime_error("unsupported image coarse derivative (_cd) address layout");
+    if (((flags & RdnaImageSampleGradientCountMask) != 0u) != ((flags & RdnaImageSampleFlagDerivative) != 0u)) {
+        throw std::runtime_error("image derivative flags without a gradient count");
     }
     const auto lodModes = flags & (RdnaImageSampleFlagLod | RdnaImageSampleFlagBias | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLevelZero);
     if (std::popcount(lodModes) > 1) {
@@ -120,27 +160,45 @@ void validateFlags(std::uint32_t flags) {
     }
 }
 
-std::uint32_t componentWidth(std::uint32_t flags, std::uint32_t component) {
-    if ((flags & RdnaImageSampleFlagA16) == 0u) {
-        return 32;
-    }
+struct ComponentShape {
+    std::uint32_t width;
+    bool startsDword;
+};
+
+ComponentShape componentShape(std::uint32_t flags, std::uint32_t component) {
+    const bool a16 = (flags & RdnaImageSampleFlagA16) != 0u;
     std::uint32_t cursor = 0;
     if ((flags & RdnaImageSampleFlagOffset) != 0u) {
         if (component == cursor) {
-            return 32;
+            return {32, true};
         }
         ++cursor;
     }
     if ((flags & RdnaImageSampleFlagBias) != 0u) {
         if (component == cursor) {
-            return 16;
+            return {a16 ? 16u : 32u, !a16};
         }
         ++cursor;
     }
-    if ((flags & RdnaImageSampleFlagCompare) != 0u && component == cursor) {
-        return 32;
+    if ((flags & RdnaImageSampleFlagCompare) != 0u) {
+        if (component == cursor) {
+            return {32, true};
+        }
+        ++cursor;
     }
-    return 16;
+    const auto gradients = (flags & RdnaImageSampleGradientCountMask) >> RdnaImageSampleGradientCountShift;
+    if (component < cursor + gradients * 2u) {
+        if ((flags & RdnaImageSampleFlagG16) == 0u) {
+            return {32, true};
+        }
+        return {16, (component - cursor) % gradients == 0u};
+    }
+    cursor += gradients * 2u;
+    return {a16 ? 16u : 32u, !a16 || (gradients != 0u && component == cursor)};
+}
+
+bool isBiasComponent(std::uint32_t flags, std::uint32_t component) {
+    return (flags & RdnaImageSampleFlagBias) != 0u && component == ((flags & RdnaImageSampleFlagOffset) != 0u ? 1u : 0u);
 }
 
 RdnaImageDimension decodeDimension(std::uint32_t dimension) {
@@ -215,14 +273,14 @@ RdnaImageAddressComponent GetRdnaImageAddressComponentLayout(std::uint32_t flags
     }
     std::uint32_t offset = 0;
     for (std::uint32_t index = 0; index <= component; ++index) {
-        const auto width = componentWidth(flags, index);
-        if (width == 32u) {
+        const auto shape = componentShape(flags, index);
+        if (shape.startsDword) {
             offset = (offset + 31u) & ~31u;
         }
         if (index == component) {
-            return {offset, width};
+            return {offset, shape.width};
         }
-        offset += width;
+        offset += isBiasComponent(flags, index) ? 32u : shape.width;
     }
     throw std::runtime_error("invalid image address component");
 }
@@ -255,7 +313,9 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     }
     const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
     const auto& info = lookupOpcode(opcode);
-    const auto reservedWord0 = info.sample || info.gather ? 0x000350C0u : 0x000340C0u;
+    const bool samplerOp = info.sample || info.gather || opcode == 0x60u;
+    const auto texelStatusBits = samplerOp ? 0x00010000u : opcode <= 0x0eu ? 0x00030000u : 0u;
+    const auto reservedWord0 = (info.sample || info.gather ? 0x00035040u : info.atomic ? 0x000340C0u : 0x00034040u) & ~texelStatusBits;
     if ((word0 & reservedWord0) != 0u || (word1 & 0x3C000000u) != 0u) {
         char message[96];
         std::snprintf(message, sizeof(message), "unsupported or reserved MIMG control bits (words %08x %08x)", word0, word1);
@@ -271,23 +331,28 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     }
     const bool a16 = (word1 & 0x40000000u) != 0u;
     const bool d16 = (word1 & 0x80000000u) != 0u;
-    const auto flags = info.flags | (a16 ? RdnaImageSampleFlagA16 : 0u);
-    validateFlags(flags);
     const auto dimension = decodeDimension((word0 >> 3u) & 7u);
     const bool multisampled = dimension == RdnaImageDimension::Dim2DMsaa || dimension == RdnaImageDimension::Dim2DMsaaArray;
-    if (multisampled && (info.sample || info.gather || opcode == 0x60u || opcode == 1u || opcode == 9u)) {
+    if (multisampled && (info.sample || info.gather || opcode == 0x60u || (opcode >= 1u && opcode <= 5u) || opcode == 9u || opcode == 0x0bu)) {
         throw std::runtime_error("unsupported multisampled MIMG operation");
     }
+    auto flags = info.flags | (a16 ? RdnaImageSampleFlagA16 : 0u);
+    if ((info.flags & RdnaImageSampleFlagDerivative) != 0u) {
+        flags |= gradientCount(dimension) << RdnaImageSampleGradientCountShift;
+    }
+    validateFlags(flags);
     const auto dmask = (word0 >> 8u) & 15u;
-    if (dmask == 0u || ((info.gather || info.atomic) && !std::has_single_bit(dmask))) {
+    const bool compareSwap = info.opcode == RdnaOpcode::ImageAtomicCmpswap || info.opcode == RdnaOpcode::ImageAtomicFcmpswap;
+    if (dmask == 0u || (compareSwap ? dmask != 3u : (info.gather || info.atomic) && !std::has_single_bit(dmask))) {
         throw std::runtime_error("invalid MIMG data mask");
     }
     if (d16 && !(info.sample || info.gather || opcode == 0u || opcode == 1u || opcode == 8u || opcode == 9u)) {
         throw std::runtime_error("MIMG opcode does not support D16");
     }
-    const bool rayQuery = info.opcode == RdnaOpcode::ImageBvhIntersectRay;
-    std::uint32_t components = rayQuery ? (a16 ? 8u : 11u) : opcode == 0x0Eu ? 1u : coordinateCount(dimension);
-    if (opcode == 1u || opcode == 9u) {
+    const bool rayQuery64 = info.opcode == RdnaOpcode::ImageBvh64IntersectRay;
+    const bool rayQuery = rayQuery64 || info.opcode == RdnaOpcode::ImageBvhIntersectRay;
+    std::uint32_t components = rayQuery ? (a16 ? 8u : 11u) + (rayQuery64 ? 1u : 0u) : opcode == 0x0Eu ? 1u : coordinateCount(dimension);
+    if (opcode == 1u || opcode == 4u || opcode == 5u || opcode == 9u || opcode == 0x0bu) {
         ++components;
     }
     if (info.sample || info.gather) {
@@ -308,7 +373,8 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     }
     const auto dataComponents = info.gather ? 4u : static_cast<std::uint32_t>(std::popcount(dmask));
     const auto dataDwords = d16 ? (dataComponents + 1u) / 2u : dataComponents;
-    if (dataDwords > 256u - vdata) {
+    const auto statusDwords = (word0 & 0x00010000u) != 0u ? 1u : 0u;
+    if (dataDwords + statusDwords > 256u - vdata) {
         throw std::runtime_error("MIMG data register range overflow");
     }
     const auto resource = ((word1 >> 16u) & 31u) * 4u;
@@ -330,6 +396,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     instruction.dataDwordCount = dataDwords;
     instruction.glc = (word0 & 0x2000u) != 0u;
     instruction.slc = (word0 & 0x02000000u) != 0u;
+    instruction.dlc = (word0 & 0x80u) != 0u;
     instruction.imageGlc = instruction.glc;
     instruction.imageSlc = instruction.slc;
     instruction.imageA16 = a16;

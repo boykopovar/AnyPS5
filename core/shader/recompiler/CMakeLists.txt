@@ -1,4 +1,5 @@
 function(add_shader_recompiler target runtimeTarget)
+    cmake_parse_arguments(PARSE_ARGV 2 shaderCache "" "" "GUARD_SOURCES")
     if(NOT TARGET "${runtimeTarget}")
         message(FATAL_ERROR "Shader recompiler requires an existing runtime target: ${runtimeTarget}")
     endif()
@@ -72,6 +73,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/ScalarInstructions.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/VectorInstructions.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/FloatInstructions.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/Float64Instructions.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/IntegerInstructions.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/CompareInstructions.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/ControlFlowInstructions.cpp
@@ -94,6 +96,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ConstantFolder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DeadCodeEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ReadLaneEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceTracker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
@@ -114,6 +117,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvModule.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAnalysis.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAlu/SpirvAluEmitterMath.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAlu/SpirvAluEmitterFloat64.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvAlu/SpirvAluEmitterRegisters.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvFlowEmitter.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvImageEmitter.cpp
@@ -155,39 +159,100 @@ function(add_shader_recompiler target runtimeTarget)
 
     set(shaderCacheGeneratedDir "${CMAKE_CURRENT_BINARY_DIR}/${target}_generated")
     set(shaderCacheVersionHeader "${shaderCacheGeneratedDir}/ShaderCacheVersion.hpp")
-    set(shaderCacheDriverDir "${PROJECT_SOURCE_DIR}/core/libs/prx/libSceAgcDriver")
-    file(GLOB_RECURSE shaderCacheSources CONFIGURE_DEPENDS
+    file(GLOB_RECURSE shaderCacheRecompilerSources CONFIGURE_DEPENDS
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.cpp"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.hpp"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.h"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/*.cmake"
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CMakeLists.txt"
-            "${shaderCacheDriverDir}/*.cpp"
-            "${shaderCacheDriverDir}/*.hpp"
-            "${shaderCacheDriverDir}/*.h"
-            "${shaderCacheDriverDir}/*.comp"
-            "${shaderCacheDriverDir}/*.cmake"
-            "${shaderCacheDriverDir}/CMakeLists.txt"
     )
-    list(FILTER shaderCacheSources EXCLUDE REGEX "^${shaderCacheDriverDir}/(tests|tools)/")
-    if(ANYPS5_ENABLE_SPIRV_TOOLS AND EXISTS "${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Tools/CHANGES")
-        list(APPEND shaderCacheSources "${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Tools/CHANGES")
+    set(shaderCacheKeySources "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp")
+    foreach(source IN LISTS shaderCacheKeySources)
+        if(NOT EXISTS "${source}")
+            message(FATAL_ERROR "Shader disk cache key source does not exist: ${source}")
+        endif()
+        list(APPEND shaderCacheRecompilerSources "${source}")
+    endforeach()
+    set(shaderCacheGuardSources)
+    foreach(source IN LISTS shaderCache_GUARD_SOURCES)
+        get_filename_component(source "${source}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+        list(APPEND shaderCacheGuardSources "${source}")
+    endforeach()
+    list(REMOVE_ITEM shaderCacheGuardSources ${shaderCacheRecompilerSources})
+
+    find_package(Git QUIET)
+    set(shaderCacheSubmodules "${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Headers" "${PROJECT_SOURCE_DIR}/3rdparty/glslang")
+    if(ANYPS5_ENABLE_SPIRV_TOOLS)
+        list(APPEND shaderCacheSubmodules "${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Tools")
     endif()
-    list(JOIN shaderCacheSources "\n" shaderCacheSourceList)
+    set(shaderCacheSubmoduleStamps)
+    foreach(submodule IN LISTS shaderCacheSubmodules)
+        list(APPEND shaderCacheSubmoduleStamps "${submodule}/CMakeLists.txt")
+        if(NOT GIT_FOUND)
+            continue()
+        endif()
+        foreach(ref IN ITEMS HEAD refs/heads)
+            execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${submodule}" rev-parse --path-format=absolute --git-path ${ref}
+                    OUTPUT_VARIABLE stamp OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE status ERROR_QUIET)
+            if(status EQUAL 0 AND EXISTS "${stamp}" AND NOT IS_DIRECTORY "${stamp}")
+                list(APPEND shaderCacheSubmoduleStamps "${stamp}")
+            endif()
+        endforeach()
+    endforeach()
+
+    get_target_property(shaderCacheIncludeDirectories ${target} INCLUDE_DIRECTORIES)
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" shaderCacheBuildType)
+    set(shaderCacheExtra "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} ${CMAKE_BUILD_TYPE} spirv-tools=${ANYPS5_ENABLE_SPIRV_TOOLS} ${CMAKE_SYSTEM_PROCESSOR} flags=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${shaderCacheBuildType}}")
+    set(shaderCacheReviewedNames
+            BuildRectListShaders
+            CaptureResources
+            DebugProbeActive
+            DepthBitsTextureWidth
+            HashBytes
+            PixelInput
+            PixelInputBit
+            ReadWholeFile
+            Recompile
+            RecompileCacheKey::ContextHash
+            RecompileResult
+            ResolveSource
+            ResourceMaterializer::SpecializationNanoseconds
+            SetDebugProbeActive
+            ShaderCacheDirectory
+            ThreadOwned
+            WriteFileAtomically
+    )
+    set(shaderCacheManifest)
+    foreach(section IN ITEMS sources guard submodules includes reviewed)
+        if(section STREQUAL "sources")
+            set(entries ${shaderCacheRecompilerSources})
+        elseif(section STREQUAL "guard")
+            set(entries ${shaderCacheGuardSources})
+        elseif(section STREQUAL "submodules")
+            set(entries ${shaderCacheSubmodules})
+        elseif(section STREQUAL "includes")
+            set(entries ${shaderCacheIncludeDirectories})
+        else()
+            set(entries ${shaderCacheReviewedNames})
+        endif()
+        foreach(entry IN LISTS entries)
+            string(APPEND shaderCacheManifest "${section} ${entry}\n")
+        endforeach()
+    endforeach()
     set(shaderCacheListFile "${shaderCacheGeneratedDir}/sources.txt")
-    file(CONFIGURE OUTPUT "${shaderCacheListFile}" CONTENT "${shaderCacheSourceList}\n" @ONLY)
-    set(shaderCacheExtra "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} ${CMAKE_BUILD_TYPE} spirv-tools=${ANYPS5_ENABLE_SPIRV_TOOLS} ${CMAKE_SYSTEM_PROCESSOR}")
+    file(CONFIGURE OUTPUT "${shaderCacheListFile}" CONTENT "${shaderCacheManifest}" @ONLY)
     add_custom_command(
             OUTPUT "${shaderCacheVersionHeader}"
             COMMAND ${CMAKE_COMMAND}
             "-DROOT=${PROJECT_SOURCE_DIR}"
             "-DLIST_FILE=${shaderCacheListFile}"
             "-DRECOMPILER_DIR=${CMAKE_CURRENT_FUNCTION_LIST_DIR}"
+            "-DGIT=${GIT_EXECUTABLE}"
             "-DEXTRA=${shaderCacheExtra}"
             "-DOUTPUT=${shaderCacheVersionHeader}"
             -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ShaderCacheVersion.cmake"
-            DEPENDS ${shaderCacheSources} "${shaderCacheListFile}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ShaderCacheVersion.cmake"
-            COMMENT "Hashing the shader recompiler and AGC driver sources for the shader disk cache"
+            DEPENDS ${shaderCacheRecompilerSources} ${shaderCacheGuardSources} ${shaderCacheSubmoduleStamps} "${shaderCacheListFile}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ShaderCacheVersion.cmake"
+            COMMENT "Hashing the shader recompiler sources for the shader disk cache"
             VERBATIM
     )
     target_sources(${target} PRIVATE "${shaderCacheVersionHeader}")

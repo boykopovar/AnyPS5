@@ -6,6 +6,16 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+std::uint32_t RegisterListSize(std::uint32_t numRegs, const char* function) {
+    constexpr std::uint32_t bytesPerRegister = 3u * sizeof(std::uint32_t);
+    Agc::Command::Require(numRegs <= 0xffffffffu / bytesPerRegister, function, "register list size overflow");
+    return numRegs * bytesPerRegister;
+}
+
+}
+
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcCbSetUcRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues) {
@@ -29,9 +39,7 @@ std::uint32_t* APS5_VABI sceAgcCbSetShRegistersDirect(CommandBuffer* buf, const 
 }
 
 std::uint32_t APS5_VABI sceAgcCbSetShRegistersDirectGetSize(std::uint32_t numRegs) {
-    (void)numRegs;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterListSize(numRegs, __func__);
 }
 
 std::uint32_t* APS5_VABI sceAgcCbSetUcRegistersDirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs) {
@@ -39,9 +47,7 @@ std::uint32_t* APS5_VABI sceAgcCbSetUcRegistersDirect(CommandBuffer* buf, const 
 }
 
 std::uint32_t APS5_VABI sceAgcCbSetUcRegistersDirectGetSize(std::uint32_t numRegs) {
-    (void)numRegs;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterListSize(numRegs, __func__);
 }
 
 }

@@ -74,10 +74,8 @@ int APS5_VABI scePlayGoDialogGetResult(void* result) {
     return 0;
 }
 
-APS5_EXPORT("NOAMxY2EGS0", scePlayGoDialogUnknown00);
-int APS5_VABI scePlayGoDialogUnknown00(void) {
-    NotImplemented_nid_no_patch("NOAMxY2EGS0");
-    return 0;
+int APS5_VABI scePlayGoDialogGetStatus(void) {
+    return g_status.load();
 }
 
 }

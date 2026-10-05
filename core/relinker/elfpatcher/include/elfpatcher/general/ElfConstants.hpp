@@ -115,12 +115,7 @@ inline constexpr std::uint32_t kDynSymInfoFirstGlobal = 1;
 inline constexpr std::uint64_t kDynSymAlign = 8;
 inline constexpr std::uint32_t kDynamicLinkToStrTab = 2;
 
-inline constexpr std::uint8_t kStubOpPopRax = 0x58;
-inline constexpr std::uint8_t kStubOpMovRbxRsp[] = {0x48, 0x89, 0xe3};
-inline constexpr std::uint8_t kStubOpSubRsp0x30[] = {0x48, 0x83, 0xec, 0x30};
 inline constexpr std::uint8_t kStubOpAndRsp0xf0[] = {0x48, 0x83, 0xe4, 0xf0};
-inline constexpr std::uint8_t kStubOpMovDwordPtrRsp[] = {0x89, 0x04, 0x24};
-inline constexpr std::uint8_t kStubOpMovQwordPtrRsp8Rbx[] = {0x48, 0x89, 0x5c, 0x24, 0x08};
 inline constexpr std::uint8_t kStubOpMovRdiRsp[] = {0x48, 0x89, 0xe7};
 inline constexpr std::uint8_t kStubOpXorRsiRsi[] = {0x48, 0x31, 0xf6};
 inline constexpr std::uint8_t kStubOpCallRel32 = 0xe8;

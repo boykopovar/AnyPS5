@@ -21,6 +21,19 @@ int64_t APS5_VABI time_nid_postfix(int64_t* timer) {
     return libc_time_nid_postfix(timer);
 }
 
+int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const uint64_t t = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
+    return static_cast<int64_t>(t / 10);
+#else
+    timespec now{};
+    clock_gettime(CLOCK_REALTIME, &now);
+    return static_cast<int64_t>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
+#endif
+}
+
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0) {
     return std::difftime(static_cast<std::time_t>(time1), static_cast<std::time_t>(time0));
 }

@@ -25,7 +25,9 @@ struct Submission {
     std::shared_ptr<const ShaderRegistry> shaders;
     std::map<std::size_t, std::shared_ptr<IFlipRequest>> flips;
     std::map<std::size_t, std::shared_ptr<IRenderingWait>> renderingWaits;
+    std::map<std::size_t, std::size_t> conditionalEnds;
     bool suspend = false;
+    bool waitFree = false;
 
     std::uint64_t received = 0;
     std::vector<std::uint64_t> labelWrites;

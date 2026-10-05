@@ -6,6 +6,7 @@
 #include <cstring>
 
 static constexpr int SCE_AMPR_ERROR_BUFFER_FULL = 0x8002001C;
+static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 
 static int Append(Apr::CommandBufferObject* buffer, const void* command, uint32_t bytes) {
     if (!buffer->base || bytes > buffer->size - buffer->offset) return SCE_AMPR_ERROR_BUFFER_FULL;
@@ -22,39 +23,81 @@ static int AppendCommand(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, T
     return Append(buffer, &command, sizeof(command));
 }
 
+static bool ValidCounter(std::uint32_t counter) {
+    return counter < 128u;
+}
+
+static bool ValidWriteAddress(volatile std::uint64_t* address) {
+    return address && (reinterpret_cast<std::uintptr_t>(address) & 7u) == 0u;
+}
+
+static bool ValidWait(std::uint32_t compare, std::uint32_t flush) {
+    return compare < 4u && flush < 2u;
+}
+
+static std::uint64_t MarkerBytes(const char* text) {
+    return sizeof(Apr::MarkerCommand) + ((std::strlen(text) + 8) & ~std::uint64_t{7});
+}
+
+static std::uint64_t MeasureMarker(const char* text) {
+    if (!text) return static_cast<std::uint32_t>(SCE_KERNEL_ERROR_EINVAL);
+    return MarkerBytes(text);
+}
+
+static int AppendMarker(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, const char* text) {
+    if (!buffer || !text) return SCE_KERNEL_ERROR_EINVAL;
+    const std::uint64_t bytes = MarkerBytes(text);
+    if (!buffer->base || bytes > buffer->size - buffer->offset) return SCE_AMPR_ERROR_BUFFER_FULL;
+    const Apr::MarkerCommand command{{opcode, static_cast<std::uint32_t>(bytes)}};
+    std::uint8_t* destination = buffer->base + buffer->offset;
+    std::memset(destination, 0, bytes);
+    std::memcpy(destination, &command, sizeof(command));
+    std::memcpy(destination + sizeof(command), text, std::strlen(text));
+    buffer->offset += static_cast<std::uint32_t>(bytes);
+    ++buffer->numCommands;
+    return 0;
+}
+
 extern "C" {
 
 int APS5_VABI sceAmprCommandBufferWriteAddressOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint64_t value) {
-    if (!address) return static_cast<int>(0x80020016);
+    if (!ValidWriteAddress(address)) return SCE_KERNEL_ERROR_EINVAL;
     return AppendCommand(buffer, Apr::Opcode::WriteAddress, Apr::WriteAddressCommand{{}, reinterpret_cast<std::uint64_t>(address), value, 0, 0});
 }
 
-int APS5_VABI sceAmprCommandBufferWriteCounterOnCompletion(Apr::CommandBufferObject* buffer, std::uint32_t counter, std::uint32_t value) {
+int APS5_VABI sceAmprCommandBufferWriteCounterOnCompletion(Apr::CommandBufferObject* buffer, std::uint8_t counter, std::uint32_t value) {
+    if (!ValidCounter(counter)) return SCE_KERNEL_ERROR_EINVAL;
     return AppendCommand(buffer, Apr::Opcode::WriteCounter, Apr::WriteCounterCommand{{}, counter, value});
 }
 
-int APS5_VABI sceAmprCommandBufferWaitOnAddress(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t compare) {
-    return AppendCommand(buffer, Apr::Opcode::WaitOnAddress, Apr::WaitCommand{{}, reinterpret_cast<std::uint64_t>(address), reference, mask, 0, compare});
+int APS5_VABI sceAmprCommandBufferWaitOnAddress(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint64_t reference, std::uint8_t compare, std::uint8_t flush) {
+    if ((reinterpret_cast<std::uintptr_t>(address) & 7u) != 0u || !ValidWait(compare, flush)) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendCommand(buffer, Apr::Opcode::WaitOnAddress, Apr::WaitCommand{{}, reinterpret_cast<std::uint64_t>(address), reference, ~0ull, 0, compare});
 }
 
-int APS5_VABI sceAmprCommandBufferWaitOnCounter(Apr::CommandBufferObject* buffer, std::uint32_t counter, std::uint32_t reference, std::uint32_t compare) {
+int APS5_VABI sceAmprCommandBufferWaitOnCounter(Apr::CommandBufferObject* buffer, std::uint8_t counter, std::uint32_t reference, std::uint8_t compare, std::uint8_t flush) {
+    if (!ValidCounter(counter) || !ValidWait(compare, flush)) return SCE_KERNEL_ERROR_EINVAL;
     return AppendCommand(buffer, Apr::Opcode::WaitOnCounter, Apr::WaitCommand{{}, 0, reference, ~0ull, counter, compare});
 }
 
-int APS5_VABI sceAmprCommandBufferWriteKernelEventQueueOnCompletion(Apr::CommandBufferObject* buffer, std::uint64_t equeue, std::uint64_t ident, std::uint64_t data, std::uint64_t userData) {
-    return AppendCommand(buffer, Apr::Opcode::WriteKernelEventQueue, Apr::WriteKernelEventQueueCommand{{}, equeue, ident, data, userData});
+int APS5_VABI sceAmprCommandBufferWriteKernelEventQueueOnCompletion(Apr::CommandBufferObject* buffer, std::uint64_t equeue, std::int32_t ident, std::uint64_t data) {
+    if (!equeue) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendCommand(buffer, Apr::Opcode::WriteKernelEventQueue, Apr::WriteKernelEventQueueCommand{{}, equeue, static_cast<std::uint64_t>(ident), data, 0});
 }
 
 int APS5_VABI sceAmprCommandBufferWriteAddressFromTimeCounterOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address) {
+    if (!ValidWriteAddress(address)) return SCE_KERNEL_ERROR_EINVAL;
     return AppendCommand(buffer, Apr::Opcode::WriteAddressFromTimeCounter, Apr::WriteAddressFromCounterCommand{{}, reinterpret_cast<std::uint64_t>(address), 0, 0});
 }
 
-int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint32_t counter) {
+int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint8_t counter) {
+    if (!ValidWriteAddress(address) || !ValidCounter(counter)) return SCE_KERNEL_ERROR_EINVAL;
     return AppendCommand(buffer, Apr::Opcode::WriteAddressFromCounter, Apr::WriteAddressFromCounterCommand{{}, reinterpret_cast<std::uint64_t>(address), counter, 0});
 }
 
-int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint32_t counter0, std::uint32_t counter1) {
-    return AppendCommand(buffer, Apr::Opcode::WriteAddressFromCounterPair, Apr::WriteAddressFromCounterCommand{{}, reinterpret_cast<std::uint64_t>(address), counter0, counter1});
+int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint8_t counter) {
+    if (!ValidWriteAddress(address) || (counter & 0x81u) != 0u) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendCommand(buffer, Apr::Opcode::WriteAddressFromCounterPair, Apr::WriteAddressFromCounterCommand{{}, reinterpret_cast<std::uint64_t>(address), counter, counter + 1u});
 }
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressOnCompletion() { return sizeof(Apr::WriteAddressCommand); }
@@ -182,19 +225,17 @@ int APS5_VABI sceAmprCommandBufferNopWithData() {
  return 0;
 }
 
-int APS5_VABI sceAmprCommandBufferPopMarker() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceAmprCommandBufferPopMarker(Apr::CommandBufferObject* buffer) {
+    return AppendCommand(buffer, Apr::Opcode::PopMarker, Apr::MarkerCommand{});
 }
 
-int APS5_VABI sceAmprCommandBufferPushMarker() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceAmprCommandBufferPushMarker(Apr::CommandBufferObject* buffer, const char* text) {
+    return AppendMarker(buffer, Apr::Opcode::PushMarker, text);
 }
 
-int APS5_VABI sceAmprCommandBufferPushMarkerWithColor() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceAmprCommandBufferPushMarkerWithColor(Apr::CommandBufferObject* buffer, const char* text, std::uint32_t color) {
+    (void)color;
+    return AppendMarker(buffer, Apr::Opcode::PushMarker, text);
 }
 
 int APS5_VABI sceAmprCommandBufferReset(Apr::CommandBufferObject* buffer) {
@@ -211,14 +252,13 @@ int APS5_VABI sceAmprCommandBufferSetBuffer(Apr::CommandBufferObject* buffer, vo
     return 0;
 }
 
-int APS5_VABI sceAmprCommandBufferSetMarker() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceAmprCommandBufferSetMarker(Apr::CommandBufferObject* buffer, const char* text) {
+    return AppendMarker(buffer, Apr::Opcode::SetMarker, text);
 }
 
-int APS5_VABI sceAmprCommandBufferSetMarkerWithColor() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceAmprCommandBufferSetMarkerWithColor(Apr::CommandBufferObject* buffer, const char* text, const std::uint32_t* color) {
+    if (!color) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendMarker(buffer, Apr::Opcode::SetMarker, text);
 }
 
 int APS5_VABI sceAmprCommandBufferWaitOnAddress_04_00() {
@@ -290,19 +330,17 @@ int APS5_VABI sceAmprMeasureCommandSizeNopWithData() {
  return 0;
 }
 
-int APS5_VABI sceAmprMeasureCommandSizePopMarker() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker() {
+    return sizeof(Apr::MarkerCommand);
 }
 
-int APS5_VABI sceAmprMeasureCommandSizePushMarker() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarker(const char* text) {
+    return MeasureMarker(text);
 }
 
-int APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char* text, std::uint32_t color) {
+    (void)color;
+    return MeasureMarker(text);
 }
 
 uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(void) {
@@ -329,14 +367,13 @@ int APS5_VABI sceAmprMeasureCommandSizeResetGatherScatterState() {
  return 0;
 }
 
-int APS5_VABI sceAmprMeasureCommandSizeSetMarker() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarker(const char* text) {
+    return MeasureMarker(text);
 }
 
-int APS5_VABI sceAmprMeasureCommandSizeSetMarkerWithColor() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarkerWithColor(const char* text, std::uint32_t color) {
+    (void)color;
+    return MeasureMarker(text);
 }
 
 int APS5_VABI sceAmprMeasureCommandSizeWaitOnAddress_04_00() {

@@ -17,6 +17,8 @@ struct PosixSemaphore {
 };
 
 static constexpr int GUEST_EAGAIN = 35;
+static constexpr int GUEST_EOVERFLOW = 84;
+static constexpr unsigned int GUEST_SEM_VALUE_MAX = 0x7fffffffu;
 static constexpr int GUEST_REALTIME_CLOCK = 0;
 
 static int Fail(int error) {
@@ -47,7 +49,7 @@ extern "C" {
 
 int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
     (void)pshared;
-    if (!sem) return Fail(PosixThread::GUEST_EINVAL);
+    if (!sem || value > GUEST_SEM_VALUE_MAX) return Fail(PosixThread::GUEST_EINVAL);
     auto* semaphore = new PosixSemaphore();
     semaphore->count = value;
     std::memcpy(sem, &semaphore, sizeof(semaphore));
@@ -97,6 +99,7 @@ int APS5_VABI sem_post_nid_postfix(void* sem) {
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
     {
         std::lock_guard lock(semaphore->lock);
+        if (semaphore->count == GUEST_SEM_VALUE_MAX) return Fail(GUEST_EOVERFLOW);
         ++semaphore->count;
     }
     semaphore->available.NotifyOne();

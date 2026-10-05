@@ -1,5 +1,6 @@
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include <array>
 #include <string>
 #include <string_view>
@@ -268,6 +269,57 @@ void RunGuestTextureResourceTests() {
     partialMips.maxMip = 2;
     const auto partial = DecodeTextureResource(pack(partialMips));
     Require(partial.lastLevel == 1 && partial.mipCount == 3, "a view over part of the mip chain decoded wrongly");
+
+    Fields pastLast = base;
+    pastLast.base40 = 0x55ea000ull;
+    pastLast.format = 71;
+    pastLast.width = 1920;
+    pastLast.height = 1080;
+    pastLast.tileModeRaw = 0x1b;
+    pastLast.maxMip = 5;
+    pastLast.baseLevel = 6;
+    pastLast.lastLevel = 6;
+    const auto tailView = DecodeTextureResource(pack(pastLast));
+    Require(tailView.baseLevel == 6 && tailView.lastLevel == 6 && tailView.mipCount == 7, "a view one level past the last mip must address that level of the chain");
+    auto allocated = tailView;
+    allocated.mipCount = 6;
+    const auto allocatedSurface = DescribeSurface(allocated);
+    const auto viewSurface = DescribeSurface(tailView);
+    Require(allocatedSurface.guestBytes == 0x1640000u && viewSurface.guestBytes == 0x1640000u, "a 1920x1080 64 bpp SW_64KB_R_X chain must take addrlib's 0x1640000 bytes with 6 and with 7 levels");
+    constexpr std::array<std::uint64_t, 7> addrlibOffsets{0x650000u, 0x1d0000u, 0x90000u, 0x30000u, 0x10000u, 0u, 0u};
+    for (std::uint32_t level = 0; level < 7; ++level) {
+        Require(viewSurface.mips[level].tiledOffset == addrlibOffsets[level] && viewSurface.mips[level].tail == (level >= 5), "the 7-level chain must place each level at its addrlib offset");
+        if (level < 6) Require(allocatedSurface.mips[level].tiledOffset == addrlibOffsets[level] && allocatedSurface.mips[level].tail == viewSurface.mips[level].tail && allocatedSurface.mips[level].tailX == viewSurface.mips[level].tailX && allocatedSurface.mips[level].tailY == viewSurface.mips[level].tailY, "the level past the last mip must not move the allocated levels");
+    }
+    Require(viewSurface.mips[5].tailX == 64 && viewSurface.mips[5].tailY == 0, "the last allocated level must sit in its addrlib tail slot");
+    Require(viewSurface.mips[6].tailX == 0 && viewSurface.mips[6].tailY == 32, "the level past the last mip must sit in its addrlib tail slot");
+    pastLast.lastLevel = 8;
+    const auto deeperView = DecodeTextureResource(pack(pastLast));
+    Require(deeperView.mipCount == 9, "a view past the last mip must cover every level it names");
+    const auto deeperSurface = DescribeSurface(deeperView);
+    Require(deeperSurface.guestBytes == 0x1640000u && deeperSurface.mips[7].tail && deeperSurface.mips[7].tailX == 32 && deeperSurface.mips[7].tailY == 0 && deeperSurface.mips[8].tail && deeperSurface.mips[8].tailX == 0 && deeperSurface.mips[8].tailY == 16, "levels 7 and 8 must sit in their addrlib tail slots");
+
+    Fields pastLinear = base;
+    pastLinear.maxMip = 1;
+    pastLinear.baseLevel = 2;
+    pastLinear.lastLevel = 2;
+    rejectFields(pastLinear, "would move the surface's own");
+    auto linearChain = partial;
+    linearChain.mipCount = 2;
+    const auto linearAllocated = DescribeSurface(linearChain).guestBytes;
+    linearChain.mipCount = 3;
+    Require(linearAllocated == 0x1800u && DescribeSurface(linearChain).guestBytes == 0x1c00u, "a third level must grow a 16x16 32 bpp linear chain from addrlib's 0x1800 to 0x1c00 bytes");
+
+    Fields pastUntailed = pastLast;
+    pastUntailed.maxMip = 0;
+    pastUntailed.baseLevel = 1;
+    pastUntailed.lastLevel = 1;
+    rejectFields(pastUntailed, "would move the surface's own");
+    auto untailedChain = tailView;
+    untailedChain.mipCount = 1;
+    const auto untailedAllocated = DescribeSurface(untailedChain).guestBytes;
+    untailedChain.mipCount = 2;
+    Require(untailedAllocated == 0xff0000u && DescribeSurface(untailedChain).guestBytes == 0x1470000u, "a second level must grow a 1920x1080 64 bpp SW_64KB_R_X surface from addrlib's 0xff0000 to 0x1470000 bytes");
 
     std::array<std::uint32_t, 4> shortWords{};
     reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");

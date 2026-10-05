@@ -129,6 +129,7 @@ struct GpuKeyStore {
     std::uint64_t begin;
     std::uint64_t end;
     DccKeys keys = DccKeys::Uncompressed;
+    std::uint64_t note = 0;
 };
 
 struct KeyStoreMemo {
@@ -232,7 +233,7 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
         std::lock_guard lock(memo.mutex);
         const auto end = begin + count;
         std::erase_if(memo.entries, [&](const GpuKeyStore& store) { return begin < store.end && store.begin < end; });
-        if (MemoRecorder(memo) == &recorder) memo.entries.push_back({begin, end});
+        if (MemoRecorder(memo) == &recorder) memo.entries.push_back({begin, end, DccKeys::Uncompressed, recorder.LastWriteNote(begin, count)});
     }
     CountStore(Scans().gpuStores);
     TraceKeyStore("gpu", begin, count);
@@ -257,10 +258,30 @@ void NoteKeysFillOnGpu(std::uint64_t begin, std::size_t count, DccKeys keys) {
     std::lock_guard lock(memo.mutex);
     const auto end = begin + count;
     std::erase_if(memo.entries, [&](const GpuKeyStore& store) { return begin < store.end && store.begin < end; });
-    if (MemoRecorder(memo) != nullptr) memo.entries.push_back({begin, end, keys});
+    auto* recorder = MemoRecorder(memo);
+    if (recorder != nullptr) memo.entries.push_back({begin, end, keys, GuestMemory::GpuMutex().HeldByThisThread() ? recorder->LastWriteNote(begin, count) : 0});
 }
 
 namespace {
+
+std::optional<DccKeys> PendingStoreKeys(Recorder& recorder, std::uint64_t begin, std::size_t count) {
+    const auto end = begin + count;
+    std::uint64_t note = 0;
+    DccKeys keys = DccKeys::Mixed;
+    {
+        auto& memo = Memo();
+        std::lock_guard lock(memo.mutex);
+        if (MemoRecorder(memo) != &recorder) return std::nullopt;
+        for (const auto& store : memo.entries) {
+            if (store.note == 0 || store.begin > begin || store.end < end) continue;
+            note = store.note;
+            keys = store.keys;
+            break;
+        }
+    }
+    if (note == 0 || AnyShadowedOverlaps(begin, count) || recorder.NewestWriteNote(begin, count) != note) return std::nullopt;
+    return keys;
+}
 
 // Whether the keys already read as uncompressed: scans the same bytes as ReadDccKeys, so it counts
 // as a scan too.
@@ -424,6 +445,7 @@ DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
     const auto count = static_cast<std::size_t>(surfaceBytes / KeyBytes);
     if (metaAddress != 0 && count != 0 && GuestMemory::GpuMutex().HeldByThisThread()) {
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(metaAddress, count)) {
+            if (const auto keys = PendingStoreKeys(*recorder, metaAddress, count)) return *keys;
             Recorder::CountSync(2);
             recorder->SyncThrough(metaAddress, count);
         }

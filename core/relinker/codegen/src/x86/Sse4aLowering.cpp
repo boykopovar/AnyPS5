@@ -29,6 +29,10 @@ void _nopFill(std::vector<std::uint8_t>& out, std::size_t count) {
     }
 }
 
+void _zeroUpper(StubBodyBuilder& body, const std::uint8_t dst) {
+    body.Sse(kPrefixScalar, {0x0F, 0x7E}, dst, dst);
+}
+
 std::uint64_t _fieldMask(const std::uint8_t length) {
     return length >= kFieldBits ? ~std::uint64_t{0} : ((std::uint64_t{1} << length) - 1);
 }
@@ -101,6 +105,7 @@ void _emitOutOfLine(StubBodyBuilder& body, const Sse4aOperands& operands) {
         body.Sse(kPrefixPacked, {0x0F, 0xD3}, dst, scratch[0]);
         body.Sse(kPrefixPacked, {0x0F, 0xF3}, dst, scratch[1]);
         body.Sse(kPrefixPacked, {0x0F, 0xD3}, dst, scratch[1]);
+        _zeroUpper(body, dst);
         body.Restore(scratch[1]);
         body.Restore(scratch[0]);
         return;
@@ -124,6 +129,7 @@ void _emitOutOfLine(StubBodyBuilder& body, const Sse4aOperands& operands) {
                 body.ShiftImm(kShiftLeft, dst, static_cast<std::uint8_t>(kFieldBits - length));
                 body.ShiftImm(kShiftRight, dst, static_cast<std::uint8_t>(kFieldBits - length));
             }
+            _zeroUpper(body, dst);
         }
     } else if (byteAligned) {
         if (src != dst)
@@ -150,6 +156,7 @@ void _emitOutOfLine(StubBodyBuilder& body, const Sse4aOperands& operands) {
             hole[byte] = static_cast<std::uint8_t>(holeMask >> (byte * 8));
         body.RipOperand({0x0F, 0xDB}, scratch, hole);
         body.Sse(kPrefixPacked, {0x0F, 0xEF}, dst, scratch);
+        _zeroUpper(body, dst);
         body.Restore(scratch);
     }
 }
@@ -166,21 +173,15 @@ std::optional<std::vector<std::uint8_t>> Sse4aLowering::LowerInPlace(const Sse4a
     std::vector<std::uint8_t> sequence;
     if (operands.Insertq) {
         if (dst == src && index == 0) {
+            EmitSse(sequence, kPrefixScalar, {0x0F, 0x7E}, dst, dst);
         } else if (length == kFieldBits && index == 0) {
             EmitSse(sequence, kPrefixScalar, {0x0F, 0x7E}, dst, src);
-        } else if (index == 0 && length % 16 == 0) {
-            EmitSse(sequence, kPrefixPacked, {0x0F, 0x3A, 0x0E}, dst, src);
-            sequence.push_back(static_cast<std::uint8_t>((1u << (length / 16)) - 1));
         } else {
             return std::nullopt;
         }
     } else {
         if (index == 0 && length == kFieldBits) {
-        } else if (index + length == kFieldBits) {
-            EmitShiftImm(sequence, kShiftRight, dst, index);
-        } else if (index == 0 && (length == 8 || length == 16 || length == 32)) {
-            const std::uint8_t opcode = length == 8 ? 0x32 : (length == 16 ? 0x34 : 0x35);
-            EmitSse(sequence, kPrefixPacked, {0x0F, 0x38, opcode}, dst, dst);
+            EmitSse(sequence, kPrefixScalar, {0x0F, 0x7E}, dst, dst);
         } else {
             return std::nullopt;
         }

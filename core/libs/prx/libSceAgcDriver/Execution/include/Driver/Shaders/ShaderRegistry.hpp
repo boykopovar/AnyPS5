@@ -39,6 +39,8 @@ using ShaderRegistry = std::map<std::uint64_t, std::shared_ptr<const ShaderSnaps
 
 bool FailureMemo();
 
+std::uint64_t NullPixelProgramAddress();
+
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, std::uint64_t deviceSerial, const ShaderRecompiler::RecompileRequest& request, bool bypass, const std::string** poisoned = nullptr);
 
 }

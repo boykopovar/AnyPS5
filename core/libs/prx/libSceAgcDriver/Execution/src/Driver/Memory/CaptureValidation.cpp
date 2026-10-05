@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -14,7 +15,8 @@ bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captu
     double waited = 0;
     PendingView pending;
     pending.Load();
-    thread_local std::vector<std::byte> known;
+    thread_local std::vector<std::byte>* knownSlot = nullptr;
+    auto& known = ShaderRecompiler::ThreadOwned(knownSlot);
     for (const auto& region : captured) {
         if (!stable) break;
         known.resize(region.bytes.size());
@@ -58,7 +60,8 @@ bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captu
 bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped, std::optional<SampledReadScope>* sampling, const DataMask* data) {
     using Policy = ShaderMemory::PendingWrite;
 
-    thread_local std::vector<std::size_t> pending;
+    thread_local std::vector<std::size_t>* pendingSlot = nullptr;
+    auto& pending = ShaderRecompiler::ThreadOwned(pendingSlot);
     pending.clear();
     for (std::size_t i = 0; i < captured.size(); ++i) {
         const auto& region = captured[i];
@@ -66,7 +69,8 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
     }
 
     const auto compareMasked = [&](const ShaderRecompiler::MemoryRegion& region, std::size_t first) {
-        thread_local std::vector<std::byte> live;
+        thread_local std::vector<std::byte>* liveSlot = nullptr;
+        auto& live = ShaderRecompiler::ThreadOwned(liveSlot);
         live.resize(region.bytes.size());
         const auto copied = GuestMemory::CopyMapped(region.guestAddress, live);
         if (copied != GuestMemory::Compare::Equal) return copied;
@@ -84,9 +88,12 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
     };
 
     static constexpr std::size_t NoKnownValue = std::numeric_limits<std::size_t>::max();
-    thread_local std::vector<Policy> policies;
-    thread_local std::vector<std::size_t> knownOffsets;
-    thread_local std::vector<std::byte> knownBytes;
+    thread_local std::vector<Policy>* policiesSlot = nullptr;
+    thread_local std::vector<std::size_t>* knownOffsetsSlot = nullptr;
+    thread_local std::vector<std::byte>* knownBytesSlot = nullptr;
+    auto& policies = ShaderRecompiler::ThreadOwned(policiesSlot);
+    auto& knownOffsets = ShaderRecompiler::ThreadOwned(knownOffsetsSlot);
+    auto& knownBytes = ShaderRecompiler::ThreadOwned(knownBytesSlot);
     policies.assign(pending.size(), Policy::None);
     knownOffsets.assign(pending.size(), NoKnownValue);
     knownBytes.clear();

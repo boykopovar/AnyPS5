@@ -30,6 +30,26 @@ void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCop
 
 std::array<std::uint32_t, 4> MeshIndexBufferDescriptor(const Pm4::DrawParameters& draw, std::uint64_t unreadAddress);
 
+struct MeshArguments {
+    std::uint32_t groups;
+    std::uint32_t instances;
+    std::uint32_t layers;
+    std::uint32_t indexCount;
+    std::uint32_t firstIndex;
+};
+static_assert(sizeof(MeshArguments) == ShaderRecompiler::MeshArgumentBytes);
+struct MeshArgumentRules {
+    std::uint32_t indexCount;
+    std::uint32_t inputSize;
+    std::uint32_t step;
+    std::uint32_t primitivesPerGroup;
+    std::uint32_t maxGroups;
+    std::uint32_t maxInstances;
+    std::uint32_t maxTotal;
+};
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
+
 // Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not
 // recordable (no recorder, APS5_SYNC_DRAWS, APS5_DUMP_TARGETS), a resident target is gone from the
 // storage cache, the template is gone, the pipeline is gone from the pipeline store, or the

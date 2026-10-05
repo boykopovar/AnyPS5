@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 #include "prx/libc/include/GuestArena.hpp"
 #include <atomic>
 #include <chrono>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 #include <mutex>
 #include "Sse4aEmulation.hpp"
@@ -27,6 +29,8 @@ void Report(const char* format, ...) {
     DWORD written = 0;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(length), &written, nullptr);
 }
+
+void ReportAllThreads();
 
 void DescribeAddress(std::uint64_t address, char* buffer, std::size_t size) {
     HMODULE module = nullptr;
@@ -330,12 +334,108 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         }
     }
     std::fflush(stderr);
+    ReportAllThreads();
+    std::fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
+}
+
+std::size_t CaptureFrames(const CONTEXT* context, std::uint64_t* frames, std::size_t capacity) {
+    std::size_t count = 0;
+    std::uint64_t frame = context->Rbp;
+    while (count < capacity && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8)) {
+        const auto returnAddress = reinterpret_cast<const std::uint64_t*>(frame)[1];
+        if (!IsExecutable(returnAddress)) break;
+        frames[count++] = returnAddress;
+        const auto next = reinterpret_cast<const std::uint64_t*>(frame)[0];
+        if (next <= frame) break;
+        frame = next;
+    }
+    return count;
+}
+
+void ReportThreadContext(const CONTEXT* context, DWORD threadId, const char* name, const std::uint64_t* frames, std::size_t frameCount) {
+    char line[MAX_PATH + 64];
+    Report("  thread %lu '%s': rip ", static_cast<unsigned long>(threadId), name ? name : "");
+    DescribeAddress(context->Rip, line, sizeof(line));
+    Report("%s rsp 0x%016llx rbp 0x%016llx\n", line, static_cast<unsigned long long>(context->Rsp), static_cast<unsigned long long>(context->Rbp));
+    for (std::size_t depth = 0; depth < frameCount; ++depth) {
+        DescribeAddress(frames[depth], line, sizeof(line));
+        Report("    #%llu %s\n", static_cast<unsigned long long>(depth), line);
+    }
+}
+
+void ReportAllThreads() {
+    const DWORD current = GetCurrentThreadId();
+    const DWORD pid = GetCurrentProcessId();
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    struct CapturedThread {
+        DWORD id;
+        char name[128];
+        CONTEXT context;
+        std::uint64_t frames[12];
+        std::size_t frameCount;
+    };
+    static CapturedThread captured[128];
+    std::size_t capturedCount = 0;
+    std::size_t skippedCount = 0;
+    if (Thread32First(snapshot, &entry)) {
+        do {
+            if (entry.th32OwnerProcessID != pid || entry.th32ThreadID == current) continue;
+            if (capturedCount >= sizeof(captured) / sizeof(captured[0])) {
+                ++skippedCount;
+                continue;
+            }
+            HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+            if (!thread) continue;
+            if (SuspendThread(thread) == static_cast<DWORD>(-1)) {
+                CloseHandle(thread);
+                continue;
+            }
+            CONTEXT context{};
+            context.ContextFlags = CONTEXT_FULL;
+            const BOOL haveContext = GetThreadContext(thread, &context);
+            std::uint64_t frames[12] = {};
+            const std::size_t frameCount = haveContext ? CaptureFrames(&context, frames, sizeof(frames) / sizeof(frames[0])) : 0;
+            ResumeThread(thread);
+            char name[128] = "";
+            PWSTR description = nullptr;
+            if (SUCCEEDED(GetThreadDescription(thread, &description)) && description) {
+                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
+                LocalFree(description);
+            }
+            CloseHandle(thread);
+            if (!haveContext) continue;
+            captured[capturedCount].id = entry.th32ThreadID;
+            std::memcpy(captured[capturedCount].name, name, sizeof(captured[capturedCount].name));
+            captured[capturedCount].context = context;
+            std::memcpy(captured[capturedCount].frames, frames, sizeof(captured[capturedCount].frames));
+            captured[capturedCount].frameCount = frameCount;
+            ++capturedCount;
+        } while (Thread32Next(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    Report("  all threads:\n");
+    for (std::size_t i = 0; i < capturedCount; ++i) {
+        ReportThreadContext(&captured[i].context, captured[i].id, captured[i].name, captured[i].frames, captured[i].frameCount);
+    }
+    if (skippedCount != 0) Report("  %llu further thread(s) left out\n", static_cast<unsigned long long>(skippedCount));
+}
+
+DWORD WINAPI HangWatchdog(LPVOID param) {
+    const auto seconds = static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(param));
+    Sleep(static_cast<DWORD>(seconds * 1000ull));
+    Report("\nFATAL: timed dump after %llu s (APS5_HANG_DUMP_SECS); aborting\n", seconds);
+    std::fflush(stderr);
+    std::abort();
+    return 0;
 }
 
 // abort() and the UCRT's invalid-parameter path end the process with a silent fast fail
 // (0xc0000409); both are reported with the calling thread's stack first.
-void ReportBacktrace(const char* what) {
+void ReportBacktrace(const char* what, bool reportThreads) {
     void* frames[48];
     const auto count = RtlCaptureStackBackTrace(0, 48, frames, nullptr);
     Report("FATAL: %s on thread %lu\n", what, static_cast<unsigned long>(GetCurrentThreadId()));
@@ -344,22 +444,23 @@ void ReportBacktrace(const char* what) {
         DescribeAddress(reinterpret_cast<std::uint64_t>(frames[i]), line, sizeof(line));
         Report("    #%u %s\n", static_cast<unsigned>(i), line);
     }
+    if (reportThreads) ReportAllThreads();
     std::fflush(stderr);
 }
 
 void AbortSignalHandler(int) {
-    ReportBacktrace("abort() (SIGABRT)");
+    ReportBacktrace("abort() (SIGABRT)", true);
 }
 
 void InvalidParameterHandler(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, std::uintptr_t) {
-    ReportBacktrace("UCRT invalid parameter");
+    ReportBacktrace("UCRT invalid parameter", true);
 }
 
 // Static destruction runs on the thread that ends the process (ExitProcess -> DLL_PROCESS_DETACH),
 // so its stack names the exit's caller when no libc exit/abort path was taken.
 struct ExitReporter {
     ~ExitReporter() {
-        if (std::getenv("APS5_TRACE_EXIT") != nullptr) ReportBacktrace("process exit (static destruction)");
+        if (std::getenv("APS5_TRACE_EXIT") != nullptr) ReportBacktrace("process exit (static destruction)", false);
     }
 } g_exitReporter;
 
@@ -370,6 +471,15 @@ const bool g_crashReportInstalled = [] {
     std::signal(SIGABRT, AbortSignalHandler);
     _set_invalid_parameter_handler(InvalidParameterHandler);
     InstallWatch();
+    if (const char* hang = std::getenv("APS5_HANG_DUMP_SECS")) {
+        unsigned long long seconds = 0;
+        if (hang[0] >= '0' && hang[0] <= '9') {
+            char* end = nullptr;
+            const auto value = std::strtoull(hang, &end, 10);
+            if (end && *end == 0) seconds = value;
+        }
+        if (seconds > 0) CreateThread(nullptr, 0, HangWatchdog, reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(seconds)), 0, nullptr);
+    }
     return true;
 }();
 

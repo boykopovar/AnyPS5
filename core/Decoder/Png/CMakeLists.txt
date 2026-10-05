@@ -16,6 +16,7 @@ function(add_png_decoder target runtimeTarget)
 
     if(BUILD_TESTING)
         add_test_executable(${target}_tests ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/Png.cpp)
+        target_include_directories(${target}_tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/3rdparty/stb)
         target_link_libraries(${target}_tests PRIVATE ${target})
         configure_windows_unwind(${target}_tests)
         add_test(NAME ${target} COMMAND ${target}_tests)

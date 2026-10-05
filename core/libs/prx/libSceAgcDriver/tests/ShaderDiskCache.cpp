@@ -31,7 +31,7 @@ void setEnvironment(const char* name, const std::string& value) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -92,6 +92,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.samplerDepthCompare = {true, false, true};
     binding.imageDepthCompare = {false, true, false};
     binding.imageWritten = {false, true, true};
+    binding.imageAtomic = {false, true, false};
     binding.bufferAtomic = {true};
     binding.bufferWritten = {false, false, true, true, false};
     return binding;
@@ -324,6 +325,7 @@ void verifyKeySensitivity() {
     changes("a capability", [](SampleRequest& sample) { sample.capabilities[1] = 62u; });
     changes("an extension", [](SampleRequest& sample) { sample.extensions[0] = "SPV_KHR_storage_buffer_storage_clasS"; });
     changes("barycentrics", [](SampleRequest& sample) { sample.request.target.fragmentShaderBarycentricEnabled = true; });
+    changes("non-constant texel offsets", [](SampleRequest& sample) { sample.request.target.nonConstantImageOffsets = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });

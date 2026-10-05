@@ -592,12 +592,12 @@ std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, co
     return destination;
 }
 
-std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& import, std::uint64_t surfaceBase, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint64_t, std::uint64_t>> tailBlocks) {
+std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& import, std::uint64_t surfaceBase, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint64_t, std::uint64_t>> tailBlocks, bool countReads) {
     std::vector<ShadowRun> result;
     if (runs.empty()) return result;
     const auto importPiece = [&](std::uint64_t begin, std::uint64_t end) {
         result.push_back({begin, end, import.buffer, surfaceBase + begin - import.base, false, nullptr});
-        Stats().detiledImportBytes.fetch_add(end - begin, std::memory_order_relaxed);
+        if (countReads) Stats().detiledImportBytes.fetch_add(end - begin, std::memory_order_relaxed);
     };
     std::shared_ptr<UnitShadow> shadow;
     if (UnitShadowEnabled()) {
@@ -608,7 +608,7 @@ std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& i
     }
     if (shadow == nullptr) {
         for (const auto& [begin, end] : runs) importPiece(begin, end);
-        Stats().detiledImport.fetch_add(1, std::memory_order_relaxed);
+        if (countReads) Stats().detiledImport.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
     const auto first = shadow->UnitOf(surfaceBase + runs.front().first);
@@ -663,6 +663,7 @@ std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& i
             (isFresh ? shadowBytes : importBytes) += pieceEnd - pieceBegin;
         }
     }
+    if (!countReads) shadowBytes = importBytes = 0;
     if (shadowBytes != 0) {
         Stats().detiledShadow.fetch_add(1, std::memory_order_relaxed);
         Stats().detiledShadowBytes.fetch_add(shadowBytes, std::memory_order_relaxed);

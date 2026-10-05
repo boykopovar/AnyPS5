@@ -77,10 +77,24 @@ void Driver::run(std::uint32_t id) noexcept {
                 }
                 submission = std::move(pending.front());
                 pending.pop_front();
+                if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
+                if (submission.waitFree) {
+                    orderHolders.fetch_add(1, std::memory_order_acq_rel);
+                    while (!failure && !stopping && !orderReleased(id, submission.received)) changed.wait_for(lock, std::chrono::milliseconds(1));
+                    orderHolders.fetch_sub(1, std::memory_order_acq_rel);
+                    rethrowFailure();
+                }
                 worker.queued.fetch_sub(1, std::memory_order_acq_rel);
                 if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
-            execute(submission);
+            {
+                struct Running {
+                    std::atomic<std::uint32_t>& count;
+                    explicit Running(std::atomic<std::uint32_t>& count) : count(count) { count.fetch_add(1, std::memory_order_acq_rel); }
+                    ~Running() { count.fetch_sub(1, std::memory_order_acq_rel); }
+                } running{runningWorkers};
+                execute(submission);
+            }
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
             const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             bool notify = true;
@@ -89,8 +103,9 @@ void Driver::run(std::uint32_t id) noexcept {
                 rethrowFailure();
                 markCompleted(submission.serial);
                 forgetUnfinishedWrites(workers.at(id), submission);
+                if (id == 0) queue0Executing = 0;
 
-                notify = idleWaiters != 0;
+                notify = idleWaiters != 0 || orderHolders.load(std::memory_order_acquire) != 0;
             }
             if (notify) changed.notify_all();
             else ++costs.notifiesSkipped;

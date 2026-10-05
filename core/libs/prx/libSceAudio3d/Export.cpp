@@ -1,13 +1,16 @@
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
 
 void APS5_VABI sceAudio3dGetDefaultOpenParameters(Audio3dOpenParameters* p) {
- (void)p;
- NotImplemented_nid_no_patch(__func__);
+    if (p == nullptr) APS5_INVALID_ARG_EX;
+    constexpr Audio3dOpenParameters defaults{0x20, 256, 0, 512, 2, 2, 0, 0};
+    static_assert(offsetof(Audio3dOpenParameters, num_beds) == 0x20);
+    std::memcpy(p, &defaults, defaults.size_this);
 }
 
 int APS5_VABI sceAudio3dInitialize(int64_t reserved) {
@@ -17,6 +20,12 @@ int APS5_VABI sceAudio3dInitialize(int64_t reserved) {
 }
 
 int APS5_VABI sceAudio3dPortAdvance(uint32_t port_id) {
+ (void)port_id;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceAudio3dPortClose(uint32_t port_id) {
  (void)port_id;
  NotImplemented_nid_no_patch(__func__);
  return 0;

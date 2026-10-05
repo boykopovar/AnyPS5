@@ -7,7 +7,7 @@
 #include <utility>
 
 KernelSemaPrivate::KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCount, std::string name, bool isFifo)
- : name(std::move(name)), tokenCount(initCount), maxCount(maxCount), isFifo(isFifo) {
+ : name(std::move(name)), tokenCount(initCount), initCount(initCount), maxCount(maxCount), isFifo(isFifo) {
 }
 
 extern "C" {
@@ -41,7 +41,7 @@ int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
  }
 
  std::lock_guard<std::mutex> lock(sem->mutex);
- if (sem->tokenCount + count > sem->maxCount) {
+ if (count > sem->maxCount - sem->tokenCount) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
  sem->tokenCount += count;
@@ -55,33 +55,46 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  }
 
  std::unique_lock<std::mutex> lock(sem->mutex);
+ const std::uint64_t generation = sem->cancelGeneration;
  ++sem->waiterCount;
+ ++sem->cancelableCount;
  struct WaiterGuard {
   KernelSemaPrivate* sem;
+  std::uint64_t generation;
   ~WaiterGuard() {
    --sem->waiterCount;
+   if (sem->cancelGeneration == generation) {
+    --sem->cancelableCount;
+   }
    sem->condition.NotifyAll();
   }
- } waiterGuard{sem};
+ } waiterGuard{sem, generation};
 
  const auto waitStart = std::chrono::steady_clock::now();
  const auto traceWait = [&](bool timedOut) {
   KernelTraceWait_nid_postfix("sema", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
  };
+ const auto released = [&] { return sem->tokenCount >= need || sem->deleted || sem->cancelGeneration != generation; };
  if (time == nullptr) {
-  sem->condition.Wait(lock, [&] { return sem->tokenCount >= need || sem->deleted; });
+  sem->condition.Wait(lock, released);
   traceWait(false);
   if (sem->deleted) {
    return SCE_KERNEL_ERROR_EACCES;
+  }
+  if (sem->cancelGeneration != generation) {
+   return SCE_KERNEL_ERROR_ECANCELED;
   }
   sem->tokenCount -= need;
   return KERNEL_SEMA_OK;
  }
 
- const bool acquired = sem->condition.WaitUntil(lock, TimedWait::DeadlineNanos(*time), [&] { return sem->tokenCount >= need || sem->deleted; });
+ const bool acquired = sem->condition.WaitUntil(lock, TimedWait::DeadlineNanos(*time), released);
  traceWait(!acquired);
  if (sem->deleted) {
   return SCE_KERNEL_ERROR_EACCES;
+ }
+ if (sem->cancelGeneration != generation) {
+  return SCE_KERNEL_ERROR_ECANCELED;
  }
  if (!acquired) {
   return SCE_KERNEL_ERROR_ETIMEDOUT;
@@ -91,11 +104,22 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
 }
 
 int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
- (void)sem;
- (void)count;
- (void)threads;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (sem == nullptr) {
+  APS5_INVALID_ARG_EX;
+ }
+
+ std::lock_guard<std::mutex> lock(sem->mutex);
+ if (count > sem->maxCount) {
+  return SCE_KERNEL_ERROR_EINVAL;
+ }
+ if (threads != nullptr) {
+  *threads = sem->cancelableCount;
+ }
+ sem->tokenCount = count < 0 ? sem->initCount : count;
+ sem->cancelableCount = 0;
+ ++sem->cancelGeneration;
+ sem->condition.NotifyAll();
+ return KERNEL_SEMA_OK;
 }
 
 int APS5_VABI sceKernelDeleteSema(KernelSema sem) {

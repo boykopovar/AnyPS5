@@ -5,6 +5,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #ifdef _WIN32
@@ -116,10 +117,15 @@ int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const 
 
 extern "C" {
 
-int APS5_VABI __elf_phdr_match_addr_nid_postfix(ModuleInfo* module, std::uint64_t address) {
-    (void)module;
-    (void)address;
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info* phdrInfo, void* addr) {
+    if (phdrInfo == nullptr) throw std::invalid_argument("__elf_phdr_match_addr: phdr_info is null");
+    const auto address = reinterpret_cast<std::uintptr_t>(addr);
+    for (std::uint16_t i = 0; i < phdrInfo->dlpi_phnum; ++i) {
+        const Elf64_Phdr& header = phdrInfo->dlpi_phdr[i];
+        if (header.p_type != PT_LOAD || (header.p_flags & PF_X) == 0) continue;
+        const std::uintptr_t begin = phdrInfo->dlpi_addr + header.p_vaddr;
+        if (begin <= address && address + sizeof(addr) < begin + header.p_memsz) return 1;
+    }
     return 0;
 }
 

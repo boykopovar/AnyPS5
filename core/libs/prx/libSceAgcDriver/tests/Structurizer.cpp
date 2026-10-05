@@ -85,6 +85,16 @@ int main() {
         auto exitTails = makeGraph({{1}, {2}, {3, 4}, {7}, {5, 6}, {7, 1}, {7}, {}});
         Structurizer{}.Structurize(exitTails);
         requireStructuredBranches(exitTails, "a loop with two exit tails");
+        auto earlyReturn = makeGraph({{2, 1}, {4, 2}, {3, 5}, {5}, {}, {}});
+        Structurizer{}.Structurize(earlyReturn);
+        requireStructuredBranches(earlyReturn, "an early return inside a selection that joins its parent's merge");
+        for (const auto& block : earlyReturn.blocks) {
+            const auto merge = block.terminator.mergeBlock;
+            if (merge != InvalidControlFlowId && !earlyReturn.Dominates(block.id, merge)) {
+                std::fprintf(stderr, "an early return inside a selection: header %u does not dominate its merge %u\n", block.id, merge);
+                return 1;
+            }
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

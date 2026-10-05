@@ -141,6 +141,14 @@ std::vector<std::unique_ptr<DepthSurface>>& surfaces() {
 
 }
 
+std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
+    const std::uint32_t blockWidth = bytesPerTexel == 4 ? 128u : 256u;
+    const std::uint32_t blockHeight = bytesPerTexel == 1 ? 256u : 128u;
+    const auto width = static_cast<std::uint64_t>((extent.width + blockWidth - 1) / blockWidth * blockWidth);
+    const auto height = static_cast<std::uint64_t>((extent.height + blockHeight - 1) / blockHeight * blockHeight);
+    return width * height * bytesPerTexel;
+}
+
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) {
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {

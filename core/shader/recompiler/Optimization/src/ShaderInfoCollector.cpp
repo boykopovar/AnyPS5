@@ -128,6 +128,7 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
                         case StageInputKind::InvocationId:
                         case StageInputKind::PrimitiveId:
                         case StageInputKind::FrontFacing:
+                        case StageInputKind::HelperInvocation:
                         case StageInputKind::LocalInvocationIndex:
                             if (component != 0u) {
                                 return Fail("typed scalar builtin component is out of range");
@@ -321,6 +322,9 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     break;
                 case StageInputKind::FrontFacing:
                     AddInput(info, kind, 0, 1, "gl_FrontFacing");
+                    break;
+                case StageInputKind::HelperInvocation:
+                    AddInput(info, kind, 0, 1, "gl_HelperInvocation");
                     break;
                 case StageInputKind::Layer:
                     AddInput(info, kind, 0, 1, "gl_Layer");

@@ -77,3 +77,33 @@ extern "C" _Unwind_Reason_Code __gxx_personality_v0(
 ) {
     return __gxx_personality_v0_nid_postfix(version, actions, exceptionClass, exception, context);
 }
+
+extern "C" _Unwind_Reason_Code __gcc_personality_v0(
+    int version, _Unwind_Action actions, std::uint64_t,
+    _Unwind_Exception* exception, _Unwind_Context* context
+) {
+    using namespace LibcUnwind;
+    if (version != 1) return _URC_FATAL_PHASE1_ERROR;
+    if (!(actions & _UA_CLEANUP_PHASE) || !context->lsda) return _URC_CONTINUE_UNWIND;
+    const Byte* p = reinterpret_cast<const Byte*>(context->lsda);
+    Byte landingEncoding = *p++;
+    Word landingBase = landingEncoding == 255 ? context->region : Encoded(p, landingEncoding, context->dataBase, context->region, context->textBase);
+    if (*p++ != 255) Uleb(p);
+    Byte callEncoding = *p++;
+    Word length = Uleb(p);
+    const Byte* callEnd = p + length;
+    Word ip = context->registers[16] - !context->signalFrame;
+    while (p < callEnd) {
+        Word start = Encoded(p, callEncoding);
+        Word size = Encoded(p, callEncoding);
+        Word landing = Encoded(p, callEncoding);
+        Uleb(p);
+        if (ip < context->region + start || ip - context->region - start >= size) continue;
+        if (!landing) return _URC_CONTINUE_UNWIND;
+        context->registers[0] = reinterpret_cast<Word>(exception);
+        context->registers[1] = 0;
+        context->registers[16] = landingBase + landing;
+        return _URC_INSTALL_CONTEXT;
+    }
+    return _URC_CONTINUE_UNWIND;
+}

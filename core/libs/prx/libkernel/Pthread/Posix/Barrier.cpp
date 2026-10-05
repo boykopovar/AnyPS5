@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <mutex>
 #include <new>
+#include <stdexcept>
+#include <string>
 
 struct PthreadBarrierPrivate {
     std::mutex mutex;
@@ -13,11 +15,54 @@ struct PthreadBarrierPrivate {
     std::uint64_t generation = 0;
 };
 
+namespace {
+
+constexpr int PROCESS_PRIVATE = 0;
+constexpr int PROCESS_SHARED = 1;
+
+}
+
+struct PthreadBarrierattrPrivate {
+    int pshared = PROCESS_PRIVATE;
+};
+
 extern "C" {
 
-int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, const void* attr, unsigned count) {
+int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** attr) {
+    if (!attr) return 22;
+    try {
+        *attr = new PthreadBarrierattrPrivate;
+        return 0;
+    } catch (const std::bad_alloc&) {
+        return 12;
+    }
+}
+
+int APS5_VABI pthread_barrierattr_destroy_nid_postfix(PthreadBarrierattrPrivate** attr) {
+    if (!attr || !*attr) return 22;
+    delete *attr;
+    *attr = nullptr;
+    return 0;
+}
+
+int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPrivate* const* attr, int* pshared) {
+    if (!attr || !*attr) return 22;
+    if (!pshared) APS5_INVALID_ARG_EX;
+    *pshared = (*attr)->pshared;
+    return 0;
+}
+
+int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPrivate** attr, int pshared) {
+    if (!attr || !*attr) return 22;
+    if (pshared == PROCESS_SHARED) NotImplemented_nid_no_patch("pthread_barrierattr_setpshared: PTHREAD_PROCESS_SHARED");
+    if (pshared != PROCESS_PRIVATE) return 22;
+    (*attr)->pshared = pshared;
+    return 0;
+}
+
+int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
+    (void)attr;
     if (!barrier || count == 0) return 22;
-    if (attr) NotImplemented_nid_no_patch("pthread_barrier_init: non-default attributes");
     try {
         auto* value = new PthreadBarrierPrivate;
         value->count = count;

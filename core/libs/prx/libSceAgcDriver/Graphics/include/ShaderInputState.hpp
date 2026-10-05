@@ -10,7 +10,7 @@
 
 namespace AgcDriver::Graphics {
 
-ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings);
+ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram = false);
 ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers& shader);
 // A guest range DecodeVertexStageInfo read (an attribute word, a vertex V#) with the bytes as read:
 // the draw cache validates them by value with the stage's capture (design_cpu_final rule RD).

@@ -389,6 +389,18 @@ struct AjmDecAt9ConfigDataInfo {
     std::uint32_t superframe_size;
 };
 
+struct AjmDecMp3ParseFrame {
+    std::uint64_t frame_size;
+    std::uint32_t num_channels;
+    std::uint32_t samples_per_channel;
+    std::uint32_t bitrate;
+    std::uint32_t sample_rate;
+    std::uint32_t encoder_delay;
+    std::uint32_t num_frames;
+    std::uint32_t total_samples;
+    std::uint32_t ofl_type;
+};
+
 using AudioOut2ContextHandle = std::uint64_t;
 using AudioOut2PortHandle = std::uint64_t;
 using AudioOut2UserHandle = std::uintptr_t;

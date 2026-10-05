@@ -593,6 +593,28 @@ bool splitSharedMergeBlock(ControlFlowGraph& graph, std::uint32_t merge, const s
     return true;
 }
 
+bool splitOneReturnJoin(ControlFlowGraph& graph) {
+    for (const auto& block : graph.blocks) {
+        if (block.terminator.kind != TerminatorKind::ConditionalBranch || findInnermostContainingLoop(graph, block.id) != nullptr || findSelectionMerge(graph, block) != InvalidControlFlowId) {
+            continue;
+        }
+        const auto returns = [&](std::uint32_t target) { return graph.Dominates(block.id, target) && hasLinearPathToTerminal(graph, target); };
+        const auto joinsEnclosing = [&](std::uint32_t target) {
+            const auto& predecessors = graph.FindBlock(target).predecessors;
+            return !graph.Dominates(block.id, target) && std::all_of(predecessors.begin(), predecessors.end(), [&](std::uint32_t predecessor) {
+                return graph.Dominates(block.id, predecessor) || graph.Dominates(predecessor, block.id);
+            });
+        };
+        const auto trueTarget = block.terminator.trueBlock;
+        const auto falseTarget = block.terminator.falseBlock;
+        const auto join = returns(trueTarget) && joinsEnclosing(falseTarget) ? falseTarget : returns(falseTarget) && joinsEnclosing(trueTarget) ? trueTarget : InvalidControlFlowId;
+        if (join != InvalidControlFlowId && splitSharedMergeBlock(graph, join, dominatedBlocks(graph, block.id, join))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool splitOneLoopMerge(ControlFlowGraph& graph) {
     for (const auto& loop : graph.naturalLoops) {
         const auto constructBlocks = dominatedBlocks(graph, loop.headerBlock, loop.mergeBlock);
@@ -1401,7 +1423,7 @@ void Structurizer::splitSharedMergeBlocks(ControlFlowGraph& graph) const {
     }
     SplitBudget budget{programWords, std::max(CloneWordLimit, programWords / CloneBudgetDivisor), std::max(CloneWordLimit, programWords), nextGotoVariable};
     for (std::uint32_t splits = 0; splits < splitBudget; ++splits) {
-        if (!splitOneLoopMerge(graph) && !splitOneSelectionMerge(graph, budget, [this](ControlFlowGraph& candidate) { recomputeAnalyses(candidate); })) {
+        if (!splitOneLoopMerge(graph) && !splitOneSelectionMerge(graph, budget, [this](ControlFlowGraph& candidate) { recomputeAnalyses(candidate); }) && !splitOneReturnJoin(graph)) {
             return;
         }
         rebuildPredecessors(graph);

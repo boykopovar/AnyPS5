@@ -132,6 +132,22 @@ static int SceErrorFromErrno(int error) {
     return static_cast<int>(0x80020000u | static_cast<unsigned>(error > 0 && error <= 34 ? error : error == GUEST_ENOTEMPTY ? error : GUEST_EIO));
 }
 
+extern "C" int* APS5_VABI __error_nid_postfix();
+
+static int PosixFailure(int error) {
+    *__error_nid_postfix() = error;
+    return -1;
+}
+
+static int PosixResult(int result) {
+    return result < 0 ? PosixFailure(result & 0xffff) : result;
+}
+
+static int PathError(const char* path) {
+    if (path == nullptr) return GUEST_EFAULT;
+    return *path == '\0' ? GUEST_ENOENT : 0;
+}
+
 extern "C" {
 
 int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
@@ -215,25 +231,26 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
 }
 
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
-    return sceKernelOpen(path, flags, static_cast<std::uint16_t>(mode));
+    if (const int error = PathError(path)) return PosixFailure(error);
+    return PosixResult(sceKernelOpen(path, flags, static_cast<std::uint16_t>(mode)));
 }
 
 int APS5_VABI _open_nid_postfix(const char* path, int flags, ...) {
-    std::uint16_t mode = 0;
+    int mode = 0;
     if (flags & SCE_KERNEL_O_CREAT) {
 #ifdef _WIN32
         __builtin_sysv_va_list arguments;
         __builtin_sysv_va_start(arguments, flags);
-        mode = static_cast<std::uint16_t>(__builtin_va_arg(arguments, int));
+        mode = __builtin_va_arg(arguments, int);
         __builtin_sysv_va_end(arguments);
 #else
         std::va_list arguments;
         va_start(arguments, flags);
-        mode = static_cast<std::uint16_t>(va_arg(arguments, int));
+        mode = va_arg(arguments, int);
         va_end(arguments);
 #endif
     }
-    return sceKernelOpen(path, flags, mode);
+    return open_nid_postfix(path, flags, mode);
 }
 
 int64_t APS5_VABI pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t offset) {
@@ -286,11 +303,14 @@ std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, st
 }
 
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
-    return sceKernelStat(path, sb);
+    if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
+    if (const int error = PathError(path)) return PosixFailure(error);
+    return PosixResult(sceKernelStat(path, sb));
 }
 
 int APS5_VABI unlink_nid_postfix(const char* path) {
-    return sceKernelUnlink(path);
+    if (const int error = PathError(path)) return PosixFailure(error);
+    return PosixResult(sceKernelUnlink(path));
 }
 
 int APS5_VABI sceKernelCheckReachability(const char* path) {
@@ -437,7 +457,8 @@ int APS5_VABI sceKernelRmdir(const char* path) {
 }
 
 int APS5_VABI rmdir_nid_postfix(const char* path) {
-    return sceKernelRmdir(path);
+    if (const int error = PathError(path)) return PosixFailure(error);
+    return PosixResult(sceKernelRmdir(path));
 }
 
 }

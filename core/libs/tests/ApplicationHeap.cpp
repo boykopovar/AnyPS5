@@ -12,7 +12,11 @@ void* APS5_VABI _Znwm_nid_postfix(std::size_t);
 void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*);
 void APS5_VABI _ZdlPv_nid_postfix(void*);
 void APS5_VABI _ZdaPv_nid_postfix(void*);
+void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void*, std::size_t);
 void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
+char* APS5_VABI strdup_nid_postfix(const char*);
+char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
+int* APS5_VABI __error_nid_postfix();
 }
 
 namespace {
@@ -127,7 +131,7 @@ int main(int argc, char** argv) {
         for (std::size_t alignment : {16, 64, 4096}) {
             auto* aligned = ApplicationHeapAlign_nid_no_patch(alignment, 37);
             require(reinterpret_cast<std::uintptr_t>(aligned) % alignment == 0);
-            ApplicationHeapFree_nid_no_patch(aligned);
+            _ZdlPvSt11align_val_t_nid_postfix(aligned, alignment);
         }
         void* aligned = nullptr;
         require(ApplicationHeapPosixAlign_nid_no_patch(&aligned, 256, 99) == 0);
@@ -174,6 +178,11 @@ int main(int argc, char** argv) {
     require(frees == 4);
     require(ApplicationHeapRealign_nid_no_patch(storage.data(), 48, 32) == storage.data() && lastSize == 48 && lastAlignment == 32);
     reject([] { ApplicationHeapRealign_nid_no_patch(storage.data(), 16, 4096); });
+    pointer = ApplicationHeapAlign_nid_no_patch(64, 37);
+    _ZdlPvSt11align_val_t_nid_postfix(pointer, 64);
+    require(frees == 5);
+    _ZdlPvSt11align_val_t_nid_postfix(nullptr, 64);
+    require(frees == 5);
     fail = true;
     reject([] { _Znwm_nid_postfix(8); });
     reject([] { ApplicationHeapAlign_nid_no_patch(4, 64); });
@@ -186,4 +195,23 @@ int main(int argc, char** argv) {
     reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
     recurse = false;
     require(ApplicationHeapAllocate_nid_no_patch(64) == storage.data());
+    const char text[] = "guest string";
+    char* copy = strdup_nid_postfix(text);
+    require(copy == reinterpret_cast<char*>(storage.data()) && lastSize == sizeof(text));
+    require(std::strcmp(copy, text) == 0 && copy != text);
+    ApplicationHeapFree_nid_no_patch(copy);
+    copy = strdup_nid_postfix("");
+    require(lastSize == 1 && copy[0] == '\0');
+    ApplicationHeapFree_nid_no_patch(copy);
+    copy = strndup_nid_postfix(text, 5);
+    require(lastSize == 6 && std::strcmp(copy, "guest") == 0);
+    ApplicationHeapFree_nid_no_patch(copy);
+    fail = true;
+    *__error_nid_postfix() = 0;
+    require(strdup_nid_postfix(text) == nullptr && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 0;
+    require(strdup_nid_postfix("") == nullptr && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 0;
+    require(strndup_nid_postfix(text, 5) == nullptr && *__error_nid_postfix() == 12);
+    fail = false;
 }

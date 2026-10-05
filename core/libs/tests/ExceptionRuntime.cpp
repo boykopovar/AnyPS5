@@ -17,6 +17,7 @@ extern "C" void __cxa_decrement_exception_refcount_nid_postfix(void*);
 extern "C" void __cxa_rethrow_primary_exception_nid_postfix(void*);
 
 extern "C" [[noreturn]] void _ZSt14_Xout_of_rangePKc_nid_postfix(const char*);
+extern "C" [[noreturn]] void _ZSt13_Xrange_errorPKc_nid_postfix(const char*);
 extern "C" [[noreturn]] void __cxa_bad_cast_nid_postfix();
 extern "C" [[noreturn]] void _ZNKSt9exception6_RaiseEv_nid_postfix(const void*);
 extern "C" void* __cxa_vec_new3_nid_postfix(std::size_t, std::size_t, std::size_t, void(*)(void*), void(*)(void*), void*(*)(std::size_t), void(*)(void*, std::size_t));
@@ -190,6 +191,13 @@ int main() {
     try { throw Virtual(); } catch (Base& value) { assert(value.value == 7); }
     try { _ZSt14_Xout_of_rangePKc_nid_postfix("test message"); }
     catch (const std::logic_error& value) { assert(std::strcmp(value.what(), "test message") == 0); }
+    try { _ZSt13_Xrange_errorPKc_nid_postfix("range message"); }
+    catch (const std::range_error& value) { if (std::strcmp(value.what(), "range message") != 0) std::abort(); }
+    try { _ZSt13_Xrange_errorPKc_nid_postfix(nullptr); }
+    catch (const std::runtime_error& value) { if (std::strcmp(value.what(), "") != 0) std::abort(); }
+    try { _ZSt13_Xrange_errorPKc_nid_postfix("not a logic error"); }
+    catch (const std::logic_error&) { std::abort(); }
+    catch (const std::range_error&) {}
     try { __cxa_bad_cast_nid_postfix(); }
     catch (const std::exception& value) { assert(value.what() != nullptr); }
     try { _ZNKSt9exception6_RaiseEv_nid_postfix(nullptr); assert(false); }

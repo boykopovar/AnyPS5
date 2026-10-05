@@ -8,14 +8,6 @@ namespace ShaderRecompiler {
 IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr) {
 }
 
-IrOpcode IrValue::Opcode() const {
-    return opcode;
-}
-
-IrType IrValue::Type() const {
-    return type;
-}
-
 std::uint32_t IrValue::Id() const {
     return id;
 }
@@ -30,10 +22,6 @@ const std::vector<IrValue*>& IrValue::Uses() const {
 
 IrBlock* IrValue::Parent() const {
     return parent;
-}
-
-bool IrValue::HasImmediate() const {
-    return hasImmediate;
 }
 
 std::uint32_t IrValue::ImmediateU32() const {
@@ -96,23 +84,8 @@ bool IrValue::IsEmpty() const {
     return opcode == IrOpcode::Void;
 }
 
-bool IrValue::IsIdentity() const {
-    return opcode == IrOpcode::Identity;
-}
-
 bool IrValue::IsPhi() const {
     return opcode == IrOpcode::Phi;
-}
-
-IrValue* IrValue::Resolve() const {
-    const IrValue* current = this;
-    while (current->IsIdentity()) {
-        if (current->arguments.empty() || current->arguments.front() == nullptr) {
-            throw std::runtime_error("IrValue::Resolve encountered a malformed Identity value");
-        }
-        current = current->arguments.front();
-    }
-    return const_cast<IrValue*>(current);
 }
 
 bool IrValue::MayHaveSideEffects() const {
@@ -127,19 +100,8 @@ std::size_t IrValue::UseCount() const {
     return uses.size();
 }
 
-std::size_t IrValue::ArgumentCount() const {
-    return arguments.size();
-}
-
 std::size_t IrValue::PhiBlockCount() const {
     return phiBlocks.size();
-}
-
-IrValue* IrValue::Argument(std::size_t index) const {
-    if (index >= arguments.size()) {
-        throw std::out_of_range("IrValue::Argument index is out of range");
-    }
-    return arguments[index];
 }
 
 IrBlock* IrValue::PhiBlock(std::size_t index) const {

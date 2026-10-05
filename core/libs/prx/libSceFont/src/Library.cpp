@@ -297,6 +297,15 @@ int APS5_VABI sceFontRendererSetOutlineBufferPolicy(FontRenderer fontRenderer, s
     return SCE_FONT_OK;
 }
 
+int APS5_VABI sceFontGetPixelResolution(FontLibrary library, std::uint32_t* subPixelCount) {
+    if (!subPixelCount) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *subPixelCount = 0;
+    const auto* lib = static_cast<const FontLibNative*>(library);
+    if (!lib || lib->magic != LIBRARY_MAGIC || !lib->sys_driver || !lib->sys_driver->pixel_resolution) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    *subPixelCount = lib->sys_driver->pixel_resolution();
+    return SCE_FONT_OK;
+}
+
 int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, std::uint32_t size) {
     auto* lib = static_cast<FontLibNative*>(library);
     if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;

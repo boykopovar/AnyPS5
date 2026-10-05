@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -115,6 +116,8 @@ bool addressSpaceCacheEnabled() {
 struct HostImports {
     std::mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
+    PFN_vkDestroyBuffer destroyBuffer = nullptr;
+    PFN_vkFreeMemory freeMemory = nullptr;
     std::map<std::uint64_t, HostImport> imports;
     std::set<std::uint64_t> failed;
     // Registry generation the imports were last reconciled with.
@@ -363,12 +366,20 @@ const GuestAllocations::Range* containingRange(const GuestAllocations::Lease& le
 // guest addresses. Walks the imports only when the registry changed since the last walk.
 void refreshImports(const Context& context, HostImports& state, const GuestAllocations::Lease& lease) {
     if (state.device != context.device) {
+        for (const auto& [address, entry] : state.imports) {
+            if (state.device != VK_NULL_HANDLE && state.destroyBuffer != nullptr && state.freeMemory != nullptr) {
+                state.destroyBuffer(state.device, entry.buffer, nullptr);
+                state.freeMemory(state.device, entry.memory, nullptr);
+            }
 #ifdef _WIN32
-        for (const auto& [address, entry] : state.imports) GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
+            GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
+        }
         state.imports.clear();
         state.failed.clear();
         state.device = context.device;
+        state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
+        state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
         state.refreshedGeneration = 0;
         ++state.epoch;
     }
@@ -661,7 +672,8 @@ void refreshMirror(ImageMirror& mirror, std::uint64_t address, std::uint64_t byt
 void refreshHeapMirrors(std::vector<ImageMirror*>& mirrors, std::vector<RefreshBlock>& blocks) {
     constexpr std::uint64_t block = 65536;
     std::sort(mirrors.begin(), mirrors.end(), [](const ImageMirror* left, const ImageMirror* right) { return left->base < right->base; });
-    thread_local std::vector<std::uint8_t> changed;
+    thread_local std::vector<std::uint8_t>* changedSlot = nullptr;
+    auto& changed = ShaderRecompiler::ThreadOwned(changedSlot);
     for (std::size_t first = 0; first < mirrors.size();) {
         auto last = first + 1;
         while (last < mirrors.size() && mirrors[last]->base == mirrors[last - 1]->base + mirrors[last - 1]->bytes) ++last;

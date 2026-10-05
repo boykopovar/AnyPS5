@@ -1,3 +1,4 @@
+#include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdlib>
@@ -12,6 +13,16 @@ int APS5_VABI sceKernelFsync(int);
 int APS5_VABI sceKernelFtruncate(int, long long);
 int APS5_VABI sceKernelTruncate_nid_postfix(const char*, long long);
 int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const void*);
+int APS5_VABI open_nid_postfix(const char*, int, int);
+int APS5_VABI _open_nid_postfix(const char*, int, ...);
+int APS5_VABI close_nid_postfix(int);
+int APS5_VABI stat_nid_postfix(const char*, FileStat*);
+int APS5_VABI unlink_nid_postfix(const char*);
+int APS5_VABI rmdir_nid_postfix(const char*);
+int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
+int APS5_VABI sceKernelStat(const char*, FileStat*);
+int APS5_VABI sceKernelUnlink(const char*);
+int APS5_VABI sceKernelRmdir(const char*);
 int* APS5_VABI __error_nid_postfix();
 }
 static void Check(bool value, int line) {
@@ -67,6 +78,45 @@ int main() {
     Require(std::fclose(native) == 0);
     Require(std::filesystem::file_size(sized) == 3);
     Require(remove_nid_postfix(sized.string().c_str()) == 0);
+    const auto present = root / "present.txt";
+    const auto presentName = present.string();
+    const auto missingName = (root / "missing.txt").string();
+    const auto rootName = root.string();
+    { std::ofstream stream(present); stream << "posix"; }
+    FileStat status{};
+    Require(stat_nid_postfix(presentName.c_str(), &status) == 0 && status.st_size == 5);
+    Require(stat_nid_postfix(missingName.c_str(), &status) == -1 && *__error_nid_postfix() == 2);
+    Require(sceKernelStat(missingName.c_str(), &status) == static_cast<int>(0x80020002u));
+    Require(stat_nid_postfix("", &status) == -1 && *__error_nid_postfix() == 2);
+    Require(stat_nid_postfix(nullptr, &status) == -1 && *__error_nid_postfix() == 14);
+    Require(stat_nid_postfix(presentName.c_str(), nullptr) == -1 && *__error_nid_postfix() == 14);
+    const int opened = open_nid_postfix(presentName.c_str(), 0, 0);
+    Require(opened >= 0 && close_nid_postfix(opened) == 0);
+    const int reopened = _open_nid_postfix(presentName.c_str(), 0);
+    Require(reopened >= 0 && close_nid_postfix(reopened) == 0);
+    Require(open_nid_postfix(missingName.c_str(), 0, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(_open_nid_postfix(missingName.c_str(), 0) == -1 && *__error_nid_postfix() == 2);
+    Require(sceKernelOpen(missingName.c_str(), 0, 0) == static_cast<int>(0x80020002u));
+    Require(open_nid_postfix(presentName.c_str(), 0x0a02, 0644) == -1 && *__error_nid_postfix() == 17);
+    Require(_open_nid_postfix(presentName.c_str(), 0x0a02, 0644) == -1 && *__error_nid_postfix() == 17);
+    Require(open_nid_postfix("", 0, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(_open_nid_postfix("", 0) == -1 && *__error_nid_postfix() == 2);
+    Require(open_nid_postfix(nullptr, 0, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(_open_nid_postfix(nullptr, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(rmdir_nid_postfix(rootName.c_str()) == -1 && *__error_nid_postfix() == 66);
+    Require(sceKernelRmdir(rootName.c_str()) == static_cast<int>(0x80020042u));
+    Require(rmdir_nid_postfix(presentName.c_str()) == -1 && *__error_nid_postfix() == 20);
+    Require(rmdir_nid_postfix(missingName.c_str()) == -1 && *__error_nid_postfix() == 2);
+    Require(rmdir_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
+    Require(rmdir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(unlink_nid_postfix(missingName.c_str()) == -1 && *__error_nid_postfix() == 2);
+    Require(sceKernelUnlink(missingName.c_str()) == static_cast<int>(0x80020002u));
+    Require(unlink_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
+    Require(unlink_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(unlink_nid_postfix(presentName.c_str()) == 0 && !std::filesystem::exists(present));
+    const auto empty = root / "empty";
+    Require(std::filesystem::create_directory(empty));
+    Require(rmdir_nid_postfix(empty.string().c_str()) == 0 && !std::filesystem::exists(empty));
     Require(remove_nid_postfix(root.string().c_str()) == 0);
     Require(!std::filesystem::exists(root));
 }

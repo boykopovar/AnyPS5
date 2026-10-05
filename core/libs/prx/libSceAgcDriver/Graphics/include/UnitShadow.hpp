@@ -100,7 +100,8 @@ bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>
 // from one buffer (a slab while the unit is fresh, else the import) at `offset` (byte x of the run
 // is at offset + (x - begin)), split at unit freshness and slab boundaries with one tracker query
 // over the span. A tail block (surface-relative, every unit of it) must have one source: a mixed
-// one is published (TailMip) and read from the import.
+// one is published (TailMip) and read from the import. `countReads` false: not counted as detiled
+// bytes (a write-back reading the current bytes of its padding).
 struct ShadowRun {
     std::uint64_t begin;
     std::uint64_t end;
@@ -109,7 +110,7 @@ struct ShadowRun {
     bool shadow;
     std::shared_ptr<ShadowSlab> slab;
 };
-std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& import, std::uint64_t surfaceBase, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint64_t, std::uint64_t>> tailBlocks);
+std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& import, std::uint64_t surfaceBase, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint64_t, std::uint64_t>> tailBlocks, bool countReads = true);
 
 // The slab destination of a retile copy [begin, end) (guest addresses inside one slab: the caller
 // splits at SlabBoundary), making the slab under the budget; nullopt when refused (the caller writes

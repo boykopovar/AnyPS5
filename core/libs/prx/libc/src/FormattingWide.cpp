@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <climits>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
@@ -28,7 +29,7 @@ bool In(char16_t character, const char* set) {
 }
 
 void AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
-    for (std::size_t index = 0; index < limit && text[index] != '\0';) {
+    for (std::size_t index = 0; out.size() < limit && text[index] != '\0';) {
         const unsigned char lead = static_cast<unsigned char>(text[index]);
         std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
         std::uint32_t code = extra == 3 ? lead & 0x07 : extra == 2 ? lead & 0x0f : extra == 1 ? lead & 0x1f : lead;
@@ -41,6 +42,7 @@ void AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
         if (extra != 0) used = extra + 1;
         index += used;
         if (code >= 0x10000) {
+            if (limit - out.size() < 2) break;
             code -= 0x10000;
             out.push_back(static_cast<char16_t>(0xd800 + (code >> 10)));
             out.push_back(static_cast<char16_t>(0xdc00 + (code & 0x3ff)));
@@ -87,7 +89,7 @@ void AppendPadded(std::u16string& out, const std::u16string& text, bool left, in
     if (left) out.append(pad, u' ');
 }
 
-std::u16string FormatWide(const char16_t* format, VaList* source) {
+std::u16string FormatWide(const char16_t* format, VaList* source, bool rejectNullStrings = false) {
     if (format == nullptr || source == nullptr) throw std::invalid_argument("Null formatting argument");
     LibcDetail::FormatArguments args(source);
     std::u16string out;
@@ -170,10 +172,12 @@ std::u16string FormatWide(const char16_t* format, VaList* source) {
             const std::size_t limit = precision < 0 ? SIZE_MAX : static_cast<std::size_t>(precision);
             if (conversion == u'S' || length == "l") {
                 const char16_t* value = args.Next<const char16_t*>();
+                if (value == nullptr && rejectNullStrings) throw std::invalid_argument("Null string argument");
                 if (value == nullptr) value = u"(null)";
                 for (std::size_t index = 0; index < limit && value[index] != 0; ++index) text.push_back(value[index]);
             } else {
                 const char* value = args.Next<const char*>();
+                if (value == nullptr && rejectNullStrings) throw std::invalid_argument("Null string argument");
                 AppendUtf16(text, value != nullptr ? value : "(null)", limit);
             }
             AppendPadded(out, text, left, width);
@@ -201,6 +205,27 @@ int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const ch
         errno = 22;
         return -1;
     }
+}
+
+int APS5_VABI snwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
+    constexpr std::size_t RsizeMax = SIZE_MAX >> 1;
+    int result = -1;
+    if (buffer != nullptr && format != nullptr && size != 0 && size <= RsizeMax) {
+        APS5_VA_BEGIN(format);
+        try {
+            const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args), true);
+            if (text.size() <= static_cast<std::size_t>(INT_MAX)) {
+                const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
+                std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
+                buffer[copied] = 0;
+                result = static_cast<int>(text.size());
+            }
+        } catch (const std::invalid_argument&) {
+        }
+        APS5_VA_END();
+    }
+    if (result < 0 && buffer != nullptr && size != 0 && size < RsizeMax) buffer[0] = 0;
+    return result;
 }
 
 int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {

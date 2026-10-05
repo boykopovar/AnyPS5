@@ -1,0 +1,29 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer Words { uint words[]; };
+layout(push_constant) uniform Parameters {
+    Words counter;
+    Words target;
+    uint count;
+    uint store;
+} parameters;
+
+void main() {
+    uint low = parameters.counter.words[0];
+    uint high = parameters.counter.words[1];
+    for (uint i = 0u; i < parameters.count; ++i) {
+        uint carry;
+        low = uaddCarry(low, parameters.counter.words[4u + 2u * i], carry);
+        high = high + parameters.counter.words[5u + 2u * i] + carry;
+    }
+    parameters.counter.words[0] = low;
+    parameters.counter.words[1] = high;
+    if (parameters.store != 0u) {
+        for (uint db = 0u; db < 16u; ++db) {
+            parameters.target.words[db * 4u] = db == 0u ? low : 0u;
+            parameters.target.words[db * 4u + 1u] = (db == 0u ? high : 0u) | 0x80000000u;
+        }
+    }
+}

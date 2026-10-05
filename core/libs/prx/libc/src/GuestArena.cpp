@@ -21,7 +21,7 @@ namespace {
 constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull;
 constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull;
 constexpr std::uintptr_t SystemReservedEnd = 0x0000001000000000ull;
-constexpr std::size_t ArenaSize = 0x0000007000000000ull;
+constexpr std::uintptr_t ApplicationAreaEnd = 0x000000FC00000000ull;
 
 std::uintptr_t alignUp(std::uintptr_t value, std::size_t alignment) {
     return (value + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1);
@@ -69,8 +69,11 @@ public:
         std::lock_guard lock(_lock);
         const auto start = reinterpret_cast<std::uintptr_t>(pointer);
         const auto next = _used.lower_bound(start);
-        if ((next != _used.end() && next->first < start + bytes) || (next != _used.begin() && std::prev(next)->second > start))
-            throw std::runtime_error("fixed guest mapping overlaps a guest arena range");
+        if ((next != _used.end() && next->first < start + bytes) || (next != _used.begin() && std::prev(next)->second > start)) {
+            char message[160];
+            std::snprintf(message, sizeof(message), "fixed guest mapping 0x%llx+0x%zx overlaps %s", static_cast<unsigned long long>(start), bytes, OverlapsHostRegion(start, bytes) ? "a host region in the guest arena" : "a guest arena range");
+            throw std::runtime_error(message);
+        }
         _used.emplace(start, start + bytes);
     }
 
@@ -103,7 +106,7 @@ private:
         SYSTEM_INFO system{};
         GetSystemInfo(&system);
         const std::uintptr_t granularity = system.dwAllocationGranularity;
-        const std::uintptr_t end = ArenaStart + ArenaSize;
+        const std::uintptr_t end = ApplicationAreaEnd;
         for (std::uintptr_t cursor = ArenaStart; cursor < end;) {
             MEMORY_BASIC_INFORMATION info{};
             if (VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) == 0) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "query the guest arena range");
@@ -115,6 +118,7 @@ private:
             if (last < regionEnd) _holes.emplace_back(last, regionEnd);
             cursor = regionEnd;
         }
+        _hostRegions = _holes;
         _holes.emplace_back(SystemReservedStart, SystemReservedEnd);
         for (const auto& [holeStart, holeEnd] : _holes) _used.emplace(holeStart, holeEnd);
         _base = ArenaStart;
@@ -125,6 +129,7 @@ private:
     std::mutex _lock;
     std::map<std::uintptr_t, std::uintptr_t> _used;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _holes;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostRegions;
     std::uintptr_t _base = 0;
     std::uintptr_t _end = 0;
     bool _writeWatched = false;
@@ -133,6 +138,12 @@ public:
     std::uintptr_t Base() const { return _base; }
     std::size_t Size() const { return _end - _base; }
     bool WriteWatched() const { return _writeWatched; }
+    bool OverlapsHostRegion(std::uintptr_t start, std::size_t bytes) const {
+        for (const auto& [regionStart, regionEnd] : _hostRegions) {
+            if (regionStart < start + bytes && start < regionEnd) return true;
+        }
+        return false;
+    }
 };
 
 const bool g_reserved = (Arena::Get(), true);
@@ -185,18 +196,32 @@ bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t byt
     return WindowsMappings::Get().Collect(address, bytes, pages, count, clear);
 }
 
+bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    return Arena::Get().OverlapsHostRegion(address, bytes);
+}
+
+namespace {
+
+std::invalid_argument OutsideArena(const char* operation, const void* pointer, std::size_t bytes) {
+    char message[128];
+    std::snprintf(message, sizeof(message), "%s 0x%llx+0x%zx outside the guest arena", operation, static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer)), bytes);
+    return std::invalid_argument(message);
+}
+
+}
+
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
-    if (!Arena::Get().Contains(pointer, bytes)) throw std::invalid_argument("commit outside the guest arena");
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
     WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
 }
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
-    if (!Arena::Get().Contains(pointer, bytes)) throw std::invalid_argument("reset outside the guest arena");
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
     WindowsMappings::Get().Reset(pointer, bytes);
 }
 
 void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
-    if (!Arena::Get().Contains(pointer, bytes)) throw std::invalid_argument("shared mapping outside the guest arena");
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("shared mapping", pointer, bytes);
     WindowsMappings::Get().Map(pointer, bytes, section, offset, protection);
 }
 

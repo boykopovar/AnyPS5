@@ -7,16 +7,21 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <limits>
+#include <thread>
 #include <vector>
 
 #undef main
 
 extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
 extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
+extern "C" int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
+extern "C" int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 
 namespace {
 
@@ -157,17 +162,51 @@ void testDecode() {
     expectFailure([&] { AgcDriver::ReadDisplayBuffer(buffer); });
     buffer.address = std::numeric_limits<uint64_t>::max() & ~uint64_t{65535};
     expectFailure([&] { AgcDriver::DisplayBufferSize(buffer); });
+    const VideoOutBuffer registered{0, reinterpret_cast<uint64_t>(tiled.data()), 0};
+    BufferAttributeGroup group{};
+    sceVideoOutSetBufferAttribute2(&group.attribute, 0x8000000000000000ull, 0, 259, 137, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, 0, 0);
+    group.occupied = true;
+    const auto plain = DescribeVideoOutBuffer(registered, group);
+    group.attribute.option = VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY;
+    const auto strict = DescribeVideoOutBuffer(registered, group);
+    check(strict.address == plain.address && strict.pixelFormat == plain.pixelFormat && strict.width == plain.width && strict.height == plain.height && strict.tilingMode == plain.tilingMode && strict.pitchInPixel == plain.pitchInPixel, "the STRICT_COLORIMETRY option changed the described buffer");
+    for (const uint64_t option : {1ull, 32ull, 40ull}) {
+        group.attribute.option = option;
+        check(expectFailure([&] { DescribeVideoOutBuffer(registered, group); }).find("buffer option " + std::to_string(option)) != std::string::npos, "an unsupported buffer option was accepted");
+    }
+}
+
+void testOpenParam() {
+    using Words = std::array<std::uint32_t, 6>;
+    constexpr auto first = VIDEO_OUT_OPEN_PARAM_FIRST_WORD;
+    for (const Words& rejected : {
+             Words{24, 0, 0, 0, 0, 0},
+             Words{first, 2, 0, 0, 0, 0},
+             Words{first, 0, 0, 0x101, 0, 0},
+             Words{first, 1, 255, 0, 0, 0},
+             Words{first, 1, 768, 0, 0, 0},
+             Words{first, 0, 0, 1, 0, 0},
+             Words{first, 0, 0, 1, 0x2000, 0},
+             Words{first, 0, 0, 1, 0, 1},
+         }) {
+        expectFailure([&] { sceVideoOutOpen(255, 0, 0, rejected.data()); });
+    }
+    std::array<std::uint32_t, 4> zeroed{first, 0, 0, 0};
+    const auto zeroedHandle = sceVideoOutOpen(255, 0, 0, zeroed.data());
+    check(zeroedHandle >= 0, "open with a zeroed param failed");
+    sceVideoOutClose(zeroedHandle);
+    for (const Words& accepted : {Words{first, 1, 767, 0, 0, 0}, Words{first, 0, 0, 1, 1, 0}}) {
+        const auto handle = sceVideoOutOpen(255, 0, 0, accepted.data());
+        check(handle >= 0, "open with a valid service thread setting failed");
+        sceVideoOutClose(handle);
+    }
 }
 
 void testControls() {
-    std::array<std::uint32_t, 4> openParam{VIDEO_OUT_OPEN_PARAM_SIZE, 0, 0, 0};
+    testOpenParam();
+    const std::array<std::uint32_t, 22> openParam{VIDEO_OUT_OPEN_PARAM_FIRST_WORD, 1, 0x100, 1, 0x1FFF};
     const auto handle = sceVideoOutOpen(255, 0, 0, openParam.data());
-    check(handle >= 0, "open with a zeroed param failed");
-    openParam[0] = 24;
-    expectFailure([&] { sceVideoOutOpen(255, 0, 0, openParam.data()); });
-    openParam[0] = VIDEO_OUT_OPEN_PARAM_SIZE;
-    openParam[2] = 1;
-    expectFailure([&] { sceVideoOutOpen(255, 0, 0, openParam.data()); });
+    check(handle >= 0, "open with the highest priority on every CPU failed");
     const auto cfg = VideoOutDriver::Get().GetConfig(handle);
     for (int rate = 0; rate <= 2; ++rate) {
         check(sceVideoOutSetFlipRate(handle, rate) == 0 && cfg->flipRate == rate, "flip rate was not applied");
@@ -273,6 +312,112 @@ void testBackToBack() {
     LibcRunShutdown_nid_postfix();
 }
 
+void testReleaseVblank() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::vector<std::byte> allocation(6 * 65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    fillBuffer(storage, 259, 137);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    check(sceVideoOutSetFlipRate(handle, 2) == 0, "flip rate was not applied");
+    sceVideoOutSubmitFlip(handle, 0, 1, 1);
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip did not complete");
+        check(cfg->vblankStatus.count > 3, "the first presentation did not outlast the vblank it was released at");
+        check(cfg->lastFlipVblank == 3, "the next flip is not paced from the vblank this flip was released at");
+    }
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
+std::uint32_t busyLoopResult(std::uint32_t iterations) {
+    std::uint32_t value = 1;
+    for (std::uint32_t i = 0; i < iterations; ++i) value = value * value + 1u;
+    return value;
+}
+
+void testFlipAfterGpuWork() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::vector<std::byte> allocation(6 * 65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    fillBuffer(storage, 259, 137);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    alignas(256) static const std::array<std::uint32_t, 12> code{
+        0xbe850380, 0x7e040281, 0xd5690002, 0x00020502, 0x4a040481, 0x80058105,
+        0xbf070405, 0xbf85fffa, 0x7e020280, 0xe0701000, 0x80000201, 0xbf810000};
+    Shader shader{};
+    shader.file_header = 0x34333231;
+    shader.version = 0x18;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(code);
+    shader.code = code.data();
+    AgcDriverRegisterShader_nid_postfix(&shader);
+    std::int64_t physical = 0;
+    void* mapped = nullptr;
+    check(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, 65536, 65536, 0, &physical) == 0, "direct memory allocation failed");
+    check(sceKernelMapDirectMemory(&mapped, 65536, 0x33, 0, physical, 65536) == 0, "direct memory mapping failed");
+    auto& result = static_cast<volatile std::uint32_t*>(mapped)[0];
+    auto& label = static_cast<volatile std::uint32_t*>(mapped)[64];
+    result = 0;
+    label = 0;
+    constexpr std::uint32_t iterations = 100000000u;
+    const auto program = reinterpret_cast<std::uintptr_t>(code.data());
+    const auto output = reinterpret_cast<std::uintptr_t>(&result);
+    const auto target = reinterpret_cast<std::uintptr_t>(&label);
+    std::vector<std::uint32_t> commands{
+        0xc0027600, 0x20c, static_cast<std::uint32_t>(program >> 8u), static_cast<std::uint32_t>(program >> 40u),
+        0xc0017600, 0x213, 5u << 1u,
+        0xc0037600, 0x207, 32, 1, 1,
+        0xc0057600, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u) & 0xffffu, 4, 0x31016fac, iterations,
+        0xc0031500, 1, 1, 1, 0x8041,
+        0xc0064900, 0x514, 1u << 29u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u), 1, 0, 0};
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 4) == 0, "the first flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(30), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the first flip did not complete");
+    }
+    std::atomic<std::int64_t> landed{0};
+    const auto start = std::chrono::steady_clock::now();
+    const auto since = [&] { return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count(); };
+    std::thread poller([&] {
+        while (label != 1 && since() < 30000000) std::this_thread::yield();
+        if (label == 1) landed.store(since());
+    });
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the GPU work was not accepted");
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 5) == 0, "the flip was not accepted");
+    std::int64_t flipped = 0;
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(30), [&] { return cfg->failure || cfg->flipStatus.count == 2; });
+        flipped = since();
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip did not complete");
+    }
+    poller.join();
+    AgcDriverWaitIdle_nid_postfix();
+    std::printf("GPU work landed at %.1f ms, flip completed at %.1f ms\n", landed.load() / 1000.0, flipped / 1000.0);
+    check(landed.load() >= 100000, "the GPU work did not land or was too short to order against the flip");
+    check(result == busyLoopResult(iterations), "the GPU work stored the wrong result");
+    check(flipped + 20000 >= landed.load(), "the flip completed before the GPU work submitted ahead of it");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -281,6 +426,8 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
         else if (argc == 2 && std::string(argv[1]) == "present") testPresentation(false);
         else if (argc == 2 && std::string(argv[1]) == "backtoback") testBackToBack();
+        else if (argc == 2 && std::string(argv[1]) == "pacing") testReleaseVblank();
+        else if (argc == 2 && std::string(argv[1]) == "aftergpu") testFlipAfterGpuWork();
         else if (argc == 2 && std::string(argv[1]) == "unavailable") testPresentation(true);
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");

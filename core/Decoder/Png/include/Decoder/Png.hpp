@@ -35,9 +35,16 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> png);
 
 std::optional<Image> Decode(std::span<const std::uint8_t> png);
 
+inline constexpr std::uint8_t FILTER_NONE = 1 << 0;
+inline constexpr std::uint8_t FILTER_SUB = 1 << 1;
+inline constexpr std::uint8_t FILTER_UP = 1 << 2;
+inline constexpr std::uint8_t FILTER_AVERAGE = 1 << 3;
+inline constexpr std::uint8_t FILTER_PAETH = 1 << 4;
+inline constexpr std::uint8_t FILTER_ALL = FILTER_NONE | FILTER_SUB | FILTER_UP | FILTER_AVERAGE | FILTER_PAETH;
+
 struct EncodeOptions {
     int compressionLevel = 8;
-    int filter = -1;
+    std::uint8_t filters = FILTER_ALL;
 };
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,

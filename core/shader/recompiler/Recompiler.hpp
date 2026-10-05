@@ -189,6 +189,7 @@ struct SpirvTarget {
     std::uint32_t maxWorkgroupSharedMemoryBytes;
     std::optional<MeshTargetLimits> mesh;
     std::optional<TessellationTargetLimits> tessellation;
+    bool nonConstantImageOffsets = false;
 };
 
 struct BindingLayout {
@@ -237,6 +238,10 @@ struct TessellationConfiguration {
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
 inline constexpr std::uint32_t MeshDrawPushBytes = 24;
+inline constexpr std::uint32_t MeshArgumentAddressDword = 4;
+inline constexpr std::uint32_t MeshArgumentIndexCountDword = 3;
+inline constexpr std::uint32_t MeshArgumentFirstIndexDword = 4;
+inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 
 struct GraphicsDrawParameters {
@@ -305,6 +310,7 @@ struct DescriptorBinding {
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
     std::vector<bool> imageWritten;
     std::vector<bool> imageDepthCompare;
+    std::vector<bool> imageAtomic;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
     // (~0.4-0.5 us each on NVIDIA), so a driver may keep these elements in device-local memory.
@@ -392,6 +398,7 @@ struct RecompileResult {
     bool instanceOffsetShared = false;
     bool vertexOffsetConflict = false;
     bool instanceOffsetConflict = false;
+    std::uint32_t hostSubgroupSize = 0;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     bool cacheHit = false;

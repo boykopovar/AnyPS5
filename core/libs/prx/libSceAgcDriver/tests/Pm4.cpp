@@ -2,12 +2,16 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <limits>
 #include <set>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -97,6 +101,29 @@ void testRegisters() {
     expectFailure([&] { execute(state, makePacket(0x7a, {0x10000010, 1})); }, "bank selection");
     expectFailure([&] { execute(state, makePacket(0x69, {0xffff, 1, 2})); }, "overflow");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x9f, {0, 0, 0x80000000, 0}), 0x20); }, "compute");
+}
+
+void testRegisterFile() {
+    AgcDriver::Registers registers{{0x300, 3}, {0x10, 1}, {0x41, 2}};
+    check(registers.size() == 3 && !registers.contains(0x11) && registers.at(0x41) == 2, "register file lookup");
+    check(registers.find(0x12) == registers.end() && registers.find(0x10)->second == 1, "register file find");
+    check(!registers.emplace(0x10, 9).second && registers.at(0x10) == 1, "register file emplace replaced a value");
+    check(registers.insert_or_assign(0x10, 7).second == false && registers.at(0x10) == 7, "register file assignment");
+    check(registers.lower_bound(0x11)->first == 0x41 && registers.upper_bound(0x41)->first == 0x300 && registers.lower_bound(0x301) == registers.end(), "register file bounds");
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> order;
+    for (const auto& [offset, value] : registers) order.emplace_back(offset, value);
+    check(order == std::vector<std::pair<std::uint32_t, std::uint32_t>>{{0x10, 7}, {0x41, 2}, {0x300, 3}}, "register file order");
+    auto copy = registers;
+    copy[0x7000] = 5;
+    check(copy.size() == 4 && registers.size() == 3 && !registers.contains(0x7000) && !(copy == registers), "register file copy");
+    check(copy.erase(0x7000) == 1 && copy.erase(0x7000) == 0 && copy == registers, "register file erase");
+    bool threw = false;
+    try {
+        static_cast<void>(registers.at(0x42));
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    check(threw, "register file read an unset register");
 }
 
 void testContextAndBases() {
@@ -265,6 +292,12 @@ void testMemory() {
     check(data[0] == 11 && data[1] == 12, "WRITE_DATA increment failed");
     execute(state, makePacket(0x37, {0x10100, low(data.data()), high(data.data()), 21, 22}));
     check(data[0] == 22 && data[1] == 12, "WRITE_DATA fixed destination failed");
+    execute(state, makePacket(0x37, {0x40000100, low(data.data()), high(data.data()), 41, 42}));
+    check(data[0] == 41 && data[1] == 42, "WRITE_DATA from the PFP failed");
+    execute(state, makePacket(0x37, {0x04100200, low(data.data()), high(data.data()), 61, 62}));
+    check(data[0] == 61 && data[1] == 62, "WRITE_DATA with a cache policy failed");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x08000100, low(data.data()), high(data.data()), 71}), 0); }, "reserved");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x80000100, low(data.data()), high(data.data()), 51}), 0); }, "engine");
     execute(state, makePacket(0x81, {4, 31, 32}));
     execute(state, makePacket(0x83, {4, 2, low(data.data()), high(data.data())}));
     check(data[0] == 31 && data[1] == 32, "constant RAM round trip failed");
@@ -315,6 +348,29 @@ void testCopies() {
 #endif
 }
 
+void testMemoryCopyDecode() {
+    using AgcDriver::Pm4::DecodeMemoryCopy;
+    constexpr std::uint64_t source = 0x1120000000ull, destination = 0x403d7b400ull;
+    const auto packet = [&](std::uint32_t control, std::uint64_t from, std::uint64_t to, std::uint32_t command) {
+        return makePacket(0x50, {control, static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(from >> 32u), static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(to >> 32u), command});
+    };
+    const auto copy = DecodeMemoryCopy(packet(0x60000000, source, destination, 0xbdd800));
+    check(copy.has_value() && copy->source == source && copy->destination == destination && copy->bytes == 0xbdd800, "a memory-to-memory DMA_DATA did not decode as a copy");
+    check(DecodeMemoryCopy(packet(0x00000000, source, destination, 64)).has_value(), "a DMA_DATA with memory selectors 0 did not decode as a copy");
+    check(!DecodeMemoryCopy(packet(0x40000000, 0x44332211, destination, 64)).has_value(), "an immediate fill decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60100000, source, 0x100, 64)).has_value(), "a DMA_DATA to the GDS decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x20000000, 0x100, destination, 64)).has_value(), "a DMA_DATA from the GDS decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60000000, source, destination, 64 | (1u << 26u))).has_value(), "a register source decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60000000, source, destination, 64 | (1u << 27u))).has_value(), "a register destination decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60000000, source, destination, 64 | (1u << 28u))).has_value(), "a non-incrementing source decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60000000, source, destination, 64 | (1u << 29u))).has_value(), "a non-incrementing destination decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60000000, source, destination, 0)).has_value(), "an empty DMA_DATA decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60000000, source, source + 32, 64)).has_value(), "overlapping ranges decoded as a copy");
+    check(!DecodeMemoryCopy(packet(0x60000000, source + 32, source, 64)).has_value(), "overlapping ranges below the source decoded as a copy");
+    check(DecodeMemoryCopy(packet(0x60000000, source, source + 64, 64)).has_value(), "adjacent ranges did not decode as a copy");
+    check(!DecodeMemoryCopy(makePacket(0x40, {0x10101, 0, 0, 0, 0})).has_value(), "a COPY_DATA decoded as a DMA_DATA copy");
+}
+
 void testMemorySynchronization() {
     struct MemoryState {
         std::uint32_t source = 0;
@@ -354,6 +410,60 @@ void testMemorySynchronization() {
     });
     expectFailure([&] { execute(state, makePacket(0x37, {0x100, low(&memory.destination), high(&memory.destination), 99})); }, "range synchronization failed");
     check(memory.destination == 42, "failed synchronization changed the destination");
+}
+
+void testConditionalValidation() {
+    alignas(4) static std::uint32_t condition = 0;
+    const auto valid = makePacket(0x22, {low(&condition), high(&condition), 0, 0x3fff});
+    check(AgcDriver::Pm4::UnsupportedReason(valid[0]).empty() && AgcDriver::Pm4::AccessesMemory(valid[0]), "COND_EXEC is rejected or does not synchronize guest memory");
+    AgcDriver::Pm4::Validate(valid, 0);
+    AgcDriver::Pm4::Validate(valid, 0x20);
+    check(AgcDriver::Pm4::ConditionalWords(valid) == 0x3fff, "COND_EXEC count decoded wrong");
+    check(AgcDriver::Pm4::ConditionalWords(makePacket(0x22, {low(&condition), high(&condition), 0, 0})) == 0, "empty COND_EXEC range decoded wrong");
+    AgcDriver::Pm4::Validate(makePacket(0x22, {low(&condition), high(&condition), 3u << 25u, 5}), 0x20);
+    const auto invalidWord = [&](std::size_t word, std::uint32_t value, std::uint32_t queue, const char* text) {
+        auto packet = valid;
+        packet[word] = value;
+        expectFailure([&] { AgcDriver::Pm4::Validate(packet, queue); }, text);
+    };
+    invalidWord(1, low(&condition) | 1u, 0, "reserved address bits");
+    invalidWord(1, low(&condition) | 2u, 0x20, "reserved address bits");
+    invalidWord(2, 0x10000u, 0, "above 48");
+    invalidWord(3, 3u << 25u, 0, "reserved control fields");
+    invalidWord(3, 1u, 0x20, "reserved control fields");
+    invalidWord(3, 1u << 27u, 0x20, "reserved control fields");
+    invalidWord(4, 0x4000u, 0, "reserved count bits");
+    invalidWord(4, 0x80000005u, 0x20, "reserved count bits");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x22, {0, 0, 0}), 0); }, "packet size");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x22, {0, 0, 0, 0, 0}), 0); }, "packet size");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x22, {0, 0, 0, 0}, 1), 0); }, "header flags");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x22, {0, 0, 0, 0}, 2), 0x20); }, "header flags");
+    expectFailure([] { AgcDriver::Pm4::ConditionalWords(makePacket(0x37, {0x100, 0, 0, 0})); }, "expected COND_EXEC");
+    AgcDriver::QueueState state;
+    expectFailure([&] { AgcDriver::Pm4::Execute(valid, state); }, "driver execution");
+}
+
+void testConditionReadSynchronization() {
+    alignas(4) static std::uint32_t condition = 0;
+    static std::size_t flushed = 0;
+    condition = 0;
+    flushed = 0;
+    struct FlushHookReset {
+        ~FlushHookReset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); }
+    } reset;
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
+        check(address == reinterpret_cast<std::uintptr_t>(&condition) && bytes == sizeof(condition), "COND_EXEC synchronized an unrelated range");
+        condition = 0x80;
+        ++flushed;
+    });
+    const auto packet = makePacket(0x22, {low(&condition), high(&condition), 0, 5});
+    check(AgcDriver::Pm4::ReadCondition(packet) == 0x80 && flushed == 1, "COND_EXEC read its condition before the GPU work that writes it");
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t, std::size_t) {
+        throw std::runtime_error("condition synchronization failed");
+    });
+    expectFailure([&] { AgcDriver::Pm4::ReadCondition(packet); }, "condition synchronization failed");
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    expectFailure([] { AgcDriver::Pm4::ReadCondition(makePacket(0x22, {0x1000, 0, 0, 5})); }, "guest");
 }
 
 void testWriteChangedKeepsUntouchedBytes() {
@@ -492,6 +602,97 @@ void testDriverSubmission() {
     check(destination[0] == 0, "rejected submission executed a prefix");
 }
 
+std::vector<std::uint32_t> joinPackets(std::initializer_list<std::vector<std::uint32_t>> packets) {
+    std::vector<std::uint32_t> words;
+    for (const auto& packet : packets) words.insert(words.end(), packet.begin(), packet.end());
+    return words;
+}
+
+std::vector<std::uint32_t> writeWord(std::uint32_t& target, std::uint32_t value) {
+    return makePacket(0x37, {0x00100200, low(&target), high(&target), value});
+}
+
+std::vector<std::uint32_t> conditional(const std::uint32_t& condition, std::uint32_t words, std::uint32_t control = 0) {
+    return makePacket(0x22, {low(&condition), high(&condition), control, words});
+}
+
+std::vector<std::uint32_t> indirectBuffer(const std::vector<std::uint32_t>& target, bool chain = false) {
+    return makePacket(0x3f, {low(target.data()), high(target.data()), static_cast<std::uint32_t>(target.size()) | (chain ? 1u << 20u : 0u)});
+}
+
+void submitWords(std::vector<std::uint32_t>& words, std::uint32_t queue = 0) {
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check((queue == 0 ? sceAgcDriverSubmitDcb(&packet) : sceAgcDriverSubmitAcb(queue, &packet)) == 0, "conditional submission failed");
+}
+
+void testConditionalSubmission() {
+    alignas(8) static std::uint32_t zero = 0, one = 1, condition = 0;
+    static std::array<std::uint32_t, 16> results{};
+    results.fill(0);
+    const auto run = [](std::vector<std::uint32_t> words, std::uint32_t queue = 0) {
+        submitWords(words, queue);
+        AgcDriverWaitIdle_nid_postfix();
+    };
+    run(joinPackets({conditional(one, 5), writeWord(results[0], 11), writeWord(results[1], 12)}));
+    check(results[0] == 11 && results[1] == 12, "COND_EXEC skipped a range whose condition is set");
+    run(joinPackets({conditional(zero, 6), {0x80000000u}, writeWord(results[0], 21), writeWord(results[1], 22)}));
+    check(results[0] == 11 && results[1] == 22, "COND_EXEC did not skip exactly its range when the condition is zero");
+    run(joinPackets({conditional(zero, 0), writeWord(results[2], 23)}));
+    check(results[2] == 23, "an empty COND_EXEC range skipped the next packet");
+    alignas(4) static std::uint32_t never = 0;
+    never = 0;
+    auto skippedWait = joinPackets({conditional(zero, 9), makePacket(0x3c, {0x13, low(&never), high(&never), 1, 0xffffffffu, 0x190}), makePacket(0x10, {0}, 0x30), writeWord(results[14], 24)});
+    submitWords(skippedWait);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::atomic_ref<std::uint32_t>(results[14]).load() != 24 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool skipped = std::atomic_ref<std::uint32_t>(results[14]).load() == 24;
+    std::atomic_ref<std::uint32_t>(never).store(1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(skipped, "a WAIT_REG_MEM inside a skipped COND_EXEC range was executed");
+
+    condition = 1;
+    run(joinPackets({writeWord(condition, 0), conditional(condition, 5), writeWord(results[0], 31), writeWord(results[1], 32)}));
+    check(condition == 0 && results[0] == 11 && results[1] == 32, "COND_EXEC read its condition before an earlier packet of its queue stored it");
+    run(joinPackets({writeWord(condition, 9), conditional(condition, 5), writeWord(results[0], 41)}));
+    check(results[0] == 41, "COND_EXEC skipped a range whose condition an earlier packet of its queue set");
+    condition = 0;
+    run(joinPackets({conditional(condition, 5, 3u << 25u), writeWord(results[3], 42), writeWord(condition, 1), conditional(condition, 5, 1u << 25u), writeWord(results[4], 43)}), 0x20);
+    check(results[3] == 0 && results[4] == 43, "compute queue COND_EXEC with a cache policy evaluated wrong");
+
+    run(joinPackets({conditional(one, 10), conditional(zero, 10), writeWord(results[5], 51), writeWord(results[6], 52), writeWord(results[7], 53)}));
+    check(results[5] == 0 && results[6] == 0 && results[7] == 53, "a nested COND_EXEC range reaching past the outer range was not skipped exactly");
+    run(joinPackets({conditional(zero, 10), conditional(one, 10), writeWord(results[5], 54), writeWord(results[6], 55), writeWord(results[7], 56)}));
+    check(results[5] == 0 && results[6] == 55 && results[7] == 56, "a skipped COND_EXEC range did not skip the COND_EXEC inside it");
+
+    static std::vector<std::uint32_t> target;
+    target = joinPackets({writeWord(results[8], 61), conditional(zero, 5), writeWord(results[9], 62), writeWord(results[10], 63)});
+    run(joinPackets({conditional(zero, 4), indirectBuffer(target), writeWord(results[11], 64)}));
+    check(results[8] == 0 && results[10] == 0 && results[11] == 64, "COND_EXEC over an INDIRECT_BUFFER did not skip the whole buffer");
+    run(joinPackets({conditional(one, 4), indirectBuffer(target), writeWord(results[11], 65)}));
+    check(results[8] == 61 && results[9] == 0 && results[10] == 63 && results[11] == 65, "COND_EXEC over an INDIRECT_BUFFER or inside one evaluated wrong");
+
+    const auto rejected = [](std::vector<std::uint32_t> words, const char* text) {
+        results[12] = 0;
+        expectFailure([&] { submitWords(words); }, text);
+        AgcDriverWaitIdle_nid_postfix();
+        check(results[12] == 0, "a rejected conditional submission executed a prefix");
+    };
+    const auto sentinel = writeWord(results[12], 1);
+    rejected(joinPackets({sentinel, conditional(one, 3), writeWord(results[13], 1)}), "ends inside a packet");
+    rejected(joinPackets({sentinel, conditional(one, 6), writeWord(results[13], 1)}), "exceeds its command buffer");
+    rejected(joinPackets({sentinel, conditional(one, 6), {0xc004105cu, 7, 0, 1, 0, 0}}), "a flip inside a conditional execution range");
+    rejected(joinPackets({sentinel, conditional(one, 2), makePacket(0x59, {0x80000000u})}), "REWIND inside a conditional execution range");
+    rejected(joinPackets({sentinel, conditional(one, 4), indirectBuffer(target, true)}), "chained INDIRECT_BUFFER");
+    rejected(joinPackets({sentinel, conditional(one, 2), {0x40000000u, 0}}), "whole packets");
+    rejected(joinPackets({sentinel, makePacket(0x22, {low(&one), high(&one), 0, 0x4005}), writeWord(results[13], 1)}), "reserved count bits");
+    static std::vector<std::uint32_t> unaligned, overlong;
+    unaligned = joinPackets({conditional(one, 3), writeWord(results[13], 1)});
+    overlong = joinPackets({conditional(one, 10), writeWord(results[13], 1)});
+    rejected(joinPackets({sentinel, indirectBuffer(unaligned)}), "ends inside a packet");
+    rejected(joinPackets({sentinel, indirectBuffer(overlong), writeWord(results[13], 1)}), "exceeds its command buffer");
+    check(results[13] == 0, "a rejected conditional submission executed a guarded packet");
+}
+
 void testAsyncMemoryFailure() {
     auto commands = makePacket(0x37, {0x100, 0x1000, 0, 1});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
@@ -514,18 +715,23 @@ int main(int argc, char** argv) {
         testCatalog();
         testWriteChangedKeepsUntouchedBytes();
         testRegisters();
+        testRegisterFile();
         testContextAndBases();
         testIndexedDraw();
         testAutoDraw();
         testIndirectDraw();
         testMemory();
         testCopies();
+        testMemoryCopyDecode();
         testMemorySynchronization();
+        testConditionalValidation();
+        testConditionReadSynchronization();
         testEventWrite();
         testAcquireMem();
         testDriverSubmission();
+        testConditionalSubmission();
         LibcRunShutdown_nid_postfix();
-        std::puts("PM4 catalog, registers, state, memory and submission tests passed");
+        std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

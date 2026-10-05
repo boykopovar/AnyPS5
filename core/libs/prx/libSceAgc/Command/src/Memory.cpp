@@ -49,6 +49,11 @@ std::uint32_t* WriteAtomicMem(CommandBuffer* buffer, std::uint8_t atomicOp, std:
     return Emit(buffer, 0x1eu, {atomicOp | (static_cast<std::uint32_t>(command) << 8u) | (static_cast<std::uint32_t>(cachePolicy) << 25u), static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u), static_cast<std::uint32_t>(srcData), static_cast<std::uint32_t>(srcData >> 32u), static_cast<std::uint32_t>(compareData), static_cast<std::uint32_t>(compareData >> 32u), loopInterval}, function);
 }
 
+std::uint32_t* WritePrimeUtcl2(CommandBuffer* buffer, const volatile void* address, std::uint32_t sizeInBytes, const char* function) {
+    const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
+    return Emit(buffer, 0x10u, {0, static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u), sizeInBytes}, function);
+}
+
 std::uint32_t* WriteData(CommandBuffer* buffer, bool compute, std::uint8_t dst, std::uint8_t cachePolicy, std::uint64_t address, const void* data, std::uint32_t count, std::uint8_t increment, std::uint8_t writeConfirm, const char* function) {
     Require(data != nullptr && count != 0 && count <= 0x3ffdu, function, "invalid write data payload");
     CheckBits(dst, compute ? 0xfu : 0x1fu, function);

@@ -52,13 +52,15 @@ PngEncContext* context(void* handle) {
     return ctx && ctx->magic == CONTEXT_MAGIC ? ctx : nullptr;
 }
 
-int filterMode(std::uint16_t filterType) {
-    if (filterType == FILTER_ALL) return -1;
-    if (filterType & FILTER_SUB) return 1;
-    if (filterType & FILTER_UP) return 2;
-    if (filterType & FILTER_AVERAGE) return 3;
-    if (filterType & FILTER_PAETH) return 4;
-    return 0;
+std::uint8_t filterSet(std::uint16_t filterType) {
+    if (filterType == FILTER_ALL) return Decoder::Png::FILTER_ALL;
+    if (filterType == 0) return Decoder::Png::FILTER_NONE;
+    std::uint8_t filters = 0;
+    if (filterType & FILTER_SUB) filters |= Decoder::Png::FILTER_SUB;
+    if (filterType & FILTER_UP) filters |= Decoder::Png::FILTER_UP;
+    if (filterType & FILTER_AVERAGE) filters |= Decoder::Png::FILTER_AVERAGE;
+    if (filterType & FILTER_PAETH) filters |= Decoder::Png::FILTER_PAETH;
+    return filters;
 }
 
 }
@@ -120,7 +122,7 @@ int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngE
                 if (channels == 4) *destination++ = source[3];
             }
         }
-        png = Decoder::Png::Encode(pixels, width, height, channels, {param->compression_level, filterMode(param->filter_type)});
+        png = Decoder::Png::Encode(pixels, width, height, channels, {param->compression_level, filterSet(param->filter_type)});
     } catch (const std::exception&) {
         return PNG_ENC_ERROR_FATAL;
     }

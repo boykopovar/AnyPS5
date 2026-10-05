@@ -31,6 +31,7 @@ struct ResourceSpecialization {
         bool fmask = false;
         bool depthBits = false;
         bool depthUnorm16 = false;
+        IrBufferFormat packedFormat = IrBufferFormat::Invalid;
 
         bool operator==(const Image& other) const;
     };

@@ -44,6 +44,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
     try {
         bool submitted = false;
         bool presentable = false;
+        bool trailing = false;
         double waitedMs = 0;
         {
             std::unique_lock replacing(deviceReplacement, std::defer_lock);
@@ -102,8 +103,13 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
 
                 presenting->QueuePresent();
                 timing.Mark("queue_present");
+                trailing = !syncFlip;
                 submitted = false;
             }
+        }
+        if (trailing) {
+            waitedMs += presenting->FinishPresent();
+            timing.Mark("render_fence_wait");
         }
         if (submitted) {
             waitedMs = presenting->FinishPresent();

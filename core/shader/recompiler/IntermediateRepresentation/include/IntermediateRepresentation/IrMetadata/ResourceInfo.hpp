@@ -40,8 +40,10 @@ struct MemoryInfo {
     bool dataSigned = false;
     bool typed = false;
     bool formatted = false;
+    bool d16 = false;
     bool imageHasMip = false;
     bool imageR128 = false;
+    bool imagePacked = false;
     bool idxen = false;
     bool offen = false;
     bool planningOnly = false;

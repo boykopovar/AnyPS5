@@ -1,10 +1,17 @@
 #include "BdaTests.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include <cstring>
 #include <array>
 #include <algorithm>
+#include <utility>
+#include <vector>
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -114,5 +121,24 @@ void RunGuestAllocationTests() {
         reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
         Require(!applied, "split image memory became releasable");
     }
+#endif
+}
+
+void RunUnmappedGapTests() {
+#if defined(__linux__)
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* block = static_cast<std::byte*>(mmap(nullptr, 3 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(block != MAP_FAILED, "cannot map the gap test pages");
+    Require(munmap(block + page, page) == 0, "cannot unmap the gap test's middle page");
+    const auto base = reinterpret_cast<std::uint64_t>(block);
+    const auto ranges = GuestMemory::CommittedRanges(base, 3 * page);
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>> expected{{base, base + page}, {base + 2 * page, base + 3 * page}};
+    Require(ranges == expected, "the pages after an unmapped gap in host memory were not described");
+    Require(GuestMemory::CommittedRanges(base + page, 2 * page) == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{base + 2 * page, base + 3 * page}}, "the pages after a query that starts in a gap were not described");
+    Require(!GuestMemory::Accessible(block, 3 * page) && GuestMemory::Accessible(block + 2 * page, page, true), "an unmapped gap in host memory is misreported");
+    Require(!GuestMemory::Accessible(reinterpret_cast<const void*>(std::uintptr_t{0x18}), 4), "a near-null address counts as accessible");
+    munmap(block, page);
+    munmap(block + 2 * page, page);
 #endif
 }

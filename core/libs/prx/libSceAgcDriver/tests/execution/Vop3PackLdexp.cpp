@@ -1,0 +1,169 @@
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "Recompiler.hpp"
+#include "VulkanTestDevice.hpp"
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+
+using AgcDriver::Graphics::Require;
+using ShaderRecompiler::ShaderStage;
+
+constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Inputs = 4;
+constexpr std::uint32_t Results = 16;
+alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
+alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+
+alignas(256) constexpr std::array<std::uint32_t, 42> Code{
+    0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0xd768000a, 0x02020b04, 0xd768020b,
+    0x22020b04, 0xd769000c, 0x02020b04, 0xd769010d, 0x62020b04, 0xd762000e, 0x02020d04, 0xd762010f,
+    0x22020d04, 0xd7620010, 0x02020f05, 0xd54d0011, 0x041a0b04, 0xd7110012, 0x02020b04, 0xd7110213,
+    0x22020b04, 0xd7111814, 0x02020b04, 0xd7111115, 0x22020b04, 0xd56b0016, 0x02020b04, 0xd56b0017,
+    0x02020f06, 0xe0781000, 0x80010a03, 0xe0781010, 0x80010e03, 0xe0781020, 0x80011203, 0xe0781030,
+    0x80011603, 0xbf810000,
+};
+
+constexpr std::uint32_t Rows[32][4] = {
+    {0x3fc00000u, 0x00800000u, 0x00000080u, 0xffffffffu},
+    {0xbf800001u, 0x80ffffffu, 0xffffff81u, 0x00000000u},
+    {0x3f800000u, 0x7f000000u, 0x0000007fu, 0x00000000u},
+    {0x40000000u, 0x00800001u, 0xffffff82u, 0xfffffffeu},
+    {0x3f7fff80u, 0x3effff00u, 0x00000000u, 0x00000001u},
+    {0xbf000000u, 0x3f000000u, 0x00000115u, 0x348abf59u},
+    {0x382000a0u, 0xffc00000u, 0xffffff00u, 0x0000007fu},
+    {0x7fa12345u, 0xb8400180u, 0x367c8d22u, 0xffff0000u},
+    {0x37800101u, 0x3840017fu, 0x80000001u, 0x000000fdu},
+    {0x00000000u, 0x00000001u, 0xffffff69u, 0xffffff00u},
+    {0xd62c214cu, 0x7f800001u, 0x000000feu, 0xffffff6bu},
+    {0xffc00000u, 0x3ac900c9u, 0xffffffffu, 0x00000116u},
+    {0x38a00141u, 0xff800000u, 0x00000000u, 0x00000098u},
+    {0x628aa774u, 0x807fffffu, 0xffffff69u, 0xffffff81u},
+    {0x7f800000u, 0x3b490191u, 0x0fdc7365u, 0x00000080u},
+    {0xff800000u, 0x7f800000u, 0x00000000u, 0x00000116u},
+    {0x807fffffu, 0x80000000u, 0x00000096u, 0x00000080u},
+    {0x7f800001u, 0x3a800000u, 0x00001000u, 0x00000082u},
+    {0x37c000c0u, 0x7fa12345u, 0xffffffffu, 0x7f703ee0u},
+    {0x00000001u, 0xab16df9cu, 0xa053bb90u, 0x55e635d7u},
+    {0x8dc822deu, 0x00000000u, 0x7fffffffu, 0x002baa81u},
+    {0xffc00000u, 0xffbfffffu, 0x00000097u, 0x00000082u},
+    {0x80000000u, 0x2d6e2b74u, 0xffffff6bu, 0x9fb7084au},
+    {0xf2d7d40fu, 0x7f800001u, 0x00000100u, 0x7ffffffeu},
+    {0x3c000000u, 0x80000000u, 0xfffffe00u, 0x1b1c3f27u},
+    {0x3efffe01u, 0x3f000001u, 0xffffff6bu, 0xffffffffu},
+    {0x3f000000u, 0xb8a0013fu, 0x00000096u, 0x5cdff86du},
+    {0x3b490192u, 0x4801920eu, 0x00000115u, 0x7fffffffu},
+    {0x3ac900cau, 0x37c000c1u, 0x00000081u, 0x00000082u},
+    {0xbf7ffcffu, 0x32135b34u, 0x00000017u, 0x00000002u},
+    {0x38a00141u, 0x3b490193u, 0xffffff82u, 0x8acac024u},
+    {0x3820009fu, 0x3f7fffc0u, 0x0000007eu, 0x80000000u}
+};
+constexpr std::uint32_t Expected[32][14] = {
+    {0x00007fffu, 0x00008001u, 0x0000ffffu, 0x00000000u, 0x7f800000u, 0xff800000u, 0x00000000u, 0x1fa00000u, 0x00000000u, 0x00008000u, 0x00803fc0u, 0x00808000u, 0x00000000u, 0xffffff80u},
+    {0x00008001u, 0x00007fffu, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u, 0x80ffffffu, 0xa0c08080u, 0xffff0001u, 0x7fff8001u, 0x80ffbf80u, 0x80ff8001u, 0xc17fffffu, 0x00000000u},
+    {0x7fff7fffu, 0x7fff8001u, 0xffffffffu, 0x00000000u, 0x7f000000u, 0xff000000u, 0x7f000000u, 0x5f400000u, 0x00000000u, 0x00008000u, 0x7f003f80u, 0x7f008000u, 0x00000000u, 0x00000000u},
+    {0x00007fffu, 0x00008001u, 0x0000ffffu, 0x00000000u, 0x01000000u, 0x81000000u, 0x00000000u, 0x20400000u, 0x00010000u, 0x00018000u, 0x00804000u, 0x00808000u, 0x40000000u, 0x000000fcu},
+    {0x3fff7fffu, 0x3fff8001u, 0x7fffffffu, 0x00000000u, 0x3f7fff80u, 0xbf7fff80u, 0x3f7fff00u, 0x3ebfff40u, 0xff00ff80u, 0x7f007f80u, 0x3eff3f7fu, 0x3effff80u, 0x00008000u, 0x00000000u},
+    {0x4000c000u, 0x40004000u, 0x80000000u, 0x00000000u, 0xff800000u, 0xff800000u, 0x7f800000u, 0x7f000000u, 0x00000000u, 0x00008000u, 0x3f00bf00u, 0x3f008000u, 0x00000000u, 0xda210b4du},
+    {0x00000001u, 0x0000ffffu, 0x00000002u, 0x00000000u, 0x00000000u, 0x80000000u, 0xffc00000u, 0x9c700050u, 0x000000a0u, 0x000080a0u, 0xffc03820u, 0xffc080a0u, 0xd8000000u, 0xffff8100u},
+    {0xffff0000u, 0x00010000u, 0x00000000u, 0x00030000u, 0x7fa12345u, 0xffa12345u, 0x80000000u, 0x9b701262u, 0x01802345u, 0x0180a345u, 0xb8407fa1u, 0xb840a345u, 0xdaf4e780u, 0x72de0000u},
+    {0x00010001u, 0x0001ffffu, 0x00030001u, 0x00000000u, 0x00000000u, 0x80000000u, 0x7f800000u, 0x37600140u, 0x017f0101u, 0x017f8101u, 0x38403780u, 0x38408101u, 0x80c1807fu, 0x800000fdu},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x00000001u, 0x00010000u, 0x00018000u, 0x00000000u, 0x00008000u, 0x00000000u, 0x00009700u},
+    {0x00008001u, 0x00007fffu, 0x00000000u, 0x00000000u, 0xff800000u, 0xff800000u, 0x7f800001u, 0xaa561026u, 0x0001214cu, 0x0001a14cu, 0x7f80d62cu, 0x7f80a14cu, 0x302c214cu, 0xffff6c2au},
+    {0x00320000u, 0x00320000u, 0x00640000u, 0x00000000u, 0xffc00000u, 0xffc00000u, 0x7f800000u, 0x9dc50065u, 0x00c90000u, 0x00c98000u, 0x3ac9ffc0u, 0x3ac98000u, 0xcdc00000u, 0xfffffeeau},
+    {0x80010003u, 0x7ffffffdu, 0x00000005u, 0xffff0000u, 0x38a00141u, 0xb8a00141u, 0xff800000u, 0x9b900020u, 0x00000141u, 0x00008141u, 0xff8038a0u, 0xff808141u, 0x5f800000u, 0x00000000u},
+    {0x00007fffu, 0x00008001u, 0x0000ffffu, 0x00000000u, 0x170aa774u, 0x970aa774u, 0x80000000u, 0x7185d3bau, 0xffffa774u, 0x7fff2774u, 0x807f628au, 0x807fa774u, 0x5775588cu, 0x00004ae9u},
+    {0x00647fffu, 0x00648001u, 0x00c9ffffu, 0x00000000u, 0x7f800000u, 0xff800000u, 0x7b490191u, 0x5d640149u, 0x01910000u, 0x01918000u, 0x3b497f80u, 0x3b498000u, 0xb7800000u, 0xee39b280u},
+    {0x7fff8001u, 0x7fff7fffu, 0xffff0000u, 0x00000000u, 0xff800000u, 0xff800000u, 0x7f800000u, 0xbf800000u, 0x00000000u, 0x00008000u, 0x7f80ff80u, 0x7f808000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u, 0x80000000u, 0x803f7f7fu, 0x0000ffffu, 0x00007fffu, 0x8000807fu, 0x8000ffffu, 0x80000000u, 0x00004b00u},
+    {0x00200000u, 0x00200000u, 0x00400000u, 0x00000000u, 0x7f800001u, 0xff800001u, 0x7b800000u, 0x5c800000u, 0x00000001u, 0x00008001u, 0x3a807f80u, 0x3a808001u, 0x3a800000u, 0x00082000u},
+    {0x00000001u, 0x0000ffffu, 0x00000001u, 0x00000000u, 0x374000c0u, 0xb74000c0u, 0x7fa12345u, 0x5bb11283u, 0x234500c0u, 0x234580c0u, 0x7fa137c0u, 0x7fa180c0u, 0xff9a73c0u, 0x808fc120u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x80000000u, 0xff800000u, 0x550b704eu, 0xdf9c0001u, 0x5f9c8001u, 0xab160000u, 0xab168001u, 0xab16df9cu, 0x4f8755f0u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xff800000u, 0xff800000u, 0x00000000u, 0x4764116fu, 0x000022deu, 0x0000a2deu, 0x00008dc8u, 0x0000a2deu, 0x00000000u, 0x7fd4557fu},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xffc00000u, 0xffc00000u, 0xffbfffffu, 0xffbf7f80u, 0xffff0000u, 0x7fff8000u, 0xffbfffc0u, 0xffbf8000u, 0x00400000u, 0x00004caeu},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u, 0x00000000u, 0x5737163au, 0x2b740000u, 0x2b748000u, 0x2d6e8000u, 0x2d6e8000u, 0x00000000u, 0x0a782ceeu},
+    {0x00008001u, 0x00007fffu, 0x00000000u, 0x00000000u, 0xff800000u, 0xff800000u, 0x7f800001u, 0xb8ab6a08u, 0x0001d40fu, 0x0001540fu, 0x7f80f2d7u, 0x7f80d40fu, 0x6b57d40fu, 0xfffffe00u},
+    {0x00000100u, 0x0000ff00u, 0x00000200u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u, 0x5e000000u, 0x00000000u, 0x00008000u, 0x80003c00u, 0x80008000u, 0x00000000u, 0xc781b200u},
+    {0x40003fffu, 0x4000c001u, 0x80007fffu, 0x00000000u, 0x00000000u, 0x80000000u, 0x3e800001u, 0x3f807f01u, 0x0001fe01u, 0x00017e01u, 0x3f003effu, 0x3f00fe01u, 0x7dfffe01u, 0x00000095u},
+    {0xfffe4000u, 0x0002c000u, 0x00008000u, 0x00050000u, 0x7f800000u, 0xff800000u, 0xff800000u, 0x7b50001fu, 0x013f0000u, 0x013f8000u, 0xb8a03f00u, 0xb8a08000u, 0x81000000u, 0x6b3b8fdeu},
+    {0x7fff0064u, 0x7fffff9cu, 0xffff00c9u, 0x00000000u, 0x7f800000u, 0xff800000u, 0x7f800000u, 0x41254a50u, 0x920e0192u, 0x120e8192u, 0x48013b49u, 0x48018192u, 0xf27559fcu, 0x7ffffeebu},
+    {0x00010032u, 0x0001ffceu, 0x00020065u, 0x00000000u, 0x7b4900cau, 0xfb4900cau, 0x78c000c1u, 0x38c400c6u, 0x00c100cau, 0x00c180cau, 0x37c03ac9u, 0x37c080cau, 0x4f09984au, 0x00004182u},
+    {0x00008003u, 0x00007ffdu, 0x00000000u, 0x00000000u, 0xcafffcffu, 0xcafffcffu, 0x33135b34u, 0x7849ab9au, 0x5b34fcffu, 0x5b347cffu, 0x3213bf7fu, 0x3213fcffu, 0xf9db08ccu, 0x0000002eu},
+    {0x00650003u, 0x0065fffdu, 0x00c90005u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0x3a75016au, 0x01930141u, 0x01938141u, 0x3b4938a0u, 0x3b498141u, 0x7a6af953u, 0xb0356e48u},
+    {0x7fff0001u, 0x7fffffffu, 0xffff0002u, 0x00000000u, 0x7720009fu, 0xf720009fu, 0x00000000u, 0x3b4f7fafu, 0xffc0009fu, 0x7fc0809fu, 0x3f7f3820u, 0x3f7f809fu, 0x687fd840u, 0x00000000u}
+};
+constexpr const char* Names[14] = {"cvt_pknorm_i16_f320", "cvt_pknorm_i16_f321", "cvt_pknorm_u16_f322", "cvt_pknorm_u16_f323", "ldexp_f324", "ldexp_f325", "ldexp_f326", "lerp_u87", "pack_b32_f168", "pack_b32_f169", "pack_b32_f1610", "pack_b32_f1611", "mul_lo_i32_0", "mul_lo_i32_1"};
+
+void Fill(std::uint32_t tid, std::uint32_t* words) {
+    std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words);
+}
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+}
+
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
+
+void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
+    Require(actual == expected, std::string("vop3 pack ldexp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+}
+
+void Run(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(Code);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+void Check() {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t* in = &Input[tid * Inputs];
+        const std::uint32_t* out = &Output[tid * Results];
+        for (std::uint32_t i = 0; i < 14; ++i) Expect(tid, out[i], Expected[tid][i], Names[i]);
+    }
+}
+
+}
+
+int main() {
+    try {
+        const auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
+        Run(*device);
+        Check();
+        std::puts("vop3 pack ldexp tests passed");
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

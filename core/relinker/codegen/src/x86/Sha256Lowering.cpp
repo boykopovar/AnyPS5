@@ -182,6 +182,16 @@ void _emitMessage2(StubBodyBuilder& body, const Sha256Operands& operands) {
 }
 
 void Sha256Lowering::EmitOutOfLine(StubBodyBuilder& body, const Sha256Operands& operands) const {
+    if (operands.Memory) {
+        auto loaded = operands;
+        loaded.Memory.reset();
+        loaded.Source = _scratch<1>({operands.Operation, operands.Destination, operands.Destination, {}})[0];
+        body.Spill(loaded.Source);
+        body.Load(loaded.Source, *operands.Memory);
+        EmitOutOfLine(body, loaded);
+        body.Restore(loaded.Source);
+        return;
+    }
     switch (operands.Operation) {
     case Sha256Operation::Rnds2:
         _emitRounds(body, operands);

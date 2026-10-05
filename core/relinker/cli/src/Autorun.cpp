@@ -20,12 +20,15 @@ int Autorun(const std::string& absPath, bool toWindows) {
     const int rawCode = std::system(cmd.c_str());
 
     int exitCode = rawCode;
-    if (toWindows) {
-        std::cout << "\nExit code: " << rawCode << '\n';
-    } else {
-        if (rawCode != -1) exitCode = (rawCode >> 8) & 0xFF;
-        std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
+#ifdef _WIN32
+    std::cout << "\nExit code: " << rawCode << '\n';
+#else
+    if (rawCode != -1) {
+        const int signal = rawCode & 0x7F;
+        exitCode = signal ? 128 + signal : (rawCode >> 8) & 0xFF;
     }
+    std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
+#endif
 
     std::cout << "\nPress Enter to exit...\n";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');

@@ -3,6 +3,7 @@
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
@@ -107,6 +108,24 @@ IrValue* TranslationContext::makeImageAddress(const RdnaInstruction& inst, const
             components[index] = &ir.GetVectorReg(static_cast<VectorReg>(inst.imageNsaVectorRegisters[index - 1u]));
         } else {
             components[index] = &readRawU32(offsetOperand(plainBase, index)).Value();
+        }
+    }
+    if ((inst.imageSampleFlags & RdnaImageSampleFlagCd) != 0u) {
+        const auto mask = ballotMask(IrU1(ir.GetExec()));
+        IrValue& lane = ir.Emit(IrOpcode::LaneId, IrType::U32, {});
+        IrValue& quad = ir.BitwiseAnd(lane, ir.Constant(~3u));
+        IrValue& word = program.WaveSize() == 64u ? ir.Select(ir.ULessThan(lane, ir.Constant(32u)), mask[0].Value(), mask[1].Value()) : mask[0].Value();
+        IrValue& active = ir.BitwiseAnd(ir.ShiftRightLogical(word, ir.BitwiseAnd(quad, ir.Constant(31u))), ir.Constant(15u));
+        IrValue& first = ir.Emit(IrOpcode::FindILsb32, IrType::U32, {&active});
+        IrValue& source = ir.Select(ir.INotEqual(active, ir.Constant(0u)), ir.IAdd(quad, first), lane);
+        IrValue& address = ir.ShiftLeftLogical(source, ir.Constant(2u));
+        IrValue& exec = ir.GetExec();
+        const std::uint32_t gradientStart = std::popcount(inst.imageSampleFlags & (RdnaImageSampleFlagOffset | RdnaImageSampleFlagBias | RdnaImageSampleFlagCompare));
+        const std::uint32_t gradients = 2u * ((inst.imageSampleFlags & RdnaImageSampleGradientCountMask) >> RdnaImageSampleGradientCountShift);
+        const std::uint32_t firstDword = GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, gradientStart).bitOffset / 32u;
+        const std::uint32_t lastDword = GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, gradientStart + gradients - 1u).bitOffset / 32u;
+        for (std::uint32_t index = firstDword; index <= lastDword; ++index) {
+            components[index] = &ir.Emit(IrOpcode::BpermuteU32, IrOpcodeType(IrOpcode::BpermuteU32), {components[index], &address, &exec});
         }
     }
     return &ir.Emit(IrOpcode::MakeImageAddress, IrOpcodeType(IrOpcode::MakeImageAddress),

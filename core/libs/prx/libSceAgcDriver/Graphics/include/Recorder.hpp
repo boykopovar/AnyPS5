@@ -110,6 +110,8 @@ public:
     // overlapping in-flight batch's fence has signaled (its in-place GPU stores are final in host
     // memory; its completion stores are the caller's business, see VulkanDevice::CopyBuffer).
     bool PendingWriteSettled(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t LastWriteNote(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t NewestWriteNote(std::uint64_t address, std::size_t bytes) const;
     // Batch read tracking: the guest ranges the recorded work reads IN PLACE through a host import
     // and the GPU has not executed yet (a V# element bound in place, a region the GPU copies out of
     // an import, an address-based build's leased heaps, indirect arguments, a GPU-direct storage
@@ -176,7 +178,10 @@ public:
     // Submits and waits for every batch, running completions in order.
     void Sync();
     void CountSamples();
-    static std::uint64_t SamplesPassed();
+    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
+    std::uint64_t SamplesTotal();
+    bool DumpSamples(VkDeviceAddress target);
+    void NoteSampledDraw();
     // Waits only for the batches up to the newest one that writes the range (submitting the open
     // batch when it is that one); later batches stay in flight. Fences of one queue signal in
     // submission order, so completions still run in order. Debug aid: APS5_NO_SYNC_THROUGH=1 syncs all.
@@ -230,6 +235,7 @@ public:
     // Entries leave the table with their batch (a memory bound only). The note also enters the
     // label's range as a pending write of the open batch (the flush hook syncs CPU reads), marked
     // as the label's own so it does not count as an overwrite of the entry.
+    static constexpr std::size_t LabelTableBytes = 64;
     void NoteLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
     // Late rule: an entry whose stamp is not newer than the wait's submission is still the value
     // memory will hold, unless a CPU store touched the dword since it was recorded (the table
@@ -273,12 +279,14 @@ public:
     // inside [address, address + bytes): a range query for large ranges (a fill of megabytes),
     // where a per-dword lookup would not do.
     bool PendingLabelIn(std::uint64_t address, std::size_t bytes) const;
+    bool CompletionLabelIn(std::uint64_t address, std::size_t bytes) const;
     // PendingLabel of the active recorder WITHOUT GuestMemory::GpuMutex: the table has a small mutex
     // of its own (every mutation holds both), so a WAIT_REG_MEM consults it without queueing behind
     // device work. Nothing is done under the table mutex but the lookup (it never takes the GPU mutex).
     static std::optional<LabelHit> LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal = nullptr);
     // The value alone, for callers asking whether any label is pending in a dword (afterStamp 0).
     static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp);
+    static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
     // of the same queue) takes its value, since that queue's later work follows the label in queue
@@ -316,6 +324,7 @@ public:
     // completion store would land on memory the game may have reused by then (a stale label value
     // over a fresh command buffer). Debug aid: APS5_LABEL_STORE_ALWAYS=1 stores unconditionally.
     void AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool storedOnGpu);
+    bool AfterRecordedWork(std::function<void()> action);
     // A CPU store of GPU results into guest memory (GuestBufferMemory::WriteBack): recorded so a
     // completion label store can tell whether its bytes were overwritten. Under GuestMemory::
     // GpuMutex (every write-back runs inside finish() or a synchronous draw's wait): the first
@@ -401,6 +410,7 @@ public:
     // range index to pass to End, or NoTiming when timing is off or the batch's queries are used up.
     static constexpr std::uint32_t NoTiming = 0xffffffffu;
     static bool GpuTimingEnabled();
+    static bool BatchStampsEnabled();
     std::uint32_t BeginGpuTiming(std::uint64_t key);
     // `bytes`: what the range moved (a fill's, a copy's), summed per key on the [gputime] line.
     void EndGpuTiming(std::uint32_t index, std::uint64_t bytes = 0);
@@ -453,7 +463,7 @@ public:
     // frame record): finish() writes an entry per submitted batch into a ring of the last 128,
     // under GuestMemory::GpuMutex and the ring's own mutex; the readers below take only the ring
     // mutex, so the presenter reads them WITHOUT the GpuMutex. gpuStartNs/gpuEndNs are the
-    // whole-batch stamps (0 without APS5_PROFILE_GPU); `reads` and `readGeneration` (the
+    // whole-batch stamps (0 unless BatchStampsEnabled); `reads` and `readGeneration` (the
     // write-watch generation collected over the noted in-place reads at submit) are filled with
     // APS5_FLIP_READ_CHECK=1 only.
     struct Completed {
@@ -483,6 +493,7 @@ private:
         std::vector<std::shared_ptr<void>> kept;
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+        std::vector<std::uint64_t> writeNotes;
         // In-place reads (see NotePendingRead), dying with the batch: a finished batch's reads are done.
         struct Read {
             std::uint64_t begin;
@@ -499,6 +510,9 @@ private:
         std::chrono::steady_clock::time_point submittedAt{};
         VkQueryPool queries = VK_NULL_HANDLE;
         VkQueryPool samples = VK_NULL_HANDLE;
+        std::shared_ptr<void> samplePool;
+        bool sampleActive = false;
+        bool samplesDrawn = false;
         std::vector<std::uint64_t> timedKeys;
         std::vector<std::uint64_t> timedBytes;
         // The whole-batch timed range (BatchTimingKey) and its stamps once read (see Completed).
@@ -508,6 +522,7 @@ private:
         std::uint64_t readGeneration = 0;
         // Dword addresses this batch noted in the label table (removed when it finishes).
         std::vector<std::uint64_t> labelDwords;
+        std::vector<std::multimap<std::uint64_t, std::uint64_t>::iterator> wideLabels;
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
@@ -597,7 +612,23 @@ private:
     void readGpuTiming(Batch& batch);
     void beginSamples(Batch& batch);
     void readSamples(Batch& batch);
+    bool gpuSampleCounter();
+    void endSamples(Batch& batch);
+    void foldSamples(Batch& batch, VkDeviceAddress target);
+    struct SampleSegment {
+        std::shared_ptr<void> pool;
+        VkQueryPool handle;
+    };
+    std::vector<SampleSegment> pendingSamples;
     bool countingSamples = false;
+    int meshArgumentState = 0;
+    VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
+    VkPipeline meshArgumentPipeline = VK_NULL_HANDLE;
+    int sampleCounterState = 0;
+    std::unique_ptr<Buffer> sampleCounter;
+    VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
+    VkPipeline samplePipeline = VK_NULL_HANDLE;
+    std::shared_ptr<void> samplePools;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
@@ -613,6 +644,13 @@ private:
     PFN_vkEndCommandBuffer endCommandBuffer = nullptr;
     PFN_vkQueueSubmit queueSubmit = nullptr;
     PFN_vkCmdPipelineBarrier cmdPipelineBarrier = nullptr;
+    PFN_vkCmdBeginQuery cmdBeginQuery = nullptr;
+    PFN_vkCmdEndQuery cmdEndQuery = nullptr;
+    PFN_vkCmdResetQueryPool cmdResetQueryPool = nullptr;
+    PFN_vkCmdCopyQueryPoolResults cmdCopyQueryPoolResults = nullptr;
+    PFN_vkCmdBindPipeline cmdBindPipeline = nullptr;
+    PFN_vkCmdPushConstants cmdPushConstants = nullptr;
+    PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
     TFunction function(TFunction resolved, const char* name) const {
         return resolved != nullptr ? resolved : context.Function<TFunction>(name);
@@ -681,6 +719,9 @@ private:
     // The queued entries (batch always null), by dword; a lookup on the noting queue's thread
     // prefers them (its newest store in program order), every other lookup sees `labels` alone.
     std::map<std::uint64_t, LabelEntry> queuedLabels;
+    std::multimap<std::uint64_t, std::uint64_t> wideLabels;
+    std::uint64_t wideLabelBytes = 0;
+    bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
@@ -690,9 +731,11 @@ private:
     // snapshot (a rebuild from inside a completion must not drop them) until finish returns.
     std::vector<const Batch*> finishing;
     std::uint64_t submissions = 0;
+    std::uint64_t writeNoteCount = 0;
     // Command buffers and fences of completed batches, reused by later ones (hundreds of batches per
     // frame would otherwise allocate and free their objects each time).
     std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
+    std::vector<VkQueryPool> sparePools;
     mutable std::mutex completedMutex;
     std::array<Completed, CompletedRingSize> completed;
     std::uint64_t newestSubmitted = 0;

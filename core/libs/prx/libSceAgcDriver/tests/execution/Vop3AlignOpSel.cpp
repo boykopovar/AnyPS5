@@ -1,0 +1,190 @@
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "Recompiler.hpp"
+#include "VulkanTestDevice.hpp"
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+
+using AgcDriver::Graphics::Require;
+using ShaderRecompiler::ShaderStage;
+
+constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Inputs = 4;
+constexpr std::uint32_t Results = 16;
+alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
+alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+
+alignas(256) constexpr std::array<std::uint32_t, 62> Code{
+    0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0x7e140307, 0xd54e000a, 0x041a0b04,
+    0x7e160307, 0xd54e080b, 0x041a0b04, 0x7e180307, 0xd54e100c, 0x041a0b04, 0x7e1a0307, 0xd54e180d,
+    0x041a0b04, 0x7e1c0307, 0xd54e200e, 0x041a0b04, 0x7e1e0307, 0xd54e400f, 0x041a0b04, 0x7e200307,
+    0xd54e4810, 0x041a0b04, 0x7e220307, 0xd54e7811, 0x041a0b04, 0x7e240307, 0xd54f0012, 0x041a0b04,
+    0x7e260307, 0xd54f0813, 0x041a0b04, 0x7e280307, 0xd54f1014, 0x041a0b04, 0x7e2a0307, 0xd54f1815,
+    0x041a0b04, 0x7e2c0307, 0xd54f2016, 0x041a0b04, 0x7e2e0307, 0xd54f4017, 0x041a0b04, 0x7e300307,
+    0xd54f5018, 0x041a0b04, 0x7e320307, 0xd54f7819, 0x041a0b04, 0xe0781000, 0x80010a03, 0xe0781010,
+    0x80010e03, 0xe0781020, 0x80011203, 0xe0781030, 0x80011603, 0xbf810000,
+};
+
+constexpr std::uint32_t Rows[32][4] = {
+    {0xc0001234u, 0x73ab4876u, 0x04082408u, 0x7253edc6u},
+    {0x05b4d756u, 0xedccc000u, 0x1f210011u, 0x24aa1734u},
+    {0x8000fffeu, 0xad0ee1e7u, 0x00ffffffu, 0x80018000u},
+    {0xdc8cf93au, 0xe3653b50u, 0x21030300u, 0xffff0002u},
+    {0x400000ffu, 0xfffe4000u, 0xff001101u, 0x80018000u},
+    {0xf8800b51u, 0xfffe4000u, 0x20018024u, 0x7ffffffeu},
+    {0x80017fffu, 0x8000edccu, 0x031f0180u, 0xb63f2c62u},
+    {0xc0001234u, 0x80010002u, 0x01203f03u, 0x0001fffeu},
+    {0x89e7d15fu, 0x986e86cbu, 0x01010300u, 0x30b17d0bu},
+    {0x8001fffeu, 0x97491e23u, 0x0300241fu, 0x800000ffu},
+    {0x00011234u, 0x7fffc000u, 0x3f040300u, 0x1b98fbe4u},
+    {0xf542441du, 0x00007fffu, 0x03803f3fu, 0x7fff00ffu},
+    {0x80000001u, 0x03e0d681u, 0x00041007u, 0xc000fffeu},
+    {0x2d7c5048u, 0x728a6fcfu, 0x3f043f80u, 0x00007fffu},
+    {0xedccc000u, 0xff769e37u, 0x0701043fu, 0x36971e1bu},
+    {0x8001edccu, 0x62dc08d6u, 0x2100100fu, 0x5f27ff08u},
+    {0xf589d99au, 0xddd4a054u, 0x0f10101fu, 0x2891dd3cu},
+    {0xafdd8733u, 0x6be49ee7u, 0x3f101101u, 0xedccffffu},
+    {0x4b1e943eu, 0x205bc308u, 0x000f0f11u, 0xffff8000u},
+    {0x3fc2a908u, 0x482ea760u, 0xff072103u, 0xfb019df4u},
+    {0x00000000u, 0x40008001u, 0x24030001u, 0x80004000u},
+    {0x00010001u, 0x8bcce7cdu, 0x03212007u, 0x0001fffeu},
+    {0x0000c000u, 0xedcc0000u, 0x0303003fu, 0x000100ffu},
+    {0x4000ffffu, 0x40004000u, 0x0003ffffu, 0x0001edccu},
+    {0xc0000002u, 0xa8f51ac5u, 0x0f113f20u, 0xa2592b9du},
+    {0xe1594dc4u, 0x95468325u, 0x01212407u, 0xb6125e0cu},
+    {0xfffefffeu, 0xffff7fffu, 0x20ff2024u, 0x131e2d48u},
+    {0x80004000u, 0x4f1c9ce2u, 0x0fff3f07u, 0x065479e4u},
+    {0xc77d357fu, 0x000100ffu, 0x0f032104u, 0x33080a1du},
+    {0xc0000000u, 0x88ebd524u, 0x08211110u, 0x64bd7a63u},
+    {0x4000ffffu, 0x2141c6d1u, 0xff203f00u, 0x53935c55u},
+    {0xb8d0c65du, 0x369a9ad7u, 0x0011201fu, 0x5937c1f0u}
+};
+constexpr std::uint32_t Expected[32][16] = {
+    {0x3473ab48u, 0x473ab487u, 0x3473ab48u, 0x473ab487u, 0x3473ab48u, 0xab480000u, 0xb4870000u, 0xb4870000u, 0x73ab4876u, 0x73ab4876u, 0x73ab4876u, 0x73ab4876u, 0x73ab4876u, 0x48760000u, 0x48760000u, 0x48760000u},
+    {0x6bab76e6u, 0xedccc000u, 0x76e66000u, 0x0b69aeadu, 0x6bab76e6u, 0x76e60000u, 0xc0000000u, 0xaead0000u, 0x56edccc0u, 0xedccc000u, 0x56edccc0u, 0xb4d756edu, 0x56edccc0u, 0xccc00000u, 0xccc00000u, 0x56ed0000u},
+    {0x0001fffdu, 0x0001fffdu, 0x0001fffdu, 0xad0ee1e7u, 0x0001fffdu, 0xfffd0000u, 0xfffd0000u, 0xe1e70000u, 0x00fffeadu, 0x00fffeadu, 0x00fffeadu, 0xad0ee1e7u, 0x00fffeadu, 0xfead0000u, 0xfead0000u, 0xe1e70000u},
+    {0xe3653b50u, 0x5c6ca76au, 0x5c6ca76au, 0x71b29da8u, 0xe3653b50u, 0x3b500000u, 0xa76a0000u, 0x9da80000u, 0xe3653b50u, 0x8cf93ae3u, 0x8cf93ae3u, 0x3ae3653bu, 0xe3653b50u, 0x3b500000u, 0x3ae30000u, 0x653b0000u},
+    {0xffff2000u, 0x007fffffu, 0xfffe4000u, 0x800001ffu, 0xffff2000u, 0x20000000u, 0xffff0000u, 0x01ff0000u, 0xfffffe40u, 0xfffffe40u, 0xfffe4000u, 0x0000ffffu, 0xfffffe40u, 0xfe400000u, 0x40000000u, 0xffff0000u},
+    {0x1fffe400u, 0xfffe4000u, 0xffff2000u, 0xfffe4000u, 0x1fffe400u, 0xe4000000u, 0x40000000u, 0x40000000u, 0xfffe4000u, 0xfffe4000u, 0x51fffe40u, 0xfffe4000u, 0xfffe4000u, 0x40000000u, 0xfe400000u, 0x40000000u},
+    {0x8000edccu, 0xc00076e6u, 0x0002ffffu, 0xf0001db9u, 0x8000edccu, 0xedcc0000u, 0x76e60000u, 0x1db90000u, 0x8000edccu, 0xff8000edu, 0x017fff80u, 0x017fff80u, 0x8000edccu, 0xedcc0000u, 0xff800000u, 0xff800000u},
+    {0x90002000u, 0x80002469u, 0x80010002u, 0x40008001u, 0x90002000u, 0x20000000u, 0x24690000u, 0x80010000u, 0x00123480u, 0x00123480u, 0x80010002u, 0x34800100u, 0x00123480u, 0x34800000u, 0x00020000u, 0x01000000u},
+    {0x986e86cbu, 0xf30dd0d9u, 0xcc374365u, 0xcc374365u, 0x986e86cbu, 0x86cb0000u, 0xd0d90000u, 0x43650000u, 0x986e86cbu, 0xe7d15f98u, 0x5f986e86u, 0x5f986e86u, 0x986e86cbu, 0x86cb0000u, 0x6e860000u, 0x6e860000u},
+    {0x0003fffdu, 0xe97491e2u, 0x97491e23u, 0xd2e923c4u, 0x0003fffdu, 0xfffd0000u, 0x91e20000u, 0x23c40000u, 0x01fffe97u, 0x97491e23u, 0x97491e23u, 0x01fffe97u, 0x01fffe97u, 0xfe970000u, 0x1e230000u, 0xfe970000u},
+    {0x7fffc000u, 0x8ffff800u, 0x47fffc00u, 0x00022468u, 0x7fffc000u, 0xc0000000u, 0xf8000000u, 0x24680000u, 0x7fffc000u, 0x0112347fu, 0x7fffc000u, 0x0112347fu, 0x7fffc000u, 0xc0000000u, 0xc0000000u, 0x347f0000u},
+    {0xea84883au, 0xea84883au, 0x00007fffu, 0xa0000fffu, 0xea84883au, 0x883a0000u, 0x883a0000u, 0x0fff0000u, 0x42441d00u, 0x42441d00u, 0x00007fffu, 0x42441d00u, 0x42441d00u, 0x1d000000u, 0x7fff0000u, 0x1d000000u},
+    {0x0207c1adu, 0x000103e0u, 0x103e0d68u, 0x03e0d681u, 0x0207c1adu, 0xc1ad0000u, 0x03e00000u, 0xd6810000u, 0x00000103u, 0x03e0d681u, 0x03e0d681u, 0x03e0d681u, 0x00000103u, 0x01030000u, 0xd6810000u, 0xd6810000u},
+    {0x728a6fcfu, 0x5af8a090u, 0x8728a6fcu, 0x5af8a090u, 0x728a6fcfu, 0x6fcf0000u, 0xa0900000u, 0xa0900000u, 0x728a6fcfu, 0x7c504872u, 0x728a6fcfu, 0x7c504872u, 0x728a6fcfu, 0x6fcf0000u, 0x6fcf0000u, 0x48720000u},
+    {0xdb998001u, 0x0ff769e3u, 0x7fbb4f1bu, 0x01feed3cu, 0xdb998001u, 0x80010000u, 0x69e30000u, 0xed3c0000u, 0xccc000ffu, 0xff769e37u, 0x00ff769eu, 0xccc000ffu, 0xccc000ffu, 0x00ff0000u, 0x769e0000u, 0x00ff0000u},
+    {0xdb98c5b8u, 0xedcc62dcu, 0x62dc08d6u, 0x316e046bu, 0xdb98c5b8u, 0xc5b80000u, 0x62dc0000u, 0x046b0000u, 0x01edcc62u, 0x62dc08d6u, 0x62dc08d6u, 0xcc62dc08u, 0x01edcc62u, 0xcc620000u, 0x08d60000u, 0xdc080000u},
+    {0xeb13b335u, 0xd99addd4u, 0xd99addd4u, 0xb335bba9u, 0xeb13b335u, 0xb3350000u, 0xddd40000u, 0xbba90000u, 0x89d99addu, 0xddd4a054u, 0xddd4a054u, 0x89d99addu, 0x89d99addu, 0x9add0000u, 0xa0540000u, 0x9add0000u},
+    {0xb5f24f73u, 0xc399b5f2u, 0x87336be4u, 0x5fbb0e66u, 0xb5f24f73u, 0x4f730000u, 0xb5f20000u, 0x0e660000u, 0x336be49eu, 0x336be49eu, 0x6be49ee7u, 0xdd87336bu, 0x336be49eu, 0xe49e0000u, 0x9ee70000u, 0x336b0000u},
+    {0x4a1f102du, 0x287c40b7u, 0x287c40b7u, 0x205bc308u, 0x4a1f102du, 0x102d0000u, 0x40b70000u, 0xc3080000u, 0x3e205bc3u, 0x1e943e20u, 0x1e943e20u, 0x205bc308u, 0x3e205bc3u, 0x5bc30000u, 0x3e200000u, 0xc3080000u},
+    {0x0905d4ecu, 0x241753b0u, 0x10905d4eu, 0x7f855210u, 0x0905d4ecu, 0xd4ec0000u, 0x53b00000u, 0x52100000u, 0xc2a90848u, 0x08482ea7u, 0xc2a90848u, 0xc2a90848u, 0xc2a90848u, 0x08480000u, 0x08480000u, 0x08480000u},
+    {0x20004000u, 0x40008001u, 0x08001000u, 0x04000800u, 0x20004000u, 0x40000000u, 0x80010000u, 0x08000000u, 0x00400080u, 0x40008001u, 0x00000040u, 0x40008001u, 0x00400080u, 0x00800000u, 0x00400000u, 0x80010000u},
+    {0x031799cfu, 0x8bcce7cdu, 0xc5e673e6u, 0x31799cf9u, 0x031799cfu, 0x99cf0000u, 0xe7cd0000u, 0x9cf90000u, 0x0100018bu, 0x8bcce7cdu, 0x018bcce7u, 0x0100018bu, 0x0100018bu, 0x018b0000u, 0xcce70000u, 0x018b0000u},
+    {0x00018001u, 0xedcc0000u, 0x1db98000u, 0x1db98000u, 0x00018001u, 0x80010000u, 0x00000000u, 0x80000000u, 0x00c000edu, 0xedcc0000u, 0x00c000edu, 0x00c000edu, 0x00c000edu, 0x00ed0000u, 0x00ed0000u, 0x00ed0000u},
+    {0x8001fffeu, 0x8001fffeu, 0xe8000800u, 0x40004000u, 0x8001fffeu, 0xfffe0000u, 0xfffe0000u, 0x40000000u, 0x00ffff40u, 0x00ffff40u, 0x00ffff40u, 0x40004000u, 0x00ffff40u, 0xff400000u, 0xff400000u, 0x40000000u},
+    {0xa8f51ac5u, 0x80000005u, 0x0001547au, 0x000551eau, 0xa8f51ac5u, 0x1ac50000u, 0x00050000u, 0x51ea0000u, 0xa8f51ac5u, 0x000002a8u, 0x02a8f51au, 0x000002a8u, 0xa8f51ac5u, 0x1ac50000u, 0xf51a0000u, 0x02a80000u},
+    {0x892a8d06u, 0x49546832u, 0x4aa34192u, 0x4aa34192u, 0x892a8d06u, 0x8d060000u, 0x68320000u, 0x41920000u, 0x594dc495u, 0x95468325u, 0xc4954683u, 0xc4954683u, 0x594dc495u, 0xc4950000u, 0x46830000u, 0x46830000u},
+    {0xeffff7ffu, 0xffff7fffu, 0xfffdfffdu, 0xffff7fffu, 0xeffff7ffu, 0xf7ff0000u, 0x7fff0000u, 0x7fff0000u, 0xffff7fffu, 0xffff7fffu, 0xfefffeffu, 0xffff7fffu, 0xffff7fffu, 0x7fff0000u, 0xfeff0000u, 0x7fff0000u},
+    {0x009e3939u, 0x00008000u, 0x00008000u, 0x80009e39u, 0x009e3939u, 0x39390000u, 0x80000000u, 0x9e390000u, 0x0040004fu, 0x0040004fu, 0x0040004fu, 0x0040004fu, 0x0040004fu, 0x004f0000u, 0x004f0000u, 0x004f0000u},
+    {0xf000100fu, 0x8000807fu, 0xe000201fu, 0x6afe0002u, 0xf000100fu, 0x100f0000u, 0x807f0000u, 0x00020000u, 0x000100ffu, 0x7f000100u, 0x7d357f00u, 0x7d357f00u, 0x000100ffu, 0x00ff0000u, 0x7f000000u, 0x7f000000u},
+    {0x000088ebu, 0x00004475u, 0x4475ea92u, 0x0088ebd5u, 0x000088ebu, 0x88eb0000u, 0x44750000u, 0xebd50000u, 0x88ebd524u, 0x0088ebd5u, 0x0088ebd5u, 0x88ebd524u, 0x88ebd524u, 0xd5240000u, 0xebd50000u, 0xd5240000u},
+    {0x2141c6d1u, 0x8001fffeu, 0x2141c6d1u, 0x8001fffeu, 0x2141c6d1u, 0xc6d10000u, 0xfffe0000u, 0xfffe0000u, 0x2141c6d1u, 0x00ffff21u, 0x2141c6d1u, 0x00ffff21u, 0x2141c6d1u, 0xc6d10000u, 0xc6d10000u, 0xff210000u},
+    {0x71a18cbau, 0x369a9ad7u, 0x632e9b4du, 0x369a9ad7u, 0x71a18cbau, 0x8cba0000u, 0x9ad70000u, 0x9ad70000u, 0xd0c65d36u, 0x369a9ad7u, 0x5d369a9au, 0x369a9ad7u, 0xd0c65d36u, 0x5d360000u, 0x9a9a0000u, 0x9ad70000u}
+};
+constexpr const char* Names[16] = {
+    "v_alignbit_b32 v10, v4, v5, v6 op_sel:[0,0,0,0]",
+    "v_alignbit_b32 v11, v4, v5, v6 op_sel:[1,0,0,0]",
+    "v_alignbit_b32 v12, v4, v5, v6 op_sel:[0,1,0,0]",
+    "v_alignbit_b32 v13, v4, v5, v6 op_sel:[1,1,0,0]",
+    "v_alignbit_b32 v14, v4, v5, v6 op_sel:[0,0,1,0]",
+    "v_alignbit_b32 v15, v4, v5, v6 op_sel:[0,0,0,1]",
+    "v_alignbit_b32 v16, v4, v5, v6 op_sel:[1,0,0,1]",
+    "v_alignbit_b32 v17, v4, v5, v6 op_sel:[1,1,1,1]",
+    "v_alignbyte_b32 v18, v4, v5, v6 op_sel:[0,0,0,0]",
+    "v_alignbyte_b32 v19, v4, v5, v6 op_sel:[1,0,0,0]",
+    "v_alignbyte_b32 v20, v4, v5, v6 op_sel:[0,1,0,0]",
+    "v_alignbyte_b32 v21, v4, v5, v6 op_sel:[1,1,0,0]",
+    "v_alignbyte_b32 v22, v4, v5, v6 op_sel:[0,0,1,0]",
+    "v_alignbyte_b32 v23, v4, v5, v6 op_sel:[0,0,0,1]",
+    "v_alignbyte_b32 v24, v4, v5, v6 op_sel:[0,1,0,1]",
+    "v_alignbyte_b32 v25, v4, v5, v6 op_sel:[1,1,1,1]",
+};
+
+void Fill(std::uint32_t tid, std::uint32_t* words) {
+    std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words);
+}
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+}
+
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
+
+void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
+    Require(actual == expected, std::string("vop3 align op sel: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+}
+
+void Run(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(Code);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+void Check() {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t* in = &Input[tid * Inputs];
+        const std::uint32_t* out = &Output[tid * Results];
+        for (std::uint32_t i = 0; i < 16; ++i) {
+            Expect(tid, out[i], Expected[tid][i], Names[i]);
+        }
+    }
+}
+
+}
+
+int main() {
+    try {
+        const auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
+        Run(*device);
+        Check();
+        std::puts("vop3 align op sel tests passed");
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

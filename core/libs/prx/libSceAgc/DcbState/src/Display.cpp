@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/DcbState/include/Display.hpp"
 
+#include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include <cstdint>
@@ -21,16 +22,11 @@ uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_hand
 }
 
 uint32_t* APS5_VABI sceAgcDcbPrimeUtcl2(CommandBuffer* buf, const volatile void* address, uint32_t size_in_bytes) {
-    (void)buf;
-    (void)address;
-    (void)size_in_bytes;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return Agc::Command::WritePrimeUtcl2(buf, address, size_in_bytes, __func__);
 }
 
 std::uint32_t APS5_VABI sceAgcDcbPrimeUtcl2GetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 20;
 }
 
 }

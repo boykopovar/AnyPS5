@@ -41,7 +41,12 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
     const auto abs_path = fpath.string();
     std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(abs_path.c_str(), mode), std::fclose);
     if (!handle) {
-        const auto reason = std::strerror(errno);
+        const int error = errno;
+        if (error == ENOENT) {
+            errno = error;
+            return nullptr;
+        }
+        const auto reason = std::strerror(error);
         std::error_code ec;
         std::filesystem::path sibling;
         for (const auto& entry : std::filesystem::directory_iterator(fpath.parent_path(), ec)) {
@@ -131,7 +136,9 @@ std::int64_t APS5_VABI ftell_nid_postfix(FileStream* stream) { return ftello_nid
 
 int APS5_VABI fgetpos_nid_postfix(FileStream* stream, std::int64_t* position) {
     if (!position) throw std::invalid_argument("fgetpos: null position");
-    *position = ftello_nid_postfix(stream);
+    const auto result = ftello_nid_postfix(stream);
+    if (result == -1) return -1;
+    *position = result;
     return 0;
 }
 

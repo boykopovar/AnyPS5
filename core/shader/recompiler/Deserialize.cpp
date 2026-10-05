@@ -7,6 +7,7 @@
 #include "Optimization/BindingAllocator.hpp"
 #include "Optimization/ConstantFolder.hpp"
 #include "Optimization/DeadCodeEliminator.hpp"
+#include "Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/ReadLaneEliminator.hpp"
 #include "Optimization/ResourceTracker.hpp"
 #include "Optimization/ShaderInfoCollector.hpp"
@@ -205,6 +206,13 @@ int main(int argc, char** argv) {
             constantFolder.Fold(program);
             ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
+            deadCodeEliminator.Eliminate(program);
+        }
+
+        MaskedSelectEliminator maskedSelectEliminator;
+        const auto maskedSelectStats = maskedSelectEliminator.Eliminate(program);
+        std::cout << "MaskedSelectEliminator removed " << maskedSelectStats.removedSelects << "\n";
+        if (maskedSelectStats.removedSelects != 0u) {
             deadCodeEliminator.Eliminate(program);
         }
 

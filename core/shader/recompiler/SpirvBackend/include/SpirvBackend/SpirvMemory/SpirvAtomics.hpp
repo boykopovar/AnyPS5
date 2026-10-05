@@ -7,7 +7,6 @@
 namespace ShaderRecompiler {
 
 void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state);
-std::uint32_t EmitFloatAtomicReplacement(SpirvEmitterState& state, std::uint32_t old, std::uint32_t source, bool maxValue);
 std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dwordIndex);
 
 }

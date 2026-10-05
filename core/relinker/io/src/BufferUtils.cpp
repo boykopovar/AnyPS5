@@ -60,11 +60,7 @@ void AppendString(std::vector<std::uint8_t>& buf, const std::string& str) {
 }
 
 void AlignBuffer(std::vector<std::uint8_t>& buf, std::size_t alignment) {
-    const std::size_t remainder = buf.size() % alignment;
-    if (remainder != 0) {
-        const std::size_t padding = alignment - remainder;
-        buf.resize(buf.size() + padding, 0);
-    }
+    buf.resize(AlignUp(buf.size(), alignment), 0);
 }
 
 std::uint64_t AlignUp64(std::uint64_t value, std::uint64_t alignment) {
