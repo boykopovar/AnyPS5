@@ -18,6 +18,7 @@ constexpr int ErrorInvalidAddress = static_cast<int>(0x80bc0031u);
 constexpr int ErrorNoResourceId = static_cast<int>(0x80bc0023u);
 constexpr int ErrorInvalidMode = static_cast<int>(0x80bc0024u);
 constexpr uint32_t ValidKeyboardModes = 0x0000007f;
+constexpr int ErrorConnectionFailed = static_cast<int>(0x80bc0004u);
 constexpr uint32_t TypeNumber = 4;
 constexpr uint32_t ValidOptions = 0x00007bff;
 constexpr uint32_t OptionUseOver2K = 0x00004000;
@@ -58,10 +59,11 @@ int APS5_VABI sceImeKeyboardGetInfo(uint32_t resource_id, KeyboardInfo* info) {
 }
 
 int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids) {
- (void)user_id;
- (void)resource_ids;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!resource_ids) return ErrorInvalidAddress;
+ resource_ids->user_id = user_id;
+ for (auto& id : resource_ids->resource_id) id = 0;
+ std::lock_guard lock(g_keyboardMutex);
+ return g_openKeyboards.contains(user_id) ? ErrorConnectionFailed : ErrorNotOpened;
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {

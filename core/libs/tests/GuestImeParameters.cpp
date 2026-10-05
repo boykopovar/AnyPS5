@@ -11,6 +11,9 @@ int APS5_VABI sceImeClose_nid_postfix(void);
 int APS5_VABI sceImeSetCaret(const Caret* caret);
 int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length);
 int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geometry);
+int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param);
+int APS5_VABI sceImeKeyboardClose(int32_t user_id);
+int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids);
 }
 
 static_assert(sizeof(Param) == 96);
@@ -123,4 +126,17 @@ int main() {
     CheckPanelSizes();
     CheckErrors();
     CheckClosedPanel();
+
+    KeyboardResourceIdArray ids{};
+    Require(sceImeKeyboardGetResourceId(1, nullptr) == static_cast<int>(0x80bc0031u), "null resource ids");
+    ids.user_id = -1;
+    ids.resource_id[2] = 7;
+    Require(sceImeKeyboardGetResourceId(1, &ids) == static_cast<int>(0x80bc0002u), "keyboard not opened");
+    Require(ids.user_id == 1 && ids.resource_id[2] == 0, "resource ids not cleared");
+    KeyboardParam keyboard{};
+    Require(sceImeKeyboardOpen(1, &keyboard) == 0, "keyboard open");
+    ids.resource_id[0] = 9;
+    Require(sceImeKeyboardGetResourceId(1, &ids) == static_cast<int>(0x80bc0004u), "no keyboard connected");
+    Require(ids.resource_id[0] == 0, "resource ids not cleared after open");
+    Require(sceImeKeyboardClose(1) == 0, "keyboard close");
 }
