@@ -35,6 +35,7 @@ struct InputConfig::Editor::State {
     bool loaded = false;
     std::array<bool, 3> dirty{};
     int activeTab = -1;
+    SDL_Rect cancelBounds{};
     bool closing = false;
     std::string error;
     std::string status;
@@ -310,6 +311,11 @@ void InputConfig::Editor::Open() {
         state->rendererReady = ImGui_ImplSDLRenderer2_Init(state->renderer);
         if (!state->rendererReady) throw std::runtime_error("Input: ImGui renderer initialization failed");
         state->load();
+        if (SDL_NumJoysticks() > 0) {
+            int selected = 0;
+            for (int index = 0; index < SDL_NumJoysticks(); ++index) if (SDL_IsGameController(index)) { selected = index; break; }
+            state->selectDevice(selected);
+        }
     } catch (...) { state->destroy(); throw; }
 }
 
@@ -333,7 +339,14 @@ bool InputConfig::Editor::HandleEvent(const SDL_Event& event) {
         state->selectDevice(-1); state->status = "Controller disconnected. Select a connected device to continue.";
     }
     if (event.type == SDL_WINDOWEVENT && event.window.windowID == WindowId() && event.window.event == SDL_WINDOWEVENT_CLOSE) { state->closing = true; return true; }
-    ImGui_ImplSDL2_ProcessEvent(&event);
+    const bool capturing = state->captureAction >= 0 || state->captureButton >= 0 || state->captureAxis >= 0;
+    const SDL_Point point{event.button.x, event.button.y};
+    if (capturing && event.type == SDL_MOUSEBUTTONDOWN && event.button.windowID == WindowId() && SDL_PointInRect(&point, &state->cancelBounds)) {
+        state->cancelCapture();
+        return true;
+    }
+    const bool captureInput = state->captureAction >= 0 && (event.type == SDL_KEYDOWN || event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEWHEEL);
+    if (!captureInput) ImGui_ImplSDL2_ProcessEvent(&event);
     if (state->captureAction >= 0) {
         std::string source;
         if (event.type == SDL_KEYDOWN && event.key.windowID == WindowId() && !event.key.repeat) source = std::string("KEY:") + SDL_GetScancodeName(event.key.keysym.scancode);
@@ -397,6 +410,9 @@ InputConfig::SavedConfiguration InputConfig::Editor::Render() {
     if (state->captureAction >= 0 || state->captureButton >= 0 || state->captureAxis >= 0) {
         ImGui::TextUnformatted("Waiting for input..."); ImGui::SameLine();
         if (ImGui::Button("Cancel capture")) state->cancelCapture();
+        const auto minimum = ImGui::GetItemRectMin();
+        const auto maximum = ImGui::GetItemRectMax();
+        state->cancelBounds = {static_cast<int>(minimum.x), static_cast<int>(minimum.y), static_cast<int>(maximum.x - minimum.x), static_cast<int>(maximum.y - minimum.y)};
     }
     if (!state->loaded) { if (ImGui::Button("Reload configuration")) state->load(); }
     else if (ImGui::BeginTabBar("Sources")) {
