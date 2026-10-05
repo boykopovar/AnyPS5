@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEVIDEOOUT_PADINPUT_HPP
 
 #include "SDL_events.h"
+#include "ControllerMapping.hpp"
 #include "SDL_gamecontroller.h"
 #include "prx/libScePad/include/InputMapping.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -17,6 +18,8 @@ public:
     ~PadInput();
     void HandleEvent(const SDL_Event& event, DisplayWindow& window);
     void Update();
+    void SetSuspended(bool value);
+    void Reload(bool keyboard, bool database);
 
 private:
     void publish();
@@ -34,6 +37,9 @@ private:
     std::array<std::uint8_t, 2> mouseStick{128, 128};
     std::chrono::steady_clock::time_point nextMousePoll{};
     bool mouseEnabled = false;
+    bool suspended = false;
+    InputConfig::ControllerProfiles controllerProfiles;
+    InputConfig::ControllerProfile controllerProfile;
     SDL_GameController* controller = nullptr;
     PadInputState controllerState{};
     std::uint32_t outputSequence = 0;

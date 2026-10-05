@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 #include "SDL.h"
+#include "InputEditor.hpp"
 #include "SDL_vulkan.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -466,6 +467,7 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
     std::shared_ptr<FlipRequest> current;
     try {
         PadInput padInput;
+        InputConfig::Editor inputEditor(InputConfig::ResolvePath());
         MouseInput mouseInput;
         KeyboardInput keyboardInput;
         while (!token.stop_requested()) {
@@ -486,10 +488,56 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
                     LibcRequestExit_nid_postfix(0);
                     throw ProcessShutdown{};
                 }
+                const bool shortcut = event.type == SDL_KEYDOWN && !event.key.repeat && event.key.keysym.scancode == SDL_SCANCODE_F10 && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle());
+                if (shortcut && !inputEditor.IsOpen()) {
+                    try {
+                        inputEditor.Open();
+                        padInput.SetSuspended(true);
+                        SDL_Event focus{};
+                        focus.type = SDL_WINDOWEVENT;
+                        focus.window.windowID = SDL_GetWindowID(window.Handle());
+                        focus.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+                        mouseInput.HandleEvent(focus, focus.window.windowID);
+                        keyboardInput.HandleEvent(focus, focus.window.windowID);
+                    } catch (const std::exception& error) {
+                        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Input configuration", error.what(), window.Handle());
+                    }
+                    continue;
+                }
+                if (inputEditor.IsOpen()) {
+                    inputEditor.HandleEvent(event);
+                    padInput.HandleEvent(event, window);
+                    if (event.type == SDL_WINDOWEVENT && window.Handle() != nullptr && event.window.windowID == SDL_GetWindowID(window.Handle()) && event.window.event == SDL_WINDOWEVENT_CLOSE) {
+                        LibcRequestExit_nid_postfix(0);
+                        throw ProcessShutdown{};
+                    }
+                    continue;
+                }
                 padInput.HandleEvent(event, window);
                 if (window.Handle() != nullptr) {
                     mouseInput.HandleEvent(event, SDL_GetWindowID(window.Handle()));
                     keyboardInput.HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                }
+            }
+            const bool editing = inputEditor.IsOpen();
+            const auto saved = inputEditor.Render();
+            if (saved != InputConfig::SavedConfiguration::None) {
+                try {
+                    padInput.Reload(saved == InputConfig::SavedConfiguration::Keyboard, saved == InputConfig::SavedConfiguration::Database);
+                    if (saved == InputConfig::SavedConfiguration::Database) inputEditor.RefreshController();
+                } catch (const std::exception& error) {
+                    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Input configuration", error.what(), window.Handle());
+                }
+            }
+            if (editing && !inputEditor.IsOpen()) {
+                padInput.SetSuspended(false);
+                if (window.Handle() != nullptr && SDL_GetKeyboardFocus() == window.Handle()) {
+                    SDL_Event focus{};
+                    focus.type = SDL_WINDOWEVENT;
+                    focus.window.windowID = SDL_GetWindowID(window.Handle());
+                    focus.window.event = SDL_WINDOWEVENT_FOCUS_GAINED;
+                    mouseInput.HandleEvent(focus, focus.window.windowID);
+                    keyboardInput.HandleEvent(focus, focus.window.windowID);
                 }
             }
             padInput.Update();
