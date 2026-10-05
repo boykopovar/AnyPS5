@@ -388,6 +388,45 @@ void Unmap(void* addr, size_t len) {
 #endif
 }
 
+// PS5 titles map direct memory for the GPU and assume a low virtual window. The Windows back end
+// gets that from its guest arena (the first mapping lands at 0x200000000 and the rest follow it),
+// while a plain Linux mmap hands back a top-down address that this title's allocator rejects: it
+// re-requests the same 256 MB block and then asserts. Reserve the same low window here.
+#if !defined(_WIN32)
+constexpr std::uintptr_t LowArenaStart = 0x200000000;
+constexpr std::size_t LowArenaSize = 0x400000000;
+
+class LowArena {
+public:
+    void* TryMap(std::size_t len, int prot, std::size_t alignment) {
+        std::lock_guard lock(mutex);
+        if (!reserved) {
+            const void* probe = mmap(reinterpret_cast<void*>(LowArenaStart), LowArenaSize, PROT_NONE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+            if (probe == MAP_FAILED) return nullptr;
+            reserved = true;
+        }
+        const std::size_t prefix = (alignment - (cursor & (alignment - 1))) & (alignment - 1);
+        if (cursor + prefix + len > LowArenaStart + LowArenaSize) return nullptr;
+        const void* mapped = mmap(reinterpret_cast<void*>(cursor + prefix), len, prot,
+            MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
+        if (mapped == MAP_FAILED) return nullptr;
+        cursor += prefix + len;
+        return reinterpret_cast<void*>(cursor - len);
+    }
+
+private:
+    std::mutex mutex;
+    std::uintptr_t cursor = LowArenaStart;
+    bool reserved = false;
+};
+
+LowArena& GetLowArena() {
+    static LowArena arena;
+    return arena;
+}
+#endif
+
 void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
     ValidateLength(len);
     alignment = ValidateAlignment(alignment);
@@ -449,6 +488,9 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
     }
 #ifdef _WIN32
     return mmap_aligned(len, prot, alignment);
+#endif
+#if !defined(_WIN32)
+    if (auto* low = GetLowArena().TryMap(len, prot, alignment)) return low;
 #endif
     if (len > std::numeric_limits<size_t>::max() - alignment) {
         throw std::overflow_error("Aligned mapping size overflow");
