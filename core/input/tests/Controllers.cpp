@@ -5,6 +5,9 @@
 #include <iostream>
 #include <stdexcept>
 
+extern "C" void SDL_PrivateJoystickAddTouchpad(SDL_Joystick* joystick, int fingers);
+extern "C" int SDL_PrivateJoystickTouchpad(SDL_Joystick* joystick, int touchpad, int finger, Uint8 state, float x, float y, float pressure);
+
 void Require(bool value, const char* reason) { if (!value) throw std::runtime_error(reason); }
 template<class TOperation> void Reject(TOperation operation) {
     bool rejected = false;
@@ -23,7 +26,7 @@ int main() {
         SDL_Joystick* joystick = SDL_JoystickOpen(device);
         Require(joystick != nullptr, SDL_GetError());
         const auto guid = InputConfig::Guid(joystick);
-        const std::string mapping = guid + ",Virtual pad,a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,start:b6,leftstick:b7,rightstick:b8,touchpad:b9,dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,leftx:a0,lefty:a1,rightx:a2,righty:a3,lefttrigger:a4,righttrigger:a5,";
+        const std::string mapping = guid + ",Virtual pad,a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,start:b6,leftstick:b7,rightstick:b8,touchpad:b9,back:b11,dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,leftx:a0,lefty:a1,rightx:a2,righty:a3,lefttrigger:a4,righttrigger:a5,";
         InputConfig::ValidateMapping(mapping);
         Reject([&] { InputConfig::ValidateMapping(guid + ",Bad,a:b0,a:b1,"); });
         Reject([&] { InputConfig::ValidateMapping(guid + ",Bad,a:b-1,"); });
@@ -43,6 +46,40 @@ int main() {
         Require((state.buttons & static_cast<unsigned>(Pad::PadButton::Cross)) != 0, "button not forwarded");
         Require((state.buttons & static_cast<unsigned>(Pad::PadButton::Up)) != 0, "hat not forwarded");
         Require(state.sticks[0] == 128 && state.analogButtonsL2 == 0, "neutral analog state incorrect");
+        SDL_JoystickSetVirtualButton(joystick, 11, 1); SDL_GameControllerUpdate();
+        state = InputConfig::SampleController(controller, profile);
+        Require((state.buttons & static_cast<unsigned>(Pad::PadButton::TouchPad)) != 0 && state.touch[0].active && state.touch[0].x == 960 && state.touch[0].y == 471, "View fallback lost its center touch contact");
+        SDL_LockJoysticks();
+        SDL_PrivateJoystickAddTouchpad(joystick, 2);
+        SDL_PrivateJoystickTouchpad(joystick, 0, 1, SDL_PRESSED, 0.25f, 0.75f, 1.0f);
+        SDL_UnlockJoysticks();
+        state = InputConfig::SampleController(controller, profile);
+        Require(!state.touch[0].active && state.touch[1].active && state.touch[1].x == 479 && state.touch[1].y == 706, "View fallback overwrote a real finger contact");
+        SDL_LockJoysticks();
+        SDL_PrivateJoystickTouchpad(joystick, 0, 1, SDL_RELEASED, 0.25f, 0.75f, 0.0f);
+        SDL_UnlockJoysticks();
+        profile.buttons.back() = SDL_CONTROLLER_BUTTON_INVALID;
+        state = InputConfig::SampleController(controller, profile);
+        Require((state.buttons & static_cast<unsigned>(Pad::PadButton::TouchPad)) == 0 && !state.touch[0].active, "disabled touchpad retained View fallback");
+        profile.buttons.back() = SDL_CONTROLLER_BUTTON_B;
+        Require((InputConfig::SampleController(controller, profile).buttons & static_cast<unsigned>(Pad::PadButton::TouchPad)) == 0, "reassigned touchpad retained View fallback");
+        SDL_JoystickSetVirtualButton(joystick, 1, 1); SDL_GameControllerUpdate();
+        Require(InputConfig::SampleController(controller, profile).touch[0].active, "reassigned touchpad has no synthetic contact");
+        SDL_JoystickSetVirtualButton(joystick, 1, 0);
+        profile = InputConfig::ControllerProfile{};
+        for (const auto* type : {"PS4", "PS5"}) {
+            Require(SDL_GameControllerAddMapping((mapping + "type:" + type + ",").c_str()) >= 0, SDL_GetError());
+            SDL_GameControllerUpdate();
+            Require(SDL_GameControllerGetType(controller) == (std::string_view(type) == "PS4" ? SDL_CONTROLLER_TYPE_PS4 : SDL_CONTROLLER_TYPE_PS5), "virtual PlayStation type not applied");
+            state = InputConfig::SampleController(controller, profile);
+            Require((state.buttons & static_cast<unsigned>(Pad::PadButton::TouchPad)) == 0 && !state.touch[0].active, "Share/Create incorrectly became a touchpad click");
+            SDL_JoystickSetVirtualButton(joystick, 9, 1); SDL_GameControllerUpdate();
+            Require((InputConfig::SampleController(controller, profile).buttons & static_cast<unsigned>(Pad::PadButton::TouchPad)) != 0, "physical PlayStation touchpad click lost");
+            SDL_JoystickSetVirtualButton(joystick, 9, 0);
+        }
+        InputConfig::ApplyDatabase({mapping});
+        SDL_JoystickSetVirtualButton(joystick, 11, 0); SDL_GameControllerUpdate();
+        Require(!InputConfig::SampleController(controller, profile).touch[0].active, "View release retained synthetic contact");
         SDL_JoystickSetVirtualAxis(joystick, 0, 32767);
         SDL_JoystickSetVirtualAxis(joystick, 4, 0);
         SDL_GameControllerUpdate();

@@ -137,18 +137,6 @@ PadInputState PadInput::sampleController() const {
             for (int i = 0; i < 3; ++i) { result.accel[i] = accel[i]; result.gyro[i] = gyro[i]; }
         }
     }
-    if (SDL_GameControllerGetNumTouchpads(controller) > 0) {
-        for (int finger = 0; finger < 2; ++finger) {
-            Uint8 down = 0;
-            float x = 0.0f;
-            float y = 0.0f;
-            float pressure = 0.0f;
-            if (SDL_GameControllerGetTouchpadFinger(controller, 0, finger, &down, &x, &y, &pressure) != 0 || down == 0) continue;
-            result.touch[finger].active = true;
-            result.touch[finger].x = static_cast<std::uint16_t>(std::clamp(x, 0.0f, 1.0f) * 1919.0f);
-            result.touch[finger].y = static_cast<std::uint16_t>(std::clamp(y, 0.0f, 1.0f) * 942.0f);
-        }
-    }
     return result;
 }
 

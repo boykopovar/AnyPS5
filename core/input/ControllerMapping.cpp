@@ -157,8 +157,11 @@ std::string InputConfig::SerializeControllers(const ControllerProfiles& profiles
 PadInputState InputConfig::SampleController(SDL_GameController* controller, const ControllerProfile& profile) {
     PadInputState result;
     if (controller == nullptr) return result;
+    const auto type = SDL_GameControllerGetType(controller);
+    const bool playStation = type == SDL_CONTROLLER_TYPE_PS4 || type == SDL_CONTROLLER_TYPE_PS5;
     for (std::size_t index = 0; index < profile.buttons.size(); ++index) {
         if (profile.buttons[index] != SDL_CONTROLLER_BUTTON_INVALID && SDL_GameControllerGetButton(controller, profile.buttons[index])) result.buttons |= static_cast<std::uint32_t>(ControllerButtons[index].output);
+        if (!playStation && ControllerButtons[index].output == Pad::PadButton::TouchPad && profile.buttons[index] == SDL_CONTROLLER_BUTTON_TOUCHPAD && SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_BACK)) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
     }
     for (std::size_t index = 0; index < profile.axes.size(); ++index) {
         const auto source = profile.axes[index];
@@ -175,6 +178,19 @@ PadInputState InputConfig::SampleController(SDL_GameController* controller, cons
             if (analog) result.buttons |= static_cast<std::uint32_t>(index == 4 ? Pad::PadButton::L2 : Pad::PadButton::R2);
         }
     }
+    if (SDL_GameControllerGetNumTouchpads(controller) > 0) {
+        for (int finger = 0; finger < 2; ++finger) {
+            Uint8 down = 0;
+            float x = 0.0f;
+            float y = 0.0f;
+            float pressure = 0.0f;
+            if (SDL_GameControllerGetTouchpadFinger(controller, 0, finger, &down, &x, &y, &pressure) != 0 || down == 0) continue;
+            result.touch[finger].active = true;
+            result.touch[finger].x = static_cast<std::uint16_t>(std::clamp(x, 0.0f, 1.0f) * 1919.0f);
+            result.touch[finger].y = static_cast<std::uint16_t>(std::clamp(y, 0.0f, 1.0f) * 942.0f);
+        }
+    }
+    if (!playStation && (result.buttons & static_cast<std::uint32_t>(Pad::PadButton::TouchPad)) != 0 && !result.touch[0].active && !result.touch[1].active) result.touch[0] = {true, 960, 471, 0};
     return result;
 }
 

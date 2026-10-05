@@ -28,16 +28,22 @@ int main() {
 #endif
     InputConfig::WriteAtomic(path, "Cross=KEY:F\n");
     try {
-        const int device = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_UNKNOWN, 6, 2, 0);
+        const int device = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_UNKNOWN, 6, 3, 0);
         Require(device >= 0, SDL_GetError());
         auto* joystick = SDL_JoystickOpen(device);
         Require(joystick != nullptr, SDL_GetError());
         for (int axis = 4; axis < 6; ++axis) SDL_JoystickSetVirtualAxis(joystick, axis, -32768);
         const auto guid = InputConfig::Guid(joystick);
-        InputConfig::WriteAtomic(directory / "anyps5-gamecontrollerdb.txt", guid + ",Runtime pad,a:b0,b:b1,leftx:a0,lefty:a1,rightx:a2,righty:a3,lefttrigger:a4,righttrigger:a5,\n");
+        InputConfig::WriteAtomic(directory / "anyps5-gamecontrollerdb.txt", guid + ",Runtime pad,a:b0,b:b1,back:b2,leftx:a0,lefty:a1,rightx:a2,righty:a3,lefttrigger:a4,righttrigger:a5,\n");
         {
             PadInput pad;
             DisplayWindow window;
+            SDL_JoystickSetVirtualButton(joystick, 2, 1); pad.Update();
+            Require((published.buttons & static_cast<unsigned>(Pad::PadButton::TouchPad)) != 0 && published.touch[0].active && published.touch[0].x == 960 && published.touch[0].y == 471, "View touch contact not published to the game");
+            pad.SetSuspended(true); pad.Update();
+            Require(published.buttons == 0 && !published.touch[0].active, "View contact leaked while editor active");
+            SDL_JoystickSetVirtualButton(joystick, 2, 0); pad.SetSuspended(false); pad.Update();
+            Require(published.buttons == 0 && !published.touch[0].active, "released View contact persisted");
             SDL_Event key{};
             key.type = SDL_KEYDOWN; key.key.keysym.scancode = SDL_SCANCODE_F;
             pad.HandleEvent(key, window);
@@ -78,7 +84,7 @@ int main() {
             while (SDL_PollEvent(&event)) pad.HandleEvent(event, window);
             pad.Update();
             Require(published.buttons == 0, "disconnect left a button pressed");
-            const int next = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_UNKNOWN, 6, 2, 0);
+            const int next = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_UNKNOWN, 6, 3, 0);
             while (SDL_PollEvent(&event)) pad.HandleEvent(event, window);
             joystick = SDL_JoystickOpen(next);
             for (int axis = 4; axis < 6; ++axis) SDL_JoystickSetVirtualAxis(joystick, axis, -32768);

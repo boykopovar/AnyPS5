@@ -59,6 +59,8 @@ TouchPad = NONE
 
 Button targets are Cross, Circle, Square, Triangle, L1, R1, Options, L3, R3, Up, Right, Down, Left and TouchPad. Axis targets are LeftStickX, LeftStickY, RightStickX, RightStickY, L2 and R2. Sources use SDL controller names. `NONE` disables a target.
 
+The default TouchPad binding also accepts Back/View on non-PlayStation controllers. A touchpad press on these controllers supplies a center contact when no real finger contact is available. DualShock 4 and DualSense retain their physical touchpad and Share/Create behavior. Assigning another TouchPad source replaces the Back/View fallback; `TouchPad = NONE` disables it.
+
 **SDL Mapping** creates physical mappings, including for joysticks not recognized as game controllers. Release the controls before capture. Move a stick right or down, or press a trigger fully when prompted. The assistant samples resting axes, detects buttons, axes and cardinal hat directions, and requires confirmation for each input. Skip controls absent from the device. Save writes `anyps5-gamecontrollerdb.txt` using SDL mapping records with the current platform. The database is loaded before controller detection. Unfinished mappings are retained while selecting or reconnecting devices within the same editor session.
 
 Save applies only to the current tab. During gameplay, saved changes apply immediately; SDL mapping changes reopen the active controller. Closing with unsaved edits requires confirmation. Invalid configuration or a failed write reports an error; failed writes leave the destination file intact. Saving normalizes the file and does not preserve comments. Finger touch data, sensors and controller output remain handled by the existing SDL runtime.
