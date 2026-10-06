@@ -28,6 +28,7 @@ struct FontState {
     FT_Face face = nullptr;
     float scaleW = 16.0f;
     float scaleH = 16.0f;
+    std::int32_t attribute = 0;
 
     FontState() = default;
     FontState(const FontState&) = delete;
@@ -47,6 +48,7 @@ struct GeneratedGlyph {
     std::vector<FontGlyphOutlinePoint> outlinePoints;
     std::vector<std::uint8_t> outlineTags;
     std::vector<std::uint16_t> outlineContours;
+    std::int32_t attribute = 0;
     bool metricsInitialized = false;
     bool outlineInitialized = false;
 };
