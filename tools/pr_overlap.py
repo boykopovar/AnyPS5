@@ -84,8 +84,11 @@ def clashes(a, b, path):
 
 
 def conflicts(a, b):
-    if not (a["tree"] and b["tree"] and a["files"] & b["files"]):
+    files = a["files"] & b["files"]
+    if not files:
         return {}
+    if not (a["tree"] and b["tree"]):
+        return {path: [] for path in files}
     files = merge("--merge-base=refs/pr/base", a["tree"], b["tree"])[1]
     return {path: [] if path in a["added"] else clashes(a, b, path) for path in files}
 
