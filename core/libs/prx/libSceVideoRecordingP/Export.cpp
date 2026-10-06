@@ -10,6 +10,12 @@
 #include <vector>
 
 namespace {
+constexpr int VIDEO_RECORDING_ERROR_INVALID_STATE = static_cast<int>(0x80A80006);
+constexpr int VIDEO_RECORDING_ERROR_UNSUPPORTED = static_cast<int>(0x80A80008);
+constexpr int VIDEO_RECORDING_STATUS_NONE = 0;
+constexpr int VIDEO_RECORDING_MEM_SIZE = 4 * 1024;
+constexpr std::size_t VIDEO_RECORDING_PATH_MAX = 1023;
+
 std::mutex g_infoMutex;
 std::map<int32_t, std::vector<unsigned char>> g_info;
 }
@@ -17,9 +23,8 @@ std::map<int32_t, std::vector<unsigned char>> g_info;
 extern "C" {
 
 int APS5_VABI sceVideoRecordingClose(int discard) {
- (void)discard;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)discard;
+    return VIDEO_RECORDING_ERROR_INVALID_STATE;
 }
 
 int APS5_VABI sceVideoRecordingGetInfo(int32_t info, void* data, size_t size) {
@@ -33,22 +38,19 @@ int APS5_VABI sceVideoRecordingGetInfo(int32_t info, void* data, size_t size) {
 }
 
 int APS5_VABI sceVideoRecordingGetStatus(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return VIDEO_RECORDING_STATUS_NONE;
 }
 
-int APS5_VABI sceVideoRecordingOpen(void* buffer, size_t size, const void* param) {
- (void)buffer;
- (void)size;
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceVideoRecordingOpen(const char* path, const void* param, void* heap, int heapSize) {
+    if (path == nullptr || param == nullptr || heap == nullptr) APS5_INVALID_ARG_EX;
+    if (std::memchr(path, 0, VIDEO_RECORDING_PATH_MAX + 1) == nullptr) APS5_INVALID_ARG_EX;
+    (void)heapSize;
+    return VIDEO_RECORDING_ERROR_UNSUPPORTED;
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize(const void* param) {
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (param == nullptr) APS5_INVALID_ARG_EX;
+    return VIDEO_RECORDING_MEM_SIZE;
 }
 
 int APS5_VABI sceVideoRecordingSetInfo(int32_t info, const void* data, size_t size) {
@@ -60,13 +62,11 @@ int APS5_VABI sceVideoRecordingSetInfo(int32_t info, const void* data, size_t si
 }
 
 int APS5_VABI sceVideoRecordingStart(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return VIDEO_RECORDING_ERROR_INVALID_STATE;
 }
 
 int APS5_VABI sceVideoRecordingStop(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    return VIDEO_RECORDING_ERROR_INVALID_STATE;
 }
 
 APS5_EXPORT("iQS6DUtLybE", videoRecordingUnknown_iQS6DUtLybE);
