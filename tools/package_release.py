@@ -10,7 +10,7 @@ def package(platform, build, output, version):
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", version) or version.endswith("."):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
     libraries = sorted((build / "core/libs/libs").glob("*.prx"))
-    expected = {f"{directory.name}.prx" for directory in Path("core/libs/prx").iterdir() if directory.is_dir()}
+    expected = {f"{directory.name}.prx" for directory in (Path(__file__).resolve().parent.parent / "core/libs/prx").iterdir() if directory.is_dir()}
     expected.add("libcohtml.Prospero.prx")
     missing = expected - {library.name for library in libraries}
     if missing:
