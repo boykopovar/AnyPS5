@@ -288,18 +288,21 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     Require(targets.size() == attachments && owners.size() == colorAttachments, "render targets do not match the pipeline's attachments");
     const bool resident = std::all_of(owners.begin(), owners.end(), [](const auto& owner) { return owner != nullptr; });
     if (resident) {
+        const auto matches = [&](const CachedFramebuffer& entry) {
+            if (entry.extent.width != extent.width || entry.extent.height != extent.height || !std::equal(entry.views.begin(), entry.views.end(), targets.begin(), targets.end())) return false;
+            for (std::size_t i = 0; i < owners.size(); ++i) {
+                if (entry.owners[i].lock().get() != owners[i].get()) return false;
+            }
+            return true;
+        };
+        if (!framebuffers.empty() && matches(framebuffers.back())) return framebuffers.back().framebuffer;
         // Entries whose views are gone can never match again and go as soon as no recorded draw holds
         // them (Kept keeps its framebuffer until the batch completes).
         std::erase_if(framebuffers, [](const CachedFramebuffer& entry) {
             return entry.framebuffer.use_count() == 1 && std::any_of(entry.owners.begin(), entry.owners.end(), [](const auto& owner) { return owner.expired(); });
         });
         for (auto it = framebuffers.begin(); it != framebuffers.end(); ++it) {
-            if (it->extent.width != extent.width || it->extent.height != extent.height || !std::equal(it->views.begin(), it->views.end(), targets.begin(), targets.end())) continue;
-            // View handles are recycled once a StorageTexture is destroyed, so the owners must be the
-            // very objects the views were made for.
-            bool same = true;
-            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owners[i].lock().get() == owners[i].get();
-            if (!same) continue;
+            if (!matches(*it)) continue;
             std::rotate(it, std::next(it), framebuffers.end());
             return framebuffers.back().framebuffer;
         }
