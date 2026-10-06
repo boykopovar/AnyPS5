@@ -173,10 +173,28 @@ static void TestRejectedParams() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestRateChangeUnderFilter() {
+    const auto system = CreateSystem();
+    const auto sampler = Sampler(system, std::vector<std::int16_t>(Grain, 0), 1, 48000);
+    SetFilter(sampler, Filter(0, 1, 1, 0, 1000.0f, 1.0f, 1.0f));
+    Require(sceNgs2SystemSetSampleRate(system, 48000) == SCE_NGS2_OK);
+    bool rejected = false;
+    try {
+        sceNgs2SystemSetSampleRate(system, 96000);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+    SetFilter(sampler, Filter(0, 1, 0, 0, 0.0f, 1.0f, 1.0f));
+    Require(sceNgs2SystemSetSampleRate(system, 96000) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 int main() {
     TestLowPassAndTail();
     TestBypassMaskAndGain();
     TestSystemRateAndZeroCutoff();
     TestRejectedParams();
+    TestRateChangeUnderFilter();
     return 0;
 }

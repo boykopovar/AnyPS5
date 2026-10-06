@@ -18,6 +18,11 @@ int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption*, const Ng
 int APS5_VABI sceNgs2SystemDestroy(uintptr_t, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2SystemGetInfo(uintptr_t, Ngs2SystemInfo*, size_t);
 int APS5_VABI sceNgs2SystemSetGrainSamples(uintptr_t, uint32_t);
+int APS5_VABI sceNgs2SystemSetSampleRate(uintptr_t, uint32_t);
+int APS5_VABI sceNgs2SystemSetUserData(uintptr_t, uintptr_t);
+int APS5_VABI sceNgs2SystemGetUserData(uintptr_t, uintptr_t*);
+int APS5_VABI sceNgs2SystemLock(uintptr_t);
+int APS5_VABI sceNgs2SystemUnlock(uintptr_t);
 int APS5_VABI sceNgs2SystemRender(uintptr_t, const Ngs2RenderBufferInfo*, uint32_t);
 int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t, const Ngs2RackOption*, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2RackCreate(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2ContextBufferInfo*, uintptr_t*);
@@ -40,7 +45,7 @@ inline void Check(bool value, int line) {
 
 inline constexpr std::uint32_t Grain = 8;
 
-inline std::vector<std::uint64_t> buffers[16];
+inline std::vector<std::uint64_t> buffers[32];
 inline std::size_t usedBuffers = 0;
 
 inline Ngs2ContextBufferInfo Buffer(const Ngs2ContextBufferInfo& query) {

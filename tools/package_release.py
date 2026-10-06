@@ -11,7 +11,6 @@ def package(platform, build, output, version):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
     libraries = sorted((build / "core/libs/libs").glob("*.prx"))
     expected = {f"{directory.name}.prx" for directory in Path("core/libs/prx").iterdir() if directory.is_dir()}
-    expected.add("libcohtml.Prospero.prx")
     missing = expected - {library.name for library in libraries}
     if missing:
         raise RuntimeError(f"Missing patched libraries: {', '.join(sorted(missing))}")

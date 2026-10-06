@@ -69,12 +69,6 @@ const std::uint8_t* Ngs2Voice::WaveformData() const {
     return block.data + (static_cast<std::size_t>(block.info.num_skip_samples) + block.cursor) * channels * sizeof(std::int16_t);
 }
 
-template <typename TParam>
-static const TParam& ParamAs(const Ngs2VoiceParamHeader& param) {
-    if (param.size < sizeof(TParam)) throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " is too small");
-    return reinterpret_cast<const TParam&>(param);
-}
-
 static Ngs2Port& PortAt(Ngs2Voice& voice, std::uint32_t port) {
     if (port >= voice.ports.size()) throw std::invalid_argument("NGS2: voice port " + std::to_string(port) + " is out of range");
     return voice.ports[port];
@@ -244,6 +238,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     const std::uint32_t rackId = param.id >> 16;
     if (rackId == 0) {
         ApplyCommonParam(voice, param);
+        return;
+    }
+    if (rackId == (SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 >> 16) || rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+        Ngs2ApplyCustomParam(voice, param);
         return;
     }
     if (rackId != voice.rack->rackId) throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " belongs to another rack");

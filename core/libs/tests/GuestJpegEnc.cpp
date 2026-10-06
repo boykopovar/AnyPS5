@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -23,17 +24,34 @@ static bool IsJpeg(const unsigned char* data, std::uint32_t size) {
     return size > 4 && data[0] == 0xFF && data[1] == 0xD8 && data[size - 2] == 0xFF && data[size - 1] == 0xD9;
 }
 
+static std::pair<int, std::uint8_t> ReadFrame(const unsigned char* jpeg, std::uint32_t size) {
+    std::size_t offset = 2;
+    while (offset + 3 < size) {
+        Require(jpeg[offset++] == 0xFF);
+        while (offset < size && jpeg[offset] == 0xFF) ++offset;
+        Require(offset < size);
+        const std::uint8_t marker = jpeg[offset++];
+        if (marker == 0xDA || marker == 0xD9) break;
+        Require(offset + 1 < size);
+        const std::size_t length = (static_cast<std::size_t>(jpeg[offset]) << 8) | jpeg[offset + 1];
+        Require(length >= 2 && offset + length <= size);
+        if (marker >= 0xC0 && marker <= 0xC3) return {jpeg[offset + 7], jpeg[offset + 9]};
+        offset += length;
+    }
+    std::abort();
+}
+
 static int AverageError(const std::vector<std::uint8_t>& expected, const std::vector<std::uint8_t>& actual) {
     long total = 0;
     for (std::size_t i = 0; i < expected.size(); ++i) total += expected[i] > actual[i] ? expected[i] - actual[i] : actual[i] - expected[i];
     return static_cast<int>(total / static_cast<long>(expected.size()));
 }
 
-static std::vector<std::uint8_t> DecodeOutput(const JpegEncOutputInfo& info) {
+static std::vector<std::uint8_t> DecodeOutput(const JpegEncOutputInfo& info, std::uint32_t channels = 3) {
     Require(IsJpeg(jpeg, info.size));
     const auto decoded = Decoder::Jpeg::Decode({jpeg, info.size});
     Require(decoded.has_value());
-    Require(decoded->width == 16 && decoded->height == 16 && decoded->channels == 3);
+    Require(decoded->width == 16 && decoded->height == 16 && decoded->channels == channels);
     return decoded->pixels;
 }
 
@@ -169,6 +187,7 @@ int main() {
     info = {};
     Require(sceJpegEncEncode(handle, &rgba, &info) == 0);
     Require(info.height == 16);
+    Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x22}});
     Require(AverageError(expected, DecodeOutput(info)) < 6);
 
     for (std::uint32_t y = 0; y < 16; ++y) {
@@ -183,6 +202,7 @@ int main() {
     bgra.pixel_format = 1;
     info = {};
     Require(sceJpegEncEncode(handle, &bgra, &info) == 0);
+    Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x22}});
     Require(AverageError(expected, DecodeOutput(info)) < 6);
 
     alignas(4) static unsigned char yuyv[16 * 16 * 2];
@@ -202,10 +222,8 @@ int main() {
     Require(AverageError(std::vector<std::uint8_t>(16 * 16 * 3, 100), DecodeOutput(info)) < 3);
 
     static unsigned char gray[16 * 16];
-    std::vector<std::uint8_t> expectedGray(16 * 16 * 3);
     for (std::size_t i = 0; i < sizeof(gray); ++i) {
         gray[i] = static_cast<unsigned char>(((i % 16) + (i / 16)) * 8);
-        for (int c = 0; c < 3; ++c) expectedGray[i * 3 + c] = gray[i];
     }
     JpegEncEncodeParam y8 = ValidEncodeParam();
     y8.image = gray;
@@ -216,7 +234,15 @@ int main() {
     y8.sampling_type = 0;
     info = {};
     Require(sceJpegEncEncode(handle, &y8, &info) == 0);
-    Require(AverageError(expectedGray, DecodeOutput(info)) < 6);
+    Require(ReadFrame(jpeg, info.size) == std::pair{1, std::uint8_t{0x11}});
+    const auto decodedGray = DecodeOutput(info, 1);
+    Require(AverageError(std::vector<std::uint8_t>(gray, gray + sizeof(gray)), decodedGray) < 6);
+
+    rgba.sampling_type = 1;
+    rgba.compression_ratio = 0;
+    info = {};
+    Require(sceJpegEncEncode(handle, &rgba, &info) == 0);
+    Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x21}});
 
     std::memset(jpeg, 0, sizeof(jpeg));
     Require(sceJpegEncEncode(handle, &rgba, nullptr) == 0);

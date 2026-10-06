@@ -199,12 +199,38 @@ struct FileStat {
     KernelTimespec st_birthtim;
 };
 
-struct ModuleInfo {
-    std::uint64_t size;
-    std::uint64_t info[32];
-    KernelModule handle;
-    std::uint8_t pad[156];
+struct ModuleSegmentInfo {
+    std::uint64_t address;
+    std::uint32_t size;
+    std::int32_t prot;
 };
+
+struct ModuleInfoEx {
+    std::uint64_t st_size;
+    char name[256];
+    KernelModule id;
+    std::uint32_t tls_index;
+    std::uint64_t tls_init_addr;
+    std::uint32_t tls_init_size;
+    std::uint32_t tls_size;
+    std::uint32_t tls_offset;
+    std::uint32_t tls_align;
+    std::uint64_t init_proc_addr;
+    std::uint64_t fini_proc_addr;
+    std::uint64_t reserved1;
+    std::uint64_t reserved2;
+    std::uint64_t eh_frame_hdr_addr;
+    std::uint64_t eh_frame_addr;
+    std::uint32_t eh_frame_hdr_size;
+    std::uint32_t eh_frame_size;
+    ModuleSegmentInfo segments[4];
+    std::uint32_t segment_count;
+    std::uint32_t ref_count;
+};
+static_assert(offsetof(ModuleInfoEx, id) == 0x108);
+static_assert(offsetof(ModuleInfoEx, eh_frame_hdr_addr) == 0x148);
+static_assert(offsetof(ModuleInfoEx, segments) == 0x160);
+static_assert(sizeof(ModuleInfoEx) == 0x1A8);
 
 struct ModuleInfoForUnwind {
     std::uint64_t st_size;

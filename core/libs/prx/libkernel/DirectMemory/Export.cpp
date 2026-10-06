@@ -148,6 +148,18 @@ int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, 
  return 0;
 }
 
+int APS5_VABI sceKernelGetDirectMemoryType(int64_t offset, int* memory_type, int64_t* start, int64_t* end) {
+ if (!memory_type || !start || !end) return SCE_KERNEL_ERROR_EINVAL;
+ int64_t blockStart = 0;
+ int64_t blockEnd = 0;
+ int blockType = 0;
+ if (!DirectMemoryFind(offset, false, &blockStart, &blockEnd, &blockType)) return SCE_KERNEL_ERROR_ENOENT;
+ *memory_type = blockType;
+ *start = blockStart;
+ *end = blockEnd;
+ return 0;
+}
+
 size_t APS5_VABI sceKernelGetDirectMemorySize(void) {
  return DIRECT_MEMORY_SIZE;
 }
@@ -212,6 +224,13 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  // mapping at or above it: titles walk their mappings and check that a mapping covers a whole
  // allocation, so the answer must be the registered allocation, not a page.
  constexpr int findNext = 1;
+ std::uintptr_t reservedStart = 0;
+ std::uintptr_t reservedEnd = 0;
+ if (GuestReservation(address, &reservedStart, &reservedEnd)) {
+  info->start = reservedStart;
+  info->end = reservedEnd;
+  return 0;
+ }
  const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
  const GuestAllocations::Range* best = nullptr;
  for (const auto& range : lease) {
@@ -284,10 +303,9 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
 // ---------------------------------------------------------------------------
 
 int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
- (void)start;
- (void)len;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (start < 0 || (static_cast<uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (len == 0) return 0;
+ return DirectMemoryCheckedFree(start, len) ? 0 : SCE_KERNEL_ERROR_ENOENT;
 }
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
