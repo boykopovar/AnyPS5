@@ -304,3 +304,23 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+add_test_executable(agc_marker_span_tests EXCLUDE_FROM_ALL
+        tests/MarkerSpan.cpp
+        Command/src/Packet.cpp
+        Command/src/Memory.cpp
+        Command/src/Control.cpp
+        DcbState/src/Marker.cpp
+        Acb/src/Control.cpp
+)
+target_include_directories(agc_marker_span_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_marker_span_tests PRIVATE libc)
+configure_windows_unwind(agc_marker_span_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_marker_span_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME agc_marker_span_tests COMMAND agc_marker_span_tests)
+    if(WIN32)
+        set_tests_properties(agc_marker_span_tests PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
