@@ -31,6 +31,8 @@ Throughout the project, every function at every stage either **does exactly what
 
 ### Unknown function info
 
+- [libSceSysmodule](../../core/libs/prx/libSceSysmodule/Export.cpp) - load/unload owns a native provider reference under `libs/` beside the executable; native initialization and finalization run outside the state lock. Console module-start/module-stop entry points and nonempty load arguments are not implemented. Transitions in progress, missing or invalid providers, and nonempty arguments throw; they do not report success. The 0x125 TextToSpeech2 ID is routed, but no speech provider is supplied by this change.
+
 - PPSA01341 imports declared without parameters, signatures unknown: [sceAgcSetSemaphoreMemory](../../core/libs/prx/libSceAgc/Unimplemented.cpp), [sceAgcDriverRegisterMultipleResources](../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp). Names from the shadPS4 aerolib NID list
 - [7CxI50-xlCk, pMxXhNozUX8](../../core/libs/prx/libSceNpPartner001/Export.cpp) (libSceNpPartner001) - unknown names and signatures, imported by PPSA23566; declared without parameters
 - [sceAgcWaitRegMemPatchMask](../../core/libs/prx/libSceAgc/Patch/src/WaitRegMem.cpp) (libSceAgc) - follows `sceAgcWaitRegMemPatchReference`: the mask is taken as a 32-bit value and written to the low mask word of a 32- or 64-bit wait, as [OpenAGC](https://github.com/OpenAGC/OpenAGC/blob/main/src/game_compat.c) does; [sharpemu](https://github.com/sharpemu/sharpemu/blob/main/src/SharpEmu.Libs/Agc/AgcExports.PacketPatching.cs) writes both words of a 64-bit wait's mask. A mask above 32 bits throws

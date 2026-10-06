@@ -1,5 +1,7 @@
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -16,6 +18,12 @@
 #include "ModuleTable.hpp"
 #include "prx/libc/include/General.hpp"
 
+extern "C" {
+void* APS5_VABI dlopen_nid_postfix(const char*, int);
+int APS5_VABI dlclose_nid_postfix(void*);
+char* APS5_VABI dlerror_nid_postfix();
+}
+
 namespace {
 
 const char* findModuleName(const std::uint32_t id) {
@@ -24,7 +32,107 @@ const char* findModuleName(const std::uint32_t id) {
 }
 
 std::mutex gMutex;
-std::unordered_map<std::uint32_t, std::int32_t> gLoadCount;
+enum class Phase { Loading, Loaded, Unloading };
+struct Provider {
+    Phase phase = Phase::Loading;
+    std::int32_t references = 0;
+    void* handle = nullptr;
+};
+std::unordered_map<std::uint32_t, Provider> gProviders;
+
+const char* requireModuleName(std::uint32_t id, const char* operation) {
+    const char* name = findModuleName(id);
+    if (!name) {
+        throw std::runtime_error(std::string(operation) + ": unknown id " + std::to_string(id));
+    }
+    return name;
+}
+
+std::filesystem::path providerPath(const char* name) {
+#ifdef _WIN32
+    wchar_t executable[32768];
+    const DWORD length = GetModuleFileNameW(nullptr, executable, 32768);
+    if (!length || length >= 32768) {
+        throw std::runtime_error("sceSysmodule: cannot resolve executable directory");
+    }
+    const auto directory = std::filesystem::path(executable).parent_path();
+#else
+    const auto directory = std::filesystem::read_symlink("/proc/self/exe").parent_path();
+#endif
+    return directory / "libs" / (std::string(name) + ".prx");
+}
+
+int acquireProvider(std::uint32_t id, const char* operation) {
+    const char* name = requireModuleName(id, operation);
+    {
+        std::lock_guard lock(gMutex);
+        auto [found, inserted] = gProviders.try_emplace(id);
+        if (!inserted) {
+            auto& provider = found->second;
+            if (provider.phase != Phase::Loaded) {
+                throw std::runtime_error(std::string(operation) + ": provider transition in progress");
+            }
+            if (provider.references == std::numeric_limits<std::int32_t>::max()) {
+                throw std::runtime_error(std::string(operation) + ": provider reference overflow");
+            }
+            ++provider.references;
+            return 0;
+        }
+    }
+    void* handle = nullptr;
+    try {
+        const auto path = providerPath(name).string();
+        handle = dlopen_nid_postfix(path.c_str(), 2);
+    } catch (...) {
+        std::lock_guard lock(gMutex);
+        gProviders.erase(id);
+        throw;
+    }
+    if (!handle) {
+        const char* error = dlerror_nid_postfix();
+        {
+            std::lock_guard lock(gMutex);
+            gProviders.erase(id);
+        }
+        throw std::runtime_error(std::string(operation) + ": failed to load " + name +
+                                 (error ? std::string(": ") + error : ""));
+    }
+    {
+        std::lock_guard lock(gMutex);
+        auto& provider = gProviders.at(id);
+        provider.handle = handle;
+        provider.references = 1;
+        provider.phase = Phase::Loaded;
+    }
+    return 0;
+}
+
+int releaseProvider(std::uint32_t id, const char* operation) {
+    requireModuleName(id, operation);
+    void* handle = nullptr;
+    {
+        std::lock_guard lock(gMutex);
+        const auto found = gProviders.find(id);
+        if (found == gProviders.end()) return static_cast<int>(0x80A90003);
+        auto& provider = found->second;
+        if (provider.phase != Phase::Loaded) {
+            throw std::runtime_error(std::string(operation) + ": provider transition in progress");
+        }
+        if (--provider.references > 0) return 0;
+        provider.phase = Phase::Unloading;
+        handle = provider.handle;
+        provider.handle = nullptr;
+    }
+    const int result = dlclose_nid_postfix(handle);
+    if (result != 0) {
+        throw std::runtime_error(std::string(operation) + ": native provider release failed");
+    }
+    {
+        std::lock_guard lock(gMutex);
+        gProviders.erase(id);
+    }
+    return 0;
+}
 
 bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
 #ifdef _WIN32
@@ -104,14 +212,10 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleIsLoaded: invalid id 0");
     }
-    if (!findModuleName(id)) {
-        APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
-        // throw std::runtime_error(std::string("sceSysmoduleIsLoaded: unknown id ") + std::to_string(id));
-        return 0;
-    }
+    requireModuleName(id, "sceSysmoduleIsLoaded");
     std::lock_guard<std::mutex> lock(gMutex);
-    auto it = gLoadCount.find(id);
-    if (it == gLoadCount.end() || it->second < 1) {
+    const auto it = gProviders.find(id);
+    if (it == gProviders.end() || it->second.phase != Phase::Loaded || it->second.references < 1) {
         return 0x80A90002;
     }
     return 0;
@@ -121,77 +225,42 @@ int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleLoadModule: invalid id 0");
     }
-    if (!findModuleName(id)) {
-        APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
-        // throw std::runtime_error(std::string("sceSysmoduleLoadModule: unknown id ") + std::to_string(id));
-        return 0;
-    }
-    std::lock_guard<std::mutex> lock(gMutex);
-    gLoadCount[id]++;
-    return 0;
+    return acquireProvider(id, "sceSysmoduleLoadModule");
 }
 
 int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret) {
-    (void)argc;
-    (void)argv;
-    (void)unk;
     if ((id & 0x7fffffffu) == 0) {
         throw std::runtime_error("sceSysmoduleLoadModuleInternalWithArg: invalid id 0");
     }
-    if (!findModuleName(id)) {
-        throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternalWithArg: unknown id ") + std::to_string(id));
+    if (argc != 0 || argv || unk != 0) {
+        throw std::runtime_error("sceSysmoduleLoadModuleInternalWithArg: unsupported arguments");
     }
-    std::lock_guard<std::mutex> lock(gMutex);
-    gLoadCount[id]++;
+    const int result = acquireProvider(id, "sceSysmoduleLoadModuleInternalWithArg");
     if (ret) {
-        *ret = 0;
+        *ret = result;
     }
-    return 0;
+    return result;
 }
 
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleUnloadModule: invalid id 0");
     }
-    if (!findModuleName(id)) {
-        APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
-        return 0;
-    }
-    std::lock_guard<std::mutex> lock(gMutex);
-    auto it = gLoadCount.find(id);
-    if (it == gLoadCount.end() || it->second < 1) {
-        return 0x80A90003;
-    }
-    it->second--;
-    return 0;
+    return releaseProvider(id, "sceSysmoduleUnloadModule");
 }
 
 int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id) {
     if ((id & 0x7fffffffu) == 0) {
         throw std::runtime_error("sceSysmoduleLoadModuleInternal: invalid id 0");
     }
-    if (!findModuleName(id)) {
-        throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternal: unknown id ") + std::to_string(id));
-    }
-    std::lock_guard<std::mutex> lock(gMutex);
-    gLoadCount[id]++;
-    return 0;
+    return acquireProvider(id, "sceSysmoduleLoadModuleInternal");
 }
 
 int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id) {
     if ((id & 0x7fffffffu) == 0) {
         throw std::runtime_error("sceSysmoduleUnloadModuleInternal: invalid id 0");
     }
-    if (!findModuleName(id)) {
-        throw std::runtime_error(std::string("sceSysmoduleUnloadModuleInternal: unknown id ") + std::to_string(id));
-    }
-    std::lock_guard<std::mutex> lock(gMutex);
-    auto it = gLoadCount.find(id);
-    if (it == gLoadCount.end() || it->second < 1) {
-        return 0x80A90003;
-    }
-    it->second--;
-    return 0;
+    return releaseProvider(id, "sceSysmoduleUnloadModuleInternal");
 }
 
 }
