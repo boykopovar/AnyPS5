@@ -201,6 +201,7 @@ RdnaOpcode decodeSoppOpcode(std::uint32_t opcode) {
         case 0x08u: return RdnaOpcode::SCbranchExecz;
         case 0x09u: return RdnaOpcode::SCbranchExecnz;
         case 0x0au: return RdnaOpcode::SBarrier;
+        case 0x0bu: return RdnaOpcode::SEndpgm;
         case 0x0cu: return RdnaOpcode::SWaitcnt;
         case 0x0eu: return RdnaOpcode::SSleep;
         case 0x0fu: return RdnaOpcode::SSetprio;

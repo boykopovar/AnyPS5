@@ -30,6 +30,11 @@ alignas(256) constexpr std::array<std::uint32_t, 30> Code{
     0xe0701000, 0x80010603, 0xbf9b0000, 0xe0701004, 0x80010603, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 20> SetkillCode{
+    0x34020084, 0x34060086, 0xe0301000, 0x80000401, 0xbf8c3f70, 0x4a0a0881, 0x7e0c02ff, 0x00000bad, 0xbf060000, 0xbf840007,
+    0xbf840003, 0xe0701000, 0x80010503, 0xbf8b0000, 0xe0701000, 0x80010603, 0xbf8b0001, 0xe0701004, 0x80010603, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 2> RoundTowardZeroCode{0xbfa40003, 0xbf810000};
 
 void Fill(std::uint32_t tid, std::uint32_t* words) { words[0] = tid * 0x01010101u + 7u; }
@@ -74,7 +79,7 @@ void ExpectRefused(AgcDriver::VulkanDevice& device) {
     Require(refused, "scalar program end: s_round_mode 3 was translated");
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -82,7 +87,6 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const auto result = ShaderRecompiler::Recompile(Request(device, code, userData, memory));
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -104,7 +108,9 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
+        Run(*device, Code);
+        Check();
+        Run(*device, SetkillCode);
         Check();
         ExpectRefused(*device);
         std::puts("scalar program end tests passed");
