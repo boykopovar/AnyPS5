@@ -672,16 +672,24 @@ bool TranslationContext::sBfeU32(const RdnaInstruction& inst, bool sign) {
     return true;
 }
 
-bool TranslationContext::sBfeU64(const RdnaInstruction& inst) {
-    const IrU64 source = readU64(sourceAt(inst, 0u));
-    const IrU32 field = readU32(sourceAt(inst, 1u));
-    const IrU32 offset(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&field.Value(), &ir.Constant(0u), &ir.Constant(6u)}));
-    const IrU32 rawCount(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&field.Value(), &ir.Constant(16u), &ir.Constant(7u)}));
+IrU64 TranslationContext::extractBits64(IrU64 source, IrU32 offset, IrU32 rawCount, bool sign) {
     const IrU32 available(ir.ISub(ir.Constant(64u), offset.Value()));
     const IrU32 count(ir.Emit(IrOpcode::UMin32, IrType::U32, {&rawCount.Value(), &available.Value()}));
     const IrU64 shifted(ir.Emit(IrOpcode::ShiftRightLogical64, IrType::U64, {&source.Value(), &offset.Value()}));
     const IrU64 mask = rightMask64(count);
     const IrU64 result(ir.Emit(IrOpcode::BitwiseAnd64, IrType::U64, {&shifted.Value(), &mask.Value()}));
+    if (!sign) return result;
+    const IrU32 discard(ir.BitwiseAnd(ir.ISub(ir.Constant(64u), count.Value()), ir.Constant(63u)));
+    const IrU64 aligned(ir.Emit(IrOpcode::ShiftLeftLogical64, IrType::U64, {&result.Value(), &discard.Value()}));
+    return IrU64(ir.Emit(IrOpcode::ShiftRightArithmetic64, IrType::U64, {&aligned.Value(), &discard.Value()}));
+}
+
+bool TranslationContext::sBfeU64(const RdnaInstruction& inst, bool sign) {
+    const IrU64 source = readU64(sourceAt(inst, 0u));
+    const IrU32 field = readU32(sourceAt(inst, 1u));
+    const IrU32 offset(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&field.Value(), &ir.Constant(0u), &ir.Constant(6u)}));
+    const IrU32 rawCount(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&field.Value(), &ir.Constant(16u), &ir.Constant(7u)}));
+    const IrU64 result = extractBits64(source, offset, rawCount, sign);
     writeOperand(inst.destination, &result.Value());
     ir.SetScc(ir.Emit(IrOpcode::INotEqual64, IrType::U1, {&result.Value(), &ir.ConstantU64(0)}));
     return true;

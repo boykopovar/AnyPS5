@@ -239,7 +239,8 @@ private:
     IrU32 extractBits32(IrU32 source, IrU32 offset, IrU32 rawCount, bool sign);
     bool sBfmB64(const RdnaInstruction& inst);
     bool sBfeU32(const RdnaInstruction& inst, bool sign);
-    bool sBfeU64(const RdnaInstruction& inst);
+    bool sBfeU64(const RdnaInstruction& inst, bool sign);
+    IrU64 extractBits64(IrU64 source, IrU32 offset, IrU32 rawCount, bool sign);
     bool vBfeU32(const RdnaInstruction& inst, bool sign);
     bool vBfiB32(const RdnaInstruction& inst);
     bool sBitcmpB32(const RdnaInstruction& inst, bool expected);
