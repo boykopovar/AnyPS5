@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 #include "prx/libSceFont/include/FontInternal.hpp"
 
@@ -143,6 +145,36 @@ int APS5_VABI sceFontGetEffectWeight(FontHandle fontHandle, float* weightXScale,
     const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetWeightScale(&font->style, weightXScale, weightYScale, mode); });
     if (rc != SCE_FONT_OK) ResetWeightOutputs(weightXScale, weightYScale, mode);
     return rc;
+}
+
+int APS5_VABI sceFontGetScriptLanguage(FontHandle fontHandle, std::int32_t fontScript, std::int32_t* fontLanguage) {
+    if (!fontLanguage) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (fontScript != 0x0000 && fontScript != 0x0100 && fontScript != 0x0600 && fontScript != 0x3000) {
+        throw std::runtime_error(std::string("Unsupported fontScript ") + std::to_string(fontScript) +
+                                 " was passed to sceFontGetScriptLanguage: only scripts 0x0000 (default), 0x0100 (latin), "
+                                 "0x0600 (arabic) and 0x3000 (CJK) are pinned. See docs/dev/TechnicalDebt.md");
+    }
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) {
+        *fontLanguage = 0;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    FontState* state = TryGetState(fontHandle);
+    if (!state) {
+        ReleaseFontLock(font, fontLock);
+        *fontLanguage = 0;
+        throw std::runtime_error("sceFontGetScriptLanguage: the font handle carries no font state. See docs/dev/TechnicalDebt.md");
+    }
+    const auto it = state->scriptLanguages.find(fontScript);
+    if (it == state->scriptLanguages.end()) {
+        ReleaseFontLock(font, fontLock);
+        *fontLanguage = 0;
+        return SCE_FONT_ERROR_UNSET_PARAMETER;
+    }
+    *fontLanguage = it->second;
+    ReleaseFontLock(font, fontLock);
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontSetupRenderScalePixel(FontHandle fontHandle, float w, float h) {
