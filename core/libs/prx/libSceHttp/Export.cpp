@@ -172,6 +172,12 @@ int APS5_VABI sceHttpSetRecvTimeOut(int id, uint32_t usec) {
     return 0;
 }
 
+int APS5_VABI sceHttpSetResponseHeaderMaxSize(int id, uint64_t header_size) {
+    (void)id;
+    (void)header_size;
+    return 0;
+}
+
 int APS5_VABI sceHttpSetRequestContentLength(int request_id, uint64_t content_length) {
     (void)request_id;
     (void)content_length;
@@ -240,6 +246,11 @@ int APS5_VABI sceHttpReadData(int request_id, void* data, size_t size) {
     (void)data;
     (void)size;
     return ERROR_NETWORK;
+}
+
+int APS5_VABI sceHttpRedirectCacheFlush(int http_ctx_id) {
+    (void)http_ctx_id;
+    return 0;
 }
 
 int APS5_VABI sceHttpSetChunkedTransferEnabled(int id, int enable) {
@@ -342,6 +353,11 @@ int APS5_VABI sceHttpsLoadCert(int http_ctx_id, int num, void* ca_list, void* ce
     (void)ca_list;
     (void)cert;
     (void)key;
+    return 0;
+}
+
+int APS5_VABI sceHttpsUnloadCert(int http_ctx_id) {
+    (void)http_ctx_id;
     return 0;
 }
 

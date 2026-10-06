@@ -84,14 +84,6 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
 #endif
 }
 
-int APS5_VABI sceKernelGetModuleInfoFromAddr(uint64_t addr, int n, ModuleInfo* r) {
- (void)addr;
- (void)n;
- (void)r;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
  (void)args;
  (void)argp;

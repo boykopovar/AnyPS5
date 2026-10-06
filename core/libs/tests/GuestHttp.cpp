@@ -18,6 +18,9 @@ int APS5_VABI sceHttpCreateRequest2(int, const char*, const char*, std::uint64_t
 int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
 int APS5_VABI sceHttpsLoadCert(int, int, void*, void*, void*);
 int APS5_VABI sceHttpGetLastErrno(int, int*);
+int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
+int APS5_VABI sceHttpRedirectCacheFlush(int);
+int APS5_VABI sceHttpsUnloadCert(int);
 int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
 }
 
@@ -137,6 +140,9 @@ int main() {
     Require(sceHttpSetInflateGZIPEnabled(1, -1) == invalidValue);
     Require(sceHttpsEnableOption(1, 0) == 0);
     Require(sceHttpsLoadCert(1, 0, nullptr, nullptr, nullptr) == 0);
+    Require(sceHttpsUnloadCert(1) == 0);
+    Require(sceHttpSetResponseHeaderMaxSize(1, 8192) == 0);
+    Require(sceHttpRedirectCacheFlush(1) == 0);
     int httpErrno = -1;
     Require(sceHttpGetLastErrno(1, &httpErrno) == 0);
     Require(httpErrno == 0);

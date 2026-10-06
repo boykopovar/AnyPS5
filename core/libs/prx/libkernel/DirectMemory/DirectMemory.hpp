@@ -11,6 +11,7 @@ static constexpr size_t PS5_PAGE_SIZE = 0x4000;
 
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut);
 void DirectMemoryFree(int64_t start, size_t len);
+bool DirectMemoryCheckedFree(int64_t start, size_t len);
 void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType);
 bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end, std::uint64_t* offset, int* memoryType);
 void ForgetDirectMemory(int64_t start, size_t len);
@@ -22,5 +23,6 @@ int DoMprotect(const void* addr, size_t len, int prot);
 int DoMunmap(void* addr, size_t len);
 int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment);
 bool GuestProtection(uintptr_t addr, int* prot);
+bool GuestReservation(std::uintptr_t addr, std::uintptr_t* start, std::uintptr_t* end);
 
 #endif

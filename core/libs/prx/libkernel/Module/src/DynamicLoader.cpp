@@ -39,6 +39,7 @@ struct Module {
 std::mutex modulesMutex;
 std::map<std::uintptr_t, std::shared_ptr<Module>> modules;
 std::uintptr_t nextHandle = 0x20000000;
+std::map<const void*, std::uintptr_t> imageIds;
 void* Symbol(Module& module, const char* name) {
 #ifdef _WIN32
     return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(module.native), name));
@@ -138,5 +139,14 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
     // Unload outside the registry lock: module destructors may call loader APIs.
     module.reset();
     return 0;
+}
+std::int32_t ModuleIdForImage_nid_no_patch(const void* native) {
+    std::lock_guard lock(modulesMutex);
+    for (const auto& [handle, module] : modules) {
+        if (module->native == native) return static_cast<std::int32_t>(handle);
+    }
+    const auto [found, inserted] = imageIds.emplace(native, nextHandle);
+    if (inserted) ++nextHandle;
+    return static_cast<std::int32_t>(found->second);
 }
 }

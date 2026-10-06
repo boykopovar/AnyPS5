@@ -1,7 +1,11 @@
 #include "Ngs2Test.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
+#include <thread>
 #include <vector>
 
 static uintptr_t Sampler(uintptr_t system, const std::vector<std::int16_t>& pcm, std::uint32_t repeats) {
@@ -152,6 +156,71 @@ static std::int32_t APS5_VABI Release(Ngs2ContextBufferInfo* info) {
     return SCE_NGS2_OK;
 }
 
+static void TestSampleRate() {
+    const auto system = CreateSystem();
+    Require(sceNgs2SystemSetSampleRate(0x1234, 96000) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE);
+    bool threw = false;
+    try {
+        sceNgs2SystemSetSampleRate(system, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(sceNgs2SystemSetSampleRate(system, 96000) == SCE_NGS2_OK);
+    Ngs2SystemInfo info{};
+    Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK && info.sample_rate == 96000);
+
+    const auto master = Mastering(system, 1);
+    const std::vector<std::int16_t> pcm{0, 1000, 2000, 3000};
+    const auto sampler = Sampler(system, pcm, 1);
+    Patch(sampler, master);
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    const std::int16_t expected[Grain] = {0, 500, 1000, 1500, 2000, 2500, 3000, 1500};
+    const auto out = RenderI16(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == expected[i]);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestUserData() {
+    uintptr_t value = 1;
+    Require(sceNgs2SystemSetUserData(0x1234, 5) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE);
+    Require(sceNgs2SystemGetUserData(0x1234, &value) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE && value == 1);
+    const auto system = CreateSystem();
+    Require(sceNgs2SystemGetUserData(system, &value) == SCE_NGS2_OK && value == 0);
+    Require(sceNgs2SystemSetUserData(system, 0xfedcba9876543210) == SCE_NGS2_OK);
+    Require(sceNgs2SystemGetUserData(system, &value) == SCE_NGS2_OK && value == 0xfedcba9876543210);
+    bool threw = false;
+    try {
+        sceNgs2SystemGetUserData(system, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestLock() {
+    const auto system = CreateSystem();
+    Require(sceNgs2SystemLock(0x1234) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE);
+    Require(sceNgs2SystemUnlock(0x1234) == SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE);
+    Ngs2SystemInfo info{};
+    std::thread free([&] { Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK); });
+    free.join();
+
+    Require(sceNgs2SystemLock(system) == SCE_NGS2_OK);
+    std::atomic<bool> done = false;
+    std::thread blocked([&] {
+        Require(sceNgs2SystemGetInfo(system, &info, sizeof(info)) == SCE_NGS2_OK);
+        done = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!done);
+    Require(sceNgs2SystemUnlock(system) == SCE_NGS2_OK);
+    blocked.join();
+    Require(done);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestAllocator() {
     const Ngs2BufferAllocator allocator{Allocate, Release, 9};
     uintptr_t system = 0;
@@ -171,6 +240,9 @@ int main() {
     TestPcmBlockEnd();
     TestPitchAndRepeat();
     TestSubmixerMatrix();
+    TestSampleRate();
+    TestUserData();
+    TestLock();
     TestAllocator();
     return 0;
 }

@@ -36,6 +36,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/EventFlag/src/EventFlag.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Module.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/DynamicLoader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/ModuleInfo.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Aio/src/Aio.cpp
@@ -106,6 +107,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_dynamic_loader PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(NOT WIN32)
+        add_test_executable(guest_module_info_tests ${LIBS_INCLUDE_DIR}/tests/GuestModuleInfo.cpp)
+        target_include_directories(guest_module_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_module_info_tests PRIVATE libkernel libc)
+        add_dependencies(guest_module_info_tests guest_module_fixture)
+        add_test(NAME guest_module_info COMMAND guest_module_info_tests $<TARGET_FILE_NAME:guest_module_fixture>)
+        set_tests_properties(guest_module_info PROPERTIES
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:guest_module_fixture>")
     endif()
     add_test_executable(guest_filesystem_tests ${LIBS_INCLUDE_DIR}/tests/GuestFilesystem.cpp)
     target_include_directories(guest_filesystem_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -365,6 +375,10 @@ if(BUILD_TESTING)
         target_include_directories(guest_directory_entry_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_directory_entry_tests PRIVATE libkernel libc)
         add_test(NAME guest_directory_entries COMMAND guest_directory_entry_tests)
+        add_test_executable(guest_file_vector_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileVector.cpp)
+        target_include_directories(guest_file_vector_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_file_vector_tests PRIVATE libkernel libc)
+        add_test(NAME guest_file_vector COMMAND guest_file_vector_tests)
     else()
         add_test_executable(guest_directory_close_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectoryClose.cpp)
         target_include_directories(guest_directory_close_tests PRIVATE ${LIBS_INCLUDE_DIR})

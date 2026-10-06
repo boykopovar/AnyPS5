@@ -41,7 +41,6 @@ constexpr std::uint8_t SAMPLING_TYPE_420 = 2;
 constexpr std::uint32_t MAX_IMAGE_DIMENSION = 0xFFFF;
 constexpr std::uint32_t MAX_IMAGE_PITCH = 0xFFFFFFF;
 constexpr std::uint64_t MAX_IMAGE_SIZE = 0x7FFFFFFF;
-constexpr int SUBSAMPLED_MAX_QUALITY = 90;
 
 struct Encoder {
     Encoder* self;
@@ -148,9 +147,16 @@ std::vector<std::uint8_t> toPackedPixels(const JpegEncEncodeParam& param, std::u
 }
 
 int toQuality(const JpegEncEncodeParam& param) {
-    int quality = 100 - param.compression_ratio * 99 / 255;
-    if (param.sampling_type != SAMPLING_TYPE_FULL) quality = std::min(quality, SUBSAMPLED_MAX_QUALITY);
-    return quality;
+    return 100 - param.compression_ratio * 99 / 255;
+}
+
+Decoder::Jpeg::Sampling toSampling(const JpegEncEncodeParam& param) {
+    switch (param.sampling_type) {
+    case SAMPLING_TYPE_FULL: return Decoder::Jpeg::Sampling::Yuv444;
+    case SAMPLING_TYPE_422: return Decoder::Jpeg::Sampling::Yuv422;
+    case SAMPLING_TYPE_420: return Decoder::Jpeg::Sampling::Yuv420;
+    }
+    throw std::invalid_argument("sceJpegEncEncode: invalid sampling type");
 }
 
 }  // namespace
@@ -187,7 +193,7 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
 
     const std::uint32_t channels = param->pixel_format == PIXEL_FORMAT_Y8 ? 1 : 3;
     const std::vector<std::uint8_t> pixels = toPackedPixels(*param, channels);
-    const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(pixels, param->image_width, param->image_height, channels, toQuality(*param));
+    const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(pixels, param->image_width, param->image_height, channels, toQuality(*param), toSampling(*param));
     if (jpeg.size() > param->jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
     std::memcpy(param->jpeg, jpeg.data(), jpeg.size());
