@@ -19,6 +19,10 @@ Args ParseArgs(int argc, char* argv[]) {
             if (i + 1 >= argc)
                 throw std::runtime_error("--exclude-sce-module requires a file name");
             args.excludedSceModules.insert(argv[++i]);
+        } else if (arg == "--module-dir") {
+            if (i + 1 >= argc)
+                throw std::runtime_error("--module-dir requires a directory");
+            args.moduleDirectories.push_back(argv[++i]);
         } else if (arg == "--to-intel") {
             args.toIntel = true;
         } else if (arg.rfind("unused-filter=", 0) == 0) {
@@ -57,6 +61,9 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.skipSceModule && !args.excludedSceModules.empty())
         throw std::runtime_error("--exclude-sce-module conflicts with --skip-sce-module");
 
+    if (args.skipSceModule && !args.moduleDirectories.empty())
+        throw std::runtime_error("--module-dir conflicts with --skip-sce-module");
+
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
 
@@ -65,7 +72,7 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
-            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
             "Example: relinker input.elf output.elf"
         );
 

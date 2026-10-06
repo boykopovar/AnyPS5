@@ -24,6 +24,7 @@ struct GuestRuntime {
     std::uint32_t FiniRva = 0;
     bool UsePlatformTlsResolver = true;
     std::vector<std::string> Names;
+    bool DeferInitialization = false;
 };
 
 }

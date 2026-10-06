@@ -31,7 +31,7 @@ std::vector<std::string> ReadNeededNames(const Domain::SysVDynamicSection& dynam
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::vector<std::string>& moduleDirectories) const {
     const auto root = std::filesystem::absolute(inputPath).parent_path();
     const auto singular = root / "sce_module";
     const auto plural = root / "sce_modules";
@@ -44,6 +44,20 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<std::filesystem::path> directories;
     if (hasSingular || hasPlural) directories.push_back(hasSingular ? singular : plural);
     if (hasPrx) directories.push_back(prx);
+    std::vector<std::filesystem::path> deferredDirectories;
+    for (const auto& name : moduleDirectories) {
+        const std::filesystem::path relative(name);
+        if (relative.empty() || relative.is_absolute() || relative.lexically_normal().generic_string().starts_with(".."))
+            throw Domain::RelinkerException("--module-dir must be a directory inside the input directory: " + name);
+        const auto directory = (root / relative).lexically_normal();
+        if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + directory.string());
+        if (std::find(directories.begin(), directories.end(), directory) != directories.end()) throw Domain::RelinkerException("Duplicate guest module directory: " + directory.string());
+        directories.push_back(directory);
+        deferredDirectories.push_back(directory);
+    }
+    const auto deferred = [&](const GuestImage& image) {
+        return std::find(deferredDirectories.begin(), deferredDirectories.end(), image.SourcePath.parent_path().lexically_normal()) != deferredDirectories.end();
+    };
     std::vector<std::filesystem::path> paths;
     std::set<std::string> unmatchedExclusions = excludedModules;
     const auto isElf = [](const std::filesystem::path& path) {
@@ -237,7 +251,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::AppendU64(dynamic.DynamicSegmentData, dynamic.DynStrData.size());
         Io::AppendString(dynamic.DynStrData, name);
     };
-    for (const auto index : order) if (!windows) addNeeded("$ORIGIN/app0/" + images[index].SourcePath.parent_path().lexically_relative(root).generic_string() + "/" + images[index].OutputName);
+    for (const auto index : order) if (!windows && !deferred(images[index])) addNeeded("$ORIGIN/app0/" + images[index].SourcePath.parent_path().lexically_relative(root).generic_string() + "/" + images[index].OutputName);
     for (const auto& name : hostLibraries) addNeeded(name);
     std::string guestRunPath = runPath;
     if (!windows) {
@@ -258,6 +272,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         runtime.UsePlatformTlsResolver = image.UsePlatformTlsResolver;
         runtime.Path = relativeDirectory + "/" + image.OutputName;
         runtime.Names = {image.SourcePath.filename().string(), image.Soname};
+        runtime.DeferInitialization = deferred(image);
         std::vector<std::uint8_t> output;
         if (windows) output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime);
         else {

@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <set>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -103,6 +104,28 @@ char* APS5_VABI dlerror_nid_postfix() {
     pendingError = false;
     return loaderError.data();
 }
+#ifdef _WIN32
+static void InitializeDeferredModule(HMODULE native, std::size_t args, const void* argp, int* result) {
+    using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
+    using Initializer = void (APS5_VABI *)(int, char**, char**);
+    static std::mutex initializedLock;
+    static std::set<HMODULE> initialized;
+    const auto* table = reinterpret_cast<const std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
+    if (!table) return;
+    {
+        std::lock_guard lock(initializedLock);
+        if (!initialized.insert(native).second) return;
+    }
+    auto* base = reinterpret_cast<std::uint8_t*>(native);
+    const int started = table[0] != 0 ? reinterpret_cast<Entry>(base + table[0])(args, argp, nullptr) : 0;
+    if (result) *result = started;
+    for (std::uint32_t index = 0; index < table[1]; ++index) {
+        const auto initializer = *reinterpret_cast<Initializer*>(base + table[2 + index]);
+        if (initializer) initializer(0, nullptr, nullptr);
+    }
+}
+#endif
+
 static std::filesystem::path RelinkedModulePath(const std::filesystem::path& path) {
     auto relinked = path;
     relinked += ".guest.prx";
@@ -110,7 +133,7 @@ static std::filesystem::path RelinkedModulePath(const std::filesystem::path& pat
     return std::filesystem::is_regular_file(relinked, error) ? relinked : path;
 }
 
-void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
+static void* OpenModule(const char* path, int flags, std::size_t args, const void* argp, int* result) {
     if ((flags & ~0x103) || (flags & 3) == 0 || (flags & 3) == 3) {
         Error("dlopen: unsupported flags"); return nullptr;
     }
@@ -125,6 +148,7 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             if (!*path) { Error("dlopen: empty module path"); return nullptr; }
             const auto resolved = RelinkedModulePath(ResolvePath_nid_no_patch(path));
             module->native = LoadLibraryExW(resolved.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+            if (module->native) InitializeDeferredModule(static_cast<HMODULE>(module->native), args, argp, result);
         }
         if (!module->native) {
             char message[128];
@@ -144,6 +168,14 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         return reinterpret_cast<void*>(handle);
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
+void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
+    return OpenModule(path, flags, 0, nullptr, nullptr);
+}
+
+void* GuestLoadStartModule_nid_no_patch(const char* path, int flags, std::size_t args, const void* argp, int* result) {
+    return OpenModule(path, flags, args, argp, result);
+}
+
 void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
     if (!name || !*name) { Error("dlsym: empty symbol name"); return nullptr; }
     try {
