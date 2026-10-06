@@ -7,16 +7,6 @@
 
 extern "C" {
 
-int APS5_VABI sceFontCharacterGetSyllableStringState() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontCharactersRefersTextCodes() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceFontControl() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -38,11 +28,6 @@ int APS5_VABI sceFontCreateGraphicsServiceWithEdition() {
 }
 
 int APS5_VABI sceFontCreateWords() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontDefineAttribute() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -98,11 +83,6 @@ int APS5_VABI sceFontGetScriptLanguage() {
 }
 
 int APS5_VABI sceFontGetTypographicDesign() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGlyphDefineAttribute() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -388,16 +368,6 @@ int APS5_VABI sceFontSetTypographicDesign() {
 }
 
 int APS5_VABI sceFontSupportGlyphs() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontTextCodesStepBack() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontTextCodesStepNext() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

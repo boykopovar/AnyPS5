@@ -239,6 +239,15 @@ struct FontTextCharacter {
     std::uint8_t reserved_0x40[136];
 };
 
+union FontTextCodes {
+    struct {
+        void* order;
+        std::uint32_t code;
+        std::uint32_t reserved;
+    } text;
+    void* systemUse[8];
+};
+
 struct FontRenderSurface {
     void* buffer;
     std::int32_t widthByte;
