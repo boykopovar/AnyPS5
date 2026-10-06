@@ -367,6 +367,27 @@ int APS5_VABI sceFontClearDeviceCache(FontLibrary library) {
     return rc;
 }
 
+int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary library, void** buffer, std::uint32_t* size) {
+    if (!buffer || !size) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *size = 0;
+    auto* lib = static_cast<FontLibNative*>(library);
+    if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    std::uint32_t previous = 0;
+    if (!AcquireLibraryLock(lib, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    std::uint32_t* current = AcquireDeviceCache(lib);
+    int rc = SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER;
+    if (current) {
+        *buffer = current;
+        *size = current[0];
+        lib->flags &= ~1u;
+        rc = SCE_FONT_OK;
+    }
+    ReleaseDeviceCache(lib, nullptr);
+    ReleaseLibraryLock(lib, previous);
+    return rc;
+}
+
 int APS5_VABI sceFontSupportExternalFonts(FontLibrary library, std::uint32_t fontMax, std::uint32_t formats) {
     return SupportFonts(library, &FontLibNative::external_fonts_ctx, fontMax, (fontMax << 6) | 0x20u, formats);
 }

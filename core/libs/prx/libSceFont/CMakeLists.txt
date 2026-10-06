@@ -12,6 +12,17 @@ if(BUILD_TESTING)
     target_include_directories(guest_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_font_tests PRIVATE libSceFont libSceFontFt libc)
     add_test(NAME guest_font COMMAND guest_font_tests)
+
+    add_test_executable(guest_font_dettach_device_cache_buffer_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontDettachDeviceCacheBuffer.cpp)
+    target_include_directories(guest_font_dettach_device_cache_buffer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_dettach_device_cache_buffer_tests PRIVATE libSceFont libSceFontFt libc)
+    configure_windows_unwind(guest_font_dettach_device_cache_buffer_tests)
+    add_test(NAME guest_font_dettach_device_cache_buffer COMMAND guest_font_dettach_device_cache_buffer_tests)
+    if(WIN32)
+        set_tests_properties(guest_font_dettach_device_cache_buffer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
+    endif()
+
     add_test_executable(guest_system_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemFont.cpp)
     target_include_directories(guest_system_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_font_tests PRIVATE libSceFont libSceFontFt libc)
