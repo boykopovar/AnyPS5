@@ -158,6 +158,41 @@ bool parseZoneSuffix(const char*& cursor, std::int64_t& offsetMinutes) {
     return false;
 }
 
+bool parseMonthName(const char*& cursor, int& month) {
+    static constexpr char names[][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    for (int index = 0; index < 12; ++index) {
+        if (cursor[0] == names[index][0] && cursor[1] == names[index][1] && cursor[2] == names[index][2]) {
+            month = index + 1;
+            cursor += 3;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool parseRfc2822(const char* text, RtcDateTime& time, std::int64_t& offsetMinutes) {
+    const char* cursor = text;
+    while (*cursor && *cursor != ' ' && *cursor != ',') ++cursor;
+    if (*cursor != ',') return false;
+    ++cursor;
+    if (*cursor++ != ' ') return false;
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+    if (!parseDigits(cursor, 2, day) || *cursor++ != ' ') return false;
+    if (!parseMonthName(cursor, month)) return false;
+    if (*cursor++ != ' ') return false;
+    if (!parseDigits(cursor, 4, year) || *cursor++ != ' ') return false;
+    if (!parseDigits(cursor, 2, hour) || *cursor++ != ':' || !parseDigits(cursor, 2, minute) || *cursor++ != ':' || !parseDigits(cursor, 2, second)) return false;
+    if (*cursor++ != ' ') return false;
+    if (*cursor != '+' && *cursor != '-') return false;
+    const int sign = *cursor++ == '-' ? -1 : 1;
+    int offsetHours = 0, offsetMinute = 0;
+    if (!parseDigits(cursor, 2, offsetHours) || !parseDigits(cursor, 2, offsetMinute) || *cursor != 0) return false;
+    offsetMinutes = sign * (offsetHours * 60 + offsetMinute);
+    time = RtcDateTime{static_cast<std::uint16_t>(year), static_cast<std::uint16_t>(month), static_cast<std::uint16_t>(day),
+        static_cast<std::uint16_t>(hour), static_cast<std::uint16_t>(minute), static_cast<std::uint16_t>(second), 0};
+    return true;
+}
+
 }
 
 extern "C" {
@@ -329,12 +364,13 @@ int APS5_VABI sceRtcParseDateTime(RtcTick* utc, const char* date_time) {
     std::int64_t offsetMinutes = 0;
     if (ok && *cursor != 0) ok = parseZoneSuffix(cursor, offsetMinutes);
     if (ok && *cursor != 0) ok = false;
-    if (!ok) {
-        NotImplemented_nid_no_patch(__func__);
+    RtcDateTime time{};
+    if (ok) {
+        time = RtcDateTime{static_cast<std::uint16_t>(year), static_cast<std::uint16_t>(month), static_cast<std::uint16_t>(day),
+            static_cast<std::uint16_t>(hour), static_cast<std::uint16_t>(minute), static_cast<std::uint16_t>(second), microsecond};
+    } else if (!parseRfc2822(date_time, time, offsetMinutes)) {
         return SCE_RTC_ERROR_BAD_PARSE;
     }
-    const RtcDateTime time{static_cast<std::uint16_t>(year), static_cast<std::uint16_t>(month), static_cast<std::uint16_t>(day),
-        static_cast<std::uint16_t>(hour), static_cast<std::uint16_t>(minute), static_cast<std::uint16_t>(second), microsecond};
     if (const int result = validate(&time); result != 0) return result;
     const RtcTick local{toTick(time)};
     return addTicks(utc, &local, -offsetMinutes, TICKS_PER_MINUTE);

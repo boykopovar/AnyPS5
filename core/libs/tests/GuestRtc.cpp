@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <initializer_list>
 #include <limits>
 
@@ -150,21 +149,28 @@ int main() {
     Require(sceRtcParseDateTime(&tick, "1970-01-01T00:00:00Z") == 0 && tick.tick == unixEpochTick);
     Require(sceRtcParseDateTime(&tick, "2023-02-29T00:00:00") == invalidDay);
     Require(sceRtcParseDateTime(nullptr, "1970-01-01T00:00:00Z") == invalidPointer);
+    RtcTick isoTick{};
+    Require(sceRtcParseRFC3339(&isoTick, "2003-07-01T08:52:37Z") == 0);
+    Require(sceRtcParseDateTime(&tick, "Tue, 01 Jul 2003 10:52:37 +0200") == 0 && tick.tick == isoTick.tick);
+    Require(sceRtcParseDateTime(&tick, "Tue, 01 Jul 2003 08:52:37 +0000") == 0 && tick.tick == isoTick.tick);
+    Require(sceRtcParseDateTime(&tick, "Thu, 29 Feb 2024 12:34:56 +0000") == 0 && tick.tick == leapDayTick - 789000ull);
+    Require(sceRtcParseDateTime(&tick, "Tue, 30 Feb 2024 00:00:00 +0000") == invalidDay);
     const char* unparseable[] = {
+        "",
         "2024-02-29",
         "2024/02/29T12:34:56",
         "2024-02-29T12:34:56Zjunk",
         "2024-02-29T12:34:56+99:99",
         "2024-02-29T12:34:56.",
+        "Tue, 1 Jul 2003 10:52:37 +0200",
+        "Tue,01 Jul 2003 10:52:37 +0200",
+        "Tue, 01 Jul 2003 10:52:37",
+        "Tue, 01 Jul 2003 10:52:37 +02:00",
     };
     for (const char* text : unparseable) {
-        bool thrown = false;
-        try {
-            sceRtcParseDateTime(&tick, text);
-        } catch (const std::exception&) {
-            thrown = true;
-        }
-        Require(thrown);
+        tick.tick = 123;
+        Require(sceRtcParseDateTime(&tick, text) == badParse);
+        Require(tick.tick == 123);
     }
 
     RtcTick source{leapDayTick};
