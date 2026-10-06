@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include <ft2build.h>
@@ -28,6 +29,7 @@ struct FontState {
     FT_Face face = nullptr;
     float scaleW = 16.0f;
     float scaleH = 16.0f;
+    std::unordered_map<std::int32_t, std::int32_t> scriptLanguages;
 
     FontState() = default;
     FontState(const FontState&) = delete;

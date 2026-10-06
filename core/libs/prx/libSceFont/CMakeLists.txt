@@ -30,4 +30,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_font_writing_line PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
     endif()
+
+    add_test_executable(guest_font_set_script_language_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontSetScriptLanguage.cpp)
+    target_include_directories(guest_font_set_script_language_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_set_script_language_tests PRIVATE libSceFont libSceFontFt libc)
+    configure_windows_unwind(guest_font_set_script_language_tests)
+    add_test(NAME guest_font_set_script_language COMMAND guest_font_set_script_language_tests)
+    if(WIN32)
+        set_tests_properties(guest_font_set_script_language PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
+    endif()
 endif()
