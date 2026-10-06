@@ -27,9 +27,11 @@ int APS5_VABI sceVoiceQoSInit(void* mem_block, uint32_t mem_size, int32_t app_ty
     return 0;
 }
 
-int APS5_VABI sceVoiceQoSEnd() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceVoiceQoSEnd(void) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) throw std::runtime_error("sceVoiceQoSEnd: not initialized");
+    g_initialized = false;
+    return 0;
 }
 
 int APS5_VABI sceVoiceQoSCreateLocalEndpoint() {
