@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PackageMount.hpp"
 #include <dirent.h>
 #include <cerrno>
 #include <cstring>
@@ -25,6 +26,9 @@ struct Directory {
     std::filesystem::path path;
     GuestDirectoryEntry entry{};
     std::mutex mutex;
+    bool packaged = false;
+    std::vector<PackageMount::DirectoryEntry> packageEntries;
+    std::size_t packageCursor = 0;
     ~Directory() { if (native) ::closedir(native); }
 };
 std::uint8_t DirectoryType(const std::filesystem::path& path) {
@@ -48,6 +52,12 @@ void* APS5_VABI opendir_nid_postfix(const char* path) {
     if (!*path) { errno = 2; return nullptr; }
     try {
         auto directory = std::make_unique<Directory>();
+        PackageMount::EntryInfo packaged;
+        if (PackageLookup_nid_no_patch(path, &packaged)) {
+            if (!packaged.Directory) { errno = 20; return nullptr; }
+            directory->packaged = PackageListDirectory_nid_no_patch(path, &directory->packageEntries);
+            return directory.release();
+        }
         directory->path = ResolvePath_nid_no_patch(path);
         directory->native = ::opendir(directory->path.string().c_str());
         if (!directory->native) { errno = DirectoryError(errno); return nullptr; }
@@ -60,6 +70,18 @@ GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle) {
     if (!handle) { errno = 9; return nullptr; }
     auto& directory = *static_cast<Directory*>(handle);
     std::lock_guard lock(directory.mutex);
+    if (directory.packaged) {
+        if (directory.packageCursor >= directory.packageEntries.size()) return nullptr;
+        const auto& packaged = directory.packageEntries[directory.packageCursor++];
+        if (packaged.Name.size() > 255) { errno = 63; return nullptr; }
+        directory.entry = {};
+        directory.entry.fileNumber = packaged.Inode;
+        directory.entry.recordLength = static_cast<std::uint16_t>(8 + ((packaged.Name.size() + 1 + 3) & ~std::size_t{3}));
+        directory.entry.nameLength = static_cast<std::uint8_t>(packaged.Name.size());
+        directory.entry.type = packaged.Directory ? 4 : 8;
+        std::memcpy(directory.entry.name, packaged.Name.c_str(), packaged.Name.size() + 1);
+        return &directory.entry;
+    }
     const int savedError = errno;
     errno = 0;
     auto* entry = ::readdir(directory.native);
@@ -87,6 +109,7 @@ GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle) {
 int APS5_VABI closedir_nid_postfix(void* handle) {
     if (!handle) { errno = 9; return -1; }
     std::unique_ptr<Directory> directory(static_cast<Directory*>(handle));
+    if (directory->packaged) return 0;
     const int result = ::closedir(directory->native);
     directory->native = nullptr;
     if (result) errno = DirectoryError(errno);
@@ -97,6 +120,10 @@ void APS5_VABI rewinddir_nid_postfix(void* handle) {
     if (!handle) { errno = 9; return; }
     auto& directory = *static_cast<Directory*>(handle);
     std::lock_guard lock(directory.mutex);
+    if (directory.packaged) {
+        directory.packageCursor = 0;
+        return;
+    }
     ::rewinddir(directory.native);
 }
 }

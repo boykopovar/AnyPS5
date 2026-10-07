@@ -69,7 +69,11 @@ std::optional<std::filesystem::path> GuestOf(WorkingDirectory& state, const char
 std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
     const auto guest = GuestOf(state, path);
     // Preserve the existing ability to pass explicit native drive paths.
-    if (!guest) return std::filesystem::path(path);
+    if (!guest) {
+        std::string text(path);
+        for (auto& character : text) if (character == '\\') character = '/';
+        return std::filesystem::path(text);
+    }
     if (auto aliased = ResolveAlias(guest->relative_path().generic_string())) return *aliased;
     return (state.root / guest->relative_path()).make_preferred();
 }

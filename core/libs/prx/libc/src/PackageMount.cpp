@@ -4,6 +4,7 @@
 #include <pkg/Package.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -79,6 +80,17 @@ std::filesystem::path Utf8Path(const std::string& text) {
     return std::filesystem::path(std::u8string(text.begin(), text.end()));
 }
 
+std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
+#ifdef _WIN32
+    const std::wstring wide(name, name + std::strlen(name));
+    const wchar_t* value = _wgetenv(wide.c_str());
+#else
+    const char* value = std::getenv(name);
+#endif
+    if (value == nullptr || value[0] == 0) return std::nullopt;
+    return std::filesystem::path(value);
+}
+
 std::map<std::string, std::string> ReadSidecar(const std::filesystem::path& path) {
     std::map<std::string, std::string> values;
     std::ifstream stream(path, std::ios::binary);
@@ -96,22 +108,21 @@ std::map<std::string, std::string> ReadSidecar(const std::filesystem::path& path
 
 void Mount(MountState& state) {
     const auto sidecar = ReadSidecar(ExecutableDirectory() / SidecarName);
-    const char* packageOverride = std::getenv("ANYPS5_PACKAGE");
-    const char* oodleOverride = std::getenv("ANYPS5_OODLE");
-    const bool overridden = packageOverride != nullptr && packageOverride[0] != '\0';
     const auto value = [&](const char* key) {
         const auto found = sidecar.find(key);
         return found == sidecar.end() ? std::string{} : found->second;
     };
-    const std::string package = overridden ? std::string(packageOverride) : value("package");
+    const auto packageOverride = EnvironmentPath("ANYPS5_PACKAGE");
+    const auto oodleOverride = EnvironmentPath("ANYPS5_OODLE");
+    const auto package = packageOverride ? *packageOverride : value("package").empty() ? std::filesystem::path{} : Utf8Path(value("package"));
     if (package.empty()) return;
-    const std::string oodle = oodleOverride != nullptr && oodleOverride[0] != '\0' ? std::string(oodleOverride) : value("oodle");
-    state.package = std::make_unique<Pkg::Package>(Utf8Path(package), oodle.empty() ? std::filesystem::path{} : Utf8Path(oodle));
-    if (overridden) return;
+    const auto oodle = oodleOverride ? *oodleOverride : value("oodle").empty() ? std::filesystem::path{} : Utf8Path(value("oodle"));
+    state.package = std::make_unique<Pkg::Package>(package, oodle);
+    if (packageOverride) return;
     const auto size = value("size");
     const auto contentId = value("content_id");
     if ((!size.empty() && size != std::to_string(state.package->FileSize())) || (!contentId.empty() && contentId != state.package->ContentId()))
-        throw std::runtime_error("PackageMount: " + package + " does not match " + SidecarName + "; relink the package");
+        throw std::runtime_error("PackageMount: " + value("package") + " does not match " + SidecarName + "; relink the package");
 }
 
 Pkg::Package* Mounted() {
@@ -122,13 +133,16 @@ Pkg::Package* Mounted() {
 
 const Pkg::PackageNode* Lookup(const char* path) {
     if (path == nullptr) return nullptr;
+    const int savedError = errno;
     auto* package = Mounted();
-    if (package == nullptr) return nullptr;
     std::string guest;
-    if (!GuestPath_nid_no_patch(path, &guest)) return nullptr;
+    const Pkg::PackageNode* node = nullptr;
     constexpr std::size_t rootLength = sizeof(ApplicationRoot) - 1;
-    if (guest.compare(0, rootLength, ApplicationRoot) != 0 || (guest.size() > rootLength && guest[rootLength] != '/')) return nullptr;
-    return package->Find(std::string_view(guest).substr(rootLength));
+    if (package != nullptr && GuestPath_nid_no_patch(path, &guest) && guest.compare(0, rootLength, ApplicationRoot) == 0 &&
+        (guest.size() == rootLength || guest[rootLength] == '/'))
+        node = package->Find(std::string_view(guest).substr(rootLength));
+    errno = savedError;
+    return node;
 }
 
 std::uint32_t InodeOf(const Pkg::Package& package, const Pkg::PackageNode& node) {
@@ -257,6 +271,20 @@ extern "C" bool PackageStat_nid_no_patch(const char* guestPath, FileStat* status
     const auto* node = Lookup(guestPath);
     if (node == nullptr) return false;
     FillStat(*Mounted(), *node, status);
+    return true;
+}
+
+extern "C" bool PackageListDirectory_nid_no_patch(const char* guestPath, std::vector<PackageMount::DirectoryEntry>* entries) {
+    const auto* node = Lookup(guestPath);
+    if (node == nullptr || !node->Directory) return false;
+    const auto& package = *Mounted();
+    entries->clear();
+    entries->push_back(PackageMount::DirectoryEntry{".", true, InodeOf(package, *node)});
+    entries->push_back(PackageMount::DirectoryEntry{"..", true, InodeOf(package, *node)});
+    for (const auto index : node->Children) {
+        const auto& child = package.Node(index);
+        entries->push_back(PackageMount::DirectoryEntry{child.Name, child.Directory, InodeOf(package, child)});
+    }
     return true;
 }
 

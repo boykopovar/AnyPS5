@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstdint>
@@ -29,6 +30,13 @@ int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI close_nid_postfix(int);
 std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
 int* APS5_VABI __error_nid_postfix();
+int APS5_VABI access_nid_postfix(const char*, int);
+int APS5_VABI rename_nid_postfix(const char*, const char*);
+int APS5_VABI remove_nid_postfix(const char*);
+void* APS5_VABI opendir_nid_postfix(const char*);
+GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void*);
+void APS5_VABI rewinddir_nid_postfix(void*);
+int APS5_VABI closedir_nid_postfix(void*);
 }
 
 namespace {
@@ -142,6 +150,28 @@ void ReadOnlyMount() {
     Require(fd >= 0x08000000 && close_nid_postfix(fd) == 0);
 }
 
+void LibcEntryPoints() {
+    *__error_nid_postfix() = 34;
+    Require(access_nid_postfix("/app0/data/random.bin", 4) == 0 && *__error_nid_postfix() == 34);
+    Require(access_nid_postfix("/app0/data", 5) == 0);
+    Require(access_nid_postfix("/app0/data/random.bin", 2) == -1 && *__error_nid_postfix() == 30);
+    Require(rename_nid_postfix("/app0/data/zero.bin", "/app0/data/moved.bin") == -1 && *__error_nid_postfix() == 30);
+    Require(remove_nid_postfix("/app0/data/zero.bin") == -1 && *__error_nid_postfix() == 30);
+    Require(opendir_nid_postfix("/app0/eboot.bin") == nullptr && *__error_nid_postfix() == 20);
+    void* directory = opendir_nid_postfix("/app0/sce_sys");
+    Require(directory != nullptr);
+    for (int pass = 0; pass < 2; ++pass) {
+        std::set<std::string> names;
+        while (const auto* entry = readdir_nid_postfix(directory)) {
+            Require(entry->nameLength == std::strlen(entry->name) && entry->type == (std::string(entry->name) == "trophy2" || entry->name[0] == '.' ? 4 : 8));
+            names.emplace(entry->name);
+        }
+        Require((names == std::set<std::string>{".", "..", "keystone", "param.json", "trophy2"}));
+        rewinddir_nid_postfix(directory);
+    }
+    Require(closedir_nid_postfix(directory) == 0);
+}
+
 void HostFallback() {
     FileStat status{};
     Require(sceKernelStat("/app0/sce_module/provider.prx.guest.prx", &status) == 0 && status.st_size == 5);
@@ -158,6 +188,7 @@ int main() {
     Files();
     Directories();
     ReadOnlyMount();
+    LibcEntryPoints();
     HostFallback();
     std::puts("Package mount tests passed");
     return 0;

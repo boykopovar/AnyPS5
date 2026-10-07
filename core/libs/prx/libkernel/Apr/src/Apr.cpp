@@ -715,7 +715,12 @@ int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
 
 int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
     if (!stat) return _fail(GUEST_EINVAL);
-    File::FillFileStat(_file(id).path, stat);
+    const auto file = _file(id);
+    if (!file.packagePath.empty()) {
+        if (!PackageStat_nid_no_patch(file.packagePath.c_str(), stat)) throw std::runtime_error("APR: package file disappeared: " + file.packagePath);
+        return 0;
+    }
+    File::FillFileStat(file.path, stat);
     return 0;
 }
 

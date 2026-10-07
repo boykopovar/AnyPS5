@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "prx/libSceFont/include/FontInternal.hpp"
+#include "prx/libc/include/PackageMount.hpp"
 
 namespace {
 
@@ -298,7 +299,9 @@ int APS5_VABI sceFontOpenFontFile(FontLibrary library, const char* path, std::ui
     const int rc = OpenFontInContext(request, libraryLock, pFontHandle);
     if (rc != SCE_FONT_OK) return rc;
     FontState& state = ResetState(*pFontHandle);
-    if (auto bytes = ReadFileBytes(hostPath)) LoadStateFace(state, std::move(bytes), subFontIndex);
+    std::vector<std::uint8_t> packaged;
+    if (PackageReadAll_nid_no_patch(path, &packaged)) LoadStateFace(state, std::make_shared<const std::vector<unsigned char>>(std::move(packaged)), subFontIndex);
+    else if (auto bytes = ReadFileBytes(hostPath)) LoadStateFace(state, std::move(bytes), subFontIndex);
     return SCE_FONT_OK;
 }
 

@@ -18,6 +18,12 @@ struct EntryInfo {
     std::uint64_t Size = 0;
 };
 
+struct DirectoryEntry {
+    std::string Name;
+    bool Directory = false;
+    std::uint32_t Inode = 0;
+};
+
 inline bool IsDescriptor(const int descriptor) {
     return descriptor >= FirstDescriptor && descriptor <= LastDescriptor;
 }
@@ -35,5 +41,6 @@ extern "C" std::int64_t PackageSeek_nid_no_patch(int descriptor, std::int64_t of
 extern "C" int PackageFstat_nid_no_patch(int descriptor, FileStat* status);
 extern "C" bool PackageStat_nid_no_patch(const char* guestPath, FileStat* status);
 extern "C" int PackageGetdents_nid_no_patch(int descriptor, char* buffer, int size, std::int64_t* base);
+extern "C" bool PackageListDirectory_nid_no_patch(const char* guestPath, std::vector<PackageMount::DirectoryEntry>* entries);
 
 #endif

@@ -37,7 +37,9 @@ A plaintext debug package (`\x7FFIH` finalized image whose outer PFS carries the
 relinker --windows --oodle <path to oo2core library> game.pkg app.exe
 ```
 
-Packages store most blocks Kraken-compressed. Decoding them needs a user-supplied Oodle runtime (`oo2core_*.dll` or `liboo2core*.so`) passed with `--oodle`; it is loaded only when a compressed block is read. Encrypted packages, SELF containers with encrypted or compressed segments, NAPS layouts other than native spans, deduplicated blocks and shuffle patterns are rejected with an error.
+Packages store most blocks Kraken-compressed. Decoding them needs a user-supplied Oodle runtime (`oo2core_*.dll` or `liboo2core*.so`) passed with `--oodle`; it is loaded only when a compressed block is read. The project does not ship or download Oodle. Encrypted packages, SELF containers with encrypted or compressed segments, NAPS layouts other than native spans, deduplicated blocks and shuffle patterns are rejected with an error.
+
+At run time the system libraries mount the package as `/app0`. `anyps5-package.ini` is read from the executable directory; `ANYPS5_PACKAGE` and `ANYPS5_OODLE` override its paths and skip its size and content ID check. A package that no longer matches the sidecar is an error: relink it. Paths are looked up exactly first and then case-insensitively. Files missing from the package fall back to the host `app0/` directory, which is where the converted guest modules live. The mount is read-only: writes, creation, renames and removals inside it fail with `EROFS`. Kernel file calls, AIO, AMPR, `opendir`/`readdir`, `access`, AvPlayer sources, `sceFontOpenFontFile` and the title metadata read from the package; C stdio streams (`fopen`, `freopen`, `fdopen`) over package files are not supported yet and fail with an error.
 
 ## Options
 

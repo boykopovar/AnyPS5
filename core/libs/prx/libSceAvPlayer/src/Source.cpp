@@ -3,6 +3,7 @@
 
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PackageMount.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -70,6 +71,68 @@ float DisplayAspect(int width, int height, AVRational sampleAspect) {
     const double pixel = sampleAspect.num > 0 && sampleAspect.den > 0 ? av_q2d(sampleAspect) : 1.0;
     return static_cast<float>(width * pixel / height);
 }
+
+class PackageFileStream {
+public:
+    PackageFileStream(std::string guestPath, std::uint64_t fileSize) : path(std::move(guestPath)), size(fileSize) {}
+
+    ~PackageFileStream() {
+        if (context) {
+            av_freep(&context->buffer);
+            avio_context_free(&context);
+        }
+    }
+
+    PackageFileStream(const PackageFileStream&) = delete;
+    PackageFileStream& operator=(const PackageFileStream&) = delete;
+
+    bool Open() {
+        auto* buffer = static_cast<std::uint8_t*>(av_malloc(AvioBufferSize));
+        if (!buffer) return false;
+        context = avio_alloc_context(buffer, AvioBufferSize, 0, this, &PackageFileStream::read, nullptr, &PackageFileStream::seek);
+        if (!context) av_free(buffer);
+        return context != nullptr;
+    }
+
+    AVIOContext* Context() const { return context; }
+
+private:
+    static int read(void* opaque, std::uint8_t* buffer, int size) {
+        auto* self = static_cast<PackageFileStream*>(opaque);
+        if (self->position >= self->size) return AVERROR_EOF;
+        const auto length = std::min<std::uint64_t>(static_cast<std::uint64_t>(size), self->size - self->position);
+        std::uint64_t read = 0;
+        try {
+            read = PackageReadPath_nid_no_patch(self->path.c_str(), self->position, buffer, length);
+        } catch (const std::exception& error) {
+            APS5_LOG_ERR("Could not read %s: %s", self->path.c_str(), error.what());
+            return AVERROR(EIO);
+        }
+        if (read == 0) return AVERROR_EOF;
+        self->position += read;
+        return static_cast<int>(read);
+    }
+
+    static std::int64_t seek(void* opaque, std::int64_t offset, int whence) {
+        auto* self = static_cast<PackageFileStream*>(opaque);
+        if (whence & AVSEEK_SIZE) return static_cast<std::int64_t>(self->size);
+        std::int64_t base = 0;
+        switch (whence & ~AVSEEK_FORCE) {
+        case SEEK_SET: base = 0; break;
+        case SEEK_CUR: base = static_cast<std::int64_t>(self->position); break;
+        case SEEK_END: base = static_cast<std::int64_t>(self->size); break;
+        default: return -1;
+        }
+        const auto target = std::clamp<std::int64_t>(base + offset, 0, static_cast<std::int64_t>(self->size));
+        self->position = static_cast<std::uint64_t>(target);
+        return target;
+    }
+
+    std::string path;
+    std::uint64_t size = 0;
+    std::uint64_t position = 0;
+    AVIOContext* context = nullptr;
+};
 
 class FileReplacementStream {
 public:
@@ -224,6 +287,7 @@ public:
         Stop();
         avformat_close_input(&format);
         replacement.reset();
+        packaged.reset();
     }
 
     FfmpegSource(const FfmpegSource&) = delete;
@@ -242,11 +306,20 @@ public:
             }
             format->pb = replacement->Context();
             format->flags |= AVFMT_FLAG_CUSTOM_IO;
+        } else if (PackageMount::EntryInfo entry; PackageLookup_nid_no_patch(path.c_str(), &entry) && !entry.Directory) {
+            packaged = std::make_unique<PackageFileStream>(path, entry.Size);
+            if (!packaged->Open()) {
+                avformat_free_context(format);
+                format = nullptr;
+                return false;
+            }
+            format->pb = packaged->Context();
+            format->flags |= AVFMT_FLAG_CUSTOM_IO;
         } else {
             const auto resolved = ResolvePath_nid_no_patch(path.c_str()).u8string();
             url = "file:" + std::string(resolved.begin(), resolved.end());
         }
-        if (const int error = avformat_open_input(&format, replacement ? nullptr : url.c_str(), nullptr, nullptr); error < 0) {
+        if (const int error = avformat_open_input(&format, replacement || packaged ? nullptr : url.c_str(), nullptr, nullptr); error < 0) {
             char reason[AV_ERROR_MAX_STRING_SIZE]{};
             av_strerror(error, reason, sizeof(reason));
             APS5_LOG_ERR("Could not open %s: %s", path.c_str(), reason);
@@ -1045,6 +1118,7 @@ private:
     SourceSettings settings;
     ISourceEvents& events;
     std::unique_ptr<FileReplacementStream> replacement;
+    std::unique_ptr<PackageFileStream> packaged;
     AVFormatContext* format = nullptr;
     std::vector<StreamEntry> streams;
     std::uint64_t duration = 0;

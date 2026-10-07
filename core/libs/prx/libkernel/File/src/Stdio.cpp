@@ -190,6 +190,22 @@ static int SceErrorFromErrno(int error) {
     return static_cast<int>(0x80020000u | static_cast<unsigned>(error > 0 && error <= 34 ? error : error == GUEST_ENOTEMPTY ? error : GUEST_EIO));
 }
 
+static std::int64_t PackageVectorRead(int d, const KernelIovec* iov, int iovcnt, std::int64_t offset) {
+    if (iovcnt < 0 || iovcnt > KERNEL_IOV_MAX) return SceErrorFromErrno(GUEST_EINVAL);
+    if (iov == nullptr && iovcnt != 0) return SceErrorFromErrno(GUEST_EFAULT);
+    std::int64_t total = 0;
+    for (int i = 0; i < iovcnt; ++i) {
+        const GuestArena::HostWrite destination(iov[i].base, iov[i].length);
+        if (!destination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
+        const auto read = offset < 0 ? PackageRead_nid_no_patch(d, iov[i].base, iov[i].length)
+                                     : PackagePread_nid_no_patch(d, iov[i].base, iov[i].length, offset + total);
+        if (read < 0) return read;
+        total += read;
+        if (static_cast<std::size_t>(read) < iov[i].length) break;
+    }
+    return total;
+}
+
 extern "C" int* APS5_VABI __error_nid_postfix();
 
 static int PosixFailure(int error) {
@@ -506,7 +522,8 @@ int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t
  return pwrite_nid_disambig1_nid_postfix(d, buf, nbytes, offset);
 }
 
-int64_t APS5_VABI sceKernelReadv(int, const KernelIovec*, int) {
+int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* iov, int iovcnt) {
+    if (PackageMount::IsDescriptor(d)) return PackageVectorRead(d, iov, iovcnt, -1);
     throw std::runtime_error(std::string(__func__) + ": not implemented on Windows");
 }
 
@@ -514,7 +531,8 @@ int64_t APS5_VABI sceKernelWritev(int, const KernelIovec*, int) {
     throw std::runtime_error(std::string(__func__) + ": not implemented on Windows");
 }
 
-int64_t APS5_VABI sceKernelPreadv(int, const KernelIovec*, int, int64_t) {
+int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* iov, int iovcnt, int64_t offset) {
+    if (PackageMount::IsDescriptor(d)) return offset < 0 ? SceErrorFromErrno(GUEST_EINVAL) : PackageVectorRead(d, iov, iovcnt, offset);
     throw std::runtime_error(std::string(__func__) + ": not implemented on Windows");
 }
 
@@ -559,16 +577,7 @@ int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* iov, int iovcnt) {
     if (const int error = CheckIovecs(iov, iovcnt)) return error;
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
-    if (PackageMount::IsDescriptor(d)) {
-        std::int64_t total = 0;
-        for (int i = 0; i < iovcnt; ++i) {
-            const auto read = PackageRead_nid_no_patch(d, iov[i].base, iov[i].length);
-            if (read < 0) return read;
-            total += read;
-            if (static_cast<std::size_t>(read) < iov[i].length) break;
-        }
-        return total;
-    }
+    if (PackageMount::IsDescriptor(d)) return PackageVectorRead(d, iov, iovcnt, -1);
     const auto result = static_cast<std::int64_t>(::readv(d, NativeIovecs(iov), iovcnt));
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
@@ -585,16 +594,7 @@ int64_t APS5_VABI sceKernelPreadv(int d, const KernelIovec* iov, int iovcnt, int
     if (offset < 0) return SceErrorFromErrno(GUEST_EINVAL);
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
-    if (PackageMount::IsDescriptor(d)) {
-        std::int64_t total = 0;
-        for (int i = 0; i < iovcnt; ++i) {
-            const auto read = PackagePread_nid_no_patch(d, iov[i].base, iov[i].length, offset + total);
-            if (read < 0) return read;
-            total += read;
-            if (static_cast<std::size_t>(read) < iov[i].length) break;
-        }
-        return total;
-    }
+    if (PackageMount::IsDescriptor(d)) return PackageVectorRead(d, iov, iovcnt, offset);
     const auto result = static_cast<std::int64_t>(::preadv(d, NativeIovecs(iov), iovcnt, static_cast<off_t>(offset)));
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
