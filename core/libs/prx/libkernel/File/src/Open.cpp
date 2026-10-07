@@ -5,10 +5,13 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "SceTypes.hpp"
 
 #include <cerrno>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -94,7 +97,29 @@ static int SceErrorFromErrno(int error) {
     return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
 }
 
+struct DescriptorFlags {
+    int status;
+    int descriptor;
+};
+
+static constexpr int StatusFlagsKeptByOpen = SCE_KERNEL_O_ACCMODE | SCE_KERNEL_O_NONBLOCK | SCE_KERNEL_O_APPEND |
+    SCE_KERNEL_O_ASYNC | SCE_KERNEL_O_FSYNC | SCE_KERNEL_O_DIRECT;
+static constexpr int StatusFlagsSetByFcntl = SCE_KERNEL_O_NONBLOCK | SCE_KERNEL_O_APPEND | SCE_KERNEL_O_ASYNC |
+    SCE_KERNEL_O_FSYNC | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_DIRECT;
+static constexpr int StatusFlagsWithoutHostEffect = SCE_KERNEL_O_NONBLOCK | SCE_KERNEL_O_DIRECT;
+
+static std::mutex g_descriptorFlagsMutex;
+static std::map<int, DescriptorFlags> g_descriptorFlags;
+
+void File::ForgetDescriptorFlags(int fd) {
+    std::lock_guard lock(g_descriptorFlagsMutex);
+    g_descriptorFlags.erase(fd);
+}
+
 extern "C" {
+
+int* APS5_VABI __error_nid_postfix();
+int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
@@ -109,10 +134,15 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     if (fd < 0) {
         return SceErrorFromErrno(errno);
     }
+    {
+        std::lock_guard lock(g_descriptorFlagsMutex);
+        g_descriptorFlags[fd] = DescriptorFlags{flags & StatusFlagsKeptByOpen, (flags & SCE_KERNEL_O_CLOEXEC) ? 1 : 0};
+    }
     return fd;
 }
 
 int APS5_VABI sceKernelClose(int d) {
+    File::ForgetDescriptorFlags(d);
 #ifdef _WIN32
     File::ForgetDirectoryDescriptor(d);
 #endif
@@ -184,9 +214,37 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     return 0;
 }
 
-int APS5_VABI sceKernelFcntl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelFcntl(int d, int cmd, std::intptr_t arg) {
+    constexpr int GetDescriptorFlags = 1;
+    constexpr int SetDescriptorFlags = 2;
+    constexpr int GetStatusFlags = 3;
+    constexpr int SetStatusFlags = 4;
+    if (d >= GuestSockets::FirstDescriptor) {
+        const int result = fcntl_nid_postfix(d, cmd, static_cast<int>(arg));
+        return result < 0 ? SceKernelError(*__error_nid_postfix()) : result;
+    }
+    std::lock_guard lock(g_descriptorFlagsMutex);
+    const auto found = g_descriptorFlags.find(d);
+    if (found == g_descriptorFlags.end()) {
+        throw std::runtime_error(std::string(__func__) + ": fd=" + std::to_string(d) + " was not opened through sceKernelOpen");
+    }
+    auto& flags = found->second;
+    if (cmd == GetDescriptorFlags) return flags.descriptor;
+    if (cmd == SetDescriptorFlags) {
+        flags.descriptor = static_cast<int>(arg & 1);
+        return 0;
+    }
+    if (cmd == GetStatusFlags) return flags.status;
+    if (cmd == SetStatusFlags) {
+        const int status = (flags.status & ~StatusFlagsSetByFcntl) | (static_cast<int>(arg) & StatusFlagsSetByFcntl);
+        if (((status ^ flags.status) & ~StatusFlagsWithoutHostEffect) != 0) {
+            throw std::runtime_error(std::string(__func__) + ": fd=" + std::to_string(d) + " status flags " +
+                std::to_string(flags.status) + " cannot change to " + std::to_string(status) + " on an open host file");
+        }
+        flags.status = status;
+        return 0;
+    }
+    throw std::runtime_error(std::string(__func__) + ": command " + std::to_string(cmd) + " is not implemented");
 }
 
 }

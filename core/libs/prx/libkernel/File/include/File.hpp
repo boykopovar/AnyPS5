@@ -16,6 +16,13 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
 int APS5_VABI sceKernelUnlink(const char* path);
+int APS5_VABI sceKernelFcntl(int d, int cmd, std::intptr_t arg);
+
+}
+
+namespace File {
+
+void ForgetDescriptorFlags(int fd);
 
 }
 

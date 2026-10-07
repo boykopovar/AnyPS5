@@ -8,6 +8,7 @@ constexpr std::int32_t SCE_KERNEL_O_WRONLY    = 0x00000001;
 constexpr std::int32_t SCE_KERNEL_O_RDWR      = 0x00000002;
 constexpr std::int32_t SCE_KERNEL_O_ACCMODE   = 0x00000003;
 constexpr std::int32_t SCE_KERNEL_O_APPEND    = 0x00000008;
+constexpr std::int32_t SCE_KERNEL_O_ASYNC     = 0x00000040;
 constexpr std::int32_t SCE_KERNEL_O_FSYNC     = 0x00000080;
 constexpr std::int32_t SCE_KERNEL_O_SYNC      = 0x00000080;
 constexpr std::int32_t SCE_KERNEL_O_CREAT     = 0x00000200;
@@ -17,5 +18,6 @@ constexpr std::int32_t SCE_KERNEL_O_DSYNC     = 0x00001000;
 constexpr std::int32_t SCE_KERNEL_O_NONBLOCK  = 0x00000004;
 constexpr std::int32_t SCE_KERNEL_O_DIRECT    = 0x00010000;
 constexpr std::int32_t SCE_KERNEL_O_DIRECTORY = 0x00020000;
+constexpr std::int32_t SCE_KERNEL_O_CLOEXEC   = 0x00100000;
 
 #endif

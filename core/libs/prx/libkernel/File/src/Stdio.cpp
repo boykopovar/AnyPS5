@@ -234,6 +234,7 @@ int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
 
 int APS5_VABI close_nid_postfix(int d) {
     if (d >= GuestSockets::FirstDescriptor) return GuestSockets::Close(d);
+    File::ForgetDescriptorFlags(d);
 #ifdef _WIN32
     File::ForgetDirectoryDescriptor(d);
     return _close(d);
