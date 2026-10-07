@@ -86,8 +86,17 @@ def clashes(a, b, path):
 def conflicts(a, b):
     if not (a["tree"] and b["tree"] and a["files"] & b["files"]):
         return {}
-    files = merge("--merge-base=refs/pr/base", a["tree"], b["tree"])[1]
-    return {path: [] if path in a["added"] else clashes(a, b, path) for path in files}
+    failed = merge("--merge-base=refs/pr/base", a["tree"], b["tree"])[1]
+    shared = a["files"] & b["files"]
+    out = {}
+    for path in shared | failed:
+        if path in a["added"]:
+            out[path] = []
+            continue
+        ranges = clashes(a, b, path)
+        if ranges or path in failed:
+            out[path] = ranges
+    return out
 
 
 def overlaps(prs, a, b):
