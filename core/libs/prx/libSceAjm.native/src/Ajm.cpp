@@ -107,7 +107,8 @@ struct SidebandResampleInfo {
 };
 
 struct Resampler {
-    float ratio = 1.0f;
+    double ratio = 1.0;
+    double ratioChange = 0.0;
     std::vector<double> frames;
     double position = 1.0;
 };
@@ -387,7 +388,7 @@ void StorePcm(double value, std::uint8_t* out, std::uint32_t encoding) {
 }
 
 bool Resampling(const Instance& instance) {
-    return instance.resampler.ratio != 1.0f || !instance.resampler.frames.empty();
+    return instance.resampler.ratio != 1.0 || instance.resampler.ratioChange != 0.0 || !instance.resampler.frames.empty();
 }
 
 std::size_t ResamplerHeld(const Instance& instance, std::size_t channels) {
@@ -424,7 +425,9 @@ void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t chann
             StorePcm(value, frame.data() + channel * sampleBytes, encoding);
         }
         outputs.Emit(frame.data(), frameBytes);
+        if (!(resampler.ratio > 0.0 && std::isfinite(resampler.ratio))) NotImplemented_nid_no_patch("AJM resample ratio ramp reaching a ratio that is not positive and finite");
         resampler.position += resampler.ratio;
+        resampler.ratio += resampler.ratioChange;
     }
     const auto index = std::min(static_cast<std::size_t>(resampler.position), available);
     if (index > 1) {
@@ -1042,13 +1045,17 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
     case JobKind::Control:
         Control(*instance, job, inputs);
         break;
-    case JobKind::SetResampleParameters:
-        std::memcpy(&instance->resampler.ratio, job.parameters, sizeof(instance->resampler.ratio));
-        AJM_TRACE("[ajm] instance %u set resample ratio %f\n", job.instance, static_cast<double>(instance->resampler.ratio));
+    case JobKind::SetResampleParameters: {
+        float parameters[2]{};
+        std::memcpy(parameters, job.parameters, sizeof(parameters));
+        instance->resampler.ratio = parameters[0];
+        instance->resampler.ratioChange = parameters[1];
+        AJM_TRACE("[ajm] instance %u set resample ratio %f, change per sample %g\n", job.instance, instance->resampler.ratio, instance->resampler.ratioChange);
         WriteResult(job.sideband, job.sidebandSize, 0);
         break;
+    }
     case JobKind::GetResampleInfo: {
-        const SidebandResampleInfo resample{instance->resampler.ratio, static_cast<std::int32_t>(HeldSamples(*instance)), {}};
+        const SidebandResampleInfo resample{static_cast<float>(instance->resampler.ratio), static_cast<std::int32_t>(HeldSamples(*instance)), {}};
         WriteResult(job.sideband, job.sidebandSize, 0);
         if (job.sideband && job.sidebandSize >= sizeof(SidebandResult) + sizeof(resample)) std::memcpy(static_cast<std::uint8_t*>(job.sideband) + sizeof(SidebandResult), &resample, sizeof(resample));
         break;
@@ -1225,13 +1232,18 @@ int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t 
     return sceAjmBatchJobRunSplit(info, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size);
 }
 
-int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t instance, float ratio, uint32_t flags, void* result) {
+int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t instance, float ratio_start, float ratio_change_per_sample, uint32_t flags, void* result) {
     (void)flags;
-    if (!std::isfinite(ratio) || ratio <= 0.0f) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!std::isfinite(ratio_start) || ratio_start <= 0.0f || !std::isfinite(ratio_change_per_sample)) return SCE_AJM_ERROR_INVALID_PARAMETER;
     auto header = MakeHeader(JobKind::SetResampleParameters, instance, result, sizeof(SidebandResult));
-    std::memcpy(header.parameters, &ratio, sizeof(ratio));
-    header.parameterSize = sizeof(ratio);
+    const float parameters[2]{ratio_start, ratio_change_per_sample};
+    std::memcpy(header.parameters, parameters, sizeof(parameters));
+    header.parameterSize = sizeof(parameters);
     return Append(info, header, nullptr, nullptr);
+}
+
+int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t instance, float ratio, uint32_t flags, void* result) {
+    return sceAjmBatchJobSetResampleParametersEx(info, instance, ratio, 0.0f, flags, result);
 }
 
 int APS5_VABI sceAjmBatchJobGetResampleInfo(AjmBatchInfo* info, uint32_t instance, void* result) {

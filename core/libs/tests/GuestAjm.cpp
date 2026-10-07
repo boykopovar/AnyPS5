@@ -30,6 +30,7 @@ int APS5_VABI sceAjmBatchWait(std::uint32_t, std::uint32_t, std::uint32_t, AjmBa
 int APS5_VABI sceAjmBatchCancel(std::uint32_t, std::uint32_t);
 int APS5_VABI sceAjmBatchJobClearContext(AjmBatchInfo*, std::uint32_t, void*);
 int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo*, std::uint32_t, float, std::uint32_t, void*);
+int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo*, std::uint32_t, float, float, std::uint32_t, void*);
 int APS5_VABI sceAjmBatchJobGetResampleInfo(AjmBatchInfo*, std::uint32_t, void*);
 }
 
@@ -876,6 +877,84 @@ void TestResampleAt9(std::uint32_t context) {
     for (const std::uint32_t instance : {plain, faster, slower}) Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+ResampledStream RampMp3(std::uint32_t context, std::uint32_t instance, std::size_t frames, float start, float change) {
+    ResampledStream out;
+    std::vector<std::int16_t> pcm(frames);
+    std::size_t offset = 0;
+    for (int guard = 0; guard < 4096; ++guard) {
+        std::vector<std::uint8_t> batch(4096);
+        AjmBatchInfo info{};
+        std::int64_t setResult[2] = {-1, -1};
+        DecodeSideband sideband{};
+        Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+        if (out.jobs == 0) Require(sceAjmBatchJobSetResampleParametersEx(&info, instance, start, change, 1, setResult) == 0);
+        Require(sceAjmBatchJobDecode(&info, instance, MP3_MONO + offset, sizeof(MP3_MONO) - offset, pcm.data(), pcm.size() * sizeof(std::int16_t), &sideband) == 0);
+        Submit(context, info);
+        if (out.jobs == 0) Require(setResult[0] == 0);
+        Require(sideband.result == 0 || (offset == sizeof(MP3_MONO) && sideband.outputWritten == 0));
+        offset += static_cast<std::size_t>(sideband.inputConsumed);
+        out.pcm.insert(out.pcm.end(), pcm.begin(), pcm.begin() + sideband.outputWritten / static_cast<std::int32_t>(sizeof(std::int16_t)));
+        if (++out.jobs == 1) out.afterFirstJob = GetResampleInfo(context, instance);
+        if (offset == sizeof(MP3_MONO) && sideband.outputWritten == 0) break;
+    }
+    Require(offset == sizeof(MP3_MONO));
+    out.atEnd = GetResampleInfo(context, instance);
+    return out;
+}
+
+void TestResampleRamp(std::uint32_t context) {
+    const auto create = [&] {
+        std::uint32_t instance = 0;
+        Require(sceAjmInstanceCreate(context, 0, 0, &instance) == 0);
+        return instance;
+    };
+    const std::uint32_t plain = create();
+    const auto reference = Stream(context, plain, MP3_MONO, sizeof(MP3_MONO), 1, 1152, 0);
+    const std::size_t frames = reference.pcm.size();
+
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::int64_t result[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    for (const float bad : {0.0f, -1.0f, std::nanf(""), INFINITY}) Require(sceAjmBatchJobSetResampleParametersEx(&info, plain, bad, 0.0f, 1, result) == static_cast<int>(0x80930005));
+    for (const float bad : {std::nanf(""), INFINITY, -INFINITY}) Require(sceAjmBatchJobSetResampleParametersEx(&info, plain, 1.0f, bad, 1, result) == static_cast<int>(0x80930005));
+    Require(info.offset == 0);
+
+    const std::uint32_t steady = create();
+    const auto decimated = RampMp3(context, steady, 1152, 2.0f, 0.0f);
+    RequireDecimated(reference.pcm, decimated.pcm, 1, 2);
+    Require(decimated.afterFirstJob.ratio == 2.0f && decimated.atEnd.ratio == 2.0f);
+
+    std::size_t count = 0;
+    while (count * (count + 1) / 2 + 3 <= frames) ++count;
+    const std::uint32_t ramped = create();
+    const auto triangular = RampMp3(context, ramped, 1152, 1.0f, 1.0f);
+    Require(triangular.pcm.size() == count);
+    for (std::size_t sample = 0; sample < count; ++sample) Require(triangular.pcm[sample] == reference.pcm[sample * (sample + 1) / 2]);
+    Require(triangular.atEnd.ratio == 1.0f + static_cast<float>(count));
+
+    const std::uint32_t chunked = create();
+    const auto split = RampMp3(context, chunked, 16, 1.0f, 1.0f);
+    Require(split.pcm == triangular.pcm && split.jobs > count / 16 && split.afterFirstJob.ratio == 17.0f);
+
+    const std::uint32_t stopped = create();
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobSetResampleParametersEx(&info, stopped, 1.0f, 1.0f, 1, result) == 0);
+    Submit(context, info);
+    Require(result[0] == 0);
+    RequireDecimated(reference.pcm, Stream(context, stopped, MP3_MONO, sizeof(MP3_MONO), 1, 512, 2.0f).pcm, 1, 2);
+
+    const std::uint32_t reversed = create();
+    std::vector<std::int16_t> pcm(1152);
+    DecodeSideband sideband{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobSetResampleParametersEx(&info, reversed, 2.0f, -1.0f, 1, result) == 0);
+    Require(sceAjmBatchJobDecode(&info, reversed, MP3_MONO, sizeof(MP3_MONO), pcm.data(), pcm.size() * sizeof(std::int16_t), &sideband) == 0);
+    Require(Refused(context, info));
+
+    for (const std::uint32_t instance : {plain, steady, ramped, chunked, stopped, reversed}) Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
 }
 
 int main() {
@@ -908,5 +987,6 @@ int main() {
     TestResampleOpus(context);
     TestResampleMp3(context);
     TestResampleAt9(context);
+    TestResampleRamp(context);
     Require(sceAjmFinalize(context) == 0);
 }
