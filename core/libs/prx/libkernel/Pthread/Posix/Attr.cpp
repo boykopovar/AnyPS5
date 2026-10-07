@@ -8,6 +8,8 @@
 extern "C" {
 int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
 int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
+int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, size_t size);
+int APS5_VABI scePthreadAttrSetstackaddr(PthreadAttr* attr, void* addr);
 int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize);
 }
 
@@ -64,6 +66,12 @@ int APS5_VABI pthread_attr_getstack_nid_postfix(const PthreadAttr* __restrict at
     return 0;
 }
 
+int APS5_VABI pthread_attr_getstackaddr_nid_postfix(const PthreadAttr* attr, void** stack_addr) {
+    if (!Valid(attr) || !stack_addr) return PosixThread::GUEST_EINVAL;
+    *stack_addr = (*attr)->stackAddress;
+    return 0;
+}
+
 int APS5_VABI pthread_attr_getstacksize_nid_postfix(const PthreadAttr* attr, size_t* stack_size) {
     if (!Valid(attr) || !stack_size) return PosixThread::GUEST_EINVAL;
     *stack_size = (*attr)->_stacksize;
@@ -103,6 +111,19 @@ int APS5_VABI pthread_attr_setschedpolicy_nid_postfix(PthreadAttr* attr, int pol
     if (!Valid(attr)) return PosixThread::GUEST_EINVAL;
     (*attr)->_schedpolicy = policy;
     return 0;
+}
+
+int APS5_VABI pthread_attr_setstack_nid_postfix(PthreadAttr* attr, void* stack_addr, size_t stack_size) {
+    if (!Valid(attr) || !stack_addr || stack_size < 16384) return PosixThread::GUEST_EINVAL;
+#ifdef _WIN32
+    if (stack_size > std::numeric_limits<unsigned>::max() - 0xffffu) return PosixThread::GUEST_EINVAL;
+#endif
+    return PosixThread::ToErrno(scePthreadAttrSetstack(attr, stack_addr, stack_size));
+}
+
+int APS5_VABI pthread_attr_setstackaddr_nid_postfix(PthreadAttr* attr, void* stack_addr) {
+    if (!Valid(attr) || !stack_addr) return PosixThread::GUEST_EINVAL;
+    return PosixThread::ToErrno(scePthreadAttrSetstackaddr(attr, stack_addr));
 }
 
 int APS5_VABI pthread_attr_setstacksize_nid_postfix(PthreadAttr* attr, size_t stack_size) {

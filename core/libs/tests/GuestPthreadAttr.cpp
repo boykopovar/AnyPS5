@@ -19,6 +19,14 @@ int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedPa
 int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask);
 int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, std::size_t* stackSize);
 int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state);
+int APS5_VABI pthread_attr_init_nid_postfix(PthreadAttr* attr);
+int APS5_VABI pthread_attr_destroy_nid_postfix(PthreadAttr* attr);
+int APS5_VABI pthread_attr_setstack_nid_postfix(PthreadAttr* attr, void* stack_addr, std::size_t stack_size);
+int APS5_VABI pthread_attr_getstack_nid_postfix(const PthreadAttr* __restrict attr, void** __restrict stack_addr, std::size_t* __restrict stack_size);
+int APS5_VABI pthread_attr_setstackaddr_nid_postfix(PthreadAttr* attr, void* stack_addr);
+int APS5_VABI pthread_attr_getstackaddr_nid_postfix(const PthreadAttr* attr, void** stack_addr);
+int APS5_VABI pthread_attr_setstacksize_nid_postfix(PthreadAttr* attr, std::size_t stack_size);
+int APS5_VABI pthread_attr_getstacksize_nid_postfix(const PthreadAttr* attr, std::size_t* stack_size);
 }
 
 static constexpr int SCE_OK = 0;
@@ -98,4 +106,31 @@ int main() {
 
     release.set_value();
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+
+    PthreadAttr posixAttr = nullptr;
+    Require(pthread_attr_init_nid_postfix(&posixAttr) == 0);
+    alignas(16) unsigned char dummyStack[65536] = {};
+    alignas(16) unsigned char dummyStack2[65536] = {};
+    Require(pthread_attr_setstack_nid_postfix(&posixAttr, dummyStack, sizeof(dummyStack)) == 0);
+    void* queriedAddr = nullptr;
+    std::size_t queriedSize = 0;
+    Require(pthread_attr_getstack_nid_postfix(&posixAttr, &queriedAddr, &queriedSize) == 0);
+    Require(queriedAddr == dummyStack && queriedSize == sizeof(dummyStack));
+    Require(pthread_attr_getstackaddr_nid_postfix(&posixAttr, &queriedAddr) == 0 && queriedAddr == dummyStack);
+    Require(pthread_attr_getstacksize_nid_postfix(&posixAttr, &queriedSize) == 0 && queriedSize == sizeof(dummyStack));
+    Require(pthread_attr_setstackaddr_nid_postfix(&posixAttr, dummyStack2) == 0);
+    Require(pthread_attr_getstackaddr_nid_postfix(&posixAttr, &queriedAddr) == 0 && queriedAddr == dummyStack2);
+    Require(pthread_attr_setstacksize_nid_postfix(&posixAttr, 32768) == 0);
+    Require(pthread_attr_getstacksize_nid_postfix(&posixAttr, &queriedSize) == 0 && queriedSize == 32768);
+    Require(pthread_attr_setstack_nid_postfix(nullptr, dummyStack, sizeof(dummyStack)) == 22);
+    Require(pthread_attr_setstack_nid_postfix(&posixAttr, nullptr, sizeof(dummyStack)) == 22);
+    Require(pthread_attr_setstack_nid_postfix(&posixAttr, dummyStack, 1024) == 22);
+    Require(pthread_attr_setstackaddr_nid_postfix(nullptr, dummyStack) == 22);
+    Require(pthread_attr_setstackaddr_nid_postfix(&posixAttr, nullptr) == 22);
+    Require(pthread_attr_getstackaddr_nid_postfix(nullptr, &queriedAddr) == 22);
+    Require(pthread_attr_getstackaddr_nid_postfix(&posixAttr, nullptr) == 22);
+    Require(pthread_attr_getstack_nid_postfix(nullptr, &queriedAddr, &queriedSize) == 22);
+    Require(pthread_attr_getstack_nid_postfix(&posixAttr, nullptr, &queriedSize) == 22);
+    Require(pthread_attr_getstack_nid_postfix(&posixAttr, &queriedAddr, nullptr) == 22);
+    Require(pthread_attr_destroy_nid_postfix(&posixAttr) == 0);
 }
