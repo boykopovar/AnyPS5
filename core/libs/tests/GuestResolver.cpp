@@ -8,7 +8,8 @@
 #include <source_location>
 
 extern "C" {
-int APS5_VABI getaddrinfo_nid_postfix(const char*, const char*, const GuestResolver::AddressInfo*, GuestResolver::AddressInfo**);
+int APS5_VABI getaddrinfo_nid_postfix(const char*, const char*, const GuestResolver::AddressInfo*,
+                                      GuestResolver::AddressInfo**);
 void APS5_VABI freeaddrinfo_nid_postfix(GuestResolver::AddressInfo*);
 int APS5_VABI getnameinfo_nid_postfix(const void*, std::uint32_t, char*, std::uint32_t, char*, std::uint32_t, int);
 const char* APS5_VABI gai_strerror_nid_postfix(int);
@@ -43,8 +44,8 @@ int main() {
         for (auto* entry = result; entry; entry = entry->next) {
             Require(entry->family == 2 || entry->family == 28);
             Require(entry->socketType == 1);
-            Require(getnameinfo_nid_postfix(entry->address, entry->addressLength,
-                host, sizeof(host), service, sizeof(service), 10) == 0);
+            Require(getnameinfo_nid_postfix(entry->address, entry->addressLength, host, sizeof(host), service,
+                                            sizeof(service), 10) == 0);
             Require(std::strcmp(host, numeric) == 0 && std::strcmp(service, "27910") == 0);
         }
         freeaddrinfo_nid_postfix(result);

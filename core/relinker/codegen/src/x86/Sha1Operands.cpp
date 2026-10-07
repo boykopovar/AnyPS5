@@ -23,8 +23,7 @@ Sha1Operands DecodeSha1(const std::uint8_t* data, const std::size_t length) {
         if (b == PrefixOperandSize || b == PrefixRepne || b == PrefixRep) {
             throw CodegenException("Not a SHA-1 instruction");
         }
-        if (b != PrefixLock && b != PrefixAddressSize &&
-            b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
+        if (b != PrefixLock && b != PrefixAddressSize && b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
             b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
             break;
         }
@@ -54,7 +53,8 @@ Sha1Operands DecodeSha1(const std::uint8_t* data, const std::size_t length) {
     const std::size_t modRmOffset = pos + 3;
     const std::uint8_t modrm = data[modRmOffset];
     std::size_t immediateOffset = modRmOffset + 1;
-    operands.Destination = static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (((rex & 0x4) != 0) ? 8 : 0));
+    operands.Destination =
+        static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (((rex & 0x4) != 0) ? 8 : 0));
     if (((modrm >> ModRmModShift) & ModRmModMask) != ModRmModRegister) {
         operands.Memory = DecodeMemoryOperand(data, length, modRmOffset, rex, std::move(prefixes));
         immediateOffset = modRmOffset + operands.Memory->EncodedSize;

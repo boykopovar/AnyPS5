@@ -25,12 +25,15 @@ struct Parameter {
 };
 
 void require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(std::string("Rect-list SPIR-V: ") + message);
+    if (!condition)
+        throw std::runtime_error(std::string("Rect-list SPIR-V: ") + message);
 }
 
 class RectListEmitter {
 public:
-    RectListEmitter(const std::vector<Parameter>& parameters, spv::ExecutionModel model, std::uint32_t version, std::uint32_t faultBinding) : builder(version), faultBinding(faultBinding), version(version), parameters(parameters) {
+    RectListEmitter(const std::vector<Parameter>& parameters, spv::ExecutionModel model, std::uint32_t version,
+                    std::uint32_t faultBinding)
+        : builder(version), faultBinding(faultBinding), version(version), parameters(parameters) {
         builder.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
 
         voidType = type(spv::OpTypeVoid);
@@ -40,7 +43,11 @@ public:
         vec4FloatType = type(spv::OpTypeVector, floatType, 4u);
         functionType = type(spv::OpTypeFunction, voidType);
 
-        perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType);
+        perVertexType =
+            builder.DecoratedType(spv::OpTypeStruct,
+                                  {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}},
+                                   {spv::OpDecorate, {spv::DecorationBlock}}},
+                                  vec4FloatType);
 
         ptrInputVec4Float = pointer(spv::StorageClassInput, vec4FloatType);
         ptrOutputVec4Float = pointer(spv::StorageClassOutput, vec4FloatType);
@@ -66,40 +73,51 @@ public:
         emit(spv::OpSelectionMerge, afterLevels, spv::SelectionControlMaskNone);
         emit(spv::OpBranchConditional, first, writeLevels, afterLevels);
         emit(spv::OpLabel, writeLevels);
-        for (std::uint32_t i = 0; i < 4; i++) store(access(ptrOutputFloat, tessOuter, intConstant(i)), floatOne);
-        for (std::uint32_t i = 0; i < 2; i++) store(access(ptrOutputFloat, tessInner, intConstant(i)), floatOne);
+        for (std::uint32_t i = 0; i < 4; i++)
+            store(access(ptrOutputFloat, tessOuter, intConstant(i)), floatOne);
+        for (std::uint32_t i = 0; i < 2; i++)
+            store(access(ptrOutputFloat, tessInner, intConstant(i)), floatOne);
         emit(spv::OpBranch, afterLevels);
         emit(spv::OpLabel, afterLevels);
 
-        std::array<std::uint32_t, 3> positions {};
+        std::array<std::uint32_t, 3> positions{};
         for (std::uint32_t i = 0; i < positions.size(); i++) {
             positions[i] = load(vec4FloatType, access(ptrInputVec4Float, glIn, intConstant(i), intConstant(0)));
         }
 
-        std::array<std::uint32_t, 3> coordinateEqual {};
+        std::array<std::uint32_t, 3> coordinateEqual{};
         for (std::uint32_t i = 0; i < coordinateEqual.size(); i++) {
             const auto left = result(spv::OpVectorShuffle, vec2FloatType, positions[i], positions[i], 0u, 1u);
-            const auto right = result(spv::OpVectorShuffle, vec2FloatType, positions[(i + 1u) % 3u], positions[(i + 1u) % 3u], 0u, 1u);
+            const auto right =
+                result(spv::OpVectorShuffle, vec2FloatType, positions[(i + 1u) % 3u], positions[(i + 1u) % 3u], 0u, 1u);
             coordinateEqual[i] = result(spv::OpFOrdEqual, vec2BoolType, left, right);
         }
 
-        std::array<std::uint32_t, 3> barycentric {};
-        std::array<std::uint32_t, 3> edgeVertex {};
+        std::array<std::uint32_t, 3> barycentric{};
+        std::array<std::uint32_t, 3> edgeVertex{};
         const auto floatMinusOne = constant(floatType, std::bit_cast<std::uint32_t>(-1.0f));
         for (std::uint32_t i = 0; i < edgeVertex.size(); i++) {
             const auto previous = (i + 2u) % 3u;
-            const auto xy = result(spv::OpLogicalAnd, boolType, result(spv::OpCompositeExtract, boolType, coordinateEqual[i], 0u), result(spv::OpCompositeExtract, boolType, coordinateEqual[previous], 1u));
-            const auto yx = result(spv::OpLogicalAnd, boolType, result(spv::OpCompositeExtract, boolType, coordinateEqual[i], 1u), result(spv::OpCompositeExtract, boolType, coordinateEqual[previous], 0u));
+            const auto xy =
+                result(spv::OpLogicalAnd, boolType, result(spv::OpCompositeExtract, boolType, coordinateEqual[i], 0u),
+                       result(spv::OpCompositeExtract, boolType, coordinateEqual[previous], 1u));
+            const auto yx =
+                result(spv::OpLogicalAnd, boolType, result(spv::OpCompositeExtract, boolType, coordinateEqual[i], 1u),
+                       result(spv::OpCompositeExtract, boolType, coordinateEqual[previous], 0u));
             edgeVertex[i] = result(spv::OpLogicalOr, boolType, xy, yx);
             barycentric[i] = result(spv::OpSelect, floatType, edgeVertex[i], floatMinusOne, floatOne);
         }
 
         auto cornerCount = uintConstant(0);
-        for (const auto corner : edgeVertex) cornerCount = result(spv::OpIAdd, uintType, cornerCount, result(spv::OpSelect, uintType, corner, uintConstant(1), uintConstant(0)));
+        for (const auto corner : edgeVertex)
+            cornerCount = result(spv::OpIAdd, uintType, cornerCount,
+                                 result(spv::OpSelect, uintType, corner, uintConstant(1), uintConstant(0)));
         auto valid = result(spv::OpIEqual, boolType, cornerCount, uintConstant(1));
-        for (const auto position : positions) valid = result(spv::OpLogicalAnd, boolType, valid, isFinite(position));
+        for (const auto position : positions)
+            valid = result(spv::OpLogicalAnd, boolType, valid, isFinite(position));
         const auto w = result(spv::OpCompositeExtract, floatType, positions[0], 3u);
-        valid = result(spv::OpLogicalAnd, boolType, valid, result(spv::OpFOrdGreaterThan, boolType, w, constant(floatType, 0)));
+        valid = result(spv::OpLogicalAnd, boolType, valid,
+                       result(spv::OpFOrdGreaterThan, boolType, w, constant(floatType, 0)));
         for (std::uint32_t i = 1; i < 3; ++i) {
             const auto otherW = result(spv::OpCompositeExtract, floatType, positions[i], 3u);
             valid = result(spv::OpLogicalAnd, boolType, valid, result(spv::OpFOrdEqual, boolType, w, otherW));
@@ -110,16 +128,20 @@ public:
         auto vertexIndex = result(spv::OpSelect, intType, edgeVertex[2], intConstant(2), intConstant(0));
         vertexIndex = result(spv::OpSelect, intType, edgeVertex[1], intConstant(1), vertexIndex);
         const auto fourth = result(spv::OpIEqual, boolType, invocation, intConstant(3));
-        const auto isFourth = result(spv::OpCompositeConstruct, type(spv::OpTypeVector, boolType, 4u), fourth, fourth, fourth, fourth);
-        const auto index = result(spv::OpSMod, intType, result(spv::OpIAdd, intType, vertexIndex, invocation), intConstant(3));
+        const auto isFourth =
+            result(spv::OpCompositeConstruct, type(spv::OpTypeVector, boolType, 4u), fourth, fourth, fourth, fourth);
+        const auto index =
+            result(spv::OpSMod, intType, result(spv::OpIAdd, intType, vertexIndex, invocation), intConstant(3));
 
-        const auto position = result(spv::OpSelect, vec4FloatType, isFourth, position3, load(vec4FloatType, access(ptrInputVec4Float, glIn, index, intConstant(0))));
+        const auto position = result(spv::OpSelect, vec4FloatType, isFourth, position3,
+                                     load(vec4FloatType, access(ptrInputVec4Float, glIn, index, intConstant(0))));
         store(access(ptrOutputVec4Float, glOut, invocation, intConstant(0)), position);
 
         for (std::uint32_t i = 0; i < parameters.size(); i++) {
             if (parameters[i].missing) {
                 const auto zero = constant(floatType, 0);
-                store(access(ptrOutputVec4Float, outputs[i], invocation), result(spv::OpCompositeConstruct, vec4FloatType, zero, zero, zero, zero));
+                store(access(ptrOutputVec4Float, outputs[i], invocation),
+                      result(spv::OpCompositeConstruct, vec4FloatType, zero, zero, zero, zero));
                 continue;
             }
             const auto input0 = load(vec4FloatType, access(ptrInputVec4Float, inputs[i], intConstant(0)));
@@ -130,7 +152,8 @@ public:
             const auto input1 = load(vec4FloatType, access(ptrInputVec4Float, inputs[i], intConstant(1)));
             const auto input2 = load(vec4FloatType, access(ptrInputVec4Float, inputs[i], intConstant(2)));
             const auto input3 = interpolate(input0, input1, input2, barycentric);
-            const auto value = result(spv::OpSelect, vec4FloatType, isFourth, input3, load(vec4FloatType, access(ptrInputVec4Float, inputs[i], index)));
+            const auto value = result(spv::OpSelect, vec4FloatType, isFourth, input3,
+                                      load(vec4FloatType, access(ptrInputVec4Float, inputs[i], index)));
             store(access(ptrOutputVec4Float, outputs[i], invocation), value);
         }
 
@@ -144,7 +167,9 @@ public:
 
         const auto x = load(floatType, access(ptrInputFloat, tessCoord, intConstant(0)));
         const auto y = load(floatType, access(ptrInputFloat, tessCoord, intConstant(1)));
-        const auto index = result(spv::OpIAdd, intType, result(spv::OpIMul, intType, result(spv::OpConvertFToS, intType, y), intConstant(2)), result(spv::OpConvertFToS, intType, x));
+        const auto index = result(spv::OpIAdd, intType,
+                                  result(spv::OpIMul, intType, result(spv::OpConvertFToS, intType, y), intConstant(2)),
+                                  result(spv::OpConvertFToS, intType, x));
 
         const auto position = load(vec4FloatType, access(ptrInputVec4Float, glIn, index, intConstant(0)));
         store(access(ptrOutputVec4Float, glOut, intConstant(0)), position);
@@ -162,7 +187,8 @@ private:
         std::uint32_t finite = 0;
         for (std::uint32_t component = 0; component < 4; ++component) {
             const auto value = result(spv::OpCompositeExtract, floatType, vector, component);
-            const auto invalid = result(spv::OpLogicalOr, boolType, result(spv::OpIsNan, boolType, value), result(spv::OpIsInf, boolType, value));
+            const auto invalid = result(spv::OpLogicalOr, boolType, result(spv::OpIsNan, boolType, value),
+                                        result(spv::OpIsInf, boolType, value));
             const auto valid = result(spv::OpLogicalNot, boolType, invalid);
             finite = component == 0 ? valid : result(spv::OpLogicalAnd, boolType, finite, valid);
         }
@@ -172,11 +198,16 @@ private:
     void defineFault() {
         const auto words = type(spv::OpTypeRuntimeArray, uintType);
         decorate(words, spv::DecorationArrayStride, 4);
-        const auto block = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0u, spv::DecorationOffset, 0u}}}, words);
-        fault = builder.DefineGlobalVariable(pointer(spv::StorageClassStorageBuffer, block), spv::StorageClassStorageBuffer);
+        const auto block = builder.DecoratedType(
+            spv::OpTypeStruct,
+            {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0u, spv::DecorationOffset, 0u}}},
+            words);
+        fault = builder.DefineGlobalVariable(pointer(spv::StorageClassStorageBuffer, block),
+                                             spv::StorageClassStorageBuffer);
         decorate(fault, spv::DecorationDescriptorSet, 0);
         decorate(fault, spv::DecorationBinding, faultBinding);
-        if (version >= 0x00010400u) interfaces.push_back(fault);
+        if (version >= 0x00010400u)
+            interfaces.push_back(fault);
     }
 
     std::uint32_t faultWord(std::uint32_t index) {
@@ -192,7 +223,9 @@ private:
         const auto scope = uintConstant(spv::ScopeDevice);
         const auto relaxed = uintConstant(spv::MemorySemanticsMaskNone);
         const auto state = faultWord(0);
-        const auto previous = result(spv::OpAtomicCompareExchange, uintType, state, scope, relaxed, relaxed, uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), uintConstant(0));
+        const auto previous =
+            result(spv::OpAtomicCompareExchange, uintType, state, scope, relaxed, relaxed,
+                   uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), uintConstant(0));
         const auto won = result(spv::OpIEqual, boolType, previous, uintConstant(0));
         const auto write = builder.AllocateId();
         const auto done = builder.AllocateId();
@@ -200,16 +233,18 @@ private:
         emit(spv::OpBranchConditional, won, write, done);
         emit(spv::OpLabel, write);
         store(faultWord(1), uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultReason::InvalidRectangle)));
-        for (std::uint32_t i = 2; i < 8; ++i) store(faultWord(i), uintConstant(0));
-        emit(spv::OpAtomicStore, state, scope, uintConstant(spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask), uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
+        for (std::uint32_t i = 2; i < 8; ++i)
+            store(faultWord(i), uintConstant(0));
+        emit(spv::OpAtomicStore, state, scope,
+             uintConstant(spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask),
+             uintConstant(static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
         emit(spv::OpBranch, done);
         emit(spv::OpLabel, done);
         emit(spv::OpReturn);
         emit(spv::OpLabel, next);
     }
 
-    template <typename... TArgs>
-    std::uint32_t type(spv::Op opcode, TArgs... operands) {
+    template <typename... TArgs> std::uint32_t type(spv::Op opcode, TArgs... operands) {
         return builder.Type(opcode, operands...);
     }
 
@@ -225,27 +260,23 @@ private:
         return type(spv::OpTypeArray, valueType, uintConstant(size));
     }
 
-    template <typename... TArgs>
-    std::uint32_t result(spv::Op opcode, std::uint32_t type, TArgs... operands) {
+    template <typename... TArgs> std::uint32_t result(spv::Op opcode, std::uint32_t type, TArgs... operands) {
         const auto id = builder.AllocateId();
         builder.AddFunction(opcode, type, id, operands...);
         return id;
     }
 
-    template <typename... TArgs>
-    std::uint32_t resultWithoutType(spv::Op opcode, TArgs... operands) {
+    template <typename... TArgs> std::uint32_t resultWithoutType(spv::Op opcode, TArgs... operands) {
         const auto id = builder.AllocateId();
         builder.AddFunction(opcode, id, operands...);
         return id;
     }
 
-    template <typename... TArgs>
-    void emit(spv::Op opcode, TArgs... operands) {
+    template <typename... TArgs> void emit(spv::Op opcode, TArgs... operands) {
         builder.AddFunction(opcode, operands...);
     }
 
-    template <typename... TArgs>
-    std::uint32_t access(std::uint32_t pointerType, std::uint32_t base, TArgs... indices) {
+    template <typename... TArgs> std::uint32_t access(std::uint32_t pointerType, std::uint32_t base, TArgs... indices) {
         return result(spv::OpAccessChain, pointerType, base, indices...);
     }
 
@@ -280,7 +311,8 @@ private:
         }
         defineInputs(model);
         defineOutputs(model);
-        if (model == spv::ExecutionModelTessellationControl) defineFault();
+        if (model == spv::ExecutionModelTessellationControl)
+            defineFault();
         builder.EmitEntryPoint(model, main, "main", interfaces);
         resultWithoutType(spv::OpLabel);
     }
@@ -297,9 +329,10 @@ private:
         glIn = addInterface(spv::StorageClassInput, array(perVertexType, tessControl ? 3u : 4u));
 
         inputs.resize(parameters.size());
-        std::array<std::uint32_t, 32> locations {};
+        std::array<std::uint32_t, 32> locations{};
         for (std::uint32_t i = 0; i < parameters.size(); i++) {
-            if (tessControl && parameters[i].missing) continue;
+            if (tessControl && parameters[i].missing)
+                continue;
             const auto location = tessControl ? parameters[i].inputLocation : parameters[i].outputLocation;
             if (tessControl && locations[location] != 0) {
                 inputs[i] = locations[location];
@@ -332,7 +365,8 @@ private:
         }
     }
 
-    std::uint32_t interpolate(std::uint32_t v0, std::uint32_t v1, std::uint32_t v2, const std::array<std::uint32_t, 3>& barycentric) {
+    std::uint32_t interpolate(std::uint32_t v0, std::uint32_t v1, std::uint32_t v2,
+                              const std::array<std::uint32_t, 3>& barycentric) {
         const auto p0 = result(spv::OpVectorTimesScalar, vec4FloatType, v0, barycentric[0]);
         const auto p1 = result(spv::OpVectorTimesScalar, vec4FloatType, v1, barycentric[1]);
         const auto p2 = result(spv::OpVectorTimesScalar, vec4FloatType, v2, barycentric[2]);
@@ -371,28 +405,41 @@ private:
     std::uint32_t invocationId = 0;
 };
 
-
 }
 
-RectListShaders BuildRectListShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target) {
+RectListShaders BuildRectListShaders(const RecompileResult& vertex, const RecompileResult& fragment,
+                                     const SpirvTarget& target) {
     require(target.tessellation.has_value(), "tessellation shaders are unavailable");
-    require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010500u, "unsupported SPIR-V target version");
-    require(std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityTessellation) != target.supportedCapabilities.end(), "tessellation capability is unavailable");
+    require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010500u,
+            "unsupported SPIR-V target version");
+    require(std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(),
+                      spv::CapabilityTessellation) != target.supportedCapabilities.end(),
+            "tessellation capability is unavailable");
     std::vector<Parameter> parameters;
     std::set<std::uint32_t> locations;
     for (const auto& input : fragment.fragmentParameters) {
-        require(input.location < 32 && input.sourceLocation < 32 && locations.insert(input.location).second, "invalid fragment parameter location");
+        require(input.location < 32 && input.sourceLocation < 32 && locations.insert(input.location).second,
+                "invalid fragment parameter location");
         require(!input.custom, "custom per-vertex interpolation is unsupported");
-        const bool exported = std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(), input.sourceLocation) != vertex.parameterExports.end();
+        const bool exported = std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(),
+                                        input.sourceLocation) != vertex.parameterExports.end();
         parameters.push_back({input.sourceLocation, input.location, input.flat, !exported});
     }
     const auto& limits = *target.tessellation;
-    const std::uint32_t perVertexComponents = std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents, limits.maxEvaluationInputComponents, limits.maxEvaluationOutputComponents});
-    if (const std::size_t capacity = perVertexComponents / 4u > 0u ? perVertexComponents / 4u - 1u : 0u; parameters.size() > capacity) {
+    const std::uint32_t perVertexComponents =
+        std::min({limits.maxControlPerVertexInputComponents, limits.maxControlPerVertexOutputComponents,
+                  limits.maxEvaluationInputComponents, limits.maxEvaluationOutputComponents});
+    if (const std::size_t capacity = perVertexComponents / 4u > 0u ? perVertexComponents / 4u - 1u : 0u;
+        parameters.size() > capacity) {
         parameters.resize(capacity);
     }
     const auto components = static_cast<std::uint32_t>((parameters.size() + 1) * 4);
-    require(limits.maxPatchSize >= 4 && components <= limits.maxControlPerVertexInputComponents && components <= limits.maxControlPerVertexOutputComponents && components <= limits.maxEvaluationInputComponents && components <= limits.maxEvaluationOutputComponents && limits.maxControlPerPatchOutputComponents >= 6 && components * 4 + 6 <= limits.maxControlTotalOutputComponents, "tessellation interface exceeds device limits");
+    require(limits.maxPatchSize >= 4 && components <= limits.maxControlPerVertexInputComponents &&
+                components <= limits.maxControlPerVertexOutputComponents &&
+                components <= limits.maxEvaluationInputComponents &&
+                components <= limits.maxEvaluationOutputComponents && limits.maxControlPerPatchOutputComponents >= 6 &&
+                components * 4 + 6 <= limits.maxControlTotalOutputComponents,
+            "tessellation interface exceeds device limits");
     std::uint32_t faultBinding = 0;
     for (const auto* shader : {&vertex, &fragment}) {
         for (const auto& binding : shader->bindings) {
@@ -401,15 +448,18 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
         }
     }
     RectListEmitter control(parameters, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding);
-    RectListEmitter evaluation(parameters, spv::ExecutionModelTessellationEvaluation, target.spirvVersion, faultBinding);
+    RectListEmitter evaluation(parameters, spv::ExecutionModelTessellationEvaluation, target.spirvVersion,
+                               faultBinding);
     RectListShaders shaders;
     shaders.control.spirv = control.EmitControl();
-    shaders.control.bindings.push_back({DescriptorKind::StorageBuffer, DescriptorRole::FaultBuffer, 0, faultBinding, 1, {}});
+    shaders.control.bindings.push_back(
+        {DescriptorKind::StorageBuffer, DescriptorRole::FaultBuffer, 0, faultBinding, 1, {}});
     shaders.control.bdaAbiVersion = BdaAbi::Version;
     shaders.evaluation.spirv = evaluation.EmitEvaluation();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     shaders.control.spirv = ValidateAndOptimizeSpirv(shaders.control.spirv, target.vulkanVersion, target.spirvVersion);
-    shaders.evaluation.spirv = ValidateAndOptimizeSpirv(shaders.evaluation.spirv, target.vulkanVersion, target.spirvVersion);
+    shaders.evaluation.spirv =
+        ValidateAndOptimizeSpirv(shaders.evaluation.spirv, target.vulkanVersion, target.spirvVersion);
 #endif
     return shaders;
 }

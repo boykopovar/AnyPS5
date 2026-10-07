@@ -27,7 +27,8 @@ int APS5_VABI sceHttp2CreateRequestWithURL(int tmpl_id, const char* method, cons
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
-int APS5_VABI sceHttp2CreateTemplate(int lib_http2_ctx_id, const char* user_agent, int http_ver, int is_auto_proxy_conf) {
+int APS5_VABI sceHttp2CreateTemplate(int lib_http2_ctx_id, const char* user_agent, int http_ver,
+                                     int is_auto_proxy_conf) {
     (void)lib_http2_ctx_id;
     (void)user_agent;
     (void)http_ver;
@@ -96,7 +97,8 @@ int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size
     return ERROR_NETWORK;
 }
 
-int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, void* kqueue_option, void* option) {
+int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, void* kqueue_option,
+                                       void* option) {
     (void)req_id;
     (void)post_data;
     (void)size;
@@ -234,5 +236,4 @@ int APS5_VABI sceHttp2SetRequestNoContentLength(int id) {
     (void)id;
     return 0;
 }
-
 }

@@ -43,17 +43,24 @@ constexpr std::size_t kMaxInstructionSize = 7; // prefix, REX, 0F, 78, ModRM, im
 
 inline bool Decode(const std::uint8_t* bytes, std::size_t available, Instruction& out) {
     std::size_t cursor = 0;
-    if (available < 4) return false;
+    if (available < 4)
+        return false;
     const std::uint8_t prefix = bytes[cursor++];
-    if (prefix != 0x66 && prefix != 0xf2) return false;
+    if (prefix != 0x66 && prefix != 0xf2)
+        return false;
     std::uint8_t rex = 0;
-    if ((bytes[cursor] & 0xf0) == 0x40) rex = bytes[cursor++];
-    if (cursor + 3 > available) return false;
-    if (bytes[cursor++] != 0x0f) return false;
+    if ((bytes[cursor] & 0xf0) == 0x40)
+        rex = bytes[cursor++];
+    if (cursor + 3 > available)
+        return false;
+    if (bytes[cursor++] != 0x0f)
+        return false;
     const std::uint8_t opcode = bytes[cursor++];
-    if (opcode != 0x78 && opcode != 0x79) return false;
+    if (opcode != 0x78 && opcode != 0x79)
+        return false;
     const std::uint8_t modrm = bytes[cursor++];
-    if ((modrm >> 6) != 3) return false; // register-direct only
+    if ((modrm >> 6) != 3)
+        return false; // register-direct only
     const unsigned regField = (modrm >> 3) & 7;
     const unsigned reg = regField | ((rex & 0x4) ? 8u : 0u);
     const unsigned rm = (modrm & 7) | ((rex & 0x1) ? 8u : 0u);
@@ -61,11 +68,13 @@ inline bool Decode(const std::uint8_t* bytes, std::size_t available, Instruction
     result.op = prefix == 0x66 ? Op::Extrq : Op::Insertq;
     result.registerForm = opcode == 0x79;
     if (opcode == 0x78) {
-        if (cursor + 2 > available) return false;
+        if (cursor + 2 > available)
+            return false;
         result.length = bytes[cursor++];
         result.index = bytes[cursor++];
         if (result.op == Op::Extrq) {
-            if (regField != 0) return false; // /0: the reg field is an opcode extension
+            if (regField != 0)
+                return false; // /0: the reg field is an opcode extension
             result.destination = result.source = rm;
         } else {
             result.destination = reg;
@@ -80,22 +89,22 @@ inline bool Decode(const std::uint8_t* bytes, std::size_t available, Instruction
     return true;
 }
 
-inline M128A& Register(CONTEXT& context, unsigned number) {
-    return context.FltSave.XmmRegisters[number & 15];
-}
+inline M128A& Register(CONTEXT& context, unsigned number) { return context.FltSave.XmmRegisters[number & 15]; }
 
 inline Field Resolve(const Instruction& instruction, const CONTEXT& context) {
     Field field;
     if (instruction.registerForm) {
         const M128A& source = context.FltSave.XmmRegisters[instruction.source & 15];
-        const auto control = instruction.op == Op::Extrq ? static_cast<std::uint64_t>(source.Low) : static_cast<std::uint64_t>(source.High);
+        const auto control = instruction.op == Op::Extrq ? static_cast<std::uint64_t>(source.Low)
+                                                         : static_cast<std::uint64_t>(source.High);
         field.length = static_cast<unsigned>(control & 0x3f);
         field.index = static_cast<unsigned>((control >> 8) & 0x3f);
     } else {
         field.length = instruction.length & 0x3f;
         field.index = instruction.index & 0x3f;
     }
-    if (field.length == 0) field.length = 64;
+    if (field.length == 0)
+        field.length = 64;
     return field;
 }
 
@@ -122,13 +131,17 @@ inline Field Execute(const Instruction& instruction, CONTEXT& context) {
 
 // Emulates the EXTRQ / INSERTQ at `bytes` on `context` and advances Rip past it. Returns false, leaving
 // the context untouched, when the bytes are not one of those instructions.
-inline bool Emulate(const std::uint8_t* bytes, std::size_t available, CONTEXT& context, Instruction* decoded = nullptr, Field* field = nullptr) {
+inline bool Emulate(const std::uint8_t* bytes, std::size_t available, CONTEXT& context, Instruction* decoded = nullptr,
+                    Field* field = nullptr) {
     Instruction instruction;
-    if (!Decode(bytes, available, instruction)) return false;
+    if (!Decode(bytes, available, instruction))
+        return false;
     const Field resolved = Execute(instruction, context);
     context.Rip += instruction.size;
-    if (decoded) *decoded = instruction;
-    if (field) *field = resolved;
+    if (decoded)
+        *decoded = instruction;
+    if (field)
+        *field = resolved;
     return true;
 }
 

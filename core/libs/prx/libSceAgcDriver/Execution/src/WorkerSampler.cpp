@@ -36,13 +36,15 @@ struct Sampler {
     std::uint64_t samples = 0;
 
     ~Sampler() noexcept(false) {
-        if (target != nullptr && !CloseHandle(target)) throw std::system_error(GetLastError(), std::system_category(), "Closing sampler thread handle");
+        if (target != nullptr && !CloseHandle(target))
+            throw std::system_error(GetLastError(), std::system_category(), "Closing sampler thread handle");
     }
 
     void sample() {
         CONTEXT context{};
         context.ContextFlags = CONTEXT_FULL;
-        if (SuspendThread(target) == static_cast<DWORD>(-1)) return;
+        if (SuspendThread(target) == static_cast<DWORD>(-1))
+            return;
         const bool captured = GetThreadContext(target, &context) != 0;
         std::vector<std::uint64_t> frames;
         if (captured) {
@@ -52,10 +54,12 @@ struct Sampler {
                 frames.push_back(context.Rip);
                 DWORD64 imageBase = 0;
                 auto* entry = RtlLookupFunctionEntry(context.Rip, &imageBase, nullptr);
-                if (entry == nullptr) break;
+                if (entry == nullptr)
+                    break;
                 PVOID handler = nullptr;
                 DWORD64 establisher = 0;
-                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, context.Rip, entry, &context, &handler, &establisher, nullptr);
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, context.Rip, entry, &context, &handler, &establisher,
+                                 nullptr);
             }
         }
         ResumeThread(target);
@@ -63,7 +67,8 @@ struct Sampler {
         ++samples;
         for (std::size_t i = 0; i < frames.size(); ++i) {
             auto& count = counts[frames[i]];
-            if (i == 0) ++count.first;
+            if (i == 0)
+                ++count.first;
             ++count.second;
         }
     }
@@ -71,14 +76,20 @@ struct Sampler {
     void write() {
         std::lock_guard lock(mutex);
         std::FILE* file = std::fopen(path.c_str(), "w");
-        if (file == nullptr) return;
+        if (file == nullptr)
+            return;
         std::fprintf(file, "# %llu samples\n", static_cast<unsigned long long>(samples));
         for (const auto& [address, count] : counts) {
             HMODULE module = nullptr;
             char name[MAX_PATH] = "?";
-            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(address), &module)) GetModuleFileNameA(module, name, sizeof(name));
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   reinterpret_cast<LPCSTR>(address), &module))
+                GetModuleFileNameA(module, name, sizeof(name));
             const char* base = std::strrchr(name, '\\');
-            std::fprintf(file, "%s 0x%llx %llu %llu\n", base ? base + 1 : name, static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(module)), static_cast<unsigned long long>(count.first), static_cast<unsigned long long>(count.second));
+            std::fprintf(file, "%s 0x%llx %llu %llu\n", base ? base + 1 : name,
+                         static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(module)),
+                         static_cast<unsigned long long>(count.first), static_cast<unsigned long long>(count.second));
         }
         std::fclose(file);
     }
@@ -98,46 +109,64 @@ struct ProcessSampler {
     // the rounds in between only sample the known threads.
     void enumerate() {
         const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-        if (snapshot == INVALID_HANDLE_VALUE) return;
+        if (snapshot == INVALID_HANDLE_VALUE)
+            return;
         THREADENTRY32 entry{};
         entry.dwSize = sizeof(entry);
         const DWORD process = GetCurrentProcessId();
         for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
-            if (entry.th32OwnerProcessID != process || entry.th32ThreadID == self) continue;
+            if (entry.th32OwnerProcessID != process || entry.th32ThreadID == self)
+                continue;
             auto& thread = threads[entry.th32ThreadID];
-            if (thread.target == nullptr) thread.target = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+            if (thread.target == nullptr)
+                thread.target = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE,
+                                           entry.th32ThreadID);
         }
         CloseHandle(snapshot);
         enumerated = std::chrono::steady_clock::now();
     }
 
     void sample() {
-        if (threads.empty() || std::chrono::steady_clock::now() - enumerated > std::chrono::seconds(5)) enumerate();
+        if (threads.empty() || std::chrono::steady_clock::now() - enumerated > std::chrono::seconds(5))
+            enumerate();
         for (auto& [id, thread] : threads) {
-            if (thread.target != nullptr) thread.sample();
+            if (thread.target != nullptr)
+                thread.sample();
         }
         ++rounds;
     }
 
     void write() {
         std::FILE* file = std::fopen(path.c_str(), "w");
-        if (file == nullptr) return;
+        if (file == nullptr)
+            return;
         std::fprintf(file, "# %llu rounds\n", static_cast<unsigned long long>(rounds));
         for (auto& [id, thread] : threads) {
             std::lock_guard lock(thread.mutex);
-            std::vector<std::pair<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>>> hot(thread.counts.begin(), thread.counts.end());
-            std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.second > b.second.second; });
+            std::vector<std::pair<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>>> hot(thread.counts.begin(),
+                                                                                               thread.counts.end());
+            std::sort(hot.begin(), hot.end(),
+                      [](const auto& a, const auto& b) { return a.second.second > b.second.second; });
             std::uint64_t leaves = 0;
-            for (const auto& [address, count] : hot) leaves += count.first;
-            if (leaves == 0) continue;
-            std::fprintf(file, "thread %lu samples %llu\n", static_cast<unsigned long>(id), static_cast<unsigned long long>(thread.samples));
+            for (const auto& [address, count] : hot)
+                leaves += count.first;
+            if (leaves == 0)
+                continue;
+            std::fprintf(file, "thread %lu samples %llu\n", static_cast<unsigned long>(id),
+                         static_cast<unsigned long long>(thread.samples));
             for (std::size_t i = 0; i < hot.size() && i < 40; ++i) {
                 const auto address = hot[i].first;
                 HMODULE module = nullptr;
                 char name[MAX_PATH] = "?";
-                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(address), &module)) GetModuleFileNameA(module, name, sizeof(name));
+                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       reinterpret_cast<LPCSTR>(address), &module))
+                    GetModuleFileNameA(module, name, sizeof(name));
                 const char* base = std::strrchr(name, '\\');
-                std::fprintf(file, "  %s 0x%llx %llu %llu\n", base ? base + 1 : name, static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(module)), static_cast<unsigned long long>(hot[i].second.first), static_cast<unsigned long long>(hot[i].second.second));
+                std::fprintf(file, "  %s 0x%llx %llu %llu\n", base ? base + 1 : name,
+                             static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(module)),
+                             static_cast<unsigned long long>(hot[i].second.first),
+                             static_cast<unsigned long long>(hot[i].second.second));
             }
         }
         std::fclose(file);
@@ -146,7 +175,8 @@ struct ProcessSampler {
 
 void StartProcessSampler() {
     const char* path = std::getenv("APS5_SAMPLE_THREADS");
-    if (path == nullptr) return;
+    if (path == nullptr)
+        return;
     processSamplerThread = std::jthread([path = std::string(path)](std::stop_token token) {
         auto sampler = std::make_unique<ProcessSampler>();
         sampler->path = path;
@@ -169,10 +199,13 @@ void StartProcessSampler() {
 void StartWorkerSampler() {
     StartProcessSampler();
     const char* path = std::getenv("APS5_SAMPLE_WORKER");
-    if (path == nullptr) return;
+    if (path == nullptr)
+        return;
     auto sampler = std::make_unique<Sampler>();
     sampler->path = path;
-    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &sampler->target, THREAD_ALL_ACCESS, FALSE, 0)) throw std::system_error(GetLastError(), std::system_category(), "Duplicating sampler thread handle");
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &sampler->target,
+                         THREAD_ALL_ACCESS, FALSE, 0))
+        throw std::system_error(GetLastError(), std::system_category(), "Duplicating sampler thread handle");
     workerSamplerThread = std::jthread([sampler = std::move(sampler)](std::stop_token token) {
         auto flushed = std::chrono::steady_clock::now();
         while (!token.stop_requested()) {
@@ -190,8 +223,10 @@ void StartWorkerSampler() {
 void StopWorkerSampler() {
     processSamplerThread.request_stop();
     workerSamplerThread.request_stop();
-    if (processSamplerThread.joinable()) processSamplerThread.join();
-    if (workerSamplerThread.joinable()) workerSamplerThread.join();
+    if (processSamplerThread.joinable())
+        processSamplerThread.join();
+    if (workerSamplerThread.joinable())
+        workerSamplerThread.join();
 }
 #else
 void StartWorkerSampler() {}

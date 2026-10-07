@@ -14,7 +14,9 @@ std::int64_t APS5_VABI strtol_nid_postfix(const char*, char**, int);
 std::uint64_t APS5_VABI strtoul_nid_postfix(const char*, char**, int);
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char*, char**, int);
 int* APS5_VABI __error_nid_postfix();
-struct LibcFloatConstant { std::uint32_t bits[4]; };
+struct LibcFloatConstant {
+    std::uint32_t bits[4];
+};
 extern LibcFloatConstant _FInf_nid_postfix;
 extern LibcFloatConstant _FNan_nid_postfix;
 short APS5_VABI _FDtest_nid_postfix(const float*);
@@ -41,7 +43,10 @@ int APS5_VABI __isnormalf_nid_postfix(float);
 int APS5_VABI __isinff_nid_postfix(float);
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static void CheckIntegerConversions() {
     for (const long long numerator : {4294967301LL, -4294967301LL}) {
@@ -58,26 +63,24 @@ static void CheckIntegerConversions() {
         std::size_t consumed;
         int error;
     };
-    const SignedCase signedCases[] = {
-        {"-42tail", 10, -42, 3, 0},
-        {"2147483648!", 10, INT64_C(2147483648), 10, 0},
-        {"-2147483649!", 10, -INT64_C(2147483649), 11, 0},
-        {"4294967296!", 10, INT64_C(4294967296), 10, 0},
-        {"9223372036854775807!", 10, INT64_MAX, 19, 0},
-        {"-9223372036854775808!", 10, INT64_MIN, 20, 0},
-        {"9223372036854775808!", 10, INT64_MAX, 19, 34},
-        {"-9223372036854775809!", 10, INT64_MIN, 20, 34},
-        {"18446744073709551616000!", 10, INT64_MAX, 23, 34},
-        {" \t+0x100000000z", 0, INT64_C(4294967296), 14, 0},
-        {"-0x8000000000000000!", 0, INT64_MIN, 19, 0},
-        {"0x8000000000000000!", 16, INT64_MAX, 18, 34},
-        {"0100000000000!", 0, INT64_C(8589934592), 13, 0},
-        {"100000000000000000000000000000000!", 2, INT64_C(4294967296), 33, 0},
-        {"z!", 36, 35, 1, 0},
-        {"", 10, 0, 0, 0},
-        {" \t+!", 10, 0, 0, 0},
-        {"123!", 10, 123, 3, 0}
-    };
+    const SignedCase signedCases[] = {{"-42tail", 10, -42, 3, 0},
+                                      {"2147483648!", 10, INT64_C(2147483648), 10, 0},
+                                      {"-2147483649!", 10, -INT64_C(2147483649), 11, 0},
+                                      {"4294967296!", 10, INT64_C(4294967296), 10, 0},
+                                      {"9223372036854775807!", 10, INT64_MAX, 19, 0},
+                                      {"-9223372036854775808!", 10, INT64_MIN, 20, 0},
+                                      {"9223372036854775808!", 10, INT64_MAX, 19, 34},
+                                      {"-9223372036854775809!", 10, INT64_MIN, 20, 34},
+                                      {"18446744073709551616000!", 10, INT64_MAX, 23, 34},
+                                      {" \t+0x100000000z", 0, INT64_C(4294967296), 14, 0},
+                                      {"-0x8000000000000000!", 0, INT64_MIN, 19, 0},
+                                      {"0x8000000000000000!", 16, INT64_MAX, 18, 34},
+                                      {"0100000000000!", 0, INT64_C(8589934592), 13, 0},
+                                      {"100000000000000000000000000000000!", 2, INT64_C(4294967296), 33, 0},
+                                      {"z!", 36, 35, 1, 0},
+                                      {"", 10, 0, 0, 0},
+                                      {" \t+!", 10, 0, 0, 0},
+                                      {"123!", 10, 123, 3, 0}};
     for (const auto& test : signedCases) {
         char* end = nullptr;
         *__error_nid_postfix() = 0;
@@ -100,25 +103,23 @@ static void CheckIntegerConversions() {
         std::size_t consumed;
         int error;
     };
-    const UnsignedCase unsignedCases[] = {
-        {"4294967296!", 10, UINT64_C(4294967296), 10, 0},
-        {"9223372036854775808!", 10, UINT64_C(9223372036854775808), 19, 0},
-        {"18446744073709551615!", 10, UINT64_MAX, 20, 0},
-        {"18446744073709551616!", 10, UINT64_MAX, 20, 34},
-        {"18446744073709551616000!", 10, UINT64_MAX, 23, 34},
-        {"-1!", 10, UINT64_MAX, 2, 0},
-        {"-4294967296!", 10, UINT64_MAX - UINT64_C(4294967295), 11, 0},
-        {"-18446744073709551615!", 10, 1, 21, 0},
-        {"-18446744073709551616!", 10, UINT64_MAX, 21, 34},
-        {" \t+0xffffffffffffffffz", 0, UINT64_MAX, 21, 0},
-        {"0x10000000000000000!", 16, UINT64_MAX, 19, 34},
-        {"0100000000000!", 0, UINT64_C(8589934592), 13, 0},
-        {"100000000000000000000000000000000!", 2, UINT64_C(4294967296), 33, 0},
-        {"z!", 36, 35, 1, 0},
-        {"", 10, 0, 0, 0},
-        {" \t-!", 10, 0, 0, 0},
-        {"123!", 10, 123, 3, 0}
-    };
+    const UnsignedCase unsignedCases[] = {{"4294967296!", 10, UINT64_C(4294967296), 10, 0},
+                                          {"9223372036854775808!", 10, UINT64_C(9223372036854775808), 19, 0},
+                                          {"18446744073709551615!", 10, UINT64_MAX, 20, 0},
+                                          {"18446744073709551616!", 10, UINT64_MAX, 20, 34},
+                                          {"18446744073709551616000!", 10, UINT64_MAX, 23, 34},
+                                          {"-1!", 10, UINT64_MAX, 2, 0},
+                                          {"-4294967296!", 10, UINT64_MAX - UINT64_C(4294967295), 11, 0},
+                                          {"-18446744073709551615!", 10, 1, 21, 0},
+                                          {"-18446744073709551616!", 10, UINT64_MAX, 21, 34},
+                                          {" \t+0xffffffffffffffffz", 0, UINT64_MAX, 21, 0},
+                                          {"0x10000000000000000!", 16, UINT64_MAX, 19, 34},
+                                          {"0100000000000!", 0, UINT64_C(8589934592), 13, 0},
+                                          {"100000000000000000000000000000000!", 2, UINT64_C(4294967296), 33, 0},
+                                          {"z!", 36, 35, 1, 0},
+                                          {"", 10, 0, 0, 0},
+                                          {" \t-!", 10, 0, 0, 0},
+                                          {"123!", 10, 123, 3, 0}};
     for (const auto& test : unsignedCases) {
         char* end = nullptr;
         *__error_nid_postfix() = 0;
@@ -138,11 +139,15 @@ static void CheckIntegerConversions() {
 
 static void CheckFloatClassification() {
     Require(_FInf_nid_postfix.bits[0] == 0x7f800000u && _FNan_nid_postfix.bits[0] == 0x7fc00000u);
-    for (int word = 1; word < 4; ++word) Require(_FInf_nid_postfix.bits[word] == 0 && _FNan_nid_postfix.bits[word] == 0);
-    const struct { std::uint32_t bits; short code; } cases[] = {
-        {0x00000000u, 0}, {0x80000000u, 0}, {0x00000001u, -2}, {0x807fffffu, -2}, {0x00800000u, -1},
-        {0xbf800000u, -1}, {0x7f7fffffu, -1}, {0x7f800000u, 1}, {0xff800000u, 1}, {0x7f800001u, 2},
-        {0x7fc00000u, 2}, {0xff810000u, 2}, {0x7f810000u, 2},
+    for (int word = 1; word < 4; ++word)
+        Require(_FInf_nid_postfix.bits[word] == 0 && _FNan_nid_postfix.bits[word] == 0);
+    const struct {
+        std::uint32_t bits;
+        short code;
+    } cases[] = {
+        {0x00000000u, 0},  {0x80000000u, 0},  {0x00000001u, -2}, {0x807fffffu, -2}, {0x00800000u, -1},
+        {0xbf800000u, -1}, {0x7f7fffffu, -1}, {0x7f800000u, 1},  {0xff800000u, 1},  {0x7f800001u, 2},
+        {0x7fc00000u, 2},  {0xff810000u, 2},  {0x7f810000u, 2},
     };
     for (const auto& test : cases) {
         float value;

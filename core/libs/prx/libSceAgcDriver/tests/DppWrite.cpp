@@ -26,7 +26,8 @@ int main() {
         const auto program = InstructionTranslator{}.Translate(decoded, cfg, options);
         for (const auto& block : program.Blocks()) {
             for (const auto* inst : block->Instructions()) {
-                if (inst->Opcode() == IrOpcode::DppUpdateU32 && inst->Flags<DppMoveFlags>().rowMask == 0xa) return 0;
+                if (inst->Opcode() == IrOpcode::DppUpdateU32 && inst->Flags<DppMoveFlags>().rowMask == 0xa)
+                    return 0;
             }
         }
         std::fprintf(stderr, "the DPP add writes v1 without its row mask\n");

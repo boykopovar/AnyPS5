@@ -9,7 +9,8 @@
 
 namespace {
 
-void PatchJump(std::uint32_t* cmd, const volatile std::uint32_t* target, std::uint32_t sizeInDwords, const char* function) {
+void PatchJump(std::uint32_t* cmd, const volatile std::uint32_t* target, std::uint32_t sizeInDwords,
+               const char* function) {
     Agc::Command::ValidatePacket(cmd, 0x3fu, 4, function);
     const auto address = reinterpret_cast<std::uintptr_t>(target);
     Agc::Command::CheckAddress(address, 4, function);
@@ -29,11 +30,11 @@ int APS5_VABI sceAgcJumpPatchSetTarget(uint32_t* cmd, const volatile uint32_t* t
 }
 
 APS5_EXPORT("Ikfdt-rIqCE", sceAgcUnknown_Ikfdt_MrIqCE);
-int APS5_VABI sceAgcUnknown_Ikfdt_MrIqCE(uint32_t* cmd, uint64_t cache_policy, const volatile uint32_t* target, uint32_t size_in_dwords) {
+int APS5_VABI sceAgcUnknown_Ikfdt_MrIqCE(uint32_t* cmd, uint64_t cache_policy, const volatile uint32_t* target,
+                                         uint32_t size_in_dwords) {
     Agc::Command::CheckBits(cache_policy, 3u, __func__);
     PatchJump(cmd, target, size_in_dwords, __func__);
     cmd[3] = (cmd[3] & ~(3u << 28u)) | (static_cast<std::uint32_t>(cache_policy) << 28u);
     return 0;
 }
-
 }

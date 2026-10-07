@@ -17,20 +17,9 @@ static constexpr std::uint8_t SYSRET_BYTE1 = 0x07;
 
 void ValidationPolicy::_initializeSupportedRelocationTypes() {
     _supportedRelocationTypes = {
-        R_X86_64_NONE,
-        R_X86_64_64,
-        R_X86_64_PC32,
-        R_X86_64_GOT32,
-        R_X86_64_PLT32,
-        R_X86_64_COPY,
-        R_X86_64_GLOB_DAT,
-        R_X86_64_JUMP_SLOT,
-        R_X86_64_RELATIVE,
-        R_X86_64_GOTPCREL,
-        R_X86_64_32,
-        R_X86_64_32S,
-        R_X86_64_GOTPCRELX,
-        R_X86_64_REX_GOTPCRELX,
+        R_X86_64_NONE, R_X86_64_64,       R_X86_64_PC32,      R_X86_64_GOT32,         R_X86_64_PLT32,
+        R_X86_64_COPY, R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT, R_X86_64_RELATIVE,      R_X86_64_GOTPCREL,
+        R_X86_64_32,   R_X86_64_32S,      R_X86_64_GOTPCRELX, R_X86_64_REX_GOTPCRELX,
     };
 }
 
@@ -41,17 +30,16 @@ void ValidationPolicy::RegisterLibraryImport(const std::string& library) {
     _importedLibraries.insert(library);
 }
 
-void ValidationPolicy::ValidateSyscallAbsence() {
-}
+void ValidationPolicy::ValidateSyscallAbsence() {}
 
-void ValidationPolicy::ValidateRelocationTypeSupported(const std::uint32_t relocationTypeValue, const FileByteOffset fileByteOffset) {
+void ValidationPolicy::ValidateRelocationTypeSupported(const std::uint32_t relocationTypeValue,
+                                                       const FileByteOffset fileByteOffset) {
     if (_supportedRelocationTypes.empty()) {
         _initializeSupportedRelocationTypes();
     }
     if (_supportedRelocationTypes.find(relocationTypeValue) == _supportedRelocationTypes.end()) {
         std::ostringstream msg;
-        msg << "Unsupported relocation type 0x" << std::hex << relocationTypeValue
-            << " at offset 0x" << fileByteOffset;
+        msg << "Unsupported relocation type 0x" << std::hex << relocationTypeValue << " at offset 0x" << fileByteOffset;
         throw RelinkerException(msg.str(), fileByteOffset);
     }
 }
@@ -59,30 +47,30 @@ void ValidationPolicy::ValidateRelocationTypeSupported(const std::uint32_t reloc
 void ValidationPolicy::ValidateNidBelongsToLibrary(const std::string& Nid, const std::string& library) {
     if (_importedLibraries.find(library) == _importedLibraries.end()) {
         std::ostringstream msg;
-        msg << "NID \"" << Nid << "\" references library \"" << library
-            << "\" which is not in the NEEDED list";
+        msg << "NID \"" << Nid << "\" references library \"" << library << "\" which is not in the NEEDED list";
         throw RelinkerException(msg.str(), 0);
     }
 }
 
-void ValidationPolicy::ValidateSceStructureSize(const ByteCount expectedSize, const ByteCount actualSize, const FileByteOffset fileByteOffset) {
+void ValidationPolicy::ValidateSceStructureSize(const ByteCount expectedSize, const ByteCount actualSize,
+                                                const FileByteOffset fileByteOffset) {
     if (actualSize != expectedSize) {
         std::ostringstream msg;
-        msg << "SCE structure size mismatch at offset 0x" << std::hex << fileByteOffset
-            << ": expected " << std::dec << expectedSize << ", got " << actualSize;
+        msg << "SCE structure size mismatch at offset 0x" << std::hex << fileByteOffset << ": expected " << std::dec
+            << expectedSize << ", got " << actualSize;
         throw RelinkerException(msg.str(), fileByteOffset);
     }
 }
 
-void ValidationPolicy::ValidateDynamicFieldInterpretable(const std::string& fieldName, const FileByteOffset fileByteOffset) {
+void ValidationPolicy::ValidateDynamicFieldInterpretable(const std::string& fieldName,
+                                                         const FileByteOffset fileByteOffset) {
     std::ostringstream msg;
-    msg << "Dynamic field \"" << fieldName
-        << "\" cannot be interpreted at offset 0x" << std::hex << fileByteOffset;
+    msg << "Dynamic field \"" << fieldName << "\" cannot be interpreted at offset 0x" << std::hex << fileByteOffset;
     throw RelinkerException(msg.str(), fileByteOffset);
 }
 
-void ValidationPolicy::ValidateNoSyscallInstructions(
-    const std::vector<std::uint8_t>& CodeSection, const FileByteOffset codeOffset) {
+void ValidationPolicy::ValidateNoSyscallInstructions(const std::vector<std::uint8_t>& CodeSection,
+                                                     const FileByteOffset codeOffset) {
     for (std::size_t i = 0; i + 1 < CodeSection.size(); ++i) {
         const std::uint8_t b0 = CodeSection[i];
         const std::uint8_t b1 = CodeSection[i + 1];

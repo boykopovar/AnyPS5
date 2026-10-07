@@ -50,6 +50,6 @@ struct EncodeOptions {
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
                                  std::uint32_t channels, EncodeOptions options = {});
 
-}  // namespace Decoder::Png
+} // namespace Decoder::Png
 
-#endif  // DECODER_PNG_HPP
+#endif // DECODER_PNG_HPP

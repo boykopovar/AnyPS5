@@ -14,7 +14,10 @@ int APS5_VABI sceShareOpenMenuForContent(const void* content_id);
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 }
 
@@ -33,7 +36,7 @@ int main() {
     Require(sceShareCaptureScreenshotExtended(param, nullptr) == notSupported);
     Require(sceShareCaptureScreenshotExtended(nullptr, nullptr) == notSupported);
 
-    using Capture = int (APS5_VABI*)(const void*, std::int32_t*);
+    using Capture = int(APS5_VABI*)(const void*, std::int32_t*);
     for (Capture capture : {sceShareCaptureScreenshot, sceShareCaptureVideoClip}) {
         reqId = 7;
         Require(capture(param, &reqId) == notSupported);
@@ -51,7 +54,8 @@ int main() {
     std::uint8_t status[18];
     std::memset(status, 0x5a, sizeof(status));
     Require(sceShareGetCurrentStatus(1, status) == 0);
-    for (std::size_t index = 0; index < sizeof(status); ++index) Require(status[index] == (index < 16 ? 0 : 0x5a));
+    for (std::size_t index = 0; index < sizeof(status); ++index)
+        Require(status[index] == (index < 16 ? 0 : 0x5a));
     std::memset(status, 0x5a, sizeof(status));
     Require(sceShareGetCurrentStatus(0xffffffffu, status) == 0);
     Require(status[0] == 0 && status[15] == 0 && status[16] == 0x5a);

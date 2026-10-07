@@ -7,9 +7,7 @@ namespace Nid {
 
 namespace {
 
-constexpr std::uint32_t _rotl32(std::uint32_t x, unsigned n) {
-    return (x << n) | (x >> (32u - n));
-}
+constexpr std::uint32_t _rotl32(std::uint32_t x, unsigned n) { return (x << n) | (x >> (32u - n)); }
 
 }
 
@@ -34,13 +32,13 @@ std::array<std::uint8_t, 20> Sha1(const std::vector<std::uint8_t>& data) {
     for (std::size_t offset = 0; offset < msg.size(); offset += 64u) {
         std::uint32_t w[80];
         for (int i = 0; i < 16; ++i) {
-            w[i] = (static_cast<std::uint32_t>(msg[offset + i * 4u + 0u]) << 24u)
-                 | (static_cast<std::uint32_t>(msg[offset + i * 4u + 1u]) << 16u)
-                 | (static_cast<std::uint32_t>(msg[offset + i * 4u + 2u]) <<  8u)
-                 | (static_cast<std::uint32_t>(msg[offset + i * 4u + 3u]));
+            w[i] = (static_cast<std::uint32_t>(msg[offset + i * 4u + 0u]) << 24u) |
+                   (static_cast<std::uint32_t>(msg[offset + i * 4u + 1u]) << 16u) |
+                   (static_cast<std::uint32_t>(msg[offset + i * 4u + 2u]) << 8u) |
+                   (static_cast<std::uint32_t>(msg[offset + i * 4u + 3u]));
         }
         for (int i = 16; i < 80; ++i)
-            w[i] = _rotl32(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1u);
+            w[i] = _rotl32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1u);
 
         std::uint32_t a = h0, b = h1, c = h2, d = h3, e = h4;
 
@@ -60,20 +58,32 @@ std::array<std::uint8_t, 20> Sha1(const std::vector<std::uint8_t>& data) {
                 k = 0xCA62C1D6u;
             }
             std::uint32_t temp = _rotl32(a, 5u) + f + e + k + w[i];
-            e = d; d = c; c = _rotl32(b, 30u); b = a; a = temp;
+            e = d;
+            d = c;
+            c = _rotl32(b, 30u);
+            b = a;
+            a = temp;
         }
 
-        h0 += a; h1 += b; h2 += c; h3 += d; h4 += e;
+        h0 += a;
+        h1 += b;
+        h2 += c;
+        h3 += d;
+        h4 += e;
     }
 
     std::array<std::uint8_t, 20> digest;
     auto _put = [&](int base, std::uint32_t v) {
-        digest[base+0] = static_cast<std::uint8_t>(v >> 24u);
-        digest[base+1] = static_cast<std::uint8_t>(v >> 16u);
-        digest[base+2] = static_cast<std::uint8_t>(v >>  8u);
-        digest[base+3] = static_cast<std::uint8_t>(v);
+        digest[base + 0] = static_cast<std::uint8_t>(v >> 24u);
+        digest[base + 1] = static_cast<std::uint8_t>(v >> 16u);
+        digest[base + 2] = static_cast<std::uint8_t>(v >> 8u);
+        digest[base + 3] = static_cast<std::uint8_t>(v);
     };
-    _put(0, h0); _put(4, h1); _put(8, h2); _put(12, h3); _put(16, h4);
+    _put(0, h0);
+    _put(4, h1);
+    _put(8, h2);
+    _put(12, h3);
+    _put(16, h4);
     return digest;
 }
 

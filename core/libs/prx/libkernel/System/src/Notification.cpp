@@ -13,8 +13,10 @@
 #endif
 
 extern "C" int APS5_VABI sceKernelDebugOutText(int channel, const char* text) {
-    if (channel < 0) return static_cast<int>(0x80020016u);
-    if (!text) return static_cast<int>(0x8002000eu);
+    if (channel < 0)
+        return static_cast<int>(0x80020016u);
+    if (!text)
+        return static_cast<int>(0x8002000eu);
     static std::mutex outputMutex;
     const std::lock_guard lock(outputMutex);
     if (std::fprintf(stderr, "[debug:%d] %s", channel, text) < 0 || std::fflush(stderr) != 0)
@@ -22,7 +24,8 @@ extern "C" int APS5_VABI sceKernelDebugOutText(int channel, const char* text) {
     return 0;
 }
 
-extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void* request, std::size_t size, int flags) {
+extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void* request, std::size_t size,
+                                                          int flags) {
     constexpr auto invalidArgument = static_cast<int>(0x80020016u);
     constexpr auto badAddress = static_cast<int>(0x8002000eu);
     constexpr auto notSupported = static_cast<int>(0x8002002du);
@@ -51,14 +54,17 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
     static std::mutex outputMutex;
     const std::lock_guard lock(outputMutex);
     std::array<char, messageCapacity + 32> output{};
-    const auto length = std::snprintf(output.data(), output.size(), "[notification] %.*s\n", static_cast<int>(end - message), message);
+    const auto length =
+        std::snprintf(output.data(), output.size(), "[notification] %.*s\n", static_cast<int>(end - message), message);
     if (length < 0 || static_cast<std::size_t>(length) >= output.size())
         return ioError;
     std::size_t written = 0;
     while (written < static_cast<std::size_t>(length)) {
 #ifdef _WIN32
         DWORD count = 0;
-        if (!WriteFile(GetStdHandle(STD_ERROR_HANDLE), output.data() + written, static_cast<DWORD>(length - written), &count, nullptr) || count == 0)
+        if (!WriteFile(GetStdHandle(STD_ERROR_HANDLE), output.data() + written, static_cast<DWORD>(length - written),
+                       &count, nullptr) ||
+            count == 0)
             return ioError;
 #else
         const auto count = ::write(STDERR_FILENO, output.data() + written, length - written);

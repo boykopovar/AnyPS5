@@ -10,7 +10,8 @@
 #include <thread>
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadDetach(Pthread thread);
 void APS5_VABI scePthreadExit(void* retval);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
@@ -30,32 +31,32 @@ int APS5_VABI pthread_create_nid_postfix(Pthread* thread, const PthreadAttr* att
     return PosixThread::ToErrno(scePthreadCreate(thread, attr, entry, arg, nullptr));
 }
 
-int APS5_VABI pthread_create_name_np_nid_postfix(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
+int APS5_VABI pthread_create_name_np_nid_postfix(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry,
+                                                 void* arg, const char* name) {
     return PosixThread::ToErrno(scePthreadCreate(thread, attr, entry, arg, name));
 }
 
-int APS5_VABI pthread_detach_nid_postfix(Pthread thread) {
-    return PosixThread::ToErrno(scePthreadDetach(thread));
-}
+int APS5_VABI pthread_detach_nid_postfix(Pthread thread) { return PosixThread::ToErrno(scePthreadDetach(thread)); }
 
-void APS5_VABI pthread_exit_nid_postfix(void* value) {
-    scePthreadExit(value);
-}
+void APS5_VABI pthread_exit_nid_postfix(void* value) { scePthreadExit(value); }
 
 int APS5_VABI scePthreadGetschedparam(Pthread thread, int* policy, KernelSchedParam* param) {
-    if (!policy || !param) return SCE_KERNEL_ERROR_EINVAL;
+    if (!policy || !param)
+        return SCE_KERNEL_ERROR_EINVAL;
     *policy = GUEST_SCHED_FIFO;
     return scePthreadGetprio(thread, &param->sched_priority);
 }
 
 int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSchedParam* param) {
     (void)policy;
-    if (!param) return SCE_KERNEL_ERROR_EINVAL;
+    if (!param)
+        return SCE_KERNEL_ERROR_EINVAL;
     return scePthreadSetprio(thread, param->sched_priority);
 }
 
 int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
-    if (!policy || !param) return PosixThread::GUEST_EINVAL;
+    if (!policy || !param)
+        return PosixThread::GUEST_EINVAL;
     *policy = GUEST_SCHED_FIFO;
     return PosixThread::ToErrno(scePthreadGetprio(thread, &param->sched_priority));
 }
@@ -68,13 +69,9 @@ int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
     return PosixThread::ToErrno(scePthreadRename(thread, name));
 }
 
-Pthread APS5_VABI pthread_self_nid_postfix(void) {
-    return scePthreadSelf();
-}
+Pthread APS5_VABI pthread_self_nid_postfix(void) { return scePthreadSelf(); }
 
-int APS5_VABI pthread_equal_nid_postfix(Pthread first, Pthread second) {
-    return first == second;
-}
+int APS5_VABI pthread_equal_nid_postfix(Pthread first, Pthread second) { return first == second; }
 
 int APS5_VABI sched_yield_nid_postfix(void) {
     std::this_thread::yield();
@@ -91,21 +88,17 @@ int APS5_VABI pthread_setprio_nid_postfix(Pthread thread, int prio) {
 
 int APS5_VABI pthread_setschedparam_nid_postfix(Pthread thread, int policy, const KernelSchedParam* param) {
     (void)policy;
-    if (!param) return PosixThread::GUEST_EINVAL;
+    if (!param)
+        return PosixThread::GUEST_EINVAL;
     return PosixThread::ToErrno(scePthreadSetprio(thread, param->sched_priority));
 }
 
-void APS5_VABI pthread_testcancel_nid_postfix(void) {
-    scePthreadTestcancel();
-}
+void APS5_VABI pthread_testcancel_nid_postfix(void) { scePthreadTestcancel(); }
 
-void APS5_VABI pthread_yield_nid_postfix(void) {
-    std::this_thread::yield();
-}
+void APS5_VABI pthread_yield_nid_postfix(void) { std::this_thread::yield(); }
 
 unsigned int APS5_VABI sleep_nid_postfix(unsigned int seconds) {
     std::this_thread::sleep_for(std::chrono::seconds(seconds));
     return 0;
 }
-
 }

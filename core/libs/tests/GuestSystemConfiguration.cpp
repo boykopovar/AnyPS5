@@ -6,7 +6,10 @@ std::int64_t APS5_VABI sysconf_nid_postfix(int);
 int APS5_VABI getpagesize_nid_postfix();
 int* APS5_VABI __error_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     *__error_nid_postfix() = 13;
     Require(sysconf_nid_postfix(47) == 0x4000);

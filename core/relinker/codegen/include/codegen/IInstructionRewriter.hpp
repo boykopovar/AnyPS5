@@ -10,10 +10,8 @@ class IInstructionRewriter {
 public:
     virtual ~IInstructionRewriter() = default;
 
-    [[nodiscard]] virtual RewriteResult Rewrite(
-        const std::vector<std::uint8_t>& codeSection,
-        const RewriteRequest& request
-    ) const = 0;
+    [[nodiscard]] virtual RewriteResult Rewrite(const std::vector<std::uint8_t>& codeSection,
+                                                const RewriteRequest& request) const = 0;
 };
 
 }

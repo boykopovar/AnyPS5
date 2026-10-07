@@ -28,11 +28,11 @@ struct SpirvDeferredPhi {
 
 class SpirvModule {
 private:
-    template<typename TOperand>
-    static constexpr bool wordSized = (std::is_integral_v<TOperand> || std::is_enum_v<TOperand>) && sizeof(TOperand) <= sizeof(std::uint32_t);
+    template <typename TOperand>
+    static constexpr bool wordSized =
+        (std::is_integral_v<TOperand> || std::is_enum_v<TOperand>) && sizeof(TOperand) <= sizeof(std::uint32_t);
 
-    template<typename TOperand>
-    static std::uint32_t narrowWord(TOperand operand) {
+    template <typename TOperand> static std::uint32_t narrowWord(TOperand operand) {
         return static_cast<std::uint32_t>(operand);
     }
 
@@ -41,7 +41,8 @@ public:
     [[nodiscard]] std::uint32_t AllocateId();
     void EmitCapability(std::uint32_t capability);
     void EmitExtension(const std::string& extensionName);
-    void EmitEntryPoint(std::uint32_t executionModel, std::uint32_t entryPointId, const std::string& entryPointName, const std::vector<std::uint32_t>& interfaceIds);
+    void EmitEntryPoint(std::uint32_t executionModel, std::uint32_t entryPointId, const std::string& entryPointName,
+                        const std::vector<std::uint32_t>& interfaceIds);
     void EmitTypeDeclaration(std::vector<std::uint32_t> words);
     void EmitGlobalVariable(std::vector<std::uint32_t> words);
     void EmitFunctionInstruction(std::vector<std::uint32_t> words);
@@ -57,8 +58,7 @@ public:
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);
     void PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent);
 
-    template<typename... TOperands>
-    std::uint32_t Type(std::uint32_t opcode, const TOperands&... operands) {
+    template <typename... TOperands> std::uint32_t Type(std::uint32_t opcode, const TOperands&... operands) {
         return declareType(opcode, makeTypeKey(opcode, operands...));
     }
 
@@ -67,29 +67,32 @@ public:
         return interned(key, 2u, [this, opcode]() { return declareType(opcode, makeTypeKey(opcode)); });
     }
 
-    template<typename TWord>
-    requires wordSized<TWord>
+    template <typename TWord>
+        requires wordSized<TWord>
     std::uint32_t Type(std::uint32_t opcode, TWord width) {
         const auto narrowed = narrowWord(width);
         const std::uint32_t key[3] = {opcode, 1u, narrowed};
         return interned(key, 3u, [this, opcode, width]() { return declareType(opcode, makeTypeKey(opcode, width)); });
     }
 
-    template<typename TWord, typename TSign>
-    requires (wordSized<TWord> && wordSized<TSign>)
+    template <typename TWord, typename TSign>
+        requires(wordSized<TWord> && wordSized<TSign>)
     std::uint32_t Type(std::uint32_t opcode, TWord width, TSign signness) {
         const auto narrowedWidth = narrowWord(width);
         const auto narrowedSignness = narrowWord(signness);
         const std::uint32_t key[4] = {opcode, 2u, narrowedWidth, narrowedSignness};
-        return interned(key, 4u, [this, opcode, width, signness]() { return declareType(opcode, makeTypeKey(opcode, width, signness)); });
+        return interned(key, 4u, [this, opcode, width, signness]() {
+            return declareType(opcode, makeTypeKey(opcode, width, signness));
+        });
     }
 
-    template<typename... TOperands>
-    std::uint32_t DecoratedType(std::uint32_t opcode, std::initializer_list<SpirvTypeAnnotation> annotations, const TOperands&... operands) {
+    template <typename... TOperands>
+    std::uint32_t DecoratedType(std::uint32_t opcode, std::initializer_list<SpirvTypeAnnotation> annotations,
+                                const TOperands&... operands) {
         return declareDecoratedType(opcode, makeTypeKey(opcode, operands...), annotations);
     }
 
-    template<typename... TOperands>
+    template <typename... TOperands>
     std::uint32_t Constant(std::uint32_t opcode, std::uint32_t type, const TOperands&... operands) {
         std::vector<std::uint32_t> key;
         key.reserve(2u + (0u + ... + operandWordCount(operands)));
@@ -107,8 +110,8 @@ public:
         });
     }
 
-    template<typename TValue>
-    requires wordSized<TValue>
+    template <typename TValue>
+        requires wordSized<TValue>
     std::uint32_t Constant(std::uint32_t opcode, std::uint32_t type, TValue value) {
         const auto narrowed = narrowWord(value);
         const std::uint32_t key[3] = {opcode, type, narrowed};
@@ -120,18 +123,16 @@ public:
         });
     }
 
-    template<typename... TOperands>
+    template <typename... TOperands>
     void AddExecutionMode(std::uint32_t entryPoint, std::uint32_t mode, const TOperands&... operands) {
         appendInstruction(executionModes, spv::OpExecutionMode, entryPoint, mode, operands...);
     }
 
-    template<typename... TOperands>
-    void AddAnnotation(std::uint32_t opcode, const TOperands&... operands) {
+    template <typename... TOperands> void AddAnnotation(std::uint32_t opcode, const TOperands&... operands) {
         appendInstruction(annotations, opcode, operands...);
     }
 
-    template<typename... TOperands>
-    void AddFunction(std::uint32_t opcode, const TOperands&... operands) {
+    template <typename... TOperands> void AddFunction(std::uint32_t opcode, const TOperands&... operands) {
         appendInstruction(functionInstructions, opcode, operands...);
     }
 
@@ -154,7 +155,7 @@ private:
         return static_cast<std::size_t>(hash) & (DeclarationCacheSize - 1u);
     }
 
-    template<typename TDeclare>
+    template <typename TDeclare>
     std::uint32_t interned(const std::uint32_t* words, std::uint32_t length, TDeclare&& declare) {
         const auto start = declarationCacheSlot(words, length);
         std::size_t target = start;
@@ -176,16 +177,14 @@ private:
         return id;
     }
 
-    static void appendOperand(std::vector<std::uint32_t>& words, std::uint32_t value) {
-        words.push_back(value);
-    }
+    static void appendOperand(std::vector<std::uint32_t>& words, std::uint32_t value) { words.push_back(value); }
 
     static void appendOperand(std::vector<std::uint32_t>& words, std::int32_t value) {
         words.push_back(static_cast<std::uint32_t>(value));
     }
 
-    template<typename TEnum>
-    requires std::is_enum_v<TEnum>
+    template <typename TEnum>
+        requires std::is_enum_v<TEnum>
     static void appendOperand(std::vector<std::uint32_t>& words, TEnum value) {
         static_assert(sizeof(TEnum) == sizeof(std::uint32_t));
         words.push_back(static_cast<std::uint32_t>(value));
@@ -195,13 +194,12 @@ private:
         words.insert(words.end(), values.begin(), values.end());
     }
 
-    template<typename... TOperands>
+    template <typename... TOperands>
     static void appendOperands(std::vector<std::uint32_t>& words, const TOperands&... operands) {
         (appendOperand(words, operands), ...);
     }
 
-    template<typename T>
-    static std::size_t operandWordCount(const T& operand) {
+    template <typename T> static std::size_t operandWordCount(const T& operand) {
         if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
             return 1;
         } else {
@@ -209,7 +207,7 @@ private:
         }
     }
 
-    template<typename... TOperands>
+    template <typename... TOperands>
     static std::vector<std::uint32_t> makeTypeKey(std::uint32_t opcode, const TOperands&... operands) {
         const auto operandCount = static_cast<std::uint32_t>((0u + ... + operandWordCount(operands)));
         std::vector<std::uint32_t> key;
@@ -218,8 +216,9 @@ private:
         return key;
     }
 
-    template<typename... TOperands>
-    static void appendInstruction(std::vector<std::uint32_t>& section, std::uint32_t opcode, const TOperands&... operands) {
+    template <typename... TOperands>
+    static void appendInstruction(std::vector<std::uint32_t>& section, std::uint32_t opcode,
+                                  const TOperands&... operands) {
         const auto offset = section.size();
         appendOperands(section, opcode, operands...);
         const auto wordCount = static_cast<std::uint32_t>(section.size() - offset);
@@ -227,7 +226,8 @@ private:
     }
 
     std::uint32_t declareType(std::uint32_t opcode, std::vector<std::uint32_t> key);
-    std::uint32_t declareDecoratedType(std::uint32_t opcode, std::vector<std::uint32_t> key, std::initializer_list<SpirvTypeAnnotation> annotationList);
+    std::uint32_t declareDecoratedType(std::uint32_t opcode, std::vector<std::uint32_t> key,
+                                       std::initializer_list<SpirvTypeAnnotation> annotationList);
     std::uint32_t declareConstant(std::uint32_t opcode, std::vector<std::uint32_t> key);
     static void appendString(std::vector<std::uint32_t>& words, const std::string& text);
 

@@ -17,9 +17,7 @@ namespace {
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 std::mutex condInitializationMutex;
 
-PthreadCond destroyedCond() {
-    return reinterpret_cast<PthreadCond>(std::uintptr_t{2});
-}
+PthreadCond destroyedCond() { return reinterpret_cast<PthreadCond>(std::uintptr_t{2}); }
 
 PthreadCond resolveCond(PthreadCond* cond) {
     if (!cond)
@@ -53,16 +51,26 @@ int waitUntil(PthreadCond* cond, PthreadMutex* mutex, std::optional<std::uint64_
     bool timedOut = false;
     const auto waitStart = std::chrono::steady_clock::now();
     struct Trace {
-        const void* caller; const bool& timedOut; std::chrono::steady_clock::time_point start;
-        ~Trace() { KernelTraceWait_nid_postfix("cond", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), timedOut); }
+        const void* caller;
+        const bool& timedOut;
+        std::chrono::steady_clock::time_point start;
+        ~Trace() {
+            KernelTraceWait_nid_postfix("cond", caller,
+                                        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                                       std::chrono::steady_clock::now() - start)
+                                                                       .count()),
+                                        timedOut);
+        }
     } trace{caller, timedOut, waitStart};
     if (m->_type == MutexType::Recursive) {
         std::unique_lock<std::recursive_timed_mutex> lock(m->_rmtx, std::adopt_lock);
         const auto previousCount = m->_count;
         m->_count = 0;
         m->_owner.store(std::thread::id{}, std::memory_order_release);
-        if (deadlineNanos) timedOut = !c->_cv.WaitUntil(lock, *deadlineNanos);
-        else c->_cv.Wait(lock);
+        if (deadlineNanos)
+            timedOut = !c->_cv.WaitUntil(lock, *deadlineNanos);
+        else
+            c->_cv.Wait(lock);
         m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
         m->_count = previousCount;
         lock.release();
@@ -70,8 +78,10 @@ int waitUntil(PthreadCond* cond, PthreadMutex* mutex, std::optional<std::uint64_
     }
     std::unique_lock<std::timed_mutex> lock(m->_mtx, std::adopt_lock);
     m->_owner.store(std::thread::id{}, std::memory_order_release);
-    if (deadlineNanos) timedOut = !c->_cv.WaitUntil(lock, *deadlineNanos);
-    else c->_cv.Wait(lock);
+    if (deadlineNanos)
+        timedOut = !c->_cv.WaitUntil(lock, *deadlineNanos);
+    else
+        c->_cv.Wait(lock);
     m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
     lock.release();
     return timedOut ? sceTimedOut : 0;
@@ -157,5 +167,4 @@ int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) {
 int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
     return waitUntil(cond, mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
 }
-
 }

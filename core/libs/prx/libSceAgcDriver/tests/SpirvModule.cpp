@@ -45,10 +45,13 @@ void testRepeatedTypesShareOneId() {
     const auto second = module.Type(spv::OpTypeInt, 32u, 0u);
     check(first == second, "a repeated OpTypeInt 32 0 returned a different id");
     check(declared(module, spv::OpTypeInt) == 1, "a repeated OpTypeInt 32 0 was declared more than once");
-    check(module.Type(spv::OpTypeVoid) == module.Type(spv::OpTypeVoid), "a repeated OpTypeVoid returned a different id");
+    check(module.Type(spv::OpTypeVoid) == module.Type(spv::OpTypeVoid),
+          "a repeated OpTypeVoid returned a different id");
     check(declared(module, spv::OpTypeVoid) == 1, "OpTypeVoid was not declared exactly once");
-    check(module.Type(spv::OpTypeBool) == module.Type(spv::OpTypeBool), "a repeated OpTypeBool returned a different id");
-    check(module.Type(spv::OpTypeFloat, 32u) == module.Type(spv::OpTypeFloat, 32u), "a repeated OpTypeFloat 32 returned a different id");
+    check(module.Type(spv::OpTypeBool) == module.Type(spv::OpTypeBool),
+          "a repeated OpTypeBool returned a different id");
+    check(module.Type(spv::OpTypeFloat, 32u) == module.Type(spv::OpTypeFloat, 32u),
+          "a repeated OpTypeFloat 32 returned a different id");
     check(declared(module, spv::OpTypeFloat) == 1, "OpTypeFloat was not declared exactly once");
 }
 
@@ -61,9 +64,12 @@ void testOperandShapesDoNotCollide() {
     const auto voidType = module.Type(spv::OpTypeVoid);
     const auto boolType = module.Type(spv::OpTypeBool);
     check(voidType != boolType, "OpTypeVoid collided with OpTypeBool");
-    check(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 32u, 1u), "unsigned and signed OpTypeInt 32 collided");
-    check(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 64u, 0u), "OpTypeInt 32 collided with OpTypeInt 64");
-    check(module.Type(spv::OpTypeFloat, 32u) != module.Type(spv::OpTypeFloat, 64u), "OpTypeFloat 32 collided with OpTypeFloat 64");
+    check(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 32u, 1u),
+          "unsigned and signed OpTypeInt 32 collided");
+    check(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 64u, 0u),
+          "OpTypeInt 32 collided with OpTypeInt 64");
+    check(module.Type(spv::OpTypeFloat, 32u) != module.Type(spv::OpTypeFloat, 64u),
+          "OpTypeFloat 32 collided with OpTypeFloat 64");
 }
 
 void testOperandKindsAgree() {
@@ -73,9 +79,11 @@ void testOperandKindsAgree() {
     check(fromUnsigned == fromSigned, "OpTypeInt disagreed between unsigned and signed operands");
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto fromEnum = module.Type(spv::OpTypePointer, spv::StorageClassFunction, typeU32);
-    const auto fromWord = module.Type(spv::OpTypePointer, static_cast<std::uint32_t>(spv::StorageClassFunction), typeU32);
+    const auto fromWord =
+        module.Type(spv::OpTypePointer, static_cast<std::uint32_t>(spv::StorageClassFunction), typeU32);
     check(fromEnum == fromWord, "OpTypePointer disagreed between enum and integer operands");
-    check(fromEnum == module.Type(spv::OpTypePointer, spv::StorageClassFunction, typeU32), "a repeated enum-operand OpTypePointer returned a different id");
+    check(fromEnum == module.Type(spv::OpTypePointer, spv::StorageClassFunction, typeU32),
+          "a repeated enum-operand OpTypePointer returned a different id");
     check(declared(module, spv::OpTypePointer) == 1, "OpTypePointer was not declared exactly once");
 }
 
@@ -83,24 +91,34 @@ void testDecoratedTypesStayDistinct() {
     SpirvModule module;
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto plain = module.Type(spv::OpTypeRuntimeArray, typeU32);
-    const auto decorated = module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, typeU32);
+    const auto decorated =
+        module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, typeU32);
     check(plain != decorated, "a plain OpTypeRuntimeArray collided with the decorated one");
-    check(decorated == module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, typeU32), "a repeated decorated type returned a different id");
-    check(declared(module, spv::OpTypeRuntimeArray) == 2, "the plain and decorated OpTypeRuntimeArray were not both declared");
+    check(decorated == module.DecoratedType(spv::OpTypeRuntimeArray,
+                                            {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, typeU32),
+          "a repeated decorated type returned a different id");
+    check(declared(module, spv::OpTypeRuntimeArray) == 2,
+          "the plain and decorated OpTypeRuntimeArray were not both declared");
 }
 
 void testConstantsShareOneId() {
     SpirvModule module;
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto typeBool = module.Type(spv::OpTypeBool);
-    check(module.Constant(spv::OpConstant, typeU32, 0u) == module.Constant(spv::OpConstant, typeU32, 0u), "a repeated OpConstant 0 returned a different id");
-    check(module.Constant(spv::OpConstant, typeU32, 0u) != module.Constant(spv::OpConstant, typeU32, 1u), "OpConstant 0 collided with OpConstant 1");
-    check(module.Constant(spv::OpConstant, typeU32, 1000u) != module.Constant(spv::OpConstant, typeU32, 0u), "OpConstant 1000 collided with OpConstant 0");
-    check(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool), "a repeated OpConstantTrue returned a different id");
-    check(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool), "OpConstantTrue collided with OpConstantFalse");
+    check(module.Constant(spv::OpConstant, typeU32, 0u) == module.Constant(spv::OpConstant, typeU32, 0u),
+          "a repeated OpConstant 0 returned a different id");
+    check(module.Constant(spv::OpConstant, typeU32, 0u) != module.Constant(spv::OpConstant, typeU32, 1u),
+          "OpConstant 0 collided with OpConstant 1");
+    check(module.Constant(spv::OpConstant, typeU32, 1000u) != module.Constant(spv::OpConstant, typeU32, 0u),
+          "OpConstant 1000 collided with OpConstant 0");
+    check(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool),
+          "a repeated OpConstantTrue returned a different id");
+    check(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool),
+          "OpConstantTrue collided with OpConstantFalse");
     check(declared(module, spv::OpConstant) == 3, "OpConstant was not declared once per distinct value");
     check(declared(module, spv::OpConstantTrue) == 1, "OpConstantTrue was not declared exactly once");
-    const auto signedId = module.Constant(spv::OpConstant, module.Type(spv::OpTypeInt, 32u, 1u), static_cast<std::uint32_t>(-1));
+    const auto signedId =
+        module.Constant(spv::OpConstant, module.Type(spv::OpTypeInt, 32u, 1u), static_cast<std::uint32_t>(-1));
     check(signedId != 0, "a signed OpConstant produced a zero id");
 }
 
@@ -108,9 +126,12 @@ void testOperandFreeConstantsShareOneId() {
     SpirvModule module;
     const auto typeBool = module.Type(spv::OpTypeBool);
     const auto typeVoid = module.Type(spv::OpTypeVoid);
-    check(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool), "a repeated OpConstantTrue returned a different id");
-    check(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool), "OpConstantTrue collided with OpConstantFalse");
-    check(module.Constant(spv::OpConstantTrue, typeVoid) != module.Constant(spv::OpConstantTrue, typeBool), "OpConstantTrue of different types collided");
+    check(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool),
+          "a repeated OpConstantTrue returned a different id");
+    check(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool),
+          "OpConstantTrue collided with OpConstantFalse");
+    check(module.Constant(spv::OpConstantTrue, typeVoid) != module.Constant(spv::OpConstantTrue, typeBool),
+          "OpConstantTrue of different types collided");
     check(declared(module, spv::OpConstantTrue) == 2, "OpConstantTrue was not declared once per type");
     check(declared(module, spv::OpConstantFalse) == 1, "OpConstantFalse was not declared exactly once");
     check(module.Type(spv::OpTypeVoid) == typeVoid, "a repeated operand-free type returned a different id");
@@ -123,7 +144,8 @@ void testIdsSurviveInterleavedAllocation() {
     for (int i = 0; i < 8; ++i) {
         check(module.AllocateId() != 0, "AllocateId returned zero");
         check(module.Type(spv::OpTypeInt, 32u, 0u) == typeU32, "a memoized type changed id after AllocateId");
-        check(module.Constant(spv::OpConstant, typeU32, 4u) == constant, "a memoized constant changed id after AllocateId");
+        check(module.Constant(spv::OpConstant, typeU32, 4u) == constant,
+              "a memoized constant changed id after AllocateId");
     }
 }
 
@@ -135,7 +157,8 @@ void testModulesAreIndependent() {
     check(firstId == 1, "the first id of a fresh module was not 1");
     check(secondId == 1, "a second module did not start its ids from 1");
     first.Type(spv::OpTypeVoid);
-    check(second.Type(spv::OpTypeInt, 32u, 0u) == secondId, "a second module's ids moved when the first module was used");
+    check(second.Type(spv::OpTypeInt, 32u, 0u) == secondId,
+          "a second module's ids moved when the first module was used");
 }
 
 void testIdsStayUniqueBeyondCacheCapacity() {

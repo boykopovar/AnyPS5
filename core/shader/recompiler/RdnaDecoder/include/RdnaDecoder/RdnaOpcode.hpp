@@ -1044,7 +1044,6 @@ enum class RdnaOpcode : std::uint16_t {
     Count
 };
 
-
 [[nodiscard]] bool IsScalarAluOpcode(RdnaOpcode opcode);
 [[nodiscard]] bool IsVectorAluOpcode(RdnaOpcode opcode);
 [[nodiscard]] bool IsBranchOpcode(RdnaOpcode opcode);

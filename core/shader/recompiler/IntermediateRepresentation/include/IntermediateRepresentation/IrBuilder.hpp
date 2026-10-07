@@ -26,7 +26,8 @@ public:
     [[nodiscard]] IrValue& ConstantBool(bool value);
     [[nodiscard]] IrValue& ConstantU8(std::uint8_t value);
     [[nodiscard]] IrValue& ConstantU16(std::uint16_t value);
-    [[nodiscard]] IrValue& Emit(IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments, std::uint64_t flags);
+    [[nodiscard]] IrValue& Emit(IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments,
+                                std::uint64_t flags);
 
     IrValue& GetUserData(ScalarReg reg);
     IrValue& GetScalarReg(ScalarReg reg);
@@ -80,7 +81,8 @@ public:
     IrValue& LogicalOr(IrValue& lhs, IrValue& rhs);
     IrValue& LogicalNot(IrValue& value);
 
-    template<typename TFlags> requires(sizeof(TFlags) <= sizeof(std::uint64_t) && std::is_trivially_copyable_v<TFlags>)
+    template <typename TFlags>
+        requires(sizeof(TFlags) <= sizeof(std::uint64_t) && std::is_trivially_copyable_v<TFlags>)
     [[nodiscard]] IrValue& Emit(IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments, TFlags flags) {
         std::uint64_t rawFlags = 0;
         std::memcpy(&rawFlags, &flags, sizeof(flags));

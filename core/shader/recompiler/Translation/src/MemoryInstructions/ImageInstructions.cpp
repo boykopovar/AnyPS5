@@ -34,8 +34,12 @@ MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
     memory.imageSampleFlags = inst.imageSampleFlags;
     memory.imageDimension = inst.imageDimension;
     memory.imageAddressComponents = inst.imageAddressComponents;
-    memory.imageHasMip = inst.op == RdnaOpcode::ImageLoadMip || inst.op == RdnaOpcode::ImageStoreMip || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStoreMipPck;
-    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck;
+    memory.imageHasMip = inst.op == RdnaOpcode::ImageLoadMip || inst.op == RdnaOpcode::ImageStoreMip ||
+                         inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn ||
+                         inst.op == RdnaOpcode::ImageStoreMipPck;
+    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn ||
+                         inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn ||
+                         inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck;
     memory.dataSigned = inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPckSgn;
     memory.imageR128 = inst.imageR128;
     return memory;
@@ -43,18 +47,30 @@ MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 
 IrOpcode imageAtomic64Opcode(IrOpcode opcode) {
     switch (opcode) {
-    case IrOpcode::ImageAtomicSwap32: return IrOpcode::ImageAtomicSwap64;
-    case IrOpcode::ImageAtomicIAdd32: return IrOpcode::ImageAtomicIAdd64;
-    case IrOpcode::ImageAtomicISub32: return IrOpcode::ImageAtomicISub64;
-    case IrOpcode::ImageAtomicUMin32: return IrOpcode::ImageAtomicUMin64;
-    case IrOpcode::ImageAtomicUMax32: return IrOpcode::ImageAtomicUMax64;
-    case IrOpcode::ImageAtomicSMin32: return IrOpcode::ImageAtomicSMin64;
-    case IrOpcode::ImageAtomicSMax32: return IrOpcode::ImageAtomicSMax64;
-    case IrOpcode::ImageAtomicAnd32: return IrOpcode::ImageAtomicAnd64;
-    case IrOpcode::ImageAtomicOr32: return IrOpcode::ImageAtomicOr64;
-    case IrOpcode::ImageAtomicXor32: return IrOpcode::ImageAtomicXor64;
-    case IrOpcode::ImageAtomicCmpSwap32: return IrOpcode::ImageAtomicCmpSwap64;
-    default: throw std::runtime_error("64-bit " + std::string(IrOpcodeName(opcode)) + " is not implemented");
+    case IrOpcode::ImageAtomicSwap32:
+        return IrOpcode::ImageAtomicSwap64;
+    case IrOpcode::ImageAtomicIAdd32:
+        return IrOpcode::ImageAtomicIAdd64;
+    case IrOpcode::ImageAtomicISub32:
+        return IrOpcode::ImageAtomicISub64;
+    case IrOpcode::ImageAtomicUMin32:
+        return IrOpcode::ImageAtomicUMin64;
+    case IrOpcode::ImageAtomicUMax32:
+        return IrOpcode::ImageAtomicUMax64;
+    case IrOpcode::ImageAtomicSMin32:
+        return IrOpcode::ImageAtomicSMin64;
+    case IrOpcode::ImageAtomicSMax32:
+        return IrOpcode::ImageAtomicSMax64;
+    case IrOpcode::ImageAtomicAnd32:
+        return IrOpcode::ImageAtomicAnd64;
+    case IrOpcode::ImageAtomicOr32:
+        return IrOpcode::ImageAtomicOr64;
+    case IrOpcode::ImageAtomicXor32:
+        return IrOpcode::ImageAtomicXor64;
+    case IrOpcode::ImageAtomicCmpSwap32:
+        return IrOpcode::ImageAtomicCmpSwap64;
+    default:
+        throw std::runtime_error("64-bit " + std::string(IrOpcodeName(opcode)) + " is not implemented");
     }
 }
 
@@ -81,7 +97,8 @@ bool TranslationContext::imageBvhIntersectRay(const RdnaInstruction& inst) {
     memory.addressIsFull = inst.op == RdnaOpcode::ImageBvh64IntersectRay;
     IrValue* descriptor = constructU32x4(inst.source1, 4u);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageBvhIntersectRay, IrOpcodeType(IrOpcode::ImageBvhIntersectRay), {descriptor, address, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageBvhIntersectRay, IrOpcodeType(IrOpcode::ImageBvhIntersectRay),
+                              {descriptor, address, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
     for (std::uint32_t i = 0u; i < 4u; ++i) {
         writeOperand(offsetOperand(inst.destination, i), &ir.CompositeExtract(result, i));
     }
@@ -101,14 +118,16 @@ bool TranslationContext::imageAtomic(const RdnaInstruction& inst, IrOpcode opcod
     if (opcode == IrOpcode::ImageAtomicCmpSwap64) {
         const IrU64 value = readU64(inst.destination);
         const IrU64 comparator = readU64(offsetOperand(inst.destination, 2u));
-        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &comparator.Value(), &exec}, flags);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &comparator.Value(), &exec},
+                          flags);
     } else if (IsImageAtomic64Opcode(opcode)) {
         const IrU64 value = readU64(inst.destination);
         result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &exec}, flags);
     } else if (opcode == IrOpcode::ImageAtomicCmpSwap32 || opcode == IrOpcode::ImageAtomicFCmpSwap32) {
         const IrU32 value = readU32(inst.destination);
         const IrU32 comparator = readU32(offsetOperand(inst.destination, 1u));
-        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &comparator.Value(), &exec}, flags);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &comparator.Value(), &exec},
+                          flags);
     } else {
         const IrU32 value = readU32(inst.destination);
         result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &exec}, flags);
@@ -123,7 +142,8 @@ bool TranslationContext::imageGetResinfo(const RdnaInstruction& inst) {
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageQueryDimensions, IrOpcodeType(IrOpcode::ImageQueryDimensions), {resource, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageQueryDimensions, IrOpcodeType(IrOpcode::ImageQueryDimensions),
+                              {resource, address}, addMemoryInfo(memory, inst.programCounter));
     writeImageComponents(inst.destination, &result, memory, 4u);
     return true;
 }
@@ -133,7 +153,8 @@ bool TranslationContext::imageGetLod(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageQueryLod, IrOpcodeType(IrOpcode::ImageQueryLod), {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageQueryLod, IrOpcodeType(IrOpcode::ImageQueryLod),
+                              {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
     writeImageComponents(inst.destination, &result, memory, 2u);
     return true;
 }
@@ -143,7 +164,8 @@ bool TranslationContext::imageLoad(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
     IrValue& exec = ir.GetExec();
-    IrValue& result = ir.Emit(IrOpcode::ImageRead, IrOpcodeType(IrOpcode::ImageRead), {resource, address, &exec}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageRead, IrOpcodeType(IrOpcode::ImageRead), {resource, address, &exec},
+                              addMemoryInfo(memory, inst.programCounter));
     writeImageComponents(inst.destination, &result, memory, 4u);
     return true;
 }
@@ -156,7 +178,8 @@ bool TranslationContext::imageMsaaLoad(const RdnaInstruction& inst) {
     IrValue& exec = ir.GetExec();
     for (std::uint32_t fragment = 0u; fragment < 4u; ++fragment) {
         IrValue* address = makeImageAddress(inst, inst.source0, fragment);
-        IrValue& result = ir.Emit(IrOpcode::ImageRead, IrOpcodeType(IrOpcode::ImageRead), {resource, address, &exec}, addMemoryInfo(memory, inst.programCounter));
+        IrValue& result = ir.Emit(IrOpcode::ImageRead, IrOpcodeType(IrOpcode::ImageRead), {resource, address, &exec},
+                                  addMemoryInfo(memory, inst.programCounter));
         writeImageComponents(offsetOperand(inst.destination, fragment), &result, memory, 4u);
     }
     return true;
@@ -173,10 +196,12 @@ bool TranslationContext::imageStore(const RdnaInstruction& inst) {
         probeReg.reg = 255u;
         IrValue& probed = ir.ShiftRightLogical(readRawU32(probeReg).Value(), ir.Constant(probe.shift));
         IrValue& zero = ir.Constant(0u);
-        data = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrOpcodeType(IrOpcode::CompositeConstructU32x4), {&probed, &zero, &zero, &zero});
+        data = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrOpcodeType(IrOpcode::CompositeConstructU32x4),
+                        {&probed, &zero, &zero, &zero});
     }
     IrValue& exec = ir.GetExec();
-    (void)ir.Emit(IrOpcode::ImageWrite, IrOpcodeType(IrOpcode::ImageWrite), {resource, address, data, &exec}, addMemoryInfo(memory, inst.programCounter));
+    (void)ir.Emit(IrOpcode::ImageWrite, IrOpcodeType(IrOpcode::ImageWrite), {resource, address, data, &exec},
+                  addMemoryInfo(memory, inst.programCounter));
     return true;
 }
 
@@ -185,7 +210,8 @@ bool TranslationContext::imageSample(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageSampleRaw, IrOpcodeType(IrOpcode::ImageSampleRaw), {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageSampleRaw, IrOpcodeType(IrOpcode::ImageSampleRaw),
+                              {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
     const bool dref = (memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u;
     if (dref && memory.dataBits != 16u) {
         IrValue& component = ir.CompositeExtract(result, 0u);
@@ -203,7 +229,8 @@ bool TranslationContext::imageGather(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageGatherRaw, IrOpcodeType(IrOpcode::ImageGatherRaw), {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageGatherRaw, IrOpcodeType(IrOpcode::ImageGatherRaw),
+                              {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
     for (std::uint32_t index = 0; index < memory.dataDwords; ++index) {
         writeOperand(offsetOperand(inst.destination, index), &ir.CompositeExtract(result, index));
     }

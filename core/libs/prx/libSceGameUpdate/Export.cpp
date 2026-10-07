@@ -26,16 +26,15 @@ int APS5_VABI sceGameUpdateCheck(int request_id, const GameUpdateCheckParam* par
     return SCE_GAME_UPDATE_ERROR_OFFLINE;
 }
 
-int APS5_VABI sceGameUpdateCreateRequest(void) {
-    return SCE_GAME_UPDATE_ERROR_OFFLINE;
-}
+int APS5_VABI sceGameUpdateCreateRequest(void) { return SCE_GAME_UPDATE_ERROR_OFFLINE; }
 
 int APS5_VABI sceGameUpdateDeleteRequest(int request_id) {
     (void)request_id;
     return 0;
 }
 
-int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t service_label, const void* entitlement_label, GameUpdateAddcontVersionInfo* info) {
+int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t service_label, const void* entitlement_label,
+                                                   GameUpdateAddcontVersionInfo* info) {
     (void)service_label;
     if (!g_initialized.load()) {
         return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
@@ -65,5 +64,4 @@ int APS5_VABI sceGameUpdateTerminate(void) {
     g_initialized.store(false);
     return 0;
 }
-
 }

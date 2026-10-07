@@ -11,10 +11,7 @@ class ISectionHeaderTableBuilder {
 public:
     virtual ~ISectionHeaderTableBuilder() = default;
 
-    virtual void WriteTable(
-        std::vector<std::uint8_t>& buf,
-        const SectionHeaderTableRequest& request
-    ) const = 0;
+    virtual void WriteTable(std::vector<std::uint8_t>& buf, const SectionHeaderTableRequest& request) const = 0;
 };
 
 }

@@ -85,15 +85,18 @@ static void CheckBounded() {
     buffer[0] = u'x';
     Require(snwprintf_s_nid_postfix(buffer, 16, u"a%s", nullNarrow) < 0 && buffer[0] == 0, "null %s argument");
 
-    Require(Format(buffer, 16, u"%s", nullNarrow) == 6 && buffer == std::u16string(u"(null)"), "vswprintf null %s argument");
+    Require(Format(buffer, 16, u"%s", nullNarrow) == 6 && buffer == std::u16string(u"(null)"),
+            "vswprintf null %s argument");
 }
 
 static void CheckCount() {
     char16_t buffer[16];
     int count = -7;
-    Require(Format(buffer, 16, u"ab%ncd", &count) == 4 && buffer == std::u16string(u"abcd") && count == 2, "vswprintf %n");
+    Require(Format(buffer, 16, u"ab%ncd", &count) == 4 && buffer == std::u16string(u"abcd") && count == 2,
+            "vswprintf %n");
     count = -7;
-    Require(Format(buffer, 16, u"%s%n!", "\xf0\x9f\x98\x80", &count) == 3 && count == 2, "vswprintf %n counts UTF-16 units");
+    Require(Format(buffer, 16, u"%s%n!", "\xf0\x9f\x98\x80", &count) == 3 && count == 2,
+            "vswprintf %n counts UTF-16 units");
     count = -7;
     Require(Format(buffer, 16, u"%n", &count) == 0 && buffer[0] == 0 && count == 0, "vswprintf %n at start");
     unsigned char bytes[2] = {0xaa, 0xaa};

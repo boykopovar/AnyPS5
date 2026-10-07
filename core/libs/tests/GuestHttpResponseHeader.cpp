@@ -22,7 +22,8 @@ static void Require(bool value) {
     }
 }
 
-static void Check(std::string_view header, const char* field, std::size_t offset, std::string_view expected, int consumed) {
+static void Check(std::string_view header, const char* field, std::size_t offset, std::string_view expected,
+                  int consumed) {
     const char* value = nullptr;
     std::size_t length = 999;
     const int result = sceHttpParseResponseHeader(header.data(), header.size(), field, &value, &length);
@@ -32,7 +33,8 @@ static void Check(std::string_view header, const char* field, std::size_t offset
     Require(result == consumed);
     Require(length == expected.size());
     Require(value == (expected.empty() ? nullptr : header.data() + offset));
-    if (length != 0) Require(std::memcmp(value, expected.data(), length) == 0);
+    if (length != 0)
+        Require(std::memcmp(value, expected.data(), length) == 0);
 }
 
 static void CheckGuardPage() {
@@ -48,7 +50,8 @@ static void CheckGuardPage() {
     const long hostPageSize = sysconf(_SC_PAGESIZE);
     Require(hostPageSize > 0);
     const std::size_t pageSize = static_cast<std::size_t>(hostPageSize);
-    auto* pages = static_cast<char*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    auto* pages =
+        static_cast<char*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     Require(pages != MAP_FAILED);
     Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
 #endif
@@ -59,7 +62,8 @@ static void CheckGuardPage() {
     Check({header, 6}, "x", 3, "abc", 6);
     const char* value = header;
     std::size_t length = 123;
-    Require(sceHttpParseResponseHeader(header, text.size(), "not-present", &value, &length) == static_cast<int>(0x80432025));
+    Require(sceHttpParseResponseHeader(header, text.size(), "not-present", &value, &length) ==
+            static_cast<int>(0x80432025));
     Require(value == header && length == 123);
     Require(sceHttpParseResponseHeader(pages + pageSize, 0, "x", &value, &length) == static_cast<int>(0x80432025));
     pages[pageSize - 1] = 'X';

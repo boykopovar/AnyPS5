@@ -12,10 +12,14 @@ int APS5_VABI sceKeyboardOpen(int, std::int32_t, std::int32_t, const void*);
 int APS5_VABI sceKeyboardClose(std::int32_t);
 int APS5_VABI sceKeyboardRead(std::int32_t, KeyboardData*, std::int32_t);
 int APS5_VABI sceKeyboardReadState(std::int32_t, KeyboardData*);
-int APS5_VABI sceKeyboardGetKey2Char(std::int32_t, std::int32_t, std::uint32_t, std::uint32_t, std::uint16_t, KeyboardCharData*);
+int APS5_VABI sceKeyboardGetKey2Char(std::int32_t, std::int32_t, std::uint32_t, std::uint32_t, std::uint16_t,
+                                     KeyboardCharData*);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Uint8 repeat = 0) {
     SDL_Event event{};
@@ -27,7 +31,8 @@ static SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Ui
     return event;
 }
 
-static std::uint16_t Char(std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode, std::int32_t arrange = KEYBOARD_ARRANGEMENT_101) {
+static std::uint16_t Char(std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode,
+                          std::int32_t arrange = KEYBOARD_ARRANGEMENT_101) {
     KeyboardCharData data{};
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, led, modifierKey, keyCode, &data) == KEYBOARD_OK);
     Require(data.processed == (data.char_code != 0) && data.length == (data.processed ? 1 : 0));
@@ -46,7 +51,8 @@ int main() {
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardOpen(1, 0, 1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardOpen(1, 1, 0, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_HANDLE);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) ==
+            KEYBOARD_ERROR_INVALID_HANDLE);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
     Require(sceKeyboardRead(42, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
@@ -108,10 +114,12 @@ int main() {
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
 
     Require(Char(0, 0, 0x04) == 'a' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x1d) == 'Z');
-    Require(Char(KEYBOARD_LED_CAPS_LOCK, 0, 0x04) == 'A' && Char(KEYBOARD_LED_CAPS_LOCK, KEYBOARD_MOD_RIGHT_SHIFT, 0x04) == 'a');
+    Require(Char(KEYBOARD_LED_CAPS_LOCK, 0, 0x04) == 'A' &&
+            Char(KEYBOARD_LED_CAPS_LOCK, KEYBOARD_MOD_RIGHT_SHIFT, 0x04) == 'a');
     Require(Char(KEYBOARD_LED_CAPS_LOCK, 0, 0x1e) == '1' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x1e) == '!');
     Require(Char(0, 0, 0x27) == '0' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x27) == ')');
-    Require(Char(0, 0, 0x28) == '\n' && Char(0, 0, 0x2a) == '\b' && Char(0, 0, 0x2b) == '\t' && Char(0, 0, 0x2c) == ' ');
+    Require(Char(0, 0, 0x28) == '\n' && Char(0, 0, 0x2a) == '\b' && Char(0, 0, 0x2b) == '\t' &&
+            Char(0, 0, 0x2c) == ' ');
     Require(Char(0, 0, 0x29) == 0 && Char(0, 0, 0x32) == 0 && Char(0, 0, 0x3a) == 0 && Char(0, 0, 0xe1) == 0);
     Require(Char(0, 0, 0x31) == '\\' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x31) == '|');
     Require(Char(0, 0, 0x34) == '\'' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x34) == '"');
@@ -122,19 +130,26 @@ int main() {
     Require(Char(0, 0, 0x87) == 0 && Char(0, 0, 0x89) == 0);
 
     constexpr std::uint32_t shift = KEYBOARD_MOD_LEFT_SHIFT;
-    Require(Jis(0, 0x04) == 'a' && Jis(shift, 0x04) == 'A' && Jis(KEYBOARD_MOD_RIGHT_SHIFT, 0x04, KEYBOARD_LED_CAPS_LOCK) == 'a');
+    Require(Jis(0, 0x04) == 'a' && Jis(shift, 0x04) == 'A' &&
+            Jis(KEYBOARD_MOD_RIGHT_SHIFT, 0x04, KEYBOARD_LED_CAPS_LOCK) == 'a');
     Require(Jis(0, 0x1e) == '1' && Jis(shift, 0x1e) == '!' && Jis(shift, 0x1f) == '"' && Jis(shift, 0x23) == '&');
-    Require(Jis(shift, 0x24) == '\'' && Jis(shift, 0x25) == '(' && Jis(shift, 0x26) == ')' && Jis(0, 0x27) == '0' && Jis(shift, 0x27) == 0);
-    Require(Jis(0, 0x28) == '\n' && Jis(0, 0x29) == 0 && Jis(0, 0x2a) == '\b' && Jis(0, 0x2b) == '\t' && Jis(shift, 0x2c) == ' ');
+    Require(Jis(shift, 0x24) == '\'' && Jis(shift, 0x25) == '(' && Jis(shift, 0x26) == ')' && Jis(0, 0x27) == '0' &&
+            Jis(shift, 0x27) == 0);
+    Require(Jis(0, 0x28) == '\n' && Jis(0, 0x29) == 0 && Jis(0, 0x2a) == '\b' && Jis(0, 0x2b) == '\t' &&
+            Jis(shift, 0x2c) == ' ');
     Require(Jis(0, 0x2d) == '-' && Jis(shift, 0x2d) == '=' && Jis(0, 0x2e) == '^' && Jis(shift, 0x2e) == '~');
     Require(Jis(0, 0x2f) == '@' && Jis(shift, 0x2f) == '`' && Jis(0, 0x30) == '[' && Jis(shift, 0x30) == '{');
     Require(Jis(0, 0x31) == ']' && Jis(shift, 0x31) == '}' && Jis(0, 0x32) == ']' && Jis(shift, 0x32) == '}');
     Require(Jis(0, 0x33) == ';' && Jis(shift, 0x33) == '+' && Jis(0, 0x34) == ':' && Jis(shift, 0x34) == '*');
-    Require(Jis(0, 0x35) == 0 && Jis(shift, 0x35) == 0 && Jis(0, 0x36) == ',' && Jis(shift, 0x37) == '>' && Jis(shift, 0x38) == '?');
+    Require(Jis(0, 0x35) == 0 && Jis(shift, 0x35) == 0 && Jis(0, 0x36) == ',' && Jis(shift, 0x37) == '>' &&
+            Jis(shift, 0x38) == '?');
     Require(Jis(0, 0x87) == '\\' && Jis(shift, 0x87) == '_' && Jis(0, 0x89) == '\\' && Jis(shift, 0x89) == '|');
-    Require(Jis(0, 0x59, KEYBOARD_LED_NUM_LOCK) == '1' && Jis(0, 0x59) == 0 && Jis(0, 0x55) == '*' && Jis(0, 0xe1) == 0);
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(Jis(0, 0x59, KEYBOARD_LED_NUM_LOCK) == '1' && Jis(0, 0x59) == 0 && Jis(0, 0x55) == '*' &&
+            Jis(0, 0xe1) == 0);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) ==
+            KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) ==
+            KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
 
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);

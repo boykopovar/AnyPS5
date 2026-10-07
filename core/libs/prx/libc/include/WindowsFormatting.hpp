@@ -17,11 +17,9 @@ class FormatArguments {
     VaList args;
 
 public:
-    explicit FormatArguments(const void* source) {
-        std::memcpy(&args, source, sizeof(args));
-    }
+    explicit FormatArguments(const void* source) { std::memcpy(&args, source, sizeof(args)); }
 
-    template<class T> T Next() {
+    template <class T> T Next() {
         const void* address;
         if constexpr (std::is_same_v<T, double>) {
             if (args.fp_offset < 176) {
@@ -49,7 +47,6 @@ public:
         std::memcpy(&value, address, sizeof(value));
         return value;
     }
-
 };
 
 class FormatOutput {
@@ -60,8 +57,10 @@ class FormatOutput {
 
 public:
     FormatOutput(char* buffer, size_t size, std::string* text) : destination(buffer), capacity(size), complete(text) {
-        if (size && !buffer) throw std::invalid_argument("Null formatting buffer");
-        if (capacity) destination[0] = 0;
+        if (size && !buffer)
+            throw std::invalid_argument("Null formatting buffer");
+        if (capacity)
+            destination[0] = 0;
     }
 
     void Append(const char* text, size_t size) {
@@ -73,26 +72,31 @@ public:
             std::memcpy(destination + count, text, copied);
             destination[count + copied] = 0;
         }
-        if (complete) complete->append(text, size);
+        if (complete)
+            complete->append(text, size);
         count += size;
     }
 
-    template<class T> void Value(const std::string& format, T value) {
+    template <class T> void Value(const std::string& format, T value) {
         const int size = std::snprintf(nullptr, 0, format.c_str(), value);
-        if (size < 0) throw std::runtime_error("Formatting conversion failed");
+        if (size < 0)
+            throw std::runtime_error("Formatting conversion failed");
         if (static_cast<size_t>(size) > static_cast<size_t>(INT_MAX) - count)
             throw std::overflow_error("Formatted output exceeds INT_MAX");
         if (complete) {
             std::vector<char> text(static_cast<size_t>(size) + 1);
             const int written = std::snprintf(text.data(), text.size(), format.c_str(), value);
-            if (written != size) throw std::runtime_error("Inconsistent formatting conversion");
+            if (written != size)
+                throw std::runtime_error("Inconsistent formatting conversion");
             complete->append(text.data(), static_cast<size_t>(size));
         }
         if (capacity && count < capacity - 1) {
             const size_t remaining = capacity - count;
             const size_t required = static_cast<size_t>(size) + 1;
-            const int written = std::snprintf(destination + count, remaining < required ? remaining : required, format.c_str(), value);
-            if (written != size) throw std::runtime_error("Inconsistent formatting conversion");
+            const int written =
+                std::snprintf(destination + count, remaining < required ? remaining : required, format.c_str(), value);
+            if (written != size)
+                throw std::runtime_error("Inconsistent formatting conversion");
         }
         count += static_cast<size_t>(size);
     }
@@ -103,7 +107,8 @@ public:
 // The guest's wchar_t is 16 bits (UTF-16, as on the PS4/PS5 toolchain); wide conversions are
 // formatted as UTF-8 through %s.
 inline void AppendUtf8(std::string& utf8, char32_t code) {
-    if (code > 0x10ffff) code = 0xfffd;
+    if (code > 0x10ffff)
+        code = 0xfffd;
     if (code < 0x80) {
         utf8 += static_cast<char>(code);
     } else if (code < 0x800) {
@@ -121,30 +126,37 @@ inline void AppendUtf8(std::string& utf8, char32_t code) {
     }
 }
 
-inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr) {
-    if (!format || !source) throw std::invalid_argument("Null formatting argument");
+inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source,
+                         std::string* complete = nullptr) {
+    if (!format || !source)
+        throw std::invalid_argument("Null formatting argument");
     const char* const formatStart = format;
     FormatArguments args(source);
     FormatOutput output(buffer, size, complete);
     while (*format) {
         const char* literal = format;
-        while (*format && *format != '%') ++format;
+        while (*format && *format != '%')
+            ++format;
         output.Append(literal, static_cast<size_t>(format - literal));
-        if (!*format) break;
+        if (!*format)
+            break;
         ++format;
         if (*format == '%') {
             output.Append(format++, 1);
             continue;
         }
         std::string spec = "%";
-        while (*format && std::strchr("-+ #0", *format)) spec += *format++;
+        while (*format && std::strchr("-+ #0", *format))
+            spec += *format++;
         if (*format == '*') {
             ++format;
             const int width = args.Next<int>();
-            if (width < 0) spec += '-';
+            if (width < 0)
+                spec += '-';
             spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
         } else {
-            while (*format >= '0' && *format <= '9') spec += *format++;
+            while (*format >= '0' && *format <= '9')
+                spec += *format++;
         }
         size_t precisionLimit = std::numeric_limits<size_t>::max();
         if (*format == '.') {
@@ -162,7 +174,8 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 while (*format >= '0' && *format <= '9') {
                     const auto digit = static_cast<size_t>(*format - '0');
                     precisionLimit = precisionLimit <= (std::numeric_limits<size_t>::max() - digit) / 10
-                        ? precisionLimit * 10 + digit : std::numeric_limits<size_t>::max();
+                                         ? precisionLimit * 10 + digit
+                                         : std::numeric_limits<size_t>::max();
                     spec += *format++;
                 }
             }
@@ -174,27 +187,36 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 length += *format++;
         }
         const char conversion = *format;
-        if (!conversion) throw std::invalid_argument("Incomplete format conversion");
+        if (!conversion)
+            throw std::invalid_argument("Incomplete format conversion");
         ++format;
-        const bool integerLength = length.empty() || length == "h" || length == "hh" ||
-            length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
+        const bool integerLength = length.empty() || length == "h" || length == "hh" || length == "l" ||
+                                   length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
-            if (!integerLength) throw std::invalid_argument("Invalid integer length");
+            if (!integerLength)
+                throw std::invalid_argument("Invalid integer length");
             long long value;
             if (length.empty() || length == "h" || length == "hh") {
                 value = args.Next<int>();
-                if (length == "h") value = static_cast<short>(value);
-                if (length == "hh") value = static_cast<signed char>(value);
-            } else value = args.Next<long long>();
+                if (length == "h")
+                    value = static_cast<short>(value);
+                if (length == "hh")
+                    value = static_cast<signed char>(value);
+            } else
+                value = args.Next<long long>();
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("ouxX", conversion)) {
-            if (!integerLength) throw std::invalid_argument("Invalid integer length");
+            if (!integerLength)
+                throw std::invalid_argument("Invalid integer length");
             unsigned long long value;
             if (length.empty() || length == "h" || length == "hh") {
                 value = args.Next<unsigned int>();
-                if (length == "h") value = static_cast<unsigned short>(value);
-                if (length == "hh") value = static_cast<unsigned char>(value);
-            } else value = args.Next<unsigned long long>();
+                if (length == "h")
+                    value = static_cast<unsigned short>(value);
+                if (length == "hh")
+                    value = static_cast<unsigned char>(value);
+            } else
+                value = args.Next<unsigned long long>();
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             if (length == "L") {
@@ -202,7 +224,8 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 static_assert(std::numeric_limits<long double>::digits == 64);
                 output.Value(spec + "L" + conversion, args.Next<long double>());
             } else {
-                if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
+                if (!length.empty() && length != "l")
+                    throw std::invalid_argument("Invalid floating length");
                 output.Value(spec + conversion, args.Next<double>());
             }
         } else if (conversion == 'c' && (length.empty() || length == "h")) {
@@ -213,15 +236,18 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(spec + 's', utf8.c_str());
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
-            if (!value) value = "(null)";
+            if (!value)
+                value = "(null)";
             output.Value(spec + 's', value);
         } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
             const char16_t* value = args.Next<const char16_t*>();
-            if (!value) value = u"(null)";
+            if (!value)
+                value = u"(null)";
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
                 char32_t code = *value++;
-                if (code >= 0xd800 && code < 0xdc00 && *value >= 0xdc00 && *value < 0xe000) code = 0x10000 + ((code - 0xd800) << 10) + (*value++ - 0xdc00);
+                if (code >= 0xd800 && code < 0xdc00 && *value >= 0xdc00 && *value < 0xe000)
+                    code = 0x10000 + ((code - 0xd800) << 10) + (*value++ - 0xdc00);
                 const auto previousSize = utf8.size();
                 AppendUtf8(utf8, code);
                 if (utf8.size() > precisionLimit) {
@@ -234,14 +260,20 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(spec + conversion, args.Next<void*>());
         } else if (conversion == 'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
-            if (!pointer) throw std::invalid_argument("Null format count pointer");
+            if (!pointer)
+                throw std::invalid_argument("Null format count pointer");
             const int count = output.Count();
-            if (length == "hh") *static_cast<signed char*>(pointer) = static_cast<signed char>(count);
-            else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
-            else if (length.empty()) *static_cast<int*>(pointer) = count;
-            else *static_cast<long long*>(pointer) = count;
+            if (length == "hh")
+                *static_cast<signed char*>(pointer) = static_cast<signed char>(count);
+            else if (length == "h")
+                *static_cast<short*>(pointer) = static_cast<short>(count);
+            else if (length.empty())
+                *static_cast<int*>(pointer) = count;
+            else
+                *static_cast<long long*>(pointer) = count;
         } else {
-            throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
+            throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" +
+                                        std::string(formatStart).substr(0, 160) + "\"");
         }
     }
     return output.Count();

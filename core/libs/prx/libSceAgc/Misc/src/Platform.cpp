@@ -13,5 +13,4 @@ int APS5_VABI sceAgcGetIsTrinityMode(bool* isTrinityMode) {
     *isTrinityMode = false;
     return 0;
 }
-
 }

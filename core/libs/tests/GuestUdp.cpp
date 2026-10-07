@@ -37,7 +37,10 @@ extern "C" {
 std::int64_t APS5_VABI sendmsg_nid_postfix(int, const Msghdr*, int);
 std::int64_t APS5_VABI recvmsg_nid_postfix(int, Msghdr*, int);
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 17);
@@ -66,11 +69,13 @@ int main() {
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0, nullptr, nullptr) == -1);
     Require(*__error_nid_postfix() == 35);
     const char message[] = "guest UDP loopback";
-    Require(sendto_nid_postfix(sender, message, sizeof(message), 0, destination.data(), destination.size()) == sizeof(message));
+    Require(sendto_nid_postfix(sender, message, sizeof(message), 0, destination.data(), destination.size()) ==
+            sizeof(message));
     int queued = 0;
     for (int i = 0; i < 100 && queued == 0; ++i) {
         Require(ioctl_nid_postfix(receiver, 0x4004667f, &queued) == 0);
-        if (!queued) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!queued)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     Require(queued == sizeof(message));
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 2, nullptr, nullptr) == sizeof(message));
@@ -89,7 +94,8 @@ int main() {
         queued = 0;
         for (int i = 0; i < 100 && queued == 0; ++i) {
             Require(ioctl_nid_postfix(receiver, 0x4004667f, &queued) == 0);
-            if (!queued) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (!queued)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         Require(queued != 0);
     };
@@ -101,7 +107,8 @@ int main() {
     Msghdr incoming{source.data(), static_cast<std::uint32_t>(source.size()), pieces, 2, control, sizeof(control), -1};
     Require(recvmsg_nid_postfix(receiver, &incoming, 0) == 14);
     Require(std::memcmp(first, "scat", 4) == 0 && std::memcmp(second, "ter gather", 10) == 0);
-    Require(incoming.flags == 0 && incoming.controlLength == 0 && incoming.nameLength == 16 && source[1] == 2 && source[4] == 127);
+    Require(incoming.flags == 0 && incoming.controlLength == 0 && incoming.nameLength == 16 && source[1] == 2 &&
+            source[4] == 127);
     Require(sendmsg_nid_postfix(sender, &outgoing, 0) == 14);
     wait();
     char shortBuffer[5]{};

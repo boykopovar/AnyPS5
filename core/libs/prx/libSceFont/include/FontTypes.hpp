@@ -58,13 +58,14 @@ using FontRenderer = void*;
 
 struct FontMemory;
 
-using FontAllocFunction = void* (APS5_VABI*)(void* object, std::uint32_t size);
-using FontFreeFunction = void (APS5_VABI*)(void* object, void* p);
-using FontReallocFunction = void* (APS5_VABI*)(void* object, void* p, std::uint32_t newSize);
-using FontCallocFunction = void* (APS5_VABI*)(void* object, std::uint32_t nBlock, std::uint32_t size);
-using FontMspaceCreateFunction = void* (APS5_VABI*)(void* parent, const char* name, void* address, std::uint32_t size, std::uint32_t attr);
-using FontMspaceDestroyFunction = void (APS5_VABI*)(void* parent, void* mspace);
-using FontMemoryDestroyFunction = void (APS5_VABI*)(FontMemory* fontMemory, void* object, void* destroyArg);
+using FontAllocFunction = void*(APS5_VABI*)(void* object, std::uint32_t size);
+using FontFreeFunction = void(APS5_VABI*)(void* object, void* p);
+using FontReallocFunction = void*(APS5_VABI*)(void* object, void* p, std::uint32_t newSize);
+using FontCallocFunction = void*(APS5_VABI*)(void* object, std::uint32_t nBlock, std::uint32_t size);
+using FontMspaceCreateFunction = void*(APS5_VABI*)(void* parent, const char* name, void* address, std::uint32_t size,
+                                                   std::uint32_t attr);
+using FontMspaceDestroyFunction = void(APS5_VABI*)(void* parent, void* mspace);
+using FontMemoryDestroyFunction = void(APS5_VABI*)(FontMemory* fontMemory, void* object, void* destroyArg);
 
 struct FontMemoryInterface {
     FontAllocFunction alloc;
@@ -295,7 +296,8 @@ union FontTextParseResult {
     } Error;
 };
 
-using FontTextParseFunction = std::int32_t (APS5_VABI*)(FontTextSource* fontTextSource, void** order, FontTextParseResult* result);
+using FontTextParseFunction = std::int32_t(APS5_VABI*)(FontTextSource* fontTextSource, void** order,
+                                                       FontTextParseResult* result);
 
 struct FontTextSource {
     std::uint64_t systemUse0;

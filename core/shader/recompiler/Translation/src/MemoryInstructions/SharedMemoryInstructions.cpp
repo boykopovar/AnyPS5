@@ -35,7 +35,8 @@ bool TranslationContext::dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, 
     const IrU32 address = readU32(inst.source0);
     const IrU32 value = readU32(inst.source1);
     IrValue& active = ir.GetExec();
-    IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &value.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &value.Value(), &active},
+                              addMemoryInfo(memory, inst.programCounter));
     if (returnsValue) {
         writeOperand(inst.destination, &result);
     }
@@ -53,19 +54,24 @@ bool TranslationContext::dsWrxchg2(const RdnaInstruction& inst) {
     MemoryInfo second = first;
     second.offset = first.secondaryOffset;
     const IrU32 address = readU32(inst.source0);
-    const auto data = [&](const RdnaOperand& operand) { return width == 2u ? &readU64(operand).Value() : &readU32(operand).Value(); };
+    const auto data = [&](const RdnaOperand& operand) {
+        return width == 2u ? &readU64(operand).Value() : &readU32(operand).Value();
+    };
     IrValue* firstValue = data(inst.source1);
     IrValue* secondValue = data(inst.source2);
     IrValue& active = ir.GetExec();
     const IrOpcode opcode = width == 2u ? IrOpcode::SharedAtomicSwap64 : IrOpcode::SharedAtomicSwap32;
-    IrValue& firstOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), firstValue, &active}, addMemoryInfo(first, inst.programCounter));
-    IrValue& secondOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), secondValue, &active}, addMemoryInfo(second, inst.programCounter));
+    IrValue& firstOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), firstValue, &active},
+                                addMemoryInfo(first, inst.programCounter));
+    IrValue& secondOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), secondValue, &active},
+                                 addMemoryInfo(second, inst.programCounter));
     writeOperand(inst.destination, &firstOld);
     writeOperand(offsetOperand(inst.destination, width), &secondOld);
     return true;
 }
 
-IrValue* TranslationContext::loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory, std::uint32_t pc) {
+IrValue* TranslationContext::loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory,
+                                           std::uint32_t pc) {
     IrOpcode opcode;
     switch (width) {
     case 1u:
@@ -94,20 +100,26 @@ IrValue* TranslationContext::extractSharedU32(IrValue* value, std::uint32_t widt
     return &ir.CompositeExtract(*value, index);
 }
 
-void TranslationContext::writeSharedU32(std::uint32_t width, IrU32 address, const std::array<IrValue*, 4>& values, const MemoryInfo& memory, std::uint32_t pc) {
+void TranslationContext::writeSharedU32(std::uint32_t width, IrU32 address, const std::array<IrValue*, 4>& values,
+                                        const MemoryInfo& memory, std::uint32_t pc) {
     IrValue& active = ir.GetExec();
     switch (width) {
     case 1u:
-        (void)ir.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&address.Value(), values[0], &active}, addMemoryInfo(memory, pc));
+        (void)ir.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&address.Value(), values[0], &active},
+                      addMemoryInfo(memory, pc));
         break;
     case 2u:
-        (void)ir.Emit(IrOpcode::WriteSharedU32x2, IrType::Void, {&address.Value(), values[0], values[1], &active}, addMemoryInfo(memory, pc));
+        (void)ir.Emit(IrOpcode::WriteSharedU32x2, IrType::Void, {&address.Value(), values[0], values[1], &active},
+                      addMemoryInfo(memory, pc));
         break;
     case 3u:
-        (void)ir.Emit(IrOpcode::WriteSharedU32x3, IrType::Void, {&address.Value(), values[0], values[1], values[2], &active}, addMemoryInfo(memory, pc));
+        (void)ir.Emit(IrOpcode::WriteSharedU32x3, IrType::Void,
+                      {&address.Value(), values[0], values[1], values[2], &active}, addMemoryInfo(memory, pc));
         break;
     case 4u:
-        (void)ir.Emit(IrOpcode::WriteSharedU32x4, IrType::Void, {&address.Value(), values[0], values[1], values[2], values[3], &active}, addMemoryInfo(memory, pc));
+        (void)ir.Emit(IrOpcode::WriteSharedU32x4, IrType::Void,
+                      {&address.Value(), values[0], values[1], values[2], values[3], &active},
+                      addMemoryInfo(memory, pc));
         break;
     default:
         throw std::runtime_error("writeSharedU32 does not support the requested width");
@@ -127,7 +139,8 @@ bool TranslationContext::dsRead(const RdnaInstruction& inst) {
     }
     const IrOpcode opcode = memory.dataBits == 8u ? IrOpcode::LoadSharedU8 : IrOpcode::LoadSharedU16;
     IrValue& active = ir.GetExec();
-    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& loaded =
+        ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
     writeOperand(inst.destination, &widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value());
     return true;
 }
@@ -168,7 +181,8 @@ bool TranslationContext::dsWrite(const RdnaInstruction& inst) {
     const IrOpcode opcode = memory.dataBits == 8u ? IrOpcode::WriteSharedU8 : IrOpcode::WriteSharedU16;
     IrValue* narrowed = narrowSubdword(IrU32(*values[0]), memory.dataBits);
     IrValue& active = ir.GetExec();
-    (void)ir.Emit(opcode, IrType::Void, {&address.Value(), narrowed, &active}, addMemoryInfo(memory, inst.programCounter));
+    (void)ir.Emit(opcode, IrType::Void, {&address.Value(), narrowed, &active},
+                  addMemoryInfo(memory, inst.programCounter));
     return true;
 }
 
@@ -200,8 +214,10 @@ bool TranslationContext::dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode,
     const IrU32 data0 = readU32(inst.source1);
     const IrU32 data1 = readU32(inst.source2);
     IrValue& active = ir.GetExec();
-    IrValue& old = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &data0.Value(), &data1.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
-    if (returnsValue) writeOperand(inst.destination, &old);
+    IrValue& old = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &data0.Value(), &data1.Value(), &active},
+                           addMemoryInfo(memory, inst.programCounter));
+    if (returnsValue)
+        writeOperand(inst.destination, &old);
     return true;
 }
 
@@ -216,11 +232,14 @@ bool TranslationContext::dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode
     IrValue* old;
     if (IrOpcodeOperandCount(opcode) == 4u) {
         const IrU64 data1 = readU64(inst.source2);
-        old = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &data0.Value(), &data1.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+        old = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &data0.Value(), &data1.Value(), &active},
+                       addMemoryInfo(memory, inst.programCounter));
     } else {
-        old = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &data0.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+        old = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &data0.Value(), &active},
+                       addMemoryInfo(memory, inst.programCounter));
     }
-    if (returnsValue) writeOperand(inst.destination, old);
+    if (returnsValue)
+        writeOperand(inst.destination, old);
     return true;
 }
 
@@ -230,7 +249,8 @@ bool TranslationContext::dsAppendConsume(const RdnaInstruction& inst, IrOpcode o
     IrValue& active = ir.GetExec();
     IrValue& activeLo = ir.GetExecLo();
     IrValue& activeHi = ir.GetExecHi();
-    IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &active, &activeLo, &activeHi}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &active, &activeLo, &activeHi},
+                              addMemoryInfo(memory, inst.programCounter));
     writeOperand(inst.destination, &result);
     return true;
 }
@@ -243,10 +263,12 @@ bool TranslationContext::dsAddtid(const RdnaInstruction& inst, bool write) {
     IrValue& active = ir.GetExec();
     if (write) {
         const IrU32 value = readU32(inst.source1);
-        (void)ir.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&address, &value.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
+        (void)ir.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&address, &value.Value(), &active},
+                      addMemoryInfo(memory, inst.programCounter));
         return true;
     }
-    IrValue& loaded = ir.Emit(IrOpcode::LoadSharedU32, IrOpcodeType(IrOpcode::LoadSharedU32), {&address, &active}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& loaded = ir.Emit(IrOpcode::LoadSharedU32, IrOpcodeType(IrOpcode::LoadSharedU32), {&address, &active},
+                              addMemoryInfo(memory, inst.programCounter));
     writeOperand(inst.destination, &loaded);
     return true;
 }
@@ -255,7 +277,8 @@ bool TranslationContext::dsSwizzleB32(const RdnaInstruction& inst) {
     const IrU32 value = readU32(inst.source0);
     IrValue& pattern = ir.Constant(inst.memoryOffset & 0xffffu);
     IrValue& active = ir.GetExec();
-    IrValue& result = ir.Emit(IrOpcode::SwizzleU32, IrOpcodeType(IrOpcode::SwizzleU32), {&value.Value(), &pattern, &active});
+    IrValue& result =
+        ir.Emit(IrOpcode::SwizzleU32, IrOpcodeType(IrOpcode::SwizzleU32), {&value.Value(), &pattern, &active});
     writeOperand(inst.destination, &result);
     return true;
 }
@@ -265,7 +288,8 @@ bool TranslationContext::dsBpermuteB32(const RdnaInstruction& inst) {
     IrValue& address = ir.IAdd(index.Value(), ir.Constant(inst.memoryOffset));
     const IrU32 value = readU32(inst.source1);
     IrValue& active = ir.GetExec();
-    IrValue& result = ir.Emit(IrOpcode::BpermuteU32, IrOpcodeType(IrOpcode::BpermuteU32), {&value.Value(), &address, &active});
+    IrValue& result =
+        ir.Emit(IrOpcode::BpermuteU32, IrOpcodeType(IrOpcode::BpermuteU32), {&value.Value(), &address, &active});
     writeOperand(inst.destination, &result);
     return true;
 }
@@ -275,7 +299,8 @@ bool TranslationContext::dsPermuteB32(const RdnaInstruction& inst) {
     IrValue& address = ir.IAdd(index.Value(), ir.Constant(inst.memoryOffset));
     const IrU32 value = readU32(inst.source1);
     IrValue& active = ir.GetExec();
-    IrValue& result = ir.Emit(IrOpcode::PermuteU32, IrOpcodeType(IrOpcode::PermuteU32), {&value.Value(), &address, &active});
+    IrValue& result =
+        ir.Emit(IrOpcode::PermuteU32, IrOpcodeType(IrOpcode::PermuteU32), {&value.Value(), &address, &active});
     writeOperand(inst.destination, &result);
     return true;
 }

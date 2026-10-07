@@ -199,4 +199,3 @@ void main() {
         copyElement(params.srcBase + tiledOffset, params.dstBase + linearOffset);
     }
 }
-

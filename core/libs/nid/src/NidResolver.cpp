@@ -20,7 +20,9 @@ std::string ResolveOneName(const std::string& funcName) {
     return ComputeNid(StripNidPostfix(funcName), "");
 }
 
-std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::string>& exportedNames, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports) {
+std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::string>& exportedNames,
+                                                         const std::string& libraryName,
+                                                         const std::unordered_set<std::string>& excludedExports) {
     using namespace Internal;
 
     std::unordered_set<std::string> nameSet(exportedNames.begin(), exportedNames.end());
@@ -29,7 +31,8 @@ std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::
         for (std::size_t i = 0u; i < exportedNames.size(); ++i) {
             for (std::size_t j = i + 1u; j < exportedNames.size(); ++j) {
                 if (exportedNames[i] == exportedNames[j])
-                    throw std::runtime_error("duplicate exported symbol \"" + exportedNames[i] + "\" in library \"" + libraryName + "\"");
+                    throw std::runtime_error("duplicate exported symbol \"" + exportedNames[i] + "\" in library \"" +
+                                             libraryName + "\"");
             }
         }
     }

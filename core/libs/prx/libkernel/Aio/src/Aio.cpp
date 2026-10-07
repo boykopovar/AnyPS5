@@ -36,15 +36,14 @@ std::mutex g_mutex;
 std::array<std::int32_t, AioMaxQueues> g_states{};
 std::int32_t g_nextId = 1;
 
-bool ValidId(std::int32_t id) {
-    return id > 0 && id < AioMaxQueues;
-}
+bool ValidId(std::int32_t id) { return id > 0 && id < AioMaxQueues; }
 
 std::int32_t AllocateId() {
     std::lock_guard<std::mutex> lock(g_mutex);
     const std::int32_t id = g_nextId;
     g_nextId = (g_nextId + 1) % AioMaxQueues;
-    if (g_nextId == 0) g_nextId = 1;
+    if (g_nextId == 0)
+        g_nextId = 1;
     g_states[id] = AioProcessing;
     return id;
 }
@@ -65,7 +64,8 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
         throw std::runtime_error("sceKernelAioSubmitReadCommands: nbytes exceeds platform limit");
     }
     const int duped = ::_dup(fd);
-    if (duped < 0) return -1;
+    if (duped < 0)
+        return -1;
     if (::_lseeki64(duped, offset, SEEK_SET) < 0) {
         const int error = errno;
         ::_close(duped);
@@ -88,7 +88,8 @@ std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, s
         throw std::runtime_error("sceKernelAioSubmitWriteCommands: nbytes exceeds platform limit");
     }
     const int duped = ::_dup(fd);
-    if (duped < 0) return -1;
+    if (duped < 0)
+        return -1;
     if (::_lseeki64(duped, offset, SEEK_SET) < 0) {
         const int error = errno;
         ::_close(duped);
@@ -106,14 +107,15 @@ std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, s
 }
 
 bool RunRequest(KernelAioRwRequest& req, bool write) {
-    const std::int64_t done = write
-        ? NativePwrite(req.fd, req.buf, req.nbyte, req.offset)
-        : NativePread(req.fd, req.buf, req.nbyte, req.offset);
+    const std::int64_t done = write ? NativePwrite(req.fd, req.buf, req.nbyte, req.offset)
+                                    : NativePread(req.fd, req.buf, req.nbyte, req.offset);
     if (done < 0) {
         const int error = errno;
         req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EIO);
-        if (error == EBADF) req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EBADF);
-        if (error == EFAULT) req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EFAULT);
+        if (error == EBADF)
+            req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EBADF);
+        if (error == EFAULT)
+            req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EFAULT);
         req.result->state = AioAborted;
         return false;
     }
@@ -123,21 +125,26 @@ bool RunRequest(KernelAioRwRequest& req, bool write) {
 }
 
 int ValidateRequests(KernelAioRwRequest* req, std::int32_t size, const void* id) {
-    if (req == nullptr || id == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (size <= 0) return SCE_KERNEL_ERROR_EINVAL;
+    if (req == nullptr || id == nullptr)
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (size <= 0)
+        return SCE_KERNEL_ERROR_EINVAL;
     for (std::int32_t i = 0; i < size; ++i) {
-        if (req[i].result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+        if (req[i].result == nullptr)
+            return SCE_KERNEL_ERROR_EFAULT;
     }
     return 0;
 }
 
 int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, bool write, std::int32_t* id) {
     const int error = ValidateRequests(req, size, id);
-    if (error != 0) return error;
+    if (error != 0)
+        return error;
     const std::int32_t queue = AllocateId();
     bool aborted = false;
     for (std::int32_t i = 0; i < size; ++i) {
-        if (!RunRequest(req[i], write)) aborted = true;
+        if (!RunRequest(req[i], write))
+            aborted = true;
     }
     SetState(queue, aborted ? AioAborted : AioCompleted);
     *id = queue;
@@ -146,8 +153,10 @@ int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, bool write, std::
 
 int SubmitCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, bool write, std::int32_t* id, const char* name) {
     const int error = ValidateRequests(req, size, id);
-    if (error != 0) return error;
-    if (size > AioRequestNumMax) throw std::runtime_error(std::string(name) + ": more than 128 requests per batch is not modelled");
+    if (error != 0)
+        return error;
+    if (size > AioRequestNumMax)
+        throw std::runtime_error(std::string(name) + ": more than 128 requests per batch is not modelled");
     for (std::int32_t i = 0; i < size; ++i) {
         const std::int32_t queue = AllocateId();
         SetState(queue, RunRequest(req[i], write) ? AioCompleted : AioAborted);
@@ -157,11 +166,15 @@ int SubmitCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, bool writ
 }
 
 int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out, const char* name) {
-    if (id == nullptr || out == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (num < 0) return SCE_KERNEL_ERROR_EINVAL;
-    if (num > AioIdNumMax) throw std::runtime_error(std::string(name) + ": more than 128 ids per batch is not modelled");
+    if (id == nullptr || out == nullptr)
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (num < 0)
+        return SCE_KERNEL_ERROR_EINVAL;
+    if (num > AioIdNumMax)
+        throw std::runtime_error(std::string(name) + ": more than 128 ids per batch is not modelled");
     for (std::int32_t i = 0; i < num; ++i) {
-        if (!ValidId(id[i])) return SCE_KERNEL_ERROR_EINVAL;
+        if (!ValidId(id[i]))
+            return SCE_KERNEL_ERROR_EINVAL;
     }
     return 0;
 }
@@ -171,8 +184,10 @@ int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out, const
 extern "C" {
 
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret) {
-    if (ret == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (!ValidId(id)) return SCE_KERNEL_ERROR_EINVAL;
+    if (ret == nullptr)
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (!ValidId(id))
+        return SCE_KERNEL_ERROR_EINVAL;
     SetState(id, AioAborted);
     *ret = 0;
     return 0;
@@ -180,7 +195,8 @@ int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret) {
 
 int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret) {
     const int error = ValidateIds(id, num, ret, "sceKernelAioDeleteRequests");
-    if (error != 0) return error;
+    if (error != 0)
+        return error;
     for (int32_t i = 0; i < num; ++i) {
         SetState(id[i], AioAborted);
         ret[i] = 0;
@@ -189,23 +205,29 @@ int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret)
 }
 
 int APS5_VABI sceKernelAioCancelRequest(int32_t id, int32_t* state) {
-    if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+    if (state == nullptr)
+        return SCE_KERNEL_ERROR_EFAULT;
     if (id == 0) {
         *state = AioProcessing;
         return 0;
     }
-    if (!ValidId(id)) return SCE_KERNEL_ERROR_EINVAL;
+    if (!ValidId(id))
+        return SCE_KERNEL_ERROR_EINVAL;
     SetState(id, AioAborted);
     *state = AioAborted;
     return 0;
 }
 
 int APS5_VABI sceKernelAioCancelRequests(int32_t* id, int32_t num, int32_t* state) {
-    if (id == nullptr || state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (num < 0) return SCE_KERNEL_ERROR_EINVAL;
-    if (num > AioIdNumMax) throw std::runtime_error("sceKernelAioCancelRequests: more than 128 ids per batch is not modelled");
+    if (id == nullptr || state == nullptr)
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (num < 0)
+        return SCE_KERNEL_ERROR_EINVAL;
+    if (num > AioIdNumMax)
+        throw std::runtime_error("sceKernelAioCancelRequests: more than 128 ids per batch is not modelled");
     for (int32_t i = 0; i < num; ++i) {
-        if (id[i] != 0 && !ValidId(id[i])) return SCE_KERNEL_ERROR_EINVAL;
+        if (id[i] != 0 && !ValidId(id[i]))
+            return SCE_KERNEL_ERROR_EINVAL;
     }
     for (int32_t i = 0; i < num; ++i) {
         if (id[i] == 0) {
@@ -225,7 +247,8 @@ int APS5_VABI sceKernelAioInitializeImpl(void* param, int32_t size) {
 }
 
 void APS5_VABI sceKernelAioInitializeParam(void* param) {
-    if (param == nullptr) throw std::invalid_argument("sceKernelAioInitializeParam: param is null");
+    if (param == nullptr)
+        throw std::invalid_argument("sceKernelAioInitializeParam: param is null");
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
@@ -243,14 +266,17 @@ int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, in
     return SubmitCommandsMultiple(req, size, false, id, "sceKernelAioSubmitReadCommandsMultiple");
 }
 
-int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
+int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, int32_t size, int32_t prio,
+                                                      int32_t* id) {
     (void)prio;
     return SubmitCommandsMultiple(req, size, true, id, "sceKernelAioSubmitWriteCommandsMultiple");
 }
 
 int APS5_VABI sceKernelAioPollRequest(int32_t id, int32_t* state) {
-    if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (!ValidId(id)) return SCE_KERNEL_ERROR_EINVAL;
+    if (state == nullptr)
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (!ValidId(id))
+        return SCE_KERNEL_ERROR_EINVAL;
     std::lock_guard<std::mutex> lock(g_mutex);
     *state = g_states[id];
     return 0;
@@ -258,8 +284,10 @@ int APS5_VABI sceKernelAioPollRequest(int32_t id, int32_t* state) {
 
 int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state, uint32_t mode, uint32_t* usec) {
     const int error = ValidateIds(id, num, state, "sceKernelAioWaitRequests");
-    if (error != 0) return error;
-    if (mode != AioWaitAnd && mode != AioWaitOr) throw std::runtime_error("sceKernelAioWaitRequests: unsupported wait mode");
+    if (error != 0)
+        return error;
+    if (mode != AioWaitAnd && mode != AioWaitOr)
+        throw std::runtime_error("sceKernelAioWaitRequests: unsupported wait mode");
     const auto start = std::chrono::steady_clock::now();
     for (;;) {
         bool allDone = true;
@@ -268,22 +296,29 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
             std::lock_guard<std::mutex> lock(g_mutex);
             for (int32_t i = 0; i < num; ++i) {
                 state[i] = g_states[id[i]];
-                if (state[i] == AioProcessing) allDone = false;
-                if (state[i] == AioCompleted) anyCompleted = true;
+                if (state[i] == AioProcessing)
+                    allDone = false;
+                if (state[i] == AioCompleted)
+                    anyCompleted = true;
             }
         }
-        if (allDone || (mode == AioWaitOr && anyCompleted)) return 0;
+        if (allDone || (mode == AioWaitOr && anyCompleted))
+            return 0;
         if (usec != nullptr && *usec != 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed > static_cast<std::int64_t>(*usec)) return SCE_KERNEL_ERROR_ETIMEDOUT;
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+            if (elapsed > static_cast<std::int64_t>(*usec))
+                return SCE_KERNEL_ERROR_ETIMEDOUT;
         }
         std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
 }
 
 int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec) {
-    if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (!ValidId(id)) return SCE_KERNEL_ERROR_EINVAL;
+    if (state == nullptr)
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (!ValidId(id))
+        return SCE_KERNEL_ERROR_EINVAL;
     const auto start = std::chrono::steady_clock::now();
     for (;;) {
         std::int32_t current;
@@ -296,7 +331,8 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
             return 0;
         }
         if (usec != nullptr && *usec != 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
             if (elapsed > static_cast<std::int64_t>(*usec)) {
                 *state = current;
                 return SCE_KERNEL_ERROR_ETIMEDOUT;
@@ -310,5 +346,4 @@ int APS5_VABI sceKernelAioPollRequests() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

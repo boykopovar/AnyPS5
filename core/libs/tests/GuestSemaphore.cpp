@@ -4,7 +4,8 @@
 #include <cstdlib>
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt);
 int APS5_VABI sceKernelDeleteSema(KernelSema sem);
@@ -19,7 +20,10 @@ static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCE_KERNEL_ERROR_ECANCELED = static_cast<int>(0x80020055);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 struct Waiter {
     KernelSema sem = nullptr;

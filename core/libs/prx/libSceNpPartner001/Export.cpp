@@ -13,5 +13,4 @@ int APS5_VABI sceNpPartnerUnknown_pMxXhNozUX8(void) {
     NotImplemented_nid_no_patch("pMxXhNozUX8");
     return 0;
 }
-
 }

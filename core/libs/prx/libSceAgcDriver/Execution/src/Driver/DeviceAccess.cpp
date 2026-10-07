@@ -28,7 +28,8 @@ void DeviceUseGate::lock_shared() {
 
 void DeviceUseGate::unlock_shared() {
     std::lock_guard lock(mutex);
-    if (--users == 0) changed.notify_all();
+    if (--users == 0)
+        changed.notify_all();
 }
 
 void DeviceUseGate::lock() {

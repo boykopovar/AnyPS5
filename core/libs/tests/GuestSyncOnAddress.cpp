@@ -9,11 +9,16 @@
 #include <vector>
 
 extern "C" {
-int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected, const KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout,
+                                         const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected,
+                                           const KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected,
+                                           const KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, const KernelUseconds* timeout,
+                                          const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected,
+                                           const KernelUseconds* timeout, const char* name);
 int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count);
 }
 
@@ -22,12 +27,17 @@ static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 static constexpr KernelUseconds FAILSAFE_TIMEOUT = 10000000;
 static constexpr auto SETTLE = std::chrono::milliseconds(100);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
-template <class TCall>
-static bool Rejects(TCall call) {
-    try { call(); }
-    catch (const std::invalid_argument&) { return true; }
+template <class TCall> static bool Rejects(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
     return false;
 }
 
@@ -114,9 +124,11 @@ static void WakeHonoursTheCountAndTheAddress() {
     Require(otherFinished.load() == 0);
 
     Require(sceKernelSyncOnAddressWake(&other, 1) == SCE_OK);
-    for (auto& waiter : waiters) waiter.join();
+    for (auto& waiter : waiters)
+        waiter.join();
     otherWaiter.join();
-    for (const int result : results) Require(result == SCE_OK);
+    for (const int result : results)
+        Require(result == SCE_OK);
     Require(otherResult == SCE_OK);
 }
 
@@ -196,8 +208,10 @@ static void WakeReleasesWaitersOfEverySize() {
         Require(sceKernelSyncOnAddressWake(&value, INT_MAX) == SCE_OK);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    for (auto& waiter : waiters) waiter.join();
-    for (const int result : results) Require(result == SCE_OK);
+    for (auto& waiter : waiters)
+        waiter.join();
+    for (const int result : results)
+        Require(result == SCE_OK);
 }
 
 static void NarrowWaitsCompareOnlyTheirWidth() {
@@ -262,11 +276,15 @@ static void RejectsInvalidArguments() {
     Require(sceKernelSyncOnAddressWake(misaligned, 1) == SCE_OK);
     Require(Rejects([&] { sceKernelSyncOnAddressWait8(nullptr, 1, nullptr, nullptr); }));
     Require(Rejects([&] { sceKernelSyncOnAddressWait16(nullptr, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait16(reinterpret_cast<std::uint16_t*>(reinterpret_cast<unsigned char*>(words) + 1), 1, nullptr, nullptr); }));
+    Require(Rejects([&] {
+        sceKernelSyncOnAddressWait16(reinterpret_cast<std::uint16_t*>(reinterpret_cast<unsigned char*>(words) + 1), 1,
+                                     nullptr, nullptr);
+    }));
     Require(Rejects([&] { sceKernelSyncOnAddressWake(words, -1); }));
 
     std::uint64_t values[2] = {1, 1};
-    auto* wordAligned = reinterpret_cast<std::uint64_t*>(reinterpret_cast<unsigned char*>(values) + sizeof(std::uint32_t));
+    auto* wordAligned =
+        reinterpret_cast<std::uint64_t*>(reinterpret_cast<unsigned char*>(values) + sizeof(std::uint32_t));
     Require(Rejects([&] { sceKernelSyncOnAddressWait64(nullptr, 1, nullptr, nullptr); }));
     Require(Rejects([&] { sceKernelSyncOnAddressWait64(wordAligned, 1, nullptr, nullptr); }));
 }

@@ -18,8 +18,10 @@ namespace AgcDriver {
 
 class ProfileOutput {
 public:
-    explicit ProfileOutput(std::function<void(std::string_view)> writer, std::size_t capacity = 4 * 1024 * 1024) : writer(std::move(writer)), capacity(capacity) {
-        if (!this->writer || capacity == 0) throw std::invalid_argument("invalid profile output writer or capacity");
+    explicit ProfileOutput(std::function<void(std::string_view)> writer, std::size_t capacity = 4 * 1024 * 1024)
+        : writer(std::move(writer)), capacity(capacity) {
+        if (!this->writer || capacity == 0)
+            throw std::invalid_argument("invalid profile output writer or capacity");
         worker = std::thread([this] { run(); });
     }
 
@@ -35,9 +37,12 @@ public:
     bool Write(std::string text) {
         {
             std::lock_guard lock(mutex);
-            if (failure) std::rethrow_exception(failure);
-            if (stopping) throw std::runtime_error("profile output is stopping");
-            if (text.empty()) return true;
+            if (failure)
+                std::rethrow_exception(failure);
+            if (stopping)
+                throw std::runtime_error("profile output is stopping");
+            if (text.empty())
+                return true;
             if (text.size() > capacity - bytes) {
                 ++dropped;
                 changed.notify_one();
@@ -51,21 +56,23 @@ public:
         return true;
     }
 
-    template<typename... TArgs>
-    void Print(const char* format, TArgs... args) {
+    template <typename... TArgs> void Print(const char* format, TArgs... args) {
         std::array<char, 2048> local{};
         const auto size = std::snprintf(local.data(), local.size(), format, args...);
-        if (size < 0) throw std::runtime_error("profile output formatting failed");
+        if (size < 0)
+            throw std::runtime_error("profile output formatting failed");
         if (static_cast<std::size_t>(size) < local.size()) {
             Write(std::string(local.data(), size));
         } else if (static_cast<std::size_t>(size) > capacity) {
             std::lock_guard lock(mutex);
-            if (failure) std::rethrow_exception(failure);
+            if (failure)
+                std::rethrow_exception(failure);
             ++dropped;
             changed.notify_one();
         } else {
             std::vector<char> text(static_cast<std::size_t>(size) + 1);
-            if (std::snprintf(text.data(), text.size(), format, args...) != size) throw std::runtime_error("profile output formatting changed");
+            if (std::snprintf(text.data(), text.size(), format, args...) != size)
+                throw std::runtime_error("profile output formatting changed");
             Write(std::string(text.data(), size));
         }
     }
@@ -73,7 +80,8 @@ public:
     void Flush() {
         std::unique_lock lock(mutex);
         idle.wait(lock, [&] { return failure || (pending.empty() && !writing && dropped == 0); });
-        if (failure) std::rethrow_exception(failure);
+        if (failure)
+            std::rethrow_exception(failure);
     }
 
 private:
@@ -85,14 +93,16 @@ private:
                 {
                     std::unique_lock lock(mutex);
                     changed.wait(lock, [&] { return stopping || !pending.empty() || dropped != 0; });
-                    if (stopping && pending.empty() && dropped == 0) return;
+                    if (stopping && pending.empty() && dropped == 0)
+                        return;
                     while (!pending.empty() && (batch.empty() || batch.size() + pending.front().size() <= 65536)) {
                         consumed += pending.front().size();
                         batch += pending.front();
                         pending.pop_front();
                     }
                     if (dropped != 0) {
-                        batch += "[profile-output] dropped " + std::to_string(dropped) + " chunks because the diagnostic writer fell behind\n";
+                        batch += "[profile-output] dropped " + std::to_string(dropped) +
+                                 " chunks because the diagnostic writer fell behind\n";
                         dropped = 0;
                     }
                     writing = true;
@@ -137,8 +147,7 @@ inline ProfileOutput& ProfileOutput_nid_no_patch() {
     return output;
 }
 
-template<typename... TArgs>
-void ProfilePrint_nid_no_patch(const char* format, TArgs... args) {
+template <typename... TArgs> void ProfilePrint_nid_no_patch(const char* format, TArgs... args) {
     ProfileOutput_nid_no_patch().Print(format, args...);
 }
 

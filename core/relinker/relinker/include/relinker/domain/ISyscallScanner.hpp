@@ -10,11 +10,8 @@ class ISyscallScanner {
 public:
     virtual ~ISyscallScanner() = default;
 
-    virtual void ScanCodeSectionForSyscalls(
-        const std::vector<std::uint8_t>& codeSection,
-        FileByteOffset codeSectionOffset,
-        FileByteOffset codeSectionSize
-    ) = 0;
+    virtual void ScanCodeSectionForSyscalls(const std::vector<std::uint8_t>& codeSection,
+                                            FileByteOffset codeSectionOffset, FileByteOffset codeSectionSize) = 0;
 };
 
 }

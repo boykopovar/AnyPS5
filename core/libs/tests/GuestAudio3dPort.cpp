@@ -12,8 +12,10 @@ int APS5_VABI sceAudio3dInitialize(std::int64_t reserved);
 int APS5_VABI sceAudio3dTerminate();
 int APS5_VABI sceAudio3dPortOpen(int user_id, const Audio3dOpenParameters* parameters, std::uint32_t* id);
 int APS5_VABI sceAudio3dPortClose(std::uint32_t port_id);
-int APS5_VABI sceAudio3dPortSetAttribute(std::uint32_t port_id, std::uint32_t attribute_id, const void* attribute, std::size_t attribute_size);
-int APS5_VABI sceAudio3dPortGetQueueLevel(std::uint32_t port_id, std::uint32_t* queue_level, std::uint32_t* queue_available);
+int APS5_VABI sceAudio3dPortSetAttribute(std::uint32_t port_id, std::uint32_t attribute_id, const void* attribute,
+                                         std::size_t attribute_size);
+int APS5_VABI sceAudio3dPortGetQueueLevel(std::uint32_t port_id, std::uint32_t* queue_level,
+                                          std::uint32_t* queue_available);
 int APS5_VABI sceAudio3dPortAdvance(std::uint32_t port_id);
 int APS5_VABI sceAudio3dPortPush(std::uint32_t port_id, std::uint32_t blocking);
 }
@@ -27,13 +29,13 @@ constexpr int NOT_READY = static_cast<int>(0x80EA0007);
 constexpr int SYSTEM_USER = 0xFF;
 
 void Require(bool value, const char* message) {
-    if (value) return;
+    if (value)
+        return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
 }
 
-template <typename F>
-void RequireThrows(F f, const char* message) {
+template <typename F> void RequireThrows(F f, const char* message) {
     bool threw = false;
     try {
         f();
@@ -74,7 +76,8 @@ void CheckBeforeInitialize() {
     Require(sceAudio3dPortAdvance(0) == INVALID_PORT, "advance needs an open port");
     Require(sceAudio3dPortPush(0, 0) == INVALID_PORT, "push needs an open port");
     float value = 0.0f;
-    Require(sceAudio3dPortSetAttribute(0, 0x10001, &value, sizeof(value)) == INVALID_PORT, "set attribute needs an open port");
+    Require(sceAudio3dPortSetAttribute(0, 0x10001, &value, sizeof(value)) == INVALID_PORT,
+            "set attribute needs an open port");
     Require(sceAudio3dInitialize(0) == 0, "initialize");
     RequireThrows([] { sceAudio3dInitialize(0); }, "repeated initialize must throw");
 }
@@ -99,8 +102,18 @@ void CheckOpenParameters() {
     rejects([](auto& p) { p.max_objects = 0; }, "zero objects");
     rejects([](auto& p) { p.queue_depth = 0; }, "zero queue depth");
     rejects([](auto& p) { p.buffer_mode = 3; }, "buffer mode above 2");
-    rejects([](auto& p) { p.size_this = 0x28; p.num_beds = 4; }, "4 beds");
-    rejects([](auto& p) { p.size_this = 0x28; p.num_beds = 1; }, "1 bed");
+    rejects(
+        [](auto& p) {
+            p.size_this = 0x28;
+            p.num_beds = 4;
+        },
+        "4 beds");
+    rejects(
+        [](auto& p) {
+            p.size_this = 0x28;
+            p.num_beds = 1;
+        },
+        "1 bed");
     auto throws = [&](auto change, const char* message) {
         Audio3dOpenParameters parameters = defaults;
         change(parameters);
@@ -109,7 +122,12 @@ void CheckOpenParameters() {
     throws([](auto& p) { p.size_this = 0x10; }, "0x10 parameters select buffer mode 0");
     throws([](auto& p) { p.size_this = 0x18; }, "0x18 parameters select buffer mode 1");
     throws([](auto& p) { p.buffer_mode = 1; }, "buffer mode 1");
-    throws([](auto& p) { p.size_this = 0x28; p.num_beds = 3; }, "3 beds");
+    throws(
+        [](auto& p) {
+            p.size_this = 0x28;
+            p.num_beds = 3;
+        },
+        "3 beds");
 }
 
 void CheckOpenClose() {

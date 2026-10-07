@@ -34,6 +34,7 @@ struct _Unwind_Exception {
 struct _Unwind_Context;
 
 using _Unwind_Trace_Fn = _Unwind_Reason_Code (*)(_Unwind_Context*, void*);
-using _Unwind_Stop_Fn = _Unwind_Reason_Code (*)(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*, void*);
+using _Unwind_Stop_Fn = _Unwind_Reason_Code (*)(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*,
+                                                _Unwind_Context*, void*);
 
 #endif

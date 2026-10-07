@@ -44,7 +44,8 @@ std::uintptr_t AlignUp(std::uintptr_t value, std::uintptr_t alignment) {
 
 Arena* Find(void* handle) {
     const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
-    if (found != arenas.end()) return found->second.get();
+    if (found != arenas.end())
+        return found->second.get();
     Error(22);
     return nullptr;
 }
@@ -59,7 +60,8 @@ void RemoveFree(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
 }
 
 void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
-    if (!arena) return nullptr;
+    if (!arena)
+        return nullptr;
     alignment = std::max<std::size_t>(alignment, Granule);
     const auto needed = AlignUp(std::max<std::size_t>(size, 1), Granule);
     if (needed < size || needed > std::numeric_limits<std::uintptr_t>::max() - alignment) {
@@ -71,12 +73,15 @@ void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
         const auto chunk = arena->chunks.find(start);
         const auto end = chunk->second.end;
         const auto aligned = AlignUp(start, alignment);
-        if (aligned < start || aligned > end || end - aligned < needed) continue;
+        if (aligned < start || aligned > end || end - aligned < needed)
+            continue;
         RemoveFree(*arena, chunk);
         arena->chunks.erase(chunk);
-        if (aligned > start) AddFree(*arena, start, aligned);
+        if (aligned > start)
+            AddFree(*arena, start, aligned);
         const auto finish = aligned + needed;
-        if (finish < end) AddFree(*arena, finish, end);
+        if (finish < end)
+            AddFree(*arena, finish, end);
         arena->chunks[aligned] = {finish, true, size};
         arena->inUse += needed;
         arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
@@ -89,7 +94,8 @@ void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
 bool FindUsed(Arena* arena, const void* pointer, std::map<std::uintptr_t, Chunk>::iterator& chunk) {
     if (arena && pointer) {
         chunk = arena->chunks.find(reinterpret_cast<std::uintptr_t>(pointer));
-        if (chunk != arena->chunks.end() && chunk->second.used) return true;
+        if (chunk != arena->chunks.end() && chunk->second.used)
+            return true;
     }
     Error(22);
     return false;
@@ -119,9 +125,11 @@ void Release(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
 
 bool InsideAllocation(const Arena& arena, std::uintptr_t start, std::size_t size) {
     auto found = arena.chunks.upper_bound(start);
-    if (found == arena.chunks.begin()) return false;
+    if (found == arena.chunks.begin())
+        return false;
     --found;
-    return found->second.used && size <= found->second.end - start && start - found->first <= found->second.end - found->first - size;
+    return found->second.used && size <= found->second.end - start &&
+           start - found->first <= found->second.end - found->first - size;
 }
 
 struct MallocManagedSize {
@@ -136,10 +144,12 @@ struct MallocManagedSize {
 static_assert(sizeof(MallocManagedSize) == 0x28);
 
 int FillStats(void* handle, MallocManagedSize* stats) {
-    if (!stats || stats->size < sizeof(MallocManagedSize)) return 22;
+    if (!stats || stats->size < sizeof(MallocManagedSize))
+        return 22;
     std::lock_guard lock(arenaMutex);
     auto* arena = Find(handle);
-    if (!arena) return 22;
+    if (!arena)
+        return 22;
     const auto system = arena->end - arena->base;
     stats->maxSystemSize = system;
     stats->currentSystemSize = system;
@@ -151,8 +161,7 @@ int FillStats(void* handle, MallocManagedSize* stats) {
 }
 
 extern "C" {
-void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char* name, void* base,
-                                              std::size_t size, unsigned flags) {
+void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags) {
     (void)name;
     const auto start = reinterpret_cast<std::uintptr_t>(base);
     if (!base || (start & (Granule - 1)) || size < ArenaHeaderBytes + 2 * Granule ||
@@ -179,7 +188,8 @@ void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char* name, void* base,
 
 int APS5_VABI sceLibcMspaceDestroy_nid_postfix(void* handle) {
     std::lock_guard lock(arenaMutex);
-    if (arenas.erase(reinterpret_cast<std::uintptr_t>(handle)) != 0) return 0;
+    if (arenas.erase(reinterpret_cast<std::uintptr_t>(handle)) != 0)
+        return 0;
     Error(22);
     return -1;
 }
@@ -190,11 +200,13 @@ void* APS5_VABI sceLibcMspaceMalloc_nid_postfix(void* handle, std::size_t size) 
 }
 
 void APS5_VABI sceLibcMspaceFree_nid_postfix(void* handle, void* pointer) {
-    if (!pointer) return;
+    if (!pointer)
+        return;
     std::lock_guard lock(arenaMutex);
     auto* arena = Find(handle);
     std::map<std::uintptr_t, Chunk>::iterator chunk;
-    if (FindUsed(arena, pointer, chunk)) Release(*arena, chunk);
+    if (FindUsed(arena, pointer, chunk))
+        Release(*arena, chunk);
 }
 
 void* APS5_VABI sceLibcMspaceCalloc_nid_postfix(void* handle, std::size_t count, std::size_t size) {
@@ -204,17 +216,23 @@ void* APS5_VABI sceLibcMspaceCalloc_nid_postfix(void* handle, std::size_t count,
     }
     std::lock_guard lock(arenaMutex);
     void* result = Allocate(Find(handle), count * size, Granule);
-    if (result) std::memset(result, 0, count * size);
+    if (result)
+        std::memset(result, 0, count * size);
     return result;
 }
 
 void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, std::size_t size) {
     std::lock_guard lock(arenaMutex);
     auto* arena = Find(handle);
-    if (!pointer) return Allocate(arena, size, Granule);
+    if (!pointer)
+        return Allocate(arena, size, Granule);
     std::map<std::uintptr_t, Chunk>::iterator chunk;
-    if (!FindUsed(arena, pointer, chunk)) return nullptr;
-    if (!size) { Release(*arena, chunk); return nullptr; }
+    if (!FindUsed(arena, pointer, chunk))
+        return nullptr;
+    if (!size) {
+        Release(*arena, chunk);
+        return nullptr;
+    }
     const auto needed = AlignUp(size, Granule);
     const auto start = chunk->first;
     const auto capacity = chunk->second.end - start;
@@ -223,12 +241,14 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, st
         return pointer;
     }
     const auto next = std::next(chunk);
-    if (next != arena->chunks.end() && !next->second.used && next->first == chunk->second.end && next->second.end - start >= needed) {
+    if (next != arena->chunks.end() && !next->second.used && next->first == chunk->second.end &&
+        next->second.end - start >= needed) {
         const auto nextEnd = next->second.end;
         RemoveFree(*arena, next);
         arena->chunks.erase(next);
         const auto finish = start + needed;
-        if (finish < nextEnd) AddFree(*arena, finish, nextEnd);
+        if (finish < nextEnd)
+            AddFree(*arena, finish, nextEnd);
         arena->inUse += needed - capacity;
         arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
         arena->chunks[start] = {finish, true, size};
@@ -243,14 +263,17 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, st
     return result;
 }
 
-int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void* handle, void** result,
-                                                   std::size_t alignment, std::size_t size) {
-    if (!result || alignment < sizeof(void*) || (alignment & (alignment - 1))) return 22;
+int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void* handle, void** result, std::size_t alignment,
+                                                     std::size_t size) {
+    if (!result || alignment < sizeof(void*) || (alignment & (alignment - 1)))
+        return 22;
     std::lock_guard lock(arenaMutex);
     auto* arena = Find(handle);
-    if (!arena) return 22;
+    if (!arena)
+        return 22;
     void* pointer = Allocate(arena, size, alignment);
-    if (!pointer) return 12;
+    if (!pointer)
+        return 12;
     *result = pointer;
     return 0;
 }
@@ -264,7 +287,8 @@ void* APS5_VABI sceLibcMspaceMemalign_nid_postfix(void* handle, std::size_t alig
     return Allocate(Find(handle), size, alignment);
 }
 
-void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t size, std::size_t alignment) {
+void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t size,
+                                                      std::size_t alignment) {
     if (alignment == 0 || (alignment & (alignment - 1))) {
         Error(22);
         return nullptr;
@@ -272,10 +296,15 @@ void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointe
     const auto effective = std::max<std::size_t>(alignment, 16);
     std::lock_guard lock(arenaMutex);
     auto* arena = Find(handle);
-    if (!pointer) return Allocate(arena, size, effective);
+    if (!pointer)
+        return Allocate(arena, size, effective);
     std::map<std::uintptr_t, Chunk>::iterator chunk;
-    if (!FindUsed(arena, pointer, chunk)) return nullptr;
-    if (!size) { Release(*arena, chunk); return nullptr; }
+    if (!FindUsed(arena, pointer, chunk))
+        return nullptr;
+    if (!size) {
+        Release(*arena, chunk);
+        return nullptr;
+    }
     const auto start = chunk->first;
     if (AlignUp(size, Granule) <= chunk->second.end - start && (start & (effective - 1)) == 0) {
         chunk->second.requested = size;
@@ -299,14 +328,17 @@ int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManag
 }
 
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer) {
-    if (!pointer) return 0;
+    if (!pointer)
+        return 0;
     std::lock_guard lock(arenaMutex);
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     for (auto arena = arenas.upper_bound(address); arena != arenas.begin();) {
         --arena;
-        if (address >= arena->second->end) continue;
+        if (address >= arena->second->end)
+            continue;
         const auto found = arena->second->chunks.find(address);
-        if (found != arena->second->chunks.end() && found->second.used) return found->second.end - found->first;
+        if (found != arena->second->chunks.end() && found->second.used)
+            return found->second.end - found->first;
     }
     Error(22);
     return 0;

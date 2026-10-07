@@ -19,14 +19,16 @@ constexpr int InvalidMode = static_cast<int>(0x80bc0024u);
 constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
 
 static void Require(bool value, const char* message) {
-    if (value) return;
+    if (value)
+        return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
 }
 
 static void RequireUntouched(const KeyboardInfo& info) {
     const auto* bytes = reinterpret_cast<const unsigned char*>(&info);
-    for (size_t i = 0; i < sizeof(info); ++i) Require(bytes[i] == 0xa5, "keyboard info written");
+    for (size_t i = 0; i < sizeof(info); ++i)
+        Require(bytes[i] == 0xa5, "keyboard info written");
 }
 
 static void CheckClosed() {

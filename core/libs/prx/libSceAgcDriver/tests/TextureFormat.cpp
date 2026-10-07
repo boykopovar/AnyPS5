@@ -16,7 +16,8 @@ VkFormat unsampledFormats[2]{};
 
 void unsampledFormatProperties(VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
     *properties = {};
-    if (format != unsampledFormats[0] && format != unsampledFormats[1]) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    if (format != unsampledFormats[0] && format != unsampledFormats[1])
+        properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 }
 
 std::uint32_t decodedWithout(VkFormat first = VK_FORMAT_UNDEFINED, VkFormat second = VK_FORMAT_UNDEFINED) {
@@ -29,27 +30,40 @@ void srgbDecodeTests() {
     constexpr std::uint32_t srgb8 = 1u;
     constexpr std::uint32_t srgb8_8 = 2u;
     Require(decodedWithout() == 0u, "a device that samples every sRGB format needs no shader decode");
-    Require(decodedWithout(VK_FORMAT_R8G8_SRGB) == srgb8_8, "a device without sampled R8G8_SRGB must decode 8_8_SRGB in the shader");
-    Require(decodedWithout(VK_FORMAT_R8_SRGB) == srgb8, "a device without sampled R8_SRGB must decode 8_SRGB in the shader");
-    Require(decodedWithout(VK_FORMAT_R8_SRGB, VK_FORMAT_R8G8_SRGB) == (srgb8 | srgb8_8), "a device without either 8-bit sRGB format must decode both in the shader");
-    Require(decodedWithout(VK_FORMAT_R8G8_SRGB, VK_FORMAT_R8G8_UNORM) == 0u, "8_8_SRGB without a sampled UNORM view must not be decoded in the shader");
-    Require(decodedWithout(VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_BC1_RGBA_SRGB_BLOCK) == 0u, "only the 8 and 8_8 sRGB formats may be decoded in the shader");
+    Require(decodedWithout(VK_FORMAT_R8G8_SRGB) == srgb8_8,
+            "a device without sampled R8G8_SRGB must decode 8_8_SRGB in the shader");
+    Require(decodedWithout(VK_FORMAT_R8_SRGB) == srgb8,
+            "a device without sampled R8_SRGB must decode 8_SRGB in the shader");
+    Require(decodedWithout(VK_FORMAT_R8_SRGB, VK_FORMAT_R8G8_SRGB) == (srgb8 | srgb8_8),
+            "a device without either 8-bit sRGB format must decode both in the shader");
+    Require(decodedWithout(VK_FORMAT_R8G8_SRGB, VK_FORMAT_R8G8_UNORM) == 0u,
+            "8_8_SRGB without a sampled UNORM view must not be decoded in the shader");
+    Require(decodedWithout(VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_BC1_RGBA_SRGB_BLOCK) == 0u,
+            "only the 8 and 8_8 sRGB formats may be decoded in the shader");
     Context context{};
-    Require(SampledTextureFormat(context, 129) == VK_FORMAT_R8G8_SRGB && SampledTextureFormat(context, 128) == VK_FORMAT_R8_SRGB, "sRGB textures must keep their sRGB views without shader decode");
+    Require(SampledTextureFormat(context, 129) == VK_FORMAT_R8G8_SRGB &&
+                SampledTextureFormat(context, 128) == VK_FORMAT_R8_SRGB,
+            "sRGB textures must keep their sRGB views without shader decode");
     context.srgbDecodeFormats = srgb8_8;
-    Require(SampledTextureFormat(context, 129) == VK_FORMAT_R8G8_UNORM, "8_8_SRGB decoded in the shader must be viewed as R8G8_UNORM");
-    Require(SampledTextureFormat(context, 128) == VK_FORMAT_R8_SRGB, "8_SRGB must keep its sRGB view when only 8_8_SRGB is decoded in the shader");
+    Require(SampledTextureFormat(context, 129) == VK_FORMAT_R8G8_UNORM,
+            "8_8_SRGB decoded in the shader must be viewed as R8G8_UNORM");
+    Require(SampledTextureFormat(context, 128) == VK_FORMAT_R8_SRGB,
+            "8_SRGB must keep its sRGB view when only 8_8_SRGB is decoded in the shader");
     context.srgbDecodeFormats = srgb8 | srgb8_8;
-    Require(SampledTextureFormat(context, 128) == VK_FORMAT_R8_UNORM, "8_SRGB decoded in the shader must be viewed as R8_UNORM");
-    Require(SampledTextureFormat(context, 130) == VK_FORMAT_R8G8B8A8_SRGB && SampledTextureFormat(context, 14) == VK_FORMAT_R8G8_UNORM && SampledTextureFormat(context, 170) == VK_FORMAT_BC1_RGBA_SRGB_BLOCK, "formats without a shader decode must keep their views");
+    Require(SampledTextureFormat(context, 128) == VK_FORMAT_R8_UNORM,
+            "8_SRGB decoded in the shader must be viewed as R8_UNORM");
+    Require(SampledTextureFormat(context, 130) == VK_FORMAT_R8G8B8A8_SRGB &&
+                SampledTextureFormat(context, 14) == VK_FORMAT_R8G8_UNORM &&
+                SampledTextureFormat(context, 170) == VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
+            "formats without a shader decode must keep their views");
 }
 
-template<typename TAction>
-void reject(TAction action, std::string_view reason) {
+template <typename TAction> void reject(TAction action, std::string_view reason) {
     try {
         action();
     } catch (const std::runtime_error& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected format test error: ") + error.what());
+        Require(std::string_view(error.what()).find(reason) != std::string_view::npos,
+                std::string("unexpected format test error: ") + error.what());
         return;
     }
     throw std::runtime_error(std::string("expected texture format rejection: ") + std::string(reason));
@@ -65,11 +79,15 @@ void convertedDccClearTests() {
         return TextureClearKeys(resource, keys.size() * 256u);
     };
     for (const std::uint32_t format : {30u, 34u}) {
-        reject([&] { read(format, 0x40); }, "DCC clear code 0001 of converted texture format " + std::to_string(format));
-        reject([&] { read(format, 0x80); }, "DCC clear code 1110 of converted texture format " + std::to_string(format));
-        Require(read(format, 0x00) == DccKeys::Clear0000 && read(format, 0xc0) == DccKeys::Clear1111, "converted texture format " + std::to_string(format) + " must keep its 0000 and 1111 DCC clear codes");
+        reject([&] { read(format, 0x40); },
+               "DCC clear code 0001 of converted texture format " + std::to_string(format));
+        reject([&] { read(format, 0x80); },
+               "DCC clear code 1110 of converted texture format " + std::to_string(format));
+        Require(read(format, 0x00) == DccKeys::Clear0000 && read(format, 0xc0) == DccKeys::Clear1111,
+                "converted texture format " + std::to_string(format) + " must keep its 0000 and 1111 DCC clear codes");
     }
-    Require(read(20, 0x40) == DccKeys::Clear0001 && read(20, 0x80) == DccKeys::Clear1110, "format 20 must keep its 0001 and 1110 DCC clear codes");
+    Require(read(20, 0x40) == DccKeys::Clear0001 && read(20, 0x80) == DccKeys::Clear1110,
+            "format 20 must keep its 0001 and 1110 DCC clear codes");
 }
 
 }
@@ -93,7 +111,8 @@ void RunTextureFormatTests() {
     Require(ResolveTextureFormat(77) == VK_FORMAT_R32G32B32A32_SFLOAT, "format 77 must resolve to R32G32B32A32_SFLOAT");
     Require(BytesPerElement(77) == 16u, "format 77 must be sixteen bytes wide");
 
-    Require(ResolveTextureFormat(169) == VK_FORMAT_BC1_RGBA_UNORM_BLOCK, "format 169 must resolve to BC1_RGBA_UNORM_BLOCK");
+    Require(ResolveTextureFormat(169) == VK_FORMAT_BC1_RGBA_UNORM_BLOCK,
+            "format 169 must resolve to BC1_RGBA_UNORM_BLOCK");
     Require(IsBlockCompressed(169), "format 169 must be block compressed");
     Require(BytesPerElement(169) == 8u, "BC1 blocks must be eight bytes");
     Require(BlockWidth(169) == 4u && BlockHeight(169) == 4u, "BC1 blocks must be four by four texels");
@@ -106,9 +125,12 @@ void RunTextureFormatTests() {
     Require(ResolveTextureFormat(30) == ResolveTextureFormat(20), "format 30 must remap to format 20");
     Require(BytesPerElement(30) == 4u, "remapped format 30 must be four bytes wide");
     for (std::uint32_t format = 0; format < 512u; ++format) {
-        const auto remapped = static_cast<std::uint32_t>(ShaderRecompiler::RemapTextureFormat(static_cast<ShaderRecompiler::IrBufferFormat>(format)));
-        if (remapped == format) continue;
-        Require(ResolveTextureFormat(format) == ResolveTextureFormat(remapped), "guest format " + std::to_string(format) + " must resolve like the format the recompiler remaps it to");
+        const auto remapped = static_cast<std::uint32_t>(
+            ShaderRecompiler::RemapTextureFormat(static_cast<ShaderRecompiler::IrBufferFormat>(format)));
+        if (remapped == format)
+            continue;
+        Require(ResolveTextureFormat(format) == ResolveTextureFormat(remapped),
+                "guest format " + std::to_string(format) + " must resolve like the format the recompiler remaps it to");
     }
 
     reject([] { ResolveTextureFormat(0); }, "unsupported guest texture format");

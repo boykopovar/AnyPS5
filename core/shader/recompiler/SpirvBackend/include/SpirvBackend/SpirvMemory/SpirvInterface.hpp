@@ -11,7 +11,8 @@ namespace ShaderRecompiler {
 void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const BindingAllocationResult& bindings);
 void EmitModuleHeader(SpirvEmitterState& state, const BindingAllocationResult& bindings);
 void DefineModule(SpirvEmitterState& state);
-std::uint32_t DefineInterfaceVariable(SpirvEmitterState& state, std::uint32_t type, std::uint32_t storage, const char* name);
+std::uint32_t DefineInterfaceVariable(SpirvEmitterState& state, std::uint32_t type, std::uint32_t storage,
+                                      const char* name);
 std::uint32_t ExecutionModelForStage(IrShaderStage stage);
 
 std::uint32_t GlslStd450(SpirvEmitterState& state);

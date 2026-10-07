@@ -23,5 +23,4 @@ int APS5_VABI sceNpTrophy2AbortHandle(int handle) {
     (void)handle;
     return SCE_NP_TROPHY2_OK;
 }
-
 }

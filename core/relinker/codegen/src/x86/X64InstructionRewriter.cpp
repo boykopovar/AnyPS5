@@ -10,18 +10,14 @@ namespace Codegen {
 
 using namespace X64OpcodeConstants;
 
-X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstruction(
-    const std::uint8_t* data,
-    std::size_t length
-) {
+X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstruction(const std::uint8_t* data,
+                                                                                  std::size_t length) {
     std::size_t pos = 0;
 
     while (pos < length) {
         const std::uint8_t b = data[pos];
-        if ((b >= RexMin && b <= RexMax) ||
-            b == PrefixLock || b == PrefixRepne || b == PrefixRep ||
-            b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs ||
-            b == PrefixSegEs || b == PrefixSegFs || b == PrefixSegGs ||
+        if ((b >= RexMin && b <= RexMax) || b == PrefixLock || b == PrefixRepne || b == PrefixRep || b == PrefixSegCs ||
+            b == PrefixSegSs || b == PrefixSegDs || b == PrefixSegEs || b == PrefixSegFs || b == PrefixSegGs ||
             b == PrefixOperandSize || b == PrefixAddressSize) {
             pos += 1;
             continue;
@@ -89,11 +85,9 @@ X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstructio
 }
 
 std::int32_t X64InstructionRewriter::ReadInt32(const std::uint8_t* data) {
-    return static_cast<std::int32_t>(
-        static_cast<std::uint32_t>(data[0]) |
-        (static_cast<std::uint32_t>(data[1]) << 8) |
-        (static_cast<std::uint32_t>(data[2]) << 16) |
-        (static_cast<std::uint32_t>(data[3]) << 24));
+    return static_cast<std::int32_t>(static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8) |
+                                     (static_cast<std::uint32_t>(data[2]) << 16) |
+                                     (static_cast<std::uint32_t>(data[3]) << 24));
 }
 
 void X64InstructionRewriter::WriteInt32(std::uint8_t* data, std::int32_t value) {
@@ -104,14 +98,9 @@ void X64InstructionRewriter::WriteInt32(std::uint8_t* data, std::int32_t value) 
     data[3] = static_cast<std::uint8_t>((unsignedValue >> 24) & 0xFF);
 }
 
-std::int64_t X64InstructionRewriter::AdjustedDelta(
-    std::int64_t instrPosition,
-    std::int64_t targetPosition,
-    std::int64_t cutStart,
-    std::int64_t cutEnd,
-    std::int64_t sliceSize,
-    std::int64_t delta
-) {
+std::int64_t X64InstructionRewriter::AdjustedDelta(std::int64_t instrPosition, std::int64_t targetPosition,
+                                                   std::int64_t cutStart, std::int64_t cutEnd, std::int64_t sliceSize,
+                                                   std::int64_t delta) {
     const bool instrShifts = instrPosition >= cutEnd && instrPosition < sliceSize;
     const bool targetShifts = targetPosition >= cutEnd && targetPosition < sliceSize;
 
@@ -122,10 +111,8 @@ std::int64_t X64InstructionRewriter::AdjustedDelta(
     return instrShifts ? -delta : delta;
 }
 
-RewriteResult X64InstructionRewriter::Rewrite(
-    const std::vector<std::uint8_t>& codeSection,
-    const RewriteRequest& request
-) const {
+RewriteResult X64InstructionRewriter::Rewrite(const std::vector<std::uint8_t>& codeSection,
+                                              const RewriteRequest& request) const {
     const auto offset = static_cast<std::size_t>(request.Offset);
 
     if (offset > codeSection.size()) {
@@ -169,9 +156,8 @@ RewriteResult X64InstructionRewriter::Rewrite(
             if (site.Kind == ReferenceKind::Rel8Branch) {
                 const auto disp = static_cast<std::int8_t>(codeSection[fieldPosition]);
                 const std::int64_t targetPosition = instrEnd + disp;
-                const std::int64_t adjust = AdjustedDelta(
-                    matchOffset, targetPosition, cutStart, cutEnd,
-                    static_cast<std::int64_t>(codeSection.size()), delta);
+                const std::int64_t adjust = AdjustedDelta(matchOffset, targetPosition, cutStart, cutEnd,
+                                                          static_cast<std::int64_t>(codeSection.size()), delta);
 
                 if (adjust != 0) {
                     const std::int64_t newDisp = static_cast<std::int64_t>(disp) + adjust;
@@ -182,16 +168,15 @@ RewriteResult X64InstructionRewriter::Rewrite(
                     }
 
                     const std::int64_t newMatchOffset = matchOffset < cutStart ? matchOffset : matchOffset + delta;
-                    const auto newFieldPosition = static_cast<std::size_t>(
-                        newMatchOffset + static_cast<std::int64_t>(site.FieldOffset));
+                    const auto newFieldPosition =
+                        static_cast<std::size_t>(newMatchOffset + static_cast<std::int64_t>(site.FieldOffset));
                     rewritten[newFieldPosition] = static_cast<std::uint8_t>(static_cast<std::int8_t>(newDisp));
                 }
             } else {
                 const auto disp = ReadInt32(codeSection.data() + fieldPosition);
                 const std::int64_t targetPosition = instrEnd + disp;
-                const std::int64_t adjust = AdjustedDelta(
-                    matchOffset, targetPosition, cutStart, cutEnd,
-                    static_cast<std::int64_t>(codeSection.size()), delta);
+                const std::int64_t adjust = AdjustedDelta(matchOffset, targetPosition, cutStart, cutEnd,
+                                                          static_cast<std::int64_t>(codeSection.size()), delta);
 
                 if (adjust != 0) {
                     const std::int64_t newDisp = static_cast<std::int64_t>(disp) + adjust;
@@ -202,8 +187,8 @@ RewriteResult X64InstructionRewriter::Rewrite(
                     }
 
                     const std::int64_t newMatchOffset = matchOffset < cutStart ? matchOffset : matchOffset + delta;
-                    const auto newFieldPosition = static_cast<std::size_t>(
-                        newMatchOffset + static_cast<std::int64_t>(site.FieldOffset));
+                    const auto newFieldPosition =
+                        static_cast<std::size_t>(newMatchOffset + static_cast<std::int64_t>(site.FieldOffset));
                     WriteInt32(rewritten.data() + newFieldPosition, static_cast<std::int32_t>(newDisp));
                 }
             }

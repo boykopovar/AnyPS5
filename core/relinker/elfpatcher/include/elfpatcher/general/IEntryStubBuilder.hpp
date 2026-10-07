@@ -10,10 +10,7 @@ class IEntryStubBuilder {
 public:
     virtual ~IEntryStubBuilder() = default;
 
-    virtual std::vector<std::uint8_t> BuildEntryStub(
-        std::uint64_t stubVaddr,
-        std::uint64_t realEntryVaddr
-    ) const = 0;
+    virtual std::vector<std::uint8_t> BuildEntryStub(std::uint64_t stubVaddr, std::uint64_t realEntryVaddr) const = 0;
 };
 
 }

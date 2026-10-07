@@ -24,12 +24,13 @@ int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_t unknown, const char* typeName, const char* what) {
+int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_t unknown, const char* typeName,
+                                                  const char* what) {
     (void)unknown;
-    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception, typeName ? typeName : "(unknown)", what ? ", what(): " : "", what ? what : "");
+    std::fprintf(stderr, "[coredump] uncaught C++ exception %p of type %s%s%s\n", exception,
+                 typeName ? typeName : "(unknown)", what ? ", what(): " : "", what ? what : "");
     return 0;
 }
-
 
 int APS5_VABI sceCoredumpAttachUserFile(void) {
     NotImplemented_nid_no_patch("5nc2gdLNsok");

@@ -24,14 +24,12 @@ using GuestRudpEventHandler = void(APS5_VABI*)(int, int, int, void*);
 std::mutex g_mutex;
 bool g_inited = false;
 int g_next_ctx = 0;
-std::map<int, bool> g_ctx;  // id -> bound
+std::map<int, bool> g_ctx; // id -> bound
 GuestRudpEventHandler g_handler = nullptr;
 void* g_handler_arg = nullptr;
 
-bool valid_ctx(int ctx) {
-    return g_ctx.count(ctx) != 0;
-}
-}  // namespace
+bool valid_ctx(int ctx) { return g_ctx.count(ctx) != 0; }
+} // namespace
 
 extern "C" {
 
@@ -143,7 +141,7 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, uint32_t size) {
         return RUDP_ERROR_INVALID_CONTEXT_ID;
     }
     if (status != nullptr && size != 0) {
-        std::memset(status, 0, size);  // state 0 = idle, nothing pending
+        std::memset(status, 0, size); // state 0 = idle, nothing pending
     }
     return 0;
 }

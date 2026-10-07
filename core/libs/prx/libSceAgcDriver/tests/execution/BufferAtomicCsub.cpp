@@ -29,15 +29,16 @@ alignas(256) std::array<std::uint32_t, MaxThreads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, MaxThreads * Results + SharedWords> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 35> Code{
-    0x34020084, 0x34040085, 0xe0301000, 0x80000401, 0xe0301004, 0x80000501, 0xe0301008, 0x80000601,
-    0xbf8c3f70, 0x7e140280, 0x461414c1, 0x481414c1, 0x7e0e0304, 0xe0d05000, 0x80010702, 0x7e100304,
-    0xbefe03ff, 0x55555555, 0xe0d05004, 0x80010802, 0xbefe03c1, 0x7e120305, 0xe0d04800, 0x80010900,
-    0x7e160306, 0xe0d04804, 0x80010b00, 0xbf8c3f70, 0xe0701008, 0x80010702, 0xe070100c, 0x80010802,
-    0xe0701010, 0x80010a02, 0xbf810000,
+    0x34020084, 0x34040085, 0xe0301000, 0x80000401, 0xe0301004, 0x80000501, 0xe0301008, 0x80000601, 0xbf8c3f70,
+    0x7e140280, 0x461414c1, 0x481414c1, 0x7e0e0304, 0xe0d05000, 0x80010702, 0x7e100304, 0xbefe03ff, 0x55555555,
+    0xe0d05004, 0x80010802, 0xbefe03c1, 0x7e120305, 0xe0d04800, 0x80010900, 0x7e160306, 0xe0d04804, 0x80010b00,
+    0xbf8c3f70, 0xe0701008, 0x80010702, 0xe070100c, 0x80010802, 0xe0701010, 0x80010a02, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 3> NoReturnCode{
-    0xe0d01000, 0x80010702, 0xbf810000,
+    0xe0d01000,
+    0x80010702,
+    0xbf810000,
 };
 
 struct Workgroup {
@@ -57,14 +58,27 @@ struct Row {
 };
 
 constexpr std::array<Row, 16> Edges{{
-    {0u, 0u}, {0u, 1u}, {1u, 0u}, {1u, 1u},
-    {5u, 7u}, {7u, 5u}, {0xffffffffu, 1u}, {1u, 0xffffffffu},
-    {0x80000000u, 0x7fffffffu}, {0x7fffffffu, 0x80000000u}, {0xffffffffu, 0xffffffffu}, {0x80000000u, 0x80000000u},
-    {0x80000001u, 0x80000000u}, {0u, 0xffffffffu}, {0xffffffffu, 0u}, {0x12345678u, 0x12345679u},
+    {0u, 0u},
+    {0u, 1u},
+    {1u, 0u},
+    {1u, 1u},
+    {5u, 7u},
+    {7u, 5u},
+    {0xffffffffu, 1u},
+    {1u, 0xffffffffu},
+    {0x80000000u, 0x7fffffffu},
+    {0x7fffffffu, 0x80000000u},
+    {0xffffffffu, 0xffffffffu},
+    {0x80000000u, 0x80000000u},
+    {0x80000001u, 0x80000000u},
+    {0u, 0xffffffffu},
+    {0xffffffffu, 0u},
+    {0x12345678u, 0x12345679u},
 }};
 
 Row RowOf(std::uint32_t tid) {
-    if (tid < Edges.size()) return Edges[tid];
+    if (tid < Edges.size())
+        return Edges[tid];
     const std::uint32_t memory = (tid + 1u) * 0x9e3779b9u;
     const std::uint32_t subtrahend = (tid + 1u) * 0x85ebca6bu;
     return {memory, (tid & 3u) == 0u ? subtrahend >> 8u : subtrahend};
@@ -79,7 +93,8 @@ std::uint32_t SubtractClamped(std::uint32_t memory, std::uint32_t subtrahend) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -97,15 +112,17 @@ std::vector<std::uint32_t> UserData() {
     return userData;
 }
 
-ShaderRecompiler::RecompileResult Recompile(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const Workgroup& workgroup, std::span<const std::uint32_t> userData) {
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{workgroup.threads, 1, 1}, 0, {false, false, false}, false, 1};
+ShaderRecompiler::RecompileResult Recompile(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code,
+                                            const Workgroup& workgroup, std::span<const std::uint32_t> userData) {
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{
+        {workgroup.threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {workgroup.waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
 }
@@ -131,7 +148,8 @@ void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
 }
 
 void Check(const Workgroup& workgroup) {
-    constexpr std::array<const char*, 4> names{"memory", "memory under a partial exec mask", "returned value", "data register under a partial exec mask"};
+    constexpr std::array<const char*, 4> names{"memory", "memory under a partial exec mask", "returned value",
+                                               "data register under a partial exec mask"};
     std::uint32_t partialTotal = 0;
     std::uint32_t exhaustedTotal = 0;
     for (std::uint32_t tid = 0; tid < MaxThreads; ++tid) {
@@ -139,9 +157,11 @@ void Check(const Workgroup& workgroup) {
         const auto* out = &Output[tid * Results];
         const auto where = "buffer atomic csub: " + workgroup.Name() + " thread " + std::to_string(tid);
         if (tid >= workgroup.threads) {
-            Require(out[0] == row.memory && out[1] == row.memory, where + " is outside the workgroup but its memory changed");
+            Require(out[0] == row.memory && out[1] == row.memory,
+                    where + " is outside the workgroup but its memory changed");
             for (std::uint32_t j = 2; j < Results; ++j) {
-                Require(out[j] == Untouched, where + " is outside the workgroup but result " + std::to_string(j) + " was written");
+                Require(out[j] == Untouched,
+                        where + " is outside the workgroup but result " + std::to_string(j) + " was written");
             }
             continue;
         }
@@ -151,20 +171,26 @@ void Check(const Workgroup& workgroup) {
         Require(lane < workgroup.waveSize, where + " reports lane " + std::to_string(lane));
         const bool active = lane >= 32u || ((MaskedExecLo >> lane) & 1u) != 0u;
         const std::uint32_t clamped = SubtractClamped(row.memory, row.subtrahend);
-        const std::array<std::uint32_t, 4> expected{clamped, active ? clamped : row.memory, row.memory, active ? row.memory : row.subtrahend};
+        const std::array<std::uint32_t, 4> expected{clamped, active ? clamped : row.memory, row.memory,
+                                                    active ? row.memory : row.subtrahend};
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
-            Require(out[j] == expected[j], where + " lane " + std::to_string(lane) + " " + names[j] + " is " + Hex(out[j]) + ", expected " + Hex(expected[j]));
+            Require(out[j] == expected[j], where + " lane " + std::to_string(lane) + " " + names[j] + " is " +
+                                               Hex(out[j]) + ", expected " + Hex(expected[j]));
         }
         for (std::uint32_t j = Written; j < Results; ++j) {
             Require(out[j] == Untouched, where + " result " + std::to_string(j) + " was written");
         }
     }
-    const std::array<std::uint32_t, SharedWords> shared{SubtractClamped(SharedPartial, partialTotal), SubtractClamped(SharedExhausted, exhaustedTotal)};
-    constexpr std::array<const char*, SharedWords> sharedNames{"dword shared by all lanes", "dword exhausted by all lanes"};
-    Require(shared[0] != 0u && shared[1] == 0u, "buffer atomic csub: " + workgroup.Name() + " does not cover both shared outcomes");
+    const std::array<std::uint32_t, SharedWords> shared{SubtractClamped(SharedPartial, partialTotal),
+                                                        SubtractClamped(SharedExhausted, exhaustedTotal)};
+    constexpr std::array<const char*, SharedWords> sharedNames{"dword shared by all lanes",
+                                                               "dword exhausted by all lanes"};
+    Require(shared[0] != 0u && shared[1] == 0u,
+            "buffer atomic csub: " + workgroup.Name() + " does not cover both shared outcomes");
     for (std::uint32_t j = 0; j < SharedWords; ++j) {
         const auto actual = Output[MaxThreads * Results + j];
-        Require(actual == shared[j], "buffer atomic csub: " + workgroup.Name() + " " + sharedNames[j] + " is " + Hex(actual) + ", expected " + Hex(shared[j]));
+        Require(actual == shared[j], "buffer atomic csub: " + workgroup.Name() + " " + sharedNames[j] + " is " +
+                                         Hex(actual) + ", expected " + Hex(shared[j]));
     }
 }
 
@@ -177,7 +203,8 @@ void CheckNoReturnRejected(const AgcDriver::VulkanDevice& device) {
     } catch (const std::exception& error) {
         failure = error.what();
     }
-    Require(failure.find(reason) != std::string::npos, "buffer atomic csub: expected '" + reason + "', got '" + failure + "'");
+    Require(failure.find(reason) != std::string::npos,
+            "buffer atomic csub: expected '" + reason + "', got '" + failure + "'");
 }
 
 }
@@ -185,7 +212,8 @@ void CheckNoReturnRejected(const AgcDriver::VulkanDevice& device) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         for (const auto& workgroup : Workgroups) {
             Run(*device, workgroup);
             Check(workgroup);

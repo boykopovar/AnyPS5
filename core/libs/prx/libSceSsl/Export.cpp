@@ -31,14 +31,16 @@ extern "C" {
 
 int APS5_VABI sceSslFreeCaCerts(int ssl_ctx_id, void* ca_certs) {
     (void)ssl_ctx_id;
-    if (!ca_certs) return ERROR_INVALID_ARG;
+    if (!ca_certs)
+        return ERROR_INVALID_ARG;
     *static_cast<SslCaCerts*>(ca_certs) = {};
     return 0;
 }
 
 int APS5_VABI sceSslGetCaCerts(int ssl_ctx_id, void* ca_certs) {
     (void)ssl_ctx_id;
-    if (!ca_certs) return ERROR_INVALID_ARG;
+    if (!ca_certs)
+        return ERROR_INVALID_ARG;
     *static_cast<SslCaCerts*>(ca_certs) = {};
     return ERROR_NOT_FOUND;
 }
@@ -54,13 +56,13 @@ int APS5_VABI sceSslTerm_nid_postfix(int ssl_ctx_id) {
 }
 
 int APS5_VABI sceSslClose() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceSslGetSerialNumber() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceSslLoadCert() {
@@ -102,5 +104,4 @@ int APS5_VABI sceSslGetSubjectName(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

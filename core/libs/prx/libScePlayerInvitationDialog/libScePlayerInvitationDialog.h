@@ -32,7 +32,6 @@ std::int32_t APS5_VABI scePlayerInvitationDialogGetStatus(void);
 std::int32_t APS5_VABI scePlayerInvitationDialogClose(void);
 std::int32_t APS5_VABI scePlayerInvitationDialogTerminate(void);
 std::int32_t APS5_VABI scePlayerInvitationDialogGetResult(ScePlayerInvitationDialogResult* result);
-
 }
 
 #endif

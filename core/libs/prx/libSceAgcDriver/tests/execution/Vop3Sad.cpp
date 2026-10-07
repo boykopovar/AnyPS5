@@ -23,20 +23,27 @@ alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 51> SadCode{
-    0x34020082, 0x34060084, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
-    0xbf8c3f70, 0xd55a000a, 0x041a0b04, 0xd55b000b, 0x041a0b04, 0xd55c000c, 0x041a0b04, 0xd571000d,
-    0x041a0b04, 0xd55d000e, 0x041a0b04, 0xd55a000f, 0x04190104, 0xd55a0010, 0x041a0ac1, 0xd55b0011,
-    0x042a0905, 0xd55c0012, 0x0419ff04, Literal,    0xd5710013, 0x041a0905, 0xe0702000, 0x80010a03,
-    0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03, 0xe070200c, 0x80010d03, 0xe0702010, 0x80010e03,
-    0xe0702014, 0x80010f03, 0xe0702018, 0x80011003, 0xe070201c, 0x80011103, 0xe0702020, 0x80011203,
-    0xe0702024, 0x80011303, 0xbf810000,
+    0x34020082, 0x34060084, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601, 0xbf8c3f70,
+    0xd55a000a, 0x041a0b04, 0xd55b000b, 0x041a0b04, 0xd55c000c, 0x041a0b04, 0xd571000d, 0x041a0b04, 0xd55d000e,
+    0x041a0b04, 0xd55a000f, 0x04190104, 0xd55a0010, 0x041a0ac1, 0xd55b0011, 0x042a0905, 0xd55c0012, 0x0419ff04,
+    Literal,    0xd5710013, 0x041a0905, 0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03,
+    0xe070200c, 0x80010d03, 0xe0702010, 0x80010e03, 0xe0702014, 0x80010f03, 0xe0702018, 0x80011003, 0xe070201c,
+    0x80011103, 0xe0702020, 0x80011203, 0xe0702024, 0x80011303, 0xbf810000,
 };
 
 constexpr std::array<std::array<std::uint32_t, 3>, 12> Edges{{
-    {0xffffffffu, 0u, 0u}, {0u, 0xffffffffu, 0xffffffffu}, {0xff00ff00u, 0x00ff00ffu, 0xfffffc04u}, {0x80000000u, 0x7fffffffu, 1u},
-    {0x7f80ff00u, 0x807f00ffu, 0xffff0000u}, {0x01020304u, 0x04030201u, 0x10u}, {0x12345678u, 0x12345678u, 0x9abcdef0u},
-    {0x80808080u, 0x7f7f7f7fu, 0u}, {0x8000ffffu, 0x7fff0000u, 0xfffe0002u}, {0x00ff0001u, 0x000000ffu, 0x7fffffffu},
-    {0xffffffffu, 0x00ff0000u, 0x03fcu}, {0u, 0u, 0u},
+    {0xffffffffu, 0u, 0u},
+    {0u, 0xffffffffu, 0xffffffffu},
+    {0xff00ff00u, 0x00ff00ffu, 0xfffffc04u},
+    {0x80000000u, 0x7fffffffu, 1u},
+    {0x7f80ff00u, 0x807f00ffu, 0xffff0000u},
+    {0x01020304u, 0x04030201u, 0x10u},
+    {0x12345678u, 0x12345678u, 0x9abcdef0u},
+    {0x80808080u, 0x7f7f7f7fu, 0u},
+    {0x8000ffffu, 0x7fff0000u, 0xfffe0002u},
+    {0x00ff0001u, 0x000000ffu, 0x7fffffffu},
+    {0xffffffffu, 0x00ff0000u, 0x03fcu},
+    {0u, 0u, 0u},
 }};
 
 void FillInput() {
@@ -55,7 +62,8 @@ void FillInput() {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -70,14 +78,14 @@ auto Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> cod
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
 }
@@ -96,7 +104,8 @@ std::uint32_t Sad(std::uint32_t lhs, std::uint32_t rhs, std::uint32_t fieldBits,
     for (std::uint32_t offset = 0; offset < 32u; offset += fieldBits) {
         const std::uint32_t left = (lhs >> offset) & fieldMask;
         const std::uint32_t right = (rhs >> offset) & fieldMask;
-        if (masked && right == 0u) continue;
+        if (masked && right == 0u)
+            continue;
         sum += left > right ? left - right : right - left;
     }
     return sum;
@@ -104,8 +113,16 @@ std::uint32_t Sad(std::uint32_t lhs, std::uint32_t rhs, std::uint32_t fieldBits,
 
 void Check() {
     constexpr std::array<const char*, 10> names{
-        "v_sad_u8", "v_sad_hi_u8", "v_sad_u16", "v_msad_u8", "v_sad_u32", "v_sad_u8 with a zero reference", "v_sad_u8 with an inline constant",
-        "v_sad_hi_u8 accumulating into a v_sad_u8 result", "v_sad_u16 with a literal", "v_msad_u8 with swapped sources",
+        "v_sad_u8",
+        "v_sad_hi_u8",
+        "v_sad_u16",
+        "v_msad_u8",
+        "v_sad_u32",
+        "v_sad_u8 with a zero reference",
+        "v_sad_u8 with an inline constant",
+        "v_sad_hi_u8 accumulating into a v_sad_u8 result",
+        "v_sad_u16 with a literal",
+        "v_msad_u8 with swapped sources",
     };
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto* in = &Input[tid * Inputs];
@@ -127,7 +144,9 @@ void Check() {
         };
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
             const std::uint32_t actual = Output[tid * Results + j];
-            Require(actual == expected[j], std::string(names[j]) + ": thread " + std::to_string(tid) + " (" + Hex(a) + ", " + Hex(b) + ", " + Hex(c) + ") is " + Hex(actual) + ", expected " + Hex(expected[j]));
+            Require(actual == expected[j], std::string(names[j]) + ": thread " + std::to_string(tid) + " (" + Hex(a) +
+                                               ", " + Hex(b) + ", " + Hex(c) + ") is " + Hex(actual) + ", expected " +
+                                               Hex(expected[j]));
         }
     }
 }
@@ -137,7 +156,8 @@ void Check() {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         FillInput();
         Run(*device);
         Check();

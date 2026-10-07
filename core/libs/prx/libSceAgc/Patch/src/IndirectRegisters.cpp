@@ -53,5 +53,4 @@ int APS5_VABI sceAgcSetUcRegIndirectPatchSetNumRegisters(std::uint32_t* cmd, std
     Agc::Command::SetIndirectCount(cmd, 0x64u, numRegs, __func__);
     return 0;
 }
-
 }

@@ -16,13 +16,11 @@ constexpr std::uint32_t InterpolantF16HiOnly = 2;
 using CreateInterpolantValueFn = std::uint32_t (*)(std::uint32_t psWord, const ShaderSemantic* gsSemantic);
 
 std::uint32_t CreateInterpolantValue(std::uint32_t psWord, const ShaderSemantic* gsSemantic) {
-    const std::uint32_t value = ((psWord & 0x00300000u) != 0)
-        ? CreateInterpolantF16Value(psWord, gsSemantic)
-        : CreateInterpolantNonF16Value(psWord, gsSemantic);
+    const std::uint32_t value = ((psWord & 0x00300000u) != 0) ? CreateInterpolantF16Value(psWord, gsSemantic)
+                                                              : CreateInterpolantNonF16Value(psWord, gsSemantic);
 
-    return (gsSemantic == nullptr)
-        ? CreateInterpolantDefaultValue(value, psWord)
-        : CreateInterpolantMappingValue(value, psWord, ShaderSemanticWord(*gsSemantic));
+    return (gsSemantic == nullptr) ? CreateInterpolantDefaultValue(value, psWord)
+                                   : CreateInterpolantMappingValue(value, psWord, ShaderSemanticWord(*gsSemantic));
 }
 
 std::uint32_t CreateInterpolantF16HiValue(std::uint32_t psWord, const ShaderSemantic* gsSemantic) {
@@ -44,12 +42,12 @@ std::uint32_t CreateInterpolantF16HiValue(std::uint32_t psWord, const ShaderSema
 }
 
 std::uint32_t CreateInterpolantValueSplitF16(std::uint32_t psWord, const ShaderSemantic* gsSemantic) {
-    return (((psWord >> 20u) & 0x3u) == InterpolantF16HiOnly)
-        ? CreateInterpolantF16HiValue(psWord, gsSemantic)
-        : CreateInterpolantValue(psWord, gsSemantic);
+    return (((psWord >> 20u) & 0x3u) == InterpolantF16HiOnly) ? CreateInterpolantF16HiValue(psWord, gsSemantic)
+                                                              : CreateInterpolantValue(psWord, gsSemantic);
 }
 
-int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader* gs, const Shader* ps, CreateInterpolantValueFn createValue) {
+int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader* gs, const Shader* ps,
+                             CreateInterpolantValueFn createValue) {
     if (regs == nullptr) {
         throw std::runtime_error(std::string(fn) + ": regs is null");
     }
@@ -98,5 +96,4 @@ APS5_EXPORT("dbOlWdppb4o", sceAgcUnknownCreateInterpolantMapping);
 int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
     return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16);
 }
-
 }

@@ -28,10 +28,12 @@ void Driver::reapCompletionLabels() {
         return;
     }
 
-    if (!completionsPending()) return;
+    if (!completionsPending())
+        return;
 
     bumpEpoch(&EpochBumps::reaps);
-    if (const auto localDevice = device.Load()) localDevice->ReapRecorded();
+    if (const auto localDevice = device.Load())
+        localDevice->ReapRecorded();
 }
 
 void Driver::run(std::uint32_t id) noexcept {
@@ -43,7 +45,8 @@ void Driver::run(std::uint32_t id) noexcept {
     }
 
     GuestMemory::TagGpuLockThread(id);
-    if (id == 0) StartWorkerSampler();
+    if (id == 0)
+        StartWorkerSampler();
     Submission submission;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& costs = submissionCosts(id);
@@ -56,17 +59,21 @@ void Driver::run(std::uint32_t id) noexcept {
                 auto& worker = workers.at(id);
                 auto& pending = worker.pending;
                 workerQueued() = &worker.queued;
-                if (traceGpu && pending.empty()) std::fprintf(stderr, "[gpu] %.1f idle queue=0x%x\n", TraceMs(), id);
+                if (traceGpu && pending.empty())
+                    std::fprintf(stderr, "[gpu] %.1f idle queue=0x%x\n", TraceMs(), id);
                 const auto ready = [&] { return failure || stopping || !pending.empty(); };
 
                 while (!ready()) {
                     if (!completionsPending() || (id != 0 && Graphics::Recorder::PendingCompletionLabels() == 0)) {
-                        if (id == 0) queue0Dormant.store(true, std::memory_order_relaxed);
+                        if (id == 0)
+                            queue0Dormant.store(true, std::memory_order_relaxed);
                         changed.wait(lock, ready);
-                        if (id == 0) queue0Dormant.store(false, std::memory_order_relaxed);
+                        if (id == 0)
+                            queue0Dormant.store(false, std::memory_order_relaxed);
                         break;
                     }
-                    if (changed.wait_for(lock, std::chrono::milliseconds(1), ready)) break;
+                    if (changed.wait_for(lock, std::chrono::milliseconds(1), ready))
+                        break;
                     lock.unlock();
                     reapCompletionLabels();
                     lock.lock();
@@ -77,46 +84,64 @@ void Driver::run(std::uint32_t id) noexcept {
                 }
                 submission = std::move(pending.front());
                 pending.pop_front();
-                if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
+                if (id == 0)
+                    queue0Executing = submission.suspend ? 0 : submission.received;
                 if (submission.waitFree) {
                     orderHolders.fetch_add(1, std::memory_order_acq_rel);
-                    while (!failure && !stopping && !orderReleased(id, submission.received)) changed.wait_for(lock, std::chrono::milliseconds(1));
+                    while (!failure && !stopping && !orderReleased(id, submission.received))
+                        changed.wait_for(lock, std::chrono::milliseconds(1));
                     orderHolders.fetch_sub(1, std::memory_order_acq_rel);
                     rethrowFailure();
                 }
                 worker.queued.fetch_sub(1, std::memory_order_acq_rel);
-                if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
+                if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{})
+                    costs.dequeueNs +=
+                        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                       std::chrono::steady_clock::now() - submission.enqueuedAt)
+                                                       .count());
             }
             {
                 struct Running {
                     std::atomic<std::uint32_t>& count;
-                    explicit Running(std::atomic<std::uint32_t>& count) : count(count) { count.fetch_add(1, std::memory_order_acq_rel); }
+                    explicit Running(std::atomic<std::uint32_t>& count) : count(count) {
+                        count.fetch_add(1, std::memory_order_acq_rel);
+                    }
                     ~Running() { count.fetch_sub(1, std::memory_order_acq_rel); }
                 } running{runningWorkers};
                 execute(submission);
             }
-            if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
-            const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            if (traceGpu)
+                std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(),
+                             static_cast<unsigned long long>(submission.serial), id);
+            const auto completeStart =
+                profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             bool notify = true;
             {
                 std::lock_guard lock(mutex);
                 rethrowFailure();
                 markCompleted(submission.serial);
                 forgetUnfinishedWrites(workers.at(id), submission);
-                if (id == 0) queue0Executing = 0;
+                if (id == 0)
+                    queue0Executing = 0;
 
                 notify = idleWaiters != 0 || orderHolders.load(std::memory_order_acquire) != 0;
             }
-            if (notify) changed.notify_all();
-            else ++costs.notifiesSkipped;
-            if (profile) costs.completeNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - completeStart).count());
+            if (notify)
+                changed.notify_all();
+            else
+                ++costs.notifiesSkipped;
+            if (profile)
+                costs.completeNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                                   std::chrono::steady_clock::now() - completeStart)
+                                                                   .count());
         }
     } catch (const ProcessShutdown&) {
         submission = Submission{};
     } catch (...) {
         const auto error = std::current_exception();
         ReportFailure(error);
-        for (const auto& [offset, flip] : submission.flips) flip->Fail(error);
+        for (const auto& [offset, flip] : submission.flips)
+            flip->Fail(error);
     }
 }
 

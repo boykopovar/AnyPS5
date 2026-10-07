@@ -16,7 +16,8 @@ constexpr std::size_t SCE_RANDOM_MAX_SIZE = 64;
 extern "C" {
 
 int APS5_VABI sceRandomGetRandomNumber(void* buf, size_t size) {
-    if (!buf || size > SCE_RANDOM_MAX_SIZE) return SCE_RANDOM_ERROR_INVALID;
+    if (!buf || size > SCE_RANDOM_MAX_SIZE)
+        return SCE_RANDOM_ERROR_INVALID;
     static thread_local std::random_device device;
     auto* bytes = static_cast<unsigned char*>(buf);
     for (std::size_t offset = 0; offset < size; offset += sizeof(unsigned int)) {
@@ -25,5 +26,4 @@ int APS5_VABI sceRandomGetRandomNumber(void* buf, size_t size) {
     }
     return 0;
 }
-
 }

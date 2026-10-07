@@ -12,13 +12,13 @@ int APS5_VABI sceAudioOut2MasteringInit(std::uint32_t);
 }
 
 static void Require(bool value, const char* message) {
-    if (value) return;
+    if (value)
+        return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
 }
 
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
+template <typename TFunction> static bool ThrowsRuntimeError(TFunction function) {
     try {
         function();
     } catch (const std::runtime_error&) {
@@ -38,7 +38,8 @@ void TestSet3DLatency() {
     Require(sceAudioOut2Set3DLatency(systemUser, 1) == 0, "latency 1 for the system user must be accepted");
     Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(systemUser, 0); }), "latency 0 must throw");
     Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(systemUser, 3); }), "latency 3 must throw");
-    Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(user, 2); }), "a user other than the system user must throw");
+    Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(user, 2); }),
+            "a user other than the system user must throw");
 }
 
 void TestMasteringInit() {

@@ -8,8 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ShaderRecompiler
-{
+namespace ShaderRecompiler {
 
 void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const BindingAllocationResult& bindings) {
     CheckBindings(program, bindings);
@@ -24,17 +23,25 @@ void EmitModuleHeader(SpirvEmitterState& state, const BindingAllocationResult& b
 std::uint32_t ExecutionModelForStage(IrShaderStage stage) {
     switch (stage) {
     case IrShaderStage::Local:
-    case IrShaderStage::Vertex: return spv::ExecutionModelVertex;
-    case IrShaderStage::TessellationControl: return spv::ExecutionModelTessellationControl;
-    case IrShaderStage::TessellationEvaluation: return spv::ExecutionModelTessellationEvaluation;
-    case IrShaderStage::Mesh: return spv::ExecutionModelMeshEXT;
-    case IrShaderStage::Pixel: return spv::ExecutionModelFragment;
-    case IrShaderStage::Compute: return spv::ExecutionModelGLCompute;
-    default: FailEmit("shader stage has no execution model");
+    case IrShaderStage::Vertex:
+        return spv::ExecutionModelVertex;
+    case IrShaderStage::TessellationControl:
+        return spv::ExecutionModelTessellationControl;
+    case IrShaderStage::TessellationEvaluation:
+        return spv::ExecutionModelTessellationEvaluation;
+    case IrShaderStage::Mesh:
+        return spv::ExecutionModelMeshEXT;
+    case IrShaderStage::Pixel:
+        return spv::ExecutionModelFragment;
+    case IrShaderStage::Compute:
+        return spv::ExecutionModelGLCompute;
+    default:
+        FailEmit("shader stage has no execution model");
     }
 }
 
-std::uint32_t DefineInterfaceVariable(SpirvEmitterState& state, std::uint32_t type, std::uint32_t storage, const char* name) {
+std::uint32_t DefineInterfaceVariable(SpirvEmitterState& state, std::uint32_t type, std::uint32_t storage,
+                                      const char* name) {
     const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
     state.interfaceVariables.push_back(variable);
     state.module.AddName(variable, name);
@@ -65,7 +72,8 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputVertices, mesh.maxVertices);
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputPrimitivesEXT, mesh.maxPrimitives);
     }
-    if (StageOf(state) == IrShaderStage::TessellationControl || StageOf(state) == IrShaderStage::TessellationEvaluation) {
+    if (StageOf(state) == IrShaderStage::TessellationControl ||
+        StageOf(state) == IrShaderStage::TessellationEvaluation) {
         DefineTessellationExecutionModes(state);
     }
     state.entryLabel = state.module.AllocateId();
@@ -84,7 +92,8 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityInt64);
     }
     if (state.requirements.imageInt64Atomics) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end()) {
+        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(),
+                      static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end()) {
             FailEmit("64-bit image atomics need VK_EXT_shader_image_atomic_int64");
         }
         state.module.EmitCapability(spv::CapabilityInt64);
@@ -115,7 +124,8 @@ void DefineModule(SpirvEmitterState& state) {
     if (state.requirements.imageGatherExtended) {
         state.module.EmitCapability(spv::CapabilityImageGatherExtended);
     }
-    if (state.laneCount == 2 || state.requirements.subgroupBallot || state.requirements.subgroupShuffle || state.requirements.subgroupLocalInvocationId) {
+    if (state.laneCount == 2 || state.requirements.subgroupBallot || state.requirements.subgroupShuffle ||
+        state.requirements.subgroupLocalInvocationId) {
         state.module.EmitCapability(spv::CapabilityGroupNonUniform);
     }
     if (state.laneCount == 2 || state.requirements.subgroupBallot) {
@@ -128,9 +138,12 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityComputeDerivativeGroupQuadsKHR);
         state.module.EmitExtension("SPV_KHR_compute_shader_derivatives");
     }
-    const bool fragmentBarycentric = StageOf(state) == IrShaderStage::Pixel && std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
-        return input.perVertex || input.kind == StageInputKind::BaryCoordSmooth || input.kind == StageInputKind::BaryCoordNoPerspective;
-    });
+    const bool fragmentBarycentric =
+        StageOf(state) == IrShaderStage::Pixel &&
+        std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
+            return input.perVertex || input.kind == StageInputKind::BaryCoordSmooth ||
+                   input.kind == StageInputKind::BaryCoordNoPerspective;
+        });
     if (fragmentBarycentric) {
         state.module.EmitCapability(spv::CapabilityFragmentBarycentricKHR);
         state.module.EmitExtension("SPV_KHR_fragment_shader_barycentric");
@@ -139,7 +152,8 @@ void DefineModule(SpirvEmitterState& state) {
     state.module.EmitExtension("SPV_KHR_float_controls");
     state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 32u);
     if (state.requirements.float64) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) == state.supportedCapabilities.end()) {
+        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(),
+                      static_cast<std::uint32_t>(spv::CapabilityFloat64)) == state.supportedCapabilities.end()) {
             throw std::runtime_error("64-bit float instructions need the Float64 capability, which the device lacks");
         }
         state.module.EmitCapability(spv::CapabilityFloat64);
@@ -173,7 +187,8 @@ void DefineModule(SpirvEmitterState& state) {
                 state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDepthGreater);
             }
         }
-        if (pixel.psEarlyZ && !pixel.psPixelKillEnable && !pixel.psDepthExportEnable && !pixel.psSampleMaskExportEnable) {
+        if (pixel.psEarlyZ && !pixel.psPixelKillEnable && !pixel.psDepthExportEnable &&
+            !pixel.psSampleMaskExportEnable) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeEarlyFragmentTests);
         }
     }

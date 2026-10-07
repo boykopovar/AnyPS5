@@ -9,12 +9,11 @@ int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info*, void*);
 }
 
 static void Require(bool condition) {
-    if (!condition) std::abort();
+    if (!condition)
+        std::abort();
 }
 
-static void* Address(std::uintptr_t value) {
-    return reinterpret_cast<void*>(value);
-}
+static void* Address(std::uintptr_t value) { return reinterpret_cast<void*>(value); }
 
 int main() {
     const std::array<Elf64_Phdr, 4> headers{{

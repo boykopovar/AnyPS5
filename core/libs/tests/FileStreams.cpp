@@ -16,11 +16,11 @@ int fflush_nid_postfix(FileStream* stream);
 }
 
 static void Require(bool condition) {
-    if (!condition) throw std::runtime_error("File stream check failed");
+    if (!condition)
+        throw std::runtime_error("File stream check failed");
 }
 
-template<typename TAction>
-static void ExpectException(TAction action) {
+template <typename TAction> static void ExpectException(TAction action) {
     try {
         action();
     } catch (const std::runtime_error&) {

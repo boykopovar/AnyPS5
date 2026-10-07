@@ -35,31 +35,22 @@ struct Row {
 };
 
 constexpr std::array<Row, 20> Rows{{
-    {0x00000000u, 0x7f800000u, 0x3f800000u},
-    {0x80000000u, 0x7f800000u, 0xc0200000u},
-    {0x7f800000u, 0x00000000u, 0x3f400000u},
-    {0xff800000u, 0x80000000u, 0x40400000u},
-    {0x00000000u, 0x7fc00000u, 0x3fc00000u},
-    {0x7fc00000u, 0x80000000u, 0xc0800000u},
-    {0x00000000u, 0x40000000u, 0x7f800000u},
-    {0x80000000u, 0xc0400000u, 0xff800000u},
-    {0x00000000u, 0x3f800000u, 0x7fc00000u},
-    {0x3fc00000u, 0x40100000u, 0xbf400000u},
-    {0xc0c00000u, 0x3f000000u, 0x41200000u},
-    {0x7f800000u, 0x40000000u, 0x3f800000u},
-    {0x7f800000u, 0xbf800000u, 0x7f800000u},
-    {0x7fc00000u, 0x3f800000u, 0x3f800000u},
-    {0x40400000u, 0x40800000u, 0xc1400000u},
-    {0x7f7fffffu, 0x40000000u, 0x3f800000u},
-    {0x3ec00000u, 0xc1480000u, 0x42c88000u},
-    {0xc4800000u, 0xbd800000u, 0xc2800000u},
-    {0x40e00000u, 0x41100000u, 0x3f000000u},
-    {0x80000000u, 0x80000000u, 0x40a00000u},
+    {0x00000000u, 0x7f800000u, 0x3f800000u}, {0x80000000u, 0x7f800000u, 0xc0200000u},
+    {0x7f800000u, 0x00000000u, 0x3f400000u}, {0xff800000u, 0x80000000u, 0x40400000u},
+    {0x00000000u, 0x7fc00000u, 0x3fc00000u}, {0x7fc00000u, 0x80000000u, 0xc0800000u},
+    {0x00000000u, 0x40000000u, 0x7f800000u}, {0x80000000u, 0xc0400000u, 0xff800000u},
+    {0x00000000u, 0x3f800000u, 0x7fc00000u}, {0x3fc00000u, 0x40100000u, 0xbf400000u},
+    {0xc0c00000u, 0x3f000000u, 0x41200000u}, {0x7f800000u, 0x40000000u, 0x3f800000u},
+    {0x7f800000u, 0xbf800000u, 0x7f800000u}, {0x7fc00000u, 0x3f800000u, 0x3f800000u},
+    {0x40400000u, 0x40800000u, 0xc1400000u}, {0x7f7fffffu, 0x40000000u, 0x3f800000u},
+    {0x3ec00000u, 0xc1480000u, 0x42c88000u}, {0xc4800000u, 0xbd800000u, 0xc2800000u},
+    {0x40e00000u, 0x41100000u, 0x3f000000u}, {0x80000000u, 0x80000000u, 0x40a00000u},
 }};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -76,14 +67,14 @@ void Run(AgcDriver::VulkanDevice& device) {
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(FmaLegacyCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -96,9 +87,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-bool IsNan(std::uint32_t bits) {
-    return (bits & 0x7fffffffu) > 0x7f800000u;
-}
+bool IsNan(std::uint32_t bits) { return (bits & 0x7fffffffu) > 0x7f800000u; }
 
 std::uint32_t FmaLegacy(float a, float b, float c) {
     if (a == 0.0f || b == 0.0f) {
@@ -109,7 +98,8 @@ std::uint32_t FmaLegacy(float a, float b, float c) {
 
 void Check() {
     constexpr std::array<const char*, 5> names{
-        "v_fma_legacy_f32", "v_fma_legacy_f32 -src0", "v_fma_legacy_f32 |src0| -src2", "v_fma_legacy_f32 src0=0", "v_fma_legacy_f32 -src0 -|src1|",
+        "v_fma_legacy_f32",        "v_fma_legacy_f32 -src0",         "v_fma_legacy_f32 |src0| -src2",
+        "v_fma_legacy_f32 src0=0", "v_fma_legacy_f32 -src0 -|src1|",
     };
     for (std::uint32_t tid = 0; tid < Rows.size(); ++tid) {
         const auto& row = Rows[tid];
@@ -117,12 +107,18 @@ void Check() {
         const float b = std::bit_cast<float>(row.b);
         const float c = std::bit_cast<float>(row.c);
         const std::array<std::uint32_t, 5> expected{
-            FmaLegacy(a, b, c), FmaLegacy(-a, b, c), FmaLegacy(std::fabs(a), b, -c), FmaLegacy(0.0f, b, c), FmaLegacy(-a, -std::fabs(b), c),
+            FmaLegacy(a, b, c),
+            FmaLegacy(-a, b, c),
+            FmaLegacy(std::fabs(a), b, -c),
+            FmaLegacy(0.0f, b, c),
+            FmaLegacy(-a, -std::fabs(b), c),
         };
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
             const auto actual = Output[tid * Results + j];
             const bool matches = actual == expected[j] || (IsNan(actual) && IsNan(expected[j]));
-            Require(matches, std::string("fma legacy: lane ") + std::to_string(tid) + " (" + Hex(row.a) + ", " + Hex(row.b) + ", " + Hex(row.c) + ") " + names[j] + " is " + Hex(actual) + ", expected " + Hex(expected[j]));
+            Require(matches, std::string("fma legacy: lane ") + std::to_string(tid) + " (" + Hex(row.a) + ", " +
+                                 Hex(row.b) + ", " + Hex(row.c) + ") " + names[j] + " is " + Hex(actual) +
+                                 ", expected " + Hex(expected[j]));
         }
     }
 }
@@ -132,7 +128,8 @@ void Check() {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         Run(*device);
         Check();
         std::puts("fma legacy tests passed");

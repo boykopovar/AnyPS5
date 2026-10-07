@@ -51,5 +51,4 @@ int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void* callback, void* userdata)
     (void)userdata;
     return SCE_NP_TROPHY2_OK;
 }
-
 }

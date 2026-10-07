@@ -26,9 +26,7 @@ static constexpr char SAVE_DIR[] = "_sd";
 static std::atomic<std::int32_t> g_transaction_counter{1};
 static std::atomic<int> g_initializations{0};
 
-static std::string save_root() {
-    return std::string(SAVE_DIR);
-}
+static std::string save_root() { return std::string(SAVE_DIR); }
 
 // Events the title polls with sceSaveDataGetEventResult; a backup completes at once here.
 static std::mutex g_state_mutex;
@@ -71,12 +69,13 @@ namespace {
 // with a small .param sidecar holding the last SaveDataParam the title wrote. Keying by user as well as slot
 // keeps two users' in-memory saves from colliding on the same console.
 constexpr char MEM_DIR[] = "_sd_mem";
-constexpr std::size_t MEM_MAX_SIZE = 0x1000000;  // 16 MiB
+constexpr std::size_t MEM_MAX_SIZE = 0x1000000; // 16 MiB
 std::mutex g_mem_mutex;
 
 std::string mem_path(std::int32_t user_id, std::uint32_t slot, const char* ext) {
     char buf[96];
-    std::snprintf(buf, sizeof(buf), "%s/u%d/slot%u.%s", MEM_DIR, static_cast<int>(user_id), static_cast<unsigned>(slot), ext);
+    std::snprintf(buf, sizeof(buf), "%s/u%d/slot%u.%s", MEM_DIR, static_cast<int>(user_id), static_cast<unsigned>(slot),
+                  ext);
     return buf;
 }
 
@@ -114,9 +113,7 @@ bool read_file_all(const std::string& path, std::vector<char>& out) {
     return static_cast<bool>(f);
 }
 
-std::string param_path(const std::string& real_path) {
-    return real_path + ".param";
-}
+std::string param_path(const std::string& real_path) { return real_path + ".param"; }
 
 bool read_param_file(const std::string& path, SaveDataParam* param) {
     if (!std::filesystem::exists(path)) {
@@ -127,7 +124,8 @@ bool read_param_file(const std::string& path, SaveDataParam* param) {
         throw std::runtime_error("SaveData: cannot read param file " + path);
     }
     if (bytes.size() != sizeof(SaveDataParam)) {
-        throw std::runtime_error("SaveData: param file " + path + " is " + std::to_string(bytes.size()) + " bytes, expected " + std::to_string(sizeof(SaveDataParam)) + " (outdated format)");
+        throw std::runtime_error("SaveData: param file " + path + " is " + std::to_string(bytes.size()) +
+                                 " bytes, expected " + std::to_string(sizeof(SaveDataParam)) + " (outdated format)");
     }
     std::memcpy(param, bytes.data(), sizeof(SaveDataParam));
     return true;
@@ -161,13 +159,26 @@ struct ParamField {
 
 bool param_field(std::uint32_t param_type, ParamField* field) {
     switch (param_type) {
-    case SAVE_DATA_PARAM_TYPE_ALL: *field = {0, sizeof(SaveDataParam), false}; return true;
-    case SAVE_DATA_PARAM_TYPE_TITLE: *field = {offsetof(SaveDataParam, title), sizeof(SaveDataParam::title), true}; return true;
-    case SAVE_DATA_PARAM_TYPE_SUB_TITLE: *field = {offsetof(SaveDataParam, sub_title), sizeof(SaveDataParam::sub_title), true}; return true;
-    case SAVE_DATA_PARAM_TYPE_DETAIL: *field = {offsetof(SaveDataParam, detail), sizeof(SaveDataParam::detail), true}; return true;
-    case SAVE_DATA_PARAM_TYPE_USER_PARAM: *field = {offsetof(SaveDataParam, user_param), sizeof(SaveDataParam::user_param), false}; return true;
-    case SAVE_DATA_PARAM_TYPE_MTIME: *field = {offsetof(SaveDataParam, mtime), sizeof(SaveDataParam::mtime), false}; return true;
-    default: return false;
+    case SAVE_DATA_PARAM_TYPE_ALL:
+        *field = {0, sizeof(SaveDataParam), false};
+        return true;
+    case SAVE_DATA_PARAM_TYPE_TITLE:
+        *field = {offsetof(SaveDataParam, title), sizeof(SaveDataParam::title), true};
+        return true;
+    case SAVE_DATA_PARAM_TYPE_SUB_TITLE:
+        *field = {offsetof(SaveDataParam, sub_title), sizeof(SaveDataParam::sub_title), true};
+        return true;
+    case SAVE_DATA_PARAM_TYPE_DETAIL:
+        *field = {offsetof(SaveDataParam, detail), sizeof(SaveDataParam::detail), true};
+        return true;
+    case SAVE_DATA_PARAM_TYPE_USER_PARAM:
+        *field = {offsetof(SaveDataParam, user_param), sizeof(SaveDataParam::user_param), false};
+        return true;
+    case SAVE_DATA_PARAM_TYPE_MTIME:
+        *field = {offsetof(SaveDataParam, mtime), sizeof(SaveDataParam::mtime), false};
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -175,16 +186,16 @@ int traceLimit() {
     static const int limit = std::getenv("APS5_SAVEDATA_TRACE") != nullptr ? std::numeric_limits<int>::max() : 3;
     return limit;
 }
-#define SAVEDATA_TRACE(...) \
-    do { \
-        static std::atomic<int> traceCount{0}; \
-        if (traceCount.fetch_add(1, std::memory_order_relaxed) < traceLimit()) { \
-            std::fprintf(stderr, "[SAVEDATA:native] " __VA_ARGS__); \
-            std::fputc('\n', stderr); \
-            std::fflush(stderr); \
-        } \
+#define SAVEDATA_TRACE(...)                                                                                            \
+    do {                                                                                                               \
+        static std::atomic<int> traceCount{0};                                                                         \
+        if (traceCount.fetch_add(1, std::memory_order_relaxed) < traceLimit()) {                                       \
+            std::fprintf(stderr, "[SAVEDATA:native] " __VA_ARGS__);                                                    \
+            std::fputc('\n', stderr);                                                                                  \
+            std::fflush(stderr);                                                                                       \
+        }                                                                                                              \
     } while (0)
-}  // namespace
+} // namespace
 
 extern "C" {
 
@@ -198,7 +209,8 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
     event.type = SAVE_DATA_EVENT_TYPE_BACKUP;
     event.error_code = SAVE_DATA_OK;
     event.user_id = backup->user_id;
-    if (backup->title_id != nullptr) event.title_id = *backup->title_id;
+    if (backup->title_id != nullptr)
+        event.title_id = *backup->title_id;
     event.dir_name = *backup->dir_name;
     std::lock_guard lock(g_state_mutex);
     g_events.push_back(event);
@@ -238,7 +250,9 @@ static int deleteSave(const SaveDataDelete* del) {
 
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
     const int rc = deleteSave(del);
-    SAVEDATA_TRACE("delete dir=%s -> 0x%08x", del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("delete dir=%s -> 0x%08x",
+                   del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)",
+                   static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -284,7 +298,10 @@ static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameS
 
 int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     const int rc = dirNameSearch(cond, result);
-    SAVEDATA_TRACE("dirNameSearch user=%d pattern=%s hit=%u set=%u -> 0x%08x", cond != nullptr ? cond->user_id : -1, cond != nullptr && cond->dir_name != nullptr ? cond->dir_name->data : "(all)", result != nullptr ? result->hit_num : 0u, result != nullptr ? result->set_num : 0u, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("dirNameSearch user=%d pattern=%s hit=%u set=%u -> 0x%08x", cond != nullptr ? cond->user_id : -1,
+                   cond != nullptr && cond->dir_name != nullptr ? cond->dir_name->data : "(all)",
+                   result != nullptr ? result->hit_num : 0u, result != nullptr ? result->set_num : 0u,
+                   static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -318,11 +335,13 @@ static int getMountInfo(const SaveDataMountPoint* mount_point, SaveDataMountInfo
 
 int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mount_point, SaveDataMountInfo* info) {
     const int rc = getMountInfo(mount_point, info);
-    SAVEDATA_TRACE("getMountInfo point=%s -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("getMountInfo point=%s -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)",
+                   static_cast<unsigned>(rc));
     return rc;
 }
 
-static int getParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) {
+static int getParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size,
+                    size_t* got_size) {
     if (mount_point == nullptr || param_buf == nullptr) {
         throw std::runtime_error("sceSaveDataGetParam: null argument");
     }
@@ -343,9 +362,12 @@ static int getParam(const SaveDataMountPoint* mount_point, uint32_t param_type, 
     return SAVE_DATA_OK;
 }
 
-int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) {
+int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf,
+                                  size_t param_buf_size, size_t* got_size) {
     const int rc = getParam(mount_point, param_type, param_buf, param_buf_size, got_size);
-    SAVEDATA_TRACE("getParam point=%s type=%u size=%zu -> 0x%08x got=%zu", mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc), got_size != nullptr ? *got_size : static_cast<size_t>(0));
+    SAVEDATA_TRACE("getParam point=%s type=%u size=%zu -> 0x%08x got=%zu",
+                   mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size,
+                   static_cast<unsigned>(rc), got_size != nullptr ? *got_size : static_cast<size_t>(0));
     return rc;
 }
 
@@ -389,7 +411,8 @@ static int getSaveDataMemory2(SaveDataMemoryGet2* get_param) {
 
 int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
     const int rc = getSaveDataMemory2(get_param);
-    SAVEDATA_TRACE("getMemory2 user=%d slot=%u -> 0x%08x", get_param != nullptr ? get_param->user_id : -1, get_param != nullptr ? get_param->slot_id : 0u, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("getMemory2 user=%d slot=%u -> 0x%08x", get_param != nullptr ? get_param->user_id : -1,
+                   get_param != nullptr ? get_param->slot_id : 0u, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -427,7 +450,8 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (!create && !create2 && !open) {
         throw std::runtime_error("sceSaveDataMount3: unknown mount_mode");
     }
-    const auto* nameEnd = static_cast<const char*>(std::memchr(mount->dir_name->data, '\0', sizeof(mount->dir_name->data)));
+    const auto* nameEnd =
+        static_cast<const char*>(std::memchr(mount->dir_name->data, '\0', sizeof(mount->dir_name->data)));
     if (nameEnd == nullptr) {
         throw std::runtime_error("sceSaveDataMount3: unterminated directory name");
     }
@@ -471,7 +495,13 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
 
 int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
     const int rc = mount3(mount, mount_result);
-    SAVEDATA_TRACE("mount3 user=%d dir=%s mode=0x%x blocks=%llu -> 0x%08x point=%s status=%u", mount != nullptr ? mount->user_id : -1, mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), mount_result != nullptr ? mount_result->mount_point.data : "", mount_result != nullptr ? mount_result->mount_status : 0u);
+    SAVEDATA_TRACE("mount3 user=%d dir=%s mode=0x%x blocks=%llu -> 0x%08x point=%s status=%u",
+                   mount != nullptr ? mount->user_id : -1,
+                   mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)",
+                   mount != nullptr ? mount->mount_mode : 0u,
+                   mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc),
+                   mount_result != nullptr ? mount_result->mount_point.data : "",
+                   mount_result != nullptr ? mount_result->mount_status : 0u);
     return rc;
 }
 
@@ -499,7 +529,8 @@ int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, c
     return SAVE_DATA_OK;
 }
 
-static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) {
+static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf,
+                    size_t param_buf_size) {
     if (mount_point == nullptr || param_buf == nullptr) {
         throw std::runtime_error("sceSaveDataSetParam: null argument");
     }
@@ -529,9 +560,12 @@ static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, 
     return store_param(g_slots[slot].real_path, param) ? SAVE_DATA_OK : SAVE_DATA_ERROR_INTERNAL;
 }
 
-int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) {
+int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf,
+                                  size_t param_buf_size) {
     const int rc = setParam(mount_point, param_type, param_buf, param_buf_size);
-    SAVEDATA_TRACE("setParam point=%s type=%u size=%zu -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("setParam point=%s type=%u size=%zu -> 0x%08x",
+                   mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size,
+                   static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -589,7 +623,9 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
 
 int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param) {
     const int rc = setSaveDataMemory2(set_param);
-    SAVEDATA_TRACE("setMemory2 user=%d slot=%u num=%u -> 0x%08x", set_param != nullptr ? set_param->user_id : -1, set_param != nullptr ? set_param->slot_id : 0u, set_param != nullptr ? set_param->data_num : 0u, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("setMemory2 user=%d slot=%u num=%u -> 0x%08x", set_param != nullptr ? set_param->user_id : -1,
+                   set_param != nullptr ? set_param->slot_id : 0u, set_param != nullptr ? set_param->data_num : 0u,
+                   static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -635,9 +671,14 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
     return SAVE_DATA_OK;
 }
 
-int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDataMemorySetupResult* result) {
+int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param,
+                                              SaveDataMemorySetupResult* result) {
     const int rc = setupSaveDataMemory2(setup_param, result);
-    SAVEDATA_TRACE("setupMemory2 user=%d slot=%u size=%zu -> 0x%08x existed=%zu", setup_param != nullptr ? setup_param->user_id : -1, setup_param != nullptr ? setup_param->slot_id : 0u, setup_param != nullptr ? setup_param->memory_size : static_cast<size_t>(0), static_cast<unsigned>(rc), result != nullptr ? result->existed_memory_size : static_cast<size_t>(0));
+    SAVEDATA_TRACE("setupMemory2 user=%d slot=%u size=%zu -> 0x%08x existed=%zu",
+                   setup_param != nullptr ? setup_param->user_id : -1,
+                   setup_param != nullptr ? setup_param->slot_id : 0u,
+                   setup_param != nullptr ? setup_param->memory_size : static_cast<size_t>(0),
+                   static_cast<unsigned>(rc), result != nullptr ? result->existed_memory_size : static_cast<size_t>(0));
     return rc;
 }
 
@@ -700,11 +741,13 @@ static int umount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
 
 int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
     const int rc = umount2(mode, mount_point);
-    SAVEDATA_TRACE("umount2 mode=0x%x point=%s -> 0x%08x", mode, mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("umount2 mode=0x%x point=%s -> 0x%08x", mode, mount_point != nullptr ? mount_point->data : "(null)",
+                   static_cast<unsigned>(rc));
     return rc;
 }
 
-int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* mount, SaveDataMountResult* mount_result) {
+int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* mount,
+                                              SaveDataMountResult* mount_result) {
     const int rc = transferringMount(mount, mount_result);
     SAVEDATA_TRACE("transferringMountPs4 -> 0x%08x", static_cast<unsigned>(rc));
     return rc;

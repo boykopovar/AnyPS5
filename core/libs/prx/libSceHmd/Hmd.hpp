@@ -55,12 +55,10 @@ extern "C" {
 std::int32_t APS5_VABI sceHmdInitialize(const Hmd::InitializeParam* param);
 std::int32_t APS5_VABI sceHmdInitialize315(const Hmd::InitializeParam* param);
 std::int32_t APS5_VABI sceHmdTerminate();
-std::int32_t APS5_VABI sceHmdOpen(std::int32_t userId, std::int32_t type, std::int32_t index,
-                                Hmd::OpenParam* param);
+std::int32_t APS5_VABI sceHmdOpen(std::int32_t userId, std::int32_t type, std::int32_t index, Hmd::OpenParam* param);
 std::int32_t APS5_VABI sceHmdClose(std::int32_t handle);
 std::int32_t APS5_VABI sceHmdGetDeviceInformation(Hmd::DeviceInformation* info);
-std::int32_t APS5_VABI sceHmdGetDeviceInformationByHandle(std::int32_t handle,
-                                                        Hmd::DeviceInformation* info);
+std::int32_t APS5_VABI sceHmdGetDeviceInformationByHandle(std::int32_t handle, Hmd::DeviceInformation* info);
 std::int32_t APS5_VABI sceHmdInternalGetDeviceStatus(Hmd::DeviceStatus* status);
 std::int32_t APS5_VABI sceHmdInternalMmapIsConnect();
 }

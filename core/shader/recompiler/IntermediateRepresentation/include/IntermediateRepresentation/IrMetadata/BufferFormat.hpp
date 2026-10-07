@@ -126,7 +126,8 @@ enum class IrTextureNumericClass { Unsupported, Float, Uint, Sint };
 
 inline constexpr std::uint32_t ShaderImageIdentitySwizzle = 0x00000facu;
 
-[[nodiscard]] constexpr std::uint32_t DstSel(std::uint32_t x, std::uint32_t y = 0, std::uint32_t z = 0, std::uint32_t w = 0) {
+[[nodiscard]] constexpr std::uint32_t DstSel(std::uint32_t x, std::uint32_t y = 0, std::uint32_t z = 0,
+                                             std::uint32_t w = 0) {
     return (x & 0x7u) | ((y & 0x7u) << 3u) | ((z & 0x7u) << 6u) | ((w & 0x7u) << 9u);
 }
 

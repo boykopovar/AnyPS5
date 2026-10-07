@@ -22,11 +22,11 @@ constexpr std::uint8_t kPxor = 0xEF;
 constexpr std::uint8_t kPaddd = 0xFE;
 constexpr std::array<std::uint32_t, 4> kRoundConstants = {0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xCA62C1D6};
 
-template<std::size_t TCount>
-std::array<std::uint8_t, TCount> _scratch(const Sha1Operands& operands) {
+template <std::size_t TCount> std::array<std::uint8_t, TCount> _scratch(const Sha1Operands& operands) {
     std::array<std::uint8_t, TCount> scratch{};
     for (std::uint8_t reg = 0, found = 0; found < TCount; ++reg)
-        if (reg != operands.Destination && reg != operands.Source) scratch[found++] = reg;
+        if (reg != operands.Destination && reg != operands.Source)
+            scratch[found++] = reg;
     return scratch;
 }
 
@@ -45,7 +45,8 @@ void _rotate(StubBodyBuilder& body, const std::uint8_t reg, const std::uint8_t t
     _op(body, kPor, reg, tmp);
 }
 
-void _function(StubBodyBuilder& body, const std::uint8_t function, const std::uint8_t out, const std::uint8_t b, const std::uint8_t c, const std::uint8_t d, const std::uint8_t tmp) {
+void _function(StubBodyBuilder& body, const std::uint8_t function, const std::uint8_t out, const std::uint8_t b,
+               const std::uint8_t c, const std::uint8_t d, const std::uint8_t tmp) {
     switch (function) {
     case 0:
         _op(body, kMovdqa, out, c);

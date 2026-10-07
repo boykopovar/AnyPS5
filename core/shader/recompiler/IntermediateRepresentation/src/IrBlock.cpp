@@ -4,28 +4,17 @@
 
 namespace ShaderRecompiler {
 
-IrBlock::IrBlock(std::uint32_t id) : id(id) {
-}
+IrBlock::IrBlock(std::uint32_t id) : id(id) {}
 
-std::uint32_t IrBlock::Id() const {
-    return id;
-}
+std::uint32_t IrBlock::Id() const { return id; }
 
-std::list<IrValue*>& IrBlock::Instructions() {
-    return instructions;
-}
+std::list<IrValue*>& IrBlock::Instructions() { return instructions; }
 
-const std::list<IrValue*>& IrBlock::Instructions() const {
-    return instructions;
-}
+const std::list<IrValue*>& IrBlock::Instructions() const { return instructions; }
 
-std::vector<IrBlock*>& IrBlock::Predecessors() {
-    return predecessors;
-}
+std::vector<IrBlock*>& IrBlock::Predecessors() { return predecessors; }
 
-std::vector<IrBlock*>& IrBlock::Successors() {
-    return successors;
-}
+std::vector<IrBlock*>& IrBlock::Successors() { return successors; }
 
 void IrBlock::AppendInstruction(IrValue* value) {
     if (value == nullptr) {
@@ -84,13 +73,9 @@ void IrBlock::AddSuccessor(IrBlock* block) {
     successors.push_back(block);
 }
 
-const std::vector<IrBlock*>& IrBlock::Predecessors() const {
-    return predecessors;
-}
+const std::vector<IrBlock*>& IrBlock::Predecessors() const { return predecessors; }
 
-const std::vector<IrBlock*>& IrBlock::Successors() const {
-    return successors;
-}
+const std::vector<IrBlock*>& IrBlock::Successors() const { return successors; }
 
 void IrBlock::SsaSeal() {
     if (ssaSealed) {
@@ -99,9 +84,7 @@ void IrBlock::SsaSeal() {
     ssaSealed = true;
 }
 
-bool IrBlock::IsSsaSealed() const {
-    return ssaSealed;
-}
+bool IrBlock::IsSsaSealed() const { return ssaSealed; }
 
 void IrBlock::AddBranch(IrBlock* block) {
     if (block == nullptr) {
@@ -111,8 +94,6 @@ void IrBlock::AddBranch(IrBlock* block) {
     block->AddPredecessor(this);
 }
 
-bool IrBlock::Empty() const {
-    return instructions.empty();
-}
+bool IrBlock::Empty() const { return instructions.empty(); }
 
 }

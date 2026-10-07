@@ -55,18 +55,19 @@ std::array<std::uint32_t, 8> TextureDescriptor(const std::uint32_t* texels, std:
     };
 }
 
-void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::uint32_t level, std::span<const std::uint32_t> code) {
+void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::uint32_t level,
+           std::span<const std::uint32_t> code) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, level);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -79,9 +80,16 @@ void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::ui
 }
 
 void Check(const std::uint32_t* texels, bool last, const std::string& step) {
-    for (const auto offset : PastOffsets) Require(texels[offset / 4u] == StoredPast, step + ": byte offset " + std::to_string(offset) + " does not hold the store through level 3, past MAX_MIP 2, at its addrlib tail slot");
-    for (const auto offset : LastOffsets) Require(texels[offset / 4u] == (last ? StoredLast : Untouched), step + ": byte offset " + std::to_string(offset) + " of level 2 holds an unexpected value");
-    for (auto index = TailBlockBytes / 4u; index < SurfaceBytes / 4u; ++index) Require(texels[index] == Untouched, step + ": byte offset " + std::to_string(index * 4u) + " of levels 0 and 1 changed");
+    for (const auto offset : PastOffsets)
+        Require(texels[offset / 4u] == StoredPast,
+                step + ": byte offset " + std::to_string(offset) +
+                    " does not hold the store through level 3, past MAX_MIP 2, at its addrlib tail slot");
+    for (const auto offset : LastOffsets)
+        Require(texels[offset / 4u] == (last ? StoredLast : Untouched),
+                step + ": byte offset " + std::to_string(offset) + " of level 2 holds an unexpected value");
+    for (auto index = TailBlockBytes / 4u; index < SurfaceBytes / 4u; ++index)
+        Require(texels[index] == Untouched,
+                step + ": byte offset " + std::to_string(index * 4u) + " of levels 0 and 1 changed");
 }
 
 }
@@ -89,9 +97,11 @@ void Check(const std::uint32_t* texels, bool last, const std::string& step) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         std::vector<std::uint32_t> storage((SurfaceBytes + 0x10000u) / 4u);
-        auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
+        auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) &
+                                                        ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + SurfaceBytes / 4u, Untouched);
         {
             GuestAllocations::Mutation mutation;

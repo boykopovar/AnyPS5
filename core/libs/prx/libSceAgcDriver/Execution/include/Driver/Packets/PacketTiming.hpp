@@ -30,7 +30,11 @@ struct PacketProfile {
 };
 
 struct PacketTimer {
-    bool enabled; std::uint32_t key; std::uint32_t queue; PacketProfile& profile; std::chrono::steady_clock::time_point start;
+    bool enabled;
+    std::uint32_t key;
+    std::uint32_t queue;
+    PacketProfile& profile;
+    std::chrono::steady_clock::time_point start;
     ~PacketTimer();
 };
 

@@ -19,7 +19,8 @@ int* APS5_VABI __error_nid_postfix();
 }
 
 static void Require(bool condition) {
-    if (!condition) std::abort();
+    if (!condition)
+        std::abort();
 }
 
 int main() {

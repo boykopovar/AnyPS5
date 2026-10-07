@@ -18,8 +18,6 @@ void SsaBuilder::Rewrite(IrProgram& program, std::span<IrBlock* const> blocks) c
     Detail::RemoveRegisterStatePseudos(blocks);
 }
 
-void SsaBuilder::Rewrite(IrProgram& program) const {
-    Rewrite(program, program.BlockOrder());
-}
+void SsaBuilder::Rewrite(IrProgram& program) const { Rewrite(program, program.BlockOrder()); }
 
 }

@@ -12,19 +12,19 @@
 #include "Ngs2Internal.hpp"
 
 static constexpr std::uint16_t WAVE_FORMAT_EXTENSIBLE = 0xfffe;
-static constexpr std::uint8_t ATRAC9_GUID[16] = {0xd2, 0x42, 0xe1, 0x47, 0xba, 0x36, 0x8d, 0x4d, 0x88, 0xfc, 0x61, 0x65, 0x4f, 0x8c, 0x83, 0x6c};
+static constexpr std::uint8_t ATRAC9_GUID[16] = {0xd2, 0x42, 0xe1, 0x47, 0xba, 0x36, 0x8d, 0x4d,
+                                                 0x88, 0xfc, 0x61, 0x65, 0x4f, 0x8c, 0x83, 0x6c};
 static constexpr std::size_t FMT_ATRAC9_SIZE = 52;
 static constexpr std::size_t FMT_GUID_OFFSET = 24;
 static constexpr std::size_t FMT_CONFIG_OFFSET = 44;
 static constexpr std::size_t FACT_ATRAC9_SIZE = 12;
 static constexpr std::uint32_t MAX_SAMPLE_RATE = 192000;
 
-void Ngs2Atrac9DecoderDeleter::operator()(void* handle) const {
-    Atrac9ReleaseHandle(handle);
-}
+void Ngs2Atrac9DecoderDeleter::operator()(void* handle) const { Atrac9ReleaseHandle(handle); }
 
 static void ConfigBytes(std::uint32_t configData, std::uint8_t* config) {
-    for (int i = 0; i < 4; i++) config[i] = static_cast<std::uint8_t>(configData >> (24 - 8 * i));
+    for (int i = 0; i < 4; i++)
+        config[i] = static_cast<std::uint8_t>(configData >> (24 - 8 * i));
 }
 
 static bool CodecInfo(const std::uint8_t* config, Atrac9CodecInfo& info) {
@@ -32,19 +32,22 @@ static bool CodecInfo(const std::uint8_t* config, Atrac9CodecInfo& info) {
     std::uint8_t copy[4];
     std::memcpy(copy, config, sizeof(copy));
     info = {};
-    return decoder != nullptr && Atrac9InitDecoder(decoder.get(), copy) == 0 && Atrac9GetCodecInfo(decoder.get(), &info) == 0 && info.channels > 0 &&
-           info.framesInSuperframe > 0 && info.frameSamples > 0 && info.superframeSize % info.framesInSuperframe == 0;
+    return decoder != nullptr && Atrac9InitDecoder(decoder.get(), copy) == 0 &&
+           Atrac9GetCodecInfo(decoder.get(), &info) == 0 && info.channels > 0 && info.framesInSuperframe > 0 &&
+           info.frameSamples > 0 && info.superframeSize % info.framesInSuperframe == 0;
 }
 
 static bool MatchingCodecInfo(const Ngs2WaveformFormat& format, Atrac9CodecInfo& info) {
     std::uint8_t config[4];
     ConfigBytes(format.config_data, config);
-    return CodecInfo(config, info) && static_cast<std::uint32_t>(info.channels) == format.num_channels && static_cast<std::uint32_t>(info.samplingRate) == format.sample_rate;
+    return CodecInfo(config, info) && static_cast<std::uint32_t>(info.channels) == format.num_channels &&
+           static_cast<std::uint32_t>(info.samplingRate) == format.sample_rate;
 }
 
 void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
     Atrac9CodecInfo info{};
-    if (!MatchingCodecInfo(format, info)) throw std::invalid_argument("NGS2: the ATRAC9 config does not match the waveform format");
+    if (!MatchingCodecInfo(format, info))
+        throw std::invalid_argument("NGS2: the ATRAC9 config does not match the waveform format");
     ConfigBytes(format.config_data, voice.atrac9.config);
     voice.atrac9.frameSamples = static_cast<std::uint32_t>(info.frameSamples);
     voice.atrac9.framesInSuperframe = static_cast<std::uint32_t>(info.framesInSuperframe);
@@ -54,25 +57,30 @@ void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
 
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block) {
     const std::uint64_t samples = static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples;
-    const std::uint64_t superframeSamples = static_cast<std::uint64_t>(voice.atrac9.frameSamples) * voice.atrac9.framesInSuperframe;
-    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples * voice.atrac9.superframeBytes);
+    const std::uint64_t superframeSamples =
+        static_cast<std::uint64_t>(voice.atrac9.frameSamples) * voice.atrac9.framesInSuperframe;
+    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples *
+                                    voice.atrac9.superframeBytes);
 }
 
 void Ngs2RestartAtrac9(Ngs2Voice& voice) {
     auto& atrac9 = voice.atrac9;
     atrac9.decoder.reset(Atrac9GetHandle());
-    if (atrac9.decoder == nullptr || Atrac9InitDecoder(atrac9.decoder.get(), atrac9.config) != 0) throw std::runtime_error("NGS2: ATRAC9 decoder init failed");
+    if (atrac9.decoder == nullptr || Atrac9InitDecoder(atrac9.decoder.get(), atrac9.config) != 0)
+        throw std::runtime_error("NGS2: ATRAC9 decoder init failed");
     atrac9.window.clear();
     atrac9.windowStart = 0;
 }
 
 static void DecodeSuperframe(Ngs2Voice& voice, Ngs2Block& block) {
     auto& atrac9 = voice.atrac9;
-    if (block.dataCursor + atrac9.superframeBytes > block.info.data_size) throw std::invalid_argument("NGS2: the ATRAC9 block ends inside a superframe");
+    if (block.dataCursor + atrac9.superframeBytes > block.info.data_size)
+        throw std::invalid_argument("NGS2: the ATRAC9 block ends inside a superframe");
     const std::size_t frameValues = static_cast<std::size_t>(atrac9.frameSamples) * voice.channels;
     const std::size_t superframeValues = frameValues * atrac9.framesInSuperframe;
     if (atrac9.window.size() >= 2 * superframeValues) {
-        atrac9.window.erase(atrac9.window.begin(), atrac9.window.begin() + static_cast<std::ptrdiff_t>(superframeValues));
+        atrac9.window.erase(atrac9.window.begin(),
+                            atrac9.window.begin() + static_cast<std::ptrdiff_t>(superframeValues));
         atrac9.windowStart += atrac9.frameSamples * atrac9.framesInSuperframe;
     }
     std::size_t end = atrac9.window.size();
@@ -81,9 +89,12 @@ static void DecodeSuperframe(Ngs2Voice& voice, Ngs2Block& block) {
     std::size_t consumed = 0;
     for (std::uint32_t frame = 0; frame < atrac9.framesInSuperframe; frame++, end += frameValues) {
         int used = 0;
-        const int status = Atrac9DecodeF32(atrac9.decoder.get(), superframe + consumed, static_cast<int>(atrac9.superframeBytes - consumed), atrac9.window.data() + end, &used, 0);
+        const int status =
+            Atrac9DecodeF32(atrac9.decoder.get(), superframe + consumed,
+                            static_cast<int>(atrac9.superframeBytes - consumed), atrac9.window.data() + end, &used, 0);
         consumed += static_cast<std::size_t>(std::max(used, 0));
-        if (status != 0 || consumed > atrac9.superframeBytes) throw std::runtime_error("NGS2: ATRAC9 decode failed with " + Ngs2Hex(static_cast<std::uint32_t>(status)));
+        if (status != 0 || consumed > atrac9.superframeBytes)
+            throw std::runtime_error("NGS2: ATRAC9 decode failed with " + Ngs2Hex(static_cast<std::uint32_t>(status)));
     }
     block.dataCursor += atrac9.superframeBytes;
     voice.decodedBytes += atrac9.superframeBytes;
@@ -96,17 +107,18 @@ const float* Ngs2Atrac9Frame(Ngs2Voice& voice, Ngs2Block& block, std::uint32_t f
         atrac9.window.clear();
         atrac9.windowStart = 0;
     }
-    if (position < atrac9.windowStart) throw std::logic_error("NGS2: ATRAC9 frames are read backwards");
-    while (position >= atrac9.windowStart + atrac9.window.size() / voice.channels) DecodeSuperframe(voice, block);
+    if (position < atrac9.windowStart)
+        throw std::logic_error("NGS2: ATRAC9 frames are read backwards");
+    while (position >= atrac9.windowStart + atrac9.window.size() / voice.channels)
+        DecodeSuperframe(voice, block);
     return atrac9.window.data() + static_cast<std::size_t>(position - atrac9.windowStart) * voice.channels;
 }
 
-static std::uint16_t ReadLe16(const std::uint8_t* data) {
-    return static_cast<std::uint16_t>(data[0] | data[1] << 8);
-}
+static std::uint16_t ReadLe16(const std::uint8_t* data) { return static_cast<std::uint16_t>(data[0] | data[1] << 8); }
 
 static std::uint32_t ReadLe32(const std::uint8_t* data) {
-    return static_cast<std::uint32_t>(data[0]) | static_cast<std::uint32_t>(data[1]) << 8 | static_cast<std::uint32_t>(data[2]) << 16 | static_cast<std::uint32_t>(data[3]) << 24;
+    return static_cast<std::uint32_t>(data[0]) | static_cast<std::uint32_t>(data[1]) << 8 |
+           static_cast<std::uint32_t>(data[2]) << 16 | static_cast<std::uint32_t>(data[3]) << 24;
 }
 
 struct RiffChunks {
@@ -121,8 +133,10 @@ struct RiffChunks {
 };
 
 static int ReadChunks(const std::uint8_t* bytes, std::size_t size, RiffChunks& chunks) {
-    if (size < 12) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
-    if (std::memcmp(bytes, "RIFF", 4) != 0 || std::memcmp(bytes + 8, "WAVE", 4) != 0) return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
+    if (size < 12)
+        return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    if (std::memcmp(bytes, "RIFF", 4) != 0 || std::memcmp(bytes + 8, "WAVE", 4) != 0)
+        return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
     const std::size_t end = std::min<std::size_t>(size, 8 + static_cast<std::size_t>(ReadLe32(bytes + 4)));
     for (std::size_t offset = 12; offset + 8 <= end;) {
         const auto* chunk = bytes + offset;
@@ -134,7 +148,8 @@ static int ReadChunks(const std::uint8_t* bytes, std::size_t size, RiffChunks& c
             chunks.dataSize = chunkSize;
             break;
         }
-        if (chunkSize > end - payload) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+        if (chunkSize > end - payload)
+            return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
         if (std::memcmp(chunk, "fmt ", 4) == 0) {
             chunks.format = bytes + payload;
             chunks.formatSize = chunkSize;
@@ -147,23 +162,34 @@ static int ReadChunks(const std::uint8_t* bytes, std::size_t size, RiffChunks& c
         }
         offset = payload + chunkSize + (chunkSize & 1);
     }
-    if (chunks.format == nullptr || chunks.dataOffset == 0 || chunks.dataOffset > std::numeric_limits<std::uint32_t>::max()) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    if (chunks.format == nullptr || chunks.dataOffset == 0 ||
+        chunks.dataOffset > std::numeric_limits<std::uint32_t>::max())
+        return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     return SCE_NGS2_OK;
 }
 
 static int ParseAtrac9(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
     const auto* format = chunks.format;
-    if (chunks.formatSize < FMT_ATRAC9_SIZE || chunks.fact == nullptr || chunks.factSize < FACT_ATRAC9_SIZE) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
+    if (chunks.formatSize < FMT_ATRAC9_SIZE || chunks.fact == nullptr || chunks.factSize < FACT_ATRAC9_SIZE)
+        return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     std::uint8_t config[4];
     std::memcpy(config, format + FMT_CONFIG_OFFSET, sizeof(config));
     Atrac9CodecInfo codec{};
-    if (!CodecInfo(config, codec) || ReadLe16(format + 2) != codec.channels || ReadLe32(format + 4) != static_cast<std::uint32_t>(codec.samplingRate) ||
-        ReadLe16(format + 12) != codec.superframeSize || ReadLe16(format + 18) != static_cast<std::uint32_t>(codec.frameSamples * codec.framesInSuperframe)) {
+    if (!CodecInfo(config, codec) || ReadLe16(format + 2) != codec.channels ||
+        ReadLe32(format + 4) != static_cast<std::uint32_t>(codec.samplingRate) ||
+        ReadLe16(format + 12) != codec.superframeSize ||
+        ReadLe16(format + 18) != static_cast<std::uint32_t>(codec.frameSamples * codec.framesInSuperframe)) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (chunks.sampler != nullptr && chunks.samplerSize >= 32 && ReadLe32(chunks.sampler + 28) != 0) throw std::runtime_error("NGS2: parsing looped waveforms is not implemented");
-    info.format = {SCE_NGS2_WAVEFORM_TYPE_ATRAC9, static_cast<std::uint32_t>(codec.channels), static_cast<std::uint32_t>(codec.samplingRate),
-                   static_cast<std::uint32_t>(config[0]) << 24 | static_cast<std::uint32_t>(config[1]) << 16 | static_cast<std::uint32_t>(config[2]) << 8 | config[3], 0, 0};
+    if (chunks.sampler != nullptr && chunks.samplerSize >= 32 && ReadLe32(chunks.sampler + 28) != 0)
+        throw std::runtime_error("NGS2: parsing looped waveforms is not implemented");
+    info.format = {SCE_NGS2_WAVEFORM_TYPE_ATRAC9,
+                   static_cast<std::uint32_t>(codec.channels),
+                   static_cast<std::uint32_t>(codec.samplingRate),
+                   static_cast<std::uint32_t>(config[0]) << 24 | static_cast<std::uint32_t>(config[1]) << 16 |
+                       static_cast<std::uint32_t>(config[2]) << 8 | config[3],
+                   0,
+                   0};
     info.data_offset = static_cast<std::uint32_t>(chunks.dataOffset);
     info.data_size = static_cast<std::uint32_t>(chunks.dataSize);
     info.num_samples = ReadLe32(chunks.fact);
@@ -186,12 +212,15 @@ static int ParseAtrac9(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
 extern "C" {
 
 int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2WaveformInfo* info) {
-    if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (info == nullptr)
+        return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     *info = {};
-    if (data == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    if (data == nullptr)
+        return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     RiffChunks chunks;
     const int result = ReadChunks(static_cast<const std::uint8_t*>(data), data_size, chunks);
-    if (result != SCE_NGS2_OK) return result;
+    if (result != SCE_NGS2_OK)
+        return result;
     const std::uint16_t tag = ReadLe16(chunks.format);
     if (tag == WAVE_FORMAT_EXTENSIBLE && chunks.formatSize >= FMT_GUID_OFFSET + sizeof(ATRAC9_GUID) &&
         std::memcmp(chunks.format + FMT_GUID_OFFSET, ATRAC9_GUID, sizeof(ATRAC9_GUID)) == 0) {
@@ -200,15 +229,21 @@ int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2W
     throw std::runtime_error("NGS2: parsing waveform format tag " + Ngs2Hex(tag) + " is not implemented");
 }
 
-int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_pos, uint32_t num_samples, Ngs2WaveformBlock* block) {
-    if (block == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_t sample_pos, uint32_t num_samples,
+                                       Ngs2WaveformBlock* block) {
+    if (block == nullptr)
+        return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     *block = {};
-    if (format == nullptr || format->num_channels == 0 || format->num_channels > NGS2_MAX_CHANNELS || format->sample_rate == 0 || format->sample_rate > MAX_SAMPLE_RATE) {
+    if (format == nullptr || format->num_channels == 0 || format->num_channels > NGS2_MAX_CHANNELS ||
+        format->sample_rate == 0 || format->sample_rate > MAX_SAMPLE_RATE) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) throw std::runtime_error("NGS2: waveform blocks of type " + Ngs2Hex(format->waveform_type) + " are not implemented");
+    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9)
+        throw std::runtime_error("NGS2: waveform blocks of type " + Ngs2Hex(format->waveform_type) +
+                                 " are not implemented");
     Atrac9CodecInfo codec{};
-    if (!MatchingCodecInfo(*format, codec)) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
+    if (!MatchingCodecInfo(*format, codec))
+        return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     const std::uint64_t superframeSamples = static_cast<std::uint64_t>(codec.frameSamples) * codec.framesInSuperframe;
     const std::uint64_t skip = sample_pos % superframeSamples;
     block->data_offset = sample_pos / superframeSamples * codec.superframeSize;
@@ -219,7 +254,6 @@ int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_
     block->num_samples = num_samples;
     return SCE_NGS2_OK;
 }
-
 }
 
 #pragma GCC visibility pop

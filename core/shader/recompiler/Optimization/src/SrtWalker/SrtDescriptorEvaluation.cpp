@@ -17,14 +17,18 @@ std::string& failureReason() {
 }
 
 std::string DescribeValue(const IrValue* value, std::uint32_t depth) {
-    if (value == nullptr) return "null";
+    if (value == nullptr)
+        return "null";
     value = value->Resolve();
     std::string text(IrOpcodeName(value->Opcode()));
-    if (value->HasImmediate() && value->Type() == IrType::U32) return text + "(" + std::to_string(value->ImmediateU32()) + ")";
-    if (depth == 0 || value->ArgumentCount() == 0) return text;
+    if (value->HasImmediate() && value->Type() == IrType::U32)
+        return text + "(" + std::to_string(value->ImmediateU32()) + ")";
+    if (depth == 0 || value->ArgumentCount() == 0)
+        return text;
     text += "(";
     for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
-        if (index != 0) text += ", ";
+        if (index != 0)
+            text += ", ";
         text += DescribeValue(value->Argument(index), depth - 1);
     }
     return text + ")";
@@ -44,16 +48,25 @@ const DescriptorSource* Source(const IrResourcePlan& program, std::uint32_t sour
 
 }
 
-bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources) {
+bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources,
+                                const SrtRuntime& runtime, std::vector<DescriptorValue>& results,
+                                std::vector<std::uint32_t>& flat, bool evaluateFlat,
+                                std::span<const std::uint8_t> cleanFlatSlots,
+                                std::vector<std::uint8_t>& activeSources) {
     failureReason().clear();
     static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
     if (debug) {
-        for (std::size_t slot = 0; slot < program.srtReads.size(); ++slot) std::fprintf(stderr, "[srt] slot %zu = %s"  "\n", slot, DescribeValue(program.srtReads[slot].value, 6).c_str());
+        for (std::size_t slot = 0; slot < program.srtReads.size(); ++slot)
+            std::fprintf(stderr,
+                         "[srt] slot %zu = %s"
+                         "\n",
+                         slot, DescribeValue(program.srtReads[slot].value, 6).c_str());
     }
     if (!program.srtPlanComplete) {
         return Fail("SRT plan is incomplete");
     }
-    if (std::any_of(cleanFlatSlots.begin(), cleanFlatSlots.end(), [](std::uint8_t clean) { return clean != 0u; }) && runtime.readSpecializationMemory == nullptr) {
+    if (std::any_of(cleanFlatSlots.begin(), cleanFlatSlots.end(), [](std::uint8_t clean) { return clean != 0u; }) &&
+        runtime.readSpecializationMemory == nullptr) {
         return Fail("clean flat slots need specialization memory");
     }
     SrtRuntime cleanRuntime = runtime;
@@ -71,7 +84,7 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
             }
         }
         std::vector<std::uint8_t> visited(program.controlFlow.size());
-        std::vector<std::uint32_t> pending {0};
+        std::vector<std::uint32_t> pending{0};
         while (!pending.empty()) {
             const auto index = pending.back();
             pending.pop_back();
@@ -84,7 +97,8 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
                 active[source] = 1u;
             }
             std::uint32_t condition = 0;
-            const bool cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr && cleanEvaluator.Evaluate(block.condition, condition);
+            const bool cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr &&
+                                        cleanEvaluator.Evaluate(block.condition, condition);
             if (cleanEvaluable) {
                 pending.push_back(block.successors[condition != 0u ? 0u : 1u]);
             } else {
@@ -106,11 +120,15 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
                 if (!evaluator.Evaluate(source->dwords[index], value.dwords[index])) {
                     std::string detail = DescribeValue(source->dwords[index], 4);
                     const IrValue* dword = source->dwords[index]->Resolve();
-                    if (dword->Opcode() == IrOpcode::ReadConst && dword->ArgumentCount() == 2 && dword->Argument(1)->Resolve()->HasImmediate()) {
+                    if (dword->Opcode() == IrOpcode::ReadConst && dword->ArgumentCount() == 2 &&
+                        dword->Argument(1)->Resolve()->HasImmediate()) {
                         const auto slot = dword->Argument(1)->Resolve()->ImmediateU32();
-                        if (slot < program.srtReads.size()) detail += " where slot " + std::to_string(slot) + " = " + DescribeValue(program.srtReads[slot].value, 8);
+                        if (slot < program.srtReads.size())
+                            detail += " where slot " + std::to_string(slot) + " = " +
+                                      DescribeValue(program.srtReads[slot].value, 8);
                     }
-                    return Fail("descriptor source " + std::to_string(sourceIndex) + " dword " + std::to_string(index) + ": " + detail);
+                    return Fail("descriptor source " + std::to_string(sourceIndex) + " dword " + std::to_string(index) +
+                                ": " + detail);
                 }
             }
         }
@@ -126,15 +144,19 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
             // cached) before this loop: its dereference happens here, once, and is recorded as
             // the slot's leaf; reads nested in its address cone land among the other reads.
             auto* trace = runtime.readTrace;
-            const bool pure = trace != nullptr && read.flatOffset < program.pureFlatSlots.size() && program.pureFlatSlots[read.flatOffset] != 0u;
+            const bool pure = trace != nullptr && read.flatOffset < program.pureFlatSlots.size() &&
+                              program.pureFlatSlots[read.flatOffset] != 0u;
             if (pure) {
                 trace->leaf = read.value->Resolve();
                 trace->leafSlot = read.flatOffset;
             }
-            const bool evaluated = read.flatOffset < flattened.size() && selected.Evaluate(read.value, flattened[read.flatOffset]);
-            if (pure) trace->leaf = nullptr;
+            const bool evaluated =
+                read.flatOffset < flattened.size() && selected.Evaluate(read.value, flattened[read.flatOffset]);
+            if (pure)
+                trace->leaf = nullptr;
             if (!evaluated) {
-                return Fail(std::string(clean ? "clean " : "") + "SRT read at flat offset " + std::to_string(read.flatOffset) + ": " + DescribeValue(read.value, 4));
+                return Fail(std::string(clean ? "clean " : "") + "SRT read at flat offset " +
+                            std::to_string(read.flatOffset) + ": " + DescribeValue(read.value, 4));
             }
         }
     }
@@ -146,8 +168,6 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
     return true;
 }
 
-const std::string& RuntimeSourceFailureReason() {
-    return failureReason();
-}
+const std::string& RuntimeSourceFailureReason() { return failureReason(); }
 
 }

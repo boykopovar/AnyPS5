@@ -27,7 +27,8 @@ static int Fail(int error) {
 }
 
 static PosixSemaphore* Get(void* sem) {
-    if (!sem) return nullptr;
+    if (!sem)
+        return nullptr;
     PosixSemaphore* semaphore = nullptr;
     std::memcpy(&semaphore, sem, sizeof(semaphore));
     return semaphore;
@@ -37,7 +38,8 @@ static int WaitFor(PosixSemaphore* semaphore, const KernelUseconds* usec) {
     std::unique_lock lock(semaphore->lock);
     const auto ready = [&] { return semaphore->count > 0; };
     if (usec) {
-        if (!semaphore->available.WaitUntil(lock, TimedWait::DeadlineNanos(*usec), ready)) return Fail(PosixThread::GUEST_ETIMEDOUT);
+        if (!semaphore->available.WaitUntil(lock, TimedWait::DeadlineNanos(*usec), ready))
+            return Fail(PosixThread::GUEST_ETIMEDOUT);
     } else {
         semaphore->available.Wait(lock, ready);
     }
@@ -49,7 +51,8 @@ extern "C" {
 
 int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
     (void)pshared;
-    if (!sem || value > GUEST_SEM_VALUE_MAX) return Fail(PosixThread::GUEST_EINVAL);
+    if (!sem || value > GUEST_SEM_VALUE_MAX)
+        return Fail(PosixThread::GUEST_EINVAL);
     auto* semaphore = new PosixSemaphore();
     semaphore->count = value;
     std::memcpy(sem, &semaphore, sizeof(semaphore));
@@ -58,7 +61,8 @@ int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
 
 int APS5_VABI sem_destroy_nid_postfix(void* sem) {
     auto* semaphore = Get(sem);
-    if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
+    if (!semaphore)
+        return Fail(PosixThread::GUEST_EINVAL);
     delete semaphore;
     std::memset(sem, 0, sizeof(semaphore));
     return 0;
@@ -66,40 +70,48 @@ int APS5_VABI sem_destroy_nid_postfix(void* sem) {
 
 int APS5_VABI sem_wait_nid_postfix(void* sem) {
     auto* semaphore = Get(sem);
-    if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
+    if (!semaphore)
+        return Fail(PosixThread::GUEST_EINVAL);
     return WaitFor(semaphore, nullptr);
 }
 
 int APS5_VABI sem_trywait_nid_postfix(void* sem) {
     auto* semaphore = Get(sem);
-    if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
+    if (!semaphore)
+        return Fail(PosixThread::GUEST_EINVAL);
     std::lock_guard lock(semaphore->lock);
-    if (semaphore->count == 0) return Fail(GUEST_EAGAIN);
+    if (semaphore->count == 0)
+        return Fail(GUEST_EAGAIN);
     --semaphore->count;
     return 0;
 }
 
 int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime) {
     auto* semaphore = Get(sem);
-    if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
+    if (!semaphore)
+        return Fail(PosixThread::GUEST_EINVAL);
     KernelUseconds usec = 0;
-    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return Fail(PosixThread::GUEST_EINVAL);
+    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec))
+        return Fail(PosixThread::GUEST_EINVAL);
     return WaitFor(semaphore, &usec);
 }
 
 int APS5_VABI sem_reltimedwait_np_nid_postfix(void* sem, uint32_t usec) {
     auto* semaphore = Get(sem);
-    if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
+    if (!semaphore)
+        return Fail(PosixThread::GUEST_EINVAL);
     const KernelUseconds timeout = usec;
     return WaitFor(semaphore, &timeout);
 }
 
 int APS5_VABI sem_post_nid_postfix(void* sem) {
     auto* semaphore = Get(sem);
-    if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
+    if (!semaphore)
+        return Fail(PosixThread::GUEST_EINVAL);
     {
         std::lock_guard lock(semaphore->lock);
-        if (semaphore->count == GUEST_SEM_VALUE_MAX) return Fail(GUEST_EOVERFLOW);
+        if (semaphore->count == GUEST_SEM_VALUE_MAX)
+            return Fail(GUEST_EOVERFLOW);
         ++semaphore->count;
     }
     semaphore->available.NotifyOne();
@@ -108,10 +120,10 @@ int APS5_VABI sem_post_nid_postfix(void* sem) {
 
 int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
     auto* semaphore = Get(sem);
-    if (!semaphore || !value) return Fail(PosixThread::GUEST_EINVAL);
+    if (!semaphore || !value)
+        return Fail(PosixThread::GUEST_EINVAL);
     std::lock_guard lock(semaphore->lock);
     *value = static_cast<int>(semaphore->count);
     return 0;
 }
-
 }

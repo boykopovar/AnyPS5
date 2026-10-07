@@ -16,8 +16,8 @@ inline void PreciseSleepUs(unsigned long long micros) {
     }
 #ifdef _WIN32
     struct Timer {
-        HANDLE handle = CreateWaitableTimerExW(nullptr, nullptr,
-            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        HANDLE handle =
+            CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
         ~Timer() {
             if (handle != nullptr) {
                 CloseHandle(handle);

@@ -37,7 +37,8 @@ ControlFlowGraph makeGraph(const std::vector<std::vector<std::uint32_t>>& succes
         graph.blocks.push_back(std::move(block));
     }
     for (const auto& block : graph.blocks) {
-        for (const auto successor : block.successors) graph.blocks[successor].predecessors.push_back(block.id);
+        for (const auto successor : block.successors)
+            graph.blocks[successor].predecessors.push_back(block.id);
     }
     return graph;
 }
@@ -46,8 +47,13 @@ const BasicBlock* innermostLoopHeader(const ControlFlowGraph& graph, std::uint32
     const BasicBlock* innermost = nullptr;
     std::size_t innermostSize = 0;
     for (const auto& header : graph.blocks) {
-        if (!header.terminator.loopHeader || !graph.Dominates(header.id, blockId) || graph.Dominates(header.terminator.mergeBlock, blockId) || blockId == header.terminator.mergeBlock) continue;
-        const auto size = static_cast<std::size_t>(std::count_if(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& block) { return graph.Dominates(header.id, block.id) && !graph.Dominates(header.terminator.mergeBlock, block.id); }));
+        if (!header.terminator.loopHeader || !graph.Dominates(header.id, blockId) ||
+            graph.Dominates(header.terminator.mergeBlock, blockId) || blockId == header.terminator.mergeBlock)
+            continue;
+        const auto size = static_cast<std::size_t>(
+            std::count_if(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& block) {
+                return graph.Dominates(header.id, block.id) && !graph.Dominates(header.terminator.mergeBlock, block.id);
+            }));
         if (innermost == nullptr || size < innermostSize) {
             innermost = &header;
             innermostSize = size;
@@ -59,17 +65,28 @@ const BasicBlock* innermostLoopHeader(const ControlFlowGraph& graph, std::uint32
 void requireStructuredBranches(const ControlFlowGraph& graph, const char* name) {
     for (const auto& block : graph.blocks) {
         const auto& terminator = block.terminator;
-        if (terminator.kind != TerminatorKind::ConditionalBranch || terminator.loopHeader || terminator.trueBlock == terminator.falseBlock) continue;
+        if (terminator.kind != TerminatorKind::ConditionalBranch || terminator.loopHeader ||
+            terminator.trueBlock == terminator.falseBlock)
+            continue;
         const auto* loop = innermostLoopHeader(graph, block.id);
         if (terminator.mergeBlock != InvalidControlFlowId) {
             if (loop != nullptr && terminator.mergeBlock == loop->terminator.continueBlock) {
-                throw std::runtime_error(std::string(name) + ": block " + std::to_string(block.id) + " in the loop at block " + std::to_string(loop->id) + " merges at the loop's continue block " + std::to_string(terminator.mergeBlock));
+                throw std::runtime_error(std::string(name) + ": block " + std::to_string(block.id) +
+                                         " in the loop at block " + std::to_string(loop->id) +
+                                         " merges at the loop's continue block " +
+                                         std::to_string(terminator.mergeBlock));
             }
             continue;
         }
-        const auto exits = [&](std::uint32_t target) { return loop != nullptr && (target == loop->terminator.mergeBlock || target == loop->terminator.continueBlock); };
+        const auto exits = [&](std::uint32_t target) {
+            return loop != nullptr &&
+                   (target == loop->terminator.mergeBlock || target == loop->terminator.continueBlock);
+        };
         if (!exits(terminator.trueBlock) && !exits(terminator.falseBlock)) {
-            throw std::runtime_error(std::string(name) + ": block " + std::to_string(block.id) + " branches to " + std::to_string(terminator.trueBlock) + "/" + std::to_string(terminator.falseBlock) + " without a merge, and neither is its loop's merge or continue");
+            throw std::runtime_error(std::string(name) + ": block " + std::to_string(block.id) + " branches to " +
+                                     std::to_string(terminator.trueBlock) + "/" +
+                                     std::to_string(terminator.falseBlock) +
+                                     " without a merge, and neither is its loop's merge or continue");
         }
     }
 }
@@ -81,7 +98,8 @@ int main() {
         auto nested = makeGraph({{1}, {2}, {5, 3}, {5, 4}, {7}, {6, 7}, {}, {1}});
         Structurizer{}.Structurize(nested);
         if (nested.FindBlock(2).terminator.mergeBlock == nested.FindBlock(3).terminator.mergeBlock) {
-            std::fprintf(stderr, "the nested selections share merge block %u\n", nested.FindBlock(2).terminator.mergeBlock);
+            std::fprintf(stderr, "the nested selections share merge block %u\n",
+                         nested.FindBlock(2).terminator.mergeBlock);
             return 1;
         }
         requireStructuredBranches(nested, "nested selections");
@@ -106,7 +124,8 @@ int main() {
         for (const auto& block : earlyReturn.blocks) {
             const auto merge = block.terminator.mergeBlock;
             if (merge != InvalidControlFlowId && !earlyReturn.Dominates(block.id, merge)) {
-                std::fprintf(stderr, "an early return inside a selection: header %u does not dominate its merge %u\n", block.id, merge);
+                std::fprintf(stderr, "an early return inside a selection: header %u does not dominate its merge %u\n",
+                             block.id, merge);
                 return 1;
             }
         }

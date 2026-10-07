@@ -41,7 +41,8 @@ int main() {
     expect(scePlayerInvitationDialogGetResult(&result), 0);
     expect(result.errorCode, 0);
     expect(result.result, userCanceled);
-    for (const std::uint8_t byte : result.reserved) expect(byte, 0);
+    for (const std::uint8_t byte : result.reserved)
+        expect(byte, 0);
     expect(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
     expect(scePlayerInvitationDialogOpen(nullptr), 0);
     expect(scePlayerInvitationDialogClose(), 0);

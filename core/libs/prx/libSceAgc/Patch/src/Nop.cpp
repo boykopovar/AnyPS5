@@ -12,5 +12,4 @@ extern "C" {
 std::uint32_t* APS5_VABI sceAgcSetNop(CommandBuffer* buf, std::uint32_t sizeDw) {
     return Agc::Command::WriteNop(buf, sizeDw, __func__);
 }
-
 }

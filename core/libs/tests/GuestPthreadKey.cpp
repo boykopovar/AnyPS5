@@ -4,7 +4,8 @@
 #include <thread>
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
 int APS5_VABI scePthreadKeyDelete(PthreadKey key);
@@ -15,7 +16,10 @@ int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
 static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static std::atomic<int> deletedCalls{0}, reusedCalls{0}, liveCalls{0};
 static std::atomic<void*> liveValue{nullptr};
@@ -25,14 +29,18 @@ static int first = 1, second = 2, third = 3;
 
 static void APS5_VABI Deleted(void*) { ++deletedCalls; }
 static void APS5_VABI Reused(void*) { ++reusedCalls; }
-static void APS5_VABI Live(void* value) { ++liveCalls; liveValue = value; }
+static void APS5_VABI Live(void* value) {
+    ++liveCalls;
+    liveValue = value;
+}
 
-static pthread_key_destructor_func_t Destructor(void (APS5_VABI* function)(void*)) {
+static pthread_key_destructor_func_t Destructor(void(APS5_VABI* function)(void*)) {
     return reinterpret_cast<pthread_key_destructor_func_t>(function);
 }
 
 static void WaitFor(int value) {
-    while (stage.load() != value) std::this_thread::yield();
+    while (stage.load() != value)
+        std::this_thread::yield();
 }
 
 static void* APS5_VABI ReuseBeforeExit(void*) {

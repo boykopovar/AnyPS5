@@ -28,17 +28,20 @@ alignas(256) constexpr std::array<std::uint32_t, 7> MaskedPixelCode{
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 4> FullPixelCode{
-    0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
+    0x7e0e02f2,
+    0xf800180f,
+    0x07070707,
+    0xbf810000,
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address),
+            static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{
-    {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+constexpr std::array<std::array<float, 4>, 3> Triangle{
+    {{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
 void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::span<const std::uint32_t> pixelCode) {
     Pixels.fill(Kept);
@@ -47,42 +50,46 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::span<con
     std::vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
-    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{
+        {{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
     ShaderRecompiler::RecompileRequest vertex{
         {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(VertexCode.data()), VertexCode, 0, {}},
-        {waveSize, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
+        {waveSize, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{},
+         vertexMemory},
         target,
-        {0, 0, 0, 64}
-    };
+        {0, 0, 0, 64}};
     vertex.useCache = false;
     const auto vertexResult = ShaderRecompiler::Recompile(vertex);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     pixel.wave32 = waveSize == 32u;
-    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
+    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) |
+                      ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
     pixel.posX = true;
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     const std::vector<std::uint32_t> pixelUserData(8, 0u);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{
+        {{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {waveSize, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
-        {0, 0, vertexPush, 128 - vertexPush}
-    };
+        {0, 0, vertexPush, 128 - vertexPush}};
     fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
-    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
-        {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, &pixelResult, vertexPush}
-    }};
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{
+        {{ShaderStage::Vertex, &vertexResult, 0}, {ShaderStage::Fragment, &pixelResult, vertexPush}}};
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()),
+                   {Width, Height},
+                   VK_FORMAT_R8G8B8A8_UNORM,
+                   Pixels.size(),
+                   0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
@@ -101,13 +108,18 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::span<con
 }
 
 void Check(std::uint32_t waveSize, bool masked) {
-    const auto what = "pixel valid mask wave" + std::to_string(waveSize) + (masked ? " odd columns cleared" : " full EXEC");
+    const auto what =
+        "pixel valid mask wave" + std::to_string(waveSize) + (masked ? " odd columns cleared" : " full EXEC");
     for (std::uint32_t pixel = 0; pixel < Width * Height; ++pixel) {
         const bool exported = !masked || (pixel % Width) % 2u == 0u;
         const auto expected = exported ? std::byte{255} : Kept;
         for (std::uint32_t channel = 0; channel < 4; ++channel) {
             const auto actual = Pixels[pixel * 4u + channel];
-            Require(actual == expected, what + ": pixel " + std::to_string(pixel) + " channel " + std::to_string(channel) + " is " + std::to_string(static_cast<unsigned>(actual)) + ", expected " + std::to_string(static_cast<unsigned>(expected)) + (exported ? " (exported)" : " (cleared from EXEC before the vm export)"));
+            Require(actual == expected, what + ": pixel " + std::to_string(pixel) + " channel " +
+                                            std::to_string(channel) + " is " +
+                                            std::to_string(static_cast<unsigned>(actual)) + ", expected " +
+                                            std::to_string(static_cast<unsigned>(expected)) +
+                                            (exported ? " (exported)" : " (cleared from EXEC before the vm export)"));
         }
     }
 }
@@ -117,7 +129,8 @@ void Check(std::uint32_t waveSize, bool masked) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         if (device->Target().subgroupSize < 32u) {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
             return VulkanTestSkipped;

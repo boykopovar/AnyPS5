@@ -9,7 +9,8 @@
 
 extern "C" {
 
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, NpTrophy2Details* details, NpTrophy2Data* data) {
+int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, NpTrophy2Details* details,
+                                        NpTrophy2Data* data) {
     if (details == nullptr || data == nullptr) {
         APS5_INVALID_ARG_EX;
     }
@@ -37,7 +38,9 @@ int APS5_VABI sceNpTrophy2GetTrophyInfo(int context, int handle, int trophy_id, 
     return SCE_NP_TROPHY2_OK;
 }
 
-int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t offset, uint32_t limit, NpTrophy2Details* details_array, NpTrophy2Data* data_array, uint32_t* count) {
+int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int context, int handle, uint32_t offset, uint32_t limit,
+                                             NpTrophy2Details* details_array, NpTrophy2Data* data_array,
+                                             uint32_t* count) {
     if (count == nullptr) {
         APS5_INVALID_ARG_EX;
     }
@@ -77,5 +80,4 @@ int APS5_VABI sceNpTrophy2GetTrophyIcon(int context, int handle, int trophy_id, 
     }
     throw std::runtime_error(std::string(__func__) + ": icon file not found");
 }
-
 }

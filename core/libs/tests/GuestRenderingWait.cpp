@@ -9,10 +9,16 @@
 #include <cstdlib>
 #include <mutex>
 extern "C" std::uint32_t APS5_VABI sceAgcDriverGetWaitRenderingPacketSizeInDwords();
-extern "C" std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t**, std::uint32_t, std::uint32_t, std::uint32_t, int);
-static void Require(bool value) { if (!value) std::abort(); }
-class Output final : public AgcDriver::IVideoOutput, public AgcDriver::IRenderingWait,
-    public AgcDriver::IFlipRequest, public std::enable_shared_from_this<Output> {
+extern "C" std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t**, std::uint32_t, std::uint32_t,
+                                                                         std::uint32_t, int);
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
+class Output final : public AgcDriver::IVideoOutput,
+                     public AgcDriver::IRenderingWait,
+                     public AgcDriver::IFlipRequest,
+                     public std::enable_shared_from_this<Output> {
 public:
     std::mutex mutex;
     std::condition_variable changed;
@@ -55,14 +61,18 @@ int main() {
     const auto size = sceAgcDriverGetWaitRenderingPacketSizeInDwords();
     Require(size == AgcDriver::RenderingWaitPacketWords);
     bool rejected = false;
-    try { sceAgcDriverWaitUntilSafeForRendering(&cursor, size - 1, 0, 7, 0); }
-    catch (const std::invalid_argument&) { rejected = true; }
+    try {
+        sceAgcDriverWaitUntilSafeForRendering(&cursor, size - 1, 0, 7, 0);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
     Require(rejected && cursor == words.data() && words[0] == 0);
     Require(sceAgcDriverWaitUntilSafeForRendering(&cursor, size, 0, 7, 0) == 0);
     Require(cursor == words.data() + size);
     Require(words[0] == AgcDriver::RenderingWaitPacketHeader && words[1] == 7 && words[2] == 0 && words[3] == 0);
     const std::uint32_t flip[] = {AgcDriver::FlipPacketHeader, 7, 0, 1, 0, 0};
-    for (auto word : flip) *cursor++ = word;
+    for (auto word : flip)
+        *cursor++ = word;
     Require(words.back() == 0x12345678);
     Packet packet{words.data(), 10, 0, {}};
     sceAgcDriverSubmitDcb(&packet);

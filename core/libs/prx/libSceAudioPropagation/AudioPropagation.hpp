@@ -60,29 +60,49 @@ static_assert(offsetof(PortalParams, rooms) == 0x50);
 
 extern "C" {
 
-std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const void* options, AudioPropagationSystemMemory* outMemory);
-std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const void* options, const AudioPropagationSystemMemory* memory, AudioPropagationHandle* outSystem);
+std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const void* options,
+                                                            AudioPropagationSystemMemory* outMemory);
+std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const void* options, const AudioPropagationSystemMemory* memory,
+                                                       AudioPropagationHandle* outSystem);
 std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle system);
-std::int32_t APS5_VABI sceAudioPropagationSystemSetAttributes(AudioPropagationHandle system, const AudioPropagation::Attribute* attributes, std::uint32_t count);
-std::int32_t APS5_VABI sceAudioPropagationSystemRegisterMaterial(AudioPropagationHandle system, const AudioPropagationStructDescriptor* material, AudioPropagationHandle* outMaterial);
+std::int32_t APS5_VABI sceAudioPropagationSystemSetAttributes(AudioPropagationHandle system,
+                                                              const AudioPropagation::Attribute* attributes,
+                                                              std::uint32_t count);
+std::int32_t APS5_VABI sceAudioPropagationSystemRegisterMaterial(AudioPropagationHandle system,
+                                                                 const AudioPropagationStructDescriptor* material,
+                                                                 AudioPropagationHandle* outMaterial);
 std::int32_t APS5_VABI sceAudioPropagationSystemUnregisterMaterial(AudioPropagationHandle material);
-std::int32_t APS5_VABI sceAudioPropagationSystemGetRays(AudioPropagationHandle system, void* rays, std::uint32_t* count);
-std::int32_t APS5_VABI sceAudioPropagationSystemSetRays(AudioPropagationHandle system, const void* rays, std::uint32_t count);
+std::int32_t APS5_VABI sceAudioPropagationSystemGetRays(AudioPropagationHandle system, void* rays,
+                                                        std::uint32_t* count);
+std::int32_t APS5_VABI sceAudioPropagationSystemSetRays(AudioPropagationHandle system, const void* rays,
+                                                        std::uint32_t count);
 std::int32_t APS5_VABI sceAudioPropagationRoomCreate(AudioPropagationHandle system, AudioPropagationHandle* outRoom);
 std::int32_t APS5_VABI sceAudioPropagationRoomDestroy(AudioPropagationHandle system, AudioPropagationHandle room);
-std::int32_t APS5_VABI sceAudioPropagationPortalCreate(AudioPropagationHandle system, const AudioPropagation::PortalParams* params, AudioPropagationHandle* outPortal);
+std::int32_t APS5_VABI sceAudioPropagationPortalCreate(AudioPropagationHandle system,
+                                                       const AudioPropagation::PortalParams* params,
+                                                       AudioPropagationHandle* outPortal);
 std::int32_t APS5_VABI sceAudioPropagationPortalDestroy(AudioPropagationHandle system, AudioPropagationHandle portal);
-std::int32_t APS5_VABI sceAudioPropagationPortalSetAttributes(AudioPropagationHandle portal, const AudioPropagation::Attribute* attributes, std::uint32_t count);
-std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle system, AudioPropagationHandle* outSource);
+std::int32_t APS5_VABI sceAudioPropagationPortalSetAttributes(AudioPropagationHandle portal,
+                                                              const AudioPropagation::Attribute* attributes,
+                                                              std::uint32_t count);
+std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle system,
+                                                       AudioPropagationHandle* outSource);
 std::int32_t APS5_VABI sceAudioPropagationSourceDestroy(AudioPropagationHandle system, AudioPropagationHandle source);
-std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHandle source, const AudioPropagation::Attribute* attributes, std::uint32_t count);
+std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHandle source,
+                                                              const AudioPropagation::Attribute* attributes,
+                                                              std::uint32_t count);
 std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagationHandle source, std::uint32_t* count);
-std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHandle source, std::uint32_t index, AudioPropagationHandle* outPath);
-std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle source, void* rays, std::uint32_t* count);
-std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropagationHandle source, const void* rays, std::uint32_t rayCount, std::uint32_t flags, void* paths, std::uint32_t pathCount);
-std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHandle source, const void* entries, std::uint32_t count);
-std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle system, const AudioPropagation::RenderInfo* infos, std::uint32_t count);
-
+std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHandle source, std::uint32_t index,
+                                                             AudioPropagationHandle* outPath);
+std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle source, void* rays,
+                                                        std::uint32_t* count);
+std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropagationHandle source, const void* rays,
+                                                                    std::uint32_t rayCount, std::uint32_t flags,
+                                                                    void* paths, std::uint32_t pathCount);
+std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHandle source, const void* entries,
+                                                              std::uint32_t count);
+std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle system,
+                                                       const AudioPropagation::RenderInfo* infos, std::uint32_t count);
 }
 
 #endif

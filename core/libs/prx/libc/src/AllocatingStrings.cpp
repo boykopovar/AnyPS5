@@ -17,10 +17,14 @@ extern "C" {
 
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit) {
     std::size_t length = 0;
-    while (length < limit && source[length] != '\0') ++length;
+    while (length < limit && source[length] != '\0')
+        ++length;
     try {
         auto* result = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(length + 1));
-        if (!result) { errno = 12; return nullptr; }
+        if (!result) {
+            errno = 12;
+            return nullptr;
+        }
         std::memcpy(result, source, length);
         result[length] = '\0';
         return result;
@@ -35,9 +39,15 @@ char* APS5_VABI strdup_nid_postfix(const char* source) {
 }
 
 int APS5_VABI asprintf_nid_postfix(char** destination, const char* format, ...) {
-    if (!destination) { errno = 22; return -1; }
+    if (!destination) {
+        errno = 22;
+        return -1;
+    }
     *destination = nullptr;
-    if (!format) { errno = 22; return -1; }
+    if (!format) {
+        errno = 22;
+        return -1;
+    }
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -58,12 +68,14 @@ int APS5_VABI asprintf_nid_postfix(char** destination, const char* format, ...) 
         const char* source = text;
 #endif
         if (count >= 0) {
-            auto* output = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(static_cast<std::size_t>(count) + 1));
+            auto* output =
+                static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(static_cast<std::size_t>(count) + 1));
             if (output) {
                 std::memcpy(output, source, static_cast<std::size_t>(count) + 1);
                 *destination = output;
                 result = count;
-            } else errno = 12;
+            } else
+                errno = 12;
         }
     } catch (const std::bad_alloc&) {
         errno = 12;
@@ -82,5 +94,4 @@ int APS5_VABI asprintf_nid_postfix(char** destination, const char* format, ...) 
 #endif
     return result;
 }
-
 }

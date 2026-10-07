@@ -12,9 +12,11 @@ char* APS5_VABI dlerror_nid_postfix();
 int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void*);
 int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void*);
 }
-static void Require(bool value) { if (!value) std::abort(); }
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
+template <typename TFunction> static bool ThrowsRuntimeError(TFunction function) {
     try {
         function();
     } catch (const std::runtime_error&) {
@@ -34,7 +36,7 @@ int main(int argc, char** argv) {
     Require(executable != nullptr && dlclose_nid_postfix(executable) == 0);
     void* module = dlopen_nid_postfix(argv[1], 2 | 0x100);
     Require(module != nullptr);
-    using Add = int (APS5_VABI *)(int, int);
+    using Add = int(APS5_VABI*)(int, int);
     auto add = reinterpret_cast<Add>(dlsym_nid_postfix(module, "GuestModuleAdd"));
     Require(add && add(17, 25) == 42);
     Require(dlsym_nid_postfix(reinterpret_cast<void*>(-2), "GuestModuleAdd") == reinterpret_cast<void*>(add));
@@ -63,7 +65,9 @@ int main(int argc, char** argv) {
     relinked += ".guest.prx";
     {
         std::ofstream elf(guest, std::ios::binary);
-        elf.write("\x7f" "ELF", 4);
+        elf.write("\x7f"
+                  "ELF",
+                  4);
     }
     std::filesystem::copy_file(argv[1], relinked, std::filesystem::copy_options::overwrite_existing);
     void* redirected = dlopen_nid_postfix(guest.string().c_str(), 2);
@@ -83,9 +87,12 @@ int main(int argc, char** argv) {
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
     Require(add(40, 2) == 42);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
-    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
-    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
-    Require(ThrowsRuntimeError([] { _sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&Require)); }));
+    Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(
+                reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(
+                reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
+    Require(ThrowsRuntimeError(
+        [] { _sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&Require)); }));
     int local = 0;
     Require(ThrowsRuntimeError([&] { _sceKernelRtldThreadAtexitIncrement_nid_postfix(&local); }));
 }

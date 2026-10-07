@@ -14,17 +14,20 @@ DeferredLabels& deferredLabels() {
 
 bool DeferLabels() {
 
-    static const bool defer = std::getenv("APS5_LABEL_LOCK_EACH") == nullptr && std::getenv("APS5_DRAIN_COMPLETION_LABELS") == nullptr;
+    static const bool defer =
+        std::getenv("APS5_LABEL_LOCK_EACH") == nullptr && std::getenv("APS5_DRAIN_COMPLETION_LABELS") == nullptr;
     return defer;
 }
 
 bool QueuedLabelTable() {
-    static const bool enabled = std::getenv("APS5_NO_QUEUED_LABELS") == nullptr && std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
+    static const bool enabled =
+        std::getenv("APS5_NO_QUEUED_LABELS") == nullptr && std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
     return enabled;
 }
 
 bool LabelBatchSubmit() {
-    static const bool enabled = std::getenv("APS5_NO_LABEL_BATCH_SUBMIT") == nullptr && std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
+    static const bool enabled =
+        std::getenv("APS5_NO_LABEL_BATCH_SUBMIT") == nullptr && std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
     return enabled;
 }
 
@@ -34,20 +37,49 @@ std::size_t& queuedLabelsNoted() {
 }
 
 bool NeedsRecordedLabels(std::uint32_t header) {
-    if (header == FlipPacketHeader) return true;
+    if (header == FlipPacketHeader)
+        return true;
     switch ((header >> 8u) & 0xffu) {
-        case 0x10: case 0x11: case 0x12: case 0x13: case 0x26: case 0x28: case 0x2a: case 0x2f:
-        case 0x42: case 0x46: case 0x58: case 0x68: case 0x69: case 0x76: case 0x78: case 0x79: case 0x7a: case 0x81:
-            return false;
-        default: return true;
+    case 0x10:
+    case 0x11:
+    case 0x12:
+    case 0x13:
+    case 0x26:
+    case 0x28:
+    case 0x2a:
+    case 0x2f:
+    case 0x42:
+    case 0x46:
+    case 0x58:
+    case 0x68:
+    case 0x69:
+    case 0x76:
+    case 0x78:
+    case 0x79:
+    case 0x7a:
+    case 0x81:
+        return false;
+    default:
+        return true;
     }
 }
 
 bool PacketLocksItself(std::uint32_t header) {
-    if (header == FlipPacketHeader) return true;
+    if (header == FlipPacketHeader)
+        return true;
     switch ((header >> 8u) & 0xffu) {
-        case 0x15: case 0x16: case 0x27: case 0x2d: case 0x35: case 0x24: case 0x25: case 0x2c: case 0x38: return true;
-        default: return false;
+    case 0x15:
+    case 0x16:
+    case 0x27:
+    case 0x2d:
+    case 0x35:
+    case 0x24:
+    case 0x25:
+    case 0x2c:
+    case 0x38:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -65,7 +97,8 @@ std::chrono::microseconds Driver::labelFlushDeadline() {
 }
 
 bool Driver::labelFlushDue() {
-    if (QueuedLabelTable() && !deferredLabels().labels.empty()) Get().recordQueuedLabelsByTry(GuestMemory::GpuLockThreadTag(), pollLabelRecords);
+    if (QueuedLabelTable() && !deferredLabels().labels.empty())
+        Get().recordQueuedLabelsByTry(GuestMemory::GpuLockThreadTag(), pollLabelRecords);
     const auto since = Graphics::Recorder::PendingLabelSince();
     return since.has_value() && std::chrono::steady_clock::now() - *since >= labelFlushDeadline();
 }
@@ -90,7 +123,8 @@ std::uint64_t Driver::batchCap() {
 
 void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue) {
     auto& deferred = deferredLabels();
-    if (deferred.labels.empty()) return;
+    if (deferred.labels.empty())
+        return;
 
     static thread_local std::vector<DeferredLabel>* recording = nullptr;
     auto& labels = ShaderRecompiler::ThreadOwned(recording);
@@ -101,7 +135,9 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
         std::uint32_t queue;
         ~Clear() {
             const bool failed = std::uncaught_exceptions() != 0;
-            if (failed) std::fprintf(stderr, "[gpu] queue 0x%x dropped %zu queued labels: their record failed\n", queue, labels.size());
+            if (failed)
+                std::fprintf(stderr, "[gpu] queue 0x%x dropped %zu queued labels: their record failed\n", queue,
+                             labels.size());
             labels.clear();
 
             Graphics::Recorder::CloseLabelGroup(failed ? 0 : GuestMemory::TrackerGeneration());
@@ -114,11 +150,13 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
     for (const auto& label : labels) {
         const auto bytes = std::span<const std::byte>(label.bytes).first(label.size);
         const auto stamp = ++eventSerial;
-        const int reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label.address, bytes, stamp, queue, first) : 4;
+        const int reason =
+            localDevice != nullptr ? localDevice->WriteLabelOnGpu(label.address, bytes, stamp, queue, first) : 4;
         first = false;
         countLabelOutcome(reason);
         if (reason != 0 && reason != 5 && reason != 6) {
-            if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
+            if (reason != 1 && localDevice != nullptr)
+                localDevice->WaitIdle();
             GuestMemory::Write(label.address, bytes, 4);
         }
         noteLabelStore(label.address, bytes, stamp);
@@ -126,7 +164,8 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
     ++labelGroups;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
 
-    if (profile && (labelGroups.load(std::memory_order_relaxed) & 63u) == 0 && std::chrono::steady_clock::now() - lastSyncReport > std::chrono::seconds(10)) {
+    if (profile && (labelGroups.load(std::memory_order_relaxed) & 63u) == 0 &&
+        std::chrono::steady_clock::now() - lastSyncReport > std::chrono::seconds(10)) {
         lastSyncReport = std::chrono::steady_clock::now();
         reportSync();
     }
@@ -140,31 +179,42 @@ bool Driver::recordLabelsForPacket(VulkanDevice* localDevice, std::uint32_t queu
     if (!deferredLabels().labels.empty()) {
         recordDeferredLabels(localDevice, queue);
         ++packetLockRecords;
-        if (profile) packetLockRecordUs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count());
+        if (profile)
+            packetLockRecordUs += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start)
+                    .count());
     }
-    if (localDevice == nullptr || !packetFlush || !Graphics::Recorder::PendingLabelSince().has_value()) return false;
+    if (localDevice == nullptr || !packetFlush || !Graphics::Recorder::PendingLabelSince().has_value())
+        return false;
 
     const auto submitStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     localDevice->SubmitRecorded(queue == 0);
     ++packetLockSubmits;
-    if (profile) packetLockSubmitUs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - submitStart).count());
+    if (profile)
+        packetLockSubmitUs += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - submitStart)
+                .count());
     return true;
 }
 
 void Driver::recordQueuedLabelsBeforeRead(std::uint32_t queue) {
-    if (deferredLabels().labels.empty()) return;
+    if (deferredLabels().labels.empty())
+        return;
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto localDevice = device.Load();
     recordDeferredLabels(localDevice.get(), queue);
 }
 
-bool Driver::recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> regions) {
+bool Driver::recordQueuedLabelsAfterCapture(std::uint32_t queue,
+                                            std::span<const ShaderRecompiler::MemoryRegion> regions) {
     const auto& labels = deferredLabels().labels;
-    if (labels.empty()) return false;
+    if (labels.empty())
+        return false;
     for (const auto& label : labels) {
         for (const auto& region : regions) {
-            if (label.address < region.guestAddress + region.bytes.size() && region.guestAddress < label.address + label.size) {
+            if (label.address < region.guestAddress + region.bytes.size() &&
+                region.guestAddress < label.address + label.size) {
                 recordQueuedLabelsBeforeRead(queue);
                 ++captureRetries;
                 return true;
@@ -184,12 +234,14 @@ bool Driver::recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const
 }
 
 void Driver::noteQueuedLabels(std::uint32_t queue) {
-    static const bool installed = (Graphics::Recorder::SetQueuedLabelRecorder(&Driver::recordQueuedLabelsFromHook), true);
+    static const bool installed =
+        (Graphics::Recorder::SetQueuedLabelRecorder(&Driver::recordQueuedLabelsFromHook), true);
     (void)installed;
     const auto& labels = deferredLabels().labels;
     for (auto& noted = queuedLabelsNoted(); noted < labels.size(); ++noted) {
         const auto& label = labels[noted];
-        Graphics::Recorder::NoteQueuedLabel(label.address, std::span<const std::byte>(label.bytes).first(label.size), ++eventSerial, queue);
+        Graphics::Recorder::NoteQueuedLabel(label.address, std::span<const std::byte>(label.bytes).first(label.size),
+                                            ++eventSerial, queue);
     }
 }
 
@@ -206,7 +258,8 @@ void Driver::recordQueuedLabelsByTry(std::uint32_t queue, std::atomic<std::uint6
 }
 
 void Driver::recordQueuedLabelsFromHook() {
-    if (deferredLabels().labels.empty()) return;
+    if (deferredLabels().labels.empty())
+        return;
     auto& driver = Get();
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());

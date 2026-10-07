@@ -9,18 +9,14 @@ namespace Codegen {
 
 class InstructionScanner : public IInstructionScanner {
 public:
-    [[nodiscard]] std::vector<InstructionMatch> ScanCodeSection(
-        const std::vector<std::uint8_t>& codeSection,
-        Domain::FileByteOffset codeSectionOffset,
-        Domain::FileByteOffset codeSectionSize
-    ) const override;
+    [[nodiscard]] std::vector<InstructionMatch> ScanCodeSection(const std::vector<std::uint8_t>& codeSection,
+                                                                Domain::FileByteOffset codeSectionOffset,
+                                                                Domain::FileByteOffset codeSectionSize) const override;
 };
 
-std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(
-    const std::vector<std::uint8_t>& codeSection,
-    const Domain::FileByteOffset codeSectionOffset,
-    const Domain::FileByteOffset codeSectionSize
-) const {
+std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(const std::vector<std::uint8_t>& codeSection,
+                                                                  const Domain::FileByteOffset codeSectionOffset,
+                                                                  const Domain::FileByteOffset codeSectionSize) const {
     const std::size_t limit = std::min(codeSection.size(), static_cast<std::size_t>(codeSectionSize));
 
     const X64InstructionDecoder decoder;
@@ -35,7 +31,8 @@ std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(
         try {
             length = decoder.Decode(cursor, available);
         } catch (const CodegenException& e) {
-            if (std::all_of(cursor, cursor + available, [](const std::uint8_t b) { return b == 0; })) break;
+            if (std::all_of(cursor, cursor + available, [](const std::uint8_t b) { return b == 0; }))
+                break;
             throw CodegenException(std::string("Cannot decode instruction: ") + e.what(), codeSectionOffset + i);
         }
 
@@ -47,8 +44,6 @@ std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(
     return matches;
 }
 
-std::unique_ptr<IInstructionScanner> MakeInstructionScanner() {
-    return std::make_unique<InstructionScanner>();
-}
+std::unique_ptr<IInstructionScanner> MakeInstructionScanner() { return std::make_unique<InstructionScanner>(); }
 
 }

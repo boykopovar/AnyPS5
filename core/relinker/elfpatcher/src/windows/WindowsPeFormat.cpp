@@ -12,7 +12,8 @@ std::uint32_t CheckedRva(const std::uint64_t value) {
 }
 
 std::uint32_t AlignRva(const std::uint64_t value) {
-    return CheckedRva((static_cast<std::uint64_t>(CheckedRva(value)) + SectionAlignment - 1) & ~(static_cast<std::uint64_t>(SectionAlignment) - 1));
+    return CheckedRva((static_cast<std::uint64_t>(CheckedRva(value)) + SectionAlignment - 1) &
+                      ~(static_cast<std::uint64_t>(SectionAlignment) - 1));
 }
 
 std::string ReadString(const std::vector<std::uint8_t>& bytes, const std::size_t offset) {

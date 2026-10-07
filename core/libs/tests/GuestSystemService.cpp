@@ -10,7 +10,10 @@ extern "C" int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, 
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 bool ParamGetStringThrows(int paramId, char* buf, std::size_t bufSize) {
     try {
@@ -47,11 +50,14 @@ int main() {
 
     char name[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH];
     std::memset(name, 'x', sizeof(name));
-    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, nullptr, sizeof(name)) == SYSTEM_SERVICE_ERROR_PARAMETER);
-    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, 0) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, nullptr, sizeof(name)) ==
+            SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, 0) ==
+            SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(ParamGetStringThrows(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, sizeof(name) - 1));
     Require(ParamGetStringThrows(SYSTEM_SERVICE_PARAM_ID_LANG, name, sizeof(name)));
     Require(name[0] == 'x');
-    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, sizeof(name)) == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, sizeof(name)) ==
+            SYSTEM_SERVICE_OK);
     Require(std::strcmp(name, "PS5") == 0);
 }

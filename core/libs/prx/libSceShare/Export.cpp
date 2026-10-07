@@ -79,7 +79,8 @@ int APS5_VABI sceShareSetContentParam(const char* content_param) {
     return 0;
 }
 
-int APS5_VABI sceShareSetScreenshotOverlayImage(const char* file_path, int32_t margin_x, int32_t margin_y, int32_t origin) {
+int APS5_VABI sceShareSetScreenshotOverlayImage(const char* file_path, int32_t margin_x, int32_t margin_y,
+                                                int32_t origin) {
     (void)file_path;
     (void)margin_x;
     (void)margin_y;
@@ -87,9 +88,7 @@ int APS5_VABI sceShareSetScreenshotOverlayImage(const char* file_path, int32_t m
     return 0;
 }
 
-int APS5_VABI sceShareTerminate(void) {
-    return 0;
-}
+int APS5_VABI sceShareTerminate(void) { return 0; }
 
 int APS5_VABI sceShareUnregisterContentEventCallback(void* callback) {
     (void)callback;
@@ -103,7 +102,6 @@ int APS5_VABI sceShareCaptureScreenshotExtended(const void* extended_param, int3
     }
     return ERROR_NOT_SUPPORTED;
 }
-
 
 int APS5_VABI sceShareCaptureVideoClipExtended(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -119,5 +117,4 @@ int APS5_VABI sceShareSetContentParamForApplicationTitle(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

@@ -25,8 +25,7 @@ struct AddressWaiter {
 std::mutex g_waitersLock;
 std::unordered_map<std::uintptr_t, std::list<AddressWaiter*>> g_waiters;
 
-template <class TValue>
-bool IsAlignedAddress(std::uintptr_t address) {
+template <class TValue> bool IsAlignedAddress(std::uintptr_t address) {
     return address != 0 && address % alignof(TValue) == 0;
 }
 
@@ -48,7 +47,8 @@ int WaitOnAddress(TValue* address, TValue expected, const KernelUseconds* timeou
     } else {
         waiter.condition.WaitUntil(lock, TimedWait::DeadlineNanos(*timeout), isWoken);
     }
-    const auto waited = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart);
+    const auto waited =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart);
 
     const bool woken = waiter.woken;
     if (!woken) {
@@ -62,11 +62,12 @@ int WaitOnAddress(TValue* address, TValue expected, const KernelUseconds* timeou
     return woken ? SYNC_ON_ADDRESS_OK : SCE_KERNEL_ERROR_ETIMEDOUT;
 }
 
-}  // namespace
+} // namespace
 
 extern "C" {
 
-int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout,
+                                         const char* name) {
     (void)name;
     if (!IsAlignedAddress<std::uint32_t>(reinterpret_cast<std::uintptr_t>(address))) {
         APS5_INVALID_ARG_EX;
@@ -74,7 +75,8 @@ int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t e
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, const KernelUseconds* timeout,
+                                          const char* name) {
     (void)name;
     if (!IsAlignedAddress<std::uint8_t>(reinterpret_cast<std::uintptr_t>(address))) {
         APS5_INVALID_ARG_EX;
@@ -82,7 +84,8 @@ int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t ex
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected,
+                                           const KernelUseconds* timeout, const char* name) {
     (void)name;
     if (!IsAlignedAddress<std::uint16_t>(reinterpret_cast<std::uintptr_t>(address))) {
         APS5_INVALID_ARG_EX;
@@ -90,7 +93,8 @@ int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected,
+                                           const KernelUseconds* timeout, const char* name) {
     (void)name;
     if (!IsAlignedAddress<std::uint32_t>(reinterpret_cast<std::uintptr_t>(address))) {
         APS5_INVALID_ARG_EX;
@@ -98,7 +102,8 @@ int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected,
+                                           const KernelUseconds* timeout, const char* name) {
     (void)name;
     if (!IsAlignedAddress<std::uint64_t>(reinterpret_cast<std::uintptr_t>(address))) {
         APS5_INVALID_ARG_EX;
@@ -129,5 +134,4 @@ int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count) {
     }
     return SYNC_ON_ADDRESS_OK;
 }
-
 }

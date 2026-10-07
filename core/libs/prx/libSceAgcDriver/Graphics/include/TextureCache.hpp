@@ -12,7 +12,8 @@ namespace AgcDriver::Graphics {
 class TextureCache {
 public:
     explicit TextureCache(const Context& context);
-    std::shared_ptr<Texture> Get(std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components);
+    std::shared_ptr<Texture> Get(std::span<const std::uint32_t> words, const GuestTextureResource& resource,
+                                 VkComponentMapping components);
 
 private:
     struct Entry {

@@ -57,7 +57,8 @@ bool ParseMp3Header(const std::uint8_t* data, std::size_t size, Mp3Header& heade
 std::uint32_t AacSampleRate(std::uint32_t index);
 bool ValidAt9Config(const std::uint8_t (&config)[4]);
 std::unique_ptr<Decoder> CreateMp3(std::int32_t wordSize);
-std::unique_ptr<Decoder> CreateAac(std::int32_t wordSize, bool adts, std::uint32_t samplingFreqIndex, std::uint32_t channels);
+std::unique_ptr<Decoder> CreateAac(std::int32_t wordSize, bool adts, std::uint32_t samplingFreqIndex,
+                                   std::uint32_t channels);
 std::unique_ptr<Decoder> CreateAt9(std::int32_t wordSize, const std::uint8_t (&config)[4], At9Format& format);
 
 }

@@ -50,14 +50,17 @@ void* Symbol(Module& module, const char* name) {
 #endif
 }
 void* FindSymbol(Module& module, const char* name) {
-    if (auto* symbol = Symbol(module, name)) return symbol;
+    if (auto* symbol = Symbol(module, name))
+        return symbol;
     const auto nid = Nid::ComputeNid(name, "");
 #ifdef _WIN32
     return Symbol(module, nid.c_str());
 #else
-    if (auto* symbol = Symbol(module, nid.c_str())) return symbol;
+    if (auto* symbol = Symbol(module, nid.c_str()))
+        return symbol;
     constexpr char guestSuffix[] = "#guest";
-    if (auto* symbol = Symbol(module, (std::string(name) + guestSuffix).c_str())) return symbol;
+    if (auto* symbol = Symbol(module, (std::string(name) + guestSuffix).c_str()))
+        return symbol;
     return Symbol(module, (nid + guestSuffix).c_str());
 #endif
 }
@@ -65,7 +68,8 @@ void* FindSymbol(Module& module, const char* name) {
 
 extern "C" {
 char* APS5_VABI dlerror_nid_postfix() {
-    if (!pendingError) return nullptr;
+    if (!pendingError)
+        return nullptr;
     pendingError = false;
     return loaderError.data();
 }
@@ -78,7 +82,8 @@ static std::filesystem::path RelinkedModulePath(const std::filesystem::path& pat
 
 void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
     if ((flags & ~0x103) || (flags & 3) == 0 || (flags & 3) == 3) {
-        Error("dlopen: unsupported flags"); return nullptr;
+        Error("dlopen: unsupported flags");
+        return nullptr;
     }
     try {
         auto module = std::make_shared<Module>();
@@ -88,53 +93,80 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             module->native = GetModuleHandleW(nullptr);
             module->owned = false;
         } else {
-            if (!*path) { Error("dlopen: empty module path"); return nullptr; }
+            if (!*path) {
+                Error("dlopen: empty module path");
+                return nullptr;
+            }
             const auto resolved = RelinkedModulePath(ResolvePath_nid_no_patch(path));
             module->native = LoadLibraryExW(resolved.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         }
         if (!module->native) {
             char message[128];
-            std::snprintf(message, sizeof(message), "dlopen: Windows loader error %lu (module must be host-compatible)", GetLastError());
-            Error(message); return nullptr;
+            std::snprintf(message, sizeof(message), "dlopen: Windows loader error %lu (module must be host-compatible)",
+                          GetLastError());
+            Error(message);
+            return nullptr;
         }
 #else
         const auto resolved = path ? RelinkedModulePath(ResolvePath_nid_no_patch(path)).string() : std::string{};
-        const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) |
-            ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
+        const int nativeFlags =
+            ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) | ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
-        if (!module->native) { Error(::dlerror()); return nullptr; }
+        if (!module->native) {
+            Error(::dlerror());
+            return nullptr;
+        }
 #endif
         std::lock_guard lock(modulesMutex);
         const auto handle = nextHandle++;
         modules.emplace(handle, std::move(module));
         return reinterpret_cast<void*>(handle);
-    } catch (const std::exception& error) { Error(error.what()); return nullptr; }
+    } catch (const std::exception& error) {
+        Error(error.what());
+        return nullptr;
+    }
 }
 void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
-    if (!name || !*name) { Error("dlsym: empty symbol name"); return nullptr; }
+    if (!name || !*name) {
+        Error("dlsym: empty symbol name");
+        return nullptr;
+    }
     try {
         std::vector<std::shared_ptr<Module>> search;
         {
             std::lock_guard lock(modulesMutex);
             if (handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
-                for (const auto& [key, module] : modules) if (module->global) search.push_back(module);
+                for (const auto& [key, module] : modules)
+                    if (module->global)
+                        search.push_back(module);
             } else {
                 auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
-                if (found == modules.end()) { Error("dlsym: invalid or unsupported module handle"); return nullptr; }
+                if (found == modules.end()) {
+                    Error("dlsym: invalid or unsupported module handle");
+                    return nullptr;
+                }
                 search.push_back(found->second);
             }
         }
-        for (const auto& module : search) if (auto* result = FindSymbol(*module, name)) return result;
+        for (const auto& module : search)
+            if (auto* result = FindSymbol(*module, name))
+                return result;
         Error("dlsym: symbol not found in supported module scope");
         return nullptr;
-    } catch (const std::exception& error) { Error(error.what()); return nullptr; }
+    } catch (const std::exception& error) {
+        Error(error.what());
+        return nullptr;
+    }
 }
 int APS5_VABI dlclose_nid_postfix(void* handle) {
     std::shared_ptr<Module> module;
     {
         std::lock_guard lock(modulesMutex);
         auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
-        if (found == modules.end()) { Error("dlclose: invalid module handle"); return -1; }
+        if (found == modules.end()) {
+            Error("dlclose: invalid module handle");
+            return -1;
+        }
         module = std::move(found->second);
         modules.erase(found);
     }
@@ -145,10 +177,12 @@ int APS5_VABI dlclose_nid_postfix(void* handle) {
 std::int32_t ModuleIdForImage_nid_no_patch(const void* native) {
     std::lock_guard lock(modulesMutex);
     for (const auto& [handle, module] : modules) {
-        if (module->native == native) return static_cast<std::int32_t>(handle);
+        if (module->native == native)
+            return static_cast<std::int32_t>(handle);
     }
     const auto [found, inserted] = imageIds.emplace(native, nextHandle);
-    if (inserted) ++nextHandle;
+    if (inserted)
+        ++nextHandle;
     return static_cast<std::int32_t>(found->second);
 }
 }

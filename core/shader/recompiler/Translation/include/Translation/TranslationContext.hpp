@@ -13,8 +13,12 @@ public:
     TranslationContext(IrProgram& program, IrBlock& block, std::uint32_t vectorLimit);
 
     void TranslateInstruction(const RdnaInstruction& instruction);
-    void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
-    void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t componentCount, const ShaderBufferResource& resource);
+    void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) {
+        pixelInput = info;
+        fragmentShaderBarycentricEnabled = barycentricEnabled;
+    }
+    void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute,
+                                std::uint32_t componentCount, const ShaderBufferResource& resource);
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
 
@@ -82,7 +86,8 @@ private:
     IrValue* getSamplerResource(const MemoryInfo& memory);
     IrValue* makeImageAddress(const RdnaInstruction& inst, const RdnaOperand& base, std::uint32_t fragmentOffset = 0u);
     IrValue* constructU32x4(const RdnaOperand& base, std::uint32_t count);
-    void writeImageComponents(const RdnaOperand& dst, IrValue* value, const MemoryInfo& memory, std::uint32_t componentLimit);
+    void writeImageComponents(const RdnaOperand& dst, IrValue* value, const MemoryInfo& memory,
+                              std::uint32_t componentLimit);
     BufferAddress readBufferAddress(const RdnaInstruction& inst);
     IrU32 widenSubdword(IrValue* value, std::uint32_t bits, bool sign);
     IrValue* narrowSubdword(IrU32 value, std::uint32_t bits);
@@ -109,7 +114,8 @@ private:
     bool imageBvhIntersectRay(const RdnaInstruction& inst);
     IrValue* loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory, std::uint32_t pc);
     IrValue* extractSharedU32(IrValue* value, std::uint32_t width, std::uint32_t index);
-    void writeSharedU32(std::uint32_t width, IrU32 address, const std::array<IrValue*, 4>& values, const MemoryInfo& memory, std::uint32_t pc);
+    void writeSharedU32(std::uint32_t width, IrU32 address, const std::array<IrValue*, 4>& values,
+                        const MemoryInfo& memory, std::uint32_t pc);
     bool dsRead(const RdnaInstruction& inst);
     bool dsRead2(const RdnaInstruction& inst);
     bool dsWrite(const RdnaInstruction& inst);
@@ -124,7 +130,8 @@ private:
     bool dsPermuteB32(const RdnaInstruction& inst);
     IrF32 selectF32(IrU1 condition, IrF32 trueValue, IrF32 falseValue);
     IrU32 convertF32ToU32Saturated(IrF32 value, float upperBound, float safeUpper, std::uint32_t highResult);
-    IrU32 convertF32ToI32Saturated(IrF32 value, float lowerBound, float upperBound, float safeUpper, std::uint32_t lowerResult, std::uint32_t upperResult);
+    IrU32 convertF32ToI32Saturated(IrF32 value, float lowerBound, float upperBound, float safeUpper,
+                                   std::uint32_t lowerResult, std::uint32_t upperResult);
     IrU32 convertFlooredF32ToI32(IrF32 source, IrF32 floored);
     IrU32 packU16Lanes(IrU32 low, IrU32 high);
     void emitCompareResult(const RdnaInstruction& inst, IrU1 value, bool scalar, bool cmpx);
@@ -137,7 +144,8 @@ private:
     void emitFloatClassCompare(const RdnaInstruction& inst, bool cmpx);
     IrU1 float64IsNan(const std::array<IrU32, 2>& bits);
     IrU64 float64OrderKey(const std::array<IrU32, 2>& bits);
-    void emitFloat64Compare(const RdnaInstruction& inst, bool less, bool equal, bool greater, bool unordered, bool cmpx);
+    void emitFloat64Compare(const RdnaInstruction& inst, bool less, bool equal, bool greater, bool unordered,
+                            bool cmpx);
     void emitFloat64ClassCompare(const RdnaInstruction& inst, bool cmpx);
     void vCvtF32Ubyte(const RdnaInstruction& inst, std::uint32_t byteIndex);
     void vCvtF32U32(const RdnaInstruction& inst);
@@ -208,10 +216,13 @@ private:
     IrU32 saturateInteger16(const RdnaOperand& destination, IrU32 value, bool sign);
     bool packedInteger16Mad(const RdnaInstruction& inst, bool sign);
     bool packedInteger16MinMax(const RdnaInstruction& inst, IrOpcode opcode, bool sign);
-    bool sU64Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, IrOpcode bitOpcode, bool negateRhs, bool negateResult, bool unary);
+    bool sU64Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, IrOpcode bitOpcode, bool negateRhs,
+                  bool negateResult, bool unary);
     IrU1 u64MaskBinary(const RdnaInstruction& inst, IrOpcode opcode, bool negateRhs, bool negateResult);
-    bool simpleInteger(const RdnaInstruction& inst, IrOpcode opcode, IrType type, bool reverse, bool maskShiftCount, bool updateScc);
-    bool composedIntegerBinary(const RdnaInstruction& inst, IrOpcode opcode, bool negateRhs, bool negateResult, bool updateScc);
+    bool simpleInteger(const RdnaInstruction& inst, IrOpcode opcode, IrType type, bool reverse, bool maskShiftCount,
+                       bool updateScc);
+    bool composedIntegerBinary(const RdnaInstruction& inst, IrOpcode opcode, bool negateRhs, bool negateResult,
+                               bool updateScc);
     bool vAndOrB32(const RdnaInstruction& inst);
     bool vOr3B32(const RdnaInstruction& inst);
     bool vXor3B32(const RdnaInstruction& inst);
@@ -258,7 +269,8 @@ private:
     bool packB16(const RdnaInstruction& inst, bool high0, bool high1);
     bool vCvtPk16I32(const RdnaInstruction& inst, bool sign);
     void sSubvectorLoop(const RdnaInstruction& inst, bool begin);
-    void sSaveexec(const RdnaInstruction& inst, IrOpcode operation, bool negateExec, bool negateSource, bool write64, bool negateResult = false, bool writeResult = false);
+    void sSaveexec(const RdnaInstruction& inst, IrOpcode operation, bool negateExec, bool negateSource, bool write64,
+                   bool negateResult = false, bool writeResult = false);
     void addU32(const RdnaInstruction& inst, bool vector, bool useCarryIn);
     void subU32(const RdnaInstruction& inst, bool vector, bool reverse);
     void subbU32(const RdnaInstruction& inst, bool vector, bool reverse);

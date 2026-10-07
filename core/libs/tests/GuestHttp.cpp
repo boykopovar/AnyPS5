@@ -23,10 +23,14 @@ int APS5_VABI sceHttpGetLastErrno(int, int*);
 int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
 int APS5_VABI sceHttpRedirectCacheFlush(int);
 int APS5_VABI sceHttpsUnloadCert(int);
-int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
+int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*,
+                                     const char**, std::size_t*);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
 
@@ -96,17 +100,21 @@ int main() {
     Require(Equal(escaped, "a%20b%2F~%C3%A9"));
     Require(sceHttpUriEscape(escaped, nullptr, sizeof(escaped), nullptr) == invalidValue);
 
-    constexpr const char* unescapeCases[][2] = {
-        {"", ""}, {"plain+text", "plain+text"}, {"a%20b%2F~%c3%a9", "a b/~\xC3\xA9"},
-        {"%41%4a%4F%ff", "AJO\xFF"}, {"%2520", "%20"},
-        {"%", "%"}, {"%1", "%1"}, {"%1g%gg%+1%-1", "%1g%gg%+1%-1"}
-    };
+    constexpr const char* unescapeCases[][2] = {{"", ""},
+                                                {"plain+text", "plain+text"},
+                                                {"a%20b%2F~%c3%a9", "a b/~\xC3\xA9"},
+                                                {"%41%4a%4F%ff", "AJO\xFF"},
+                                                {"%2520", "%20"},
+                                                {"%", "%"},
+                                                {"%1", "%1"},
+                                                {"%1g%gg%+1%-1", "%1g%gg%+1%-1"}};
     for (const auto& row : unescapeCases) {
         const std::size_t size = std::strlen(row[1]) + 1;
         Require(sceHttpUriUnescape(nullptr, &required, 0, row[0]) == 0 && required == size);
         std::memset(escaped, 'Z', sizeof(escaped));
         Require(sceHttpUriUnescape(escaped, &required, size - 1, row[0]) == outOfMemory && required == size);
-        for (char c : escaped) Require(c == 'Z');
+        for (char c : escaped)
+            Require(c == 'Z');
         Require(sceHttpUriUnescape(escaped, nullptr, size, row[0]) == 0);
         Require(Equal(escaped, row[1]) && escaped[size] == 'Z');
     }
@@ -121,7 +129,8 @@ int main() {
     Require(required == 123 && Equal(escaped, "A/%20"));
 
     char bytes[256], encodedBytes[766], decodedBytes[256];
-    for (std::size_t i = 1; i < 256; ++i) bytes[i - 1] = static_cast<char>(i);
+    for (std::size_t i = 1; i < 256; ++i)
+        bytes[i - 1] = static_cast<char>(i);
     bytes[255] = '\0';
     Require(sceHttpUriEscape(encodedBytes, nullptr, sizeof(encodedBytes), bytes) == 0);
     Require(sceHttpUriUnescape(decodedBytes, &required, sizeof(decodedBytes), encodedBytes) == 0);
@@ -132,7 +141,8 @@ int main() {
     char merged[512];
     auto merge = [&](const char* mergeBase, const char* relative, const char* expected) {
         std::memset(merged, 'Z', sizeof(merged));
-        return sceHttpUriMerge(merged, mergeBase, relative, &required, sizeof(merged), 0) == 0 && Equal(merged, expected);
+        return sceHttpUriMerge(merged, mergeBase, relative, &required, sizeof(merged), 0) == 0 &&
+               Equal(merged, expected);
     };
     Require(merge(base, "./default.html", "http://foo.com/foo/./default.html"));
     Require(required == baseMergeSize + 2 * (29 + 14));
@@ -151,7 +161,8 @@ int main() {
 
     Require(merge(base, "http://bar.com/other", "http://bar.com/other") && required == 21);
     const std::size_t absoluteSize = baseMergeSize + 2 * (29 + 20);
-    for (std::size_t i = 21; i < absoluteSize; ++i) Require(merged[i] == '\0');
+    for (std::size_t i = 21; i < absoluteSize; ++i)
+        Require(merged[i] == '\0');
     Require(merged[absoluteSize] == 'Z');
     Require(merge(base, "//bar.com/x", "//bar.com/x") && required == 12);
 
@@ -162,7 +173,8 @@ int main() {
     Require(required == absoluteSize);
     Require(sceHttpUriMerge(nullptr, base, "x", nullptr, 0, 0) == 0);
     std::memset(merged, 'Z', sizeof(merged));
-    Require(sceHttpUriMerge(merged, base, "./default.html", &required, baseMergeSize + 2 * (29 + 14) - 1, 0) == outOfMemory);
+    Require(sceHttpUriMerge(merged, base, "./default.html", &required, baseMergeSize + 2 * (29 + 14) - 1, 0) ==
+            outOfMemory);
     Require(required == baseMergeSize + 2 * (29 + 14) && merged[0] == 'Z');
     Require(sceHttpUriMerge(merged, base, "http://bar.com/other", &required, absoluteSize - 1, 0) == outOfMemory);
     Require(merged[0] == 'Z');

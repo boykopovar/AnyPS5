@@ -36,14 +36,13 @@ struct Builder {
 
     IrValue& emit(IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments, std::uint64_t flags = 0) {
         auto& created = program.CreateValue(opcode, type, flags);
-        for (auto* argument : arguments) created.AddArgument(argument);
+        for (auto* argument : arguments)
+            created.AddArgument(argument);
         block->AppendInstruction(&created);
         return created;
     }
 
-    IrValue& lane() {
-        return emit(IrOpcode::LaneId, IrType::U32, {});
-    }
+    IrValue& lane() { return emit(IrOpcode::LaneId, IrType::U32, {}); }
 
     IrValue& mask(std::uint32_t lanes) {
         return emit(IrOpcode::ULessThan32, IrType::Bool, {&lane(), &constant(lanes)});
@@ -77,21 +76,16 @@ struct Builder {
         return threadBit(low, high);
     }
 
-    void keep(IrValue& value) {
-        (void)emit(IrOpcode::ReferenceU32, IrType::Void, {&value});
-    }
+    void keep(IrValue& value) { (void)emit(IrOpcode::ReferenceU32, IrType::Void, {&value}); }
 
-    std::uint32_t eliminate() {
-        return MaskedSelectEliminator{}.Eliminate(program).removedSelects;
-    }
+    std::uint32_t eliminate() { return MaskedSelectEliminator{}.Eliminate(program).removedSelects; }
 };
 
-bool removed(const IrValue& value) {
-    return value.Parent() == nullptr;
-}
+bool removed(const IrValue& value) { return value.Parent() == nullptr; }
 
 bool expect(const char* name, bool condition) {
-    if (!condition) std::fprintf(stderr, "%s\n", name);
+    if (!condition)
+        std::fprintf(stderr, "%s\n", name);
     return condition;
 }
 
@@ -164,7 +158,8 @@ int main() {
 
     passed &= run("cross-lane reads must keep the select", [] {
         bool ok = true;
-        for (const IrOpcode opcode : {IrOpcode::ReadFirstLane, IrOpcode::DppMoveU32, IrOpcode::BpermuteU32, IrOpcode::Permlane16U32, IrOpcode::SwizzleU32}) {
+        for (const IrOpcode opcode : {IrOpcode::ReadFirstLane, IrOpcode::DppMoveU32, IrOpcode::BpermuteU32,
+                                      IrOpcode::Permlane16U32, IrOpcode::SwizzleU32}) {
             Builder b;
             auto& exec = b.mask(16u);
             auto& old = b.lane();
@@ -177,7 +172,8 @@ int main() {
         auto& exec = b.mask(16u);
         auto& old = b.lane();
         auto& written = b.select(exec, b.add(old, 1u), old);
-        auto& ballot = b.emit(IrOpcode::Ballot, IrType::U32x4, {&b.emit(IrOpcode::INotEqual32, IrType::Bool, {&written, &b.constant(0u)})});
+        auto& ballot = b.emit(IrOpcode::Ballot, IrType::U32x4,
+                              {&b.emit(IrOpcode::INotEqual32, IrType::Bool, {&written, &b.constant(0u)})});
         b.keep(b.emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&ballot, &b.constant(0u)}));
         return ok && b.eliminate() == 0u && !removed(written);
     });
@@ -328,9 +324,8 @@ int main() {
         return removed(written);
     };
 
-    passed &= run("an implicit-LOD pixel sample reads its quad's coordinates and keeps the select", [&] {
-        return !sample(IrShaderStage::Pixel, 0u);
-    });
+    passed &= run("an implicit-LOD pixel sample reads its quad's coordinates and keeps the select",
+                  [&] { return !sample(IrShaderStage::Pixel, 0u); });
 
     passed &= run("an explicit-LOD sample reads only its lane and drops the select", [&] {
         return sample(IrShaderStage::Pixel, RdnaImageSampleFlagLevelZero) && sample(IrShaderStage::Mesh, 0u);
@@ -342,37 +337,43 @@ int main() {
         auto& exec = b.logicalAnd(wide, b.mask(16u));
         auto& old = b.lane();
         auto& written = b.select(exec, b.add(old, 1u), old);
-        IrValue& active = asActive ? b.emit(IrOpcode::INotEqual32, IrType::Bool, {&written, &b.constant(0u)}) : sameExec ? exec : wide;
+        IrValue& active = asActive   ? b.emit(IrOpcode::INotEqual32, IrType::Bool, {&written, &b.constant(0u)})
+                          : sameExec ? exec
+                                     : wide;
         switch (opcode) {
-            case IrOpcode::WriteSharedU32:
-                b.emit(opcode, IrType::Void, {&old, &written, &active});
-                break;
-            case IrOpcode::LoadBufferU32:
-                b.keep(b.select(exec, b.emit(opcode, IrType::U32, {&b.emit(IrOpcode::GetBufferResource, IrType::BufferResource, {}), &written, &b.constant(0u), &b.constant(0u), &active}), old));
-                break;
-            default:
-                b.emit(opcode, IrType::Void, {&b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&written, &old, &old, &old}), &active});
-                break;
+        case IrOpcode::WriteSharedU32:
+            b.emit(opcode, IrType::Void, {&old, &written, &active});
+            break;
+        case IrOpcode::LoadBufferU32:
+            b.keep(b.select(exec,
+                            b.emit(opcode, IrType::U32,
+                                   {&b.emit(IrOpcode::GetBufferResource, IrType::BufferResource, {}), &written,
+                                    &b.constant(0u), &b.constant(0u), &active}),
+                            old));
+            break;
+        default:
+            b.emit(opcode, IrType::Void,
+                   {&b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&written, &old, &old, &old}), &active});
+            break;
         }
         b.eliminate();
         return removed(written);
     };
 
     passed &= run("a store, load or export whose exec implies the write's exec drops the select", [&] {
-        return guarded(IrOpcode::WriteSharedU32, true, false) && guarded(IrOpcode::LoadBufferU32, true, false) && guarded(IrOpcode::SetAttribute, true, false);
+        return guarded(IrOpcode::WriteSharedU32, true, false) && guarded(IrOpcode::LoadBufferU32, true, false) &&
+               guarded(IrOpcode::SetAttribute, true, false);
     });
 
     passed &= run("a store, load or export under a wider exec keeps the select", [&] {
-        return !guarded(IrOpcode::WriteSharedU32, false, false) && !guarded(IrOpcode::LoadBufferU32, false, false) && !guarded(IrOpcode::SetAttribute, false, false);
+        return !guarded(IrOpcode::WriteSharedU32, false, false) && !guarded(IrOpcode::LoadBufferU32, false, false) &&
+               !guarded(IrOpcode::SetAttribute, false, false);
     });
 
-    passed &= run("a value used as a store's exec keeps the select", [&] {
-        return !guarded(IrOpcode::WriteSharedU32, true, true);
-    });
+    passed &= run("a value used as a store's exec keeps the select",
+                  [&] { return !guarded(IrOpcode::WriteSharedU32, true, true); });
 
-    passed &= run("an atomic keeps the select", [&] {
-        return !guarded(IrOpcode::SharedAtomicIAdd32, true, false);
-    });
+    passed &= run("an atomic keeps the select", [&] { return !guarded(IrOpcode::SharedAtomicIAdd32, true, false); });
 
     return passed ? 0 : 1;
 }

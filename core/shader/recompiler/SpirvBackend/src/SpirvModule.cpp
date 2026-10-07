@@ -29,9 +29,7 @@ SpirvModule::SpirvModule(std::uint32_t version) : version(version) {
     functionInstructions.reserve(InitialSpirvFunctionSectionReserve);
 }
 
-std::uint32_t SpirvModule::AllocateId() {
-    return nextId++;
-}
+std::uint32_t SpirvModule::AllocateId() { return nextId++; }
 
 void SpirvModule::EmitCapability(std::uint32_t capability) {
     if (requiredCapabilities.insert(capability).second) {
@@ -47,7 +45,8 @@ void SpirvModule::EmitExtension(const std::string& extensionName) {
     }
 }
 
-void SpirvModule::EmitEntryPoint(std::uint32_t executionModel, std::uint32_t entryPointId, const std::string& entryPointName, const std::vector<std::uint32_t>& interfaceIds) {
+void SpirvModule::EmitEntryPoint(std::uint32_t executionModel, std::uint32_t entryPointId,
+                                 const std::string& entryPointName, const std::vector<std::uint32_t>& interfaceIds) {
     std::vector<std::uint32_t> operands;
     appendOperands(operands, executionModel, entryPointId);
     appendString(operands, entryPointName);
@@ -88,7 +87,10 @@ std::vector<std::uint32_t> SpirvModule::Finalize() const {
         throw std::runtime_error("SpirvModule::Finalize called with unpatched OpPhi incoming pairs");
     }
     std::vector<std::uint32_t> module;
-    module.reserve(5u + capabilities.size() + extensions.size() + extInstImports.size() + memoryModel.size() + entryPoints.size() + executionModes.size() + debug.size() + annotations.size() + typeDeclarations.size() + declarations.size() + globalVariables.size() + functionInstructions.size());
+    module.reserve(5u + capabilities.size() + extensions.size() + extInstImports.size() + memoryModel.size() +
+                   entryPoints.size() + executionModes.size() + debug.size() + annotations.size() +
+                   typeDeclarations.size() + declarations.size() + globalVariables.size() +
+                   functionInstructions.size());
     module.push_back(spv::MagicNumber);
     module.push_back(version);
     module.push_back(0u);
@@ -109,9 +111,7 @@ std::vector<std::uint32_t> SpirvModule::Finalize() const {
     return module;
 }
 
-void SpirvModule::RequireVersion(std::uint32_t version) {
-    this->version = std::max(this->version, version);
-}
+void SpirvModule::RequireVersion(std::uint32_t version) { this->version = std::max(this->version, version); }
 
 std::uint32_t SpirvModule::Import(const std::string& name) {
     if (const auto it = importIds.find(name); it != importIds.end()) {
@@ -135,7 +135,8 @@ std::uint32_t SpirvModule::declareType(std::uint32_t opcode, std::vector<std::ui
     return id;
 }
 
-std::uint32_t SpirvModule::declareDecoratedType(std::uint32_t opcode, std::vector<std::uint32_t> key, std::initializer_list<SpirvTypeAnnotation> annotationList) {
+std::uint32_t SpirvModule::declareDecoratedType(std::uint32_t opcode, std::vector<std::uint32_t> key,
+                                                std::initializer_list<SpirvTypeAnnotation> annotationList) {
     if (annotationList.size() == 0) {
         return declareType(opcode, std::move(key));
     }
@@ -210,13 +211,14 @@ void SpirvModule::appendString(std::vector<std::uint32_t>& words, const std::str
 SpirvDeferredPhi SpirvModule::AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount) {
     std::vector<std::uint32_t> words = {spv::OpPhi, type, result};
     words.resize(words.size() + incomingCount * 2u);
-    const SpirvDeferredPhi phi {functionInstructions.size()};
+    const SpirvDeferredPhi phi{functionInstructions.size()};
     AddFunction(std::span<const std::uint32_t>(words));
     unpatchedPhiIncomings += incomingCount;
     return phi;
 }
 
-void SpirvModule::PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent) {
+void SpirvModule::PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value,
+                                   std::uint32_t parent) {
     const auto incomingCount = ((functionInstructions.at(phi.wordOffset) >> spv::WordCountShift) - 3u) / 2u;
     if (incoming >= incomingCount || value == 0u || parent == 0u) {
         throw std::runtime_error("SpirvModule::PatchDeferredPhi received an invalid incoming index or a zero id");

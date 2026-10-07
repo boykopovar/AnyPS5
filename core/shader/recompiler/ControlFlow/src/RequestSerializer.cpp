@@ -16,7 +16,8 @@ std::string base64Encode(std::string_view data) {
         const std::uint8_t b0 = static_cast<std::uint8_t>(data[i]);
         const std::uint8_t b1 = static_cast<std::uint8_t>(data[i + 1u]);
         const std::uint8_t b2 = static_cast<std::uint8_t>(data[i + 2u]);
-        const std::uint32_t chunk = (static_cast<std::uint32_t>(b0) << 16u) | (static_cast<std::uint32_t>(b1) << 8u) | static_cast<std::uint32_t>(b2);
+        const std::uint32_t chunk = (static_cast<std::uint32_t>(b0) << 16u) | (static_cast<std::uint32_t>(b1) << 8u) |
+                                    static_cast<std::uint32_t>(b2);
         result.push_back(kBase64Alphabet[(chunk >> 18u) & 0x3Fu]);
         result.push_back(kBase64Alphabet[(chunk >> 12u) & 0x3Fu]);
         result.push_back(kBase64Alphabet[(chunk >> 6u) & 0x3Fu]);
@@ -86,7 +87,8 @@ std::string base64Decode(std::string_view text) {
         const std::uint8_t v1 = base64DecodeChar(c1);
         const std::uint8_t v2 = c2 == '=' ? 0u : base64DecodeChar(c2);
         const std::uint8_t v3 = c3 == '=' ? 0u : base64DecodeChar(c3);
-        const std::uint32_t chunk = (static_cast<std::uint32_t>(v0) << 18u) | (static_cast<std::uint32_t>(v1) << 12u) | (static_cast<std::uint32_t>(v2) << 6u) | static_cast<std::uint32_t>(v3);
+        const std::uint32_t chunk = (static_cast<std::uint32_t>(v0) << 18u) | (static_cast<std::uint32_t>(v1) << 12u) |
+                                    (static_cast<std::uint32_t>(v2) << 6u) | static_cast<std::uint32_t>(v3);
         result.push_back(static_cast<char>((chunk >> 16u) & 0xFFu));
         if (c2 != '=') {
             result.push_back(static_cast<char>((chunk >> 8u) & 0xFFu));
@@ -243,7 +245,8 @@ void writeShaderBinary(Writer& writer, const ShaderBinary& binary) {
     writer.WriteBytes(binary.header);
 }
 
-ShaderBinary readShaderBinary(Reader& reader, std::vector<std::uint32_t>& codeStorage, std::vector<std::byte>& headerStorage) {
+ShaderBinary readShaderBinary(Reader& reader, std::vector<std::uint32_t>& codeStorage,
+                              std::vector<std::byte>& headerStorage) {
     ShaderBinary binary{};
     binary.stage = readShaderStage(reader);
     binary.codeAddress = reader.ReadU64();
@@ -334,13 +337,15 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     info.ancillary = reader.ReadBool();
     info.sampleShading = reader.ReadBool();
     info.noPerspective = reader.ReadBool();
-    if (version >= 5u) info.linearCentroid = reader.ReadBool();
+    if (version >= 5u)
+        info.linearCentroid = reader.ReadBool();
     info.pixelKillEnable = reader.ReadBool();
     info.depthExportEnable = reader.ReadBool();
     info.sampleMaskExportEnable = reader.ReadBool();
     info.earlyZ = reader.ReadBool();
     info.executeOnNoop = reader.ReadBool();
-    if (version >= 7u) info.conservativeZExport = readConservativeZExport(reader);
+    if (version >= 7u)
+        info.conservativeZExport = readConservativeZExport(reader);
     for (std::uint8_t& value : info.targetOutputMode) {
         value = reader.ReadU8();
     }
@@ -353,11 +358,15 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     }
     if (version < 5u) {
         const auto input = [](PixelInput value, bool present) { return present ? PixelInputBit(value) : 0u; };
-        info.inputAddr = input(PixelInput::PerspectiveSample, info.hasPerspectiveCenterVgpr && inputAddrOrCenterVgpr == 2u) | input(PixelInput::PerspectiveCenter, info.hasPerspectiveCenterVgpr) |
+        info.inputAddr =
+            input(PixelInput::PerspectiveSample, info.hasPerspectiveCenterVgpr && inputAddrOrCenterVgpr == 2u) |
+            input(PixelInput::PerspectiveCenter, info.hasPerspectiveCenterVgpr) |
             input(PixelInput::LinearSample, info.sampleShading) | input(PixelInput::LinearCenter, info.noPerspective) |
-            input(PixelInput::PositionX, info.posX) | input(PixelInput::PositionY, info.posY) | input(PixelInput::PositionZ, info.posZ) | input(PixelInput::PositionW, info.posW) |
+            input(PixelInput::PositionX, info.posX) | input(PixelInput::PositionY, info.posY) |
+            input(PixelInput::PositionZ, info.posZ) | input(PixelInput::PositionW, info.posW) |
             input(PixelInput::FrontFace, info.frontFace) | input(PixelInput::Ancillary, info.ancillary);
-        if (info.sampleShading) info.inputAddr |= PixelInputBit(PixelInput::PerspectiveSample);
+        if (info.sampleShading)
+            info.inputAddr |= PixelInputBit(PixelInput::PerspectiveSample);
     }
     return info;
 }
@@ -652,7 +661,8 @@ void writeGraphicsCompileContext(Writer& writer, const GraphicsCompileContext& g
     writer.WriteU32(graphics.draw.instanceCount);
 }
 
-GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGraphicsCompileContext& storage, std::uint32_t version) {
+GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGraphicsCompileContext& storage,
+                                                  std::uint32_t version) {
     GraphicsCompileContext graphics{};
     graphics.firstUserSgpr = reader.ReadU32();
     const auto programCount = reader.ReadU64();
@@ -720,9 +730,11 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
 DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const {
     const std::string decoded = base64Decode(text);
     Reader reader(decoded);
-    if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
+    if (reader.ReadU32() != 0x41505335u)
+        throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 9u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 9u)
+        throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -732,14 +744,17 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.graphicsStorage = std::make_unique<DeserializedGraphicsCompileContext>();
         result.request.graphics = readGraphicsCompileContext(reader, *result.graphicsStorage, version);
     }
-    if (version >= 2u) result.request.useCache = reader.ReadBool();
+    if (version >= 2u)
+        result.request.useCache = reader.ReadBool();
     if (version >= 3u && result.request.context.compute.has_value()) {
         for (std::uint32_t& value : result.request.context.compute->partialThreads) {
             value = reader.ReadU32();
         }
     }
-    if (version >= 6u) result.request.target.nonConstantImageOffsets = reader.ReadBool();
-    if (version >= 9u) result.request.target.srgbDecodeFormats = reader.ReadU32();
+    if (version >= 6u)
+        result.request.target.nonConstantImageOffsets = reader.ReadBool();
+    if (version >= 9u)
+        result.request.target.srgbDecodeFormats = reader.ReadU32();
     return result;
 }
 

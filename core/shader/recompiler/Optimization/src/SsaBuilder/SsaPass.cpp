@@ -42,43 +42,43 @@ IrValue* Pass::Read(Variable variable, IrBlock* root) {
         auto& state = stack.back();
         IrBlock* block = state.block;
         switch (state.step) {
-            case ReadStep::Start: {
-                IrValue* def = std::visit([&](auto tag) { return _definitions.Get(*block, tag); }, variable);
-                if (def != nullptr) {
-                    state.result = def;
-                } else if (!block->IsSsaSealed()) {
-                    IrValue& phi = _program.CreateValue(IrOpcode::Phi, VariableType(variable));
-                    block->InsertInstructionBefore(nullptr, &phi);
-                    _incompletePhis[block][variable] = &phi;
-                    state.result = &phi;
-                } else if (const auto& predecessors = block->Predecessors(); predecessors.size() == 1) {
-                    state.step = ReadStep::SetValue;
-                    stack.push_back(ReadState{.block = predecessors.front()});
-                    break;
-                } else {
-                    IrValue& phi = _program.CreateValue(IrOpcode::Phi, VariableType(variable));
-                    block->InsertInstructionBefore(nullptr, &phi);
-                    Write(variable, block, &phi);
-                    state.phi = &phi;
-                    preparePhi();
-                    break;
-                }
-                [[fallthrough]];
-            }
-            case ReadStep::SetValue: {
-                IrValue* result = state.result;
-                Write(variable, block, result);
-                stack.pop_back();
-                stack.back().result = result;
+        case ReadStep::Start: {
+            IrValue* def = std::visit([&](auto tag) { return _definitions.Get(*block, tag); }, variable);
+            if (def != nullptr) {
+                state.result = def;
+            } else if (!block->IsSsaSealed()) {
+                IrValue& phi = _program.CreateValue(IrOpcode::Phi, VariableType(variable));
+                block->InsertInstructionBefore(nullptr, &phi);
+                _incompletePhis[block][variable] = &phi;
+                state.result = &phi;
+            } else if (const auto& predecessors = block->Predecessors(); predecessors.size() == 1) {
+                state.step = ReadStep::SetValue;
+                stack.push_back(ReadState{.block = predecessors.front()});
                 break;
-            }
-            case ReadStep::PushPhiArgument: {
-                const auto& predecessors = block->Predecessors();
-                state.phi->AddPhiOperand(predecessors[state.pred], state.result);
-                state.pred++;
+            } else {
+                IrValue& phi = _program.CreateValue(IrOpcode::Phi, VariableType(variable));
+                block->InsertInstructionBefore(nullptr, &phi);
+                Write(variable, block, &phi);
+                state.phi = &phi;
                 preparePhi();
                 break;
             }
+            [[fallthrough]];
+        }
+        case ReadStep::SetValue: {
+            IrValue* result = state.result;
+            Write(variable, block, result);
+            stack.pop_back();
+            stack.back().result = result;
+            break;
+        }
+        case ReadStep::PushPhiArgument: {
+            const auto& predecessors = block->Predecessors();
+            state.phi->AddPhiOperand(predecessors[state.pred], state.result);
+            state.pred++;
+            preparePhi();
+            break;
+        }
         }
     } while (stack.size() > 1);
     return stack.back().result;

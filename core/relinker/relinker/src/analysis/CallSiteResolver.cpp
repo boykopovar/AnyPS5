@@ -21,7 +21,10 @@ bool isRipRelativeFF(const std::vector<std::uint8_t>& text, const Codegen::Instr
     std::size_t end = cur + m.Length;
     while (cur < end) {
         std::uint8_t b = text[cur];
-        if (b >= RexMin && b <= RexMax) { ++cur; continue; }
+        if (b >= RexMin && b <= RexMax) {
+            ++cur;
+            continue;
+        }
         if (b == OneByteGrp5Rm && cur + 2 <= end) {
             std::uint8_t modrm = text[cur + 1];
             std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
@@ -35,7 +38,8 @@ bool isRipRelativeFF(const std::vector<std::uint8_t>& text, const Codegen::Instr
 
 std::size_t ffDispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
     std::size_t cur = static_cast<std::size_t>(m.Offset);
-    while (text[cur] >= RexMin && text[cur] <= RexMax) ++cur;
+    while (text[cur] >= RexMin && text[cur] <= RexMax)
+        ++cur;
     return cur + 2;
 }
 
@@ -45,7 +49,12 @@ bool isRipRelativeMov64(const std::vector<std::uint8_t>& text, const Codegen::In
     bool hasRexW = false;
     while (cur < end) {
         std::uint8_t b = text[cur];
-        if (b >= RexMin && b <= RexMax) { if (b & RexWBit) hasRexW = true; ++cur; continue; }
+        if (b >= RexMin && b <= RexMax) {
+            if (b & RexWBit)
+                hasRexW = true;
+            ++cur;
+            continue;
+        }
         if (hasRexW && b == OneByteModRmRangeJMax && cur + 2 <= end) {
             std::uint8_t modrm = text[cur + 1];
             std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
@@ -59,22 +68,30 @@ bool isRipRelativeMov64(const std::vector<std::uint8_t>& text, const Codegen::In
 
 std::size_t mov64DispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
     std::size_t cur = static_cast<std::size_t>(m.Offset);
-    while (text[cur] >= RexMin && text[cur] <= RexMax) ++cur;
+    while (text[cur] >= RexMin && text[cur] <= RexMax)
+        ++cur;
     return cur + 2;
 }
 }
 
 class CallSiteResolver : public ICallSiteResolver {
 public:
-    std::vector<FileByteOffset> ResolveCallSites(const std::vector<std::uint8_t>& textSection, FileByteOffset textSectionVAddr, VirtualAddress targetGotOrPltAddress, ByteCount targetGotOrPltSize) override;
+    std::vector<FileByteOffset> ResolveCallSites(const std::vector<std::uint8_t>& textSection,
+                                                 FileByteOffset textSectionVAddr, VirtualAddress targetGotOrPltAddress,
+                                                 ByteCount targetGotOrPltSize) override;
+
 private:
     const std::vector<std::uint8_t>* _cachedTextPtr = nullptr;
     std::multimap<VirtualAddress, FileByteOffset> _cachedTargetToInstr;
     FileByteOffset _cachedTextVAddr = 0;
 };
 
-std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector<std::uint8_t>& textSection, const FileByteOffset textSectionVAddr, const VirtualAddress targetGotOrPltAddress, const ByteCount targetGotOrPltSize) {
-    if (textSection.empty()) return {};
+std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector<std::uint8_t>& textSection,
+                                                               const FileByteOffset textSectionVAddr,
+                                                               const VirtualAddress targetGotOrPltAddress,
+                                                               const ByteCount targetGotOrPltSize) {
+    if (textSection.empty())
+        return {};
     if (_cachedTextPtr != &textSection || _cachedTextVAddr != textSectionVAddr) {
         auto scanner = Codegen::MakeInstructionScanner();
         auto instructions = scanner->ScanCodeSection(textSection, 0, textSection.size());
@@ -87,7 +104,8 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector
                 dispOff = mov64DispOffset(textSection, m);
             else
                 continue;
-            if (dispOff + 4 > textSection.size()) continue;
+            if (dispOff + 4 > textSection.size())
+                continue;
             std::int32_t disp = readDisp32(textSection, dispOff);
             VirtualAddress instrEnd = textSectionVAddr + m.Offset + static_cast<VirtualAddress>(m.Length);
             VirtualAddress target = static_cast<VirtualAddress>(static_cast<std::int64_t>(instrEnd) + disp);

@@ -23,24 +23,27 @@ bool GuestArenaWriteWatched_nid_postfix();
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection);
 bool GuestArenaHandleWrite_nid_postfix(std::uintptr_t address);
 bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection);
-bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
+bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count,
+                                         bool clear);
 bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule);
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes);
-void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection);
+void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset,
+                               std::uint32_t protection);
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnmapAlias_nid_postfix(void* alias);
 #endif
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes);
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes);
-
 }
 
 class HostWrite {
 public:
-    HostWrite(void* pointer, std::size_t bytes) : pointer(pointer), bytes(bytes), open(GuestArenaBeginHostWrite_nid_postfix(pointer, bytes)) {}
+    HostWrite(void* pointer, std::size_t bytes)
+        : pointer(pointer), bytes(bytes), open(GuestArenaBeginHostWrite_nid_postfix(pointer, bytes)) {}
     ~HostWrite() {
-        if (open) GuestArenaEndHostWrite_nid_postfix(pointer, bytes);
+        if (open)
+            GuestArenaEndHostWrite_nid_postfix(pointer, bytes);
     }
     HostWrite(const HostWrite&) = delete;
     HostWrite& operator=(const HostWrite&) = delete;

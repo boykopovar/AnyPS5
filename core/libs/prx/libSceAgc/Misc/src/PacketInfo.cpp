@@ -55,5 +55,4 @@ int APS5_VABI sceAgcDcbGetSystemSoftwareVersion(uint32_t* destination, const uin
     *destination = packet[1];
     return 0;
 }
-
 }

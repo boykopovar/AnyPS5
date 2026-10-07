@@ -33,9 +33,11 @@ struct ImageSearch {
 bool Contains(const dl_phdr_info& image, std::uintptr_t begin, std::uint64_t size) {
     for (std::uint16_t i = 0; i < image.dlpi_phnum; ++i) {
         const auto& header = image.dlpi_phdr[i];
-        if (header.p_type != PT_LOAD) continue;
+        if (header.p_type != PT_LOAD)
+            continue;
         const std::uintptr_t start = image.dlpi_addr + header.p_vaddr;
-        if (begin >= start && begin - start <= header.p_memsz && size <= header.p_memsz - (begin - start)) return true;
+        if (begin >= start && begin - start <= header.p_memsz && size <= header.p_memsz - (begin - start))
+            return true;
     }
     return false;
 }
@@ -50,7 +52,8 @@ std::uintptr_t EhFrameAddress(const dl_phdr_info& image, std::uintptr_t header) 
     if (!Contains(image, header, 8))
         throw std::runtime_error("sceKernelGetModuleInfoFromAddr: eh_frame_hdr outside the image");
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(header);
-    if (bytes[0] != 1) throw std::runtime_error("sceKernelGetModuleInfoFromAddr: unsupported eh_frame_hdr version");
+    if (bytes[0] != 1)
+        throw std::runtime_error("sceKernelGetModuleInfoFromAddr: unsupported eh_frame_hdr version");
     const std::uintptr_t field = header + 4;
     switch (bytes[1]) {
     case 0x1b: {
@@ -83,7 +86,8 @@ std::uint64_t EhFrameSize(const dl_phdr_info& image, std::uintptr_t frame) {
         std::uint32_t length;
         std::memcpy(&length, reinterpret_cast<const void*>(position), sizeof(length));
         position += 4;
-        if (length == 0) return position - frame;
+        if (length == 0)
+            return position - frame;
         std::uint64_t recordLength = length;
         if (length == 0xffffffffu) {
             if (!Contains(image, position, 8))
@@ -102,7 +106,8 @@ std::string ImageName(const dl_phdr_info& image) {
     if (path.empty()) {
         char executable[4096];
         const auto length = ::readlink("/proc/self/exe", executable, sizeof(executable) - 1);
-        if (length < 0) throw std::runtime_error("sceKernelGetModuleInfoFromAddr: cannot resolve the executable path");
+        if (length < 0)
+            throw std::runtime_error("sceKernelGetModuleInfoFromAddr: cannot resolve the executable path");
         path.assign(executable, static_cast<std::size_t>(length));
     }
     std::string name = path.substr(path.find_last_of('/') + 1);
@@ -124,7 +129,8 @@ void Fill(const dl_phdr_info& image, ModuleInfoEx& info) {
             auto& segment = info.segments[info.segment_count++];
             segment.address = address;
             segment.size = ToU32(header.p_memsz, "segment size");
-            segment.prot = ((header.p_flags & PF_R) ? ProtRead : 0) | ((header.p_flags & PF_W) ? ProtWrite : 0) | ((header.p_flags & PF_X) ? ProtExecute : 0);
+            segment.prot = ((header.p_flags & PF_R) ? ProtRead : 0) | ((header.p_flags & PF_W) ? ProtWrite : 0) |
+                           ((header.p_flags & PF_X) ? ProtExecute : 0);
         } else if (header.p_type == PT_TLS) {
             info.tls_init_addr = address;
             info.tls_init_size = ToU32(header.p_filesz, "TLS image size");
@@ -137,8 +143,10 @@ void Fill(const dl_phdr_info& image, ModuleInfoEx& info) {
             info.eh_frame_size = ToU32(EhFrameSize(image, info.eh_frame_addr), "eh_frame size");
         } else if (header.p_type == PT_DYNAMIC) {
             for (const auto* entry = reinterpret_cast<const ElfW(Dyn)*>(address); entry->d_tag != DT_NULL; ++entry) {
-                if (entry->d_tag == DT_INIT) info.init_proc_addr = image.dlpi_addr + entry->d_un.d_ptr;
-                else if (entry->d_tag == DT_FINI) info.fini_proc_addr = image.dlpi_addr + entry->d_un.d_ptr;
+                if (entry->d_tag == DT_INIT)
+                    info.init_proc_addr = image.dlpi_addr + entry->d_un.d_ptr;
+                else if (entry->d_tag == DT_FINI)
+                    info.fini_proc_addr = image.dlpi_addr + entry->d_un.d_ptr;
             }
         }
     }
@@ -147,7 +155,8 @@ void Fill(const dl_phdr_info& image, ModuleInfoEx& info) {
 
 int FindImage(dl_phdr_info* image, std::size_t, void* data) {
     auto& search = *static_cast<ImageSearch*>(data);
-    if (!Contains(*image, search.address, 1)) return 0;
+    if (!Contains(*image, search.address, 1))
+        return 0;
     Fill(*image, *search.info);
     search.found = true;
     return 1;
@@ -159,10 +168,13 @@ int FindImage(dl_phdr_info* image, std::size_t, void* data) {
 extern "C" {
 
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info) {
-    if (!info) return SCE_KERNEL_ERROR_EFAULT;
-    if (flags != 2) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported flags " + std::to_string(flags));
+    if (!info)
+        return SCE_KERNEL_ERROR_EFAULT;
+    if (flags != 2)
+        throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported flags " + std::to_string(flags));
     if (info->st_size != sizeof(ModuleInfoEx))
-        throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported st_size " + std::to_string(info->st_size));
+        throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported st_size " +
+                                    std::to_string(info->st_size));
 #ifdef _WIN32
     (void)address;
     NotImplemented_nid_no_patch(__func__);
@@ -170,17 +182,18 @@ int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, M
 #else
     Dl_info symbol{};
     link_map* native = nullptr;
-    if (!dladdr1(reinterpret_cast<const void*>(address), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) || !native)
+    if (!dladdr1(reinterpret_cast<const void*>(address), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) ||
+        !native)
         return SCE_KERNEL_ERROR_ESRCH;
     ModuleInfoEx result{};
     result.st_size = sizeof(ModuleInfoEx);
     ImageSearch search{static_cast<std::uintptr_t>(address), &result, false};
     dl_iterate_phdr(FindImage, &search);
-    if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
+    if (!search.found)
+        return SCE_KERNEL_ERROR_ESRCH;
     result.id = ModuleIdForImage_nid_no_patch(native);
     *info = result;
     return 0;
 #endif
 }
-
 }

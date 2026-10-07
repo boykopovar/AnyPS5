@@ -50,7 +50,8 @@ private:
         std::uint64_t value = 0;
     };
     std::size_t Home(const IrValue* key) const {
-        return static_cast<std::size_t>((reinterpret_cast<std::uintptr_t>(key) >> 4u) * 0x9e3779b97f4a7c15ull >> 32u) & (_slots.size() - 1u);
+        return static_cast<std::size_t>((reinterpret_cast<std::uintptr_t>(key) >> 4u) * 0x9e3779b97f4a7c15ull >> 32u) &
+               (_slots.size() - 1u);
     }
     void Grow() {
         std::vector<Slot> previous(_slots.empty() ? 64u : _slots.size() * 2u);
@@ -68,7 +69,11 @@ private:
 
 class Evaluator {
 public:
-    Evaluator(const IrResourcePlan& program, const SrtRuntime& runtime, std::span<const std::uint8_t> cleanFlatSlots = {}, Evaluator* cleanEvaluator = nullptr, IrValue* activeMask = nullptr) : _program(program), _runtime(runtime), _cleanFlatSlots(cleanFlatSlots), _cleanEvaluator(cleanEvaluator), _activeMask(activeMask != nullptr ? activeMask->Resolve() : nullptr) {}
+    Evaluator(const IrResourcePlan& program, const SrtRuntime& runtime,
+              std::span<const std::uint8_t> cleanFlatSlots = {}, Evaluator* cleanEvaluator = nullptr,
+              IrValue* activeMask = nullptr)
+        : _program(program), _runtime(runtime), _cleanFlatSlots(cleanFlatSlots), _cleanEvaluator(cleanEvaluator),
+          _activeMask(activeMask != nullptr ? activeMask->Resolve() : nullptr) {}
 
     bool Evaluate(IrValue* value, std::uint32_t& result);
     bool EvaluateWide(IrValue* raw, std::uint64_t& result);

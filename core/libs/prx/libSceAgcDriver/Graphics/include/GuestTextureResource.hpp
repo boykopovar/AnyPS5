@@ -24,21 +24,20 @@ enum class TextureTileMode {
 // The hardware SW_MODE of an XOR swizzle tile mode, or 0 for the modes addressed without an equation table.
 constexpr std::uint32_t XorSwizzleMode(TextureTileMode mode) {
     switch (mode) {
-        case TextureTileMode::kZ64KBX: return 24u;
-        case TextureTileMode::kS64KBX: return 25u;
-        case TextureTileMode::kD64KBX: return 26u;
-        case TextureTileMode::kR64KBX: return 27u;
-        default: return 0u;
+    case TextureTileMode::kZ64KBX:
+        return 24u;
+    case TextureTileMode::kS64KBX:
+        return 25u;
+    case TextureTileMode::kD64KBX:
+        return 26u;
+    case TextureTileMode::kR64KBX:
+        return 27u;
+    default:
+        return 0u;
     }
 }
 
-enum class TextureDimension {
-    k1D,
-    k2D,
-    k2DArray,
-    kCube,
-    k3D
-};
+enum class TextureDimension { k1D, k2D, k2DArray, kCube, k3D };
 
 struct GuestTextureResource {
     std::uint64_t baseAddress;

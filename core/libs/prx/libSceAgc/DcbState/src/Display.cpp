@@ -10,7 +10,8 @@
 
 extern "C" {
 
-uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_handle, int32_t display_buffer_index, uint32_t flip_mode, int64_t flip_arg) {
+uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, uint32_t video_out_handle, int32_t display_buffer_index,
+                                     uint32_t flip_mode, int64_t flip_arg) {
     auto* packet = Agc::Command::Allocate(buf, AgcDriver::FlipPacketWords, __func__);
     packet[0] = AgcDriver::FlipPacketHeader;
     packet[1] = video_out_handle;
@@ -25,8 +26,5 @@ uint32_t* APS5_VABI sceAgcDcbPrimeUtcl2(CommandBuffer* buf, const volatile void*
     return Agc::Command::WritePrimeUtcl2(buf, address, size_in_bytes, __func__);
 }
 
-std::uint32_t APS5_VABI sceAgcDcbPrimeUtcl2GetSize() {
-    return 20;
-}
-
+std::uint32_t APS5_VABI sceAgcDcbPrimeUtcl2GetSize() { return 20; }
 }

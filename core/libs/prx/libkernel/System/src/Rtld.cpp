@@ -27,11 +27,13 @@ std::multimap<const void*, void*> threadAtexitReferences;
 const void* imageContaining(const void* address, bool reference, void*& handle, const char* caller) {
     handle = nullptr;
 #ifdef _WIN32
-    const DWORD flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | (reference ? 0 : GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT);
+    const DWORD flags =
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | (reference ? 0 : GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT);
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(flags, reinterpret_cast<LPCWSTR>(address), &module))
         throw std::runtime_error(std::string(caller) + ": address outside every loaded image");
-    if (reference) handle = module;
+    if (reference)
+        handle = module;
     return module;
 #else
     Dl_info info{};
@@ -40,7 +42,8 @@ const void* imageContaining(const void* address, bool reference, void*& handle, 
         throw std::runtime_error(std::string(caller) + ": address outside every loaded image");
     if (reference && image->l_name && *image->l_name) {
         handle = dlopen(image->l_name, RTLD_LAZY | RTLD_NOLOAD);
-        if (!handle) throw std::runtime_error(std::string(caller) + ": cannot reference " + image->l_name);
+        if (!handle)
+            throw std::runtime_error(std::string(caller) + ": cannot reference " + image->l_name);
     }
     return image;
 #endif
@@ -65,7 +68,8 @@ int releaseThreadAtexitImage(const void* address, const char* caller) {
         handle = found->second;
         threadAtexitReferences.erase(found);
     }
-    if (!handle) return 0;
+    if (!handle)
+        return 0;
 #ifdef _WIN32
     if (!FreeLibrary(static_cast<HMODULE>(handle)))
 #else
@@ -92,9 +96,7 @@ void registerApplicationHeapApi(void* const* api) {
 
 extern "C" {
 
-void APS5_VABI sceKernelRtldSetApplicationHeapAPI(void* api[]) {
-    registerApplicationHeapApi(api);
-}
+void APS5_VABI sceKernelRtldSetApplicationHeapAPI(void* api[]) { registerApplicationHeapApi(api); }
 
 int APS5_VABI sceKernelRtldThreadAtexitDecrement(const void* dsoSymbol) {
     return releaseThreadAtexitImage(dsoSymbol, __func__);
@@ -112,17 +114,12 @@ void APS5_VABI sceKernelSetThreadAtexitReport(thread_atexit_report_func_t func) 
     ThreadLifecycle::SetThreadAtexitReport(func);
 }
 
-void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors) {
-    ThreadLifecycle::SetThreadDtors(dtors);
-}
-
+void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors) { ThreadLifecycle::SetThreadDtors(dtors); }
 }
 
 extern "C" {
 
-void APS5_VABI _sceKernelRtldSetApplicationHeapAPI_nid_postfix(void* api[]) {
-    registerApplicationHeapApi(api);
-}
+void APS5_VABI _sceKernelRtldSetApplicationHeapAPI_nid_postfix(void* api[]) { registerApplicationHeapApi(api); }
 
 int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void* dsoSymbol) {
     return releaseThreadAtexitImage(dsoSymbol, "_sceKernelRtldThreadAtexitDecrement");
@@ -143,5 +140,4 @@ void APS5_VABI _sceKernelSetThreadAtexitReport_nid_postfix(thread_atexit_report_
 void APS5_VABI _sceKernelSetThreadDtors_nid_postfix(thread_dtors_func_t callback) {
     ThreadLifecycle::SetThreadDtors(callback);
 }
-
 }

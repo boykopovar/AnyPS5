@@ -37,7 +37,6 @@ int APS5_VABI sceKernelPollSema(KernelSema sem, int need);
 int APS5_VABI sceKernelSignalSema(KernelSema sem, int count);
 int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time);
 int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads);
-
 }
 
 #endif

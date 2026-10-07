@@ -31,9 +31,9 @@ static void Check(bool value, int line) {
 
 int main() {
     const auto originalDirectory = std::filesystem::current_path();
-    const auto root = std::filesystem::temp_directory_path() /
-        ("anyps5-savedata-replacement-" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        ("anyps5-savedata-replacement-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     std::filesystem::current_path(root);
 
@@ -41,8 +41,7 @@ int main() {
 #ifdef SAVEDATA_NATIVE_BACKEND
     const auto savePath = std::filesystem::path("_sd_mem") / ("u" + std::to_string(userId)) / "slot0.bin";
 #else
-    const auto savePath = std::filesystem::path("_sd") / "sce_sdmemory" /
-        std::to_string(userId) / "memory.dat";
+    const auto savePath = std::filesystem::path("_sd") / "sce_sdmemory" / std::to_string(userId) / "memory.dat";
 #endif
     std::filesystem::create_directories(savePath.parent_path());
     const std::vector<char> oldData{'o', 'l', 'd'};
@@ -80,8 +79,8 @@ int main() {
     }
     Require(savedData.size() == setup.memory_size);
     Require(std::equal(oldData.begin(), oldData.end(), savedData.begin()));
-    Require(std::all_of(savedData.begin() + static_cast<std::ptrdiff_t>(oldData.size()),
-                        savedData.end(), [](char byte) { return byte == 0; }));
+    Require(std::all_of(savedData.begin() + static_cast<std::ptrdiff_t>(oldData.size()), savedData.end(),
+                        [](char byte) { return byte == 0; }));
 
 #ifdef SAVEDATA_NATIVE_BACKEND
     Require(sceSaveDataTerminate() == 0);

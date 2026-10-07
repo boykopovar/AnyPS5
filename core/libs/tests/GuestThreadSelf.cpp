@@ -3,7 +3,8 @@
 #include <cstdlib>
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI scePthreadDetach(Pthread thread);
 void APS5_VABI scePthreadExit(void* retval);
@@ -28,10 +29,12 @@ int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_
 
 static bool StackContains(Pthread thread, const void* address) {
     PthreadAttr attr = nullptr;
-    if (scePthreadAttrInit(&attr) != 0 || scePthreadAttrGet(thread, &attr) != 0) return false;
+    if (scePthreadAttrInit(&attr) != 0 || scePthreadAttrGet(thread, &attr) != 0)
+        return false;
     void* stack = nullptr;
     size_t size = 0;
-    const bool queried = scePthreadAttrGetstackaddr(&attr, &stack) == 0 && scePthreadAttrGetstacksize(&attr, &size) == 0;
+    const bool queried =
+        scePthreadAttrGetstackaddr(&attr, &stack) == 0 && scePthreadAttrGetstacksize(&attr, &size) == 0;
     scePthreadAttrDestroy(&attr);
     const auto begin = reinterpret_cast<std::uintptr_t>(stack);
     const auto value = reinterpret_cast<std::uintptr_t>(address);
@@ -46,7 +49,10 @@ static constexpr int PTHREAD_CANCEL_ENABLE = 0;
 static constexpr int PTHREAD_CANCEL_ASYNCHRONOUS = 2;
 static constexpr std::intptr_t WorkerRetval = 0x1234;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 struct WorkerContext {
     Pthread thread = nullptr;
@@ -66,7 +72,7 @@ static void* APS5_VABI Worker(void* arg) {
     int oldState = -1;
     int oldType = -1;
     context.testcancelReturned = scePthreadSetcancelstate(PTHREAD_CANCEL_ENABLE, &oldState) == SCE_OK &&
-        scePthreadSetcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &oldType) == SCE_OK;
+                                 scePthreadSetcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &oldType) == SCE_OK;
     scePthreadTestcancel();
     pthread_testcancel_nid_postfix();
     context.testcancelReturned = context.testcancelReturned && oldState == PTHREAD_CANCEL_ENABLE;

@@ -14,8 +14,10 @@ constexpr std::uint8_t Grp5RegCallIndirect = 2;
 constexpr std::uint8_t Grp5RegJmpIndirect = 4;
 
 bool ReadsMemoryOperandAsPointer(const Codegen::DecodedInstructionInfo& info) {
-    if (info.IsTwoByteOpcode) return false;
-    if (info.Opcode == OneByteMovLoadRm8 || info.Opcode == OneByteMovLoadRm) return true;
+    if (info.IsTwoByteOpcode)
+        return false;
+    if (info.Opcode == OneByteMovLoadRm8 || info.Opcode == OneByteMovLoadRm)
+        return true;
     if (info.Opcode == Codegen::X64OpcodeConstants::OneByteGrp5Rm)
         return info.ModRmRegField == Grp5RegCallIndirect || info.ModRmRegField == Grp5RegJmpIndirect;
     return false;
@@ -25,22 +27,16 @@ bool ReadsMemoryOperandAsPointer(const Codegen::DecodedInstructionInfo& info) {
 
 class GotAccessIndex : public IGotAccessIndex {
 public:
-    explicit GotAccessIndex(std::unordered_set<VirtualAddress> accessed)
-        : _accessed(std::move(accessed)) {}
+    explicit GotAccessIndex(std::unordered_set<VirtualAddress> accessed) : _accessed(std::move(accessed)) {}
 
-    bool IsGotSlotAccessed(VirtualAddress gotSlotVaddr) const override {
-        return _accessed.count(gotSlotVaddr) > 0;
-    }
+    bool IsGotSlotAccessed(VirtualAddress gotSlotVaddr) const override { return _accessed.count(gotSlotVaddr) > 0; }
 
 private:
     std::unordered_set<VirtualAddress> _accessed;
 };
 
-std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
-    const IControlFlowGraph& cfg,
-    const std::vector<std::uint8_t>& text,
-    VirtualAddress textVaddr
-) {
+std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(const IControlFlowGraph& cfg,
+                                                     const std::vector<std::uint8_t>& text, VirtualAddress textVaddr) {
     const Codegen::X64InstructionDecoder decoder;
     std::unordered_set<VirtualAddress> accessed;
 
@@ -49,18 +45,19 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
             continue;
         std::size_t bufOff = static_cast<std::size_t>(va - textVaddr);
         std::size_t available = text.size() - bufOff;
-        if (available == 0) continue;
+        if (available == 0)
+            continue;
 
         Codegen::DecodedInstructionInfo info = decoder.DecodeInstruction(text.data() + bufOff, available);
-        if (!info.HasRipRelativeDisp) continue;
-        if (!ReadsMemoryOperandAsPointer(info)) continue;
+        if (!info.HasRipRelativeDisp)
+            continue;
+        if (!ReadsMemoryOperandAsPointer(info))
+            continue;
 
         VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
         std::int32_t disp = 0;
         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
-        VirtualAddress target = static_cast<VirtualAddress>(
-            static_cast<std::int64_t>(nextVaddr) + disp
-        );
+        VirtualAddress target = static_cast<VirtualAddress>(static_cast<std::int64_t>(nextVaddr) + disp);
         accessed.insert(target);
     }
 

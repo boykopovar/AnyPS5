@@ -11,29 +11,35 @@ namespace Relinker {
 
 using namespace Elfpatcher;
 
-RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel)
-    : _elfReader(std::move(elfReader))
-    , _syscallScanner(std::move(syscallScanner))
-    , _callSiteResolver(std::move(callSiteResolver))
-    , _validationPolicy(std::move(validationPolicy))
-    , _dynamicSectionBuilder(std::move(dynamicSectionBuilder))
-    , _unusedNidFilter(std::move(unusedNidFilter))
-    , unusedFilterLevel(unusedFilterLevel)
-{
-    if (unusedFilterLevel > 2) throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader,
+                                   std::shared_ptr<ISyscallScanner> syscallScanner,
+                                   std::shared_ptr<ICallSiteResolver> callSiteResolver,
+                                   std::shared_ptr<IValidationPolicy> validationPolicy,
+                                   std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder,
+                                   std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel)
+    : _elfReader(std::move(elfReader)), _syscallScanner(std::move(syscallScanner)),
+      _callSiteResolver(std::move(callSiteResolver)), _validationPolicy(std::move(validationPolicy)),
+      _dynamicSectionBuilder(std::move(dynamicSectionBuilder)), _unusedNidFilter(std::move(unusedNidFilter)),
+      unusedFilterLevel(unusedFilterLevel) {
+    if (unusedFilterLevel > 2)
+        throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
 }
 
 std::string RelinkerPipeline::_relocationTypeName(std::uint32_t type) {
     switch (type) {
-        case 1: return "R_X86_64_64";
-        case 6: return "R_X86_64_GLOB_DAT";
-        case 7: return "R_X86_64_JUMP_SLOT";
-        case 10: return "R_X86_64_32";
-        default: {
-            std::ostringstream oss;
-            oss << "UNKNOWN(" << type << ")";
-            return oss.str();
-        }
+    case 1:
+        return "R_X86_64_64";
+    case 6:
+        return "R_X86_64_GLOB_DAT";
+    case 7:
+        return "R_X86_64_JUMP_SLOT";
+    case 10:
+        return "R_X86_64_32";
+    default: {
+        std::ostringstream oss;
+        oss << "UNKNOWN(" << type << ")";
+        return oss.str();
+    }
     }
 }
 
@@ -109,13 +115,11 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         return hasTag(osTag) ? getTagValue(osTag) : getTagValue(sysvTag);
     };
 
-    const bool hasPltRelocations = hasTag(DT_OS_PLTRELSZ) || hasTag(DT_PLTRELSZ)
-        || hasTag(DT_OS_PLTREL) || hasTag(DT_PLTREL)
-        || hasTag(DT_OS_JMPREL) || hasTag(DT_JMPREL);
+    const bool hasPltRelocations = hasTag(DT_OS_PLTRELSZ) || hasTag(DT_PLTRELSZ) || hasTag(DT_OS_PLTREL) ||
+                                   hasTag(DT_PLTREL) || hasTag(DT_OS_JMPREL) || hasTag(DT_JMPREL);
     if (hasPltRelocations || hasTag(DT_OS_PLTGOT) || hasTag(DT_PLTGOT)) {
-        gotVAddr = requireExactlyOneOf(DT_OS_PLTGOT, DT_PLTGOT, "DT_PLTGOT")
-            ? getTagValue(DT_OS_PLTGOT)
-            : getTagValue(DT_PLTGOT);
+        gotVAddr = requireExactlyOneOf(DT_OS_PLTGOT, DT_PLTGOT, "DT_PLTGOT") ? getTagValue(DT_OS_PLTGOT)
+                                                                             : getTagValue(DT_PLTGOT);
     }
 
     const FileByteOffset dynStrTabOffset = readAsOffset(DT_OS_STRTAB, DT_STRTAB, "DT_STRTAB");
@@ -130,8 +134,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     if (hasPltRelocations) {
         gotSize = readAsSize(DT_OS_PLTRELSZ, DT_PLTRELSZ, "DT_PLTRELSZ");
         const std::int64_t jmprelType = requireExactlyOneOf(DT_OS_PLTREL, DT_PLTREL, "DT_PLTREL")
-            ? getTagValue(DT_OS_PLTREL)
-            : getTagValue(DT_PLTREL);
+                                            ? getTagValue(DT_OS_PLTREL)
+                                            : getTagValue(DT_PLTREL);
         if (jmprelType != DT_RELA)
             throw RelinkerException("Unsupported DT_PLTREL type");
         dynJmpRelOffset = readAsOffset(DT_OS_JMPREL, DT_JMPREL, "DT_JMPREL");
@@ -176,7 +180,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     for (auto& [fst, snd] : neededLibraryNamesByStrOffset) {
         snd = readCStr(fst);
         neededLibraries.push_back(snd);
-        if (policy) policy->RegisterLibraryImport(snd);
+        if (policy)
+            policy->RegisterLibraryImport(snd);
     }
 
     std::map<std::uint64_t, std::string> importModules;
@@ -214,7 +219,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             std::memcpy(&nameOff, raw.data() + symOff, 4);
 
             const auto name = readCStr(nameOff);
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend});
+            nidRefs.push_back(
+                {name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend});
         }
     };
 
@@ -237,8 +243,10 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         if (executableSegments.size() > 1)
             throw RelinkerException("Strict NID filtering does not support multiple executable segments");
         nidRefs = _unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr);
-        if (nidRefs.size() > originalNidCount) throw RelinkerException("Strict NID filter increased the reference count");
-        std::cout << "Strict filtering total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
+        if (nidRefs.size() > originalNidCount)
+            throw RelinkerException("Strict NID filter increased the reference count");
+        std::cout << "Strict filtering total: " << originalNidCount << " -> " << nidRefs.size()
+                  << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
     } else if (unusedFilterLevel == 1) {
         std::vector<NidReference> pltRefs;
         std::vector<NidReference> nonPltRefs;
@@ -252,37 +260,45 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         std::cout << "PLT preservation: " << pltRefs.size() << " -> " << pltRefs.size() << "; filtered=0\n";
         const std::size_t nonPltCount = nonPltRefs.size();
         if (executableSegments.size() > 1) {
-            std::cout << "CFG/GOT filtering skipped: multiple executable segments are not modeled; "
-                      << nonPltCount << " -> " << nonPltCount << "; filtered=0\n";
+            std::cout << "CFG/GOT filtering skipped: multiple executable segments are not modeled; " << nonPltCount
+                      << " -> " << nonPltCount << "; filtered=0\n";
         } else {
             nonPltRefs = _unusedNidFilter->Filter(nonPltRefs, raw, textSection, textVAddr);
-            if (nonPltRefs.size() > nonPltCount) throw RelinkerException("Unused NID filter increased the reference count");
-            std::cout << "CFG/GOT filtering: " << nonPltCount << " -> " << nonPltRefs.size() << "; filtered=" << nonPltCount - nonPltRefs.size() << "\n";
+            if (nonPltRefs.size() > nonPltCount)
+                throw RelinkerException("Unused NID filter increased the reference count");
+            std::cout << "CFG/GOT filtering: " << nonPltCount << " -> " << nonPltRefs.size()
+                      << "; filtered=" << nonPltCount - nonPltRefs.size() << "\n";
         }
 
         nidRefs.clear();
         nidRefs.reserve(pltRefs.size() + nonPltRefs.size());
-        for (auto& ref : pltRefs) nidRefs.push_back(std::move(ref));
-        for (auto& ref : nonPltRefs) nidRefs.push_back(std::move(ref));
+        for (auto& ref : pltRefs)
+            nidRefs.push_back(std::move(ref));
+        for (auto& ref : nonPltRefs)
+            nidRefs.push_back(std::move(ref));
     } else {
         std::cout << "Unused NID filtering: disabled; filtered=0\n";
     }
 
-    std::cout << "NID total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
+    std::cout << "NID total: " << originalNidCount << " -> " << nidRefs.size()
+              << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
 
     auto dynamicRefs = nidRefs;
     std::vector<RelinkPatch> patches;
     auto pltCount = static_cast<std::uint32_t>(dynJmpRelSize / relaEntSize);
     if (unusedFilterLevel == 2) {
-        auto compacted = UnusedNidFilter::CompactPlt(originalNidRefs, nidRefs, textSection, textVAddr, _elfReader->TranslateVirtualAddress(textVAddr), dynJmpRelOffset);
+        auto compacted = UnusedNidFilter::CompactPlt(originalNidRefs, nidRefs, textSection, textVAddr,
+                                                     _elfReader->TranslateVirtualAddress(textVAddr), dynJmpRelOffset);
         dynamicRefs = std::move(compacted.References);
         patches = std::move(compacted.Patches);
         std::cout << "PLT compaction: " << pltCount << " -> " << compacted.SlotCount << "\n";
         pltCount = compacted.SlotCount;
     }
-    auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
+    auto dynSection =
+        _dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
 
-    auto appendRela = [&](std::vector<std::uint8_t>& buf, std::uint64_t offset, std::uint64_t info, std::int64_t addend) {
+    auto appendRela = [&](std::vector<std::uint8_t>& buf, std::uint64_t offset, std::uint64_t info,
+                          std::int64_t addend) {
         std::size_t pos = buf.size();
         buf.resize(pos + 24);
         std::memcpy(buf.data() + pos, &offset, 8);
@@ -330,7 +346,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         }
     }
 
-    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr, std::move(patches)};
+    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr,
+                        std::move(patches)};
 }
 
 }

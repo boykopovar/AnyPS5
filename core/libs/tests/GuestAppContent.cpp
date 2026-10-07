@@ -9,7 +9,10 @@ int APS5_VABI sceAppContentAddcontUnmount(const AppContentMountPoint*);
 
 static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
 static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     NpUnifiedEntitlementLabel label{};

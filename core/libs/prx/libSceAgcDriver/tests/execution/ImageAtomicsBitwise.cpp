@@ -27,24 +27,34 @@ alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 alignas(4096) std::array<std::uint32_t, Threads * TextureHeight> Texels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 92> Code{
-    0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0x7e100300, 0x7e120280, 0x7e140304,
-    0xf03c0108, 0x00020a08, 0x7e160305, 0xf0602108, 0x00020b08, 0x7e180280, 0xf0442108, 0x00020c08,
-    0xbf8c3f70, 0x7e28030b, 0x7e2a030c, 0x7e120281, 0x7e140304, 0xf03c0108, 0x00020a08, 0x7e160305,
-    0xf0642108, 0x00020b08, 0x7e180280, 0xf0442108, 0x00020c08, 0xbf8c3f70, 0x7e2c030b, 0x7e2e030c,
-    0x7e120282, 0x7e140304, 0xf03c0108, 0x00020a08, 0x7e160305, 0xf0682108, 0x00020b08, 0x7e180280,
-    0xf0442108, 0x00020c08, 0xbf8c3f70, 0x7e30030b, 0x7e32030c, 0x7e120283, 0x7e140304, 0xf03c0108,
-    0x00020a08, 0x7e160305, 0xf0542108, 0x00020b08, 0x7e180280, 0xf0442108, 0x00020c08, 0xbf8c3f70,
-    0x7e34030b, 0x7e36030c, 0x7e120284, 0x7e140304, 0xf03c0108, 0x00020a08, 0x7e160305, 0xf05c2108,
-    0x00020b08, 0x7e180280, 0xf0442108, 0x00020c08, 0xbf8c3f70, 0x7e38030b, 0x7e3a030c, 0xe0701000,
-    0x80011403, 0xe0701004, 0x80011503, 0xe0701008, 0x80011603, 0xe070100c, 0x80011703, 0xe0701010,
-    0x80011803, 0xe0701014, 0x80011903, 0xe0701018, 0x80011a03, 0xe070101c, 0x80011b03, 0xe0701020,
-    0x80011c03, 0xe0701024, 0x80011d03, 0xbf810000,
+    0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0x7e100300, 0x7e120280, 0x7e140304, 0xf03c0108,
+    0x00020a08, 0x7e160305, 0xf0602108, 0x00020b08, 0x7e180280, 0xf0442108, 0x00020c08, 0xbf8c3f70, 0x7e28030b,
+    0x7e2a030c, 0x7e120281, 0x7e140304, 0xf03c0108, 0x00020a08, 0x7e160305, 0xf0642108, 0x00020b08, 0x7e180280,
+    0xf0442108, 0x00020c08, 0xbf8c3f70, 0x7e2c030b, 0x7e2e030c, 0x7e120282, 0x7e140304, 0xf03c0108, 0x00020a08,
+    0x7e160305, 0xf0682108, 0x00020b08, 0x7e180280, 0xf0442108, 0x00020c08, 0xbf8c3f70, 0x7e30030b, 0x7e32030c,
+    0x7e120283, 0x7e140304, 0xf03c0108, 0x00020a08, 0x7e160305, 0xf0542108, 0x00020b08, 0x7e180280, 0xf0442108,
+    0x00020c08, 0xbf8c3f70, 0x7e34030b, 0x7e36030c, 0x7e120284, 0x7e140304, 0xf03c0108, 0x00020a08, 0x7e160305,
+    0xf05c2108, 0x00020b08, 0x7e180280, 0xf0442108, 0x00020c08, 0xbf8c3f70, 0x7e38030b, 0x7e3a030c, 0xe0701000,
+    0x80011403, 0xe0701004, 0x80011503, 0xe0701008, 0x80011603, 0xe070100c, 0x80011703, 0xe0701010, 0x80011803,
+    0xe0701014, 0x80011903, 0xe0701018, 0x80011a03, 0xe070101c, 0x80011b03, 0xe0701020, 0x80011c03, 0xe0701024,
+    0x80011d03, 0xbf810000,
 };
 
 constexpr std::array<std::array<std::uint32_t, 2>, 14> Edges{{
-    {0x0u, 0x0u}, {0x0u, 0xffffffffu}, {0xffffffffu, 0x0u}, {0xffffffffu, 0xffffffffu}, {0x7fffffffu, 0x80000000u}, {0x80000000u, 0x7fffffffu},
-    {0xffffffffu, 0x1u}, {0x1u, 0xffffffffu}, {0xaaaaaaaau, 0x55555555u}, {0xf0f0f0f0u, 0xff00ff00u}, {0x5u, 0x5u}, {0x4u, 0x5u},
-    {0x6u, 0x5u}, {0x80000000u, 0x80000000u},
+    {0x0u, 0x0u},
+    {0x0u, 0xffffffffu},
+    {0xffffffffu, 0x0u},
+    {0xffffffffu, 0xffffffffu},
+    {0x7fffffffu, 0x80000000u},
+    {0x80000000u, 0x7fffffffu},
+    {0xffffffffu, 0x1u},
+    {0x1u, 0xffffffffu},
+    {0xaaaaaaaau, 0x55555555u},
+    {0xf0f0f0f0u, 0xff00ff00u},
+    {0x5u, 0x5u},
+    {0x4u, 0x5u},
+    {0x6u, 0x5u},
+    {0x80000000u, 0x80000000u},
 }};
 
 void FillInput() {
@@ -64,7 +74,8 @@ void FillInput() {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t width, std::uint32_t height) {
@@ -74,7 +85,10 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t w
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((width - 1u) & 3u) << 30u),
         ((width - 1u) >> 2u) | ((height - 1u) << 14u),
         0xfacu | (Type2D << 28u),
-        0u, 0u, 0u, 0u,
+        0u,
+        0u,
+        0u,
+        0u,
     };
 }
 
@@ -89,14 +103,14 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRe
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
     const std::span<const std::uint32_t> code(Code);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         target,
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -104,7 +118,8 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRe
 }
 
 void Check(const char* run) {
-    constexpr std::array<const char*, Operations> names{"image_atomic_and", "image_atomic_or", "image_atomic_xor", "image_atomic_umin", "image_atomic_umax"};
+    constexpr std::array<const char*, Operations> names{"image_atomic_and", "image_atomic_or", "image_atomic_xor",
+                                                        "image_atomic_umin", "image_atomic_umax"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto* in = &Input[tid * Inputs];
         const std::uint32_t a = in[0];
@@ -115,7 +130,8 @@ void Check(const char* run) {
             const std::uint32_t stored = Output[tid * Results + 2u * j + 1u];
             const auto where = std::string(names[j]) + " " + run + ": thread " + std::to_string(tid);
             Require(returned == a, where + " returned " + std::to_string(returned) + ", expected " + std::to_string(a));
-            Require(stored == expected[j], where + " stored " + std::to_string(stored) + ", expected " + std::to_string(expected[j]));
+            Require(stored == expected[j],
+                    where + " stored " + std::to_string(stored) + ", expected " + std::to_string(expected[j]));
         }
     }
 }
@@ -125,7 +141,8 @@ void Check(const char* run) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         FillInput();
         Run(*device, 32, device->Target());
         Check("wave32");

@@ -146,9 +146,9 @@ std::string Ngs2Hex(std::uint32_t value);
 std::recursive_mutex& Ngs2Mutex();
 Ngs2System* Ngs2FindSystem(Ngs2Handle handle);
 
-template <typename TParam>
-const TParam& ParamAs(const Ngs2VoiceParamHeader& param) {
-    if (param.size < sizeof(TParam)) throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " is too small");
+template <typename TParam> const TParam& ParamAs(const Ngs2VoiceParamHeader& param) {
+    if (param.size < sizeof(TParam))
+        throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " is too small");
     return reinterpret_cast<const TParam&>(param);
 }
 
@@ -156,7 +156,8 @@ Ngs2Rack* Ngs2FindRack(Ngs2Handle handle);
 Ngs2Voice* Ngs2FindVoice(Ngs2Handle handle);
 void* Ngs2Place(const Ngs2ContextBufferInfo* bufferInfo, std::size_t size, std::size_t alignment);
 int Ngs2DestroyRack(Ngs2Rack& rack, Ngs2ContextBufferInfo* outBufferInfo);
-int Ngs2ReleaseBuffer(const Ngs2BufferAllocator& allocator, Ngs2ContextBufferInfo bufferInfo, Ngs2ContextBufferInfo* outBufferInfo);
+int Ngs2ReleaseBuffer(const Ngs2BufferAllocator& allocator, Ngs2ContextBufferInfo bufferInfo,
+                      Ngs2ContextBufferInfo* outBufferInfo);
 void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block);
 void Ngs2RestartAtrac9(Ngs2Voice& voice);

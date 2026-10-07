@@ -8,12 +8,7 @@
 
 namespace Codegen {
 
-enum class Amd64OnlyLowering : std::uint8_t {
-    InPlace,
-    Trampoline,
-    Unsupported,
-    Kept
-};
+enum class Amd64OnlyLowering : std::uint8_t { InPlace, Trampoline, Unsupported, Kept };
 
 struct Amd64OnlyMatch {
     std::string InstructionName;

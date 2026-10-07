@@ -25,7 +25,8 @@ constexpr Term Register(std::uint32_t index) { return {false, index}; }
 constexpr Term Constant() { return {true, Literal}; }
 
 void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error("vop2 multiply-add: " + message);
+    if (!value)
+        throw std::runtime_error("vop2 multiply-add: " + message);
 }
 
 Term Leaf(const IrValue* value, const std::string& name) {
@@ -34,12 +35,15 @@ Term Leaf(const IrValue* value, const std::string& name) {
     if (bits->HasImmediate()) {
         return {true, bits->ImmediateU32()};
     }
-    Require(bits->Opcode() == IrOpcode::GetVectorRegister, name + " operand is neither a literal nor a vector register");
+    Require(bits->Opcode() == IrOpcode::GetVectorRegister,
+            name + " operand is neither a literal nor a vector register");
     return {false, bits->Argument(0)->Register().index};
 }
 
-void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCount, RdnaOpcode opcode, IrOpcode expected, const std::array<Term, 3>& terms) {
-    const std::array<std::uint32_t, 2> words{(encoding << 25u) | (Destination << 17u) | (Source1 << 9u) | (256u + Source0), Literal};
+void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCount, RdnaOpcode opcode,
+           IrOpcode expected, const std::array<Term, 3>& terms) {
+    const std::array<std::uint32_t, 2> words{
+        (encoding << 25u) | (Destination << 17u) | (Source1 << 9u) | (256u + Source0), Literal};
     const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words).first(wordCount), 0u);
     Require(instruction.family == RdnaInstructionFamily::VOP2, name + " is not decoded as VOP2");
     Require(instruction.opcodeId == encoding, name + " lost its encoding");
@@ -56,7 +60,8 @@ void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCo
     const IrOpcode rejected = expected == IrOpcode::FPFma32 ? IrOpcode::FPMad32 : IrOpcode::FPFma32;
     const IrValue* result = nullptr;
     for (const auto* value : block.Instructions()) {
-        Require(value->Opcode() != rejected, name + (expected == IrOpcode::FPFma32 ? " rounds the product separately" : " is fused"));
+        Require(value->Opcode() != rejected,
+                name + (expected == IrOpcode::FPFma32 ? " rounds the product separately" : " is fused"));
         if (value->Opcode() == expected) {
             Require(result == nullptr, name + " emits more than one multiply-add");
             result = value;
@@ -65,7 +70,8 @@ void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCo
     Require(result != nullptr, name + " emits no multiply-add");
     for (std::uint32_t index = 0u; index < terms.size(); ++index) {
         const Term term = Leaf(result->Argument(index), name);
-        Require(term.literal == terms[index].literal && term.value == terms[index].value, name + " reads the wrong operand " + std::to_string(index));
+        Require(term.literal == terms[index].literal && term.value == terms[index].value,
+                name + " reads the wrong operand " + std::to_string(index));
     }
 }
 

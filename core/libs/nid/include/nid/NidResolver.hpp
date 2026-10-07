@@ -10,7 +10,9 @@ namespace Nid {
 
 std::string ResolveOneName(const std::string& funcName);
 
-std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::string>& exportedNames, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports);
+std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::string>& exportedNames,
+                                                         const std::string& libraryName,
+                                                         const std::unordered_set<std::string>& excludedExports);
 
 }
 

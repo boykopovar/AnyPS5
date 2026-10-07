@@ -3,9 +3,12 @@
 #include <cstdlib>
 #include <cstring>
 
-extern "C" int APS5_VABI wcsrtombs_s_nid_postfix(
-    std::size_t*, char*, std::size_t, const std::uint16_t**, std::size_t, void*);
-static void Require(bool value) { if (!value) std::abort(); }
+extern "C" int APS5_VABI wcsrtombs_s_nid_postfix(std::size_t*, char*, std::size_t, const std::uint16_t**, std::size_t,
+                                                 void*);
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 constexpr auto Failed = static_cast<std::size_t>(-1);
 constexpr auto Huge = std::size_t{1} << 63;
@@ -24,7 +27,8 @@ static Run Convert(const std::uint16_t* input, std::size_t capacity, std::size_t
     std::memset(run.out, 'x', sizeof(run.out));
     run.source = input;
     std::uint64_t state[2] = {};
-    run.status = wcsrtombs_s_nid_postfix(&run.result, toBuffer ? run.out : nullptr, capacity, &run.source, limit, state);
+    run.status =
+        wcsrtombs_s_nid_postfix(&run.result, toBuffer ? run.out : nullptr, capacity, &run.source, limit, state);
     return run;
 }
 
@@ -46,9 +50,11 @@ int main() {
     Require(run.status == 0 && run.result == 0 && run.source == text && std::memcmp(run.out, "\0x", 2) == 0);
 
     run = Convert(text, 3, 8);
-    Require(run.status == 34 && run.result == Failed && run.source == text + 3 && std::memcmp(run.out, "\0bcx", 4) == 0);
+    Require(run.status == 34 && run.result == Failed && run.source == text + 3 &&
+            std::memcmp(run.out, "\0bcx", 4) == 0);
     run = Convert(text, 3, 3);
-    Require(run.status == 34 && run.result == Failed && run.source == text + 3 && std::memcmp(run.out, "\0bcx", 4) == 0);
+    Require(run.status == 34 && run.result == Failed && run.source == text + 3 &&
+            std::memcmp(run.out, "\0bcx", 4) == 0);
     run = Convert(text, 1, 8);
     Require(run.status == 34 && run.result == Failed && run.source == text + 1 && std::memcmp(run.out, "\0x", 2) == 0);
 

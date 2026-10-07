@@ -66,11 +66,13 @@ constexpr std::uint32_t Vop1(std::uint32_t opcode, std::uint32_t destination, st
     return 0x7e000000u | (destination << 17u) | (opcode << 9u) | source;
 }
 
-constexpr std::uint32_t Vop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0, std::uint32_t source1) {
+constexpr std::uint32_t Vop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0,
+                             std::uint32_t source1) {
     return (opcode << 25u) | (destination << 17u) | (source1 << 9u) | source0;
 }
 
-constexpr std::uint32_t SdwaModifier(std::uint32_t source, std::uint32_t destinationSelector, std::uint32_t unused, std::uint32_t sourceSelector, std::uint32_t signExtend) {
+constexpr std::uint32_t SdwaModifier(std::uint32_t source, std::uint32_t destinationSelector, std::uint32_t unused,
+                                     std::uint32_t sourceSelector, std::uint32_t signExtend) {
     return source | (destinationSelector << 8u) | (unused << 11u) | (sourceSelector << 16u) | (signExtend << 19u);
 }
 
@@ -78,12 +80,12 @@ constexpr std::uint32_t BufferAccess(std::uint32_t data, std::uint32_t index, st
     return (ConstantZero << 24u) | ((descriptor / 4u) << 16u) | (data << 8u) | index;
 }
 
-constexpr std::uint32_t CombinationIndex(std::uint32_t sourceSelector, std::uint32_t signExtend, std::uint32_t destinationSelector, std::uint32_t unused) {
+constexpr std::uint32_t CombinationIndex(std::uint32_t sourceSelector, std::uint32_t signExtend,
+                                         std::uint32_t destinationSelector, std::uint32_t unused) {
     return ((sourceSelector * 2u + signExtend) * Selectors + destinationSelector) * UnusedModes + unused;
 }
 
-template <std::uint32_t WaveSize>
-constexpr std::array<std::uint32_t, CodeWords<WaveSize>> BuildCode() {
+template <std::uint32_t WaveSize> constexpr std::array<std::uint32_t, CodeWords<WaveSize>> BuildCode() {
     constexpr std::uint32_t sMovB32 = 0x03u;
     constexpr std::uint32_t sMovB64 = 0x04u;
     constexpr std::uint32_t vMovB32 = 0x01u;
@@ -113,7 +115,8 @@ constexpr std::array<std::uint32_t, CodeWords<WaveSize>> BuildCode() {
         code[count++] = Vop1(vMovB32, BroadcastVector, Sdwa);
         code[count++] = SdwaModifier(BroadcastVector, byte, 2u, 0u, 0u);
     }
-    code[count++] = WaveSize == 64u ? Sop1(sMovB64, ExecLoRegister, ConstantAllOnes) : Sop1(sMovB32, ExecLoRegister, ConstantAllOnes);
+    code[count++] = WaveSize == 64u ? Sop1(sMovB64, ExecLoRegister, ConstantAllOnes)
+                                    : Sop1(sMovB32, ExecLoRegister, ConstantAllOnes);
     for (std::uint32_t sourceSelector = 0; sourceSelector < Selectors; ++sourceSelector) {
         for (std::uint32_t signExtend = 0; signExtend < 2u; ++signExtend) {
             for (std::uint32_t destinationSelector = 0; destinationSelector < Selectors; ++destinationSelector) {
@@ -121,7 +124,8 @@ constexpr std::array<std::uint32_t, CodeWords<WaveSize>> BuildCode() {
                     code[count++] = Vop1(vMovB32, DataVector, VectorSource | PreviousVector);
                     code[count++] = Vop1(vMovB32, DataVector, Sdwa);
                     code[count++] = SdwaModifier(SourceVector, destinationSelector, unused, sourceSelector, signExtend);
-                    code[count++] = bufferStoreDwordIndexed | (CombinationIndex(sourceSelector, signExtend, destinationSelector, unused) * 4u);
+                    code[count++] = bufferStoreDwordIndexed |
+                                    (CombinationIndex(sourceSelector, signExtend, destinationSelector, unused) * 4u);
                     code[count++] = BufferAccess(DataVector, OutputIndexVector, OutputRegister);
                 }
             }
@@ -136,17 +140,11 @@ constexpr std::array<std::uint32_t, CodeWords<WaveSize>> BuildCode() {
 alignas(256) constexpr std::array<std::uint32_t, CodeWords<32>> Wave32Code = BuildCode<32>();
 alignas(256) constexpr std::array<std::uint32_t, CodeWords<64>> Wave64Code = BuildCode<64>();
 
-std::uint32_t Source(std::uint32_t tid) {
-    return std::rotl(Sources[tid % 32u], static_cast<int>(tid / 32u) * 8);
-}
+std::uint32_t Source(std::uint32_t tid) { return std::rotl(Sources[tid % 32u], static_cast<int>(tid / 32u) * 8); }
 
-std::uint32_t Previous(std::uint32_t tid) {
-    return 0xabcd1234u ^ (tid * 0x01030507u);
-}
+std::uint32_t Previous(std::uint32_t tid) { return 0xabcd1234u ^ (tid * 0x01030507u); }
 
-bool BroadcastActive(std::uint32_t tid) {
-    return ((BroadcastExec[tid / 32u] >> (tid % 32u)) & 1u) != 0u;
-}
+bool BroadcastActive(std::uint32_t tid) { return ((BroadcastExec[tid / 32u] >> (tid % 32u)) & 1u) != 0u; }
 
 void FillInput() {
     for (std::uint32_t tid = 0; tid < MaxLanes; ++tid) {
@@ -155,13 +153,9 @@ void FillInput() {
     }
 }
 
-std::uint32_t FieldOffset(std::uint32_t selector) {
-    return selector < 4u ? selector * 8u : (selector - 4u) * 16u;
-}
+std::uint32_t FieldOffset(std::uint32_t selector) { return selector < 4u ? selector * 8u : (selector - 4u) * 16u; }
 
-std::uint32_t FieldMask(std::uint32_t selector) {
-    return selector < 4u ? 0xffu : 0xffffu;
-}
+std::uint32_t FieldMask(std::uint32_t selector) { return selector < 4u ? 0xffu : 0xffffu; }
 
 std::uint32_t SignExtendField(std::uint32_t field, std::uint32_t mask) {
     return (field & ((mask >> 1u) + 1u)) != 0u ? field | ~mask : field;
@@ -175,7 +169,8 @@ std::uint32_t SelectSource(std::uint32_t value, std::uint32_t selector, bool sig
     return signExtend ? SignExtendField(field, FieldMask(selector)) : field;
 }
 
-std::uint32_t PlaceDestination(std::uint32_t result, std::uint32_t selector, std::uint32_t unused, std::uint32_t previous) {
+std::uint32_t PlaceDestination(std::uint32_t result, std::uint32_t selector, std::uint32_t unused,
+                               std::uint32_t previous) {
     if (selector == 6u) {
         return result;
     }
@@ -183,9 +178,12 @@ std::uint32_t PlaceDestination(std::uint32_t result, std::uint32_t selector, std
     const std::uint32_t mask = FieldMask(selector);
     const std::uint32_t field = result & mask;
     switch (unused) {
-        case 0u: return field << offset;
-        case 1u: return SignExtendField(field, mask) << offset;
-        default: return (previous & ~(mask << offset)) | (field << offset);
+    case 0u:
+        return field << offset;
+    case 1u:
+        return SignExtendField(field, mask) << offset;
+    default:
+        return (previous & ~(mask << offset)) | (field << offset);
     }
 }
 
@@ -195,33 +193,38 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-std::string Describe(std::uint32_t sourceSelector, bool signExtend, std::uint32_t destinationSelector, std::uint32_t unused) {
-    constexpr const char* selectorNames[Selectors] = {"BYTE_0", "BYTE_1", "BYTE_2", "BYTE_3", "WORD_0", "WORD_1", "DWORD"};
+std::string Describe(std::uint32_t sourceSelector, bool signExtend, std::uint32_t destinationSelector,
+                     std::uint32_t unused) {
+    constexpr const char* selectorNames[Selectors] = {"BYTE_0", "BYTE_1", "BYTE_2", "BYTE_3",
+                                                      "WORD_0", "WORD_1", "DWORD"};
     constexpr const char* unusedNames[UnusedModes] = {"UNUSED_PAD", "UNUSED_SEXT", "UNUSED_PRESERVE"};
-    return std::string("v_mov_b32_sdwa dst_sel:") + selectorNames[destinationSelector] + " dst_unused:" + unusedNames[unused] +
-        " src0_sel:" + selectorNames[sourceSelector] + (signExtend ? " sext" : "");
+    return std::string("v_mov_b32_sdwa dst_sel:") + selectorNames[destinationSelector] +
+           " dst_unused:" + unusedNames[unused] + " src0_sel:" + selectorNames[sourceSelector] +
+           (signExtend ? " sext" : "");
 }
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize,
+         const ShaderRecompiler::SpirvTarget& target) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin() + InputRegister);
     std::copy(output.begin(), output.end(), userData.begin() + OutputRegister);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{waveSize, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         target,
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -234,26 +237,37 @@ void Check(std::uint32_t waveSize, const char* run, bool masked) {
         const std::uint32_t previous = Previous(tid);
         const auto* out = &Output[tid * Results];
         const auto where = [&](std::uint32_t result) {
-            return std::string("sdwa move selectors ") + run + ": lane " + std::to_string(tid) + " source " + Hex(source) + " previous " + Hex(previous) + " result " + Hex(out[result]);
+            return std::string("sdwa move selectors ") + run + ": lane " + std::to_string(tid) + " source " +
+                   Hex(source) + " previous " + Hex(previous) + " result " + Hex(out[result]);
         };
         for (std::uint32_t sourceSelector = 0; sourceSelector < Selectors; ++sourceSelector) {
             for (std::uint32_t signExtend = 0; signExtend < 2u; ++signExtend) {
                 const std::uint32_t selected = SelectSource(source, sourceSelector, signExtend != 0u);
                 for (std::uint32_t destinationSelector = 0; destinationSelector < Selectors; ++destinationSelector) {
                     for (std::uint32_t unused = 0; unused < UnusedModes; ++unused) {
-                        const std::uint32_t index = CombinationIndex(sourceSelector, signExtend, destinationSelector, unused);
-                        const std::uint32_t expected = PlaceDestination(selected, destinationSelector, unused, previous);
-                        Require(out[index] == expected, where(index) + ", expected " + Hex(expected) + ": " + Describe(sourceSelector, signExtend != 0u, destinationSelector, unused));
+                        const std::uint32_t index =
+                            CombinationIndex(sourceSelector, signExtend, destinationSelector, unused);
+                        const std::uint32_t expected =
+                            PlaceDestination(selected, destinationSelector, unused, previous);
+                        Require(out[index] == expected,
+                                where(index) + ", expected " + Hex(expected) + ": " +
+                                    Describe(sourceSelector, signExtend != 0u, destinationSelector, unused));
                     }
                 }
             }
         }
-        if (!masked) continue;
+        if (!masked)
+            continue;
         if (BroadcastActive(tid)) {
             const std::uint32_t broadcast = (source & 0xffu) * 0x01010101u;
-            Require(out[BroadcastResult] == broadcast, where(BroadcastResult) + ", expected " + Hex(broadcast) + ": in-place v_mov_b32_sdwa v3, v3 dst_sel:BYTE_1/2/3 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_0 must copy byte 0 into the other bytes");
+            Require(out[BroadcastResult] == broadcast,
+                    where(BroadcastResult) + ", expected " + Hex(broadcast) +
+                        ": in-place v_mov_b32_sdwa v3, v3 dst_sel:BYTE_1/2/3 dst_unused:UNUSED_PRESERVE "
+                        "src0_sel:BYTE_0 must copy byte 0 into the other bytes");
         } else {
-            Require(out[BroadcastResult] == source, where(BroadcastResult) + ", expected " + Hex(source) + ": the in-place v_mov_b32_sdwa must not write an inactive lane");
+            Require(out[BroadcastResult] == source,
+                    where(BroadcastResult) + ", expected " + Hex(source) +
+                        ": the in-place v_mov_b32_sdwa must not write an inactive lane");
         }
     }
 }
@@ -263,9 +277,12 @@ void Check(std::uint32_t waveSize, const char* run, bool masked) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         const bool masked = device->Target().subgroupSize >= 32u;
-        if (!masked) std::printf("EXEC-masked broadcast skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
+        if (!masked)
+            std::printf("EXEC-masked broadcast skipped, subgroup size %u cannot hold a wave32\n",
+                        device->Target().subgroupSize);
         FillInput();
         Run(*device, Wave32Code, 32, device->Target());
         Check(32, "wave32", masked);

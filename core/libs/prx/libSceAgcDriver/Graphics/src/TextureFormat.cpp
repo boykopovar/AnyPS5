@@ -102,15 +102,14 @@ std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
     const auto remapped = remapGuestFormat(guestFormat);
     const auto* entry = remapped <= kMaxGuestFormat ? kFormatLookupTable[remapped] : nullptr;
-    if (entry == nullptr) Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
+    if (entry == nullptr)
+        Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
     return *entry;
 }
 
 }
 
-VkFormat ResolveTextureFormat(std::uint32_t guestFormat) {
-    return findFormatEntry(guestFormat).vkFormat;
-}
+VkFormat ResolveTextureFormat(std::uint32_t guestFormat) { return findFormatEntry(guestFormat).vkFormat; }
 
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
     const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
@@ -121,53 +120,54 @@ std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatPr
         return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
     };
     std::uint32_t formats = 0;
-    for (const auto format : {ShaderRecompiler::IrBufferFormat::Format8Srgb, ShaderRecompiler::IrBufferFormat::Format8_8Srgb}) {
-        if ((always || !sampled(format)) && sampled(ShaderRecompiler::SrgbUnormFormat(format))) formats |= ShaderRecompiler::SrgbDecodeBit(format);
+    for (const auto format :
+         {ShaderRecompiler::IrBufferFormat::Format8Srgb, ShaderRecompiler::IrBufferFormat::Format8_8Srgb}) {
+        if ((always || !sampled(format)) && sampled(ShaderRecompiler::SrgbUnormFormat(format)))
+            formats |= ShaderRecompiler::SrgbDecodeBit(format);
     }
     return formats;
 }
 
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
-    if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
+    if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u)
+        return ResolveTextureFormat(guestFormat);
     return ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format)));
 }
 
 std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32_t elementBytes) {
     for (const auto& entry : kFormatLookup) {
-        if (!entry.blockCompressed && entry.vkFormat == format && entry.bytesPerElement == elementBytes) return entry.guestFormat;
+        if (!entry.blockCompressed && entry.vkFormat == format && entry.bytesPerElement == elementBytes)
+            return entry.guestFormat;
     }
     return std::nullopt;
 }
 
-std::uint32_t BytesPerElement(std::uint32_t guestFormat) {
-    return findFormatEntry(guestFormat).bytesPerElement;
-}
+std::uint32_t BytesPerElement(std::uint32_t guestFormat) { return findFormatEntry(guestFormat).bytesPerElement; }
 
-bool IsConvertedTextureFormat(std::uint32_t guestFormat) {
-    return remapGuestFormat(guestFormat) != guestFormat;
-}
+bool IsConvertedTextureFormat(std::uint32_t guestFormat) { return remapGuestFormat(guestFormat) != guestFormat; }
 
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes) {
     switch (format) {
-        case VK_FORMAT_B8G8R8A8_UNORM: format = VK_FORMAT_R8G8B8A8_UNORM; break;
-        case VK_FORMAT_B8G8R8A8_SRGB: format = VK_FORMAT_R8G8B8A8_SRGB; break;
-        case VK_FORMAT_A2R10G10B10_UNORM_PACK32: format = VK_FORMAT_A2B10G10R10_UNORM_PACK32; break;
-        default: break;
+    case VK_FORMAT_B8G8R8A8_UNORM:
+        format = VK_FORMAT_R8G8B8A8_UNORM;
+        break;
+    case VK_FORMAT_B8G8R8A8_SRGB:
+        format = VK_FORMAT_R8G8B8A8_SRGB;
+        break;
+    case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        break;
+    default:
+        break;
     }
     return FindGuestTextureFormat(format, elementBytes);
 }
 
-bool IsBlockCompressed(std::uint32_t guestFormat) {
-    return findFormatEntry(guestFormat).blockCompressed;
-}
+bool IsBlockCompressed(std::uint32_t guestFormat) { return findFormatEntry(guestFormat).blockCompressed; }
 
-std::uint32_t BlockWidth(std::uint32_t guestFormat) {
-    return IsBlockCompressed(guestFormat) ? 4u : 1u;
-}
+std::uint32_t BlockWidth(std::uint32_t guestFormat) { return IsBlockCompressed(guestFormat) ? 4u : 1u; }
 
-std::uint32_t BlockHeight(std::uint32_t guestFormat) {
-    return IsBlockCompressed(guestFormat) ? 4u : 1u;
-}
+std::uint32_t BlockHeight(std::uint32_t guestFormat) { return IsBlockCompressed(guestFormat) ? 4u : 1u; }
 
 }

@@ -11,7 +11,8 @@ static_assert(sizeof(Audio3dOpenParameters) == 0x28);
 static_assert(offsetof(Audio3dOpenParameters, num_beds) == 0x20);
 
 static void Require(bool value, const char* message) {
-    if (value) return;
+    if (value)
+        return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
 }
@@ -51,8 +52,10 @@ static void CheckShortBuffer() {
         std::memcpy(guarded.parameters.data(), &size, sizeof(size));
         sceAudio3dGetDefaultOpenParameters(reinterpret_cast<Audio3dOpenParameters*>(guarded.parameters.data()));
         CheckDefaults(guarded.parameters.data());
-        for (unsigned char value : guarded.before) Require(value == 0xa5, "parameter underrun");
-        for (unsigned char value : guarded.after) Require(value == 0xa5, "parameter overrun");
+        for (unsigned char value : guarded.before)
+            Require(value == 0xa5, "parameter underrun");
+        for (unsigned char value : guarded.after)
+            Require(value == 0xa5, "parameter overrun");
     }
 }
 

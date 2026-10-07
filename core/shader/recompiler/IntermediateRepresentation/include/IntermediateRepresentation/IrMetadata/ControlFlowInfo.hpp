@@ -36,7 +36,7 @@ struct DescriptorSource {
         bool operator==(const IndirectImage& other) const = default;
     };
 
-    std::array<IrValue*, 8> dwords {};
+    std::array<IrValue*, 8> dwords{};
     std::uint32_t dwordCount = 0;
     std::optional<IndirectImage> indirectImage;
 

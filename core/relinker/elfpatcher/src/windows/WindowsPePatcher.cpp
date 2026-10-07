@@ -41,10 +41,15 @@ void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRv
 
 }
 
-WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::filesystem::path iconPath) : _windowsGui(windowsGui), _iconPath(std::move(iconPath)) {
-}
+WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::filesystem::path iconPath)
+    : _windowsGui(windowsGui), _iconPath(std::move(iconPath)) {}
 
-std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t>& sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines) {
+std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t>& sourceElf,
+                                                  const std::vector<Domain::ProgramHeader>& originalHeaders,
+                                                  const Domain::SysVDynamicSection& dynamicSection,
+                                                  const std::uint64_t originalPltGotVaddr, const std::string& runPath,
+                                                  const bool lazyBinding, const bool dependencyDiagnostics,
+                                                  const std::vector<Codegen::TrampolineSite>& trampolines) {
     WindowsLoadImage image(sourceElf, originalHeaders);
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
@@ -55,8 +60,10 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     auto nextRva = image.GetEndRva();
     bool hasProcessParameters = false;
     for (const auto& header : originalHeaders) {
-        if (header.Type != 0x61000001) continue;
-        if (hasProcessParameters || header.FileSize < 0x40) throw Domain::RelinkerException("Invalid process parameter segment");
+        if (header.Type != 0x61000001)
+            continue;
+        if (hasProcessParameters || header.FileSize < 0x40)
+            throw Domain::RelinkerException("Invalid process parameter segment");
         hasProcessParameters = true;
         std::vector<std::uint8_t> metadata(8);
         Io::WriteU32(metadata, 0, image.GetRva(header.MappedAddress, header.FileSize));
@@ -65,13 +72,15 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
     for (const auto& header : originalHeaders) {
-        if (header.Type != 0x6474e550) continue;
+        if (header.Type != 0x6474e550)
+            continue;
         std::vector<std::uint8_t> metadata(4);
         Io::WriteU32(metadata, 0, image.GetRva(header.MappedAddress, header.FileSize));
         sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva);
+    directories[9] =
+        WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;
     auto nativeImports = importBuilder.Build(nextRva);
@@ -83,12 +92,16 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     for (std::size_t index = 0; index < dynamicSection.GuestModules.size(); ++index) {
         const auto& module = dynamicSection.GuestModules[index];
         guestPaths.push_back(module.Path);
-        for (const auto& import : module.Imports) relocations.Imports.push_back({import.Name, import.TargetRva, import.Addend, static_cast<std::int32_t>(index), import.RelocationType, import.Library});
+        for (const auto& import : module.Imports)
+            relocations.Imports.push_back({import.Name, import.TargetRva, import.Addend,
+                                           static_cast<std::int32_t>(index), import.RelocationType, import.Library});
     }
     libraries.insert(libraries.begin(), guestPaths.begin(), guestPaths.end());
     if (dependencyDiagnostics)
         writeDiagnosticsImports(relocations.Imports);
-    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules);
+    auto entry =
+        WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports,
+                                        runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;
     nextRva = AlignRva(entry.Code.Rva + entry.Code.Data.size());

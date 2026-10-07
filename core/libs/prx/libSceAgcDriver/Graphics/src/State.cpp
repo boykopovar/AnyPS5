@@ -21,21 +21,24 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
     const auto it = registers.find(offset);
     if (it == registers.end()) {
         std::ostringstream message;
-        message << "missing register in " << RegisterBankName(bank) << " bank at DWORD 0x" << std::hex << offset << " (" << std::dec << offset << ')';
+        message << "missing register in " << RegisterBankName(bank) << " bank at DWORD 0x" << std::hex << offset << " ("
+                << std::dec << offset << ')';
         throw std::runtime_error("AGC graphics: " + message.str());
     }
     return it->second;
 }
 
 // A register that may be absent (the decoders' find/contains), through the facade.
-Registers::const_iterator find(const Registers& registers, std::uint32_t offset, RegisterBank bank = RegisterBank::Context) {
+Registers::const_iterator find(const Registers& registers, std::uint32_t offset,
+                               RegisterBank bank = RegisterBank::Context) {
     NoteRegisterRead(bank, offset);
     return registers.find(offset);
 }
 
 float readFloat(const Registers& registers, std::uint32_t offset) {
     const auto value = std::bit_cast<float>(read(registers, offset));
-    if (!std::isfinite(value)) Require(false, "non-finite register at DWORD " + std::to_string(offset));
+    if (!std::isfinite(value))
+        Require(false, "non-finite register at DWORD " + std::to_string(offset));
     return value;
 }
 
@@ -45,14 +48,18 @@ std::string zeroMessage(std::uint32_t offset, std::uint32_t value, const char* n
     return std::string(name) + " is unsupported" + detail;
 }
 
-void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, const char* name, RegisterBank bank = RegisterBank::Context) {
+void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, const char* name,
+          RegisterBank bank = RegisterBank::Context) {
     const auto value = read(registers, offset, bank);
-    if ((value & mask) != 0) throw std::runtime_error(zeroMessage(offset, value, name));
+    if ((value & mask) != 0)
+        throw std::runtime_error(zeroMessage(offset, value, name));
 }
 
 std::string vteMessage(std::uint32_t viewportControl) {
     std::ostringstream message;
-    message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl << ": expected 0x43f for homogeneous positions and all viewport transforms; pre-divided coordinates, reciprocal W or disabled transforms are unsupported";
+    message << "AGC graphics: PA_CL_VTE_CNTL=0x" << std::hex << viewportControl
+            << ": expected 0x43f for homogeneous positions and all viewport transforms; pre-divided coordinates, "
+               "reciprocal W or disabled transforms are unsupported";
     return message.str();
 }
 
@@ -80,8 +87,10 @@ std::uint32_t shaderControlMask(std::uint32_t zFormat) {
     constexpr std::uint32_t zExportEnable = 0x1u;
     constexpr std::uint32_t maskExportEnable = 0x100u;
     auto mask = ShaderControlMask;
-    if (zFormat != 0u && zFormatSupported(zFormat)) mask &= ~zExportEnable;
-    if (zFormat == 9u) mask &= ~maskExportEnable;
+    if (zFormat != 0u && zFormatSupported(zFormat))
+        mask &= ~zExportEnable;
+    if (zFormat == 9u)
+        mask &= ~maskExportEnable;
     return mask;
 }
 
@@ -115,36 +124,47 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     auto reference = test;
     auto fixed = compare == 0 || compare == 7 ? 0u : face.compareMask;
     const auto convert = [&](std::uint32_t op) {
-        if (face.writeMask == 0) return VK_STENCIL_OP_KEEP;
+        if (face.writeMask == 0)
+            return VK_STENCIL_OP_KEEP;
         char detail[96];
         switch (op) {
-            case 0: return VK_STENCIL_OP_KEEP;
-            case 1: return VK_STENCIL_OP_ZERO;
-            case 2:
-            case 3:
-            case 4: {
-                const auto value = op == 2 ? 0xffu : op == 3 ? test : opValue;
-                if (((reference ^ value) & fixed & face.writeMask) != 0) {
-                    std::snprintf(detail, sizeof(detail), "AGC graphics: stencil replacement 0x%02x against test value 0x%02x (masks 0x%02x/0x%02x) is unsupported", value, test, face.compareMask, face.writeMask);
-                    throw std::runtime_error(detail);
-                }
-                reference = (reference & ~face.writeMask) | (value & face.writeMask);
-                fixed |= face.writeMask;
-                return VK_STENCIL_OP_REPLACE;
-            }
-            case 5:
-            case 6:
-            case 8:
-            case 9:
-                if (opValue != 1) {
-                    std::snprintf(detail, sizeof(detail), "AGC graphics: stencil add/subtract of 0x%02x is unsupported", opValue);
-                    throw std::runtime_error(detail);
-                }
-                return op == 5 ? VK_STENCIL_OP_INCREMENT_AND_CLAMP : op == 6 ? VK_STENCIL_OP_DECREMENT_AND_CLAMP : op == 8 ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
-            case 7: return VK_STENCIL_OP_INVERT;
-            default:
-                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u is unsupported", op);
+        case 0:
+            return VK_STENCIL_OP_KEEP;
+        case 1:
+            return VK_STENCIL_OP_ZERO;
+        case 2:
+        case 3:
+        case 4: {
+            const auto value = op == 2 ? 0xffu : op == 3 ? test : opValue;
+            if (((reference ^ value) & fixed & face.writeMask) != 0) {
+                std::snprintf(detail, sizeof(detail),
+                              "AGC graphics: stencil replacement 0x%02x against test value 0x%02x (masks "
+                              "0x%02x/0x%02x) is unsupported",
+                              value, test, face.compareMask, face.writeMask);
                 throw std::runtime_error(detail);
+            }
+            reference = (reference & ~face.writeMask) | (value & face.writeMask);
+            fixed |= face.writeMask;
+            return VK_STENCIL_OP_REPLACE;
+        }
+        case 5:
+        case 6:
+        case 8:
+        case 9:
+            if (opValue != 1) {
+                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil add/subtract of 0x%02x is unsupported",
+                              opValue);
+                throw std::runtime_error(detail);
+            }
+            return op == 5   ? VK_STENCIL_OP_INCREMENT_AND_CLAMP
+                   : op == 6 ? VK_STENCIL_OP_DECREMENT_AND_CLAMP
+                   : op == 8 ? VK_STENCIL_OP_INCREMENT_AND_WRAP
+                             : VK_STENCIL_OP_DECREMENT_AND_WRAP;
+        case 7:
+            return VK_STENCIL_OP_INVERT;
+        default:
+            std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u is unsupported", op);
+            throw std::runtime_error(detail);
         }
     };
     face.failOp = convert(ops & 0xfu);
@@ -163,26 +183,34 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
     const auto zFormat = read(cx, 0x010) & 3u;
     const bool stencil = (read(cx, 0x011) & 1u) != 0;
     Require(zFormat != 2, "Z_24 depth is unsupported");
-    if (zFormat == 0) depthControl &= ~6u;
-    if (!stencil) depthControl &= ~1u;
+    if (zFormat == 0)
+        depthControl &= ~6u;
+    if (!stencil)
+        depthControl &= ~1u;
     const auto base = [&](std::uint32_t low, std::uint32_t highOffset) {
         const auto high = find(cx, highOffset);
-        return (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, low)) << 8u);
+        return (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) |
+               (static_cast<std::uint64_t>(read(cx, low)) << 8u);
     };
     const bool depthReadOnly = (view & 0x01000000u) != 0;
     const bool stencilReadOnly = (view & 0x02000000u) != 0;
     DepthTarget depth{};
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
     depth.stencilAddress = stencil ? base(0x013, 0x01b) : 0;
-    Require(zFormat == 0 || depthReadOnly || base(0x014, 0x01c) == depth.address, "depth read and written at different addresses is unsupported");
-    Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == depth.stencilAddress, "stencil read and written at different addresses is unsupported");
+    Require(zFormat == 0 || depthReadOnly || base(0x014, 0x01c) == depth.address,
+            "depth read and written at different addresses is unsupported");
+    Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == depth.stencilAddress,
+            "stencil read and written at different addresses is unsupported");
     const auto size = read(cx, 0x007);
     depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
     if (const auto slice = view & 0x1fffu; slice != 0) {
-        if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, zFormat == 1 ? 2u : 4u);
-        if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, 1u);
+        if (depth.address != 0)
+            depth.address += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, zFormat == 1 ? 2u : 4u);
+        if (depth.stencilAddress != 0)
+            depth.stencilAddress += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, 1u);
     }
-    depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
+    depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM)
+                                : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
     depth.clearDepth = readFloat(cx, 0x00b);
     depth.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
     result.depth = depth;
@@ -199,7 +227,9 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
     if (result.stencilTest) {
         const auto ops = read(cx, 0x10b);
         result.stencilFront = stencilFace((depthControl >> 8u) & 7u, ops, read(cx, 0x10c), stencilReadOnly);
-        result.stencilBack = (depthControl & 0x80u) != 0 ? stencilFace((depthControl >> 20u) & 7u, ops >> 12u, read(cx, 0x10d), stencilReadOnly) : result.stencilFront;
+        result.stencilBack = (depthControl & 0x80u) != 0
+                                 ? stencilFace((depthControl >> 20u) & 7u, ops >> 12u, read(cx, 0x10d), stencilReadOnly)
+                                 : result.stencilFront;
     }
 }
 
@@ -208,11 +238,17 @@ void decodeDepthBias(const Registers& cx, std::uint32_t raster, State& result) {
     const bool back = (result.cullMode & VK_CULL_MODE_BACK_BIT) == 0;
     const bool frontBias = (raster & 0x800u) != 0;
     const bool backBias = (raster & 0x1000u) != 0;
-    if (!(front && frontBias) && !(back && backBias)) return;
-    if (front && back && (frontBias != backBias || read(cx, 0x2e0) != read(cx, 0x2e2) || read(cx, 0x2e1) != read(cx, 0x2e3))) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "depth bias differing between front and back faces"));
+    if (!(front && frontBias) && !(back && backBias))
+        return;
+    if (front && back &&
+        (frontBias != backBias || read(cx, 0x2e0) != read(cx, 0x2e2) || read(cx, 0x2e1) != read(cx, 0x2e3)))
+        throw std::runtime_error("AGC graphics: " +
+                                 zeroMessage(0x205, raster, "depth bias differing between front and back faces"));
     const bool d16 = result.depth->format == VK_FORMAT_D16_UNORM || result.depth->format == VK_FORMAT_D16_UNORM_S8_UINT;
     const auto format = find(cx, 0x2de) == cx.end() ? (d16 ? 0xf0u : 0x1e9u) : read(cx, 0x2de);
-    if (format != (d16 ? 0xf0u : 0x1e9u)) throw std::runtime_error("AGC graphics: " + zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
+    if (format != (d16 ? 0xf0u : 0x1e9u))
+        throw std::runtime_error("AGC graphics: " +
+                                 zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
     const auto scale = front && frontBias ? 0x2e0u : 0x2e2u;
     result.depthBias = true;
     result.depthBiasSlope = readFloat(cx, scale) / 16.0f;
@@ -225,7 +261,8 @@ bool depthPassThrough(std::uint32_t depthControl) {
     const bool depth = (depthControl & 2u) != 0;
     const bool depthWrite = (depthControl & 4u) != 0;
     const bool passThroughDepth = !depth || (!depthWrite && ((depthControl >> 4u) & 7u) == 7u);
-    const bool passThroughStencil = !stencil || (((depthControl >> 8u) & 7u) == 7u && ((depthControl & 0x80u) == 0 || ((depthControl >> 20u) & 7u) == 7u));
+    const bool passThroughStencil = !stencil || (((depthControl >> 8u) & 7u) == 7u &&
+                                                 ((depthControl & 0x80u) == 0 || ((depthControl >> 20u) & 7u) == 7u));
     return (stencil || depth) && passThroughDepth && passThroughStencil;
 }
 
@@ -238,41 +275,67 @@ bool colorControlSupported(std::uint32_t colorControl, bool hasColorTarget) {
 }
 
 std::string colorControlMessage(std::uint32_t colorControl) {
-    static constexpr const char* modes[8] = {"disable", "normal", "eliminate fast clear", "resolve", "decompress", "FMASK decompress", "DCC decompress", "reserved"};
+    static constexpr const char* modes[8] = {"disable",    "normal",           "eliminate fast clear", "resolve",
+                                             "decompress", "FMASK decompress", "DCC decompress",       "reserved"};
     char text[160];
-    std::snprintf(text, sizeof(text), "AGC graphics: only normal color rendering with copy ROP is supported (CB_COLOR_CONTROL 0x%08x, mode %s)", colorControl, modes[(colorControl >> 4u) & 7u]);
+    std::snprintf(
+        text, sizeof(text),
+        "AGC graphics: only normal color rendering with copy ROP is supported (CB_COLOR_CONTROL 0x%08x, mode %s)",
+        colorControl, modes[(colorControl >> 4u) & 7u]);
     return text;
 }
 
 VkBlendFactor blendFactor(std::uint32_t value) {
     switch (value) {
-        case 0: return VK_BLEND_FACTOR_ZERO;
-        case 1: return VK_BLEND_FACTOR_ONE;
-        case 2: return VK_BLEND_FACTOR_SRC_COLOR;
-        case 3: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-        case 4: return VK_BLEND_FACTOR_SRC_ALPHA;
-        case 5: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        case 6: return VK_BLEND_FACTOR_DST_ALPHA;
-        case 7: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-        case 8: return VK_BLEND_FACTOR_DST_COLOR;
-        case 9: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
-        case 10: return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
-        case 13: return VK_BLEND_FACTOR_CONSTANT_COLOR;
-        case 14: return VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR;
-        case 19: return VK_BLEND_FACTOR_CONSTANT_ALPHA;
-        case 20: return VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA;
-        default: throw std::runtime_error("AGC graphics: unsupported blend factor " + std::to_string(value));
+    case 0:
+        return VK_BLEND_FACTOR_ZERO;
+    case 1:
+        return VK_BLEND_FACTOR_ONE;
+    case 2:
+        return VK_BLEND_FACTOR_SRC_COLOR;
+    case 3:
+        return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    case 4:
+        return VK_BLEND_FACTOR_SRC_ALPHA;
+    case 5:
+        return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case 6:
+        return VK_BLEND_FACTOR_DST_ALPHA;
+    case 7:
+        return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case 8:
+        return VK_BLEND_FACTOR_DST_COLOR;
+    case 9:
+        return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    case 10:
+        return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+    case 13:
+        return VK_BLEND_FACTOR_CONSTANT_COLOR;
+    case 14:
+        return VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR;
+    case 19:
+        return VK_BLEND_FACTOR_CONSTANT_ALPHA;
+    case 20:
+        return VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA;
+    default:
+        throw std::runtime_error("AGC graphics: unsupported blend factor " + std::to_string(value));
     }
 }
 
 VkBlendOp blendOp(std::uint32_t value) {
     switch (value) {
-        case 0: return VK_BLEND_OP_ADD;
-        case 1: return VK_BLEND_OP_SUBTRACT;
-        case 2: return VK_BLEND_OP_MIN;
-        case 3: return VK_BLEND_OP_MAX;
-        case 4: return VK_BLEND_OP_REVERSE_SUBTRACT;
-        default: throw std::runtime_error("AGC graphics: unsupported blend operation " + std::to_string(value));
+    case 0:
+        return VK_BLEND_OP_ADD;
+    case 1:
+        return VK_BLEND_OP_SUBTRACT;
+    case 2:
+        return VK_BLEND_OP_MIN;
+    case 3:
+        return VK_BLEND_OP_MAX;
+    case 4:
+        return VK_BLEND_OP_REVERSE_SUBTRACT;
+    default:
+        throw std::runtime_error("AGC graphics: unsupported blend operation " + std::to_string(value));
     }
 }
 
@@ -288,79 +351,118 @@ DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number,
     constexpr std::uint32_t unorm = 0, snorm = 1, sint = 5, srgb = 6, floating = 7;
     constexpr std::uint32_t uint = 4;
     const auto fail = [&]() -> DecodedColorFormat {
-        throw std::runtime_error("AGC graphics: unsupported color format " + std::to_string(format) + " number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+        throw std::runtime_error("AGC graphics: unsupported color format " + std::to_string(format) + " number type " +
+                                 std::to_string(number) + " component swap " + std::to_string(swap));
     };
     const bool alternate = swap == 1;
-    const auto single = [&](VkFormat vkFormat, std::uint32_t bytes) { return DecodedColorFormat{vkFormat, bytes, static_cast<std::uint8_t>((0xe4u & ~3u) | swap)}; };
-    if (swap > 1 && format != 1 && format != 2 && format != 4) return fail();
+    const auto single = [&](VkFormat vkFormat, std::uint32_t bytes) {
+        return DecodedColorFormat{vkFormat, bytes, static_cast<std::uint8_t>((0xe4u & ~3u) | swap)};
+    };
+    if (swap > 1 && format != 1 && format != 2 && format != 4)
+        return fail();
     switch (format) {
-        case 1:
-            if (number == unorm) return single(VK_FORMAT_R8_UNORM, 1);
-            if (number == snorm) return single(VK_FORMAT_R8_SNORM, 1);
-            if (number == uint) return single(VK_FORMAT_R8_UINT, 1);
+    case 1:
+        if (number == unorm)
+            return single(VK_FORMAT_R8_UNORM, 1);
+        if (number == snorm)
+            return single(VK_FORMAT_R8_SNORM, 1);
+        if (number == uint)
+            return single(VK_FORMAT_R8_UINT, 1);
+        return fail();
+    case 2:
+        if (number == unorm)
+            return single(VK_FORMAT_R16_UNORM, 2);
+        if (number == snorm)
+            return single(VK_FORMAT_R16_SNORM, 2);
+        if (number == floating)
+            return single(VK_FORMAT_R16_SFLOAT, 2);
+        if (number == uint)
+            return single(VK_FORMAT_R16_UINT, 2);
+        return fail();
+    case 3:
+        if (swap != 0)
             return fail();
-        case 2:
-            if (number == unorm) return single(VK_FORMAT_R16_UNORM, 2);
-            if (number == snorm) return single(VK_FORMAT_R16_SNORM, 2);
-            if (number == floating) return single(VK_FORMAT_R16_SFLOAT, 2);
-            if (number == uint) return single(VK_FORMAT_R16_UINT, 2);
+        if (number == unorm)
+            return {VK_FORMAT_R8G8_UNORM, 2};
+        if (number == snorm)
+            return {VK_FORMAT_R8G8_SNORM, 2};
+        return fail();
+    case 4:
+        if (number == floating)
+            return single(VK_FORMAT_R32_SFLOAT, 4);
+        if (number == uint)
+            return single(VK_FORMAT_R32_UINT, 4);
+        if (number == sint)
+            return single(VK_FORMAT_R32_SINT, 4);
+        return fail();
+    case 5:
+        if (swap != 0)
             return fail();
-        case 3:
-            if (swap != 0) return fail();
-            if (number == unorm) return {VK_FORMAT_R8G8_UNORM, 2};
-            if (number == snorm) return {VK_FORMAT_R8G8_SNORM, 2};
+        if (number == floating)
+            return {VK_FORMAT_R16G16_SFLOAT, 4};
+        if (number == unorm)
+            return {VK_FORMAT_R16G16_UNORM, 4};
+        if (number == snorm)
+            return {VK_FORMAT_R16G16_SNORM, 4};
+        if (number == uint)
+            return {VK_FORMAT_R16G16_UINT, 4};
+        return fail();
+    case 6:
+        // COLOR_10_11_11: red in the low 11 bits, the Vulkan B10G11R11 packing.
+        if (swap != 0 || number != floating)
             return fail();
-        case 4:
-            if (number == floating) return single(VK_FORMAT_R32_SFLOAT, 4);
-            if (number == uint) return single(VK_FORMAT_R32_UINT, 4);
-            if (number == sint) return single(VK_FORMAT_R32_SINT, 4);
+        return {VK_FORMAT_B10G11R11_UFLOAT_PACK32, 4};
+    case 9:
+        // COLOR_2_10_10_10 keeps red in the low bits, the Vulkan A2B10G10R10 packing.
+        if (number != unorm)
             return fail();
-        case 5:
-            if (swap != 0) return fail();
-            if (number == floating) return {VK_FORMAT_R16G16_SFLOAT, 4};
-            if (number == unorm) return {VK_FORMAT_R16G16_UNORM, 4};
-            if (number == snorm) return {VK_FORMAT_R16G16_SNORM, 4};
-            if (number == uint) return {VK_FORMAT_R16G16_UINT, 4};
+        return {alternate ? VK_FORMAT_A2R10G10B10_UNORM_PACK32 : VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4};
+    case 10:
+        if (number == unorm)
+            return {alternate ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM, 4};
+        if (number == snorm)
+            return {alternate ? VK_FORMAT_B8G8R8A8_SNORM : VK_FORMAT_R8G8B8A8_SNORM, 4};
+        if (number == srgb)
+            return {alternate ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_R8G8B8A8_SRGB, 4};
+        return fail();
+    case 11:
+        if (swap != 0)
             return fail();
-        case 6:
-            // COLOR_10_11_11: red in the low 11 bits, the Vulkan B10G11R11 packing.
-            if (swap != 0 || number != floating) return fail();
-            return {VK_FORMAT_B10G11R11_UFLOAT_PACK32, 4};
-        case 9:
-            // COLOR_2_10_10_10 keeps red in the low bits, the Vulkan A2B10G10R10 packing.
-            if (number != unorm) return fail();
-            return {alternate ? VK_FORMAT_A2R10G10B10_UNORM_PACK32 : VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4};
-        case 10:
-            if (number == unorm) return {alternate ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM, 4};
-            if (number == snorm) return {alternate ? VK_FORMAT_B8G8R8A8_SNORM : VK_FORMAT_R8G8B8A8_SNORM, 4};
-            if (number == srgb) return {alternate ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_R8G8B8A8_SRGB, 4};
+        if (number == floating)
+            return {VK_FORMAT_R32G32_SFLOAT, 8};
+        if (number == uint)
+            return {VK_FORMAT_R32G32_UINT, 8};
+        return fail();
+    case 12:
+        if (swap != 0)
             return fail();
-        case 11:
-            if (swap != 0) return fail();
-            if (number == floating) return {VK_FORMAT_R32G32_SFLOAT, 8};
-            if (number == uint) return {VK_FORMAT_R32G32_UINT, 8};
+        if (number == floating)
+            return {VK_FORMAT_R16G16B16A16_SFLOAT, 8};
+        if (number == unorm)
+            return {VK_FORMAT_R16G16B16A16_UNORM, 8};
+        if (number == snorm)
+            return {VK_FORMAT_R16G16B16A16_SNORM, 8};
+        if (number == uint)
+            return {VK_FORMAT_R16G16B16A16_UINT, 8};
+        return fail();
+    case 14:
+        if (swap != 0)
             return fail();
-        case 12:
-            if (swap != 0) return fail();
-            if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8};
-            if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8};
-            if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8};
-            if (number == uint) return {VK_FORMAT_R16G16B16A16_UINT, 8};
-            return fail();
-        case 14:
-            if (swap != 0) return fail();
-            if (number == floating) return {VK_FORMAT_R32G32B32A32_SFLOAT, 16};
-            if (number == uint) return {VK_FORMAT_R32G32B32A32_UINT, 16};
-            return fail();
-        default:
-            return fail();
+        if (number == floating)
+            return {VK_FORMAT_R32G32B32A32_SFLOAT, 16};
+        if (number == uint)
+            return {VK_FORMAT_R32G32B32A32_UINT, 16};
+        return fail();
+    default:
+        return fail();
     }
 }
 
 void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offset, bool screen) {
     const auto tl = read(registers, offset);
     const auto br = read(registers, offset + 1);
-    if (!screen) Require((tl & 0x8000u) == 0 && (br & 0x80008000u) == 0, "scissor reserved bits are unsupported");
+    if (!screen)
+        Require((tl & 0x8000u) == 0 && (br & 0x80008000u) == 0, "scissor reserved bits are unsupported");
     const auto x = tl & 0xffffu;
     const auto y = (tl >> 16u) & (screen ? 0xffffu : 0x7fffu);
     const auto right = br & 0xffffu;
@@ -371,7 +473,8 @@ void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offse
     const auto left = std::max(static_cast<std::uint32_t>(result.offset.x), x);
     const auto top = std::max(static_cast<std::uint32_t>(result.offset.y), y);
     result.offset = {static_cast<std::int32_t>(left), static_cast<std::int32_t>(top)};
-    result.extent = {std::min(oldRight, right) > left ? std::min(oldRight, right) - left : 0, std::min(oldBottom, bottom) > top ? std::min(oldBottom, bottom) - top : 0};
+    result.extent = {std::min(oldRight, right) > left ? std::min(oldRight, right) - left : 0,
+                     std::min(oldBottom, bottom) > top ? std::min(oldBottom, bottom) - top : 0};
 }
 
 }
@@ -379,32 +482,43 @@ void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offse
 ShaderStages DecodeShaderStages(const QueueState& queue) {
     const auto value = read(queue.context, 0x2d5);
     const auto validate = [&](bool condition, const char* reason) {
-        if (condition) return;
+        if (condition)
+            return;
         std::ostringstream prefix;
         prefix << "VGT_SHADER_STAGES_EN=0x" << std::hex << value << ": " << reason;
         Require(false, prefix.str());
     };
     validate((value & 0xfc000000u) == 0, "reserved stage bits are set");
-    validate((value & 3u) != 3u && ((value >> 3u) & 3u) != 3u && ((value >> 6u) & 3u) != 3u, "reserved LS_EN, ES_EN or VS_EN encoding");
+    validate((value & 3u) != 3u && ((value >> 3u) & 3u) != 3u && ((value >> 6u) & 3u) != 3u,
+             "reserved LS_EN, ES_EN or VS_EN encoding");
     const auto primitive = read(queue.userConfig, 0x242, RegisterBank::UserConfig);
     const bool tessellation = primitive == 9;
     const bool geometry = (value & 0x20u) != 0;
     validate(tessellation == ((value & 4u) != 0), "Patch topology and HS_EN disagree");
     validate(!tessellation || !geometry, "combined tessellation and geometry is unsupported by the reference path");
     const auto path = tessellation ? ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
-    ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
-    APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive, static_cast<unsigned>(result.path), result.vertexWaveSize);
+    ShaderStages result{
+        path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u,
+        {},   {}};
+    APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive,
+                       static_cast<unsigned>(result.path), result.vertexWaveSize);
     if (path == ShaderPath::Vertex) {
         validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
         validate((value & ~0x02402010u) == 0, "unsupported vertex routing, scheduling or wave-ID state");
     } else if (path == ShaderPath::Tessellation) {
         validate((value & 0x00600020u) == 0, "wave32 tessellation or geometry amplification is unsupported");
-        validate((value & ~0x0007ed0du) == 0 && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+        validate((value & ~0x0007ed0du) == 0 && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u,
+                 "unsupported tessellation routing");
         const auto config = read(queue.context, 0x2d6);
         const auto parameters = read(queue.context, 0x2db);
-        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 3u, (parameters >> 5u) & 3u};
-        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
-        validate(tess.domain == 1 && tess.partitioning == 2 && tess.outputTopology == 2, "only triangular, fractional-odd, clockwise tessellation is supported by the reference path");
+        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu,
+                                                         parameters & 3u, (parameters >> 2u) & 3u,
+                                                         (parameters >> 5u) & 3u};
+        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 &&
+                     tess.outputControlPoints <= 32,
+                 "invalid tessellation control-point counts");
+        validate(tess.domain == 1 && tess.partitioning == 2 && tess.outputTopology == 2,
+                 "only triangular, fractional-odd, clockwise tessellation is supported by the reference path");
         result.tessellation = tess;
     } else {
         validate((value & ~0x0047ec30u) == 0, "unsupported geometry routing, fast launch or wave-ID state");
@@ -413,18 +527,33 @@ ShaderStages DecodeShaderStages(const QueueState& queue) {
         const auto primitives = group & 0x1ffu;
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = read(queue.context, 0x2ce);
-        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && read(queue.context, 0x29b) == 2 && verticesPerPrimitive >= 3, "unsupported geometry input or output assembly");
+        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) &&
+                     read(queue.context, 0x29b) == 2 && verticesPerPrimitive >= 3,
+                 "unsupported geometry input or output assembly");
         const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
-        validate(vertices >= inputSize && maxVertices != 0 && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
+        validate(vertices >= inputSize && maxVertices != 0 && maxVertices <= 256 && verticesPerPrimitive <= 256,
+                 "invalid geometry subgroup output");
         const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
-        const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, maxVertices / verticesPerPrimitive});
+        const auto groupPrimitives =
+            std::min({primitives, (vertices - inputSize) / inputStep + 1u, maxVertices / verticesPerPrimitive});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
         const auto resources = read(queue.shader, 0x8b, RegisterBank::Shader);
-        validate(((read(queue.shader, 0x8a, RegisterBank::Shader) >> 29u) & 3u) == 3 && ((resources >> 16u) & 3u) == 3, "unsupported geometry VGPR allocation");
+        validate(((read(queue.shader, 0x8a, RegisterBank::Shader) >> 29u) & 3u) == 3 && ((resources >> 16u) & 3u) == 3,
+                 "unsupported geometry VGPR allocation");
         const auto esgsItemSize = read(queue.context, 0x2ab);
         validate(esgsItemSize != 0 && esgsItemSize * vertices <= 0xffffu, "invalid VGT_ESGS_RING_ITEMSIZE");
-        const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, primitives * (verticesPerPrimitive - 2u)});
-        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, primitives * (verticesPerPrimitive - 2u), ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, 0, esgsItemSize};
+        const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices,
+                                       primitives * (verticesPerPrimitive - 2u)});
+        result.mesh = ShaderRecompiler::MeshConfiguration{
+            primitive,
+            groupPrimitives,
+            (groupPrimitives - 1u) * inputStep + inputSize,
+            maxVertices,
+            primitives * (verticesPerPrimitive - 2u),
+            ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize,
+            ((resources >> 19u) & 0xffu) * 128u,
+            0,
+            esgsItemSize};
     }
     return result;
 }
@@ -434,29 +563,46 @@ State DecodeState(const QueueState& queue) {
     State result{};
     result.stages = DecodeShaderStages(queue);
     const auto primitive = read(queue.userConfig, 0x242, RegisterBank::UserConfig);
-    APS5_LOG_OUT_DEBUG("DecodeState primitive=%u path=%u vertexWave=%u", primitive, static_cast<unsigned>(result.stages.path), result.stages.vertexWaveSize);
+    APS5_LOG_OUT_DEBUG("DecodeState primitive=%u path=%u vertexWave=%u", primitive,
+                       static_cast<unsigned>(result.stages.path), result.stages.vertexWaveSize);
     switch (primitive) {
-        case 1: Require(result.stages.mesh.has_value(), "point-list vertex rendering requires point-size output support"); result.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST; break;
-        case 2: result.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; break;
-        case 7:
-        case 17:
-            Require(result.stages.path == ShaderPath::Vertex, "rect-list requires vertex routing");
-            result.rectList = true;
-            result.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
-            break;
-        case 9: result.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST; break;
-        case 4: result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;
-        case 5: result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break;
-        case 6: result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;
-        default: throw std::runtime_error("AGC graphics: unsupported primitive type " + std::to_string(primitive));
+    case 1:
+        Require(result.stages.mesh.has_value(), "point-list vertex rendering requires point-size output support");
+        result.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+        break;
+    case 2:
+        result.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        break;
+    case 7:
+    case 17:
+        Require(result.stages.path == ShaderPath::Vertex, "rect-list requires vertex routing");
+        result.rectList = true;
+        result.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+        break;
+    case 9:
+        result.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+        break;
+    case 4:
+        result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        break;
+    case 5:
+        result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+        break;
+    case 6:
+        result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+        break;
+    default:
+        throw std::runtime_error("AGC graphics: unsupported primitive type " + std::to_string(primitive));
     }
     APS5_LOG_OUT_DEBUG("Topology=%u", static_cast<unsigned>(result.topology));
-    result.primitiveRestart = read(queue.userConfig, 0x24b, RegisterBank::UserConfig) != 0 && !result.rectList && result.topology != VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+    result.primitiveRestart = read(queue.userConfig, 0x24b, RegisterBank::UserConfig) != 0 && !result.rectList &&
+                              result.topology != VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
     if ((read(cx, 0x207) & LayerExports) != 0) {
         static bool reported = false;
         if (!reported) {
             reported = true;
-            std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n", read(cx, 0x207));
+            std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n",
+                         read(cx, 0x207));
         }
     }
     zero(cx, 0x207, ~LayerExports, "clip distances, layer, viewport or auxiliary vertex exports");
@@ -468,16 +614,22 @@ State DecodeState(const QueueState& queue) {
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                std::fprintf(stderr, "[gpu] always-pass depth/stencil state is rendered without a depth target (DB_DEPTH_CONTROL=0x%08x)\n", depthControl);
+                std::fprintf(stderr,
+                             "[gpu] always-pass depth/stencil state is rendered without a depth target "
+                             "(DB_DEPTH_CONTROL=0x%08x)\n",
+                             depthControl);
             }
         } else if (IgnoreDepthTest()) {
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                std::fprintf(stderr, "[gpu] depth/stencil tests are ignored (APS5_IGNORE_DEPTH_TEST; DB_DEPTH_CONTROL=0x%08x)\n", depthControl);
+                std::fprintf(
+                    stderr, "[gpu] depth/stencil tests are ignored (APS5_IGNORE_DEPTH_TEST; DB_DEPTH_CONTROL=0x%08x)\n",
+                    depthControl);
             }
         } else {
-            if ((effectiveDepthControl(depthControl) & DepthControlMask) != 0) zero(cx, 0x200, DepthControlMask, "depth, stencil or conditional color writes");
+            if ((effectiveDepthControl(depthControl) & DepthControlMask) != 0)
+                zero(cx, 0x200, DepthControlMask, "depth, stencil or conditional color writes");
         }
         Require((depthControl & 8u) == 0 || result.depth.has_value(), "depth bounds without a depth surface");
         Require((depthControl & 0xc0000000u) == 0, "depth-conditional color writes are unsupported");
@@ -495,7 +647,8 @@ State DecodeState(const QueueState& queue) {
     Require(read(cx, 0x313) == 0x6000u, "conservative rasterization is unsupported");
     Require(read(cx, 0x30e) == 0xffffffffu && read(cx, 0x30f) == 0xffffffffu, "sample masks are unsupported");
     const auto viewportControl = read(cx, 0x206);
-    if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
+    if (viewportControl != 0x43fu)
+        throw std::runtime_error(vteMessage(viewportControl));
     zero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags");
     result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
@@ -503,12 +656,20 @@ State DecodeState(const QueueState& queue) {
     // Bits 5-10 give the front/back polygon type (2 = filled triangles), which POLY_MODE (bit 3) turns on
     // explicitly; KEEP_TOGETHER_ENABLE (bit 24) only affects primitive distribution across the chip.
     const auto rasterMode = raster & ~0x7u & ~(1u << 24u) & ~0x1800u;
-    if (rasterMode != 0 && rasterMode != 0x240u && rasterMode != 0x248u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "polygon mode, depth bias, provoking vertex or nonstandard rasterization"));
-    result.cullMode = ((raster & 1u) != 0 ? VK_CULL_MODE_FRONT_BIT : 0u) | ((raster & 2u) != 0 ? VK_CULL_MODE_BACK_BIT : 0u);
-    if (result.rectList) result.cullMode = VK_CULL_MODE_NONE;
-    if ((raster & 0x1800u) != 0 && result.depth) decodeDepthBias(cx, raster, result);
+    if (rasterMode != 0 && rasterMode != 0x240u && rasterMode != 0x248u)
+        throw std::runtime_error(
+            "AGC graphics: " +
+            zeroMessage(0x205, raster, "polygon mode, depth bias, provoking vertex or nonstandard rasterization"));
+    result.cullMode =
+        ((raster & 1u) != 0 ? VK_CULL_MODE_FRONT_BIT : 0u) | ((raster & 2u) != 0 ? VK_CULL_MODE_BACK_BIT : 0u);
+    if (result.rectList)
+        result.cullMode = VK_CULL_MODE_NONE;
+    if ((raster & 0x1800u) != 0 && result.depth)
+        decodeDepthBias(cx, raster, result);
     result.frontFace = (raster & 4u) != 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    APS5_LOG_OUT_DEBUG("Raster=0x%x cullMode=0x%x frontFace=%u negativeOneToOne=%u", raster, static_cast<unsigned>(result.cullMode), static_cast<unsigned>(result.frontFace), result.negativeOneToOne ? 1u : 0u);
+    APS5_LOG_OUT_DEBUG("Raster=0x%x cullMode=0x%x frontFace=%u negativeOneToOne=%u", raster,
+                       static_cast<unsigned>(result.cullMode), static_cast<unsigned>(result.frontFace),
+                       result.negativeOneToOne ? 1u : 0u);
     const auto shaderMask = read(cx, 0x8f);
     // Channels of targets the pixel shader does not export are never written, so the target mask only
     // matters where the shader exports.
@@ -516,18 +677,21 @@ State DecodeState(const QueueState& queue) {
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
     std::vector<std::uint32_t> exportSlots;
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
-        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) exportSlots.push_back(slot);
+        if (((shaderMask >> (4u * slot)) & 0xfu) != 0)
+            exportSlots.push_back(slot);
     }
     const auto written = [&](std::uint32_t slot) { return ((targetMask >> (4u * slot)) & 0xfu) != 0; };
     std::uint32_t exportCount = 0;
     for (std::uint32_t index = 0; index < exportSlots.size(); ++index) {
-        if (written(exportSlots[index])) exportCount = index + 1;
+        if (written(exportSlots[index]))
+            exportCount = index + 1;
     }
     result.hasColorTarget = exportCount != 0;
     APS5_LOG_OUT_DEBUG("hasColorTarget=%u exports=%u", result.hasColorTarget ? 1u : 0u, exportCount);
 
     // CB_COLOR_CONTROL mode 0 disables color writes, which only matters when a target is written.
-    if (const auto colorControl = read(cx, 0x202); !colorControlSupported(colorControl, result.hasColorTarget)) throw std::runtime_error(colorControlMessage(colorControl));
+    if (const auto colorControl = read(cx, 0x202); !colorControlSupported(colorControl, result.hasColorTarget))
+        throw std::runtime_error(colorControlMessage(colorControl));
     zero(cx, 0x1c4, zFormatSupported(read(cx, 0x1c4)) ? 0u : ~0u, "depth or sample-mask export");
     const auto exportFormat = result.hasColorTarget ? read(cx, 0x1c5) : 0u;
     APS5_LOG_OUT_DEBUG("Export format=%u", exportFormat);
@@ -536,23 +700,31 @@ State DecodeState(const QueueState& queue) {
     Require((read(cx, 0x1c3) & 0xfu) == 4, "additional position exports are unsupported");
     for (std::uint32_t index = 0; index < exportCount; ++index) {
         const auto slot = exportSlots[index];
-        if (!written(slot)) continue;
+        if (!written(slot))
+            continue;
         // Export formats only matter for the targets the draw writes.
         const auto slotExport = (exportFormat >> (4u * index)) & 0xfu;
-        if (slotExport == 0 || slotExport == 7 || slotExport == 8 || slotExport > 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " is unsupported");
+        if (slotExport == 0 || slotExport == 7 || slotExport == 8 || slotExport > 9)
+            throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) +
+                                     " is unsupported");
         auto color = DecodeColorBuffer(cx, slot);
         color.exportIndex = index;
-        APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
+        APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot,
+                           static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height,
+                           static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
         if (result.colors.empty()) {
             result.renderExtent = color.extent;
         } else {
-            result.renderExtent = {std::min(result.renderExtent.width, color.extent.width), std::min(result.renderExtent.height, color.extent.height)};
+            result.renderExtent = {std::min(result.renderExtent.width, color.extent.width),
+                                   std::min(result.renderExtent.height, color.extent.height)};
         }
         result.colors.push_back(color);
     }
     if (result.hasColorTarget) {
         result.color = result.colors.front();
-        if (result.depth) result.renderExtent = {std::min(result.renderExtent.width, result.depth->extent.width), std::min(result.renderExtent.height, result.depth->extent.height)};
+        if (result.depth)
+            result.renderExtent = {std::min(result.renderExtent.width, result.depth->extent.width),
+                                   std::min(result.renderExtent.height, result.depth->extent.height)};
     } else if (result.depth) {
         result.renderExtent = result.depth->extent;
     } else {
@@ -560,7 +732,8 @@ State DecodeState(const QueueState& queue) {
         APS5_LOG_OUT_DEBUG("No color target, screen BR register=0x%x", screenBottomRight);
         result.renderExtent = {screenBottomRight & 0xffffu, screenBottomRight >> 16u};
         APS5_LOG_OUT_DEBUG("Render extent from screen=%ux%u", result.renderExtent.width, result.renderExtent.height);
-        Require(result.renderExtent.width != 0 && result.renderExtent.height != 0, "empty framebuffer extent for a draw without color writes");
+        Require(result.renderExtent.width != 0 && result.renderExtent.height != 0,
+                "empty framebuffer extent for a draw without color writes");
     }
     const auto xs = readFloat(cx, 0x10f);
     const auto xo = readFloat(cx, 0x110);
@@ -570,21 +743,28 @@ State DecodeState(const QueueState& queue) {
     const auto zo = readFloat(cx, 0x114);
     const auto minDepth = result.negativeOneToOne ? zo - zs : zo;
     const auto maxDepth = zo + zs;
-    APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo, minDepth, maxDepth);
+    APS5_LOG_OUT_DEBUG("Viewport transform scale=(%f,%f,%f) offset=(%f,%f,%f) depth=(%f,%f)", xs, ys, zs, xo, yo, zo,
+                       minDepth, maxDepth);
     if (!(xs > 0 && ys != 0 && std::isfinite(minDepth) && std::isfinite(maxDepth))) {
         std::ostringstream message;
-        message << "AGC graphics: unsupported viewport transform: scale=(" << xs << ", " << ys << ", " << zs << "), offset=(" << xo << ", " << yo << ", " << zo << "), depth=(" << minDepth << ", " << maxDepth << "), negativeOneToOne=" << result.negativeOneToOne;
+        message << "AGC graphics: unsupported viewport transform: scale=(" << xs << ", " << ys << ", " << zs
+                << "), offset=(" << xo << ", " << yo << ", " << zo << "), depth=(" << minDepth << ", " << maxDepth
+                << "), negativeOneToOne=" << result.negativeOneToOne;
         throw std::runtime_error(message.str());
     }
     Require(readFloat(cx, 0xb4) <= readFloat(cx, 0xb5), "inverted viewport depth clamp bounds");
     result.viewport = {xo - xs, yo - ys, 2 * xs, 2 * ys, minDepth, maxDepth};
-    APS5_LOG_OUT_DEBUG("Viewport x=%f y=%f w=%f h=%f minDepth=%f maxDepth=%f", result.viewport.x, result.viewport.y, result.viewport.width, result.viewport.height, result.viewport.minDepth, result.viewport.maxDepth);
+    APS5_LOG_OUT_DEBUG("Viewport x=%f y=%f w=%f h=%f minDepth=%f maxDepth=%f", result.viewport.x, result.viewport.y,
+                       result.viewport.width, result.viewport.height, result.viewport.minDepth,
+                       result.viewport.maxDepth);
     result.scissor = {{0, 0}, result.renderExtent};
     intersect(result.scissor, cx, 0xc, true);
     intersect(result.scissor, cx, 0x81, false);
     intersect(result.scissor, cx, 0x90, false);
-    if ((read(cx, 0x292) & 2u) != 0) intersect(result.scissor, cx, 0x94, false);
-    APS5_LOG_OUT_DEBUG("Scissor offset=(%d,%d) extent=%ux%u", result.scissor.offset.x, result.scissor.offset.y, result.scissor.extent.width, result.scissor.extent.height);
+    if ((read(cx, 0x292) & 2u) != 0)
+        intersect(result.scissor, cx, 0x94, false);
+    APS5_LOG_OUT_DEBUG("Scissor offset=(%d,%d) extent=%ux%u", result.scissor.offset.x, result.scissor.offset.y,
+                       result.scissor.extent.width, result.scissor.extent.height);
     result.blends.assign(exportCount, VkPipelineColorBlendAttachmentState{});
     for (const auto& color : result.colors) {
         const auto slot = color.slot;
@@ -595,7 +775,8 @@ State DecodeState(const QueueState& queue) {
         const auto mapping = color.componentMapping;
         const auto exportedMask = (targetMask >> (4u * slot)) & 0xfu;
         for (std::uint32_t component = 0; component < 4; ++component) {
-            if (((exportedMask >> ((mapping >> (2u * component)) & 3u)) & 1u) != 0) state.colorWriteMask |= 1u << component;
+            if (((exportedMask >> ((mapping >> (2u * component)) & 3u)) & 1u) != 0)
+                state.colorWriteMask |= 1u << component;
         }
         state.blendEnable = (blend >> 30u) & 1u;
         if (state.blendEnable) {
@@ -612,12 +793,15 @@ State DecodeState(const QueueState& queue) {
                 state.dstColorBlendFactor = state.dstAlphaBlendFactor;
                 state.colorBlendOp = state.alphaBlendOp;
             }
-            for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
+            for (std::uint32_t i = 0; i < 4; ++i)
+                result.blendConstants[i] = readFloat(cx, 0x105 + i);
         }
         result.blends[color.exportIndex] = state;
     }
-    if (!result.colors.empty()) result.blend = result.blends[result.colors.front().exportIndex];
-    APS5_LOG_OUT_DEBUG("DecodeState done colorTarget=%u render=%ux%u topology=%u", result.hasColorTarget ? 1u : 0u, result.renderExtent.width, result.renderExtent.height, static_cast<unsigned>(result.topology));
+    if (!result.colors.empty())
+        result.blend = result.blends[result.colors.front().exportIndex];
+    APS5_LOG_OUT_DEBUG("DecodeState done colorTarget=%u render=%ux%u topology=%u", result.hasColorTarget ? 1u : 0u,
+                       result.renderExtent.width, result.renderExtent.height, static_cast<unsigned>(result.topology));
     return result;
 }
 
@@ -625,7 +809,8 @@ std::array<std::uint8_t, 8> ExportMappings(const State& state) {
     std::array<std::uint8_t, 8> mappings{};
     mappings.fill(0xe4u);
     for (const auto& color : state.colors) {
-        if (color.exportIndex < mappings.size()) mappings[color.exportIndex] = color.componentMapping;
+        if (color.exportIndex < mappings.size())
+            mappings[color.exportIndex] = color.componentMapping;
     }
     return mappings;
 }
@@ -641,8 +826,17 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     const auto format = (info >> 2u) & 0x1fu;
     const auto decoded = DecodeColorFormat(format, number, swap);
     // ROUND_MODE (bit 18) only affects unorm rounding. With DCC_ENABLE (bit 28) the target is written
-    if ((info & ~(0x00039f7cu | 0x00040000u | 0x10000000u)) != 0) throw std::runtime_error("AGC graphics: color compression, DCC, endian conversion, nonstandard rounding or color optimization is unsupported (CB_COLOR_INFO 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%08x", info); return std::string(text); }() + ")");
-    Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
+    if ((info & ~(0x00039f7cu | 0x00040000u | 0x10000000u)) != 0)
+        throw std::runtime_error("AGC graphics: color compression, DCC, endian conversion, nonstandard rounding or "
+                                 "color optimization is unsupported (CB_COLOR_INFO 0x" +
+                                 [&] {
+                                     char text[16];
+                                     std::snprintf(text, sizeof(text), "%08x", info);
+                                     return std::string(text);
+                                 }() +
+                                 ")");
+    Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5,
+            "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
     Require((view & ~0x3fffffffu) == 0, "reserved CB_COLOR_VIEW bits are set");
     const auto slice = view & 0x1fffu;
@@ -669,7 +863,8 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     color.mip = viewMip;
     if (maxMip != 0) {
         // A mipmapped surface is addressed like a texture; the view renders into one mip of it.
-        const auto mips = ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, maxMip + 1u);
+        const auto mips = ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes,
+                                                  color.extent.width, color.extent.height, maxMip + 1u);
         const auto& mip = mips.at(viewMip);
         mipOffset = mip.tiledOffset;
         color.mipTail = mip.tail;
@@ -678,8 +873,14 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     const ColorTargetLayout colorLayout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
     const auto high = read(cx, 0x390 + slot);
     Require((high & ~0xffu) == 0, "invalid color address extension");
-    color.surfaceAddress = (static_cast<std::uint64_t>(high) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u);
-    if (slice != 0 && !volume) color.surfaceAddress += slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+    color.surfaceAddress =
+        (static_cast<std::uint64_t>(high) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u);
+    if (slice != 0 && !volume)
+        color.surfaceAddress +=
+            slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes,
+                                                               color.surfaceExtent.width, color.surfaceExtent.height,
+                                                               color.mipCount),
+                                       1);
     color.address = color.surfaceAddress + mipOffset;
     color.bytes = colorLayout.Bytes();
     GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, colorLayout.Alignment(), true);
@@ -692,7 +893,9 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     if ((info & 0x10000000u) != 0) {
         if (maxMip == 0) {
             const auto dccHigh = find(cx, 0x3a8 + slot);
-            color.dccAddress = ((dccHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(dccHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x325 + stride)) << 8u);
+            color.dccAddress =
+                ((dccHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(dccHigh->second & 0xffu)) << 40u) |
+                (static_cast<std::uint64_t>(read(cx, 0x325 + stride)) << 8u);
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
         } else {
             static bool reported = false;
@@ -708,16 +911,22 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue) {
     const auto& cx = queue.context;
     const auto control = find(cx, 0x202);
-    if (control == cx.end()) return std::nullopt;
+    if (control == cx.end())
+        return std::nullopt;
     const auto mode = (control->second >> 4u) & 7u;
-    if (mode != 2u && mode != 6u) return std::nullopt;
-    ColorMetadataPass pass{mode == 2u ? ColorMetadataPass::Mode::EliminateFastClear : ColorMetadataPass::Mode::DccDecompress, {}};
-    Require((control->second & ~0x70u) == 0xcc0000u, "CB metadata pass with a nonstandard ROP, dual quads disabled or degamma");
-    Require((read(cx, 0x200) & 0xfu) == 0 && (read(cx, 0x0) & 0xfu) == 0, "CB metadata pass with depth or stencil work");
+    if (mode != 2u && mode != 6u)
+        return std::nullopt;
+    ColorMetadataPass pass{
+        mode == 2u ? ColorMetadataPass::Mode::EliminateFastClear : ColorMetadataPass::Mode::DccDecompress, {}};
+    Require((control->second & ~0x70u) == 0xcc0000u,
+            "CB metadata pass with a nonstandard ROP, dual quads disabled or degamma");
+    Require((read(cx, 0x200) & 0xfu) == 0 && (read(cx, 0x0) & 0xfu) == 0,
+            "CB metadata pass with depth or stencil work");
     zero(cx, 0x2f8, ~0u, "multisampling or coverage conversion");
     zero(cx, 0x80, ~0u, "window offset");
     const auto viewportControl = read(cx, 0x206);
-    if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
+    if (viewportControl != 0x43fu)
+        throw std::runtime_error(vteMessage(viewportControl));
     const auto xs = std::fabs(readFloat(cx, 0x10f));
     const auto xo = readFloat(cx, 0x110);
     const auto ys = std::fabs(readFloat(cx, 0x111));
@@ -726,16 +935,21 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
     intersect(covered, cx, 0xc, true);
     intersect(covered, cx, 0x81, false);
     intersect(covered, cx, 0x90, false);
-    if ((read(cx, 0x292) & 2u) != 0) intersect(covered, cx, 0x94, false);
+    if ((read(cx, 0x292) & 2u) != 0)
+        intersect(covered, cx, 0x94, false);
     const auto targetMask = read(cx, 0x8e);
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
-        if (((targetMask >> (4u * slot)) & 0xfu) == 0 || ((read(cx, 0x31c + slot * 0xfu) >> 2u) & 0x1fu) == 0) continue;
+        if (((targetMask >> (4u * slot)) & 0xfu) == 0 || ((read(cx, 0x31c + slot * 0xfu) >> 2u) & 0x1fu) == 0)
+            continue;
         const auto target = DecodeColorBuffer(cx, slot);
-        Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
+        Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0,
+                "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
         const auto width = static_cast<float>(target.extent.width);
         const auto height = static_cast<float>(target.extent.height);
         const bool viewportCovers = xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height;
-        const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= target.extent.width && covered.extent.height >= target.extent.height;
+        const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 &&
+                                   covered.extent.width >= target.extent.width &&
+                                   covered.extent.height >= target.extent.height;
         Require(viewportCovers && scissorCovers, "CB metadata pass over part of a color target");
         pass.targets.push_back(target);
     }
@@ -746,8 +960,10 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     const auto& cx = queue.context;
     // A register a rule needs that is absent gives no verdict here: DecodeState reports it.
     const auto value = [&](const Registers& registers, std::uint32_t offset, std::uint32_t& out) {
-        const auto it = find(registers, offset, &registers == &queue.userConfig ? RegisterBank::UserConfig : RegisterBank::Context);
-        if (it == registers.end()) return false;
+        const auto it =
+            find(registers, offset, &registers == &queue.userConfig ? RegisterBank::UserConfig : RegisterBank::Context);
+        if (it == registers.end())
+            return false;
         out = it->second;
         return true;
     };
@@ -761,39 +977,75 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (indexed && value(queue.userConfig, 0x24b, word) && word != 0) {
         std::uint32_t primitive = 0;
         std::uint32_t resetIndex = 0;
-        if (value(queue.userConfig, 0x242, primitive) && (primitive & 0x3fu) != 1 && (primitive & 0x3fu) != 2 && (primitive & 0x3fu) != 3 && (primitive & 0x3fu) != 4 && (primitive & 0x3fu) != 5 && (primitive & 0x3fu) != 6) return "AGC graphics: primitive restart is only supported for point, line and triangle topologies";
-        if (value(cx, 0x103, resetIndex) && (resetIndex & 0xffffu) != 0xffffu) return "AGC graphics: primitive restart index other than all ones is unsupported";
+        if (value(queue.userConfig, 0x242, primitive) && (primitive & 0x3fu) != 1 && (primitive & 0x3fu) != 2 &&
+            (primitive & 0x3fu) != 3 && (primitive & 0x3fu) != 4 && (primitive & 0x3fu) != 5 &&
+            (primitive & 0x3fu) != 6)
+            return "AGC graphics: primitive restart is only supported for point, line and triangle topologies";
+        if (value(cx, 0x103, resetIndex) && (resetIndex & 0xffffu) != 0xffffu)
+            return "AGC graphics: primitive restart index other than all ones is unsupported";
     }
-    if (auto reason = nonzero(cx, 0x207, ~LayerExports, "clip distances, layer, viewport or auxiliary vertex exports"); !reason.empty()) return reason;
+    if (auto reason = nonzero(cx, 0x207, ~LayerExports, "clip distances, layer, viewport or auxiliary vertex exports");
+        !reason.empty())
+        return reason;
     if (value(cx, 0x200, word)) {
         const bool surface = (word & 0xbu) != 0 && depthSurfaceBound(cx);
-        if (!surface && !((word & 3u) != 0 && depthPlanesAbsent(cx)) && !depthPassThrough(word) && !IgnoreDepthTest() && (effectiveDepthControl(word) & DepthControlMask) != 0) return zeroMessage(0x200, word, "depth, stencil or conditional color writes");
-        if (auto reason = require((word & 8u) == 0 || surface, "depth bounds without a depth surface"); !reason.empty()) return reason;
-        if (auto reason = require((word & 0xc0000000u) == 0, "depth-conditional color writes are unsupported"); !reason.empty()) return reason;
+        if (!surface && !((word & 3u) != 0 && depthPlanesAbsent(cx)) && !depthPassThrough(word) && !IgnoreDepthTest() &&
+            (effectiveDepthControl(word) & DepthControlMask) != 0)
+            return zeroMessage(0x200, word, "depth, stencil or conditional color writes");
+        if (auto reason = require((word & 8u) == 0 || surface, "depth bounds without a depth surface"); !reason.empty())
+            return reason;
+        if (auto reason = require((word & 0xc0000000u) == 0, "depth-conditional color writes are unsupported");
+            !reason.empty())
+            return reason;
     }
     std::uint32_t zFormat = 0;
     static_cast<void>(value(cx, 0x1c4, zFormat));
-    if (auto reason = nonzero(cx, 0x203, shaderControlMask(zFormat), "depth export, shader coverage or ordered fragment execution"); !reason.empty()) return reason;
-    if (auto reason = nonzero(cx, 0x2dc, AlphaToCoverageMask, "alpha-to-coverage"); !reason.empty()) return reason;
-    if (auto reason = nonzero(cx, 0x2f8, ~0u, "multisampling or coverage conversion"); !reason.empty()) return reason;
-    if (auto reason = nonzero(cx, 0x292, ScanModeMask, "scan conversion mode"); !reason.empty()) return reason;
-    if (auto reason = nonzero(cx, 0x293, ScanControlMask, "sample iteration, primitive discard or out-of-order rasterization"); !reason.empty()) return reason;
-    if (auto reason = nonzero(cx, 0x80, ~0u, "window offset"); !reason.empty()) return reason;
-    if (auto reason = nonzero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits"); !reason.empty()) return reason;
-    if (value(cx, 0x83, word) && word != 0xffffu) return require(false, "clip rectangles are unsupported");
-    if (value(cx, 0x8c, word) && (word & 0xfu) != 0xau) return require(false, "nonstandard triangle edge rules are unsupported");
-    if (value(cx, 0x2f9, word) && word != 0x2du) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
-    if (value(cx, 0x313, word) && word != 0x6000u) return require(false, "conservative rasterization is unsupported");
+    if (auto reason = nonzero(cx, 0x203, shaderControlMask(zFormat),
+                              "depth export, shader coverage or ordered fragment execution");
+        !reason.empty())
+        return reason;
+    if (auto reason = nonzero(cx, 0x2dc, AlphaToCoverageMask, "alpha-to-coverage"); !reason.empty())
+        return reason;
+    if (auto reason = nonzero(cx, 0x2f8, ~0u, "multisampling or coverage conversion"); !reason.empty())
+        return reason;
+    if (auto reason = nonzero(cx, 0x292, ScanModeMask, "scan conversion mode"); !reason.empty())
+        return reason;
+    if (auto reason =
+            nonzero(cx, 0x293, ScanControlMask, "sample iteration, primitive discard or out-of-order rasterization");
+        !reason.empty())
+        return reason;
+    if (auto reason = nonzero(cx, 0x80, ~0u, "window offset"); !reason.empty())
+        return reason;
+    if (auto reason = nonzero(cx, 0x8d, ScreenOffsetMask, "reserved PA_SU_HARDWARE_SCREEN_OFFSET bits");
+        !reason.empty())
+        return reason;
+    if (value(cx, 0x83, word) && word != 0xffffu)
+        return require(false, "clip rectangles are unsupported");
+    if (value(cx, 0x8c, word) && (word & 0xfu) != 0xau)
+        return require(false, "nonstandard triangle edge rules are unsupported");
+    if (value(cx, 0x2f9, word) && word != 0x2du)
+        return require(false, "nonstandard pixel center or vertex quantization is unsupported");
+    if (value(cx, 0x313, word) && word != 0x6000u)
+        return require(false, "conservative rasterization is unsupported");
     std::uint32_t other = 0;
-    if (value(cx, 0x30e, word) && value(cx, 0x30f, other) && (word != 0xffffffffu || other != 0xffffffffu)) return require(false, "sample masks are unsupported");
-    if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
-    if (auto reason = nonzero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags"); !reason.empty()) return reason;
+    if (value(cx, 0x30e, word) && value(cx, 0x30f, other) && (word != 0xffffffffu || other != 0xffffffffu))
+        return require(false, "sample masks are unsupported");
+    if (value(cx, 0x206, word) && word != 0x43fu)
+        return vteMessage(word);
+    if (auto reason = nonzero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags"); !reason.empty())
+        return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
-    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, (targetMask & shaderMask) != 0)) return colorControlMessage(word);
-    if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
-    if (PixelProgramUnset(queue)) return NullPixelProgramRejection(queue);
+    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) &&
+        !colorControlSupported(word, (targetMask & shaderMask) != 0))
+        return colorControlMessage(word);
+    if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export");
+        !reason.empty())
+        return reason;
+    if (PixelProgramUnset(queue))
+        return NullPixelProgramRejection(queue);
     for (const auto offset : {0x1b3u, 0x1b4u, 0x1c5u}) {
-        if (find(cx, offset) != cx.end()) continue;
+        if (find(cx, offset) != cx.end())
+            continue;
         char text[64];
         std::snprintf(text, sizeof(text), "AGC graphics: missing register at DWORD 0x%x", offset);
         return text;
@@ -810,8 +1062,10 @@ bool PixelProgramUnset(const QueueState& queue) {
 std::string NullPixelProgramRejection(const QueueState& queue) {
     const auto targetMask = find(queue.context, 0x8e);
     const auto shaderMask = find(queue.context, 0x8f);
-    if (targetMask == queue.context.end() || shaderMask == queue.context.end()) return "AGC graphics: a draw without a pixel program needs CB_TARGET_MASK and CB_SHADER_MASK";
-    if ((targetMask->second & shaderMask->second) != 0) return "AGC graphics: a draw without a pixel program writes color";
+    if (targetMask == queue.context.end() || shaderMask == queue.context.end())
+        return "AGC graphics: a draw without a pixel program needs CB_TARGET_MASK and CB_SHADER_MASK";
+    if ((targetMask->second & shaderMask->second) != 0)
+        return "AGC graphics: a draw without a pixel program writes color";
     return {};
 }
 
@@ -825,11 +1079,13 @@ bool DrawKeyCovers(RegisterRead read) {
     static const auto covered = [] {
         std::array<std::bitset<1024>, static_cast<std::size_t>(RegisterBank::Count)> bits{};
         for (const auto& range : DrawKeyRegisters) {
-            for (std::uint32_t i = 0; i < range.count; ++i) bits[static_cast<std::size_t>(range.bank)].set(range.first + i);
+            for (std::uint32_t i = 0; i < range.count; ++i)
+                bits[static_cast<std::size_t>(range.bank)].set(range.first + i);
         }
         return bits;
     }();
-    return read.bank < RegisterBank::Count && read.offset < 1024 && covered[static_cast<std::size_t>(read.bank)].test(read.offset);
+    return read.bank < RegisterBank::Count && read.offset < 1024 &&
+           covered[static_cast<std::size_t>(read.bank)].test(read.offset);
 }
 
 }

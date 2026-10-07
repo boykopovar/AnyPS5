@@ -6,7 +6,10 @@
 extern "C" {
 int APS5_VABI sceRandomGetRandomNumber(void*, std::size_t);
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     constexpr int invalid = static_cast<int>(0x817C0016);
     unsigned char buffer[80];

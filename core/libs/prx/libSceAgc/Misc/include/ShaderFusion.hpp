@@ -10,7 +10,8 @@ struct SizeAlign {
     std::size_t m_align;
 };
 
-extern "C" int APS5_VABI sceAgcUnknownFuseShaderHalves(Shader* fused_result, const Shader* front, const Shader* back, void* scratch_mem);
+extern "C" int APS5_VABI sceAgcUnknownFuseShaderHalves(Shader* fused_result, const Shader* front, const Shader* back,
+                                                       void* scratch_mem);
 extern "C" int APS5_VABI sceAgcUnknownGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back);
 
 #endif

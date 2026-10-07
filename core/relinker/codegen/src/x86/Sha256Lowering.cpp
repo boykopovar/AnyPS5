@@ -22,11 +22,11 @@ constexpr std::uint8_t kPor = 0xEB;
 constexpr std::uint8_t kPxor = 0xEF;
 constexpr std::uint8_t kPaddd = 0xFE;
 
-template<std::size_t TCount>
-std::array<std::uint8_t, TCount> _scratch(const Sha256Operands& operands) {
+template <std::size_t TCount> std::array<std::uint8_t, TCount> _scratch(const Sha256Operands& operands) {
     std::array<std::uint8_t, TCount> scratch{};
     for (std::uint8_t reg = 0, found = 0; found < TCount; ++reg)
-        if (reg != operands.Destination && reg != operands.Source && reg != kRoundKeys) scratch[found++] = reg;
+        if (reg != operands.Destination && reg != operands.Source && reg != kRoundKeys)
+            scratch[found++] = reg;
     return scratch;
 }
 
@@ -38,7 +38,8 @@ void _lane(StubBodyBuilder& body, const std::uint8_t dst, const std::uint8_t src
     body.SseImm(kPrefixPacked, {0x0F, kPshufd}, dst, src, lane);
 }
 
-void _sigma(StubBodyBuilder& body, const std::uint8_t out, const std::uint8_t value, const std::uint8_t tmp, const std::initializer_list<std::uint8_t> rotations, const std::uint8_t shift) {
+void _sigma(StubBodyBuilder& body, const std::uint8_t out, const std::uint8_t value, const std::uint8_t tmp,
+            const std::initializer_list<std::uint8_t> rotations, const std::uint8_t shift) {
     bool first = true;
     const auto term = [&](const std::uint8_t extension, const std::uint8_t count) {
         const auto target = first ? out : tmp;
@@ -56,14 +57,16 @@ void _sigma(StubBodyBuilder& body, const std::uint8_t out, const std::uint8_t va
         term(kShiftRightDwords, shift);
 }
 
-void _choose(StubBodyBuilder& body, const std::uint8_t out, const std::uint8_t e, const std::uint8_t f, const std::uint8_t g) {
+void _choose(StubBodyBuilder& body, const std::uint8_t out, const std::uint8_t e, const std::uint8_t f,
+             const std::uint8_t g) {
     _op(body, kMovdqa, out, f);
     _op(body, kPxor, out, g);
     _op(body, kPand, out, e);
     _op(body, kPxor, out, g);
 }
 
-void _majority(StubBodyBuilder& body, const std::uint8_t x, const std::uint8_t y, const std::uint8_t z, const std::uint8_t tmp) {
+void _majority(StubBodyBuilder& body, const std::uint8_t x, const std::uint8_t y, const std::uint8_t z,
+               const std::uint8_t tmp) {
     _op(body, kMovdqa, tmp, y);
     _op(body, kPand, tmp, z);
     _op(body, kPxor, y, z);
@@ -205,7 +208,8 @@ void Sha256Lowering::EmitOutOfLine(StubBodyBuilder& body, const Sha256Operands& 
     }
 }
 
-LoweredBody Sha256Lowering::LowerOutOfLine(const Sha256Operands& operands, std::span<const std::uint8_t> trailing) const {
+LoweredBody Sha256Lowering::LowerOutOfLine(const Sha256Operands& operands,
+                                           std::span<const std::uint8_t> trailing) const {
     StubBodyBuilder body;
     EmitOutOfLine(body, operands);
     body.Raw(trailing);

@@ -8,12 +8,18 @@ static std::string _jsonString(const std::string& s) {
     out.reserve(s.size() + 2);
     out.push_back('"');
     for (char c : s) {
-        if (c == '"') out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else if (c == '\r') out += "\\r";
-        else if (c == '\t') out += "\\t";
-        else out.push_back(c);
+        if (c == '"')
+            out += "\\\"";
+        else if (c == '\\')
+            out += "\\\\";
+        else if (c == '\n')
+            out += "\\n";
+        else if (c == '\r')
+            out += "\\r";
+        else if (c == '\t')
+            out += "\\t";
+        else
+            out.push_back(c);
     }
     out.push_back('"');
     return out;
@@ -41,14 +47,16 @@ std::string CallRegistryWriter::WriteCallRegistry(const std::vector<CallRegistry
         out << "    \"callSites\": [";
 
         for (std::size_t j = 0; j < e.CallSites.size(); ++j) {
-            if (j > 0) out << ", ";
+            if (j > 0)
+                out << ", ";
             out << _hexOffset(e.CallSites[j]);
         }
 
         out << "],\n";
         out << "    \"callSitesResolved\": " << (e.CallSitesResolved ? "true" : "false") << "\n";
         out << "  }";
-        if (i + 1 < entries.size()) out << ",";
+        if (i + 1 < entries.size())
+            out << ",";
         out << "\n";
     }
 

@@ -11,7 +11,8 @@ namespace AgcDriver::DriverDetail {
 
 inline constexpr std::size_t LabelStoreHistory = 4;
 
-inline constexpr const char* LabelRefusalNames[6] = {"none", "trust-off", "queued", "overwritten", "unclosed", "behind-completion"};
+inline constexpr const char* LabelRefusalNames[6] = {"none",        "trust-off", "queued",
+                                                     "overwritten", "unclosed",  "behind-completion"};
 
 inline constexpr std::chrono::microseconds PollTryInterval{1000};
 
@@ -37,8 +38,10 @@ struct PollStats {
 };
 
 struct WaitOutcomes {
-    std::uint64_t atEntry = 0, fromRecorder = 0, fromRecorderSameQueue = 0, fromRecorderPolling = 0, polled = 0, timedOut = 0, pollSubmits = 0, pollReaps = 0;
-    std::uint64_t fromRecorderUnlocked = 0, entriesUnlocked = 0, entryTriesFailed = 0, fromRecorderLate = 0, lateRefusedCpuStore = 0;
+    std::uint64_t atEntry = 0, fromRecorder = 0, fromRecorderSameQueue = 0, fromRecorderPolling = 0, polled = 0,
+                  timedOut = 0, pollSubmits = 0, pollReaps = 0;
+    std::uint64_t fromRecorderUnlocked = 0, entriesUnlocked = 0, entryTriesFailed = 0, fromRecorderLate = 0,
+                  lateRefusedCpuStore = 0;
 };
 
 struct EpochBumps {

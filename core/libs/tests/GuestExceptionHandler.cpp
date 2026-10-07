@@ -13,7 +13,10 @@ static constexpr int SCE_KERNEL_ERROR_EAGAIN = static_cast<int>(0x80020023);
 static void APS5_VABI Handler(int, void*) {}
 static void APS5_VABI Other(int, void*) {}
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     auto* handler = reinterpret_cast<void*>(&Handler);

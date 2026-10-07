@@ -28,9 +28,7 @@ void WriteU64(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint64_t 
     std::memcpy(buf.data() + offset, &v, 8);
 }
 
-void AppendU8(std::vector<std::uint8_t>& buf, std::uint8_t v) {
-    buf.push_back(v);
-}
+void AppendU8(std::vector<std::uint8_t>& buf, std::uint8_t v) { buf.push_back(v); }
 
 void AppendU16(std::vector<std::uint8_t>& buf, std::uint16_t v) {
     const std::size_t pos = buf.size();
@@ -50,9 +48,7 @@ void AppendU64(std::vector<std::uint8_t>& buf, std::uint64_t v) {
     std::memcpy(buf.data() + pos, &v, 8);
 }
 
-void AppendI64(std::vector<std::uint8_t>& buf, std::int64_t v) {
-    AppendU64(buf, static_cast<std::uint64_t>(v));
-}
+void AppendI64(std::vector<std::uint8_t>& buf, std::int64_t v) { AppendU64(buf, static_cast<std::uint64_t>(v)); }
 
 void AppendString(std::vector<std::uint8_t>& buf, const std::string& str) {
     buf.insert(buf.end(), str.begin(), str.end());
@@ -63,9 +59,7 @@ void AlignBuffer(std::vector<std::uint8_t>& buf, std::size_t alignment) {
     buf.resize(AlignUp(buf.size(), alignment), 0);
 }
 
-std::uint64_t AlignUp64(std::uint64_t value, std::uint64_t alignment) {
-    return AlignUp(value, alignment);
-}
+std::uint64_t AlignUp64(std::uint64_t value, std::uint64_t alignment) { return AlignUp(value, alignment); }
 
 std::uint16_t ReadU16(const std::vector<std::uint8_t>& buf, std::size_t offset) {
     if (offset > buf.size() || buf.size() - offset < 2)

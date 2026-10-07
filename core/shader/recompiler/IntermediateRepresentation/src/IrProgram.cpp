@@ -14,12 +14,9 @@ namespace ShaderRecompiler {
 
 namespace {
 
-[[noreturn]] void fail(const std::string& message) {
-    throw std::runtime_error(message);
-}
+[[noreturn]] void fail(const std::string& message) { throw std::runtime_error(message); }
 
-template<typename TNode>
-class IdIndex {
+template <typename TNode> class IdIndex {
 public:
     bool emplace(const TNode* node, std::size_t index) {
         const auto id = static_cast<std::size_t>(node->Id());
@@ -38,13 +35,9 @@ public:
         return others.emplace(node, index).second;
     }
 
-    [[nodiscard]] bool contains(const TNode* node) const {
-        return owns(node) || others.contains(node);
-    }
+    [[nodiscard]] bool contains(const TNode* node) const { return owns(node) || others.contains(node); }
 
-    [[nodiscard]] std::size_t at(const TNode* node) const {
-        return owns(node) ? indices[node->Id()] : others.at(node);
-    }
+    [[nodiscard]] std::size_t at(const TNode* node) const { return owns(node) ? indices[node->Id()] : others.at(node); }
 
 private:
     [[nodiscard]] bool owns(const TNode* node) const {
@@ -59,35 +52,35 @@ private:
 
 bool isRegisterStatePseudo(IrOpcode opcode) {
     switch (opcode) {
-        case IrOpcode::GetThreadBitScalarRegister:
-        case IrOpcode::SetThreadBitScalarRegister:
-        case IrOpcode::GetScalarMaskTag:
-        case IrOpcode::SetScalarMaskTag:
-        case IrOpcode::GetScalarRegister:
-        case IrOpcode::SetScalarRegister:
-        case IrOpcode::GetVectorRegister:
-        case IrOpcode::SetVectorRegister:
-        case IrOpcode::GetGotoVariable:
-        case IrOpcode::SetGotoVariable:
-        case IrOpcode::GetScc:
-        case IrOpcode::SetScc:
-        case IrOpcode::GetExec:
-        case IrOpcode::SetExec:
-        case IrOpcode::GetExecLo:
-        case IrOpcode::SetExecLo:
-        case IrOpcode::GetExecHi:
-        case IrOpcode::SetExecHi:
-        case IrOpcode::GetVcc:
-        case IrOpcode::SetVcc:
-        case IrOpcode::GetVccLo:
-        case IrOpcode::SetVccLo:
-        case IrOpcode::GetVccHi:
-        case IrOpcode::SetVccHi:
-        case IrOpcode::GetM0:
-        case IrOpcode::SetM0:
-            return true;
-        default:
-            return false;
+    case IrOpcode::GetThreadBitScalarRegister:
+    case IrOpcode::SetThreadBitScalarRegister:
+    case IrOpcode::GetScalarMaskTag:
+    case IrOpcode::SetScalarMaskTag:
+    case IrOpcode::GetScalarRegister:
+    case IrOpcode::SetScalarRegister:
+    case IrOpcode::GetVectorRegister:
+    case IrOpcode::SetVectorRegister:
+    case IrOpcode::GetGotoVariable:
+    case IrOpcode::SetGotoVariable:
+    case IrOpcode::GetScc:
+    case IrOpcode::SetScc:
+    case IrOpcode::GetExec:
+    case IrOpcode::SetExec:
+    case IrOpcode::GetExecLo:
+    case IrOpcode::SetExecLo:
+    case IrOpcode::GetExecHi:
+    case IrOpcode::SetExecHi:
+    case IrOpcode::GetVcc:
+    case IrOpcode::SetVcc:
+    case IrOpcode::GetVccLo:
+    case IrOpcode::SetVccLo:
+    case IrOpcode::GetVccHi:
+    case IrOpcode::SetVccHi:
+    case IrOpcode::GetM0:
+    case IrOpcode::SetM0:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -108,7 +101,8 @@ bool sameValue(const IrValue* left, const IrValue* right) {
     return false;
 }
 
-bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, const IrValue* right, std::vector<std::pair<const IrValue*, const IrValue*>>& visited) {
+bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, const IrValue* right,
+                         std::vector<std::pair<const IrValue*, const IrValue*>>& visited) {
     if (left != nullptr) {
         left = left->Resolve();
     }
@@ -138,7 +132,8 @@ bool equivalentValueImpl(const IrResourcePlan& program, const IrValue* left, con
     if (isRuntimeRead(left->Opcode())) {
         const auto leftIndex = left->Flags<MemoryFlags>().index;
         const auto rightIndex = right->Flags<MemoryFlags>().index;
-        if (leftIndex >= program.memoryInfo.size() || rightIndex >= program.memoryInfo.size() || !(program.memoryInfo[leftIndex] == program.memoryInfo[rightIndex])) {
+        if (leftIndex >= program.memoryInfo.size() || rightIndex >= program.memoryInfo.size() ||
+            !(program.memoryInfo[leftIndex] == program.memoryInfo[rightIndex])) {
             return false;
         }
     } else if (left->Flags<std::uint64_t>() != right->Flags<std::uint64_t>()) {
@@ -182,38 +177,34 @@ std::string valueToString(const std::map<const IrValue*, std::size_t>& ids, cons
         return "%" + std::to_string(found->second);
     }
     switch (value->Type()) {
-        case IrType::ScalarReg:
-            return "s" + std::to_string(value->Register().index);
-        case IrType::VectorReg:
-            return "v" + std::to_string(value->Register().index);
-        case IrType::Bool:
-            return value->ImmediateBool() ? "true" : "false";
-        case IrType::U8:
-            return std::to_string(value->ImmediateU8()) + "u8";
-        case IrType::U16:
-            return std::to_string(value->ImmediateU16()) + "u16";
-        case IrType::U32:
-            return formatHex32(value->ImmediateU32());
-        case IrType::U64:
-            return formatHex64(value->ImmediateU64());
-        case IrType::F16:
-            return "f16(" + formatHex16(value->ImmediateF16Bits()) + ")";
-        case IrType::F32:
-            return std::to_string(value->ImmediateF32()) + "f";
-        default:
-            return "<" + TypeToString(value->Type()) + ">";
+    case IrType::ScalarReg:
+        return "s" + std::to_string(value->Register().index);
+    case IrType::VectorReg:
+        return "v" + std::to_string(value->Register().index);
+    case IrType::Bool:
+        return value->ImmediateBool() ? "true" : "false";
+    case IrType::U8:
+        return std::to_string(value->ImmediateU8()) + "u8";
+    case IrType::U16:
+        return std::to_string(value->ImmediateU16()) + "u16";
+    case IrType::U32:
+        return formatHex32(value->ImmediateU32());
+    case IrType::U64:
+        return formatHex64(value->ImmediateU64());
+    case IrType::F16:
+        return "f16(" + formatHex16(value->ImmediateF16Bits()) + ")";
+    case IrType::F32:
+        return std::to_string(value->ImmediateF32()) + "f";
+    default:
+        return "<" + TypeToString(value->Type()) + ">";
     }
 }
 
 }
 
-std::vector<std::unique_ptr<IrBlock>>& IrProgram::Blocks() {
-    return blocks;
-}
+std::vector<std::unique_ptr<IrBlock>>& IrProgram::Blocks() { return blocks; }
 
-const std::vector<std::unique_ptr<IrBlock>>& IrProgram::Blocks() const {
-    return blocks;
-}
+const std::vector<std::unique_ptr<IrBlock>>& IrProgram::Blocks() const { return blocks; }
 
 IrBlock& IrProgram::EntryBlock() const {
     if (entryBlock == nullptr) {
@@ -222,21 +213,13 @@ IrBlock& IrProgram::EntryBlock() const {
     return *entryBlock;
 }
 
-ShaderInfo& IrProgram::Info() {
-    return resourcePlan.info;
-}
+ShaderInfo& IrProgram::Info() { return resourcePlan.info; }
 
-const ShaderInfo& IrProgram::Info() const {
-    return resourcePlan.info;
-}
+const ShaderInfo& IrProgram::Info() const { return resourcePlan.info; }
 
-std::uint32_t IrProgram::WaveSize() const {
-    return waveSize;
-}
+std::uint32_t IrProgram::WaveSize() const { return waveSize; }
 
-void IrProgram::SetWaveSize(std::uint32_t waveSize) {
-    this->waveSize = waveSize;
-}
+void IrProgram::SetWaveSize(std::uint32_t waveSize) { this->waveSize = waveSize; }
 
 IrBlock& IrProgram::CreateBlock() {
     auto block = std::make_unique<IrBlock>(nextBlockId);
@@ -254,21 +237,13 @@ IrValue& IrProgram::CreateValue(IrOpcode opcode, IrType type) {
     return created;
 }
 
-IrResourcePlan& IrProgram::Resources() {
-    return resourcePlan;
-}
+IrResourcePlan& IrProgram::Resources() { return resourcePlan; }
 
-const IrResourcePlan& IrProgram::Resources() const {
-    return resourcePlan;
-}
+const IrResourcePlan& IrProgram::Resources() const { return resourcePlan; }
 
-IrProgramMetadata& IrProgram::Metadata() {
-    return metadata;
-}
+IrProgramMetadata& IrProgram::Metadata() { return metadata; }
 
-const IrProgramMetadata& IrProgram::Metadata() const {
-    return metadata;
-}
+const IrProgramMetadata& IrProgram::Metadata() const { return metadata; }
 
 CompiledShaderInfo IrProgram::TakeCompiledInfo() && {
     CompiledShaderInfo result;
@@ -304,13 +279,9 @@ void IrProgram::SetEntryBlock(IrBlock& block) {
     entryBlock = &block;
 }
 
-std::vector<IrBlock*>& IrProgram::BlockOrder() {
-    return blockOrder;
-}
+std::vector<IrBlock*>& IrProgram::BlockOrder() { return blockOrder; }
 
-const std::vector<IrBlock*>& IrProgram::BlockOrder() const {
-    return blockOrder;
-}
+const std::vector<IrBlock*>& IrProgram::BlockOrder() const { return blockOrder; }
 
 std::string ProgramToString(const IrProgram& program) {
     std::map<const IrValue*, std::size_t> ids;
@@ -324,7 +295,8 @@ std::string ProgramToString(const IrProgram& program) {
     const auto& blockOrder = program.BlockOrder();
     const auto& blockInfo = program.Metadata().blockInfo;
     for (std::size_t blockIndex = 0; blockIndex < blockOrder.size(); blockIndex++) {
-        text += "Block $" + std::to_string(blockIndex) + " pc=" + formatHex32(blockInfo[blockIndex].startPc) + ".." + formatHex32(blockInfo[blockIndex].endPc) + "\n";
+        text += "Block $" + std::to_string(blockIndex) + " pc=" + formatHex32(blockInfo[blockIndex].startPc) + ".." +
+                formatHex32(blockInfo[blockIndex].endPc) + "\n";
         for (const auto* inst : blockOrder[blockIndex]->Instructions()) {
             if (inst->Type() != IrType::Void) {
                 text += "  %" + std::to_string(ids.at(inst)) + " = " + std::string(IrOpcodeName(inst->Opcode()));
@@ -335,7 +307,8 @@ std::string ProgramToString(const IrProgram& program) {
                 text += index == 0 ? " " : ", ";
                 if (inst->Opcode() == IrOpcode::Phi) {
                     const auto predecessor = std::find(blockOrder.begin(), blockOrder.end(), inst->PhiBlock(index));
-                    text += "[" + valueToString(ids, inst->Argument(index)) + ", $" + std::to_string(std::distance(blockOrder.begin(), predecessor)) + "]";
+                    text += "[" + valueToString(ids, inst->Argument(index)) + ", $" +
+                            std::to_string(std::distance(blockOrder.begin(), predecessor)) + "]";
                 } else {
                     text += valueToString(ids, inst->Argument(index));
                 }
@@ -391,7 +364,8 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (!predecessors.insert(predecessor).second) {
                 fail("value IR block predecessor is duplicated");
             }
-            if (std::find(predecessor->Successors().begin(), predecessor->Successors().end(), block) == predecessor->Successors().end()) {
+            if (std::find(predecessor->Successors().begin(), predecessor->Successors().end(), block) ==
+                predecessor->Successors().end()) {
                 fail("value IR predecessor edge is not reciprocal");
             }
         }
@@ -404,7 +378,8 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (!successors.insert(successor).second) {
                 fail("value IR block successor is duplicated");
             }
-            if (std::find(successor->Predecessors().begin(), successor->Predecessors().end(), block) == successor->Predecessors().end()) {
+            if (std::find(successor->Predecessors().begin(), successor->Predecessors().end(), block) ==
+                successor->Predecessors().end()) {
                 fail("value IR successor edge is not reciprocal");
             }
         }
@@ -426,48 +401,49 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             return value->Parent() == nullptr || instructionPositions.contains(value);
         };
         switch (terminator.kind) {
-            case TerminatorKind::Branch:
-                if (!addTarget(terminator.trueBlock)) {
-                    fail("value IR branch target is missing");
-                }
-                break;
-            case TerminatorKind::ConditionalBranch:
-                if (!addTarget(terminator.trueBlock) || !addTarget(terminator.falseBlock)) {
-                    fail("value IR conditional branch target is missing");
-                }
-                if (!validateControlValue(blockInfo[blockIndex].condition, IrType::Bool)) {
-                    fail("value IR conditional branch condition is invalid");
-                }
-                break;
-            case TerminatorKind::IndirectBranch: {
-                if (!validateControlValue(blockInfo[blockIndex].indirectTarget, IrType::U32)) {
-                    fail("value IR indirect branch selector is invalid");
-                }
-                std::unordered_set<std::uint32_t> indirectTargets;
-                for (const auto target : terminator.indirectTargets) {
-                    if (!indirectTargets.insert(target).second) {
-                        fail("value IR indirect branch target is duplicated");
-                    }
-                    if (!addTarget(target)) {
-                        fail("value IR indirect branch target is missing");
-                    }
-                }
-                if (terminator.indirectSelectorValues.size() != terminator.indirectSelectorTargets.size()) {
-                    fail("value IR indirect selector table is inconsistent");
-                }
-                for (const auto target : terminator.indirectSelectorTargets) {
-                    const auto found = blocksById.find(target);
-                    if (found == blocksById.end() || !expectedSuccessors.contains(found->second)) {
-                        fail("value IR indirect selector target is not a CFG successor");
-                    }
-                }
-                break;
+        case TerminatorKind::Branch:
+            if (!addTarget(terminator.trueBlock)) {
+                fail("value IR branch target is missing");
             }
-            case TerminatorKind::Return:
-            case TerminatorKind::Unsupported:
-                break;
+            break;
+        case TerminatorKind::ConditionalBranch:
+            if (!addTarget(terminator.trueBlock) || !addTarget(terminator.falseBlock)) {
+                fail("value IR conditional branch target is missing");
+            }
+            if (!validateControlValue(blockInfo[blockIndex].condition, IrType::Bool)) {
+                fail("value IR conditional branch condition is invalid");
+            }
+            break;
+        case TerminatorKind::IndirectBranch: {
+            if (!validateControlValue(blockInfo[blockIndex].indirectTarget, IrType::U32)) {
+                fail("value IR indirect branch selector is invalid");
+            }
+            std::unordered_set<std::uint32_t> indirectTargets;
+            for (const auto target : terminator.indirectTargets) {
+                if (!indirectTargets.insert(target).second) {
+                    fail("value IR indirect branch target is duplicated");
+                }
+                if (!addTarget(target)) {
+                    fail("value IR indirect branch target is missing");
+                }
+            }
+            if (terminator.indirectSelectorValues.size() != terminator.indirectSelectorTargets.size()) {
+                fail("value IR indirect selector table is inconsistent");
+            }
+            for (const auto target : terminator.indirectSelectorTargets) {
+                const auto found = blocksById.find(target);
+                if (found == blocksById.end() || !expectedSuccessors.contains(found->second)) {
+                    fail("value IR indirect selector target is not a CFG successor");
+                }
+            }
+            break;
         }
-        if ((terminator.mergeBlock != InvalidControlFlowId && !blocksById.contains(terminator.mergeBlock)) || (terminator.continueBlock != InvalidControlFlowId && !blocksById.contains(terminator.continueBlock))) {
+        case TerminatorKind::Return:
+        case TerminatorKind::Unsupported:
+            break;
+        }
+        if ((terminator.mergeBlock != InvalidControlFlowId && !blocksById.contains(terminator.mergeBlock)) ||
+            (terminator.continueBlock != InvalidControlFlowId && !blocksById.contains(terminator.continueBlock))) {
             fail("value IR structured control target is missing");
         }
         if (successors != expectedSuccessors) {
@@ -492,7 +468,8 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                 std::unordered_set<const IrBlock*> incomingBlocks;
                 for (std::size_t argIndex = 0; argIndex < inst->ArgumentCount(); argIndex++) {
                     const auto* predecessor = inst->PhiBlock(argIndex);
-                    if (predecessor == nullptr || !blockIndices.contains(predecessor) || !predecessors.contains(predecessor)) {
+                    if (predecessor == nullptr || !blockIndices.contains(predecessor) ||
+                        !predecessors.contains(predecessor)) {
                         fail("value IR Phi has a foreign or non-predecessor parent");
                     }
                     if (!incomingBlocks.insert(predecessor).second) {
@@ -515,12 +492,14 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (requireSsa && isRegisterStatePseudo(inst->Opcode())) {
                 fail("register-state pseudo " + std::string(IrOpcodeName(inst->Opcode())) + " survived SSA rewrite");
             }
-            if (inst->Opcode() != IrOpcode::Phi && inst->Opcode() != IrOpcode::Identity && inst->Type() == IrType::Opaque) {
+            if (inst->Opcode() != IrOpcode::Phi && inst->Opcode() != IrOpcode::Identity &&
+                inst->Type() == IrType::Opaque) {
                 fail("untyped opcode " + std::string(IrOpcodeName(inst->Opcode())) + " survived translation");
             }
             const bool fixedSignature = inst->Opcode() != IrOpcode::Phi && inst->Opcode() != IrOpcode::Identity;
             if (fixedSignature && inst->ArgumentCount() != IrOpcodeOperandCount(inst->Opcode())) {
-                fail(std::string(IrOpcodeName(inst->Opcode())) + " has " + std::to_string(inst->ArgumentCount()) + " arguments, expected " + std::to_string(IrOpcodeOperandCount(inst->Opcode())));
+                fail(std::string(IrOpcodeName(inst->Opcode())) + " has " + std::to_string(inst->ArgumentCount()) +
+                     " arguments, expected " + std::to_string(IrOpcodeOperandCount(inst->Opcode())));
             }
             if (inst->Opcode() == IrOpcode::ReadConstBuffer) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
@@ -531,8 +510,11 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                 if (memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid scalar-memory resource kind");
                 }
-                const bool validGroupWidth = memory.componentCount == 1u || memory.componentCount == 2u || memory.componentCount == 4u || memory.componentCount == 8u || memory.componentCount == 16u;
-                if (memory.dataBits != 32u || memory.dataDwords != 1u || !validGroupWidth || memory.componentIndex >= memory.componentCount) {
+                const bool validGroupWidth = memory.componentCount == 1u || memory.componentCount == 2u ||
+                                             memory.componentCount == 4u || memory.componentCount == 8u ||
+                                             memory.componentCount == 16u;
+                if (memory.dataBits != 32u || memory.dataDwords != 1u || !validGroupWidth ||
+                    memory.componentIndex >= memory.componentCount) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has inconsistent scalar-memory metadata");
                 }
             }
@@ -543,13 +525,22 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
                 }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
-                if (!IsAddressResourceKind(memory.kind) || (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32)) {
+                if (!IsAddressResourceKind(memory.kind) ||
+                    (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid address resource kind");
                 }
                 const bool scalarAddress = memory.kind == ResourceKind::ScalarAddress;
-                const bool validGroupWidth = scalarAddress ? (memory.componentCount == 1u || memory.componentCount == 2u || memory.componentCount == 4u || memory.componentCount == 8u || memory.componentCount == 16u) : (memory.componentCount >= 1u && memory.componentCount <= 4u);
-                const bool validWideLayout = addressInfo.components == 1u || (memory.componentIndex == 0u && memory.componentCount == addressInfo.components);
-                if (memory.dataBits != addressInfo.dataBits || memory.dataDwords != addressInfo.components || !validGroupWidth || !validWideLayout || memory.componentIndex >= memory.componentCount || memory.sampler != 0u) {
+                const bool validGroupWidth =
+                    scalarAddress
+                        ? (memory.componentCount == 1u || memory.componentCount == 2u || memory.componentCount == 4u ||
+                           memory.componentCount == 8u || memory.componentCount == 16u)
+                        : (memory.componentCount >= 1u && memory.componentCount <= 4u);
+                const bool validWideLayout =
+                    addressInfo.components == 1u ||
+                    (memory.componentIndex == 0u && memory.componentCount == addressInfo.components);
+                if (memory.dataBits != addressInfo.dataBits || memory.dataDwords != addressInfo.components ||
+                    !validGroupWidth || !validWideLayout || memory.componentIndex >= memory.componentCount ||
+                    memory.sampler != 0u) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has inconsistent address-memory metadata");
                 }
             }
@@ -563,10 +554,13 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                 if (memory.kind != ResourceKind::Buffer && memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has a non-buffer resource kind");
                 }
-                if (bufferComponents > 1u && (memory.kind != ResourceKind::Buffer || memory.dataBits != 32u || memory.dataDwords != bufferComponents || memory.componentIndex != 0u)) {
+                if (bufferComponents > 1u && (memory.kind != ResourceKind::Buffer || memory.dataBits != 32u ||
+                                              memory.dataDwords != bufferComponents || memory.componentIndex != 0u)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has inconsistent native-wide metadata");
                 }
-                if (bufferComponents == 1u && (inst->Opcode() == IrOpcode::LoadBufferU32 || inst->Opcode() == IrOpcode::StoreBufferU32) && memory.dataDwords != 1u) {
+                if (bufferComponents == 1u &&
+                    (inst->Opcode() == IrOpcode::LoadBufferU32 || inst->Opcode() == IrOpcode::StoreBufferU32) &&
+                    memory.dataDwords != 1u) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " retains scalar-sibling width metadata");
                 }
             }
@@ -577,7 +571,9 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
                 }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
-                if ((memory.kind != ResourceKind::Lds && memory.kind != ResourceKind::Gds) || memory.resource != 0u || memory.sampler != 0u || memory.componentCount == 0u || memory.componentIndex >= memory.componentCount) {
+                if ((memory.kind != ResourceKind::Lds && memory.kind != ResourceKind::Gds) || memory.resource != 0u ||
+                    memory.sampler != 0u || memory.componentCount == 0u ||
+                    memory.componentIndex >= memory.componentCount) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid shared-memory metadata");
                 }
                 std::uint32_t expectedBits = 32u;
@@ -586,7 +582,8 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                 } else if (inst->Opcode() == IrOpcode::LoadSharedU16 || inst->Opcode() == IrOpcode::WriteSharedU16) {
                     expectedBits = 16u;
                 }
-                if (memory.dataBits != expectedBits || memory.dataDwords != sharedComponents || (sharedComponents > 1u && memory.componentIndex != 0u)) {
+                if (memory.dataBits != expectedBits || memory.dataDwords != sharedComponents ||
+                    (sharedComponents > 1u && memory.componentIndex != 0u)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has inconsistent shared-memory width");
                 }
             }
@@ -601,29 +598,31 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid image-memory metadata");
                 }
             }
-            if (inst->Opcode() == IrOpcode::SetAttribute && inst->Flags<ExportFlags>().index >= program.Metadata().exportInfo.size()) {
+            if (inst->Opcode() == IrOpcode::SetAttribute &&
+                inst->Flags<ExportFlags>().index >= program.Metadata().exportInfo.size()) {
                 fail("SetAttribute has an invalid export-info index");
             }
             std::uint32_t compositeComponents = 0u;
             switch (inst->Opcode()) {
-                case IrOpcode::CompositeExtractU64:
-                    compositeComponents = 2u;
-                    break;
-                case IrOpcode::CompositeExtractU32x2:
-                    compositeComponents = 2u;
-                    break;
-                case IrOpcode::CompositeExtractU32x3:
-                    compositeComponents = 3u;
-                    break;
-                case IrOpcode::CompositeExtractU32x4:
-                    compositeComponents = 4u;
-                    break;
-                default:
-                    break;
+            case IrOpcode::CompositeExtractU64:
+                compositeComponents = 2u;
+                break;
+            case IrOpcode::CompositeExtractU32x2:
+                compositeComponents = 2u;
+                break;
+            case IrOpcode::CompositeExtractU32x3:
+                compositeComponents = 3u;
+                break;
+            case IrOpcode::CompositeExtractU32x4:
+                compositeComponents = 4u;
+                break;
+            default:
+                break;
             }
             if (compositeComponents != 0u) {
                 const auto* index = inst->Argument(1);
-                if (index == nullptr || !index->HasImmediate() || index->Type() != IrType::U32 || index->ImmediateU32() >= compositeComponents) {
+                if (index == nullptr || !index->HasImmediate() || index->Type() != IrType::U32 ||
+                    index->ImmediateU32() >= compositeComponents) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid component index");
                 }
             }
@@ -633,7 +632,9 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an empty argument");
                 }
                 if (fixedSignature && arg->Type() != IrOpcodeArgumentType(inst->Opcode(), argIndex)) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " argument " + std::to_string(argIndex) + " has type " + TypeToString(arg->Type()) + ", expected " + TypeToString(IrOpcodeArgumentType(inst->Opcode(), argIndex)));
+                    fail(std::string(IrOpcodeName(inst->Opcode())) + " argument " + std::to_string(argIndex) +
+                         " has type " + TypeToString(arg->Type()) + ", expected " +
+                         TypeToString(IrOpcodeArgumentType(inst->Opcode(), argIndex)));
                 }
                 if (arg->Parent() != nullptr && !instructionPositions.contains(arg)) {
                     fail("value IR argument has a foreign definition");
@@ -643,7 +644,8 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
                     return candidate.user == inst && candidate.operand == argIndex;
                 });
                 if (use == uses.end()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " argument " + std::to_string(argIndex) + " is absent from " + std::string(IrOpcodeName(arg->Opcode())) + " reverse uses");
+                    fail(std::string(IrOpcodeName(inst->Opcode())) + " argument " + std::to_string(argIndex) +
+                         " is absent from " + std::string(IrOpcodeName(arg->Opcode())) + " reverse uses");
                 }
             }
         }
@@ -696,7 +698,8 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
         return dominators[blockIndices.at(use)][blockIndices.at(definition)];
     };
     const auto controlDominates = [&](IrValue* value, const IrBlock* use) {
-        return value == nullptr || value->Parent() == nullptr || value->Parent() == use || dominates(value->Parent(), use);
+        return value == nullptr || value->Parent() == nullptr || value->Parent() == use ||
+               dominates(value->Parent(), use);
     };
 
     for (std::size_t blockIndex = 0; blockIndex < blockOrder.size(); blockIndex++) {
@@ -784,10 +787,12 @@ IrValue* ResolveInvariantPhi(const IrResourcePlan& program, IrValue* value) {
 }
 
 bool IsAddressResourceKind(ResourceKind kind) {
-    return kind == ResourceKind::ScalarAddress || kind == ResourceKind::Flat || kind == ResourceKind::Global || kind == ResourceKind::Scratch;
+    return kind == ResourceKind::ScalarAddress || kind == ResourceKind::Flat || kind == ResourceKind::Global ||
+           kind == ResourceKind::Scratch;
 }
 
-PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std::uint32_t positionIndex, std::uint32_t component) {
+PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std::uint32_t positionIndex,
+                                                      std::uint32_t component) {
     PositionExportComponent result;
     if (positionIndex == 0u || component >= 4u) {
         return result;
@@ -826,7 +831,10 @@ PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std
 }
 
 std::uint32_t NativeBinding(IrShaderStage stage, DescriptorBindingKind kind) {
-    const std::uint32_t group = stage == IrShaderStage::Pixel ? 1u : stage == IrShaderStage::TessellationControl ? 2u : stage == IrShaderStage::TessellationEvaluation ? 3u : 0u;
+    const std::uint32_t group = stage == IrShaderStage::Pixel                    ? 1u
+                                : stage == IrShaderStage::TessellationControl    ? 2u
+                                : stage == IrShaderStage::TessellationEvaluation ? 3u
+                                                                                 : 0u;
     return static_cast<std::uint32_t>(kind) + group * static_cast<std::uint32_t>(DescriptorBindingKind::Count);
 }
 
@@ -862,18 +870,18 @@ DescriptorBindingKind DescriptorBindingForImage(const ImageResource& image) {
         }
         sampled = true;
         switch (image.numericClass) {
-            case IrTextureNumericClass::Float:
-                base = image.depthCompare ? FirstComparisonImageBinding : sampledFloatBinding;
-                break;
-            case IrTextureNumericClass::Uint:
-                base = sampledUintBinding;
-                break;
-            case IrTextureNumericClass::Sint:
-                base = sampledSintBinding;
-                break;
-            case IrTextureNumericClass::Unsupported:
-            default:
-                fail("DescriptorBindingForImage sampled image has an unsupported numeric class");
+        case IrTextureNumericClass::Float:
+            base = image.depthCompare ? FirstComparisonImageBinding : sampledFloatBinding;
+            break;
+        case IrTextureNumericClass::Uint:
+            base = sampledUintBinding;
+            break;
+        case IrTextureNumericClass::Sint:
+            base = sampledSintBinding;
+            break;
+        case IrTextureNumericClass::Unsupported:
+        default:
+            fail("DescriptorBindingForImage sampled image has an unsupported numeric class");
         }
         if (image.depthCompare && image.numericClass != IrTextureNumericClass::Float) {
             fail("DescriptorBindingForImage depth-compare image must be float");
@@ -886,16 +894,16 @@ DescriptorBindingKind DescriptorBindingForImage(const ImageResource& image) {
             base = image.atomic64 ? atomic64UintBinding : atomicUintBinding;
         } else {
             switch (image.numericClass) {
-                case IrTextureNumericClass::Float:
-                    base = storageFloatBinding;
-                    break;
-                case IrTextureNumericClass::Uint:
-                    base = storageUintBinding;
-                    break;
-                case IrTextureNumericClass::Sint:
-                case IrTextureNumericClass::Unsupported:
-                default:
-                    fail("DescriptorBindingForImage storage image has an unsupported numeric class");
+            case IrTextureNumericClass::Float:
+                base = storageFloatBinding;
+                break;
+            case IrTextureNumericClass::Uint:
+                base = storageUintBinding;
+                break;
+            case IrTextureNumericClass::Sint:
+            case IrTextureNumericClass::Unsupported:
+            default:
+                fail("DescriptorBindingForImage storage image has an unsupported numeric class");
             }
         }
     } else {
@@ -904,35 +912,35 @@ DescriptorBindingKind DescriptorBindingForImage(const ImageResource& image) {
 
     std::uint32_t dimension = 0u;
     switch (image.dimension) {
-        case RdnaImageDimension::Dim1D:
-            break;
-        case RdnaImageDimension::Dim1DArray:
-            dimension = 1u;
-            break;
-        case RdnaImageDimension::Dim2D:
-            dimension = 2u;
-            break;
-        case RdnaImageDimension::Dim2DArray:
-            dimension = 3u;
-            break;
-        case RdnaImageDimension::Dim2DMsaa:
-            if (!sampled) {
-                fail("DescriptorBindingForImage storage image cannot be multisampled");
-            }
-            dimension = 4u;
-            break;
-        case RdnaImageDimension::Dim2DMsaaArray:
-            if (!sampled) {
-                fail("DescriptorBindingForImage storage image cannot be multisampled");
-            }
-            dimension = 5u;
-            break;
-        case RdnaImageDimension::Dim3D:
-            dimension = sampled ? 6u : 4u;
-            break;
-        case RdnaImageDimension::Unknown:
-        default:
-            fail("DescriptorBindingForImage image has an unknown dimension");
+    case RdnaImageDimension::Dim1D:
+        break;
+    case RdnaImageDimension::Dim1DArray:
+        dimension = 1u;
+        break;
+    case RdnaImageDimension::Dim2D:
+        dimension = 2u;
+        break;
+    case RdnaImageDimension::Dim2DArray:
+        dimension = 3u;
+        break;
+    case RdnaImageDimension::Dim2DMsaa:
+        if (!sampled) {
+            fail("DescriptorBindingForImage storage image cannot be multisampled");
+        }
+        dimension = 4u;
+        break;
+    case RdnaImageDimension::Dim2DMsaaArray:
+        if (!sampled) {
+            fail("DescriptorBindingForImage storage image cannot be multisampled");
+        }
+        dimension = 5u;
+        break;
+    case RdnaImageDimension::Dim3D:
+        dimension = sampled ? 6u : 4u;
+        break;
+    case RdnaImageDimension::Unknown:
+    default:
+        fail("DescriptorBindingForImage image has an unknown dimension");
     }
     return static_cast<DescriptorBindingKind>(base + dimension);
 }

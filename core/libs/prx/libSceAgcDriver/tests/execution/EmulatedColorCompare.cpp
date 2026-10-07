@@ -67,7 +67,8 @@ struct Sampler {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
@@ -77,7 +78,10 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
         0xfacu | (Type2D << 28u),
-        0u, 0u, 0u, 0u,
+        0u,
+        0u,
+        0u,
+        0u,
     };
 }
 
@@ -112,15 +116,26 @@ void FillInput() {
         Input[tid * 3u + 1u] = 1.55f - 0.065f * static_cast<float>(tid);
         Input[tid * 3u + 2u] = -0.25f + 0.05f * static_cast<float>((tid * 7u) % 32u);
     }
-    Input[0] = 0.0f; Input[1] = 0.0f; Input[2] = 0.0f;
-    Input[3] = 0.999f; Input[4] = 0.999f; Input[5] = 1.2f;
-    Input[6] = 0.6f; Input[7] = -0.1f; Input[8] = 0.5f;
-    Input[9] = 0.3f; Input[10] = 0.5f; Input[11] = 1.1f;
-    Input[12] = 0.9f; Input[13] = 1.05f; Input[14] = -0.05f;
+    Input[0] = 0.0f;
+    Input[1] = 0.0f;
+    Input[2] = 0.0f;
+    Input[3] = 0.999f;
+    Input[4] = 0.999f;
+    Input[5] = 1.2f;
+    Input[6] = 0.6f;
+    Input[7] = -0.1f;
+    Input[8] = 0.5f;
+    Input[9] = 0.3f;
+    Input[10] = 0.5f;
+    Input[11] = 1.1f;
+    Input[12] = 0.9f;
+    Input[13] = 1.05f;
+    Input[14] = -0.05f;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto x = static_cast<std::int32_t>(tid % 7u) - 3;
         const auto y = static_cast<std::int32_t>((tid / 7u) % 5u) - 2;
-        Extra[tid * 3u + 0u] = (static_cast<std::uint32_t>(x) & 0x3fu) | ((static_cast<std::uint32_t>(y) & 0x3fu) << 8u) | (tid % 3u == 0u ? 0x3f0000u : 0u);
+        Extra[tid * 3u + 0u] = (static_cast<std::uint32_t>(x) & 0x3fu) |
+                               ((static_cast<std::uint32_t>(y) & 0x3fu) << 8u) | (tid % 3u == 0u ? 0x3f0000u : 0u);
         Extra[tid * 3u + 1u] = std::bit_cast<std::uint32_t>(-2.5f + 0.25f * static_cast<float>(tid % 21u));
         Extra[tid * 3u + 2u] = std::bit_cast<std::uint32_t>(0.5f * static_cast<float>(tid % 5u));
     }
@@ -140,7 +155,8 @@ float ReferenceTexel(int x, int y, float reference, const Sampler& sampler) {
         return reference <= border ? 1.0f : 0.0f;
     }
     const auto address = [&](int value) {
-        if (clamp == ClampEdge) return std::clamp(value, 0, static_cast<int>(Side) - 1);
+        if (clamp == ClampEdge)
+            return std::clamp(value, 0, static_cast<int>(Side) - 1);
         const int size = static_cast<int>(Side);
         return ((value % size) + size) % size;
     };
@@ -154,19 +170,24 @@ float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
     const float reference = std::clamp(Input[tid * 3u + 0u], 0.0f, 1.0f);
     const int offsetX = offsets ? OffsetComponent(tid, 0u) : 0;
     const int offsetY = offsets ? OffsetComponent(tid, 1u) : 0;
-    if (sampler.filter == FilterPoint) return ReferenceTexel(static_cast<int>(std::floor(u)) + offsetX, static_cast<int>(std::floor(v)) + offsetY, reference, sampler);
+    if (sampler.filter == FilterPoint)
+        return ReferenceTexel(static_cast<int>(std::floor(u)) + offsetX, static_cast<int>(std::floor(v)) + offsetY,
+                              reference, sampler);
     const float cu = u - 0.5f;
     const float cv = v - 0.5f;
     const int x = static_cast<int>(std::floor(cu)) + offsetX;
     const int y = static_cast<int>(std::floor(cv)) + offsetY;
     const float a = cu - std::floor(cu);
     const float b = cv - std::floor(cv);
-    const float top = ReferenceTexel(x, y, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y, reference, sampler) * a;
-    const float bottom = ReferenceTexel(x, y + 1, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y + 1, reference, sampler) * a;
+    const float top =
+        ReferenceTexel(x, y, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y, reference, sampler) * a;
+    const float bottom = ReferenceTexel(x, y + 1, reference, sampler) * (1.0f - a) +
+                         ReferenceTexel(x + 1, y + 1, reference, sampler) * a;
     return top * (1.0f - b) + bottom * b;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler,
+                                          std::span<const std::uint32_t> code = Code) {
     std::vector<std::uint32_t> userData(24, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
@@ -178,42 +199,48 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     std::copy(samplerWords.begin(), samplerWords.end(), userData.begin() + 16);
     const auto extra = BufferDescriptor(Extra.data(), static_cast<std::uint32_t>(sizeof(Extra)));
     std::copy(extra.begin(), extra.end(), userData.begin() + 20);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
 }
 
 void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name, bool offsets = false) {
     Output.fill(-1.0f);
-    const std::span<const std::uint32_t> code = offsets ? std::span<const std::uint32_t>(OffsetCode) : std::span<const std::uint32_t>(Code);
+    const std::span<const std::uint32_t> code =
+        offsets ? std::span<const std::uint32_t>(OffsetCode) : std::span<const std::uint32_t>(Code);
     const auto result = Compile(device, Format8888UNorm, sampler, code);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float expected = Expected(tid, sampler, offsets);
         const float tolerance = sampler.filter == FilterPoint ? 0.0f : 1e-4f;
-        Require(std::fabs(Output[tid] - expected) <= tolerance, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
+        Require(std::fabs(Output[tid] - expected) <= tolerance, std::string(name) + ": thread " + std::to_string(tid) +
+                                                                    " compared to " + std::to_string(Output[tid]) +
+                                                                    ", expected " + std::to_string(expected));
     }
 }
 
 bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
-    return std::any_of(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) {
-        return std::any_of(binding.imageDepthCompare.begin(), binding.imageDepthCompare.end(), [](bool compare) { return compare; });
-    });
+    return std::any_of(result.bindings.begin(), result.bindings.end(),
+                       [](const ShaderRecompiler::DescriptorBinding& binding) {
+                           return std::any_of(binding.imageDepthCompare.begin(), binding.imageDepthCompare.end(),
+                                              [](bool compare) { return compare; });
+                       });
 }
 
 void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason) {
     try {
         static_cast<void>(Compile(device, format, sampler));
     } catch (const std::exception& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
+        Require(std::string_view(error.what()).find(reason) != std::string_view::npos,
+                std::string("unexpected rejection: ") + error.what());
         return;
     }
     Require(false, std::string("expected rejection: ") + std::string(reason));
@@ -224,11 +251,14 @@ void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         FillTexels();
         FillInput();
-        Require(BindsDepthCompare(Compile(*device, Format32Float, {ClampEdge, FilterBilinear})), "an R32 float texture left the native comparison path");
-        Require(!BindsDepthCompare(Compile(*device, Format8888UNorm, {ClampEdge, FilterBilinear})), "a color texture kept a depth-compare binding");
+        Require(BindsDepthCompare(Compile(*device, Format32Float, {ClampEdge, FilterBilinear})),
+                "an R32 float texture left the native comparison path");
+        Require(!BindsDepthCompare(Compile(*device, Format8888UNorm, {ClampEdge, FilterBilinear})),
+                "a color texture kept a depth-compare binding");
         Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge");
         Run(*device, {ClampEdge, FilterBilinear}, "bilinear, clamp to edge");
         Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap");
@@ -239,13 +269,15 @@ int main() {
         Run(*device, {ClampEdge, FilterPoint, BorderBlack, 0u, 0x0140u}, "point, clamp to edge, sampler LOD bias");
         Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge, offsets, bias and LOD clamp", true);
         Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap, offsets, bias and LOD clamp", true);
-        Run(*device, {ClampBorder, FilterBilinear, BorderWhite, 0u, 0x3f00u}, "bilinear, white border, offsets, bias and LOD clamp", true);
+        Run(*device, {ClampBorder, FilterBilinear, BorderWhite, 0u, 0x3f00u},
+            "bilinear, white border, offsets, bias and LOD clamp", true);
         Reject(*device, Format8888UInt, {ClampEdge, FilterPoint}, "unsupported format");
         Reject(*device, Format8888UNorm, {ClampMirror, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampBorder, FilterPoint, BorderTable}, "border color table");
         Reject(*device, Format8888UNorm, {ClampEdge, FilterAnisoBilinear}, "point or bilinear");
-        Reject(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, ReductionMin}, "min or max reduction");
+        Reject(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, ReductionMin},
+               "min or max reduction");
         std::puts("emulated color compare tests passed");
         return 0;
     } catch (const std::exception& error) {

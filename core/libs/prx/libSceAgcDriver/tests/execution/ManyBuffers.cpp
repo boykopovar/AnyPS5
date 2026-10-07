@@ -40,26 +40,23 @@ constexpr std::uint32_t Endpgm = 0xbf810000u;
 alignas(4096) std::array<std::uint32_t, (MaxBuffers + 1u) * RegionWords> Data{};
 alignas(256) std::array<std::uint32_t, MaxBuffers * 4u> Table{};
 
-constexpr std::uint32_t Vop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0, std::uint32_t source1) {
+constexpr std::uint32_t Vop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0,
+                             std::uint32_t source1) {
     return (opcode << 25u) | (destination << 17u) | (source1 << 9u) | source0;
 }
 
-constexpr std::uint32_t Increment(std::uint32_t buffer) {
-    return (buffer + 1u) * 0x01000193u;
-}
+constexpr std::uint32_t Increment(std::uint32_t buffer) { return (buffer + 1u) * 0x01000193u; }
 
-constexpr std::size_t CodeWords(std::uint32_t buffers) {
-    return 2u + buffers * 10u;
-}
+constexpr std::size_t CodeWords(std::uint32_t buffers) { return 2u + buffers * 10u; }
 
-template <std::uint32_t Buffers>
-constexpr std::array<std::uint32_t, CodeWords(Buffers)> BuildCode() {
+template <std::uint32_t Buffers> constexpr std::array<std::uint32_t, CodeWords(Buffers)> BuildCode() {
     constexpr std::uint32_t vLshlrevB32 = 0x1au;
     constexpr std::uint32_t vAddNcU32 = 0x25u;
     constexpr std::uint32_t sLoadDwordx4 = 0xf4080000u | (DescriptorRegister << 6u) | (TableRegister / 2u);
     constexpr std::uint32_t bufferLoadDword = 0xe0301000u;
     constexpr std::uint32_t bufferStoreDword = 0xe0701000u | (Threads * 4u);
-    constexpr std::uint32_t operands = (ConstantZero << 24u) | ((DescriptorRegister / 4u) << 16u) | (DataVector << 8u) | OffsetVector;
+    constexpr std::uint32_t operands =
+        (ConstantZero << 24u) | ((DescriptorRegister / 4u) << 16u) | (DataVector << 8u) | OffsetVector;
     std::array<std::uint32_t, CodeWords(Buffers)> code{};
     std::size_t count = 0;
     code[count++] = Vop2(vLshlrevB32, OffsetVector, ConstantTwo, ThreadVector);
@@ -82,13 +79,9 @@ constexpr std::array<std::uint32_t, CodeWords(Buffers)> BuildCode() {
 alignas(256) constexpr std::array<std::uint32_t, CodeWords(PushBuffers)> PushCode = BuildCode<PushBuffers>();
 alignas(256) constexpr std::array<std::uint32_t, CodeWords(DataBuffers)> DataCode = BuildCode<DataBuffers>();
 
-std::uint32_t BufferBase(std::uint32_t buffer) {
-    return buffer * RegionWords + buffer % 4u;
-}
+std::uint32_t BufferBase(std::uint32_t buffer) { return buffer * RegionWords + buffer % 4u; }
 
-std::uint32_t InputValue(std::uint32_t buffer, std::uint32_t tid) {
-    return 0x40000000u | (buffer << 8u) | tid;
-}
+std::uint32_t InputValue(std::uint32_t buffer, std::uint32_t tid) { return 0x40000000u | (buffer << 8u) | tid; }
 
 std::string Hex(std::uint32_t value) {
     char text[16];
@@ -101,7 +94,8 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     Data.fill(0xdeadbeefu);
     for (std::uint32_t buffer = 0; buffer < buffers; ++buffer) {
         const auto base = BufferBase(buffer);
-        for (std::uint32_t tid = 0; tid < Threads; ++tid) Data[base + tid] = InputValue(buffer, tid);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid)
+            Data[base + tid] = InputValue(buffer, tid);
         const auto address = reinterpret_cast<std::uintptr_t>(&Data[base]);
         Table[buffer * 4u + 0u] = static_cast<std::uint32_t>(address);
         Table[buffer * 4u + 1u] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu);
@@ -109,22 +103,28 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
         Table[buffer * 4u + 3u] = 0x01016facu;
     }
     const auto table = reinterpret_cast<std::uintptr_t>(Table.data());
-    const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(table), static_cast<std::uint32_t>(table >> 32u)};
+    const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(table),
+                                              static_cast<std::uint32_t>(table >> 32u)};
     const std::span<const std::uint32_t> tableWords(Table.data(), buffers * 4u);
-    const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {table, std::as_bytes(tableWords)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 2> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}, {table, std::as_bytes(tableWords)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    const auto guest = std::find_if(result.bindings.begin(), result.bindings.end(), [](const auto& binding) { return binding.role == DescriptorRole::GuestBuffers; });
-    Require(guest != result.bindings.end() && guest->count == buffers, label + "the program does not bind every buffer");
-    const bool hasShaderData = std::any_of(result.bindings.begin(), result.bindings.end(), [](const auto& binding) { return binding.role == DescriptorRole::ShaderData; });
-    Require(hasShaderData == shaderData, label + (shaderData ? "the buffer offsets are not in shader data" : "the buffer offsets are not in push constants"));
+    const auto guest = std::find_if(result.bindings.begin(), result.bindings.end(),
+                                    [](const auto& binding) { return binding.role == DescriptorRole::GuestBuffers; });
+    Require(guest != result.bindings.end() && guest->count == buffers,
+            label + "the program does not bind every buffer");
+    const bool hasShaderData = std::any_of(result.bindings.begin(), result.bindings.end(), [](const auto& binding) {
+        return binding.role == DescriptorRole::ShaderData;
+    });
+    Require(hasShaderData == shaderData, label + (shaderData ? "the buffer offsets are not in shader data"
+                                                             : "the buffer offsets are not in push constants"));
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t buffer = 0; buffer < buffers; ++buffer) {
@@ -133,8 +133,10 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
             const auto input = Data[base + tid];
             const auto actual = Data[base + Threads + tid];
             const auto expected = InputValue(buffer, tid) + Increment(buffer);
-            Require(input == InputValue(buffer, tid), label + "buffer " + std::to_string(buffer) + " thread " + std::to_string(tid) + " input changed to " + Hex(input));
-            Require(actual == expected, label + "buffer " + std::to_string(buffer) + " thread " + std::to_string(tid) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            Require(input == InputValue(buffer, tid), label + "buffer " + std::to_string(buffer) + " thread " +
+                                                          std::to_string(tid) + " input changed to " + Hex(input));
+            Require(actual == expected, label + "buffer " + std::to_string(buffer) + " thread " + std::to_string(tid) +
+                                            " is " + Hex(actual) + ", expected " + Hex(expected));
         }
     }
 }
@@ -144,7 +146,8 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         Run(*device, PushCode, PushBuffers, false);
         Run(*device, DataCode, DataBuffers, true);
         std::puts("many buffers tests passed");

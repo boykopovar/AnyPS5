@@ -22,18 +22,24 @@ constexpr std::uint64_t LOCK_TAIL_NANOS = 1000000ULL;
 
 template <class TTryLock, class TTryLockFor>
 bool AcquireUntil(std::uint64_t deadlineNanos, TTryLock tryLock, TTryLockFor tryLockFor) {
-    if (Coarse()) return tryLockFor(RemainingMicros(deadlineNanos));
+    if (Coarse())
+        return tryLockFor(RemainingMicros(deadlineNanos));
     for (;;) {
-        if (tryLock()) return true;
+        if (tryLock())
+            return true;
         const std::uint64_t now = NowNanos();
-        if (now >= deadlineNanos) return false;
+        if (now >= deadlineNanos)
+            return false;
         const std::uint64_t remaining = deadlineNanos - now;
         if (remaining > LOCK_BULK_NANOS) {
-            if (tryLockFor((remaining - LOCK_BULK_NANOS) / 1000ULL)) return true;
+            if (tryLockFor((remaining - LOCK_BULK_NANOS) / 1000ULL))
+                return true;
             continue;
         }
-        if (remaining <= LOCK_TAIL_NANOS) SleepUntil(deadlineNanos);
-        else PollSleepUntil(now + LOCK_POLL_NANOS);
+        if (remaining <= LOCK_TAIL_NANOS)
+            SleepUntil(deadlineNanos);
+        else
+            PollSleepUntil(now + LOCK_POLL_NANOS);
     }
 }
 
@@ -49,8 +55,7 @@ public:
     void NotifyOne();
     void NotifyAll();
 
-    template <class TLock>
-    void Wait(TLock& lock) {
+    template <class TLock> void Wait(TLock& lock) {
 #ifdef _WIN32
         if (!Coarse()) {
             Waiter* waiter = enqueue();
@@ -63,8 +68,7 @@ public:
         coarse.wait(lock);
     }
 
-    template <class TLock>
-    bool WaitUntil(TLock& lock, std::uint64_t deadlineNanos) {
+    template <class TLock> bool WaitUntil(TLock& lock, std::uint64_t deadlineNanos) {
 #ifdef _WIN32
         if (!Coarse()) {
             Waiter* waiter = enqueue();
@@ -74,18 +78,20 @@ public:
             return signaled;
         }
 #endif
-        return coarse.wait_for(lock, std::chrono::microseconds(RemainingMicros(deadlineNanos))) == std::cv_status::no_timeout;
+        return coarse.wait_for(lock, std::chrono::microseconds(RemainingMicros(deadlineNanos))) ==
+               std::cv_status::no_timeout;
     }
 
-    template <class TLock, class TPredicate>
-    void Wait(TLock& lock, TPredicate predicate) {
-        while (!predicate()) Wait(lock);
+    template <class TLock, class TPredicate> void Wait(TLock& lock, TPredicate predicate) {
+        while (!predicate())
+            Wait(lock);
     }
 
     template <class TLock, class TPredicate>
     bool WaitUntil(TLock& lock, std::uint64_t deadlineNanos, TPredicate predicate) {
         while (!predicate()) {
-            if (!WaitUntil(lock, deadlineNanos)) return predicate();
+            if (!WaitUntil(lock, deadlineNanos))
+                return predicate();
         }
         return true;
     }
@@ -104,6 +110,6 @@ private:
     std::condition_variable_any coarse;
 };
 
-}  // namespace TimedWait
+} // namespace TimedWait
 
 #endif

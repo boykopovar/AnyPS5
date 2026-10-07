@@ -12,9 +12,7 @@ constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 std::mutex semInitializationMutex;
 
-PthreadSem destroyedSem() {
-    return reinterpret_cast<PthreadSem>(std::uintptr_t{2});
-}
+PthreadSem destroyedSem() { return reinterpret_cast<PthreadSem>(std::uintptr_t{2}); }
 
 PthreadSemPrivate* resolveSem(PthreadSem* sem) {
     if (!sem)
@@ -83,7 +81,8 @@ int APS5_VABI scePthreadSemTrywait(PthreadSem* sem) {
 int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
     auto* current = resolveSem(sem);
     std::unique_lock lock(current->_mutex);
-    const auto acquired = current->_cv.WaitUntil(lock, TimedWait::DeadlineNanos(usec), [&] { return current->_count > 0; });
+    const auto acquired =
+        current->_cv.WaitUntil(lock, TimedWait::DeadlineNanos(usec), [&] { return current->_count > 0; });
     if (!acquired)
         return sceTimedOut;
     --current->_count;
@@ -98,5 +97,4 @@ int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value) {
     *value = current->_count;
     return 0;
 }
-
 }

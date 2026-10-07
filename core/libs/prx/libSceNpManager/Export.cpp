@@ -20,22 +20,20 @@ int APS5_VABI sceNpAbortRequest(int req_id) {
     return 0;
 }
 
-int APS5_VABI sceNpCheckCallback(void) {
+int APS5_VABI sceNpCheckCallback(void) { return 0; }
+
+int APS5_VABI sceNpCheckNpAvailability(int req_id, const char* user, void* result) {
+    (void)req_id;
+    (void)user;
+    (void)result;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceNpCheckNpAvailability(int req_id, const char* user, void* result) {
- (void)req_id;
- (void)user;
- (void)result;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 int APS5_VABI sceNpCheckNpReachability(int req_id, int user_id) {
- (void)req_id;
- (void)user_id;
- return SCE_NP_ERROR_SIGNED_OUT;
+    (void)req_id;
+    (void)user_id;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpCheckPremium(int req_id, const NpCheckPremiumParameter* param, NpCheckPremiumResult* result) {
@@ -50,9 +48,7 @@ int APS5_VABI sceNpCreateAsyncRequest(const NpCreateAsyncRequestParameter* param
     return g_nextRequest.fetch_add(1, std::memory_order_relaxed);
 }
 
-int APS5_VABI sceNpCreateRequest(void) {
-    return g_nextRequest.fetch_add(1, std::memory_order_relaxed);
-}
+int APS5_VABI sceNpCreateRequest(void) { return g_nextRequest.fetch_add(1, std::memory_order_relaxed); }
 
 int APS5_VABI sceNpDeleteRequest(int req_id) {
     (void)req_id;
@@ -60,10 +56,11 @@ int APS5_VABI sceNpDeleteRequest(int req_id) {
 }
 
 int APS5_VABI sceNpGetAccountAge(int req_id, int user_id, uint8_t* age) {
- (void)req_id;
- (void)user_id;
- if (!age) return SCE_NP_ERROR_INVALID_ARGUMENT;
- return SCE_NP_ERROR_SIGNED_OUT;
+    (void)req_id;
+    (void)user_id;
+    if (!age)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
@@ -79,15 +76,16 @@ int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
 }
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
- (void)user_id;
- (void)np_id;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)user_id;
+    (void)np_id;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
     (void)user_id;
-    if (!state) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!state)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     *state = NP_REACHABILITY_STATE_UNAVAILABLE;
     return 0;
 }
@@ -100,58 +98,65 @@ int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
 
 int APS5_VABI sceNpGetState(int user_id, uint32_t* state) {
     (void)user_id;
-    if (!state) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!state)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     *state = NP_STATE_SIGNED_OUT;
     return 0;
 }
 
 int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
     (void)user_id;
-    if (!has_signed_up) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!has_signed_up)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     *has_signed_up = false;
     return 0;
 }
 
 int APS5_VABI sceNpPollAsync(int req_id, int* result) {
     (void)req_id;
-    if (result) *result = SCE_NP_ERROR_SIGNED_OUT;
+    if (result)
+        *result = SCE_NP_ERROR_SIGNED_OUT;
     return NP_POLL_ASYNC_FINISHED;
 }
 
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
- (void)callback;
- (void)userdata;
- NotImplemented_nid_no_patch(__func__);
+    (void)callback;
+    (void)userdata;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
     (void)userdata;
-    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!callback)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpRegisterPlusEventCallback(void* callback, void* userdata) {
     (void)userdata;
-    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!callback)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpRegisterPremiumEventCallback(void* callback, void* userdata) {
     (void)userdata;
-    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!callback)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
     (void)userdata;
-    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!callback)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
- (void)restriction;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)restriction;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpSetNpTitleId(const NpTitleId* title_id, const NpTitleSecret* title_secret) {
@@ -160,9 +165,7 @@ int APS5_VABI sceNpSetNpTitleId(const NpTitleId* title_id, const NpTitleSecret* 
     return 0;
 }
 
-int APS5_VABI sceNpUnregisterStateCallback(void) {
-    return 0;
-}
+int APS5_VABI sceNpUnregisterStateCallback(void) { return 0; }
 
 int APS5_VABI sceNpGetAccountLanguage2(int req_id, int user_id, void* language) {
     (void)req_id;
@@ -178,7 +181,8 @@ int APS5_VABI sceNpNotifyPremiumFeature(const void* param) {
 
 int APS5_VABI sceNpRegisterStateCallbackA(void* callback, void* userdata) {
     (void)userdata;
-    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (!callback)
+        return SCE_NP_ERROR_INVALID_ARGUMENT;
     return 1;
 }
 
@@ -187,13 +191,10 @@ int APS5_VABI sceNpUnregisterStateCallbackA(int callback_id) {
     return 0;
 }
 
-int APS5_VABI sceNpUnregisterPremiumEventCallback(void) {
-    return 0;
-}
+int APS5_VABI sceNpUnregisterPremiumEventCallback(void) { return 0; }
 
 int APS5_VABI sceNpGetUserIdByAccountId() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

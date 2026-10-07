@@ -37,18 +37,19 @@ WindowsDependencyStubBuilder::WindowsDependencyStubBuilder(PeSection& data) {
         {"newline", "\n"},
         {"ordinal", "#"},
         {"extension", ".dll"},
-        {"unresolved", "Dependency tables contain no missing imports; original load failure remains fatal.\n"}
-    };
+        {"unresolved", "Dependency tables contain no missing imports; original load failure remains fatal.\n"}};
     for (const auto& [name, value] : messages) {
         storage.emplace(name, CheckedRva(data.Rva + data.Data.size()));
         Io::AppendString(data.Data, value);
     }
     Io::AlignBuffer(data.Data, 4);
     unwindRva = CheckedRva(data.Rva + data.Data.size());
-    data.Data.insert(data.Data.end(), {1, 16, 9, 0, 16, 0x82, 12, 0xf0, 10, 0xe0, 8, 0xd0, 6, 0xc0, 4, 0x70, 3, 0x60, 2, 0x50, 1, 0x30, 0, 0});
+    data.Data.insert(data.Data.end(), {1, 16,   9, 0,    16, 0x82, 12, 0xf0, 10, 0xe0, 8, 0xd0,
+                                       6, 0xc0, 4, 0x70, 3,  0x60, 2,  0x50, 1,  0x30, 0, 0});
 }
 
-WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& code, const WindowsImports& imports) const {
+WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& code,
+                                                          const WindowsImports& imports) const {
     Assembler a(code, imports.Functions, storage);
 
     a.Begin("write");

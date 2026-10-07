@@ -21,17 +21,19 @@ alignas(256) std::array<std::uint32_t, Threads * Stride> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Stride> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 17> Vop1ControlCode{
-    0x34020082, 0xe0302000, 0x80000401, 0xbf8c3f70, 0x7e000000, 0x7e003600, 0x7e008200, 0x4a080881,
-    0xd5800000, 0x00000000, 0xd59b0000, 0x00000000, 0xd5c10000, 0x00000000, 0xe0702000, 0x80010401, 0xbf810000,
+    0x34020082, 0xe0302000, 0x80000401, 0xbf8c3f70, 0x7e000000, 0x7e003600, 0x7e008200, 0x4a080881, 0xd5800000,
+    0x00000000, 0xd59b0000, 0x00000000, 0xd5c10000, 0x00000000, 0xe0702000, 0x80010401, 0xbf810000,
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid * Stride] = tid * 0x01010101u + 7u;
+    for (std::uint32_t tid = 0; tid < Threads; ++tid)
+        Input[tid * Stride] = tid * 0x01010101u + 7u;
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -39,14 +41,14 @@ void Run(AgcDriver::VulkanDevice& device) {
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(Vop1ControlCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -57,7 +59,8 @@ void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = Input[tid * Stride] + 1u;
         const auto actual = Output[tid * Stride];
-        Require(actual == expected, "vop1 control: thread " + std::to_string(tid) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+        Require(actual == expected, "vop1 control: thread " + std::to_string(tid) + " is " + std::to_string(actual) +
+                                        ", expected " + std::to_string(expected));
     }
 }
 
@@ -66,7 +69,8 @@ void Check() {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         Run(*device);
         Check();
         std::puts("vop1 control tests passed");

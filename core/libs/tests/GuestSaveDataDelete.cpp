@@ -17,7 +17,8 @@ constexpr int SaveDataErrorParameter = -2137063424;
 int failures = 0;
 
 void Check(bool condition, const std::string& what) {
-    if (condition) return;
+    if (condition)
+        return;
     std::fprintf(stderr, "savedata delete check failed: %s\n", what.c_str());
     ++failures;
 }
@@ -38,7 +39,8 @@ void Write(const std::filesystem::path& path) {
 }
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() / ("anyps5-savedata-delete-" + std::to_string(std::random_device{}()));
+    const auto root =
+        std::filesystem::temp_directory_path() / ("anyps5-savedata-delete-" + std::to_string(std::random_device{}()));
     const auto work = root / "work";
     const auto kept = work / "_sd" / "kept" / "data.bin";
     const auto victim = work / "victim" / "important.txt";
@@ -48,8 +50,10 @@ int main() {
     std::filesystem::current_path(work);
 
     for (const char* invalid : {"../victim", "", ".", "..", "../..", "kept/..", "a\\b", "c:d"}) {
-        Check(Delete(invalid, std::strlen(invalid) + 1) == SaveDataErrorParameter, std::string("\"") + invalid + "\" is rejected");
-        Check(std::filesystem::exists(kept) && std::filesystem::exists(victim), std::string("\"") + invalid + "\" deletes nothing");
+        Check(Delete(invalid, std::strlen(invalid) + 1) == SaveDataErrorParameter,
+              std::string("\"") + invalid + "\" is rejected");
+        Check(std::filesystem::exists(kept) && std::filesystem::exists(victim),
+              std::string("\"") + invalid + "\" deletes nothing");
     }
     char unterminated[sizeof(SceSaveDataDirName::data)];
     std::memset(unterminated, 'a', sizeof(unterminated));
@@ -62,7 +66,8 @@ int main() {
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    if (failures != 0) return 1;
+    if (failures != 0)
+        return 1;
     std::printf("savedata delete tests passed\n");
     return 0;
 }

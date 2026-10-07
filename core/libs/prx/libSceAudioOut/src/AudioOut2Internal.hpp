@@ -21,9 +21,10 @@ bool AudioOut2TraceEnabled();
 // Seconds since the first AudioOut2 call, for the trace.
 double AudioOut2TraceSeconds();
 
-#define AUDIOOUT2_TRACE(...) \
-    do { \
-        if (AudioOut2TraceEnabled()) std::fprintf(stderr, "[audioout2] " __VA_ARGS__); \
+#define AUDIOOUT2_TRACE(...)                                                                                           \
+    do {                                                                                                               \
+        if (AudioOut2TraceEnabled())                                                                                   \
+            std::fprintf(stderr, "[audioout2] " __VA_ARGS__);                                                          \
     } while (0)
 
 static constexpr int SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80260502);
@@ -52,7 +53,8 @@ struct AudioOut2Port {
     bool int16 = false;
     const AudioOut2StereoFold* fold = nullptr;
     const void* data = nullptr;
-    float volume[AUDIO_OUT2_PORT_CHANNELS_MAX] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    float volume[AUDIO_OUT2_PORT_CHANNELS_MAX] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                                                  1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     std::uint64_t dataSets = 0;
     std::uint64_t attributeTraces = 0;
 };

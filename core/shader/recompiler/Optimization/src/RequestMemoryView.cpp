@@ -10,9 +10,7 @@ namespace ShaderRecompiler {
 
 namespace {
 
-[[noreturn]] void fail(const char* message) {
-    throw std::runtime_error(message);
-}
+[[noreturn]] void fail(const char* message) { throw std::runtime_error(message); }
 
 }
 
@@ -41,12 +39,14 @@ bool RequestMemoryView::ReadGuestMemory(void* userContext, std::uint64_t address
     const auto* self = static_cast<const RequestMemoryView*>(userContext);
     static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
     const auto miss = [&] {
-        if (debug) std::fprintf(stderr, "[srt] guest read 0x%llx is outside the request memory\n", static_cast<unsigned long long>(address));
+        if (debug)
+            std::fprintf(stderr, "[srt] guest read 0x%llx is outside the request memory\n",
+                         static_cast<unsigned long long>(address));
         return false;
     };
-    const auto it = std::upper_bound(self->regions.begin(), self->regions.end(), address, [](std::uint64_t addressValue, const MemoryRegion& region) {
-        return addressValue < region.guestAddress;
-    });
+    const auto it = std::upper_bound(
+        self->regions.begin(), self->regions.end(), address,
+        [](std::uint64_t addressValue, const MemoryRegion& region) { return addressValue < region.guestAddress; });
     if (it == self->regions.begin()) {
         return miss();
     }

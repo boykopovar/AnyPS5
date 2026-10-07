@@ -14,9 +14,7 @@ namespace ShaderRecompiler {
 
 namespace {
 
-[[noreturn]] void fail(const std::string& message) {
-    throw std::runtime_error(message);
-}
+[[noreturn]] void fail(const std::string& message) { throw std::runtime_error(message); }
 
 // Debug aid: APS5_TRACE_BUFFER_WRITTEN=1 prints, after every Populate, how many guest buffer
 // elements the program may store to and how many it only loads (this call and cumulative), so the
@@ -98,7 +96,8 @@ DescriptorImageShape ImageShapeForResource(const ImageResource& image) {
     fail("DescriptorBindingBuilder::Populate image resource dimension has no descriptor image shape");
 }
 
-DescriptorImageShape ImageShapeFor(const std::vector<ImageResource>& images, const std::vector<std::uint32_t>& resources) {
+DescriptorImageShape ImageShapeFor(const std::vector<ImageResource>& images,
+                                   const std::vector<std::uint32_t>& resources) {
     if (resources.empty()) {
         fail("DescriptorBindingBuilder::Populate guest image binding has no resources");
     }
@@ -113,7 +112,8 @@ DescriptorImageShape ImageShapeFor(const std::vector<ImageResource>& images, con
     return *shape;
 }
 
-std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
+std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_t>& resources,
+                                                  const ResourceSnapshot& snapshot) {
     std::vector<std::uint32_t> result;
     result.reserve(resources.size() * 4u);
     for (const std::uint32_t r : resources) {
@@ -131,7 +131,8 @@ std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_
     return result;
 }
 
-std::vector<std::uint32_t> GuestImagesDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
+std::vector<std::uint32_t> GuestImagesDescriptor(const std::vector<std::uint32_t>& resources,
+                                                 const ResourceSnapshot& snapshot) {
     std::vector<std::uint32_t> result;
     std::uint32_t dwordCount = 0;
     for (std::size_t i = 0; i < resources.size(); i++) {
@@ -155,7 +156,8 @@ std::vector<std::uint32_t> GuestImagesDescriptor(const std::vector<std::uint32_t
     return result;
 }
 
-std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
+std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32_t>& resources,
+                                                   const ResourceSnapshot& snapshot) {
     std::vector<std::uint32_t> result;
     std::uint32_t dwordCount = 0;
     for (std::size_t i = 0; i < resources.size(); i++) {
@@ -182,18 +184,26 @@ std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32
 constexpr std::uint32_t ForceUnnormalizedBit = 1u << 15u;
 
 [[noreturn]] void failUnnormalized(const char* reason) {
-    fail(std::string("DescriptorBindingBuilder::Populate unnormalized guest sampler ") + reason + ", which is not implemented");
+    fail(std::string("DescriptorBindingBuilder::Populate unnormalized guest sampler ") + reason +
+         ", which is not implemented");
 }
 
 const char* UnnormalizedUseReason(std::uint32_t uses) {
     switch (uses & (~uses + 1u)) {
-        case SamplerUseImplicitLod: return "is used by an implicit-LOD sample";
-        case SamplerUseGradient: return "is used by a sample with derivatives";
-        case SamplerUseOffset: return "is used with a texel offset";
-        case SamplerUseCompare: return "is used with depth comparison";
-        case SamplerUseGather: return "is used by a gather";
-        case SamplerUseQueryLod: return "is used by image_get_lod";
-        default: return "is used by an image_sample_*_a variant";
+    case SamplerUseImplicitLod:
+        return "is used by an implicit-LOD sample";
+    case SamplerUseGradient:
+        return "is used by a sample with derivatives";
+    case SamplerUseOffset:
+        return "is used with a texel offset";
+    case SamplerUseCompare:
+        return "is used with depth comparison";
+    case SamplerUseGather:
+        return "is used by a gather";
+    case SamplerUseQueryLod:
+        return "is used by image_get_lod";
+    default:
+        return "is used by an image_sample_*_a variant";
     }
 }
 
@@ -224,7 +234,8 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             if (image.indirectRoot != ImageResource::NoIndirectImage) {
                 failUnnormalized("samples an image selected at run time");
             }
-            if ((image.dimension != RdnaImageDimension::Dim1D && image.dimension != RdnaImageDimension::Dim2D) || image.cube) {
+            if ((image.dimension != RdnaImageDimension::Dim1D && image.dimension != RdnaImageDimension::Dim2D) ||
+                image.cube) {
                 failUnnormalized("samples a 1D-array, 2D-array, 3D, cube or multisampled image");
             }
             if (image.depthCompare) {
@@ -246,14 +257,16 @@ std::vector<std::uint32_t> SamplerElements(const IrBindingLayout& layout, const 
         if (logical.kind != DescriptorBindingKind::Samplers) {
             continue;
         }
-        for (std::uint32_t element = 0; element < logical.resources.size() && element < ShaderInfo::MaxSamplers; element++) {
+        for (std::uint32_t element = 0; element < logical.resources.size() && element < ShaderInfo::MaxSamplers;
+             element++) {
             elements.at(logical.resources[element]) = element;
         }
     }
     return elements;
 }
 
-std::uint32_t ImageSamplerMask(const ShaderInfo& info, const std::vector<std::uint32_t>& samplerElements, std::uint32_t resource) {
+std::uint32_t ImageSamplerMask(const ShaderInfo& info, const std::vector<std::uint32_t>& samplerElements,
+                               std::uint32_t resource) {
     const std::uint32_t root = info.images.at(resource).indirectRoot;
     std::uint32_t mask = 0;
     for (const SampledResourcePair& pair : info.sampledPairs) {
@@ -261,14 +274,17 @@ std::uint32_t ImageSamplerMask(const ShaderInfo& info, const std::vector<std::ui
             continue;
         }
         if (pair.sampler >= samplerElements.size() || samplerElements[pair.sampler] >= ShaderInfo::MaxSamplers) {
-            fail("DescriptorBindingBuilder::Populate sampled image pair names a sampler outside the first " + std::to_string(ShaderInfo::MaxSamplers) + " elements of the sampler binding");
+            fail("DescriptorBindingBuilder::Populate sampled image pair names a sampler outside the first " +
+                 std::to_string(ShaderInfo::MaxSamplers) + " elements of the sampler binding");
         }
         mask |= 1u << samplerElements[pair.sampler];
     }
     return mask;
 }
 
-std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) {
+std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, std::uint32_t userDataBase,
+                                               const ResourceSnapshot& snapshot,
+                                               const std::array<std::uint32_t, 3>& partialThreads) {
     std::vector<std::uint32_t> result(layout.ShaderDataDwords(), 0u);
     for (std::size_t i = 0; i < layout.userDataRegisters.size(); i++) {
         const std::uint32_t reg = layout.userDataRegisters[i];
@@ -291,17 +307,25 @@ std::vector<std::uint32_t> ShaderDataDwordsFor(const IrBindingLayout& layout, st
 std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter) {
     const bool reduced = ((word0 >> 29u) & 3u) != 0u;
     if (reduced && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u)) {
-        fail("DescriptorBindingBuilder: a min or max reduction sampler that filters between texels or mip levels samples an image that needs point filtering (sint, converted or depth-bits format), which is not implemented");
+        fail("DescriptorBindingBuilder: a min or max reduction sampler that filters between texels or mip levels "
+             "samples an image that needs point filtering (sint, converted or depth-bits format), which is not "
+             "implemented");
     }
     const bool mipmapped = ((filter >> 26u) & 3u) != 0u;
     return (filter & ~(0xffu << 20u)) | (1u << 24u) | (mipmapped ? 1u << 26u : 0u);
 }
 
-void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const {
-    Populate(allocation, program.Info(), program.Resources().stage, program.Resources().userDataBase, snapshot, partialThreads);
+void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const IrProgram& program,
+                                        const ResourceSnapshot& snapshot,
+                                        const std::array<std::uint32_t, 3>& partialThreads) const {
+    Populate(allocation, program.Info(), program.Resources().stage, program.Resources().userDataBase, snapshot,
+             partialThreads);
 }
 
-void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const {
+void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const ShaderInfo& info,
+                                        IrShaderStage stage, std::uint32_t userDataBase,
+                                        const ResourceSnapshot& snapshot,
+                                        const std::array<std::uint32_t, 3>& partialThreads) const {
     const IrBindingLayout& layout = allocation.layout;
     const std::vector<std::uint32_t> shaderData = ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads);
     const UnnormalizedProof unnormalized = ProveUnnormalized(info, snapshot);
@@ -330,8 +354,10 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 // (ResourceTracker::Merge), so an element without a store or atomic is read-only
                 // over its whole extent; stores through pointers (BDA) never bind a V#.
                 physical.bufferWritten.push_back(buffer.written || buffer.atomic);
-                if (buffer.written || buffer.atomic) ++writtenHere;
-                else ++readOnlyHere;
+                if (buffer.written || buffer.atomic)
+                    ++writtenHere;
+                else
+                    ++readOnlyHere;
             }
             break;
         case DescriptorRole::GuestImages:
@@ -377,7 +403,8 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             break;
         }
 
-        if (physical.role == DescriptorRole::GuestBuffers || physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
+        if (physical.role == DescriptorRole::GuestBuffers || physical.role == DescriptorRole::GuestImages ||
+            physical.role == DescriptorRole::GuestSamplers) {
             if (physical.count == 0u || physical.guestDescriptor.size() % physical.count != 0u) {
                 fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
             }
@@ -391,7 +418,9 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         // each program twice), so the per-call counts are the ones to sum per program.
         const auto written = bufferWrittenCounts.written.fetch_add(writtenHere) + writtenHere;
         const auto readOnly = bufferWrittenCounts.readOnly.fetch_add(readOnlyHere) + readOnlyHere;
-        std::fprintf(stderr, "[bindings] guest buffer elements: %zu written, %zu read-only (total so far: %llu / %llu)\n", writtenHere, readOnlyHere, written, readOnly);
+        std::fprintf(stderr,
+                     "[bindings] guest buffer elements: %zu written, %zu read-only (total so far: %llu / %llu)\n",
+                     writtenHere, readOnlyHere, written, readOnly);
     }
     allocation.bindings = std::move(bindings);
     allocation.pushConstants.clear();

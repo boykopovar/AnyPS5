@@ -23,11 +23,15 @@ enum class DccKeys { Uncompressed, Clear0000, Clear0001, Clear1110, Clear1111, C
 const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);
 
-template<typename ReadFollowed, typename ReadNamed>
-bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys filled, std::uint64_t namedDcc, ReadFollowed&& readFollowed, ReadNamed&& readNamed) {
-    if (namedDcc == 0 || namedDcc == followedDcc) return true;
-    if (uploaded != DccKeys::Uncompressed || filled != DccKeys::Uncompressed) return false;
-    if (followedDcc != 0 && readFollowed() != DccKeys::Uncompressed) return false;
+template <typename ReadFollowed, typename ReadNamed>
+bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys filled, std::uint64_t namedDcc,
+                      ReadFollowed&& readFollowed, ReadNamed&& readNamed) {
+    if (namedDcc == 0 || namedDcc == followedDcc)
+        return true;
+    if (uploaded != DccKeys::Uncompressed || filled != DccKeys::Uncompressed)
+        return false;
+    if (followedDcc != 0 && readFollowed() != DccKeys::Uncompressed)
+        return false;
     return readNamed() == DccKeys::Uncompressed;
 }
 // The keys covering a surface of `surfaceBytes`, when they all agree.

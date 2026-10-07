@@ -136,9 +136,12 @@ struct VideoOutConfig {
     std::array<BufferAttributeGroup, VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX> groups{};
 
     void Check() const {
-        if (failure) std::rethrow_exception(failure);
-        if (shutdownToken.stop_requested()) throw ProcessShutdown{};
-        if (!opened || closing) throw std::runtime_error("VideoOut: port is closed");
+        if (failure)
+            std::rethrow_exception(failure);
+        if (shutdownToken.stop_requested())
+            throw ProcessShutdown{};
+        if (!opened || closing)
+            throw std::runtime_error("VideoOut: port is closed");
     }
 };
 

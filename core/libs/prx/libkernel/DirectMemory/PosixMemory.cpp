@@ -22,15 +22,13 @@ bool RoundLength(std::size_t length, std::size_t& rounded) {
     return true;
 }
 
-void SetError(int error) {
-    *__error_nid_postfix() = error;
-}
+void SetError(int error) { *__error_nid_postfix() = error; }
 }
 
 extern "C" {
 
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection,
-                                int flags, int descriptor, std::int64_t offset) noexcept {
+void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor,
+                                 std::int64_t offset) noexcept {
     const auto failed = [](int error) -> void* {
         SetError(error);
         return reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
@@ -47,7 +45,8 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     void* mapped = nullptr;
     try {
         const auto result = DoMapAnon(&mapped, rounded, protection, 0);
-        if (result != 0) return failed(GuestNoMemory);
+        if (result != 0)
+            return failed(GuestNoMemory);
         return mapped;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);
@@ -63,12 +62,12 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
     };
     std::size_t rounded;
     const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (!RoundLength(length, rounded) || start == 0 ||
-        (start & (PS5_PAGE_SIZE - 1)) != 0 ||
+    if (!RoundLength(length, rounded) || start == 0 || (start & (PS5_PAGE_SIZE - 1)) != 0 ||
         rounded > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {
-        if (DoMunmap(address, rounded) != 0) return failed(GuestInvalid);
+        if (DoMunmap(address, rounded) != 0)
+            return failed(GuestInvalid);
         return 0;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);
@@ -77,5 +76,4 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         return failed(GuestInvalid);
     }
 }
-
 }

@@ -22,11 +22,7 @@ namespace {
 
 using namespace ShaderRecompiler;
 
-enum class Split {
-    None,
-    Clone,
-    Route
-};
+enum class Split { None, Clone, Route };
 
 struct Program {
     std::string_view name;
@@ -40,13 +36,15 @@ struct Program {
 using RouteState = std::map<std::uint32_t, bool>;
 
 void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
 std::vector<std::uint32_t> constructBlocks(const ControlFlowGraph& graph, std::uint32_t header, std::uint32_t exclude) {
     std::vector<std::uint32_t> blocks;
     for (const auto& block : graph.blocks) {
-        if (graph.Dominates(header, block.id) && (exclude == InvalidControlFlowId || !graph.Dominates(exclude, block.id))) {
+        if (graph.Dominates(header, block.id) &&
+            (exclude == InvalidControlFlowId || !graph.Dominates(exclude, block.id))) {
             blocks.push_back(block.id);
         }
     }
@@ -56,7 +54,8 @@ std::vector<std::uint32_t> constructBlocks(const ControlFlowGraph& graph, std::u
 bool inEnclosingContinueConstruct(const ControlFlowGraph& graph, std::uint32_t header, std::uint32_t member) {
     return std::any_of(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& loop) {
         const auto continueBlock = loop.terminator.continueBlock;
-        return loop.terminator.loopHeader && graph.Dominates(loop.id, header) && !graph.Dominates(continueBlock, header) && graph.Dominates(continueBlock, member);
+        return loop.terminator.loopHeader && graph.Dominates(loop.id, header) &&
+               !graph.Dominates(continueBlock, header) && graph.Dominates(continueBlock, member);
     });
 }
 
@@ -65,46 +64,68 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
     std::vector<std::pair<std::uint32_t, std::uint32_t>> loopExits;
     for (const auto& block : graph.blocks) {
         const auto& terminator = block.terminator;
-        if (terminator.mergeBlock == InvalidControlFlowId) continue;
-        require(mergeOwners.emplace(terminator.mergeBlock, block.id).second, prefix + "block " + std::to_string(terminator.mergeBlock) + " merges two constructs");
-        if (terminator.loopHeader) loopExits.emplace_back(terminator.mergeBlock, terminator.continueBlock);
+        if (terminator.mergeBlock == InvalidControlFlowId)
+            continue;
+        require(mergeOwners.emplace(terminator.mergeBlock, block.id).second,
+                prefix + "block " + std::to_string(terminator.mergeBlock) + " merges two constructs");
+        if (terminator.loopHeader)
+            loopExits.emplace_back(terminator.mergeBlock, terminator.continueBlock);
     }
     for (const auto& block : graph.blocks) {
         const auto& terminator = block.terminator;
-        if (terminator.loopHeader || terminator.mergeBlock == InvalidControlFlowId) continue;
+        if (terminator.loopHeader || terminator.mergeBlock == InvalidControlFlowId)
+            continue;
         for (const auto member : constructBlocks(graph, block.id, terminator.mergeBlock)) {
-            if (inEnclosingContinueConstruct(graph, block.id, member)) continue;
+            if (inEnclosingContinueConstruct(graph, block.id, member))
+                continue;
             for (const auto successor : graph.FindBlock(member).successors) {
-                if (successor == terminator.mergeBlock || (graph.Dominates(block.id, successor) && !graph.Dominates(terminator.mergeBlock, successor))) continue;
-                const bool loopExit = std::any_of(loopExits.begin(), loopExits.end(), [&](const auto& exits) { return successor == exits.first || successor == exits.second; });
-                require(loopExit, prefix + "block " + std::to_string(member) + " of the selection at block " + std::to_string(block.id) + " branches to block " + std::to_string(successor) + " outside the construct");
+                if (successor == terminator.mergeBlock ||
+                    (graph.Dominates(block.id, successor) && !graph.Dominates(terminator.mergeBlock, successor)))
+                    continue;
+                const bool loopExit = std::any_of(loopExits.begin(), loopExits.end(), [&](const auto& exits) {
+                    return successor == exits.first || successor == exits.second;
+                });
+                require(loopExit, prefix + "block " + std::to_string(member) + " of the selection at block " +
+                                      std::to_string(block.id) + " branches to block " + std::to_string(successor) +
+                                      " outside the construct");
             }
         }
     }
     for (const auto& loop : graph.blocks) {
-        if (!loop.terminator.loopHeader) continue;
+        if (!loop.terminator.loopHeader)
+            continue;
         const auto continueBlock = loop.terminator.continueBlock;
         for (const auto member : constructBlocks(graph, loop.id, loop.terminator.mergeBlock)) {
             const auto& terminator = graph.FindBlock(member).terminator;
-            if (terminator.loopHeader || graph.Dominates(continueBlock, member)) continue;
-            require(terminator.mergeBlock != continueBlock, prefix + "the selection at block " + std::to_string(member) + " in the loop at block " + std::to_string(loop.id) + " merges at the loop's continue block " + std::to_string(continueBlock));
+            if (terminator.loopHeader || graph.Dominates(continueBlock, member))
+                continue;
+            require(terminator.mergeBlock != continueBlock,
+                    prefix + "the selection at block " + std::to_string(member) + " in the loop at block " +
+                        std::to_string(loop.id) + " merges at the loop's continue block " +
+                        std::to_string(continueBlock));
         }
     }
 }
 
-std::uint32_t followEmptyBlocks(const std::string& prefix, const ControlFlowGraph& graph, std::uint32_t blockId, RouteState& routes) {
+std::uint32_t followEmptyBlocks(const std::string& prefix, const ControlFlowGraph& graph, std::uint32_t blockId,
+                                RouteState& routes) {
     for (std::size_t steps = 0; steps <= graph.blocks.size(); ++steps) {
         const auto& block = graph.FindBlock(blockId);
         const auto& terminator = block.terminator;
         const bool empty = block.instructionBegin == block.instructionEnd;
-        require(terminator.gotoValue < 0 || empty, prefix + "block " + std::to_string(block.id) + " sets a route variable after guest instructions");
-        if (terminator.gotoValue >= 0) routes[terminator.gotoVariable] = terminator.gotoValue != 0;
-        if (!empty) return blockId;
+        require(terminator.gotoValue < 0 || empty,
+                prefix + "block " + std::to_string(block.id) + " sets a route variable after guest instructions");
+        if (terminator.gotoValue >= 0)
+            routes[terminator.gotoVariable] = terminator.gotoValue != 0;
+        if (!empty)
+            return blockId;
         if (terminator.kind == TerminatorKind::Branch) {
             blockId = terminator.trueBlock;
-        } else if (terminator.kind == TerminatorKind::ConditionalBranch && terminator.condition == BranchCondition::GotoVariable) {
+        } else if (terminator.kind == TerminatorKind::ConditionalBranch &&
+                   terminator.condition == BranchCondition::GotoVariable) {
             const auto route = routes.find(terminator.gotoVariable);
-            require(route != routes.end(), prefix + "block " + std::to_string(block.id) + " reads route variable " + std::to_string(terminator.gotoVariable) + " before any path sets it");
+            require(route != routes.end(), prefix + "block " + std::to_string(block.id) + " reads route variable " +
+                                               std::to_string(terminator.gotoVariable) + " before any path sets it");
             blockId = route->second ? terminator.trueBlock : terminator.falseBlock;
         } else {
             return blockId;
@@ -113,8 +134,10 @@ std::uint32_t followEmptyBlocks(const std::string& prefix, const ControlFlowGrap
     throw std::runtime_error(prefix + "a cycle of empty blocks");
 }
 
-void verifySameExecutions(const std::string& prefix, const ControlFlowGraph& original, const ControlFlowGraph& structured) {
-    std::vector<std::tuple<std::uint32_t, std::uint32_t, RouteState>> pending{{structured.blocks.front().id, original.entryBlock, {}}};
+void verifySameExecutions(const std::string& prefix, const ControlFlowGraph& original,
+                          const ControlFlowGraph& structured) {
+    std::vector<std::tuple<std::uint32_t, std::uint32_t, RouteState>> pending{
+        {structured.blocks.front().id, original.entryBlock, {}}};
     std::vector<std::tuple<std::uint32_t, std::uint32_t, RouteState>> visited;
     RouteState none;
     while (!pending.empty()) {
@@ -123,14 +146,23 @@ void verifySameExecutions(const std::string& prefix, const ControlFlowGraph& ori
         const auto copyId = followEmptyBlocks(prefix, structured, structuredId, routes);
         const auto sourceId = followEmptyBlocks(prefix, original, originalId, none);
         auto state = std::make_tuple(copyId, sourceId, routes);
-        if (std::find(visited.begin(), visited.end(), state) != visited.end()) continue;
+        if (std::find(visited.begin(), visited.end(), state) != visited.end())
+            continue;
         visited.push_back(state);
         const auto& copy = structured.FindBlock(copyId);
         const auto& source = original.FindBlock(sourceId);
-        require(copy.instructionBegin == source.instructionBegin && copy.instructionEnd == source.instructionEnd, prefix + "block " + std::to_string(copy.id) + " runs other instructions than block " + std::to_string(source.id));
-        require(copy.terminator.kind == source.terminator.kind && copy.terminator.condition == source.terminator.condition, prefix + "block " + std::to_string(copy.id) + " branches differently from block " + std::to_string(source.id));
-        if (source.terminator.kind == TerminatorKind::Branch || source.terminator.kind == TerminatorKind::ConditionalBranch) pending.emplace_back(copy.terminator.trueBlock, source.terminator.trueBlock, routes);
-        if (source.terminator.kind == TerminatorKind::ConditionalBranch) pending.emplace_back(copy.terminator.falseBlock, source.terminator.falseBlock, routes);
+        require(copy.instructionBegin == source.instructionBegin && copy.instructionEnd == source.instructionEnd,
+                prefix + "block " + std::to_string(copy.id) + " runs other instructions than block " +
+                    std::to_string(source.id));
+        require(copy.terminator.kind == source.terminator.kind &&
+                    copy.terminator.condition == source.terminator.condition,
+                prefix + "block " + std::to_string(copy.id) + " branches differently from block " +
+                    std::to_string(source.id));
+        if (source.terminator.kind == TerminatorKind::Branch ||
+            source.terminator.kind == TerminatorKind::ConditionalBranch)
+            pending.emplace_back(copy.terminator.trueBlock, source.terminator.trueBlock, routes);
+        if (source.terminator.kind == TerminatorKind::ConditionalBranch)
+            pending.emplace_back(copy.terminator.falseBlock, source.terminator.falseBlock, routes);
     }
 }
 
@@ -138,7 +170,9 @@ std::size_t clonedInstructions(const ControlFlowGraph& graph) {
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::size_t> copies;
     std::size_t cloned = 0;
     for (const auto& block : graph.blocks) {
-        if (block.instructionBegin != block.instructionEnd && copies[{block.instructionBegin, block.instructionEnd}]++ != 0) cloned += block.instructionEnd - block.instructionBegin;
+        if (block.instructionBegin != block.instructionEnd &&
+            copies[{block.instructionBegin, block.instructionEnd}]++ != 0)
+            cloned += block.instructionEnd - block.instructionBegin;
     }
     return cloned;
 }
@@ -146,7 +180,9 @@ std::size_t clonedInstructions(const ControlFlowGraph& graph) {
 std::size_t routeVariables(const ControlFlowGraph& graph) {
     std::vector<std::uint32_t> variables;
     for (const auto& block : graph.blocks) {
-        if (block.terminator.condition == BranchCondition::GotoVariable && std::find(variables.begin(), variables.end(), block.terminator.gotoVariable) == variables.end()) variables.push_back(block.terminator.gotoVariable);
+        if (block.terminator.condition == BranchCondition::GotoVariable &&
+            std::find(variables.begin(), variables.end(), block.terminator.gotoVariable) == variables.end())
+            variables.push_back(block.terminator.gotoVariable);
     }
     return variables.size();
 }
@@ -179,7 +215,8 @@ void verifyRequest(const char* path) {
     text << file.rdbuf();
     const auto request = RequestSerializer{}.Deserialize(text.str());
     const auto result = verifyGraph(path, request.request.shader.code);
-    std::printf("%s: structured with %zu added blocks, %zu cloned instructions, %zu route variables\n", path, result.addedBlocks, result.clonedInstructions, result.routeVariables);
+    std::printf("%s: structured with %zu added blocks, %zu cloned instructions, %zu route variables\n", path,
+                result.addedBlocks, result.clonedInstructions, result.routeVariables);
 }
 
 std::size_t recompile(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t subgroupSize) {
@@ -212,35 +249,45 @@ void verifyProgram(const Program& program) {
     const std::string name(program.name);
     const auto result = verifyGraph(name, program.code);
     if (program.split == Split::None) {
-        require(result.clonedInstructions == 0 && result.routeVariables == 0, name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        require(result.clonedInstructions == 0 && result.routeVariables == 0,
+                name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) +
+                    " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else if (program.split == Split::Clone) {
-        require(result.clonedInstructions != 0 && result.routeVariables == 0, name + ": expected a clone, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        require(result.clonedInstructions != 0 && result.routeVariables == 0,
+                name + ": expected a clone, got " + std::to_string(result.clonedInstructions) +
+                    " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else {
-        require(result.clonedInstructions <= program.clonedLimit && result.routeVariables != 0, name + ": expected routing with at most " + std::to_string(program.clonedLimit) + " cloned instructions, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        require(result.clonedInstructions <= program.clonedLimit && result.routeVariables != 0,
+                name + ": expected routing with at most " + std::to_string(program.clonedLimit) +
+                    " cloned instructions, got " + std::to_string(result.clonedInstructions) +
+                    " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     }
     const auto words = recompile(name, program.code, 64u);
     static_cast<void>(recompile(name, program.code, 32u));
     if (!program.reference.empty()) {
         const auto reference = recompile(name, program.reference, 64u);
-        require(words * 10u <= reference * 11u, name + ": " + std::to_string(words) + " SPIR-V words, more than 10% over the " + std::to_string(reference) + " of the program without the entering branch");
+        require(words * 10u <= reference * 11u,
+                name + ": " + std::to_string(words) + " SPIR-V words, more than 10% over the " +
+                    std::to_string(reference) + " of the program without the entering branch");
     }
 }
 
 const std::vector<std::uint32_t> DwordTableGetpcFirst{
-    0xbe8c1f00u, 0x800cff0cu, 0x00000058u, 0x820d800du, 0x83928202u, 0xd4c40016u, 0x02000500u, 0x8f128212u, 0xf4000386u, 0x24000000u,
-    0xbf8cc07fu, 0x7d820003u, 0x808c0e0cu, 0x828d800du, 0xbefd210cu, 0x7e020281u, 0xbf820003u, 0x7e020282u, 0xbf820001u, 0x7e020283u,
-    0xe0700000u, 0x80000100u, 0xbf810000u, 0x00000020u, 0x00000018u, 0x00000010u};
+    0xbe8c1f00u, 0x800cff0cu, 0x00000058u, 0x820d800du, 0x83928202u, 0xd4c40016u, 0x02000500u, 0x8f128212u, 0xf4000386u,
+    0x24000000u, 0xbf8cc07fu, 0x7d820003u, 0x808c0e0cu, 0x828d800du, 0xbefd210cu, 0x7e020281u, 0xbf820003u, 0x7e020282u,
+    0xbf820001u, 0x7e020283u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x00000020u, 0x00000018u, 0x00000010u};
 const std::vector<std::uint32_t> DwordTableIndexFirst{
-    0x816ac102u, 0x83ea826au, 0x7e020280u, 0x8f6a826au, 0xbe8e1f00u, 0x800ebc0eu, 0x820f800fu, 0xf4000487u, 0xd4000008u, 0x8aea167eu,
-    0xbf8cc07fu, 0x808e120eu, 0x828f800fu, 0xbefd210eu, 0x7e020281u, 0xbf820003u, 0x7e020282u, 0xbf820001u, 0x7e020283u, 0xe0700000u,
-    0x80000100u, 0xbf810000u, 0x00000018u, 0x00000010u, 0x00000008u};
-const std::vector<std::uint32_t> LongBranchVcc{
-    0x7e020281u, 0xbeea1f00u, 0x806a906au, 0x826b806bu, 0xbefd216au, 0x7e020282u, 0xe0700000u, 0x80000100u, 0xbf810000u};
-const std::vector<std::uint32_t> LongBranchBack{
-    0xbe880380u, 0x7e020280u, 0x4a020281u, 0x80089008u, 0xbf0ac008u, 0xbf840004u, 0xbe901f00u, 0x80909410u, 0x82918011u, 0xbefd2110u,
-    0xe0700000u, 0x80000100u, 0xbf810000u};
+    0x816ac102u, 0x83ea826au, 0x7e020280u, 0x8f6a826au, 0xbe8e1f00u, 0x800ebc0eu, 0x820f800fu, 0xf4000487u, 0xd4000008u,
+    0x8aea167eu, 0xbf8cc07fu, 0x808e120eu, 0x828f800fu, 0xbefd210eu, 0x7e020281u, 0xbf820003u, 0x7e020282u, 0xbf820001u,
+    0x7e020283u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x00000018u, 0x00000010u, 0x00000008u};
+const std::vector<std::uint32_t> LongBranchVcc{0x7e020281u, 0xbeea1f00u, 0x806a906au, 0x826b806bu, 0xbefd216au,
+                                               0x7e020282u, 0xe0700000u, 0x80000100u, 0xbf810000u};
+const std::vector<std::uint32_t> LongBranchBack{0xbe880380u, 0x7e020280u, 0x4a020281u, 0x80089008u, 0xbf0ac008u,
+                                                0xbf840004u, 0xbe901f00u, 0x80909410u, 0x82918011u, 0xbefd2110u,
+                                                0xe0700000u, 0x80000100u, 0xbf810000u};
 
-std::vector<std::uint32_t> patched(std::vector<std::uint32_t> code, std::size_t word, std::initializer_list<std::uint32_t> replacement) {
+std::vector<std::uint32_t> patched(std::vector<std::uint32_t> code, std::size_t word,
+                                   std::initializer_list<std::uint32_t> replacement) {
     std::copy(replacement.begin(), replacement.end(), code.begin() + static_cast<std::ptrdiff_t>(word));
     return code;
 }
@@ -254,49 +301,71 @@ std::string refusal(std::span<const std::uint32_t> code) {
     return {};
 }
 
-void verifyJumpTable(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t loadPc, const std::vector<std::uint64_t>& values, const std::vector<std::uint32_t>& targets) {
+void verifyJumpTable(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t loadPc,
+                     const std::vector<std::uint64_t>& values, const std::vector<std::uint32_t>& targets) {
     const auto graph = GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(code));
-    require(graph.codeTableLoads.size() == 1u && graph.codeTableLoads.front().programCounter == loadPc && graph.codeTableLoads.front().values == values, name + ": wrong code table");
+    require(graph.codeTableLoads.size() == 1u && graph.codeTableLoads.front().programCounter == loadPc &&
+                graph.codeTableLoads.front().values == values,
+            name + ": wrong code table");
     std::vector<std::uint32_t> lowered;
     for (const auto& block : graph.blocks) {
-        if (block.terminator.indirectPcSgpr != InvalidControlFlowId) lowered.insert(lowered.end(), block.terminator.indirectTargetProgramCounters.begin(), block.terminator.indirectTargetProgramCounters.end());
+        if (block.terminator.indirectPcSgpr != InvalidControlFlowId)
+            lowered.insert(lowered.end(), block.terminator.indirectTargetProgramCounters.begin(),
+                           block.terminator.indirectTargetProgramCounters.end());
     }
     std::sort(lowered.begin(), lowered.end());
     require(lowered == targets, name + ": the jump does not reach exactly the table targets");
 }
 
-void verifyLongBranch(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t branchPc, std::uint32_t target) {
+void verifyLongBranch(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t branchPc,
+                      std::uint32_t target) {
     const auto decoded = RdnaInstructionDecoder{}.Decode(code);
     const auto graph = GraphBuilder{}.Build(decoded);
-    const auto source = std::find_if(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& block) { return block.instructionEnd != block.instructionBegin && decoded.instructions[block.instructionEnd - 1u].programCounter == branchPc; });
-    require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch && graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target, name + ": the jump does not branch to " + std::to_string(target));
+    const auto source = std::find_if(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& block) {
+        return block.instructionEnd != block.instructionBegin &&
+               decoded.instructions[block.instructionEnd - 1u].programCounter == branchPc;
+    });
+    require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch &&
+                graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target,
+            name + ": the jump does not branch to " + std::to_string(target));
 }
 
 void verifyNullSwappc() {
     const std::array<std::uint32_t, 2> jump{0xbefd210cu, 0xbf810000u};
     const auto swappc = RdnaInstructionDecoder{}.Decode(jump).instructions.front();
-    require(swappc.op == RdnaOpcode::SSetpcB64 && swappc.opcodeId == 0x21u && swappc.destination.kind == RdnaOperandKind::Null &&
-        swappc.source0.kind == RdnaOperandKind::ScalarRegister && swappc.source0.reg == 12u, "s_swappc_b64 null, s[12:13] does not decode as s_setpc_b64 s[12:13]");
+    require(swappc.op == RdnaOpcode::SSetpcB64 && swappc.opcodeId == 0x21u &&
+                swappc.destination.kind == RdnaOperandKind::Null &&
+                swappc.source0.kind == RdnaOperandKind::ScalarRegister && swappc.source0.reg == 12u,
+            "s_swappc_b64 null, s[12:13] does not decode as s_setpc_b64 s[12:13]");
     const std::array<std::uint32_t, 3> front{0x7e020281u, 0xbefd2106u, 0xbf810000u};
-    require(DecodeRdnaFrontProgram(front).code.size() == 2u, "a front program ending in s_swappc_b64 null, s[6:7] does not end there");
-    verifyJumpTable("dword jump table after its base", DwordTableGetpcFirst, 0x20u, {0x20u, 0x18u, 0x10u}, {0x3cu, 0x44u, 0x4cu});
-    verifyJumpTable("dword jump table after its index", DwordTableIndexFirst, 0x1cu, {0x18u, 0x10u, 0x08u}, {0x38u, 0x40u, 0x48u});
+    require(DecodeRdnaFrontProgram(front).code.size() == 2u,
+            "a front program ending in s_swappc_b64 null, s[6:7] does not end there");
+    verifyJumpTable("dword jump table after its base", DwordTableGetpcFirst, 0x20u, {0x20u, 0x18u, 0x10u},
+                    {0x3cu, 0x44u, 0x4cu});
+    verifyJumpTable("dword jump table after its index", DwordTableIndexFirst, 0x1cu, {0x18u, 0x10u, 0x08u},
+                    {0x38u, 0x40u, 0x48u});
     verifyLongBranch("long branch through vcc", LongBranchVcc, 0x10u, 0x18u);
     verifyLongBranch("backward long branch", LongBranchBack, 0x24u, 0x08u);
     const std::array<std::uint32_t, 3> call{0xbe8c1f00u, 0xbe8e210cu, 0xbf810000u};
     const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
         {"s_swappc_b64 with a return address", {call.begin(), call.end()}, "unsupported SOP1 opcode 33"},
-        {"index rewritten after the bound", patched(DwordTableGetpcFirst, 5, {0xbe9203ffu, 0x00000040u}), "unsupported dynamic s_setpc_b64"},
-        {"index scaled for two-dword entries", patched(DwordTableGetpcFirst, 7, {0x8f128312u}), "unsupported dynamic s_setpc_b64"},
-        {"entry rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8e0380u}), "unsupported dynamic s_setpc_b64"},
-        {"base rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8d0380u}), "unsupported dynamic s_setpc_b64"},
+        {"index rewritten after the bound", patched(DwordTableGetpcFirst, 5, {0xbe9203ffu, 0x00000040u}),
+         "unsupported dynamic s_setpc_b64"},
+        {"index scaled for two-dword entries", patched(DwordTableGetpcFirst, 7, {0x8f128312u}),
+         "unsupported dynamic s_setpc_b64"},
+        {"entry rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8e0380u}),
+         "unsupported dynamic s_setpc_b64"},
+        {"base rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8d0380u}),
+         "unsupported dynamic s_setpc_b64"},
         {"borrow other than zero", patched(DwordTableGetpcFirst, 13, {0x828d810du}), "unsupported dynamic s_setpc_b64"},
-        {"long branch with a register high half", patched(LongBranchVcc, 3, {0x826b046bu}), "unsupported dynamic s_setpc_b64"},
+        {"long branch with a register high half", patched(LongBranchVcc, 3, {0x826b046bu}),
+         "unsupported dynamic s_setpc_b64"},
         {"branch into a long branch", patched(LongBranchVcc, 0, {0xbf850001u}), "does not start in its block"},
     };
     for (const auto& [name, code, message] : refused) {
         const auto error = refusal(code);
-        require(error.find(message) != std::string::npos, std::string(name) + ": expected a refusal with '" + std::string(message) + "', got '" + error + "'");
+        require(error.find(message) != std::string::npos,
+                std::string(name) + ": expected a refusal with '" + std::string(message) + "', got '" + error + "'");
     }
 }
 
@@ -330,7 +399,9 @@ tail:
 done:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         Store({0x7d880090u, 0xbf860004u, 0x7d880088u, 0xbf870003u, 0x4a020081u, 0xbf820002u, 0x4a020082u, 0x4a020283u}), Split::Clone},
+         Store(
+             {0x7d880090u, 0xbf860004u, 0x7d880088u, 0xbf870003u, 0x4a020081u, 0xbf820002u, 0x4a020082u, 0x4a020283u}),
+         Split::Clone},
         {"shared tail with a selection", R"(
   v_cmp_gt_u32 vcc, 16, v0
   s_cbranch_vccz outer_else
@@ -349,7 +420,9 @@ tail_join:
 done:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         Store({0x7d880090u, 0xbf860004u, 0x7d880088u, 0xbf870003u, 0x4a020081u, 0xbf820005u, 0x4a020082u, 0x7d880084u, 0xbf860001u, 0x4a020285u, 0x4a020283u}), Split::Clone},
+         Store({0x7d880090u, 0xbf860004u, 0x7d880088u, 0xbf870003u, 0x4a020081u, 0xbf820005u, 0x4a020082u, 0x7d880084u,
+                0xbf860001u, 0x4a020285u, 0x4a020283u}),
+         Split::Clone},
         {"shared tail in a loop", R"(
   s_mov_b32 s8, 0
   v_mov_b32 v1, 0
@@ -370,7 +443,9 @@ latch:
   s_cbranch_scc1 loop
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         Store({0xbe880380u, 0x7e020280u, 0x7d880008u, 0xbf860004u, 0x7d880088u, 0xbf870003u, 0x4a020281u, 0xbf820002u, 0x4a020282u, 0x4a020283u, 0x80089008u, 0xbf0ac008u, 0xbf85fff5u}), Split::Clone},
+         Store({0xbe880380u, 0x7e020280u, 0x7d880008u, 0xbf860004u, 0x7d880088u, 0xbf870003u, 0x4a020281u, 0xbf820002u,
+                0x4a020282u, 0x4a020283u, 0x80089008u, 0xbf0ac008u, 0xbf85fff5u}),
+         Split::Clone},
         {"continue beside the inner merge of a nested selection in a loop", R"(
   s_mov_b32 s8, 0
   v_mov_b32 v1, 0
@@ -393,8 +468,11 @@ latch:
 done:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         Store({0xbe880380u, 0x7e020280u, 0x7d880008u, 0xbf860005u, 0x7d880088u, 0xbf870002u, 0x7d880084u, 0xbf870004u, 0x4a020281u, 0x4a020282u, 0xbf09c008u, 0xbf850002u, 0x80089008u, 0xbf82fff4u}), Split::None},
-        {"loop exit to the end of the program beside a kill exit", R"(
+         Store({0xbe880380u, 0x7e020280u, 0x7d880008u, 0xbf860005u, 0x7d880088u, 0xbf870002u, 0x7d880084u, 0xbf870004u,
+                0x4a020281u, 0x4a020282u, 0xbf09c008u, 0xbf850002u, 0x80089008u, 0xbf82fff4u}),
+         Split::None},
+        {"loop exit to the end of the program beside a kill exit",
+         R"(
   v_mov_b32 v1, 0
   s_mov_b64 s[20:21], exec
   v_cmp_gt_u32 vcc, 4, v0
@@ -415,10 +493,13 @@ loop:
 kill:
   s_mov_b64 exec, 0
   s_endpgm)",
-         {0x7e020280u, 0xbe94047eu, 0x7d880084u, 0x8a946a14u, 0xbf84000cu, 0xbe880380u, 0x4a020281u, 0x7d840008u, 0x8a946a14u, 0xbf840007u,
-          0x80088108u, 0xbf0a8408u, 0xbf85fff9u, 0xbefe0414u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0xbefe0480u, 0xbf810000u},
-         Split::Route, 0},
-        {"inner loop exit to a return after the outer loop", R"(
+         {0x7e020280u, 0xbe94047eu, 0x7d880084u, 0x8a946a14u, 0xbf84000cu, 0xbe880380u, 0x4a020281u, 0x7d840008u,
+          0x8a946a14u, 0xbf840007u, 0x80088108u, 0xbf0a8408u, 0xbf85fff9u, 0xbefe0414u, 0xe0700000u, 0x80000100u,
+          0xbf810000u, 0xbefe0480u, 0xbf810000u},
+         Split::Route,
+         0},
+        {"inner loop exit to a return after the outer loop",
+         R"(
   v_mov_b32 v1, 0
   s_mov_b32 s8, 0
 outer:
@@ -439,9 +520,11 @@ early_exit:
   v_add_nc_u32 v1, 2, v1
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         {0x7e020280u, 0xbe880380u, 0xbe890380u, 0x4a020281u, 0xbf060209u, 0xbf850009u, 0x80098109u, 0xbf0a8409u, 0xbf85fffau, 0x80088108u,
-          0xbf0a8408u, 0xbf85fff6u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x4a020282u, 0xe0700000u, 0x80000100u, 0xbf810000u},
-         Split::Route, 0},
+         {0x7e020280u, 0xbe880380u, 0xbe890380u, 0x4a020281u, 0xbf060209u, 0xbf850009u, 0x80098109u, 0xbf0a8409u,
+          0xbf85fffau, 0x80088108u, 0xbf0a8408u, 0xbf85fff6u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x4a020282u,
+          0xe0700000u, 0x80000100u, 0xbf810000u},
+         Split::Route,
+         0},
         {"loop exit tail beside the continue block", R"(
   v_mov_b32 v1, 0
   s_mov_b32 s8, 0
@@ -458,8 +541,11 @@ latch:
 done:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         Store({0x7e020280u, 0xbe880380u, 0x4a020281u, 0xbf060208u, 0xbf840002u, 0x4a020282u, 0xbf820003u, 0x80088108u, 0xbf0a8408u, 0xbf85fff8u}), Split::None},
-        {"shared early exit", R"(
+         Store({0x7e020280u, 0xbe880380u, 0x4a020281u, 0xbf060208u, 0xbf840002u, 0x4a020282u, 0xbf820003u, 0x80088108u,
+                0xbf0a8408u, 0xbf85fff8u}),
+         Split::None},
+        {"shared early exit",
+         R"(
   v_mov_b32 v1, 0
   v_cmp_gt_u32 vcc, 16, v0
   s_and_saveexec_b64 s[8:9], vcc
@@ -476,7 +562,9 @@ join:
 early_exit:
   s_mov_b64 exec, 0
   s_endpgm)",
-         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880003u, 0x7d880084u, 0xbf860007u, 0x4a020081u, 0xbefe0408u, 0x7d8800a0u, 0xbf860003u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0xbefe0480u, 0xbf810000u}, Split::Clone},
+         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880003u, 0x7d880084u, 0xbf860007u, 0x4a020081u, 0xbefe0408u,
+          0x7d8800a0u, 0xbf860003u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0xbefe0480u, 0xbf810000u},
+         Split::Clone},
         {"short-circuit condition", R"(
   v_cmp_gt_u32 vcc, 16, v0
   s_cbranch_vccz body
@@ -490,8 +578,11 @@ body:
 done:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         Store({0x7d880090u, 0xbf860002u, 0x7d880088u, 0xbf870004u, 0x4a020081u, 0x7d880084u, 0xbf860001u, 0x4a020282u}), Split::Clone},
-        {"entered region with an expensive body", R"(
+         Store(
+             {0x7d880090u, 0xbf860002u, 0x7d880088u, 0xbf870004u, 0x4a020081u, 0x7d880084u, 0xbf860001u, 0x4a020282u}),
+         Split::Clone},
+        {"entered region with an expensive body",
+         R"(
   v_mov_b32 v1, 0
   v_cmp_gt_u32 vcc, 16, v0
   s_and_saveexec_b64 s[8:9], vcc
@@ -521,14 +612,18 @@ loop:
   buffer_store_dword v1, off, s[0:3], 0
 done:
   s_endpgm)",
-         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880003u, 0x4a020081u, 0x7d880288u, 0xbf870015u, 0xbe8a0380u, 0xe0300000u, 0x80000200u,
-          0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u,
-          0x7e160501u, 0x4a02020bu, 0x800a810au, 0xbf0a840au, 0xbf85ffefu, 0xbefe0408u, 0xe0700000u, 0x80000100u, 0xbf810000u},
-         Split::Route, 0,
-         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf800000u, 0x4a020081u, 0x7d880288u, 0xbf870015u, 0xbe8a0380u, 0xe0300000u, 0x80000200u,
-          0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u,
-          0x7e160501u, 0x4a02020bu, 0x800a810au, 0xbf0a840au, 0xbf85ffefu, 0xbefe0408u, 0xe0700000u, 0x80000100u, 0xbf810000u}},
-        {"return tail past an entered region", R"(
+         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880003u, 0x4a020081u, 0x7d880288u, 0xbf870015u, 0xbe8a0380u,
+          0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u,
+          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x800a810au, 0xbf0a840au,
+          0xbf85ffefu, 0xbefe0408u, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         Split::Route,
+         0,
+         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf800000u, 0x4a020081u, 0x7d880288u, 0xbf870015u, 0xbe8a0380u,
+          0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u,
+          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x800a810au, 0xbf0a840au,
+          0xbf85ffefu, 0xbefe0408u, 0xe0700000u, 0x80000100u, 0xbf810000u}},
+        {"return tail past an entered region",
+         R"(
   v_mov_b32 v1, 0
   v_cmp_gt_u32 vcc, 16, v0
   s_and_saveexec_b64 s[8:9], vcc
@@ -558,11 +653,13 @@ loop:
   buffer_store_dword v1, off, s[0:3], 0
 done:
   s_endpgm)",
-         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880004u, 0x7d880088u, 0xbf870016u, 0x4a020081u, 0xbefe0408u, 0xbe8a0380u, 0xe0300000u,
-          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u,
-          0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x800a810au, 0xbf0a840au, 0xbf85ffefu, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880004u, 0x7d880088u, 0xbf870016u, 0x4a020081u, 0xbefe0408u,
+          0xbe8a0380u, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu,
+          0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x800a810au,
+          0xbf0a840au, 0xbf85ffefu, 0xe0700000u, 0x80000100u, 0xbf810000u},
          Split::Clone},
-        {"entered region in a loop", R"(
+        {"entered region in a loop",
+         R"(
   s_mov_b32 s12, 0
   v_mov_b32 v1, 0
 outer:
@@ -593,11 +690,13 @@ join:
 exit_loop:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         {0xbe8c0380u, 0x7e020280u, 0x7d88000cu, 0xbf860003u, 0x7d880088u, 0xbf87000fu, 0x4a020281u, 0xe0300000u, 0x80000200u, 0x10060302u,
-          0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u,
-          0x4a02020bu, 0x4a020282u, 0x800c900cu, 0xbf0ac00cu, 0xbf840001u, 0xbf82ffe8u, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         {0xbe8c0380u, 0x7e020280u, 0x7d88000cu, 0xbf860003u, 0x7d880088u, 0xbf87000fu, 0x4a020281u, 0xe0300000u,
+          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u,
+          0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x4a020282u, 0x800c900cu, 0xbf0ac00cu,
+          0xbf840001u, 0xbf82ffe8u, 0xe0700000u, 0x80000100u, 0xbf810000u},
          Split::Route},
-        {"nested entered regions", R"(
+        {"nested entered regions",
+         R"(
   v_mov_b32 v1, 0
   v_cmp_gt_u32 vcc, 16, v0
   s_and_saveexec_b64 s[8:9], vcc
@@ -633,12 +732,14 @@ inner_loop:
   buffer_store_dword v1, off, s[0:3], 0
 done:
   s_endpgm)",
-         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880003u, 0x4a020081u, 0x7d880288u, 0xbf87001au, 0xe0300000u, 0x80000200u, 0x10060302u,
-          0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xbf06c00bu, 0xbf840003u, 0x4a020282u, 0x7d880284u, 0xbf86000eu, 0xbe8a0380u,
-          0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x800a810au, 0xbf0a840au, 0xbf85fff6u,
-          0xbefe0408u, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf880003u, 0x4a020081u, 0x7d880288u, 0xbf87001au,
+          0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu,
+          0xbf06c00bu, 0xbf840003u, 0x4a020282u, 0x7d880284u, 0xbf86000eu, 0xbe8a0380u, 0xe0300000u,
+          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x800a810au,
+          0xbf0a840au, 0xbf85fff6u, 0xbefe0408u, 0xe0700000u, 0x80000100u, 0xbf810000u},
          Split::Route},
-        {"shared body after an overwritten condition", R"(
+        {"shared body after an overwritten condition",
+         R"(
   v_mov_b32 v1, 0
   s_cmp_eq_u32 s2, 64
   s_cbranch_scc0 shared
@@ -663,11 +764,12 @@ store:
   buffer_store_dword v1, off, s[0:3], 0
 done:
   s_endpgm)",
-         {0x7e020280u, 0xbf06c002u, 0xbf840003u, 0x4a020081u, 0xbf068003u, 0xbf850011u, 0xbf85000eu, 0xe0300000u, 0x80000200u, 0x10060302u,
-          0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u,
-          0x4a02020bu, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         {0x7e020280u, 0xbf06c002u, 0xbf840003u, 0x4a020081u, 0xbf068003u, 0xbf850011u, 0xbf85000eu, 0xe0300000u,
+          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u,
+          0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0700000u, 0x80000100u, 0xbf810000u},
          Split::Route},
-        {"entered region beside early returns", R"(
+        {"entered region beside early returns",
+         R"(
   v_mov_b32 v1, 0
   v_cmp_gt_u32 vcc, 16, v0
   s_cbranch_vccz body
@@ -716,13 +818,16 @@ tail:
 done:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         {0x7e020280u, 0x7d880090u, 0xbf860008u, 0x4a020081u, 0x7d880288u, 0xbf870013u, 0x7e160501u, 0xbf068c0bu, 0xbf840024u, 0xbf06a60bu,
-          0xbf850022u, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u,
-          0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0x4a020281u, 0x3a020303u, 0x4a020282u, 0x3a020303u, 0x4a020283u,
-          0x3a020303u, 0x4a020284u, 0x3a020303u, 0x4a020285u, 0x3a020303u, 0x4a020286u, 0x3a020303u, 0x4a020287u, 0x3a020303u, 0x4a020288u,
+         {0x7e020280u, 0x7d880090u, 0xbf860008u, 0x4a020081u, 0x7d880288u, 0xbf870013u, 0x7e160501u, 0xbf068c0bu,
+          0xbf840024u, 0xbf06a60bu, 0xbf850022u, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u,
+          0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u,
+          0x4a02020bu, 0x4a020281u, 0x3a020303u, 0x4a020282u, 0x3a020303u, 0x4a020283u, 0x3a020303u, 0x4a020284u,
+          0x3a020303u, 0x4a020285u, 0x3a020303u, 0x4a020286u, 0x3a020303u, 0x4a020287u, 0x3a020303u, 0x4a020288u,
           0x3a020303u, 0x4a020289u, 0x3a020303u, 0x4a02028au, 0x3a020303u, 0xe0700000u, 0x80000100u, 0xbf810000u},
-         Split::Route, 4},
-        {"selection arm that only returns", R"(
+         Split::Route,
+         4},
+        {"selection arm that only returns",
+         R"(
   s_cbranch_execz inner
   s_cbranch_scc1 done
 inner:
@@ -737,10 +842,12 @@ join:
 done:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         {0xbf880001u, 0xbf850006u, 0x7d880283u, 0xbf870002u, 0x10060302u, 0xbf860001u, 0xbf870001u, 0x4a020282u, 0xe0700000u, 0x80000100u,
-          0xbf810000u},
-         Split::Route, 9},
-        {"shared early exit beside an expensive region", R"(
+         {0xbf880001u, 0xbf850006u, 0x7d880283u, 0xbf870002u, 0x10060302u, 0xbf860001u, 0xbf870001u, 0x4a020282u,
+          0xe0700000u, 0x80000100u, 0xbf810000u},
+         Split::Route,
+         9},
+        {"shared early exit beside an expensive region",
+         R"(
   v_mov_b32 v1, 0
   v_cmp_gt_u32 vcc, 16, v0
   s_and_saveexec_b64 s[8:9], vcc
@@ -772,12 +879,14 @@ join:
 early_exit:
   s_mov_b64 exec, 0
   s_endpgm)",
-         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf88000eu, 0x7d880084u, 0xbf860019u, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u,
-          0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0xbefe0408u, 0x7d8800a0u,
-          0xbf86000au, 0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0700000u, 0x80000100u,
-          0xbf810000u, 0xbefe0480u, 0xbf810000u},
+         {0x7e020280u, 0x7d880090u, 0xbe88246au, 0xbf88000eu, 0x7d880084u, 0xbf860019u, 0xe0300000u,
+          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu, 0xe0300000u,
+          0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0xbefe0408u, 0x7d8800a0u, 0xbf86000au,
+          0xe0300000u, 0x80000200u, 0x10060302u, 0x06060503u, 0x3a020303u, 0x7e160501u, 0x4a02020bu,
+          0xe0700000u, 0x80000100u, 0xbf810000u, 0xbefe0480u, 0xbf810000u},
          Split::Clone},
-        {"early exit arm beside a branch to the parent's merge", R"(
+        {"early exit arm beside a branch to the parent's merge",
+         R"(
   v_mov_b32 v1, 0
   s_cmp_eq_u32 s2, 64
   s_cbranch_scc1 join
@@ -794,10 +903,11 @@ store:
 early_exit:
   s_mov_b64 exec, 0
   s_endpgm)",
-         {0x7e020280u, 0xbf06c002u, 0xbf850003u, 0x4a020081u, 0xbf068003u, 0xbf850006u, 0x7d880088u, 0xbf870001u, 0x4a020282u, 0xe0700000u,
-          0x80000100u, 0xbf810000u, 0xbefe0480u, 0xbf810000u},
+         {0x7e020280u, 0xbf06c002u, 0xbf850003u, 0x4a020081u, 0xbf068003u, 0xbf850006u, 0x7d880088u, 0xbf870001u,
+          0x4a020282u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0xbefe0480u, 0xbf810000u},
          Split::None},
-        {"return block entered from the return block after it", R"(
+        {"return block entered from the return block after it",
+         R"(
   v_mov_b32 v1, 0
   s_cmp_eq_u32 s2, 64
   s_cbranch_scc0 later
@@ -814,10 +924,12 @@ later:
   v_add_nc_u32 v1, 3, v0
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         {0x7e020280u, 0xbf06c002u, 0xbf840008u, 0x4a020081u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x4a020082u, 0xe0700000u, 0x80000100u,
-          0xbf810000u, 0xbf068003u, 0xbf85fffau, 0x4a020083u, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         {0x7e020280u, 0xbf06c002u, 0xbf840008u, 0x4a020081u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x4a020082u,
+          0xe0700000u, 0x80000100u, 0xbf810000u, 0xbf068003u, 0xbf85fffau, 0x4a020083u, 0xe0700000u, 0x80000100u,
+          0xbf810000u},
          Split::None},
-        {"loop body between an early return and the loop test", R"(
+        {"loop body between an early return and the loop test",
+         R"(
   s_mov_b32 s8, 0
   v_mov_b32 v1, 0
   s_cmp_eq_u32 s2, 64
@@ -833,8 +945,8 @@ test:
   s_cbranch_scc1 body
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
-         {0xbe880380u, 0x7e020280u, 0xbf06c002u, 0xbf840006u, 0x4a020081u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0x4a020282u, 0x80089008u,
-          0xbf0ac008u, 0xbf85fffcu, 0xe0700000u, 0x80000100u, 0xbf810000u},
+         {0xbe880380u, 0x7e020280u, 0xbf06c002u, 0xbf840006u, 0x4a020081u, 0xe0700000u, 0x80000100u, 0xbf810000u,
+          0x4a020282u, 0x80089008u, 0xbf0ac008u, 0xbf85fffcu, 0xe0700000u, 0x80000100u, 0xbf810000u},
          Split::None},
         {"dword jump table after its base", R"(
   s_getpc_b64 s[12:13]
@@ -928,7 +1040,8 @@ done:
         try {
             verifyProgram(program);
         } catch (const std::exception& error) {
-            std::fprintf(stderr, "%s\n%.*s\n", error.what(), static_cast<int>(program.source.size()), program.source.data());
+            std::fprintf(stderr, "%s\n%.*s\n", error.what(), static_cast<int>(program.source.size()),
+                         program.source.data());
             ++failures;
         }
     }
@@ -938,7 +1051,8 @@ done:
         std::fprintf(stderr, "%s\n", error.what());
         ++failures;
     }
-    if (failures != 0) return 1;
+    if (failures != 0)
+        return 1;
     std::puts("Control flow structurization tests passed");
     return 0;
 }

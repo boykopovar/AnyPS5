@@ -5,11 +5,8 @@ namespace Codegen {
 
 using namespace X64OpcodeConstants;
 
-std::size_t DecodedInstruction::_skipPrefixesAndRex(
-    bool* outHasOperandSizePrefix,
-    bool* outHasRepnePrefix,
-    bool* outHasRepPrefix
-) const {
+std::size_t DecodedInstruction::_skipPrefixesAndRex(bool* outHasOperandSizePrefix, bool* outHasRepnePrefix,
+                                                    bool* outHasRepPrefix) const {
     std::size_t pos = 0;
     *outHasOperandSizePrefix = false;
     *outHasRepnePrefix = false;
@@ -35,8 +32,7 @@ std::size_t DecodedInstruction::_skipPrefixesAndRex(
             continue;
         }
 
-        if (b == PrefixLock ||
-            b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs || b == PrefixSegEs ||
+        if (b == PrefixLock || b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs || b == PrefixSegEs ||
             b == PrefixSegFs || b == PrefixSegGs) {
             pos += 1;
             continue;
@@ -86,8 +82,7 @@ bool DecodedInstruction::IsShaNi() const {
 
     if (Data[pos + 1] == ThreeByteEscape38) {
         const std::uint8_t opcode = Data[pos + 2];
-        return opcode == 0xC8 || opcode == 0xC9 || opcode == 0xCA ||
-               opcode == 0xCB || opcode == 0xCC || opcode == 0xCD;
+        return opcode == 0xC8 || opcode == 0xC9 || opcode == 0xCA || opcode == 0xCB || opcode == 0xCC || opcode == 0xCD;
     }
 
     if (Data[pos + 1] == ThreeByteEscape3A) {

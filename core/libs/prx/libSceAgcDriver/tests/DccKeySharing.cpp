@@ -11,7 +11,8 @@ namespace {
 int failures = 0;
 
 void Expect(bool condition, const char* what) {
-    if (condition) return;
+    if (condition)
+        return;
     std::fprintf(stderr, "FAIL: %s\n", what);
     ++failures;
 }
@@ -22,7 +23,8 @@ struct Keys {
 
     DccKeys Read(std::uint64_t address) {
         ++reads;
-        if (address == 0) return DccKeys::Uncompressed;
+        if (address == 0)
+            return DccKeys::Uncompressed;
         const auto it = ranges.find(address);
         return it == ranges.end() ? DccKeys::Uncompressed : it->second;
     }
@@ -43,8 +45,11 @@ struct SurfaceCache {
     int uploads = 0;
 
     bool Serves(const Image& held, std::uint64_t named) {
-        if (!shared) return named == 0 || named == held.dcc;
-        return KeysServeSurface(held.dcc, held.uploaded, held.filled, named, [&] { return keys.Read(held.dcc); }, [&] { return keys.Read(named); });
+        if (!shared)
+            return named == 0 || named == held.dcc;
+        return KeysServeSurface(
+            held.dcc, held.uploaded, held.filled, named, [&] { return keys.Read(held.dcc); },
+            [&] { return keys.Read(named); });
     }
 
     const Image& Lookup(std::uint64_t named) {
@@ -56,8 +61,10 @@ struct SurfaceCache {
             }
             return *image;
         }
-        if (image.has_value()) ++remade;
-        else ++made;
+        if (image.has_value())
+            ++remade;
+        else
+            ++made;
         image = Image{named, keys.Read(named), DccKeys::Uncompressed};
         ++uploads;
         return *image;
@@ -77,7 +84,8 @@ void worldMapFrames() {
             cache.Lookup(StorageKeys);
         }
         if (shared) {
-            Expect(cache.made == 1 && cache.remade == 0, "a surface whose two descriptors name uncompressed keys was remade");
+            Expect(cache.made == 1 && cache.remade == 0,
+                   "a surface whose two descriptors name uncompressed keys was remade");
             Expect(cache.uploads == 1, "a shared surface was uploaded again with nothing changed");
             Expect(cache.image->dcc == TargetKeys, "the shared image left the keys it follows");
         } else {
@@ -92,9 +100,11 @@ void namedClearRemakes() {
     cache.Lookup(TargetKeys);
     keys.ranges[StorageKeys] = DccKeys::Clear0000;
     const auto& image = cache.Lookup(StorageKeys);
-    Expect(cache.remade == 1 && image.dcc == StorageKeys && image.uploaded == DccKeys::Clear0000, "a fast clear of the named keys did not reach the surface's image");
+    Expect(cache.remade == 1 && image.dcc == StorageKeys && image.uploaded == DccKeys::Clear0000,
+           "a fast clear of the named keys did not reach the surface's image");
     const auto& own = cache.Lookup(StorageKeys);
-    Expect(cache.remade == 1 && own.uploaded == DccKeys::Clear0000, "the image of the cleared keys did not serve its own keys");
+    Expect(cache.remade == 1 && own.uploaded == DccKeys::Clear0000,
+           "the image of the cleared keys did not serve its own keys");
     cache.Lookup(TargetKeys);
     Expect(cache.remade == 2, "uncompressed keys shared an image holding a clear");
 }
@@ -105,7 +115,8 @@ void followedClearRemakes() {
     cache.Lookup(TargetKeys);
     keys.ranges[TargetKeys] = DccKeys::Clear1111;
     const auto& image = cache.Lookup(StorageKeys);
-    Expect(cache.remade == 1 && image.dcc == StorageKeys && image.uploaded == DccKeys::Uncompressed, "a descriptor over uncompressed keys was served an image whose own keys are a clear");
+    Expect(cache.remade == 1 && image.dcc == StorageKeys && image.uploaded == DccKeys::Uncompressed,
+           "a descriptor over uncompressed keys was served an image whose own keys are a clear");
 }
 
 void filledKeysRemake() {
@@ -120,16 +131,35 @@ void filledKeysRemake() {
 void serveRules() {
     Keys keys;
     keys.ranges[TargetKeys] = DccKeys::Clear0000;
-    Expect(KeysServeSurface(TargetKeys, DccKeys::Clear0000, DccKeys::Uncompressed, 0, [&] { return keys.Read(TargetKeys); }, [&] { return keys.Read(0); }), "a descriptor without metadata was refused");
-    Expect(KeysServeSurface(TargetKeys, DccKeys::Clear0000, DccKeys::Uncompressed, TargetKeys, [&] { return keys.Read(TargetKeys); }, [&] { return keys.Read(TargetKeys); }), "the image's own keys were refused");
+    Expect(KeysServeSurface(
+               TargetKeys, DccKeys::Clear0000, DccKeys::Uncompressed, 0, [&] { return keys.Read(TargetKeys); },
+               [&] { return keys.Read(0); }),
+           "a descriptor without metadata was refused");
+    Expect(KeysServeSurface(
+               TargetKeys, DccKeys::Clear0000, DccKeys::Uncompressed, TargetKeys, [&] { return keys.Read(TargetKeys); },
+               [&] { return keys.Read(TargetKeys); }),
+           "the image's own keys were refused");
     Expect(keys.reads == 0, "the own-keys and no-metadata answers scanned keys");
-    Expect(!KeysServeSurface(TargetKeys, DccKeys::Clear0000, DccKeys::Uncompressed, StorageKeys, [&] { return keys.Read(TargetKeys); }, [&] { return keys.Read(StorageKeys); }), "an image uploaded under a clear served other keys");
+    Expect(!KeysServeSurface(
+               TargetKeys, DccKeys::Clear0000, DccKeys::Uncompressed, StorageKeys,
+               [&] { return keys.Read(TargetKeys); }, [&] { return keys.Read(StorageKeys); }),
+           "an image uploaded under a clear served other keys");
     Expect(keys.reads == 0, "a refusal by the uploaded keys scanned keys");
     keys.ranges[StorageKeys] = DccKeys::Mixed;
     keys.ranges[TargetKeys] = DccKeys::Uncompressed;
-    Expect(!KeysServeSurface(TargetKeys, DccKeys::Uncompressed, DccKeys::Uncompressed, StorageKeys, [&] { return keys.Read(TargetKeys); }, [&] { return keys.Read(StorageKeys); }), "keys that do not read uncompressed were served");
+    Expect(!KeysServeSurface(
+               TargetKeys, DccKeys::Uncompressed, DccKeys::Uncompressed, StorageKeys,
+               [&] { return keys.Read(TargetKeys); }, [&] { return keys.Read(StorageKeys); }),
+           "keys that do not read uncompressed were served");
     int followedReads = 0;
-    Expect(KeysServeSurface(0, DccKeys::Uncompressed, DccKeys::Uncompressed, TargetKeys, [&] { ++followedReads; return DccKeys::Clear0000; }, [&] { return keys.Read(TargetKeys); }), "an image without metadata did not serve uncompressed keys");
+    Expect(KeysServeSurface(
+               0, DccKeys::Uncompressed, DccKeys::Uncompressed, TargetKeys,
+               [&] {
+                   ++followedReads;
+                   return DccKeys::Clear0000;
+               },
+               [&] { return keys.Read(TargetKeys); }),
+           "an image without metadata did not serve uncompressed keys");
     Expect(followedReads == 0, "an image without metadata scanned keys of its own");
 }
 

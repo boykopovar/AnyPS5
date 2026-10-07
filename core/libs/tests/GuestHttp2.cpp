@@ -14,7 +14,10 @@ int APS5_VABI sceHttp2SendRequest(int, const void*, std::size_t);
 int APS5_VABI sceHttp2Term(int);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     const int context = sceHttp2Init(1, 1, 0x10000, 4);

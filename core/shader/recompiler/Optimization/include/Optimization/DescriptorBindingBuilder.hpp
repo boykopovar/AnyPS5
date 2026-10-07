@@ -12,8 +12,11 @@ std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter
 
 class DescriptorBindingBuilder {
 public:
-    void Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const;
-    void Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const;
+    void Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot,
+                  const std::array<std::uint32_t, 3>& partialThreads) const;
+    void Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage,
+                  std::uint32_t userDataBase, const ResourceSnapshot& snapshot,
+                  const std::array<std::uint32_t, 3>& partialThreads) const;
 };
 
 }

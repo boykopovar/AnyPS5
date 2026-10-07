@@ -5,13 +5,10 @@
 
 namespace Nid {
 
-constexpr uint8_t kNidSuffix[16] = {
-    0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1,
-    0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30
-};
+constexpr uint8_t kNidSuffix[16] = {0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1,
+                                    0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30};
 
-constexpr char kBase64S[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
+constexpr char kBase64S[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
 
 std::string ComputeNid(const std::string& symbolName, const std::string& libraryName) {
     if (symbolName.empty())
@@ -34,15 +31,13 @@ std::string ComputeNid(const std::string& symbolName, const std::string& library
     int nidIndex = 0;
     for (int i = 0; i < 6; i += 3) {
         const uint32_t triple = (static_cast<uint32_t>(reversed[i]) << 16) |
-                                 (static_cast<uint32_t>(reversed[i + 1]) << 8) |
-                                 static_cast<uint32_t>(reversed[i + 2]);
+                                (static_cast<uint32_t>(reversed[i + 1]) << 8) | static_cast<uint32_t>(reversed[i + 2]);
         nid[nidIndex++] = kBase64S[(triple >> 18) & 0x3F];
         nid[nidIndex++] = kBase64S[(triple >> 12) & 0x3F];
         nid[nidIndex++] = kBase64S[(triple >> 6) & 0x3F];
         nid[nidIndex++] = kBase64S[triple & 0x3F];
     }
-    const uint32_t tail = (static_cast<uint32_t>(reversed[6]) << 16) |
-                           (static_cast<uint32_t>(reversed[7]) << 8);
+    const uint32_t tail = (static_cast<uint32_t>(reversed[6]) << 16) | (static_cast<uint32_t>(reversed[7]) << 8);
     nid[nidIndex++] = kBase64S[(tail >> 18) & 0x3F];
     nid[nidIndex++] = kBase64S[(tail >> 12) & 0x3F];
     nid[nidIndex++] = kBase64S[(tail >> 6) & 0x3F];

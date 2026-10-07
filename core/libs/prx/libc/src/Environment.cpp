@@ -33,70 +33,89 @@ std::vector<EnvironmentEntry>& Environment() {
 #else
         char** source = environ;
 #endif
-        if (source) for (; *source; ++source) {
-            if (**source && **source != '=' && std::strchr(*source, '='))
-                result.push_back({*source, nullptr});
-        }
+        if (source)
+            for (; *source; ++source) {
+                if (**source && **source != '=' && std::strchr(*source, '='))
+                    result.push_back({*source, nullptr});
+            }
         return result;
     }();
     return entries;
 }
-bool ValidEnvironmentName(const char* name) {
-    return name && *name && !std::strchr(name, '=');
+bool ValidEnvironmentName(const char* name) { return name && *name && !std::strchr(name, '='); }
+int EnvironmentError(int error) {
+    errno = error;
+    return -1;
 }
-int EnvironmentError(int error) { errno = error; return -1; }
 }
 
 extern "C" {
 char* APS5_VABI getenv_nid_postfix(const char* name) {
-    if (!ValidEnvironmentName(name)) return nullptr;
+    if (!ValidEnvironmentName(name))
+        return nullptr;
     try {
         std::lock_guard lock(environmentMutex);
         for (auto& entry : Environment())
-            if (entry.Matches(name)) return entry.Data() + std::strlen(name) + 1;
+            if (entry.Matches(name))
+                return entry.Data() + std::strlen(name) + 1;
         return nullptr;
-    } catch (const std::bad_alloc&) { errno = 12; return nullptr; }
+    } catch (const std::bad_alloc&) {
+        errno = 12;
+        return nullptr;
+    }
 }
 
 int APS5_VABI setenv_nid_postfix(const char* name, const char* value, int overwrite) {
-    if (!ValidEnvironmentName(name) || !value) return EnvironmentError(22);
+    if (!ValidEnvironmentName(name) || !value)
+        return EnvironmentError(22);
     try {
         std::lock_guard lock(environmentMutex);
         auto& entries = Environment();
-        auto found = std::find_if(entries.begin(), entries.end(),
-            [name](auto& entry) { return entry.Matches(name); });
-        if (found != entries.end() && !overwrite) return 0;
+        auto found = std::find_if(entries.begin(), entries.end(), [name](auto& entry) { return entry.Matches(name); });
+        if (found != entries.end() && !overwrite)
+            return 0;
         EnvironmentEntry replacement{std::string(name) + '=' + value, nullptr};
-        if (found != entries.end()) *found = std::move(replacement);
-        else entries.push_back(std::move(replacement));
+        if (found != entries.end())
+            *found = std::move(replacement);
+        else
+            entries.push_back(std::move(replacement));
         return 0;
-    } catch (const std::bad_alloc&) { return EnvironmentError(12); }
+    } catch (const std::bad_alloc&) {
+        return EnvironmentError(12);
+    }
 }
 
 int APS5_VABI unsetenv_nid_postfix(const char* name) {
-    if (!ValidEnvironmentName(name)) return EnvironmentError(22);
+    if (!ValidEnvironmentName(name))
+        return EnvironmentError(22);
     try {
         std::lock_guard lock(environmentMutex);
         auto& entries = Environment();
         const std::string key(name);
         std::erase_if(entries, [&key](auto& entry) { return entry.Matches(key); });
         return 0;
-    } catch (const std::bad_alloc&) { return EnvironmentError(12); }
+    } catch (const std::bad_alloc&) {
+        return EnvironmentError(12);
+    }
 }
 
 int APS5_VABI putenv_nid_postfix(char* text) {
     const char* separator = text ? std::strchr(text, '=') : nullptr;
-    if (!separator || separator == text) return EnvironmentError(22);
+    if (!separator || separator == text)
+        return EnvironmentError(22);
     try {
         std::lock_guard lock(environmentMutex);
         auto& entries = Environment();
         const std::string_view name(text, separator - text);
-        auto found = std::find_if(entries.begin(), entries.end(),
-            [name](auto& entry) { return entry.Matches(name); });
+        auto found = std::find_if(entries.begin(), entries.end(), [name](auto& entry) { return entry.Matches(name); });
         EnvironmentEntry replacement{{}, text};
-        if (found != entries.end()) *found = std::move(replacement);
-        else entries.push_back(std::move(replacement));
+        if (found != entries.end())
+            *found = std::move(replacement);
+        else
+            entries.push_back(std::move(replacement));
         return 0;
-    } catch (const std::bad_alloc&) { return EnvironmentError(12); }
+    } catch (const std::bad_alloc&) {
+        return EnvironmentError(12);
+    }
 }
 }

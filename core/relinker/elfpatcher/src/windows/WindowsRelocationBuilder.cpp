@@ -4,7 +4,8 @@
 
 namespace Elfpatcher::Windows {
 
-PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Domain::SysVDynamicSection& dynamicSection) const {
+PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image,
+                                              const Domain::SysVDynamicSection& dynamicSection) const {
     if (dynamicSection.DynSymData.empty() || dynamicSection.DynSymData.size() % 24 != 0)
         throw Domain::RelinkerException("Invalid ELF dynamic symbol table size");
     PeRelocations result;
@@ -22,7 +23,8 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
                 throw Domain::RelinkerException("Unsupported Windows relocation type " + std::to_string(type), target);
             const auto rva = image.GetRva(target, 8);
             const auto next = ranges.lower_bound(target);
-            if ((next != ranges.end() && next->first < target + 8) || (next != ranges.begin() && std::prev(next)->second > target))
+            if ((next != ranges.end() && next->first < target + 8) ||
+                (next != ranges.begin() && std::prev(next)->second > target))
                 throw Domain::RelinkerException("Overlapping ELF relocation targets", target);
             ranges.emplace(target, target + 8);
             if (type == 8) {
@@ -37,7 +39,8 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             const auto symbolOffset = static_cast<std::size_t>(symbol) * 24;
             if (Io::ReadU16(dynamicSection.DynSymData, symbolOffset + 6) != 0)
                 throw Domain::RelinkerException("Defined symbols require explicit relocation support", target);
-            const auto name = ReadString(dynamicSection.DynStrData, Io::ReadU32(dynamicSection.DynSymData, symbolOffset));
+            const auto name =
+                ReadString(dynamicSection.DynStrData, Io::ReadU32(dynamicSection.DynSymData, symbolOffset));
             if (name.empty())
                 throw Domain::RelinkerException("Empty import symbol name", target);
             if (type != 1 && addend != 0)
@@ -45,7 +48,8 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             image.RequireWritable(target, 8);
             image.WritePointer(target, 0);
             result.Imports.push_back({name, rva, addend});
-            if (const auto module = dynamicSection.ImportModules.find(target); module != dynamicSection.ImportModules.end())
+            if (const auto module = dynamicSection.ImportModules.find(target);
+                module != dynamicSection.ImportModules.end())
                 result.Imports.back().Library = module->second;
         }
     };
@@ -54,7 +58,8 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
     return result;
 }
 
-std::vector<std::uint8_t> WindowsRelocationBuilder::BuildBaseRelocations(const std::vector<std::uint32_t>& targets) const {
+std::vector<std::uint8_t>
+WindowsRelocationBuilder::BuildBaseRelocations(const std::vector<std::uint32_t>& targets) const {
     std::map<std::uint32_t, std::vector<std::uint16_t>> pages;
     for (const auto target : targets)
         pages[target & ~0xfffu].push_back(static_cast<std::uint16_t>(0xa000u | (target & 0xfffu)));

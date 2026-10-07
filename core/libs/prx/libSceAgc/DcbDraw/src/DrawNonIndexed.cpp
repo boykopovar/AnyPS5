@@ -9,19 +9,26 @@
 
 extern "C" {
 
-std::uint32_t* APS5_VABI sceAgcDcbDrawIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier) {
+std::uint32_t* APS5_VABI sceAgcDcbDrawIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes,
+                                               std::uint64_t modifier) {
     Agc::Command::Require((dataOffsetInBytes & 3u) == 0, __func__, "misaligned indirect argument offset");
     const auto offsets = Agc::Command::DrawPatchOffsets(modifier, __func__);
-    return Agc::Command::Emit(buf, 0x24u, {dataOffsetInBytes, static_cast<std::uint32_t>(offsets), static_cast<std::uint32_t>(offsets >> 32u), Agc::Command::DrawInitiator(modifier, false, __func__)}, __func__);
+    return Agc::Command::Emit(buf, 0x24u,
+                              {dataOffsetInBytes, static_cast<std::uint32_t>(offsets),
+                               static_cast<std::uint32_t>(offsets >> 32u),
+                               Agc::Command::DrawInitiator(modifier, false, __func__)},
+                              __func__);
 }
 
-std::uint32_t APS5_VABI sceAgcDcbDrawIndirectGetSize() {
-    return 20;
-}
+std::uint32_t APS5_VABI sceAgcDcbDrawIndirectGetSize() { return 20; }
 
-std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier) {
+std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes,
+                                                    std::uint32_t countIndirect, std::uint32_t maxCountOrCount,
+                                                    const volatile void* countAddress, std::uint32_t strideInBytes,
+                                                    std::uint64_t modifier) {
     Agc::Command::CheckBits(countIndirect, 1, __func__);
-    Agc::Command::Require((dataOffsetInBytes & 3u) == 0 && (strideInBytes & 3u) == 0 && strideInBytes >= 16, __func__, "invalid indirect draw offset or stride");
+    Agc::Command::Require((dataOffsetInBytes & 3u) == 0 && (strideInBytes & 3u) == 0 && strideInBytes >= 16, __func__,
+                          "invalid indirect draw offset or stride");
     const auto address = reinterpret_cast<std::uintptr_t>(countAddress);
     if (countIndirect != 0) {
         Agc::Command::CheckAddress(address, 4, __func__);
@@ -31,7 +38,8 @@ std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uin
     const auto offsets = Agc::Command::DrawPatchOffsets(modifier, __func__);
     const auto initiator = Agc::Command::DrawInitiator(modifier, false, __func__);
     const auto low = static_cast<std::uint32_t>(modifier);
-    const auto control = Agc::Command::DrawIndexLocation(modifier) | ((low & 0x10u) << 23u) | (countIndirect << 30u) | ((low & 8u) << 28u);
+    const auto control = Agc::Command::DrawIndexLocation(modifier) | ((low & 0x10u) << 23u) | (countIndirect << 30u) |
+                         ((low & 8u) << 28u);
     auto* packet = Agc::Command::Allocate(buf, 16, __func__);
     packet[0] = Agc::Command::Header(0x79u, 3, 1);
     packet[1] = 0x342u;
@@ -52,8 +60,5 @@ std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uin
     return packet;
 }
 
-std::uint32_t APS5_VABI sceAgcDcbDrawIndirectMultiGetSize() {
-    return 64;
-}
-
+std::uint32_t APS5_VABI sceAgcDcbDrawIndirectMultiGetSize() { return 64; }
 }

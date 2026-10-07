@@ -17,7 +17,8 @@ constexpr std::uint32_t ArgumentCapacity = 32768;
 constexpr std::uint32_t ArgumentTextCapacity = ArgumentCapacity * 3;
 
 std::string normalizeRunPath(std::string path) {
-    if (path.empty() || std::any_of(path.begin(), path.end(), [](const unsigned char value) { return value == 0 || value >= 128; }))
+    if (path.empty() ||
+        std::any_of(path.begin(), path.end(), [](const unsigned char value) { return value == 0 || value >= 128; }))
         throw Domain::RelinkerException("Windows run path must be a nonempty ASCII path");
     std::replace(path.begin(), path.end(), '/', '\\');
     if (path == "$ORIGIN")
@@ -33,7 +34,12 @@ std::string normalizeRunPath(std::string path) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva,
+                                                const WindowsImports& nativeImports,
+                                                const std::vector<std::string>& libraries,
+                                                const std::vector<PeImport>& imports, const std::string& runPath,
+                                                const bool lazyBinding, const bool dependencyDiagnostics,
+                                                const std::vector<Domain::GuestRuntime>& guestModules) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -41,7 +47,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     if (!absolutePath && (path.front() == '\\' || path.find(':') != std::string::npos))
         throw Domain::RelinkerException("Ambiguous Windows run path: " + path);
 
-    WindowsEntryStub result{{".startup", dataRva, SectionRead | SectionWrite | 0x40u, {}}, {".entry", 0, SectionRead | SectionExecute | 0x20u, {}}, {}};
+    WindowsEntryStub result{{".startup", dataRva, SectionRead | SectionWrite | 0x40u, {}},
+                            {".entry", 0, SectionRead | SectionExecute | 0x20u, {}},
+                            {}};
     auto& data = result.Data.Data;
 
     const auto reserve = [&](const std::size_t size) {
@@ -93,17 +101,23 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         std::vector<std::uint32_t> order;
         for (std::size_t index = 0; index < libraries.size(); ++index) {
             auto name = std::filesystem::path(libraries[index]).filename().string();
-            if (name.ends_with(".guest.prx")) name.resize(name.size() - 10);
+            if (name.ends_with(".guest.prx"))
+                name.resize(name.size() - 10);
             const bool guestName = index < guestModules.size() &&
-                std::find(guestModules[index].Names.begin(), guestModules[index].Names.end(), import.Library) != guestModules[index].Names.end();
-            if (import.Library.empty() || name == import.Library || guestName) order.push_back(CheckedRva(index));
+                                   std::find(guestModules[index].Names.begin(), guestModules[index].Names.end(),
+                                             import.Library) != guestModules[index].Names.end();
+            if (import.Library.empty() || name == import.Library || guestName)
+                order.push_back(CheckedRva(index));
         }
-        if (order.empty()) throw Domain::RelinkerException("Import module is not a dependency: " + import.Library);
-        const bool hostModule = !import.Library.empty() &&
-            std::any_of(order.begin(), order.end(), [&](auto index) { return index >= guestModules.size(); });
+        if (order.empty())
+            throw Domain::RelinkerException("Import module is not a dependency: " + import.Library);
+        const bool hostModule = !import.Library.empty() && std::any_of(order.begin(), order.end(), [&](auto index) {
+            return index >= guestModules.size();
+        });
         if (hostModule) {
             for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
-                if (libraries[index] == "libc.prx" && import.Library != "libc.prx") order.push_back(CheckedRva(index));
+                if (libraries[index] == "libc.prx" && import.Library != "libc.prx")
+                    order.push_back(CheckedRva(index));
             }
         }
         Io::AlignBuffer(data, 4);
@@ -112,7 +126,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         }));
         searchTables.push_back(CheckedRva(dataRva + data.size()));
         searchCounts.push_back(CheckedRva(order.size()));
-        for (const auto index : order) Io::AppendU32(data, index);
+        for (const auto index : order)
+            Io::AppendU32(data, index);
     }
 
     const auto lastError = reserve(4);
@@ -133,10 +148,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         resolvedPaths.push_back(reserve(PathCapacity));
 
     const auto diagnosticsOffset = data.size();
-    std::vector<std::string> errors = {"FAIL: cannot obtain executable path\n", "FAIL: executable or library path is too long\n", "FAIL: executable path has no directory\n"};
+    std::vector<std::string> errors = {"FAIL: cannot obtain executable path\n",
+                                       "FAIL: executable or library path is too long\n",
+                                       "FAIL: executable path has no directory\n"};
     for (const auto& import : imports)
         errors.push_back("FAIL: unresolved ELF import " + import.Name +
-            (import.Library.empty() ? std::string{} : " from " + import.Library) + "\n");
+                         (import.Library.empty() ? std::string{} : " from " + import.Library) + "\n");
     const auto argumentError = errors.size();
     errors.push_back("FAIL: cannot prepare command-line arguments\n");
     std::vector<std::uint32_t> errorRvas;
@@ -182,7 +199,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.PatchBranch(validHandle, code.GetRva());
         code.Emit({0x48, 0x89, 0xc1});
         code.Rip({0x48, 0x8d, 0x15}, stringRva);
-        code.Emit({0x44, 0x8b, 0x44, 0x24, 0x3c, 0x4c, 0x8d, 0x4c, 0x24, 0x38, 0x48, 0xc7, 0x44, 0x24, 0x20, 0, 0, 0, 0});
+        code.Emit(
+            {0x44, 0x8b, 0x44, 0x24, 0x3c, 0x4c, 0x8d, 0x4c, 0x24, 0x38, 0x48, 0xc7, 0x44, 0x24, 0x20, 0, 0, 0, 0});
         call("WriteFile");
         requireDiagnosticSuccess();
         code.Emit({0x8b, 0x44, 0x24, 0x38, 0x3b, 0x44, 0x24, 0x3c});
@@ -323,7 +341,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     std::vector<std::size_t> tlsResolverAddresses;
     for (std::size_t index = 0; index < imports.size(); ++index) {
         if (!guestModules.empty() && platformTlsResolvers[index] && imports[index].Name == "vNe1w4diLCs") {
-            if (imports[index].Addend != 0) throw Domain::RelinkerException("TLS resolver import has an addend");
+            if (imports[index].Addend != 0)
+                throw Domain::RelinkerException("TLS resolver import has an addend");
             tlsResolverAddresses.push_back(code.Branch({0x48, 0x8d, 0x05}));
             guestStartup.WriteImport(code, imports[index], handles);
             continue;
@@ -357,8 +376,10 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         writeString(errorRvas.at(3 + index), true);
         unresolvedBranches.push_back(code.Branch({0xe9}));
         code.PatchBranch(resolved, code.GetRva());
-        if (imports[index].RelocationType == 16) code.Emit({0x48, 0x8b, 0x00});
-        if (imports[index].RelocationType == 17) code.Emit({0x48, 0x8b, 0x40, 8});
+        if (imports[index].RelocationType == 16)
+            code.Emit({0x48, 0x8b, 0x00});
+        if (imports[index].RelocationType == 17)
+            code.Emit({0x48, 0x8b, 0x40, 8});
         if (imports[index].Addend != 0) {
             code.Emit({0x48, 0xba});
             code.U64(imports[index].Addend);
@@ -446,7 +467,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Emit({0x48, 0x83, 0xc4, 0x28});
     code.Emit({0xc3});
     const auto tlsResolver = guestStartup.EmitTlsResolver(code);
-    for (const auto offset : tlsResolverAddresses) code.PatchBranch(offset, tlsResolver);
+    for (const auto offset : tlsResolverAddresses)
+        code.PatchBranch(offset, tlsResolver);
 
     for (const auto index : lazyUnresolvedImports) {
         const auto stubRva = code.GetRva();
@@ -467,7 +489,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             throw Domain::RelinkerException("Too many dependency diagnostic routines");
         for (std::size_t index = 0; index < dependency.Functions.size(); ++index) {
             for (std::size_t field = 0; field < 3; ++field)
-                Io::WriteU32(data, functionTable - dataRva + (index + 1) * 12 + field * 4, dependency.Functions[index][field]);
+                Io::WriteU32(data, functionTable - dataRva + (index + 1) * 12 + field * 4,
+                             dependency.Functions[index][field]);
         }
         exceptionEntries = CheckedRva(dependency.Functions.size() + 1);
     }

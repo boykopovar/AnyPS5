@@ -8,7 +8,8 @@ namespace Elfpatcher::Windows {
 
 class WindowsTrampolineBuilder {
 public:
-    void Build(const std::vector<Codegen::TrampolineSite>& sites, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::uint32_t& nextRva) const;
+    void Build(const std::vector<Codegen::TrampolineSite>& sites, const WindowsLoadImage& image,
+               std::vector<PeSection>& sections, std::uint32_t& nextRva) const;
 };
 
 }

@@ -9,7 +9,8 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res);
 int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* tp);
 int APS5_VABI sceKernelClockGetres(KernelClockid clockId, KernelTimespec* tp);
 int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 }
 
@@ -26,7 +27,10 @@ static constexpr std::int64_t BURN_NANOS = 200 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t TICK_MARGIN_NANOS = 50 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t GIVE_UP_NANOS = 10 * NANOS_PER_SECOND;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static std::int64_t Nanos(int clockId) {
     KernelTimespec time{-1, -1};
@@ -58,7 +62,8 @@ static void RequireNeverDecreases(int clockId) {
 static std::atomic<bool> stopBurning{false};
 
 static void* APS5_VABI Burn(void*) {
-    while (!stopBurning.load()) {}
+    while (!stopBurning.load()) {
+    }
     return nullptr;
 }
 

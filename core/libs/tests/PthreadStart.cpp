@@ -6,7 +6,8 @@
 #include <windows.h>
 #endif
 
-extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                                          const char* name);
 extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 extern "C" int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
 extern "C" int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
@@ -34,19 +35,24 @@ static void CheckLargeFrame() {
 
 static void* APS5_VABI CheckThread(void* arg) {
     auto& context = *static_cast<ThreadContext*>(arg);
-    if (!context.thread) throw std::runtime_error("Thread handle was not published");
+    if (!context.thread)
+        throw std::runtime_error("Thread handle was not published");
 #ifdef _WIN32
     if (scePthreadSelf() != context.thread)
         throw std::runtime_error("Current guest thread handle is incorrect");
     if (context.thread->threadId != std::this_thread::get_id() || !context.thread->nativeHandle)
         throw std::runtime_error("Native thread was not initialized");
 #else
-    if (context.thread->_thr.get_id() != std::this_thread::get_id()) throw std::runtime_error("Thread object was not initialized");
-    if (!context.thread->_thr.joinable()) throw std::runtime_error("Thread object is not joinable");
+    if (context.thread->_thr.get_id() != std::this_thread::get_id())
+        throw std::runtime_error("Thread object was not initialized");
+    if (!context.thread->_thr.joinable())
+        throw std::runtime_error("Thread object is not joinable");
 #endif
     PthreadAttr attr = nullptr;
-    if (scePthreadAttrInit(&attr) != 0) throw std::runtime_error("Attribute initialization failed");
-    if (scePthreadAttrGet(context.thread, &attr) != 0) throw std::runtime_error("Attribute query failed");
+    if (scePthreadAttrInit(&attr) != 0)
+        throw std::runtime_error("Attribute initialization failed");
+    if (scePthreadAttrGet(context.thread, &attr) != 0)
+        throw std::runtime_error("Attribute query failed");
 #ifdef _WIN32
     void* address = nullptr;
     std::size_t size = 0;
@@ -58,13 +64,15 @@ static void* APS5_VABI CheckThread(void* arg) {
         throw std::runtime_error("Callback is outside the reported stack");
     for (auto cursor = begin; cursor < begin + size;) {
         MEMORY_BASIC_INFORMATION memory{};
-        if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT || memory.Protect != PAGE_READWRITE)
+        if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory) ||
+            memory.State != MEM_COMMIT || memory.Protect != PAGE_READWRITE)
             throw std::runtime_error("Guest stack contains an inaccessible page");
         cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
     }
 #endif
     CheckLargeFrame();
-    if (scePthreadAttrDestroy(&attr) != 0) throw std::runtime_error("Attribute destruction failed");
+    if (scePthreadAttrDestroy(&attr) != 0)
+        throw std::runtime_error("Attribute destruction failed");
     context.checked.set_value();
     if (context.exitExplicitly)
         scePthreadExit(arg);
@@ -79,13 +87,16 @@ int main() {
         PthreadAttr attr = nullptr;
         if (scePthreadAttrInit(&attr) != 0 || scePthreadAttrSetstacksize(&attr, context.stackSize) != 0)
             throw std::runtime_error("Requested stack setup failed");
-        if (scePthreadCreate(&context.thread, &attr, CheckThread, &context, nullptr) != 0) throw std::runtime_error("Thread creation failed");
+        if (scePthreadCreate(&context.thread, &attr, CheckThread, &context, nullptr) != 0)
+            throw std::runtime_error("Thread creation failed");
         if (scePthreadAttrDestroy(&attr) != 0)
             throw std::runtime_error("Requested stack cleanup failed");
         context.checked.get_future().get();
         void* result = nullptr;
-        if (scePthreadJoin(context.thread, &result) != 0) throw std::runtime_error("Thread join failed");
-        if (result != &context) throw std::runtime_error("Thread return value was lost");
+        if (scePthreadJoin(context.thread, &result) != 0)
+            throw std::runtime_error("Thread join failed");
+        if (result != &context)
+            throw std::runtime_error("Thread return value was lost");
     }
 #ifdef _WIN32
     for (int iteration = 0; iteration < 100; ++iteration) {
@@ -94,12 +105,15 @@ int main() {
         if (scePthreadCreate(&context.thread, nullptr, CheckThread, &context, nullptr) != 0)
             throw std::runtime_error("Detach test creation failed");
         HANDLE handle = nullptr;
-        if (!DuplicateHandle(GetCurrentProcess(), context.thread->nativeHandle, GetCurrentProcess(), &handle, SYNCHRONIZE, FALSE, 0))
+        if (!DuplicateHandle(GetCurrentProcess(), context.thread->nativeHandle, GetCurrentProcess(), &handle,
+                             SYNCHRONIZE, FALSE, 0))
             throw std::runtime_error("Detach test handle duplication failed");
-        if (scePthreadDetach(context.thread) != 0 || WaitForSingleObject(handle, 30000) != WAIT_OBJECT_0 || !CloseHandle(handle))
+        if (scePthreadDetach(context.thread) != 0 || WaitForSingleObject(handle, 30000) != WAIT_OBJECT_0 ||
+            !CloseHandle(handle))
             throw std::runtime_error("Detached thread did not finish correctly");
         context.checked.get_future().get();
     }
 #endif
-    std::cout << "PASS: 10000 thread starts, committed stacks, large frames, explicit exits and joins; 100 detach checks\n";
+    std::cout
+        << "PASS: 10000 thread starts, committed stacks, large frames, explicit exits and joins; 100 detach checks\n";
 }

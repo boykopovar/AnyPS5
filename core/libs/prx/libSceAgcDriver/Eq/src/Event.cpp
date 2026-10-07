@@ -33,7 +33,8 @@ void AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
     }
     for (const auto& registration : registrations) {
         if (registration.id == static_cast<int>(queue)) {
-            EqueueTriggerEvent_nid_postfix(registration.eq, static_cast<uintptr_t>(registration.id), EvfiltGraphicsCore, nullptr);
+            EqueueTriggerEvent_nid_postfix(registration.eq, static_cast<uintptr_t>(registration.id), EvfiltGraphicsCore,
+                                           nullptr);
         }
     }
 }
@@ -62,7 +63,8 @@ int APS5_VABI sceAgcDriverAddEqEvent(KernelEqueue eq, int id, void* udata) {
         throw std::runtime_error(std::string(__func__) + ": event queue rejected the event");
     }
     std::lock_guard lock(g_mutex);
-    if (std::none_of(g_registrations.begin(), g_registrations.end(), [&](const Registration& r) { return r.eq == eq && r.id == id; })) {
+    if (std::none_of(g_registrations.begin(), g_registrations.end(),
+                     [&](const Registration& r) { return r.eq == eq && r.id == id; })) {
         g_registrations.push_back({eq, id});
     }
     return 0;
@@ -78,5 +80,4 @@ int APS5_VABI sceAgcDriverDeleteEqEvent(KernelEqueue eq, int id) {
     }
     return 0;
 }
-
 }

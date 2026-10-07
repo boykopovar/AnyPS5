@@ -11,7 +11,8 @@ namespace Codegen {
 class Sha1Lowering {
 public:
     void EmitOutOfLine(StubBodyBuilder& body, const Sha1Operands& operands) const;
-    [[nodiscard]] LoweredBody LowerOutOfLine(const Sha1Operands& operands, std::span<const std::uint8_t> trailing = {}) const;
+    [[nodiscard]] LoweredBody LowerOutOfLine(const Sha1Operands& operands,
+                                             std::span<const std::uint8_t> trailing = {}) const;
 };
 
 }

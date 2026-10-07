@@ -9,7 +9,10 @@ int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id);
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 constexpr std::uint32_t kFiberModuleId = 0x00000006;
 constexpr int kModuleNotLoaded = static_cast<int>(0x80A90003);

@@ -10,10 +10,8 @@ void _appendBytes(std::vector<std::uint8_t>& s, const std::uint8_t* bytes, std::
 }
 }
 
-std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
-    const std::uint64_t stubVaddr,
-    const std::uint64_t realEntryVaddr
-) const {
+std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(const std::uint64_t stubVaddr,
+                                                           const std::uint64_t realEntryVaddr) const {
     std::vector<std::uint8_t> s;
     _appendBytes(s, kStubOpMovRdiRsp, sizeof(kStubOpMovRdiRsp));
     _appendBytes(s, kStubOpAndRsp0xf0, sizeof(kStubOpAndRsp0xf0));

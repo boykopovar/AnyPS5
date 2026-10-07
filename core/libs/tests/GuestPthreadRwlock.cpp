@@ -7,7 +7,8 @@
 #include <thread>
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
 int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock);
@@ -20,7 +21,7 @@ int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, cons
 int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
 }
 
-using TimedLock = int (APS5_VABI *)(PthreadRwlock*, const KernelTimespec*);
+using TimedLock = int(APS5_VABI*)(PthreadRwlock*, const KernelTimespec*);
 
 static constexpr int SCE_OK = 0;
 static constexpr int GUEST_EDEADLK = 11;
@@ -30,7 +31,10 @@ static constexpr int GUEST_ETIMEDOUT = 60;
 static constexpr int GUEST_REALTIME_CLOCK = 0;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static KernelTimespec After(std::int64_t millis) {
     KernelTimespec now{};
@@ -49,9 +53,11 @@ struct Holder {
 
 static void* APS5_VABI Hold(void* arg) {
     auto& holder = *static_cast<Holder*>(arg);
-    Require((holder.write ? pthread_rwlock_wrlock_nid_postfix(holder.rwlock) : pthread_rwlock_rdlock_nid_postfix(holder.rwlock)) == 0);
+    Require((holder.write ? pthread_rwlock_wrlock_nid_postfix(holder.rwlock)
+                          : pthread_rwlock_rdlock_nid_postfix(holder.rwlock)) == 0);
     holder.held.store(true);
-    while (!holder.release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    while (!holder.release.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     Require(pthread_rwlock_unlock_nid_postfix(holder.rwlock) == 0);
     return nullptr;
@@ -59,7 +65,8 @@ static void* APS5_VABI Hold(void* arg) {
 
 static void Start(Holder& holder) {
     Require(scePthreadCreate(&holder.thread, nullptr, Hold, &holder, nullptr) == SCE_OK);
-    while (!holder.held.load()) std::this_thread::yield();
+    while (!holder.held.load())
+        std::this_thread::yield();
 }
 
 static void ExpectTimeout(TimedLock lock, PthreadRwlock* rwlock) {
@@ -124,8 +131,11 @@ int main() {
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
 
     bool rejected = false;
-    try { pthread_rwlock_timedrdlock_nid_postfix(&rwlock, nullptr); }
-    catch (const std::runtime_error&) { rejected = true; }
+    try {
+        pthread_rwlock_timedrdlock_nid_postfix(&rwlock, nullptr);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
     Require(rejected);
     Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
 }

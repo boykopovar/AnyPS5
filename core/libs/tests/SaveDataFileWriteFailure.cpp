@@ -19,8 +19,8 @@ static void Check(bool value, int line) {
 
 int main() {
     const auto root = std::filesystem::temp_directory_path() /
-        ("anyps5-savedata-write-failure-" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                      ("anyps5-savedata-write-failure-" +
+                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
 
     const auto savePath = root / "memory.dat";
@@ -34,17 +34,17 @@ int main() {
     }
 
     int replaceAttempts = 0;
-    const bool replaced = savedata::replace_file_with(
-        savePath, replacement.data(), replacement.size(),
-        [&replaceAttempts, &savePath](const std::filesystem::path& temporary,
-                                      const std::filesystem::path& destination) {
-            ++replaceAttempts;
-            Require(destination == savePath);
-            auto expectedTemporary = savePath;
-            expectedTemporary += ".tmp";
-            Require(temporary == expectedTemporary);
-            return false;
-        });
+    const bool replaced =
+        savedata::replace_file_with(savePath, replacement.data(), replacement.size(),
+                                    [&replaceAttempts, &savePath](const std::filesystem::path& temporary,
+                                                                  const std::filesystem::path& destination) {
+                                        ++replaceAttempts;
+                                        Require(destination == savePath);
+                                        auto expectedTemporary = savePath;
+                                        expectedTemporary += ".tmp";
+                                        Require(temporary == expectedTemporary);
+                                        return false;
+                                    });
 
     Require(!replaced);
     Require(replaceAttempts == 1);

@@ -48,7 +48,10 @@ int APS5_VABI fclose_nid_postfix(FileStream*);
 int APS5_VABI _Getmbcurmax_nid_postfix();
 int APS5_VABI ___mb_cur_max_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 static int APS5_VABI WriteFormatted(FileStream* stream, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
@@ -84,32 +87,47 @@ static int APS5_VABI FormatString(char* buffer, const char* format, ...) {
 static bool CheckFileBytes(const std::string& filename, const std::string& expected, const char* mode, bool reopen) {
     std::ifstream file(filename, std::ios::binary);
     const std::string actual((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (actual == expected) return true;
-    std::fprintf(stderr, "%s %s: expected %zu raw bytes, received %zu\n", reopen ? "freopen" : "fopen", mode, expected.size(), actual.size());
+    if (actual == expected)
+        return true;
+    std::fprintf(stderr, "%s %s: expected %zu raw bytes, received %zu\n", reopen ? "freopen" : "fopen", mode,
+                 expected.size(), actual.size());
     return false;
 }
 
 static bool CheckBinaryModes() {
-    const auto directory = "anyps5-byte-stream-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto directory =
+        "anyps5-byte-stream-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     Require(std::filesystem::create_directory(directory));
     const auto filename = directory + "/bytes";
-    const std::string original("A\r\n\x1a" "B\0C", 7);
-    const std::string written("D\n\x1a" "E\0F", 6);
+    const std::string original("A\r\n\x1a"
+                               "B\0C",
+                               7);
+    const std::string written("D\n\x1a"
+                              "E\0F",
+                              6);
     const char* modes[] = {"r", "r+", "w", "w+", "a", "a+", "rb", "rb+", "r+b", "wb", "wb+", "w+b", "ab", "ab+", "a+b"};
     bool correct = true;
     for (const auto* mode : modes) {
         for (const bool reopen : {false, true}) {
-            { std::ofstream seed(filename, std::ios::binary | std::ios::trunc); seed.write(original.data(), original.size()); Require(seed.good()); }
+            {
+                std::ofstream seed(filename, std::ios::binary | std::ios::trunc);
+                seed.write(original.data(), original.size());
+                Require(seed.good());
+            }
             FileStream redirected(std::tmpfile());
-            FileStream* stream = reopen ? freopen_nid_postfix(filename.c_str(), mode, &redirected) : fopen_nid_postfix(filename.c_str(), mode);
+            FileStream* stream = reopen ? freopen_nid_postfix(filename.c_str(), mode, &redirected)
+                                        : fopen_nid_postfix(filename.c_str(), mode);
             Require(stream != nullptr);
             const bool update = std::strchr(mode, '+') != nullptr;
             if (*mode == 'r' || (*mode == 'a' && update)) {
                 Require(fseeko_nid_postfix(stream, 0, SEEK_SET) == 0);
                 char bytes[16]{};
                 const auto count = fread_nid_postfix(bytes, 1, sizeof(bytes), stream);
-                const bool matches = count == original.size() && std::memcmp(bytes, original.data(), original.size()) == 0;
-                if (!matches) std::fprintf(stderr, "%s %s: expected 7 input bytes, received %zu\n", reopen ? "freopen" : "fopen", mode, count);
+                const bool matches =
+                    count == original.size() && std::memcmp(bytes, original.data(), original.size()) == 0;
+                if (!matches)
+                    std::fprintf(stderr, "%s %s: expected 7 input bytes, received %zu\n", reopen ? "freopen" : "fopen",
+                                 mode, count);
                 correct &= matches;
                 Require(fseeko_nid_postfix(stream, 3, SEEK_SET) == 0);
                 correct &= fgetc_nid_postfix(stream) == 0x1a;
@@ -118,7 +136,9 @@ static bool CheckBinaryModes() {
             if (*mode == 'w' || *mode == 'a' || update) {
                 Require(fseeko_nid_postfix(stream, 0, SEEK_SET) == 0);
                 Require(fwrite_nid_postfix(written.data(), 1, written.size(), stream) == written.size());
-                expected = *mode == 'w' ? written : *mode == 'a' ? original + written : written + original.substr(written.size());
+                expected = *mode == 'w'   ? written
+                           : *mode == 'a' ? original + written
+                                          : written + original.substr(written.size());
             }
             Require(fclose_nid_postfix(stream) == 0);
             correct &= CheckFileBytes(filename, expected, mode, reopen);
@@ -149,7 +169,8 @@ int main() {
     setbuf_nid_postfix(wrapped, nullptr);
     Require(fseek_nid_postfix(wrapped, 0, SEEK_SET) == 0);
     char contents[32]{};
-    Require(fgets_nid_postfix(contents, sizeof(contents), wrapped) == contents && std::strcmp(contents, "retained") == 0);
+    Require(fgets_nid_postfix(contents, sizeof(contents), wrapped) == contents &&
+            std::strcmp(contents, "retained") == 0);
     Require(fclose_nid_postfix(wrapped) == 0);
 #ifdef _WIN32
     Require(_close(descriptor) == -1);
@@ -161,12 +182,12 @@ int main() {
     std::memset(stringOutput, '!', sizeof(stringOutput));
     std::int64_t count = -1;
     const char expectedString[] = "guest:4294967297:  3.50:1,2,3,4,5,6,7,8:%";
-    const int written = FormatString(stringOutput, "%s:%ld:%*.*f:%d,%d,%d,%d,%d,%d,%d,%d:%%%ln",
-        "guest", std::int64_t{4294967297}, 6, 2, 3.5, 1, 2, 3, 4, 5, 6, 7, 8, &count);
+    const int written = FormatString(stringOutput, "%s:%ld:%*.*f:%d,%d,%d,%d,%d,%d,%d,%d:%%%ln", "guest",
+                                     std::int64_t{4294967297}, 6, 2, 3.5, 1, 2, 3, 4, 5, 6, 7, 8, &count);
     Require(written == sizeof(expectedString) - 1 && count == written);
     Require(std::strcmp(stringOutput, expectedString) == 0 && stringOutput[written + 1] == '!');
-    Require(FormatString(stringOutput, "%.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.2Lf",
-        1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 1.25L) == 25);
+    Require(FormatString(stringOutput, "%.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.2Lf", 1., 2., 3., 4., 5.,
+                         6., 7., 8., 9., 10., 1.25L) == 25);
     Require(std::strcmp(stringOutput, "1 2 3 4 5 6 7 8 9 10 1.25") == 0);
     Require(FormatString(stringOutput, "") == 0 && stringOutput[0] == '\0');
     Require(__isthreaded_nid_postfix == 1);
@@ -207,8 +228,8 @@ int main() {
 
     FileStream formatted(std::tmpfile());
     const char expected[] = "guest 4294967297 1.25 1 2 3 4 5 6 7 8\n";
-    Require(fprintf_nid_postfix(&formatted, "%s %ld %.2f %d %d %d %d %d %d %d %d\n",
-        "guest", std::int64_t{4294967297}, 1.25, 1, 2, 3, 4, 5, 6, 7, 8) == sizeof(expected) - 1);
+    Require(fprintf_nid_postfix(&formatted, "%s %ld %.2f %d %d %d %d %d %d %d %d\n", "guest", std::int64_t{4294967297},
+                                1.25, 1, 2, 3, 4, 5, 6, 7, 8) == sizeof(expected) - 1);
     Require(WriteFormatted(&formatted, "%*.*f:%s", 6, 2, 3.5, "end") == 10);
     std::rewind(formatted.GetHandle());
     char output[128]{};
@@ -242,10 +263,11 @@ int main() {
     std::uint64_t sized = 0;
     char letters[4]{};
     std::int64_t consumed = -1;
-    Require(fscanf_nid_postfix(&scanMany, "%*d %d %d %d %d %d %d %d %d %ld %jd %zu %3[a-z] %%%ln",
-        &numbers[0], &numbers[1], &numbers[2], &numbers[3], &numbers[4], &numbers[5], &numbers[6], &numbers[7],
-        &large, &negative, &sized, letters, &consumed) == 12);
-    for (int i = 0; i < 8; ++i) Require(numbers[i] == i + 1);
+    Require(fscanf_nid_postfix(&scanMany, "%*d %d %d %d %d %d %d %d %d %ld %jd %zu %3[a-z] %%%ln", &numbers[0],
+                               &numbers[1], &numbers[2], &numbers[3], &numbers[4], &numbers[5], &numbers[6],
+                               &numbers[7], &large, &negative, &sized, letters, &consumed) == 12);
+    for (int i = 0; i < 8; ++i)
+        Require(numbers[i] == i + 1);
     Require(large == INT64_C(4294967297) && negative == -INT64_C(4294967298) && sized == UINT64_C(4294967299));
     Require(std::strcmp(letters, "abc") == 0 && consumed == ftello_nid_postfix(&scanMany));
     Require(fgetc_nid_postfix(&scanMany) == '!');
@@ -274,7 +296,8 @@ int main() {
     Require(!feof_nid_postfix(&positioned));
     positioned.Close();
 
-    const auto filename = "anyps5-reopen-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto filename =
+        "anyps5-reopen-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     FileStream redirected(std::tmpfile());
     Require(fgetc_nid_postfix(&redirected) == EOF && feof_nid_postfix(&redirected));
     Require(freopen_nid_postfix(filename.c_str(), "w+b", &redirected) == &redirected);
@@ -286,8 +309,12 @@ int main() {
     Require(fputc_nid_postfix('S', &redirected) == 'S');
     Require(freopen_nid_postfix(nullptr, "r", &redirected) == nullptr && *__error_nid_postfix() == 45);
     redirected.Close();
-    { std::ifstream input(filename, std::ios::binary); std::string contents; std::getline(input, contents);
-      Require(contents == "RS"); }
+    {
+        std::ifstream input(filename, std::ios::binary);
+        std::string contents;
+        std::getline(input, contents);
+        Require(contents == "RS");
+    }
     Require(std::filesystem::remove(filename));
     FileStream failed(std::tmpfile());
     Require(freopen_nid_postfix(filename.c_str(), "rb", &failed) == nullptr);

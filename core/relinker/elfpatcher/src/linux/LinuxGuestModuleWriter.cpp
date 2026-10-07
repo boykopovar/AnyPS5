@@ -6,20 +6,25 @@
 
 namespace Elfpatcher {
 
-std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath) const {
+std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestImage& image,
+                                                        const std::vector<std::string>& dependencies,
+                                                        const std::string& runPath) const {
     auto bytes = image.Bytes;
     std::vector<Domain::ProgramHeader> headers;
     std::uint64_t end = 0;
     for (auto header : image.Headers) {
-        if (header.Type != 1 && header.Type != 7 && header.Type != 0x6474e550 && header.Type != 0x6474e551) continue;
+        if (header.Type != 1 && header.Type != 7 && header.Type != 0x6474e550 && header.Type != 0x6474e551)
+            continue;
         if (header.Type == 1) {
             end = std::max(end, header.MappedAddress + header.MemorySize);
-            if (header.Flags == 0) continue;
+            if (header.Flags == 0)
+                continue;
             header.Flags |= 4;
         }
         headers.push_back(header);
     }
-    if (end > std::numeric_limits<std::uint64_t>::max() - 0x4000) throw Domain::RelinkerException("Guest virtual address overflow");
+    if (end > std::numeric_limits<std::uint64_t>::max() - 0x4000)
+        throw Domain::RelinkerException("Guest virtual address overflow");
     Io::AlignBuffer(bytes, 0x4000);
     const auto extraOffset = bytes.size();
     const auto extraAddress = Io::AlignUp64(end, 0x4000);
@@ -27,7 +32,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     auto strings = image.Dynamic.DynStrData;
     auto symbols = image.Dynamic.DynSymData;
     const auto addString = [&](const std::string& value) {
-        if (strings.size() > std::numeric_limits<std::uint32_t>::max()) throw Domain::RelinkerException("Guest string table too large");
+        if (strings.size() > std::numeric_limits<std::uint32_t>::max())
+            throw Domain::RelinkerException("Guest string table too large");
         const auto offset = static_cast<std::uint32_t>(strings.size());
         Io::AppendString(strings, value);
         return offset;
@@ -39,11 +45,14 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             Io::WriteU32(symbols, index * 24, addString("__tls_get_addr"));
             needsTlsResolver = true;
         }
-        if (symbol.Section == 0 && (symbol.Info >> 4) == 2) symbols[index * 24 + 4] = static_cast<std::uint8_t>(0x10 | (symbol.Info & 15));
+        if (symbol.Section == 0 && (symbol.Info >> 4) == 2)
+            symbols[index * 24 + 4] = static_cast<std::uint8_t>(0x10 | (symbol.Info & 15));
     }
     std::vector<std::uint64_t> needed;
-    for (const auto& dependency : dependencies) needed.push_back(addString(dependency));
-    if (needsTlsResolver) needed.push_back(addString("ld-linux-x86-64.so.2"));
+    for (const auto& dependency : dependencies)
+        needed.push_back(addString(dependency));
+    if (needsTlsResolver)
+        needed.push_back(addString("ld-linux-x86-64.so.2"));
     const auto soname = addString(image.OutputName);
     const auto search = addString(runPath);
     const auto strAddress = address();
@@ -56,18 +65,22 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     Io::AppendU32(bytes, 1);
     Io::AppendU32(bytes, count);
     Io::AppendU32(bytes, count > 1 ? 1 : 0);
-    for (std::uint32_t index = 0; index < count; ++index) Io::AppendU32(bytes, index != 0 && index + 1 < count ? index + 1 : 0);
+    for (std::uint32_t index = 0; index < count; ++index)
+        Io::AppendU32(bytes, index != 0 && index + 1 < count ? index + 1 : 0);
     Io::AlignBuffer(bytes, 8);
     const auto relaAddress = address();
     bytes.insert(bytes.end(), image.Dynamic.RelaData.begin(), image.Dynamic.RelaData.end());
     const auto pltAddress = address();
     bytes.insert(bytes.end(), image.Dynamic.RelaPltData.begin(), image.Dynamic.RelaPltData.end());
     const auto lifecycle = [&](std::uint64_t target) {
-        if (target == 0) return std::uint64_t{};
+        if (target == 0)
+            return std::uint64_t{};
         const auto start = address();
         bytes.insert(bytes.end(), {0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xe9});
         const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(address() + 4);
-        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()) throw Domain::RelinkerException("Guest initializer exceeds relative branch range");
+        if (displacement < std::numeric_limits<std::int32_t>::min() ||
+            displacement > std::numeric_limits<std::int32_t>::max())
+            throw Domain::RelinkerException("Guest initializer exceeds relative branch range");
         Io::AppendU32(bytes, static_cast<std::uint32_t>(displacement));
         return start;
     };
@@ -76,8 +89,12 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     Io::AlignBuffer(bytes, 8);
     const auto dynamicOffset = bytes.size();
     const auto dynamicAddress = address();
-    const auto tag = [&](std::uint64_t key, std::uint64_t value) { Io::AppendU64(bytes, key); Io::AppendU64(bytes, value); };
-    for (const auto offset : needed) tag(1, offset);
+    const auto tag = [&](std::uint64_t key, std::uint64_t value) {
+        Io::AppendU64(bytes, key);
+        Io::AppendU64(bytes, value);
+    };
+    for (const auto offset : needed)
+        tag(1, offset);
     tag(14, soname);
     tag(29, search);
     tag(4, hashAddress);
@@ -96,10 +113,18 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         tag(20, 7);
         tag(3, image.Got);
     }
-    if (!image.InitArray.empty()) { tag(25, image.InitArray.front()); tag(27, image.InitArray.size() * 8); }
-    if (!image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
-    if (init != 0) tag(12, init);
-    if (fini != 0) tag(13, fini);
+    if (!image.InitArray.empty()) {
+        tag(25, image.InitArray.front());
+        tag(27, image.InitArray.size() * 8);
+    }
+    if (!image.FiniArray.empty()) {
+        tag(26, image.FiniArray.front());
+        tag(28, image.FiniArray.size() * 8);
+    }
+    if (init != 0)
+        tag(12, init);
+    if (fini != 0)
+        tag(13, fini);
     tag(30, 8);
     tag(0, 0);
     const auto dynamicSize = bytes.size() - dynamicOffset;
@@ -123,15 +148,14 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     };
     for (const auto& site : image.Trampolines) {
         if (site.Length < kJmpRel32.Size || site.OriginalBytes.size() != site.Length ||
-            site.Body.size() < kJmpRel32.Size ||
-            site.ReturnBranchOffset > site.Body.size() - kJmpRel32.Size ||
+            site.Body.size() < kJmpRel32.Size || site.ReturnBranchOffset > site.Body.size() - kJmpRel32.Size ||
             site.Body[site.ReturnBranchOffset] != kJmpRel32.Bytes[0])
             throw Domain::RelinkerException("Invalid AMD-only guest trampoline site", site.Offset);
         if (site.Offset > image.Bytes.size() || site.Length > image.Bytes.size() - site.Offset)
             throw Domain::RelinkerException("AMD-only guest instruction is outside the original image", site.Offset);
         const auto mapped = std::any_of(image.Headers.begin(), image.Headers.end(), [&](const auto& header) {
-            if (header.Type != 1 || (header.Flags & 1) == 0 ||
-                site.Address < header.MappedAddress || site.Offset < header.Offset)
+            if (header.Type != 1 || (header.Flags & 1) == 0 || site.Address < header.MappedAddress ||
+                site.Offset < header.Offset)
                 return false;
             const auto addressDelta = site.Address - header.MappedAddress;
             const auto offsetDelta = site.Offset - header.Offset;
@@ -153,16 +177,15 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         const auto returnDisplacement = displacement(returnAddress, stubReturn, site.Offset);
         const auto siteDisplacement = displacement(stubAddress, siteNext, site.Offset);
         bytes.insert(bytes.end(), site.Body.begin(), site.Body.end());
-        Io::WriteU32(bytes, stubOffset + site.ReturnBranchOffset + 1,
-                     static_cast<std::uint32_t>(returnDisplacement));
+        Io::WriteU32(bytes, stubOffset + site.ReturnBranchOffset + 1, static_cast<std::uint32_t>(returnDisplacement));
         std::fill_n(bytes.begin() + static_cast<std::ptrdiff_t>(site.Offset), site.Length, kNop1.Bytes[0]);
         bytes[static_cast<std::size_t>(site.Offset)] = kJmpRel32.Bytes[0];
-        Io::WriteU32(bytes, static_cast<std::size_t>(site.Offset + 1),
-                     static_cast<std::uint32_t>(siteDisplacement));
+        Io::WriteU32(bytes, static_cast<std::size_t>(site.Offset + 1), static_cast<std::uint32_t>(siteDisplacement));
     }
     const auto phOffset = bytes.size();
     const auto phCount = headers.size() + 2;
-    if (phCount > std::numeric_limits<std::uint16_t>::max()) throw Domain::RelinkerException("Too many guest program headers");
+    if (phCount > std::numeric_limits<std::uint16_t>::max())
+        throw Domain::RelinkerException("Too many guest program headers");
     const auto extraSize = bytes.size() + phCount * 56 - extraOffset;
     headers.push_back({1, 7, extraOffset, extraAddress, extraAddress, extraSize, extraSize, 0x4000});
     headers.push_back({2, 6, dynamicOffset, dynamicAddress, dynamicAddress, dynamicSize, dynamicSize, 8});

@@ -29,7 +29,8 @@ struct PthreadBarrierattrPrivate {
 extern "C" {
 
 int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** attr) {
-    if (!attr) return 22;
+    if (!attr)
+        return 22;
     try {
         *attr = new PthreadBarrierattrPrivate;
         return 0;
@@ -39,29 +40,36 @@ int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** a
 }
 
 int APS5_VABI pthread_barrierattr_destroy_nid_postfix(PthreadBarrierattrPrivate** attr) {
-    if (!attr || !*attr) return 22;
+    if (!attr || !*attr)
+        return 22;
     delete *attr;
     *attr = nullptr;
     return 0;
 }
 
 int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPrivate* const* attr, int* pshared) {
-    if (!attr || !*attr) return 22;
-    if (!pshared) APS5_INVALID_ARG_EX;
+    if (!attr || !*attr)
+        return 22;
+    if (!pshared)
+        APS5_INVALID_ARG_EX;
     *pshared = (*attr)->pshared;
     return 0;
 }
 
 int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPrivate** attr, int pshared) {
-    if (!attr || !*attr) return 22;
-    if (pshared != PROCESS_PRIVATE && pshared != PROCESS_SHARED) return 22;
+    if (!attr || !*attr)
+        return 22;
+    if (pshared != PROCESS_PRIVATE && pshared != PROCESS_SHARED)
+        return 22;
     (*attr)->pshared = pshared;
     return 0;
 }
 
-int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count) {
+int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr,
+                                               unsigned count) {
     (void)attr;
-    if (!barrier || count == 0) return 22;
+    if (!barrier || count == 0)
+        return 22;
     try {
         auto* value = new PthreadBarrierPrivate;
         value->count = count;
@@ -73,7 +81,8 @@ int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, 
 }
 
 int APS5_VABI pthread_barrier_wait_nid_postfix(PthreadBarrierPrivate** barrier) {
-    if (!barrier || !*barrier) return 22;
+    if (!barrier || !*barrier)
+        return 22;
     auto& value = **barrier;
     std::unique_lock lock(value.mutex);
     const auto generation = value.generation;
@@ -91,15 +100,16 @@ int APS5_VABI pthread_barrier_wait_nid_postfix(PthreadBarrierPrivate** barrier) 
 }
 
 int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrier) {
-    if (!barrier || !*barrier) return 22;
+    if (!barrier || !*barrier)
+        return 22;
     auto* value = *barrier;
     {
         std::lock_guard lock(value->mutex);
-        if (value->active != 0) return 16;
+        if (value->active != 0)
+            return 16;
     }
     delete value;
     *barrier = nullptr;
     return 0;
 }
-
 }

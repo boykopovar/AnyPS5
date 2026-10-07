@@ -16,7 +16,8 @@ void SysVDynamicSectionBuilder::_appendI64(std::vector<std::uint8_t>& buf, std::
     _appendU64(buf, static_cast<std::uint64_t>(v));
 }
 
-void SysVDynamicSectionBuilder::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const {
+void SysVDynamicSectionBuilder::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag,
+                                                std::uint64_t val) const {
     _appendI64(buf, tag);
     _appendU64(buf, val);
 }
@@ -29,15 +30,9 @@ std::uint32_t SysVDynamicSectionBuilder::_appendStr(std::vector<std::uint8_t>& s
     return offset;
 }
 
-void SysVDynamicSectionBuilder::_appendElfSym(
-    std::vector<std::uint8_t>& dynsym,
-    std::uint32_t nameOff,
-    std::uint8_t info,
-    std::uint8_t other,
-    std::uint16_t shndx,
-    std::uint64_t value,
-    std::uint64_t size) const
-{
+void SysVDynamicSectionBuilder::_appendElfSym(std::vector<std::uint8_t>& dynsym, std::uint32_t nameOff,
+                                              std::uint8_t info, std::uint8_t other, std::uint16_t shndx,
+                                              std::uint64_t value, std::uint64_t size) const {
     dynsym.push_back(nameOff & 0xFF);
     dynsym.push_back((nameOff >> 8) & 0xFF);
     dynsym.push_back((nameOff >> 16) & 0xFF);
@@ -50,23 +45,17 @@ void SysVDynamicSectionBuilder::_appendElfSym(
     _appendU64(dynsym, size);
 }
 
-void SysVDynamicSectionBuilder::_appendRela(
-    std::vector<std::uint8_t>& rela,
-    std::uint64_t offset,
-    std::uint64_t info,
-    std::int64_t addend) const
-{
+void SysVDynamicSectionBuilder::_appendRela(std::vector<std::uint8_t>& rela, std::uint64_t offset, std::uint64_t info,
+                                            std::int64_t addend) const {
     _appendU64(rela, offset);
     _appendU64(rela, info);
     _appendI64(rela, addend);
 }
 
-SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
-    const std::vector<NidReference>& nidReferences,
-    const std::vector<std::string>& neededLibraries,
-    FileByteOffset originalJmprelOffset,
-    std::uint32_t originalJmprelCount)
-{
+SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(const std::vector<NidReference>& nidReferences,
+                                                                  const std::vector<std::string>& neededLibraries,
+                                                                  FileByteOffset originalJmprelOffset,
+                                                                  std::uint32_t originalJmprelCount) {
     SysVDynamicSection result;
     result.DynStrData.push_back(0);
 
@@ -78,7 +67,8 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
     auto stripHashSuffix = [](const std::string& value) -> std::string {
         const auto hashPos = value.find('#');
-        if (hashPos == std::string::npos) return value;
+        if (hashPos == std::string::npos)
+            return value;
         return value.substr(0, hashPos);
     };
 
@@ -88,9 +78,11 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
     std::vector<const NidReference*> nonPltRefs;
 
     for (const auto& ref : nidReferences) {
-        if (!ref.Library.empty()) result.ImportModules.emplace(ref.RelocationAddress, ref.Library);
+        if (!ref.Library.empty())
+            result.ImportModules.emplace(ref.RelocationAddress, ref.Library);
         std::uint32_t relType = ref.RelocationTypeValue;
-        if (relType == 0) relType = R_X86_64_JUMP_SLOT;
+        if (relType == 0)
+            relType = R_X86_64_JUMP_SLOT;
 
         if (relType != R_X86_64_JUMP_SLOT) {
             nonPltRefs.push_back(&ref);
@@ -98,26 +90,22 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
         }
 
         if (ref.RelocationTableOffset < originalJmprelOffset)
-            throw RelinkerException(
-                "JUMP_SLOT relocation lies before the original .rela.plt table",
-                ref.RelocationTableOffset);
+            throw RelinkerException("JUMP_SLOT relocation lies before the original .rela.plt table",
+                                    ref.RelocationTableOffset);
 
         const std::uint64_t byteDelta = ref.RelocationTableOffset - originalJmprelOffset;
         if (byteDelta % kRelaEntSize != 0)
-            throw RelinkerException(
-                "JUMP_SLOT relocation is not aligned to the original .rela.plt entry size",
-                ref.RelocationTableOffset);
+            throw RelinkerException("JUMP_SLOT relocation is not aligned to the original .rela.plt entry size",
+                                    ref.RelocationTableOffset);
 
         const std::uint64_t slotIndex = byteDelta / kRelaEntSize;
         if (slotIndex >= originalJmprelCount)
-            throw RelinkerException(
-                "JUMP_SLOT relocation index exceeds the original .rela.plt table size",
-                ref.RelocationTableOffset);
+            throw RelinkerException("JUMP_SLOT relocation index exceeds the original .rela.plt table size",
+                                    ref.RelocationTableOffset);
 
         if (pltSlots[slotIndex] != nullptr)
-            throw RelinkerException(
-                "Duplicate JUMP_SLOT relocation for the same original .rela.plt slot",
-                ref.RelocationTableOffset);
+            throw RelinkerException("Duplicate JUMP_SLOT relocation for the same original .rela.plt slot",
+                                    ref.RelocationTableOffset);
 
         pltSlots[slotIndex] = &ref;
     }
@@ -126,9 +114,8 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
     for (const NidReference* slot : pltSlots) {
         if (slot == nullptr)
-            throw RelinkerException(
-                "Original .rela.plt slot has no corresponding JUMP_SLOT relocation; "
-                "PLT thunks cannot be filtered without patching their hard-coded reloc index");
+            throw RelinkerException("Original .rela.plt slot has no corresponding JUMP_SLOT relocation; "
+                                    "PLT thunks cannot be filtered without patching their hard-coded reloc index");
 
         const NidReference& ref = *slot;
         const std::uint32_t nameOff = _appendStr(result.DynStrData, stripHashSuffix(ref.Nid));

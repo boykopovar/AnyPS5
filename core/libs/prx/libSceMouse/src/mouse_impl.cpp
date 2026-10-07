@@ -35,12 +35,14 @@ int Initialize() {
 
 int Open(int userId, std::int32_t type, std::int32_t index, const MouseOpenParam* param) {
     std::lock_guard lock(mouseMutex);
-    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (!initialized)
+        return MOUSE_ERROR_NOT_INITIALIZED;
     if (userId < 0 || type != 0 || index != 0 ||
         (param != nullptr && (param->behaviorFlag & ~MOUSE_OPEN_PARAM_MERGED) != 0)) {
         return MOUSE_ERROR_INVALID_ARG;
     }
-    if (opened) return MOUSE_ERROR_ALREADY_OPENED;
+    if (opened)
+        return MOUSE_ERROR_ALREADY_OPENED;
     opened = true;
     buttons = 0;
     head = 0;
@@ -54,8 +56,10 @@ int Open(int userId, std::int32_t type, std::int32_t index, const MouseOpenParam
 
 int Close(std::int32_t handle) {
     std::lock_guard lock(mouseMutex);
-    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    if (!initialized)
+        return MOUSE_ERROR_NOT_INITIALIZED;
+    if (handle != MOUSE_HANDLE || !opened)
+        return MOUSE_ERROR_INVALID_HANDLE;
     opened = false;
     buttons = 0;
     head = 0;
@@ -65,9 +69,12 @@ int Close(std::int32_t handle) {
 
 int Read(std::int32_t handle, MouseData* data, std::int32_t num) {
     std::lock_guard lock(mouseMutex);
-    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
-    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
-    if (data == nullptr || num <= 0 || num > MOUSE_MAX_DATA_NUM) return MOUSE_ERROR_INVALID_ARG;
+    if (!initialized)
+        return MOUSE_ERROR_NOT_INITIALIZED;
+    if (handle != MOUSE_HANDLE || !opened)
+        return MOUSE_ERROR_INVALID_HANDLE;
+    if (data == nullptr || num <= 0 || num > MOUSE_MAX_DATA_NUM)
+        return MOUSE_ERROR_INVALID_ARG;
     const int available = std::min(count, num);
     for (int i = 0; i < available; ++i) {
         data[i] = history[head];
@@ -80,17 +87,23 @@ int Read(std::int32_t handle, MouseData* data, std::int32_t num) {
 void Publish(const MouseInputEvent& event) {
     std::lock_guard lock(mouseMutex);
     if (event.connectionChange) {
-        if (connected == event.connected) return;
+        if (connected == event.connected)
+            return;
         connected = event.connected;
-        if (!connected) buttons = 0;
+        if (!connected)
+            buttons = 0;
     } else if (!connected) {
         return;
     }
-    if (!opened) return;
-    if (event.resetButtons) buttons = 0;
+    if (!opened)
+        return;
+    if (event.resetButtons)
+        buttons = 0;
     if (event.button != 0) {
-        if (event.pressed) buttons |= event.button;
-        else buttons &= ~event.button;
+        if (event.pressed)
+            buttons |= event.button;
+        else
+            buttons &= ~event.button;
     }
     MouseData data{};
     data.timestamp = sceKernelGetProcessTime();

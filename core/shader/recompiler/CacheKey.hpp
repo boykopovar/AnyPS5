@@ -68,45 +68,56 @@ public:
             hash ^= hash >> 29u;
         };
         std::size_t index = 0;
-        for (; index + 2 <= code.size(); index += 2) mix(code[index] | (static_cast<std::uint64_t>(code[index + 1]) << 32u));
-        if (index < code.size()) mix(code[index]);
+        for (; index + 2 <= code.size(); index += 2)
+            mix(code[index] | (static_cast<std::uint64_t>(code[index + 1]) << 32u));
+        if (index < code.size())
+            mix(code[index]);
         return hash;
     }
 
 private:
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
-        if (request.shader.stage != ShaderStage::Mesh) return;
+        if (request.shader.stage != ShaderStage::Mesh)
+            return;
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
         append(key, mesh != nullptr);
-        if (mesh == nullptr) return;
-        for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize}) append(key, value);
+        if (mesh == nullptr)
+            return;
+        for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup,
+                                 mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords,
+                                 mesh->provokingVertex, mesh->esgsItemSize})
+            append(key, value);
     }
 
-    template<typename TValue>
-    static void append(std::vector<std::uint64_t>& key, TValue value) requires (std::is_integral_v<TValue> || std::is_enum_v<TValue>) {
+    template <typename TValue>
+    static void append(std::vector<std::uint64_t>& key, TValue value)
+        requires(std::is_integral_v<TValue> || std::is_enum_v<TValue>)
+    {
         key.push_back(static_cast<std::uint64_t>(value));
     }
 
-    template<typename TValue, std::size_t TSize>
+    template <typename TValue, std::size_t TSize>
     static void append(std::vector<std::uint64_t>& key, const std::array<TValue, TSize>& values) {
-        for (const auto value : values) append(key, value);
+        for (const auto value : values)
+            append(key, value);
     }
 
-    template<typename TValue>
-    static void append(std::vector<std::uint64_t>& key, std::span<TValue> values) {
+    template <typename TValue> static void append(std::vector<std::uint64_t>& key, std::span<TValue> values) {
         append(key, values.size());
-        for (const auto value : values) append(key, value);
+        for (const auto value : values)
+            append(key, value);
     }
 
-    template<typename TValue>
-    static void append(std::vector<std::uint64_t>& key, const std::optional<TValue>& value) {
+    template <typename TValue> static void append(std::vector<std::uint64_t>& key, const std::optional<TValue>& value) {
         append(key, value.has_value());
-        if (value) append(key, *value);
+        if (value)
+            append(key, *value);
     }
 
     static void append(std::vector<std::uint64_t>& key, std::string_view value) {
         append(key, value.size());
-        for (const unsigned char byte : value) append(key, byte);
+        for (const unsigned char byte : value)
+            append(key, byte);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderComputeStageInfo& value) {
@@ -120,8 +131,10 @@ private:
 
     static void append(std::vector<std::uint64_t>& key, const ShaderPixelStageInfo& value) {
         append(key, value.interpolatorCount);
-        if (value.interpolatorCount > value.interpolatorSettings.size()) throw std::runtime_error("Shader cache: invalid interpolator count");
-        for (std::uint32_t i = 0; i < value.interpolatorCount; ++i) append(key, value.interpolatorSettings[i]);
+        if (value.interpolatorCount > value.interpolatorSettings.size())
+            throw std::runtime_error("Shader cache: invalid interpolator count");
+        for (std::uint32_t i = 0; i < value.interpolatorCount; ++i)
+            append(key, value.interpolatorSettings[i]);
         append(key, value.wave32);
         append(key, value.inputAddr);
         append(key, value.hasPerspectiveCenterVgpr);
@@ -157,7 +170,8 @@ private:
         append(key, value.fetchAttribReg);
         append(key, value.fetchBufferReg);
         append(key, value.fetchEmbedded);
-        if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
+        if (value.resourcesNum > value.resources.size())
+            throw std::runtime_error("Shader cache: invalid vertex resource count");
         for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {
             append(key, value.resources[i].fields[1] & 0xffff0000u);
             append(key, value.resources[i].fields[3]);

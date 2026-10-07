@@ -16,16 +16,12 @@ extern "C" {
 
 KernelEqueuePrivate::KernelEqueuePrivate(KernelEqueue handle) : m_handle(handle) {}
 
-KernelEqueuePrivate::~KernelEqueuePrivate() {
-    Close();
-}
+KernelEqueuePrivate::~KernelEqueuePrivate() { Close(); }
 
 uint64_t KernelEqueuePrivate::MonotonicNs() {
     return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()
-        ).count()
-    );
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
 }
 
 void KernelEqueuePrivate::Close() {
@@ -171,10 +167,9 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         return SCE_KERNEL_ERROR_EBADF;
     }
     auto it = std::find_if(m_events.begin(), m_events.end(),
-        [ident = event.event.ident, filter = event.event.filter](const auto& e) {
-            return e.event.ident == ident && e.event.filter == filter;
-        }
-    );
+                           [ident = event.event.ident, filter = event.event.filter](const auto& e) {
+                               return e.event.ident == ident && e.event.filter == filter;
+                           });
     if (it != m_events.end()) {
         it->deadlineNs = event.deadlineNs;
         it->event.udata = event.event.udata;
@@ -193,11 +188,9 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
     if (m_closed) {
         return SCE_KERNEL_ERROR_EBADF;
     }
-    auto it = std::find_if(m_events.begin(), m_events.end(),
-        [ident, filter](const auto& e) {
-            return e.event.ident == ident && e.event.filter == filter;
-        }
-    );
+    auto it = std::find_if(m_events.begin(), m_events.end(), [ident, filter](const auto& e) {
+        return e.event.ident == ident && e.event.filter == filter;
+    });
     if (it == m_events.end()) {
         return SCE_KERNEL_ERROR_ENOENT;
     }
@@ -215,11 +208,9 @@ int KernelEqueuePrivate::DeleteEvent(uintptr_t ident, int16_t filter) {
     if (m_closed) {
         return SCE_KERNEL_ERROR_EBADF;
     }
-    auto it = std::find_if(m_events.begin(), m_events.end(),
-        [ident, filter](const auto& e) {
-            return e.event.ident == ident && e.event.filter == filter;
-        }
-    );
+    auto it = std::find_if(m_events.begin(), m_events.end(), [ident, filter](const auto& e) {
+        return e.event.ident == ident && e.event.filter == filter;
+    });
     if (it == m_events.end()) {
         return SCE_KERNEL_ERROR_ENOENT;
     }
@@ -263,7 +254,6 @@ int APS5_VABI EqueueDeleteEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, in
     }
     return owner->DeleteEvent(ident, filter);
 }
-
 
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     if (eq == nullptr || name == nullptr) {
@@ -315,7 +305,11 @@ int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int
         *out = owner->WaitForEvents(ev, num, *timo);
     }
     if (timo == nullptr || *timo != 0) {
-        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), *out == 0);
+        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0),
+                                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                                   std::chrono::steady_clock::now() - waitStart)
+                                                                   .count()),
+                                    *out == 0);
     }
     if (*out == SCE_KERNEL_ERROR_EBADF) {
         return SCE_KERNEL_ERROR_EBADF;
@@ -381,17 +375,13 @@ int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTime
     if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000LL) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    const uint64_t delayNs =
-        static_cast<uint64_t>(ts->tv_sec) * 1000000000ULL +
-        static_cast<uint64_t>(ts->tv_nsec);
+    const uint64_t delayNs = static_cast<uint64_t>(ts->tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts->tv_nsec);
     const uint64_t nowNs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()
-        ).count()
-    );
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
     KernelEqueueEvent event{};
-    event.deadlineNs = (delayNs <= std::numeric_limits<uint64_t>::max() - nowNs)
-        ? nowNs + delayNs : std::numeric_limits<uint64_t>::max();
+    event.deadlineNs = (delayNs <= std::numeric_limits<uint64_t>::max() - nowNs) ? nowNs + delayNs
+                                                                                 : std::numeric_limits<uint64_t>::max();
     event.event.ident = static_cast<uintptr_t>(id);
     event.event.filter = EVFILT_HRTIMER;
     event.event.flags = EV_ADD | EV_ONESHOT;
@@ -445,8 +435,5 @@ int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id) {
     return EQUEUE_OK;
 }
 
-int APS5_VABI sceKernelDeleteAmprSystemEvent(KernelEqueue eq, int id) {
-    return sceKernelDeleteAmprEvent(eq, id);
-}
-
+int APS5_VABI sceKernelDeleteAmprSystemEvent(KernelEqueue eq, int id) { return sceKernelDeleteAmprEvent(eq, id); }
 }

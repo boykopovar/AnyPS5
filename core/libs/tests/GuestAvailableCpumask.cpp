@@ -4,7 +4,8 @@
 
 extern "C" {
 KernelCpumask APS5_VABI sceKernelGetAvailableCpumask(void);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask);
 int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask);
@@ -16,7 +17,10 @@ int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* 
 static constexpr int SCE_OK = 0;
 static constexpr int PS5_LOGICAL_CPUS = 16;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static void* APS5_VABI Worker(void* arg) {
     static_cast<std::future<void>*>(arg)->get();
@@ -49,7 +53,8 @@ int main() {
     Require(threadAffinity == available);
 
     for (KernelCpumask cpu = 1; cpu != 0; cpu <<= 1) {
-        if ((available & cpu) == 0) continue;
+        if ((available & cpu) == 0)
+            continue;
         Require(scePthreadSetaffinity(thread, cpu) == SCE_OK);
         Require(scePthreadGetaffinity(thread, &threadAffinity) == SCE_OK);
         Require(threadAffinity == cpu);

@@ -8,22 +8,17 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 using NativeStat = struct __stat64;
-static int DoStat(const std::filesystem::path& p, NativeStat* st) {
-    return _wstat64(p.wstring().c_str(), st);
-}
+static int DoStat(const std::filesystem::path& p, NativeStat* st) { return _wstat64(p.wstring().c_str(), st); }
 static int DoFstat(int fd, NativeStat* st) {
-    if (const auto directory = File::DirectoryDescriptorPath(fd)) return DoStat(*directory, st);
+    if (const auto directory = File::DirectoryDescriptorPath(fd))
+        return DoStat(*directory, st);
     return _fstat64(fd, st);
 }
 #else
 #include <sys/stat.h>
 using NativeStat = struct stat;
-static int DoStat(const std::filesystem::path& p, NativeStat* st) {
-    return ::stat(p.c_str(), st);
-}
-static int DoFstat(int fd, NativeStat* st) {
-    return ::fstat(fd, st);
-}
+static int DoStat(const std::filesystem::path& p, NativeStat* st) { return ::stat(p.c_str(), st); }
+static int DoFstat(int fd, NativeStat* st) { return ::fstat(fd, st); }
 #endif
 
 static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
@@ -94,7 +89,8 @@ void FillFileStat(int nativeDescriptor, FileStat* sb) {
 
 bool FillFileStatFromDescriptor(int fd, FileStat* sb) {
     NativeStat st{};
-    if (DoFstat(fd, &st) != 0) return false;
+    if (DoFstat(fd, &st) != 0)
+        return false;
     CopyNativeStat(st, sb);
     return true;
 }

@@ -37,8 +37,7 @@ int main() {
     Require(sceHmdGetDeviceInformation(nullptr) == Hmd::ParameterNull, "null information");
     Require(sceHmdGetDeviceInformation(&info) == Hmd::NotInitialized, "query before initialize");
     Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "failed query modified output");
-    Require(sceHmdGetDeviceInformationByHandle(0, &info) == Hmd::NotInitialized,
-            "handle query before initialize");
+    Require(sceHmdGetDeviceInformationByHandle(0, &info) == Hmd::NotInitialized, "handle query before initialize");
     Require(sceHmdInitialize(nullptr) == Hmd::ParameterNull, "null initialize");
     Require(sceHmdInitialize315(nullptr) == Hmd::ParameterNull, "null initialize315");
     param.reserved0 = &param;
@@ -63,8 +62,8 @@ int main() {
         Require(sceHmdOpen(0xff, 0, 0, nullptr) == Hmd::ParameterInvalid, "system user");
         Require(sceHmdOpen(1, 1, 0, nullptr) == Hmd::ParameterInvalid, "invalid type");
         Require(sceHmdOpen(1, 0, 1, nullptr) == Hmd::ParameterInvalid, "invalid index");
-        Require(sceHmdOpen(1, 0, 0, reinterpret_cast<Hmd::OpenParam*>(&param)) ==
-                    Hmd::ParameterInvalid, "non-null reserved open parameter");
+        Require(sceHmdOpen(1, 0, 0, reinterpret_cast<Hmd::OpenParam*>(&param)) == Hmd::ParameterInvalid,
+                "non-null reserved open parameter");
         Require(sceHmdOpen(1, 0, 0, nullptr) == Hmd::DeviceDisconnected, "open faked a handle");
         Require(sceHmdOpen(1, 0, 0, nullptr) == Hmd::DeviceDisconnected, "failed open created state");
         for (const auto handle : {0, -1, 1, 0x0f000000}) {

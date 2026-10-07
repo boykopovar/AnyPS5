@@ -27,7 +27,7 @@ enum class UniformFillKind { None, Buffer, Image };
 struct UniformFill {
     UniformFillKind kind = UniformFillKind::None;
     std::uint32_t resource = 0;
-    std::array<std::uint32_t, 3> groupStride {};
+    std::array<std::uint32_t, 3> groupStride{};
     std::uint32_t words = 0;
     std::uint32_t value = 0;
 

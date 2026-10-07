@@ -76,7 +76,7 @@ struct SpirvEmitterState {
     SpirvModule module;
     const IrProgram& program;
     ShaderStageInputInfo inputInfo;
-    std::array<std::uint32_t, 6> tessVariables {};
+    std::array<std::uint32_t, 6> tessVariables{};
     std::uint32_t tessInnerVariable = 0;
     std::uint32_t tessPatchBase = 0;
 
@@ -107,7 +107,7 @@ struct SpirvEmitterState {
     std::uint32_t bdaWritePointerFunction = 0;
     std::uint32_t bdaNoteWriteFunction = 0;
     std::uint32_t bdaFaultFunction = 0;
-    std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};
+    std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions{};
     std::uint32_t bdaStopValue = 0;
     // False for programs with workgroup barriers: faulting BDA accesses then continue (see BdaInvocationsMayStop).
     bool bdaStopsInvocations = true;
@@ -126,8 +126,8 @@ struct SpirvEmitterState {
     std::uint32_t shaderDataStorageVariable = 0;
     std::uint32_t flattenedSrtVariable = 0;
     std::uint32_t ldsVariable = 0;
-    std::array<std::uint32_t, 2> scratchVariable {};
-    std::array<std::uint32_t, ImageBindingCount> imageVariables {};
+    std::array<std::uint32_t, 2> scratchVariable{};
+    std::array<std::uint32_t, ImageBindingCount> imageVariables{};
     std::uint32_t samplerVariable = 0;
     std::uint32_t mainFunc = 0;
     std::uint32_t meshGuestFunc = 0;

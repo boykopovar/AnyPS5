@@ -20,7 +20,7 @@ void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
 char* APS5_VABI strdup_nid_postfix(const char*);
 char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
 int* APS5_VABI __error_nid_postfix();
-int APS5_VABI atexit_nid_postfix(void (APS5_VABI*)());
+int APS5_VABI atexit_nid_postfix(void(APS5_VABI*)());
 }
 
 namespace {
@@ -36,25 +36,31 @@ bool recurse = false;
 bool nullPosixResult = false;
 
 void require(bool condition) {
-    if (!condition) throw std::runtime_error("application heap test failed");
+    if (!condition)
+        throw std::runtime_error("application heap test failed");
 }
 
-template<typename TAction>
-void reject(TAction action) {
+template <typename TAction> void reject(TAction action) {
     bool rejected = false;
-    try { action(); } catch (const std::exception&) { rejected = true; }
+    try {
+        action();
+    } catch (const std::exception&) {
+        rejected = true;
+    }
     require(rejected);
 }
 
 void APS5_VABI initialize() { ++initializes; }
 void APS5_VABI finalize() { require(initializes == 1); }
 void APS5_VABI exitCallbackAllocates() {
-    if (ApplicationHeapAllocate_nid_no_patch(16) != storage.data()) throw std::runtime_error("application heap test failed");
+    if (ApplicationHeapAllocate_nid_no_patch(16) != storage.data())
+        throw std::runtime_error("application heap test failed");
 }
 
 void* APS5_VABI allocate(std::size_t bytes) {
     lastSize = bytes;
-    if (recurse) return ApplicationHeapAllocate_nid_no_patch(bytes);
+    if (recurse)
+        return ApplicationHeapAllocate_nid_no_patch(bytes);
     return fail ? nullptr : storage.data();
 }
 
@@ -68,9 +74,7 @@ void* APS5_VABI reallocate(void* pointer, std::size_t bytes) {
     return allocate(bytes);
 }
 
-void* APS5_VABI allocateZeroed(std::size_t count, std::size_t bytes) {
-    return allocate(count * bytes);
-}
+void* APS5_VABI allocateZeroed(std::size_t count, std::size_t bytes) { return allocate(count * bytes); }
 
 void* APS5_VABI align(std::size_t alignment, std::size_t bytes) {
     lastAlignment = alignment;
@@ -85,13 +89,20 @@ void* APS5_VABI realign(void* pointer, std::size_t bytes, std::size_t alignment)
 
 int APS5_VABI posixAlign(void** pointer, std::size_t alignment, std::size_t bytes) {
     ++posixCalls;
-    if (fail) { *__error_nid_postfix() = 12; *pointer = nullptr; return 12; }
-    if (nullPosixResult) { *pointer = nullptr; return 0; }
+    if (fail) {
+        *__error_nid_postfix() = 12;
+        *pointer = nullptr;
+        return 12;
+    }
+    if (nullPosixResult) {
+        *pointer = nullptr;
+        return 0;
+    }
     *pointer = align(alignment, bytes);
     return 0;
 }
 
-template<typename TValue, std::size_t TSize>
+template <typename TValue, std::size_t TSize>
 void write(std::array<std::byte, TSize>& data, std::size_t offset, TValue value) {
     require(offset <= data.size() && sizeof(value) <= data.size() - offset);
     std::memcpy(data.data() + offset, &value, sizeof(value));
@@ -135,12 +146,15 @@ int main(int argc, char** argv) {
         ApplicationHeapInitialize_nid_no_patch(process.data());
         require(initializes == 1);
         auto* pointer = static_cast<unsigned char*>(ApplicationHeapCalloc_nid_no_patch(7, 9));
-        for (unsigned i = 0; i < 63; ++i) require(pointer[i] == 0);
+        for (unsigned i = 0; i < 63; ++i)
+            require(pointer[i] == 0);
         std::memset(pointer, 0x5a, 63);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(pointer, 150));
-        for (unsigned i = 0; i < 63; ++i) require(pointer[i] == 0x5a);
+        for (unsigned i = 0; i < 63; ++i)
+            require(pointer[i] == 0x5a);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(pointer, 11));
-        for (unsigned i = 0; i < 11; ++i) require(pointer[i] == 0x5a);
+        for (unsigned i = 0; i < 11; ++i)
+            require(pointer[i] == 0x5a);
         require(ApplicationHeapReallocate_nid_no_patch(pointer, 0) == nullptr);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(nullptr, 32));
         require(pointer != nullptr);
@@ -183,7 +197,8 @@ int main(int argc, char** argv) {
     ApplicationHeapFree_nid_no_patch(pointer);
     require(frees == 2);
     require(ApplicationHeapCalloc_nid_no_patch(3, 16) == storage.data() && lastSize == 48);
-    require(ApplicationHeapPosixAlign_nid_no_patch(&pointer, 64, 128) == 0 && pointer == storage.data() && lastAlignment == 64);
+    require(ApplicationHeapPosixAlign_nid_no_patch(&pointer, 64, 128) == 0 && pointer == storage.data() &&
+            lastAlignment == 64);
     reject([] { ApplicationHeapAlign_nid_no_patch(3, 64); });
     reject([] { ApplicationHeapCalloc_nid_no_patch(2, std::numeric_limits<std::size_t>::max()); });
     require(_Znwm_nid_postfix(0) == storage.data() && lastSize == 1);
@@ -193,7 +208,8 @@ int main(int argc, char** argv) {
     require(_ZnamRKSt9nothrow_t_nid_postfix(24, nullptr) == storage.data() && lastSize == 24);
     _ZdaPv_nid_postfix(storage.data());
     require(frees == 4);
-    require(ApplicationHeapRealign_nid_no_patch(storage.data(), 48, 32) == storage.data() && lastSize == 48 && lastAlignment == 32);
+    require(ApplicationHeapRealign_nid_no_patch(storage.data(), 48, 32) == storage.data() && lastSize == 48 &&
+            lastAlignment == 32);
     reject([] { ApplicationHeapRealign_nid_no_patch(storage.data(), 16, 4096); });
     pointer = ApplicationHeapAlign_nid_no_patch(64, 37);
     _ZdlPvSt11align_val_t_nid_postfix(pointer, 64);
@@ -208,7 +224,10 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 77;
     try {
         const int error = posix_memalign_nid_postfix(&unchanged, 64, 64);
-        if (error != 12) { std::fprintf(stderr, "posix_memalign callback: expected ENOMEM 12, received %d\n", error); return 1; }
+        if (error != 12) {
+            std::fprintf(stderr, "posix_memalign callback: expected ENOMEM 12, received %d\n", error);
+            return 1;
+        }
     } catch (const std::exception&) {
         std::fputs("posix_memalign callback: expected ENOMEM 12, received exception\n", stderr);
         return 1;
@@ -222,7 +241,9 @@ int main(int argc, char** argv) {
         const int error = posix_memalign_nid_postfix(&unchanged, 64, 64);
         std::fprintf(stderr, "posix_memalign callback: success with null pointer must throw, received %d\n", error);
         return 1;
-    } catch (const std::bad_alloc&) { rejectedNull = true; }
+    } catch (const std::bad_alloc&) {
+        rejectedNull = true;
+    }
     require(rejectedNull && unchanged == storage.data());
     nullPosixResult = false;
     const auto beforeInvalid = posixCalls;

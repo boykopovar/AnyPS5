@@ -45,8 +45,10 @@ public:
         metric->bytes += bytes;
     }
 
-    void IncludeSubmission(std::uint64_t serial, Clock::time_point received, Clock::time_point enqueued, Clock::time_point dequeued, bool firstSegment) {
-        if (serial == 0 || received > enqueued || enqueued > dequeued) throw std::runtime_error("Frame timing: invalid submission timestamps");
+    void IncludeSubmission(std::uint64_t serial, Clock::time_point received, Clock::time_point enqueued,
+                           Clock::time_point dequeued, bool firstSegment) {
+        if (serial == 0 || received > enqueued || enqueued > dequeued)
+            throw std::runtime_error("Frame timing: invalid submission timestamps");
         if (firstSerial == 0) {
             firstSerial = serial;
             start = received;
@@ -61,7 +63,8 @@ public:
     }
 
     void SetFlip(std::uint64_t serial, std::size_t offset, Clock::time_point received, Clock::time_point reached) {
-        if (serial != lastSerial || received > reached || executionStart > reached) throw std::runtime_error("Frame timing: invalid flip lineage");
+        if (serial != lastSerial || received > reached || executionStart > reached)
+            throw std::runtime_error("Frame timing: invalid flip lineage");
         flipSerial = serial;
         flipOffset = offset;
         flipReceived = received;
@@ -91,7 +94,8 @@ public:
     void NoteBlit(std::uint64_t atBlit, Clock::time_point lastSubmitted, Clock::time_point blitSubmitted) {
         std::lock_guard lock(mutex);
         batchesAtBlit = atBlit;
-        if (flipReached == Clock::time_point{}) return;
+        if (flipReached == Clock::time_point{})
+            return;
         blitSubmitAfterFlip = blitSubmitted - flipReached;
         lastSubmitAfterFlip = std::max(lastSubmitted, blitSubmitted) - flipReached;
     }
@@ -107,9 +111,11 @@ public:
         gpuGapMs += gapMs;
     }
 
-    void Print(std::uint32_t outputHandle, std::int32_t buffer, std::int64_t argument, Clock::time_point finished, Clock::duration interval) {
+    void Print(std::uint32_t outputHandle, std::int32_t buffer, std::int64_t argument, Clock::time_point finished,
+               Clock::duration interval) {
         std::lock_guard lock(mutex);
-        if (firstSerial == 0 || flipSerial == 0) throw std::runtime_error("Frame timing: incomplete submission lineage");
+        if (firstSerial == 0 || flipSerial == 0)
+            throw std::runtime_error("Frame timing: incomplete submission lineage");
         std::ostringstream output;
         output.imbue(std::locale::classic());
         output << std::fixed << std::setprecision(3);
@@ -125,18 +131,25 @@ public:
         auto accounted = Clock::duration::zero();
         for (const auto scope : {"Driver.Packet", "Driver.Suspend", "Driver.Worker", "Driver.Completion"}) {
             const auto it = metrics.find({scope, "total"});
-            if (it != metrics.end()) accounted += it->second.total;
+            if (it != metrics.end())
+                accounted += it->second.total;
         }
         output << " worker_unattributed_ms=" << milliseconds(flipReached - executionStart - accounted);
-        if (interval != Clock::duration::zero()) output << " flip_interval_ms=" << milliseconds(interval);
-        output << " batches_at_flip=" << batchesAtFlip << " unsignaled_at_flip=" << unsignaledAtFlip << " batches_at_blit=" << batchesAtBlit << " batches_after_flip=" << batchesAfterFlip;
+        if (interval != Clock::duration::zero())
+            output << " flip_interval_ms=" << milliseconds(interval);
+        output << " batches_at_flip=" << batchesAtFlip << " unsignaled_at_flip=" << unsignaledAtFlip
+               << " batches_at_blit=" << batchesAtBlit << " batches_after_flip=" << batchesAfterFlip;
         output << " gpu_busy_ms=" << gpuBusyMs << " gpu_gap_ms=" << gpuGapMs;
-        output << " last_submit_after_flip_ms=" << milliseconds(lastSubmitAfterFlip) << " blit_submit_after_flip_ms=" << milliseconds(blitSubmitAfterFlip);
+        output << " last_submit_after_flip_ms=" << milliseconds(lastSubmitAfterFlip)
+               << " blit_submit_after_flip_ms=" << milliseconds(blitSubmitAfterFlip);
         output << " metrics=inclusive(count,sum_ms,max_ms[,bytes])";
         for (const auto& [key, metric] : metrics) {
-            if (metric.count == 0) continue;
-            output << ' ' << key.first << '.' << key.second << "=(" << metric.count << ',' << milliseconds(metric.total) << ',' << milliseconds(metric.maximum);
-            if (metric.bytes != 0) output << ',' << metric.bytes;
+            if (metric.count == 0)
+                continue;
+            output << ' ' << key.first << '.' << key.second << "=(" << metric.count << ',' << milliseconds(metric.total)
+                   << ',' << milliseconds(metric.maximum);
+            if (metric.bytes != 0)
+                output << ',' << metric.bytes;
             output << ')';
         }
         APS5_LOG_TIMING("%s", output.str().c_str());
@@ -170,20 +183,14 @@ private:
 
 class PerformanceContext {
 public:
-    explicit PerformanceContext(FrameTiming* frame) : previous(current) {
-        current = frame;
-    }
+    explicit PerformanceContext(FrameTiming* frame) : previous(current) { current = frame; }
 
     PerformanceContext(const PerformanceContext&) = delete;
     PerformanceContext& operator=(const PerformanceContext&) = delete;
 
-    ~PerformanceContext() {
-        current = previous;
-    }
+    ~PerformanceContext() { current = previous; }
 
-    static FrameTiming* Current() {
-        return current;
-    }
+    static FrameTiming* Current() { return current; }
 
 private:
     inline static thread_local FrameTiming* current = nullptr;
@@ -204,16 +211,20 @@ public:
     PerformanceTimer& operator=(const PerformanceTimer&) = delete;
 
     ~PerformanceTimer() {
-        if (frame == nullptr) return;
+        if (frame == nullptr)
+            return;
         const auto end = Clock::now();
-        if (tail != nullptr) frame->Add(tail, end - previous);
+        if (tail != nullptr)
+            frame->Add(tail, end - previous);
         frame->Add(total, end - start);
     }
 
     void Mark(const char* stage, std::uint64_t bytes = 0) {
-        if (frame == nullptr) return;
+        if (frame == nullptr)
+            return;
         const auto now = Clock::now();
-        if (tail == nullptr) tail = frame->Get(scope, "tail");
+        if (tail == nullptr)
+            tail = frame->Get(scope, "tail");
         frame->Add(frame->Get(scope, stage), now - previous, bytes);
         previous = now;
     }

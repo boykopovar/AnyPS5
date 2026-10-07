@@ -7,7 +7,9 @@
 #include <unistd.h>
 #endif
 
-namespace { FileStream input{stdin}; }
+namespace {
+FileStream input{stdin};
+}
 extern "C" {
 FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
@@ -19,12 +21,11 @@ int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     stream->SyncStatus();
     return result;
 }
-std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
-    return fgetc_nid_postfix(stream);
-}
+std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }
 
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
-    if (value == -1) return -1;
+    if (value == -1)
+        return -1;
     if (value < 0 || value > 255) {
         errno = 86;
         stream->SetEncodingError();
@@ -63,9 +64,7 @@ int APS5_VABI ferror_nid_postfix(FileStream* stream) {
     stream->SyncStatus();
     return (stream->GuestState().flags & 0x40) != 0;
 }
-void APS5_VABI clearerr_nid_postfix(FileStream* stream) {
-    stream->ClearError();
-}
+void APS5_VABI clearerr_nid_postfix(FileStream* stream) { stream->ClearError(); }
 int APS5_VABI fileno_nid_postfix(FileStream* stream) {
 #ifdef _WIN32
     const int descriptor = _fileno(GetNativeStream(stream));
@@ -76,7 +75,8 @@ int APS5_VABI fileno_nid_postfix(FileStream* stream) {
     return descriptor;
 }
 int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, std::size_t size) {
-    if (mode < 0 || mode > 2) return -1;
+    if (mode < 0 || mode > 2)
+        return -1;
     const int native = mode == 0 ? _IOFBF : mode == 1 ? _IOLBF : _IONBF;
     return std::setvbuf(GetNativeStream(stream), buffer, native, size);
 }

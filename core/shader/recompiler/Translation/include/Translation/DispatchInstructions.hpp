@@ -10,7 +10,8 @@ namespace ShaderRecompiler {
 
 class TranslationContext;
 
-void DispatchInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options);
+void DispatchInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg,
+                         const TranslateOptions& options);
 
 void DispatchInstruction(TranslationContext& context, const RdnaInstruction& instruction);
 

@@ -23,68 +23,72 @@ extern "C" {
 int SceMsgDialogNativeModuleLoaded_nid_no_patch = 1;
 
 int APS5_VABI sceMsgDialogClose(void) {
- int expected = COMMON_DIALOG_STATUS_RUNNING;
- if (!g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_FINISHED)) return COMMON_DIALOG_ERROR_NOT_RUNNING;
- return 0;
+    int expected = COMMON_DIALOG_STATUS_RUNNING;
+    if (!g_status.compare_exchange_strong(expected, COMMON_DIALOG_STATUS_FINISHED))
+        return COMMON_DIALOG_ERROR_NOT_RUNNING;
+    return 0;
 }
 
 int APS5_VABI sceMsgDialogGetResult(MsgDialogResult* result) {
- const int status = g_status.load();
- if (status == 0) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
- *result = MsgDialogResult{};
- result->result = COMMON_DIALOG_RESULT_OK;
- result->button_id = BUTTON_ID_OK;
- return 0;
+    const int status = g_status.load();
+    if (status == 0)
+        return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (result == nullptr)
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (status != COMMON_DIALOG_STATUS_FINISHED)
+        return COMMON_DIALOG_ERROR_NOT_FINISHED;
+    *result = MsgDialogResult{};
+    result->result = COMMON_DIALOG_RESULT_OK;
+    result->button_id = BUTTON_ID_OK;
+    return 0;
 }
 
 int APS5_VABI sceMsgDialogInitialize(void) {
     int expected = 0;
-    if (!g_status.compare_exchange_strong(expected, 1)) throw std::logic_error("sceMsgDialogInitialize: already initialized");
+    if (!g_status.compare_exchange_strong(expected, 1))
+        throw std::logic_error("sceMsgDialogInitialize: already initialized");
     return 0;
 }
 
 int APS5_VABI sceMsgDialogOpen(const void* param) {
- const int status = g_status.load();
- if (status == 0) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- g_status = COMMON_DIALOG_STATUS_FINISHED;
- return 0;
+    const int status = g_status.load();
+    if (status == 0)
+        return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (param == nullptr)
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    return 0;
 }
 
 int APS5_VABI sceMsgDialogTerminate(void) {
     int expected = 1;
-    if (g_status.compare_exchange_strong(expected, 0)) return 0;
+    if (g_status.compare_exchange_strong(expected, 0))
+        return 0;
     expected = COMMON_DIALOG_STATUS_FINISHED;
-    if (!g_status.compare_exchange_strong(expected, 0)) throw std::logic_error("sceMsgDialogTerminate: not initialized or still running");
+    if (!g_status.compare_exchange_strong(expected, 0))
+        throw std::logic_error("sceMsgDialogTerminate: not initialized or still running");
     return 0;
 }
 
-int APS5_VABI sceMsgDialogUpdateStatus(void) {
-    return g_status.load();
-}
+int APS5_VABI sceMsgDialogUpdateStatus(void) { return g_status.load(); }
 
 int APS5_VABI sceMsgDialogProgressBarInc(int target, std::uint32_t delta) {
- (void)target;
- (void)delta;
- return g_status.load() == COMMON_DIALOG_STATUS_RUNNING ? 0 : COMMON_DIALOG_ERROR_NOT_RUNNING;
+    (void)target;
+    (void)delta;
+    return g_status.load() == COMMON_DIALOG_STATUS_RUNNING ? 0 : COMMON_DIALOG_ERROR_NOT_RUNNING;
 }
 
 int APS5_VABI sceMsgDialogProgressBarSetMsg(int target, const char* msg) {
- (void)target;
- (void)msg;
- return g_status.load() == COMMON_DIALOG_STATUS_RUNNING ? 0 : COMMON_DIALOG_ERROR_NOT_RUNNING;
+    (void)target;
+    (void)msg;
+    return g_status.load() == COMMON_DIALOG_STATUS_RUNNING ? 0 : COMMON_DIALOG_ERROR_NOT_RUNNING;
 }
 
 int APS5_VABI sceMsgDialogProgressBarSetValue(int target, std::uint32_t rate) {
- (void)target;
- (void)rate;
- return g_status.load() == COMMON_DIALOG_STATUS_RUNNING ? 0 : COMMON_DIALOG_ERROR_NOT_RUNNING;
+    (void)target;
+    (void)rate;
+    return g_status.load() == COMMON_DIALOG_STATUS_RUNNING ? 0 : COMMON_DIALOG_ERROR_NOT_RUNNING;
 }
 
-int APS5_VABI sceMsgDialogGetStatus(void) {
-    return g_status.load();
-}
-
+int APS5_VABI sceMsgDialogGetStatus(void) { return g_status.load(); }
 }

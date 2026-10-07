@@ -14,11 +14,11 @@ extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddressUnk(std::uint32_t** ad
 namespace {
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error& error) {
@@ -29,10 +29,17 @@ void expectFailure(TAction action) {
 }
 
 void testRanges() {
-    const std::array<std::tuple<std::uint32_t, int, std::ptrdiff_t, std::uint64_t>, 10> rows{{
-        {0xc0047600u, 1, 2, 16}, {0xc0001000u, 1, 2, 0}, {0xffff7600u, 1, 2, 0xfffc}, {0xc0047600u, -1, 2, 16},
-        {0xc0047600u, 7, 2, 16}, {0xc0021000u, 0, 1, 12}, {0xc0001000u, 0, 1, 4}, {0xfffe1000u, 0, 1, 0xfffc},
-        {0xffff1000u, 0, -1, 0}, {0xffff7600u, 0, -1, 0}}};
+    const std::array<std::tuple<std::uint32_t, int, std::ptrdiff_t, std::uint64_t>, 10> rows{
+        {{0xc0047600u, 1, 2, 16},
+         {0xc0001000u, 1, 2, 0},
+         {0xffff7600u, 1, 2, 0xfffc},
+         {0xc0047600u, -1, 2, 16},
+         {0xc0047600u, 7, 2, 16},
+         {0xc0021000u, 0, 1, 12},
+         {0xc0001000u, 0, 1, 4},
+         {0xfffe1000u, 0, 1, 0xfffc},
+         {0xffff1000u, 0, -1, 0},
+         {0xffff7600u, 0, -1, 0}}};
     for (const auto& [header, type, offset, size] : rows) {
         std::array<std::uint32_t, 2> words{header, 0x12345678u};
         SceAgcMemoryRange range{reinterpret_cast<void*>(std::uintptr_t{0x1000}), 0xdeadu};
@@ -73,8 +80,11 @@ int main() {
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
+        try {
+            LibcRunShutdown_nid_postfix();
+        } catch (const std::exception& shutdown) {
+            std::fprintf(stderr, "shutdown: %s\n", shutdown.what());
+        }
         return 1;
     }
 }

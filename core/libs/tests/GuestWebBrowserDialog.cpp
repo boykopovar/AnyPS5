@@ -16,7 +16,10 @@ constexpr int COMMON_DIALOG_STATUS_NONE = 0;
 constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
 constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 }
 

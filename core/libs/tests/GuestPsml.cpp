@@ -11,7 +11,10 @@ std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1100(void* context, void*
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 constexpr std::int32_t kErrNotInitialized = static_cast<std::int32_t>(0x8A810001);
 

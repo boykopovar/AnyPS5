@@ -35,35 +35,42 @@ struct UriParts {
 };
 
 bool equalsIgnoreCase(std::string_view left, std::string_view right) {
-    if (left.size() != right.size()) return false;
+    if (left.size() != right.size())
+        return false;
     for (size_t i = 0; i < left.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(left[i])) != std::tolower(static_cast<unsigned char>(right[i]))) return false;
+        if (std::tolower(static_cast<unsigned char>(left[i])) != std::tolower(static_cast<unsigned char>(right[i])))
+            return false;
     }
     return true;
 }
 
 uint16_t defaultPort(std::string_view scheme) {
-    if (equalsIgnoreCase(scheme, "http")) return 80;
-    if (equalsIgnoreCase(scheme, "https")) return 443;
+    if (equalsIgnoreCase(scheme, "http"))
+        return 80;
+    if (equalsIgnoreCase(scheme, "https"))
+        return 443;
     return 0;
 }
 
-bool isHostCharacter(char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.' || c == '_';
-}
+bool isHostCharacter(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.' || c == '_'; }
 
 std::string removeDotSegments(std::string_view input) {
     std::string output;
     while (!input.empty()) {
-        if (input.starts_with("../")) input.remove_prefix(3);
-        else if (input.starts_with("./")) input.remove_prefix(2);
-        else if (input.starts_with("/./")) input.remove_prefix(2);
-        else if (input == "/.") input = "/";
+        if (input.starts_with("../"))
+            input.remove_prefix(3);
+        else if (input.starts_with("./"))
+            input.remove_prefix(2);
+        else if (input.starts_with("/./"))
+            input.remove_prefix(2);
+        else if (input == "/.")
+            input = "/";
         else if (input.starts_with("/../") || input == "/..") {
             input = input.size() == 3 ? std::string_view("/") : input.substr(3);
             const size_t slash = output.rfind('/');
             output.erase(slash == std::string::npos ? 0 : slash);
-        } else if (input == "." || input == "..") input = {};
+        } else if (input == "." || input == "..")
+            input = {};
         else {
             const size_t end = input.find('/', 1);
             const size_t length = end == std::string_view::npos ? input.size() : end;
@@ -78,8 +85,9 @@ size_t schemeLength(std::string_view uri) {
     size_t schemeEnd = 0;
     if (!uri.empty() && std::isalpha(static_cast<unsigned char>(uri[0]))) {
         schemeEnd = 1;
-        while (schemeEnd < uri.size() && (std::isalnum(static_cast<unsigned char>(uri[schemeEnd])) || uri[schemeEnd] == '+'
-            || uri[schemeEnd] == '-' || uri[schemeEnd] == '.')) ++schemeEnd;
+        while (schemeEnd < uri.size() && (std::isalnum(static_cast<unsigned char>(uri[schemeEnd])) ||
+                                          uri[schemeEnd] == '+' || uri[schemeEnd] == '-' || uri[schemeEnd] == '.'))
+            ++schemeEnd;
     }
     return schemeEnd > 0 && schemeEnd < uri.size() && uri[schemeEnd] == ':' ? schemeEnd : 0;
 }
@@ -96,7 +104,8 @@ int parseUri(std::string_view uri, UriParts& parts) {
     }
 
     parts.opaque = !uri.starts_with("//");
-    if (!parts.opaque) uri.remove_prefix(2);
+    if (!parts.opaque)
+        uri.remove_prefix(2);
 
     std::string_view authority = uri.substr(0, uri.find_first_of("/?#"));
     uri.remove_prefix(authority.size());
@@ -106,37 +115,47 @@ int parseUri(std::string_view uri, UriParts& parts) {
         const std::string_view userinfo = authority.substr(0, at);
         const size_t colon = userinfo.find(':');
         parts.username = userinfo.substr(0, colon);
-        if (colon != std::string_view::npos) parts.password = userinfo.substr(colon + 1);
+        if (colon != std::string_view::npos)
+            parts.password = userinfo.substr(colon + 1);
         authority.remove_prefix(at + 1);
     }
 
     std::string_view port;
     if (authority.starts_with('[')) {
         const size_t close = authority.find(']');
-        if (close == std::string_view::npos) return ERROR_INVALID_URL;
+        if (close == std::string_view::npos)
+            return ERROR_INVALID_URL;
         parts.hostname = authority.substr(1, close - 1);
         authority.remove_prefix(close + 1);
-        if (!authority.empty() && authority[0] != ':') return ERROR_INVALID_URL;
-        if (!authority.empty()) port = authority.substr(1);
+        if (!authority.empty() && authority[0] != ':')
+            return ERROR_INVALID_URL;
+        if (!authority.empty())
+            port = authority.substr(1);
         for (const char c : parts.hostname) {
-            if (!isHostCharacter(c) && c != ':') return ERROR_INVALID_URL;
+            if (!isHostCharacter(c) && c != ':')
+                return ERROR_INVALID_URL;
         }
     } else {
         const size_t colon = authority.find(':');
         parts.hostname = authority.substr(0, colon);
-        if (colon != std::string_view::npos) port = authority.substr(colon + 1);
+        if (colon != std::string_view::npos)
+            port = authority.substr(colon + 1);
         for (const char c : parts.hostname) {
-            if (!isHostCharacter(c)) return ERROR_INVALID_URL;
+            if (!isHostCharacter(c))
+                return ERROR_INVALID_URL;
         }
     }
 
-    if (port.size() > 5) return ERROR_INVALID_URL;
+    if (port.size() > 5)
+        return ERROR_INVALID_URL;
     uint32_t portValue = 0;
     for (const char c : port) {
-        if (!std::isdigit(static_cast<unsigned char>(c))) return ERROR_INVALID_URL;
+        if (!std::isdigit(static_cast<unsigned char>(c)))
+            return ERROR_INVALID_URL;
         portValue = portValue * 10 + static_cast<uint32_t>(c - '0');
     }
-    if (portValue > 0xFFFF) return ERROR_INVALID_URL;
+    if (portValue > 0xFFFF)
+        return ERROR_INVALID_URL;
     parts.port = port.empty() ? defaultPort(parts.scheme) : static_cast<uint16_t>(portValue);
 
     const std::string_view path = uri.substr(0, uri.find_first_of("?#"));
@@ -152,16 +171,21 @@ int parseUri(std::string_view uri, UriParts& parts) {
 }
 
 size_t poolSize(const UriParts& parts) {
-    const std::string_view fields[] = {parts.scheme, parts.username, parts.password, parts.hostname, parts.path, parts.query, parts.fragment};
+    const std::string_view fields[] = {parts.scheme, parts.username, parts.password, parts.hostname,
+                                       parts.path,   parts.query,    parts.fragment};
     size_t size = 0;
-    for (const std::string_view field : fields) size += field.size() + 1;
+    for (const std::string_view field : fields)
+        size += field.size() + 1;
     return size;
 }
 
 int copyOut(const std::string& value, char* out, size_t* require, size_t prepare) {
-    if (require) *require = value.size() + 1;
-    if (!out) return 0;
-    if (prepare < value.size() + 1) return ERROR_OUT_OF_MEMORY;
+    if (require)
+        *require = value.size() + 1;
+    if (!out)
+        return 0;
+    if (prepare < value.size() + 1)
+        return ERROR_OUT_OF_MEMORY;
     std::memcpy(out, value.c_str(), value.size() + 1);
     return 0;
 }
@@ -170,36 +194,53 @@ int copyOut(const std::string& value, char* out, size_t* require, size_t prepare
 
 extern "C" {
 
-int APS5_VABI sceHttpUriBuild(char* out, size_t* require, size_t prepare, const SceHttpUriElement* src_element, uint32_t option) {
-    if (!src_element) return ERROR_INVALID_URL;
-    if (!out && !require) return ERROR_INVALID_VALUE;
+int APS5_VABI sceHttpUriBuild(char* out, size_t* require, size_t prepare, const SceHttpUriElement* src_element,
+                              uint32_t option) {
+    if (!src_element)
+        return ERROR_INVALID_URL;
+    if (!out && !require)
+        return ERROR_INVALID_VALUE;
 
     auto field = [](const char* value) { return value ? std::string_view(value) : std::string_view(); };
     const std::string_view scheme = field(src_element->scheme);
-    const std::string_view username = option & URI_BUILD_WITH_USERNAME ? field(src_element->username) : std::string_view();
-    const std::string_view password = option & URI_BUILD_WITH_PASSWORD ? field(src_element->password) : std::string_view();
-    const std::string_view hostname = option & URI_BUILD_WITH_HOSTNAME ? field(src_element->hostname) : std::string_view();
+    const std::string_view username =
+        option & URI_BUILD_WITH_USERNAME ? field(src_element->username) : std::string_view();
+    const std::string_view password =
+        option & URI_BUILD_WITH_PASSWORD ? field(src_element->password) : std::string_view();
+    const std::string_view hostname =
+        option & URI_BUILD_WITH_HOSTNAME ? field(src_element->hostname) : std::string_view();
 
     std::string uri;
-    if (option & URI_BUILD_WITH_SCHEME && !scheme.empty()) uri.append(scheme).push_back(':');
-    if (!src_element->opaque && option & URI_BUILD_WITH_HOSTNAME) uri.append("//");
+    if (option & URI_BUILD_WITH_SCHEME && !scheme.empty())
+        uri.append(scheme).push_back(':');
+    if (!src_element->opaque && option & URI_BUILD_WITH_HOSTNAME)
+        uri.append("//");
     uri.append(username);
-    if (!password.empty()) uri.append(":").append(password);
-    if (!username.empty() || !password.empty()) uri.push_back('@');
-    if (hostname.find(':') != std::string_view::npos) uri.append("[").append(hostname).append("]");
-    else uri.append(hostname);
+    if (!password.empty())
+        uri.append(":").append(password);
+    if (!username.empty() || !password.empty())
+        uri.push_back('@');
+    if (hostname.find(':') != std::string_view::npos)
+        uri.append("[").append(hostname).append("]");
+    else
+        uri.append(hostname);
     if (option & URI_BUILD_WITH_PORT && src_element->port != 0 && src_element->port != defaultPort(scheme)) {
         uri.append(":").append(std::to_string(src_element->port));
     }
-    if (option & URI_BUILD_WITH_PATH) uri.append(field(src_element->path));
-    if (option & URI_BUILD_WITH_QUERY) uri.append(field(src_element->query));
-    if (option & URI_BUILD_WITH_FRAGMENT) uri.append(field(src_element->fragment));
+    if (option & URI_BUILD_WITH_PATH)
+        uri.append(field(src_element->path));
+    if (option & URI_BUILD_WITH_QUERY)
+        uri.append(field(src_element->query));
+    if (option & URI_BUILD_WITH_FRAGMENT)
+        uri.append(field(src_element->fragment));
     return copyOut(uri, out, require, prepare);
 }
 
 int APS5_VABI sceHttpUriEscape(char* out, size_t* require, size_t prepare, const char* in) {
-    if (!in) return ERROR_INVALID_VALUE;
-    if (!out && !require) return ERROR_INVALID_VALUE;
+    if (!in)
+        return ERROR_INVALID_VALUE;
+    if (!out && !require)
+        return ERROR_INVALID_VALUE;
 
     static constexpr char hex[] = "0123456789ABCDEF";
     std::string escaped;
@@ -217,7 +258,8 @@ int APS5_VABI sceHttpUriEscape(char* out, size_t* require, size_t prepare, const
 }
 
 int APS5_VABI sceHttpUriUnescape(char* out, size_t* require, size_t prepare, const char* in) {
-    if (!in) return ERROR_INVALID_VALUE;
+    if (!in)
+        return ERROR_INVALID_VALUE;
 
     const std::string_view input(in);
     std::string decoded;
@@ -236,35 +278,46 @@ int APS5_VABI sceHttpUriUnescape(char* out, size_t* require, size_t prepare, con
     return copyOut(decoded, out, require, prepare);
 }
 
-int APS5_VABI sceHttpUriMerge(char* merged_url, const char* url, const char* relative_uri, size_t* require, size_t prepare, uint32_t option) {
-    if (option != 0 || !url || !relative_uri) return ERROR_INVALID_VALUE;
+int APS5_VABI sceHttpUriMerge(char* merged_url, const char* url, const char* relative_uri, size_t* require,
+                              size_t prepare, uint32_t option) {
+    if (option != 0 || !url || !relative_uri)
+        return ERROR_INVALID_VALUE;
 
     UriParts base;
-    if (const int result = parseUri(url, base); result != 0) return result;
+    if (const int result = parseUri(url, base); result != 0)
+        return result;
     const bool relativeOpaque = isOpaque(relative_uri);
     if (UriParts relative; !relativeOpaque) {
-        if (const int result = parseUri(relative_uri, relative); result != 0) return result;
+        if (const int result = parseUri(relative_uri, relative); result != 0)
+            return result;
     }
 
     const size_t urlLength = strnlen(url, URI_MAX_LENGTH);
     const size_t relativeLength = strnlen(relative_uri, URI_MAX_LENGTH);
     const size_t size = poolSize(base) + 2 + (urlLength + relativeLength) * 2;
-    if (require) *require = size;
-    if (!merged_url) return 0;
-    if (prepare < size) return ERROR_OUT_OF_MEMORY;
+    if (require)
+        *require = size;
+    if (!merged_url)
+        return 0;
+    if (prepare < size)
+        return ERROR_OUT_OF_MEMORY;
 
     if (!relativeOpaque) {
         std::strncpy(merged_url, relative_uri, size);
         merged_url[size - 1] = '\0';
-        if (require) *require = relativeLength + 1;
+        if (require)
+            *require = relativeLength + 1;
         return 0;
     }
 
     std::string path = base.path;
     const size_t slash = path.rfind('/');
-    if (slash == std::string::npos) path.push_back('/');
-    else path.erase(slash + 1);
-    if (relative_uri[0] == '/') path.clear();
+    if (slash == std::string::npos)
+        path.push_back('/');
+    else
+        path.erase(slash + 1);
+    if (relative_uri[0] == '/')
+        path.clear();
     path.append(relative_uri, std::min(relativeLength, URI_MAX_LENGTH - std::min(path.size(), URI_MAX_LENGTH)));
 
     std::string scheme(base.scheme), username(base.username), password(base.password), hostname(base.hostname);
@@ -277,22 +330,31 @@ int APS5_VABI sceHttpUriMerge(char* merged_url, const char* url, const char* rel
     element.path = path.data();
     element.port = base.port;
     return sceHttpUriBuild(merged_url, nullptr, prepare - (urlLength + relativeLength + 1), &element,
-        URI_BUILD_WITH_SCHEME | URI_BUILD_WITH_HOSTNAME | URI_BUILD_WITH_PORT | URI_BUILD_WITH_PATH | URI_BUILD_WITH_USERNAME | URI_BUILD_WITH_PASSWORD);
+                           URI_BUILD_WITH_SCHEME | URI_BUILD_WITH_HOSTNAME | URI_BUILD_WITH_PORT | URI_BUILD_WITH_PATH |
+                               URI_BUILD_WITH_USERNAME | URI_BUILD_WITH_PASSWORD);
 }
 
-int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void* pool, size_t* require, size_t prepare) {
-    if (!src_url) return ERROR_INVALID_URL;
+int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void* pool, size_t* require,
+                              size_t prepare) {
+    if (!src_url)
+        return ERROR_INVALID_URL;
     const bool write = out && pool;
-    if (!write && !require) return ERROR_INVALID_VALUE;
+    if (!write && !require)
+        return ERROR_INVALID_VALUE;
 
     UriParts parts;
-    if (const int result = parseUri(src_url, parts); result != 0) return result;
+    if (const int result = parseUri(src_url, parts); result != 0)
+        return result;
 
-    const std::string_view fields[] = {parts.scheme, parts.username, parts.password, parts.hostname, parts.path, parts.query, parts.fragment};
+    const std::string_view fields[] = {parts.scheme, parts.username, parts.password, parts.hostname,
+                                       parts.path,   parts.query,    parts.fragment};
     const size_t size = poolSize(parts);
-    if (require) *require = size;
-    if (!write) return 0;
-    if (prepare < size) return ERROR_OUT_OF_MEMORY;
+    if (require)
+        *require = size;
+    if (!write)
+        return 0;
+    if (prepare < size)
+        return ERROR_OUT_OF_MEMORY;
 
     char* next = static_cast<char*>(pool);
     char* strings[7];
@@ -316,8 +378,10 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
 }
 
 int APS5_VABI sceHttpUriSweepPath(char* dst, const char* src, size_t srcSize) {
-    if (srcSize == 0) return 0;
-    if (!dst || !src) return ERROR_INVALID_VALUE;
+    if (srcSize == 0)
+        return 0;
+    if (!dst || !src)
+        return ERROR_INVALID_VALUE;
 
     const size_t length = srcSize - 1;
     if (length == 0 || src[0] != '/') {
@@ -355,5 +419,4 @@ int APS5_VABI sceHttpUriSweepPath(char* dst, const char* src, size_t srcSize) {
     }
     return 0;
 }
-
 }

@@ -24,8 +24,10 @@ void Report(const char* format, ...) {
     va_start(args, format);
     int length = std::vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
-    if (length <= 0) return;
-    if (length > static_cast<int>(sizeof(buffer)) - 1) length = sizeof(buffer) - 1;
+    if (length <= 0)
+        return;
+    if (length > static_cast<int>(sizeof(buffer)) - 1)
+        length = sizeof(buffer) - 1;
     DWORD written = 0;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(length), &written, nullptr);
 }
@@ -35,13 +37,17 @@ void ReportAllThreads();
 void DescribeAddress(std::uint64_t address, char* buffer, std::size_t size) {
     HMODULE module = nullptr;
     char path[MAX_PATH] = "?";
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(address), &module) && module) {
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCSTR>(address), &module) &&
+        module) {
         GetModuleFileNameA(module, path, sizeof(path));
         const char* name = path;
         for (const char* cursor = path; *cursor; ++cursor) {
-            if (*cursor == '\\' || *cursor == '/') name = cursor + 1;
+            if (*cursor == '\\' || *cursor == '/')
+                name = cursor + 1;
         }
-        std::snprintf(buffer, size, "0x%016llx %s+0x%llx", static_cast<unsigned long long>(address), name, static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(module)));
+        std::snprintf(buffer, size, "0x%016llx %s+0x%llx", static_cast<unsigned long long>(address), name,
+                      static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(module)));
         return;
     }
     std::snprintf(buffer, size, "0x%016llx", static_cast<unsigned long long>(address));
@@ -49,15 +55,19 @@ void DescribeAddress(std::uint64_t address, char* buffer, std::size_t size) {
 
 bool IsExecutable(std::uint64_t address) {
     MEMORY_BASIC_INFORMATION memory{};
-    if (VirtualQuery(reinterpret_cast<const void*>(address), &memory, sizeof(memory)) != sizeof(memory)) return false;
-    if (memory.State != MEM_COMMIT) return false;
+    if (VirtualQuery(reinterpret_cast<const void*>(address), &memory, sizeof(memory)) != sizeof(memory))
+        return false;
+    if (memory.State != MEM_COMMIT)
+        return false;
     const DWORD protection = memory.Protect & 0xff;
-    return protection == PAGE_EXECUTE || protection == PAGE_EXECUTE_READ || protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+    return protection == PAGE_EXECUTE || protection == PAGE_EXECUTE_READ || protection == PAGE_EXECUTE_READWRITE ||
+           protection == PAGE_EXECUTE_WRITECOPY;
 }
 
 bool IsReadable(std::uint64_t address) {
     MEMORY_BASIC_INFORMATION memory{};
-    if (VirtualQuery(reinterpret_cast<const void*>(address), &memory, sizeof(memory)) != sizeof(memory)) return false;
+    if (VirtualQuery(reinterpret_cast<const void*>(address), &memory, sizeof(memory)) != sizeof(memory))
+        return false;
     return memory.State == MEM_COMMIT && (memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0;
 }
 
@@ -92,7 +102,8 @@ void ProtectWatchPage(DWORD protection) {
 }
 
 bool HandleWatch(EXCEPTION_POINTERS* info) {
-    if (g_watchPage == 0) return false;
+    if (g_watchPage == 0)
+        return false;
     const auto* record = info->ExceptionRecord;
     auto* context = info->ContextRecord;
     if (record->ExceptionCode == EXCEPTION_SINGLE_STEP && t_watchStepping) {
@@ -100,15 +111,23 @@ bool HandleWatch(EXCEPTION_POINTERS* info) {
         ProtectWatchPage(PAGE_READONLY);
         const auto current = *reinterpret_cast<const unsigned long long*>(g_watchAddress);
         if (t_watchHit || current != t_watchBefore) {
-            if (!t_watchHit) Report("[watch] thread %lu changed the value with a write starting at 0x%llx from %s\n", GetCurrentThreadId(), static_cast<unsigned long long>(t_watchFault), t_watchWhere);
-            Report("[watch]   new value 0x%016llx at %lld ms\n", current, static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()));
+            if (!t_watchHit)
+                Report("[watch] thread %lu changed the value with a write starting at 0x%llx from %s\n",
+                       GetCurrentThreadId(), static_cast<unsigned long long>(t_watchFault), t_watchWhere);
+            Report("[watch]   new value 0x%016llx at %lld ms\n", current,
+                   static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              std::chrono::steady_clock::now().time_since_epoch())
+                                              .count()));
             t_watchHit = false;
         }
         return true;
     }
-    if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record->NumberParameters < 2 || record->ExceptionInformation[0] != 1) return false;
+    if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record->NumberParameters < 2 ||
+        record->ExceptionInformation[0] != 1)
+        return false;
     const auto address = static_cast<std::uintptr_t>(record->ExceptionInformation[1]);
-    if (address < g_watchPage || address >= g_watchPage + 0x1000) return false;
+    if (address < g_watchPage || address >= g_watchPage + 0x1000)
+        return false;
     // Block writes (memset, memcpy) fault on their first byte, so compare the value after the step
     // as well as matching the fault address.
     t_watchBefore = *reinterpret_cast<const unsigned long long*>(g_watchAddress);
@@ -117,21 +136,26 @@ bool HandleWatch(EXCEPTION_POINTERS* info) {
     if (address + 32 > g_watchAddress && address < g_watchAddress + 8) {
         char line[MAX_PATH + 64];
         DescribeAddress(context->Rip, line, sizeof(line));
-        Report("[watch] thread %lu writes 0x%llx at %s rcx=%llx rdx=%llx r8=%llx\n", GetCurrentThreadId(), static_cast<unsigned long long>(address), line, context->Rcx, context->Rdx, context->R8);
+        Report("[watch] thread %lu writes 0x%llx at %s rcx=%llx rdx=%llx r8=%llx\n", GetCurrentThreadId(),
+               static_cast<unsigned long long>(address), line, context->Rcx, context->Rdx, context->R8);
         for (std::uint64_t slot = context->Rsp; slot < context->Rsp + 0x80 && IsReadable(slot); slot += 8) {
             const auto value = *reinterpret_cast<const std::uint64_t*>(slot);
-            if (!IsExecutable(value)) continue;
+            if (!IsExecutable(value))
+                continue;
             DescribeAddress(value, line, sizeof(line));
             Report("[watch]     [rsp+0x%llx] %s\n", static_cast<unsigned long long>(slot - context->Rsp), line);
         }
         std::uint64_t frame = context->Rbp;
-        for (int depth = 0; depth < 6 && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8); ++depth) {
+        for (int depth = 0; depth < 6 && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8);
+             ++depth) {
             const auto returnAddress = reinterpret_cast<const std::uint64_t*>(frame)[1];
-            if (!IsExecutable(returnAddress)) break;
+            if (!IsExecutable(returnAddress))
+                break;
             DescribeAddress(returnAddress, line, sizeof(line));
             Report("[watch]     #%d %s\n", depth, line);
             const auto next = reinterpret_cast<const std::uint64_t*>(frame)[0];
-            if (next <= frame) break;
+            if (next <= frame)
+                break;
             frame = next;
         }
         t_watchHit = true;
@@ -148,27 +172,35 @@ void InstallWatch() {
     if (const char* absolute = std::getenv("APS5_WATCH_ADDR")) {
         g_watchAddress = std::strtoull(absolute, nullptr, 16);
         const auto page = g_watchAddress & ~static_cast<std::uintptr_t>(0xfff);
-        CreateThread(nullptr, 0, [](void* parameter) -> DWORD {
-            const auto page = reinterpret_cast<std::uintptr_t>(parameter);
-            for (;;) {
-                MEMORY_BASIC_INFORMATION memory{};
-                if (VirtualQuery(reinterpret_cast<const void*>(page), &memory, sizeof(memory)) == sizeof(memory) && memory.State == MEM_COMMIT) break;
-                Sleep(1);
-            }
-            g_watchPage = page;
-            ProtectWatchPage(PAGE_READONLY);
-            Report("[watch] watching 0x%llx (page 0x%llx)\n", static_cast<unsigned long long>(g_watchAddress), static_cast<unsigned long long>(page));
-            return 0;
-        }, reinterpret_cast<void*>(page), 0, nullptr);
+        CreateThread(
+            nullptr, 0,
+            [](void* parameter) -> DWORD {
+                const auto page = reinterpret_cast<std::uintptr_t>(parameter);
+                for (;;) {
+                    MEMORY_BASIC_INFORMATION memory{};
+                    if (VirtualQuery(reinterpret_cast<const void*>(page), &memory, sizeof(memory)) == sizeof(memory) &&
+                        memory.State == MEM_COMMIT)
+                        break;
+                    Sleep(1);
+                }
+                g_watchPage = page;
+                ProtectWatchPage(PAGE_READONLY);
+                Report("[watch] watching 0x%llx (page 0x%llx)\n", static_cast<unsigned long long>(g_watchAddress),
+                       static_cast<unsigned long long>(page));
+                return 0;
+            },
+            reinterpret_cast<void*>(page), 0, nullptr);
         return;
     }
     const char* value = std::getenv("APS5_WATCH_WRITE");
-    if (!value) return;
+    if (!value)
+        return;
     const auto elfAddress = std::strtoull(value, nullptr, 0);
     g_watchAddress = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)) + 0x10000 + elfAddress;
     g_watchPage = g_watchAddress & ~static_cast<std::uintptr_t>(0xfff);
     ProtectWatchPage(PAGE_READONLY);
-    Report("[watch] watching 0x%llx (page 0x%llx)\n", static_cast<unsigned long long>(g_watchAddress), static_cast<unsigned long long>(g_watchPage));
+    Report("[watch] watching 0x%llx (page 0x%llx)\n", static_cast<unsigned long long>(g_watchAddress),
+           static_cast<unsigned long long>(g_watchPage));
 }
 
 // SSE4a (EXTRQ / INSERTQ) is AMD-only: the PS5's Zen 2 has it and titles use it, so on an Intel host the
@@ -190,62 +222,79 @@ std::size_t ReadCode(std::uint64_t address, std::uint8_t* buffer, std::size_t si
     while (count < size) {
         const auto cursor = address + count;
         if ((cursor & 0xfff) == 0 || count == 0) {
-            if (!IsReadable(cursor)) break;
+            if (!IsReadable(cursor))
+                break;
         }
         buffer[count++] = *reinterpret_cast<const std::uint8_t*>(cursor);
     }
     return count;
 }
 
-void TraceSse4a(std::uint64_t rip, const sse4a::Instruction& instruction, const sse4a::Field& field, unsigned long long count) {
+void TraceSse4a(std::uint64_t rip, const sse4a::Instruction& instruction, const sse4a::Field& field,
+                unsigned long long count) {
     static std::mutex mutex;
     static std::uint64_t seen[128];
     static std::size_t seenCount = 0;
     {
         std::lock_guard lock(mutex);
         for (std::size_t i = 0; i < seenCount; ++i) {
-            if (seen[i] == rip) return;
+            if (seen[i] == rip)
+                return;
         }
-        if (seenCount < sizeof(seen) / sizeof(seen[0])) seen[seenCount++] = rip;
+        if (seenCount < sizeof(seen) / sizeof(seen[0]))
+            seen[seenCount++] = rip;
     }
     char line[MAX_PATH + 64];
     DescribeAddress(rip, line, sizeof(line));
     const char* mnemonic = instruction.op == sse4a::Op::Extrq ? "extrq" : "insertq";
     char operands[64];
     if (instruction.op == sse4a::Op::Extrq && !instruction.registerForm) {
-        std::snprintf(operands, sizeof(operands), "xmm%u, %u, %u", instruction.destination, instruction.length, instruction.index);
+        std::snprintf(operands, sizeof(operands), "xmm%u, %u, %u", instruction.destination, instruction.length,
+                      instruction.index);
     } else if (!instruction.registerForm) {
-        std::snprintf(operands, sizeof(operands), "xmm%u, xmm%u, %u, %u", instruction.destination, instruction.source, instruction.length, instruction.index);
+        std::snprintf(operands, sizeof(operands), "xmm%u, xmm%u, %u, %u", instruction.destination, instruction.source,
+                      instruction.length, instruction.index);
     } else {
         std::snprintf(operands, sizeof(operands), "xmm%u, xmm%u", instruction.destination, instruction.source);
     }
-    Report("[sse4a] #%llu %s %s (length %u, index %u, %u bytes) at %s on thread %lu\n", count, mnemonic, operands, field.length, field.index, static_cast<unsigned>(instruction.size), line, GetCurrentThreadId());
+    Report("[sse4a] #%llu %s %s (length %u, index %u, %u bytes) at %s on thread %lu\n", count, mnemonic, operands,
+           field.length, field.index, static_cast<unsigned>(instruction.size), line, GetCurrentThreadId());
 }
 
 bool HandleSse4a(EXCEPTION_POINTERS* info) {
-    if (!g_sse4aEmulation) return false;
+    if (!g_sse4aEmulation)
+        return false;
     const auto* record = info->ExceptionRecord;
-    if (record->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION) return false;
+    if (record->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION)
+        return false;
     auto* context = info->ContextRecord;
     const auto rip = context->Rip;
     std::uint8_t bytes[sse4a::kMaxInstructionSize];
     const std::size_t available = ReadCode(rip, bytes, sizeof(bytes));
     sse4a::Instruction instruction;
     sse4a::Field field;
-    if (!sse4a::Emulate(bytes, available, *context, &instruction, &field)) return false;
+    if (!sse4a::Emulate(bytes, available, *context, &instruction, &field))
+        return false;
     const auto count = ++g_sse4aEmulated;
-    if (g_sse4aTrace) TraceSse4a(rip, instruction, field, count);
+    if (g_sse4aTrace)
+        TraceSse4a(rip, instruction, field, count);
     return true;
 }
 
 LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     static std::atomic<bool> reported{false};
     const auto* fault = info->ExceptionRecord;
-    if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
-    if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
-    if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 &&
+        fault->ExceptionInformation[0] == 1 &&
+        GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1]))
+        return EXCEPTION_CONTINUE_EXECUTION;
+    if (HandleWatch(info))
+        return EXCEPTION_CONTINUE_EXECUTION;
+    if (HandleSse4a(info))
+        return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
-    if (!IsFatal(record->ExceptionCode)) return EXCEPTION_CONTINUE_SEARCH;
+    if (!IsFatal(record->ExceptionCode))
+        return EXCEPTION_CONTINUE_SEARCH;
     if (reported.exchange(true)) {
         // Another thread is already reporting; let it finish before this fault ends the process.
         Sleep(INFINITE);
@@ -258,50 +307,68 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName), nullptr, nullptr);
         LocalFree(description);
     }
-    Report("\nFATAL: unhandled exception 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(), threadName);
+    Report("\nFATAL: unhandled exception 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(),
+           threadName);
     DescribeAddress(context->Rip, line, sizeof(line));
     Report("  rip %s\n", line);
     if (record->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) {
         std::uint8_t bytes[8];
         const std::size_t available = ReadCode(context->Rip, bytes, sizeof(bytes));
         char hex[3 * sizeof(bytes) + 1] = "";
-        for (std::size_t i = 0; i < available; ++i) std::snprintf(hex + 3 * i, sizeof(hex) - 3 * i, "%02x ", bytes[i]);
-        Report("  bytes %s(sse4a emulation %s, %llu emulated so far)\n", hex, g_sse4aEmulation ? "on" : "off", g_sse4aEmulated.load());
+        for (std::size_t i = 0; i < available; ++i)
+            std::snprintf(hex + 3 * i, sizeof(hex) - 3 * i, "%02x ", bytes[i]);
+        Report("  bytes %s(sse4a emulation %s, %llu emulated so far)\n", hex, g_sse4aEmulation ? "on" : "off",
+               g_sse4aEmulated.load());
     }
     if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2) {
-        const char* kind = record->ExceptionInformation[0] == 0 ? "read" : record->ExceptionInformation[0] == 1 ? "write" : "execute";
+        const char* kind = record->ExceptionInformation[0] == 0   ? "read"
+                           : record->ExceptionInformation[0] == 1 ? "write"
+                                                                  : "execute";
         Report("  %s of 0x%016llx\n", kind, static_cast<unsigned long long>(record->ExceptionInformation[1]));
     }
-    Report("  rax %016llx rbx %016llx rcx %016llx rdx %016llx\n", context->Rax, context->Rbx, context->Rcx, context->Rdx);
-    Report("  rsi %016llx rdi %016llx rbp %016llx rsp %016llx\n", context->Rsi, context->Rdi, context->Rbp, context->Rsp);
+    Report("  rax %016llx rbx %016llx rcx %016llx rdx %016llx\n", context->Rax, context->Rbx, context->Rcx,
+           context->Rdx);
+    Report("  rsi %016llx rdi %016llx rbp %016llx rsp %016llx\n", context->Rsi, context->Rdi, context->Rbp,
+           context->Rsp);
     Report("  r8  %016llx r9  %016llx r10 %016llx r11 %016llx\n", context->R8, context->R9, context->R10, context->R11);
-    Report("  r12 %016llx r13 %016llx r14 %016llx r15 %016llx\n", context->R12, context->R13, context->R14, context->R15);
+    Report("  r12 %016llx r13 %016llx r14 %016llx r15 %016llx\n", context->R12, context->R13, context->R14,
+           context->R15);
     // The words each register points at, to recognise which structure a bad pointer came from.
     {
-        const std::pair<const char*, std::uint64_t> pointers[] = {{"rax", context->Rax}, {"rbx", context->Rbx}, {"rcx", context->Rcx}, {"rdx", context->Rdx}, {"rsi", context->Rsi}, {"rdi", context->Rdi}, {"r12", context->R12}, {"r13", context->R13}, {"r14", context->R14}, {"r15", context->R15}};
+        const std::pair<const char*, std::uint64_t> pointers[] = {
+            {"rax", context->Rax}, {"rbx", context->Rbx}, {"rcx", context->Rcx}, {"rdx", context->Rdx},
+            {"rsi", context->Rsi}, {"rdi", context->Rdi}, {"r12", context->R12}, {"r13", context->R13},
+            {"r14", context->R14}, {"r15", context->R15}};
         for (const auto& [name, value] : pointers) {
-            if (value < 0x10000 || (value & 7) != 0 || !IsReadable(value) || !IsReadable(value + 0x38)) continue;
+            if (value < 0x10000 || (value & 7) != 0 || !IsReadable(value) || !IsReadable(value + 0x38))
+                continue;
             const auto* words = reinterpret_cast<const std::uint64_t*>(value);
-            Report("  [%s] %016llx %016llx %016llx %016llx %016llx %016llx %016llx %016llx\n", name, words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7]);
+            Report("  [%s] %016llx %016llx %016llx %016llx %016llx %016llx %016llx %016llx\n", name, words[0], words[1],
+                   words[2], words[3], words[4], words[5], words[6], words[7]);
         }
     }
     Report("  frame pointer chain:\n");
     std::uint64_t frame = context->Rbp;
-    for (int depth = 0; depth < 32 && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8); ++depth) {
+    for (int depth = 0; depth < 32 && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8);
+         ++depth) {
         const auto returnAddress = reinterpret_cast<const std::uint64_t*>(frame)[1];
-        if (!IsExecutable(returnAddress)) break;
+        if (!IsExecutable(returnAddress))
+            break;
         DescribeAddress(returnAddress, line, sizeof(line));
         Report("    #%d %s\n", depth, line);
         const auto next = reinterpret_cast<const std::uint64_t*>(frame)[0];
-        if (next <= frame) break;
+        if (next <= frame)
+            break;
         frame = next;
     }
     Report("  stack return address candidates:\n");
     int printed = 0;
     for (std::uint64_t slot = context->Rsp; printed < 16 && slot < context->Rsp + 0x2000; slot += 8) {
-        if (!IsReadable(slot)) break;
+        if (!IsReadable(slot))
+            break;
         const auto value = *reinterpret_cast<const std::uint64_t*>(slot);
-        if (!IsExecutable(value)) continue;
+        if (!IsExecutable(value))
+            continue;
         DescribeAddress(value, line, sizeof(line));
         Report("    [rsp+0x%llx] %s\n", static_cast<unsigned long long>(slot - context->Rsp), line);
         ++printed;
@@ -311,22 +378,29 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         // returned are still below rsp.
         Report("  recently popped return address candidates:\n");
         for (std::uint64_t slot = context->Rsp - 8; slot >= context->Rsp - 0x800; slot -= 8) {
-            if (!IsReadable(slot)) break;
+            if (!IsReadable(slot))
+                break;
             const auto value = *reinterpret_cast<const std::uint64_t*>(slot);
-            if (!IsExecutable(value)) continue;
+            if (!IsExecutable(value))
+                continue;
             DescribeAddress(value, line, sizeof(line));
             Report("    [rsp-0x%llx] %s\n", static_cast<unsigned long long>(context->Rsp - slot), line);
         }
         // Registers often still point into the stack the code ran on before the bad return.
-        const std::pair<const char*, std::uint64_t> registers[] = {{"rdi", context->Rdi}, {"rsi", context->Rsi}, {"rbx", context->Rbx}, {"r12", context->R12}, {"r13", context->R13}, {"r14", context->R14}, {"r15", context->R15}};
+        const std::pair<const char*, std::uint64_t> registers[] = {
+            {"rdi", context->Rdi}, {"rsi", context->Rsi}, {"rbx", context->Rbx}, {"r12", context->R12},
+            {"r13", context->R13}, {"r14", context->R14}, {"r15", context->R15}};
         for (const auto& [name, value] : registers) {
-            if (value < 0x10000 || (value & 7) != 0 || !IsReadable(value)) continue;
+            if (value < 0x10000 || (value & 7) != 0 || !IsReadable(value))
+                continue;
             Report("  code addresses above %s (0x%llx):\n", name, static_cast<unsigned long long>(value));
             int found = 0;
             for (std::uint64_t slot = value; found < 24 && slot < value + 0x1000; slot += 8) {
-                if (!IsReadable(slot)) break;
+                if (!IsReadable(slot))
+                    break;
                 const auto candidate = *reinterpret_cast<const std::uint64_t*>(slot);
-                if (!IsExecutable(candidate)) continue;
+                if (!IsExecutable(candidate))
+                    continue;
                 DescribeAddress(candidate, line, sizeof(line));
                 Report("    [+0x%llx] %s\n", static_cast<unsigned long long>(slot - value), line);
                 ++found;
@@ -344,20 +418,24 @@ std::size_t CaptureFrames(const CONTEXT* context, std::uint64_t* frames, std::si
     std::uint64_t frame = context->Rbp;
     while (count < capacity && frame != 0 && (frame & 7) == 0 && IsReadable(frame) && IsReadable(frame + 8)) {
         const auto returnAddress = reinterpret_cast<const std::uint64_t*>(frame)[1];
-        if (!IsExecutable(returnAddress)) break;
+        if (!IsExecutable(returnAddress))
+            break;
         frames[count++] = returnAddress;
         const auto next = reinterpret_cast<const std::uint64_t*>(frame)[0];
-        if (next <= frame) break;
+        if (next <= frame)
+            break;
         frame = next;
     }
     return count;
 }
 
-void ReportThreadContext(const CONTEXT* context, DWORD threadId, const char* name, const std::uint64_t* frames, std::size_t frameCount) {
+void ReportThreadContext(const CONTEXT* context, DWORD threadId, const char* name, const std::uint64_t* frames,
+                         std::size_t frameCount) {
     char line[MAX_PATH + 64];
     Report("  thread %lu '%s': rip ", static_cast<unsigned long>(threadId), name ? name : "");
     DescribeAddress(context->Rip, line, sizeof(line));
-    Report("%s rsp 0x%016llx rbp 0x%016llx\n", line, static_cast<unsigned long long>(context->Rsp), static_cast<unsigned long long>(context->Rbp));
+    Report("%s rsp 0x%016llx rbp 0x%016llx\n", line, static_cast<unsigned long long>(context->Rsp),
+           static_cast<unsigned long long>(context->Rbp));
     for (std::size_t depth = 0; depth < frameCount; ++depth) {
         DescribeAddress(frames[depth], line, sizeof(line));
         Report("    #%llu %s\n", static_cast<unsigned long long>(depth), line);
@@ -368,7 +446,8 @@ void ReportAllThreads() {
     const DWORD current = GetCurrentThreadId();
     const DWORD pid = GetCurrentProcessId();
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return;
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return;
     THREADENTRY32 entry{};
     entry.dwSize = sizeof(entry);
     struct CapturedThread {
@@ -383,13 +462,16 @@ void ReportAllThreads() {
     std::size_t skippedCount = 0;
     if (Thread32First(snapshot, &entry)) {
         do {
-            if (entry.th32OwnerProcessID != pid || entry.th32ThreadID == current) continue;
+            if (entry.th32OwnerProcessID != pid || entry.th32ThreadID == current)
+                continue;
             if (capturedCount >= sizeof(captured) / sizeof(captured[0])) {
                 ++skippedCount;
                 continue;
             }
-            HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
-            if (!thread) continue;
+            HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE,
+                                       entry.th32ThreadID);
+            if (!thread)
+                continue;
             if (SuspendThread(thread) == static_cast<DWORD>(-1)) {
                 CloseHandle(thread);
                 continue;
@@ -398,7 +480,8 @@ void ReportAllThreads() {
             context.ContextFlags = CONTEXT_FULL;
             const BOOL haveContext = GetThreadContext(thread, &context);
             std::uint64_t frames[12] = {};
-            const std::size_t frameCount = haveContext ? CaptureFrames(&context, frames, sizeof(frames) / sizeof(frames[0])) : 0;
+            const std::size_t frameCount =
+                haveContext ? CaptureFrames(&context, frames, sizeof(frames) / sizeof(frames[0])) : 0;
             ResumeThread(thread);
             char name[128] = "";
             PWSTR description = nullptr;
@@ -407,7 +490,8 @@ void ReportAllThreads() {
                 LocalFree(description);
             }
             CloseHandle(thread);
-            if (!haveContext) continue;
+            if (!haveContext)
+                continue;
             captured[capturedCount].id = entry.th32ThreadID;
             std::memcpy(captured[capturedCount].name, name, sizeof(captured[capturedCount].name));
             captured[capturedCount].context = context;
@@ -419,9 +503,11 @@ void ReportAllThreads() {
     CloseHandle(snapshot);
     Report("  all threads:\n");
     for (std::size_t i = 0; i < capturedCount; ++i) {
-        ReportThreadContext(&captured[i].context, captured[i].id, captured[i].name, captured[i].frames, captured[i].frameCount);
+        ReportThreadContext(&captured[i].context, captured[i].id, captured[i].name, captured[i].frames,
+                            captured[i].frameCount);
     }
-    if (skippedCount != 0) Report("  %llu further thread(s) left out\n", static_cast<unsigned long long>(skippedCount));
+    if (skippedCount != 0)
+        Report("  %llu further thread(s) left out\n", static_cast<unsigned long long>(skippedCount));
 }
 
 DWORD WINAPI HangWatchdog(LPVOID param) {
@@ -444,13 +530,12 @@ void ReportBacktrace(const char* what, bool reportThreads) {
         DescribeAddress(reinterpret_cast<std::uint64_t>(frames[i]), line, sizeof(line));
         Report("    #%u %s\n", static_cast<unsigned>(i), line);
     }
-    if (reportThreads) ReportAllThreads();
+    if (reportThreads)
+        ReportAllThreads();
     std::fflush(stderr);
 }
 
-void AbortSignalHandler(int) {
-    ReportBacktrace("abort() (SIGABRT)", true);
-}
+void AbortSignalHandler(int) { ReportBacktrace("abort() (SIGABRT)", true); }
 
 void InvalidParameterHandler(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, std::uintptr_t) {
     ReportBacktrace("UCRT invalid parameter", true);
@@ -460,7 +545,8 @@ void InvalidParameterHandler(const wchar_t*, const wchar_t*, const wchar_t*, uns
 // so its stack names the exit's caller when no libc exit/abort path was taken.
 struct ExitReporter {
     ~ExitReporter() {
-        if (std::getenv("APS5_TRACE_EXIT") != nullptr) ReportBacktrace("process exit (static destruction)", false);
+        if (std::getenv("APS5_TRACE_EXIT") != nullptr)
+            ReportBacktrace("process exit (static destruction)", false);
     }
 } g_exitReporter;
 
@@ -476,9 +562,12 @@ const bool g_crashReportInstalled = [] {
         if (hang[0] >= '0' && hang[0] <= '9') {
             char* end = nullptr;
             const auto value = std::strtoull(hang, &end, 10);
-            if (end && *end == 0) seconds = value;
+            if (end && *end == 0)
+                seconds = value;
         }
-        if (seconds > 0) CreateThread(nullptr, 0, HangWatchdog, reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(seconds)), 0, nullptr);
+        if (seconds > 0)
+            CreateThread(nullptr, 0, HangWatchdog, reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(seconds)), 0,
+                         nullptr);
     }
     return true;
 }();

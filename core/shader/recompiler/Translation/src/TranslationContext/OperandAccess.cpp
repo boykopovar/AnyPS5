@@ -9,18 +9,24 @@ namespace {
 
 DppMoveFlags dppFlags(const RdnaOperand& operand) {
     const auto control = operand.dpp8 ? DppMoveFlags::Lanes8 | operand.dppCtrl : operand.dppCtrl;
-    return {control, static_cast<std::uint8_t>(operand.dppRowMask), static_cast<std::uint8_t>(operand.dppBankMask), operand.dppFetchInactive, operand.dppBoundCtrl};
+    return {control, static_cast<std::uint8_t>(operand.dppRowMask), static_cast<std::uint8_t>(operand.dppBankMask),
+            operand.dppFetchInactive, operand.dppBoundCtrl};
 }
 
 }
 
 const RdnaOperand& TranslationContext::sourceAt(const RdnaInstruction& inst, std::uint32_t index) {
     switch (index) {
-        case 0u: return inst.source0;
-        case 1u: return inst.source1;
-        case 2u: return inst.source2;
-        case 3u: return inst.source3;
-        default: throw std::runtime_error("TranslationContext::sourceAt decoded source operand index is out of range");
+    case 0u:
+        return inst.source0;
+    case 1u:
+        return inst.source1;
+    case 2u:
+        return inst.source2;
+    case 3u:
+        return inst.source3;
+    default:
+        throw std::runtime_error("TranslationContext::sourceAt decoded source operand index is out of range");
     }
 }
 
@@ -58,23 +64,29 @@ RdnaOperand TranslationContext::offsetOperand(const RdnaOperand& operand, std::u
     }
     RdnaOperand result = plainOperand(operand);
     switch (result.kind) {
-        case RdnaOperandKind::ScalarRegister:
-        case RdnaOperandKind::VectorRegister: result.reg += offset; break;
-        case RdnaOperandKind::VccLo:
-            if (offset != 1u) {
-                throw std::runtime_error("TranslationContext::offsetOperand special-register operand offset is out of range");
-            }
-            result.kind = RdnaOperandKind::VccHi;
-            break;
-        case RdnaOperandKind::ExecLo:
-            if (offset != 1u) {
-                throw std::runtime_error("TranslationContext::offsetOperand special-register operand offset is out of range");
-            }
-            result.kind = RdnaOperandKind::ExecHi;
-            break;
-        case RdnaOperandKind::VccHi:
-        case RdnaOperandKind::ExecHi: throw std::runtime_error("TranslationContext::offsetOperand special-register operand offset is out of range");
-        default: return operand;
+    case RdnaOperandKind::ScalarRegister:
+    case RdnaOperandKind::VectorRegister:
+        result.reg += offset;
+        break;
+    case RdnaOperandKind::VccLo:
+        if (offset != 1u) {
+            throw std::runtime_error(
+                "TranslationContext::offsetOperand special-register operand offset is out of range");
+        }
+        result.kind = RdnaOperandKind::VccHi;
+        break;
+    case RdnaOperandKind::ExecLo:
+        if (offset != 1u) {
+            throw std::runtime_error(
+                "TranslationContext::offsetOperand special-register operand offset is out of range");
+        }
+        result.kind = RdnaOperandKind::ExecHi;
+        break;
+    case RdnaOperandKind::VccHi:
+    case RdnaOperandKind::ExecHi:
+        throw std::runtime_error("TranslationContext::offsetOperand special-register operand offset is out of range");
+    default:
+        return operand;
     }
     return result;
 }
@@ -82,10 +94,17 @@ RdnaOperand TranslationContext::offsetOperand(const RdnaOperand& operand, std::u
 RdnaOperand TranslationContext::scalarDestinationOperand(const RdnaOperand& operand, std::uint32_t offset) {
     std::uint32_t code = 0u;
     switch (operand.kind) {
-        case RdnaOperandKind::ScalarRegister: code = operand.reg; break;
-        case RdnaOperandKind::VccLo: code = 106u; break;
-        case RdnaOperandKind::VccHi: code = 107u; break;
-        default: throw std::runtime_error("TranslationContext::scalarDestinationOperand invalid scalar-memory destination");
+    case RdnaOperandKind::ScalarRegister:
+        code = operand.reg;
+        break;
+    case RdnaOperandKind::VccLo:
+        code = 106u;
+        break;
+    case RdnaOperandKind::VccHi:
+        code = 107u;
+        break;
+    default:
+        throw std::runtime_error("TranslationContext::scalarDestinationOperand invalid scalar-memory destination");
     }
     code += offset;
     RdnaOperand result{};
@@ -94,9 +113,15 @@ RdnaOperand TranslationContext::scalarDestinationOperand(const RdnaOperand& oper
         result.reg = code;
     } else {
         switch (code) {
-            case 106u: result.kind = RdnaOperandKind::VccLo; break;
-            case 107u: result.kind = RdnaOperandKind::VccHi; break;
-            default: throw std::runtime_error("TranslationContext::scalarDestinationOperand scalar-memory destination crosses an invalid register");
+        case 106u:
+            result.kind = RdnaOperandKind::VccLo;
+            break;
+        case 107u:
+            result.kind = RdnaOperandKind::VccHi;
+            break;
+        default:
+            throw std::runtime_error(
+                "TranslationContext::scalarDestinationOperand scalar-memory destination crosses an invalid register");
         }
     }
     return result;
@@ -127,7 +152,8 @@ RdnaOperand TranslationContext::plainOperand(const RdnaOperand& operand) {
 
 IrValue* TranslationContext::readOperand(const RdnaOperand& operand, IrType type) {
     if (type == IrType::U16) {
-        return &ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&applyBitSourceModifiers(operand, readRawU32(operand)).Value()});
+        return &ir.Emit(IrOpcode::ConvertU16U32, IrType::U16,
+                        {&applyBitSourceModifiers(operand, readRawU32(operand)).Value()});
     }
     if (type == IrType::F16) {
         const IrU16 bits(ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&readF16SourceBits(operand).Value()}));
@@ -135,14 +161,20 @@ IrValue* TranslationContext::readOperand(const RdnaOperand& operand, IrType type
     }
     if (type == IrType::U1) {
         switch (operand.kind) {
-            case RdnaOperandKind::Scc: return &ir.GetScc();
-            case RdnaOperandKind::ExecLo:
-            case RdnaOperandKind::ExecHi: return &ir.GetExec();
-            case RdnaOperandKind::VccLo:
-            case RdnaOperandKind::VccHi: return &ir.GetVcc();
-            case RdnaOperandKind::VccZ: return &ir.LogicalNot(ir.GetVcc());
-            case RdnaOperandKind::ExecZ: return &ir.LogicalNot(ir.GetExec());
-            default: break;
+        case RdnaOperandKind::Scc:
+            return &ir.GetScc();
+        case RdnaOperandKind::ExecLo:
+        case RdnaOperandKind::ExecHi:
+            return &ir.GetExec();
+        case RdnaOperandKind::VccLo:
+        case RdnaOperandKind::VccHi:
+            return &ir.GetVcc();
+        case RdnaOperandKind::VccZ:
+            return &ir.LogicalNot(ir.GetVcc());
+        case RdnaOperandKind::ExecZ:
+            return &ir.LogicalNot(ir.GetExec());
+        default:
+            break;
         }
         return &ir.INotEqual(readRawU32(operand).Value(), ir.Constant(0u));
     }
@@ -180,26 +212,28 @@ void TranslationContext::writeOperand(const RdnaOperand& operand, IrValue* value
     }
     if (type == IrType::U1) {
         switch (operand.kind) {
-            case RdnaOperandKind::Scc: ir.SetScc(*value); return;
-            case RdnaOperandKind::ExecLo:
-            case RdnaOperandKind::ExecHi: {
-                const std::array<IrU32, 2> mask = ballotMask(IrU1(*value));
-                ir.SetExec(*value);
-                ir.SetExecLo(mask[0].Value());
-                ir.SetExecHi(mask[1].Value());
-                return;
-            }
-            case RdnaOperandKind::VccLo:
-            case RdnaOperandKind::VccHi: {
-                const std::array<IrU32, 2> mask = ballotMask(IrU1(*value));
-                ir.SetVcc(*value);
-                ir.SetVccLo(mask[0].Value());
-                ir.SetVccHi(mask[1].Value());
-                return;
-            }
-            default:
-                writeRawU32(operand, IrU32(ir.Select(*value, ir.Constant(1u), ir.Constant(0u))));
-                return;
+        case RdnaOperandKind::Scc:
+            ir.SetScc(*value);
+            return;
+        case RdnaOperandKind::ExecLo:
+        case RdnaOperandKind::ExecHi: {
+            const std::array<IrU32, 2> mask = ballotMask(IrU1(*value));
+            ir.SetExec(*value);
+            ir.SetExecLo(mask[0].Value());
+            ir.SetExecHi(mask[1].Value());
+            return;
+        }
+        case RdnaOperandKind::VccLo:
+        case RdnaOperandKind::VccHi: {
+            const std::array<IrU32, 2> mask = ballotMask(IrU1(*value));
+            ir.SetVcc(*value);
+            ir.SetVccLo(mask[0].Value());
+            ir.SetVccHi(mask[1].Value());
+            return;
+        }
+        default:
+            writeRawU32(operand, IrU32(ir.Select(*value, ir.Constant(1u), ir.Constant(0u))));
+            return;
         }
     }
     if (type == IrType::U16) {
@@ -255,10 +289,12 @@ IrF32 TranslationContext::applyF32ResultModifiers(const RdnaOperand& operand, Ir
         IrValue& sign = ir.BitwiseAnd(bits, ir.Constant(0x80000000u));
         IrValue* result = nullptr;
         if (operand.omod == 3u) {
-            result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x01000000u)), sign, ir.ISub(bits, ir.Constant(0x00800000u)));
+            result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x01000000u)), sign,
+                                ir.ISub(bits, ir.Constant(0x00800000u)));
         } else {
             const std::uint32_t exponentStep = operand.omod == 1u ? 0x00800000u : 0x01000000u;
-            result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7f800000u)));
+            result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7f800000u - exponentStep)),
+                                ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7f800000u)));
         }
         result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x00800000u)), ir.Constant(0u), *result);
         result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
@@ -285,8 +321,10 @@ IrU32 TranslationContext::clampF16Bits(const RdnaOperand& operand, IrU32 bits) {
         return bits;
     }
     const IrU32 magnitude(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffu)));
-    const IrU1 zero(ir.LogicalOr(ir.UGreaterThan(bits.Value(), ir.Constant(0x7fffu)), ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7c00u))));
-    const IrU32 limited(ir.Select(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x3c00u)), ir.Constant(0x3c00u), bits.Value()));
+    const IrU1 zero(ir.LogicalOr(ir.UGreaterThan(bits.Value(), ir.Constant(0x7fffu)),
+                                 ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7c00u))));
+    const IrU32 limited(
+        ir.Select(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x3c00u)), ir.Constant(0x3c00u), bits.Value()));
     return IrU32(ir.Select(zero.Value(), ir.Constant(0u), limited.Value()));
 }
 
@@ -295,44 +333,59 @@ IrU32 TranslationContext::readScalarCode(std::uint32_t code) {
         return IrU32(ir.GetScalarReg(static_cast<ScalarReg>(code)));
     }
     switch (code) {
-        case 106u: return IrU32(ir.GetVccLo());
-        case 107u: return IrU32(ir.GetVccHi());
-        case 124u: return IrU32(ir.GetM0());
-        case 126u:
-        case 127u: {
-            const std::array<IrU32, 2> mask = ballotMask(IrU1(ir.GetExec()));
-            return mask[code - 126u];
-        }
-        default: return IrU32(ir.Constant(0u));
+    case 106u:
+        return IrU32(ir.GetVccLo());
+    case 107u:
+        return IrU32(ir.GetVccHi());
+    case 124u:
+        return IrU32(ir.GetM0());
+    case 126u:
+    case 127u: {
+        const std::array<IrU32, 2> mask = ballotMask(IrU1(ir.GetExec()));
+        return mask[code - 126u];
+    }
+    default:
+        return IrU32(ir.Constant(0u));
     }
 }
 
 IrU32 TranslationContext::readRawU32(const RdnaOperand& operand) {
     switch (operand.kind) {
-        case RdnaOperandKind::LiteralConstant:
-        case RdnaOperandKind::IntegerInlineConstant:
-        case RdnaOperandKind::FloatInlineConstant: return IrU32(ir.Constant(operand.value));
-        case RdnaOperandKind::Null:
-        case RdnaOperandKind::PopsExitingWaveId: return IrU32(ir.Constant(0u));
-        case RdnaOperandKind::ScalarRegister: return IrU32(ir.GetScalarReg(static_cast<ScalarReg>(operand.reg)));
-        case RdnaOperandKind::VectorRegister: return IrU32(ir.GetVectorReg(static_cast<VectorReg>(operand.reg)));
-        case RdnaOperandKind::VccLo: return IrU32(ir.GetVccLo());
-        case RdnaOperandKind::VccHi: return IrU32(ir.GetVccHi());
-        case RdnaOperandKind::M0: return IrU32(ir.GetM0());
-        case RdnaOperandKind::ExecLo: return IrU32(ir.GetExecLo());
-        case RdnaOperandKind::ExecHi: return IrU32(ir.GetExecHi());
-        case RdnaOperandKind::Scc: return IrU32(ir.Select(ir.GetScc(), ir.Constant(1u), ir.Constant(0u)));
-        case RdnaOperandKind::VccZ:
-        case RdnaOperandKind::ExecZ: {
-            const bool vcc = operand.kind == RdnaOperandKind::VccZ;
-            IrU32 mask(vcc ? ir.GetVccLo() : ir.GetExecLo());
-            if (program.WaveSize() == 64u) {
-                mask = IrU32(ir.BitwiseOr(mask.Value(), vcc ? ir.GetVccHi() : ir.GetExecHi()));
-            }
-            const IrU32 zero(ir.Constant(0u));
-            return IrU32(ir.Select(ir.IEqual(mask.Value(), zero.Value()), ir.Constant(1u), zero.Value()));
+    case RdnaOperandKind::LiteralConstant:
+    case RdnaOperandKind::IntegerInlineConstant:
+    case RdnaOperandKind::FloatInlineConstant:
+        return IrU32(ir.Constant(operand.value));
+    case RdnaOperandKind::Null:
+    case RdnaOperandKind::PopsExitingWaveId:
+        return IrU32(ir.Constant(0u));
+    case RdnaOperandKind::ScalarRegister:
+        return IrU32(ir.GetScalarReg(static_cast<ScalarReg>(operand.reg)));
+    case RdnaOperandKind::VectorRegister:
+        return IrU32(ir.GetVectorReg(static_cast<VectorReg>(operand.reg)));
+    case RdnaOperandKind::VccLo:
+        return IrU32(ir.GetVccLo());
+    case RdnaOperandKind::VccHi:
+        return IrU32(ir.GetVccHi());
+    case RdnaOperandKind::M0:
+        return IrU32(ir.GetM0());
+    case RdnaOperandKind::ExecLo:
+        return IrU32(ir.GetExecLo());
+    case RdnaOperandKind::ExecHi:
+        return IrU32(ir.GetExecHi());
+    case RdnaOperandKind::Scc:
+        return IrU32(ir.Select(ir.GetScc(), ir.Constant(1u), ir.Constant(0u)));
+    case RdnaOperandKind::VccZ:
+    case RdnaOperandKind::ExecZ: {
+        const bool vcc = operand.kind == RdnaOperandKind::VccZ;
+        IrU32 mask(vcc ? ir.GetVccLo() : ir.GetExecLo());
+        if (program.WaveSize() == 64u) {
+            mask = IrU32(ir.BitwiseOr(mask.Value(), vcc ? ir.GetVccHi() : ir.GetExecHi()));
         }
-        default: throw std::runtime_error("TranslationContext::readRawU32 invalid decoded operand used as a raw U32 source");
+        const IrU32 zero(ir.Constant(0u));
+        return IrU32(ir.Select(ir.IEqual(mask.Value(), zero.Value()), ir.Constant(1u), zero.Value()));
+    }
+    default:
+        throw std::runtime_error("TranslationContext::readRawU32 invalid decoded operand used as a raw U32 source");
     }
 }
 
@@ -353,67 +406,75 @@ void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
             throw std::runtime_error("TranslationContext::writeRawU32 invalid SDWA destination selector");
         }
         switch (operand.sdwaDstUnused) {
-            case 0u:
-                value = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&ir.Constant(0u), &value.Value(), &ir.Constant(offset), &ir.Constant(width)}));
-                break;
-            case 1u: {
-                const IrU32 extended(ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&value.Value(), &ir.Constant(0u), &ir.Constant(width)}));
-                value = IrU32(ir.ShiftLeftLogical(extended.Value(), ir.Constant(offset)));
-                break;
-            }
-            case 2u: {
-                const std::uint32_t fieldMask = width == 32u ? 0xffffffffu : (1u << width) - 1u;
-                const IrU32 inserted(ir.ShiftLeftLogical(ir.BitwiseAnd(value.Value(), ir.Constant(fieldMask)), ir.Constant(offset)));
-                const IrU32 cleared(ir.BitwiseAnd(readRawU32(plainOperand(operand)).Value(), ir.Constant(~(fieldMask << offset))));
-                value = IrU32(ir.BitwiseOr(cleared.Value(), inserted.Value()));
-                break;
-            }
-            default: throw std::runtime_error("TranslationContext::writeRawU32 reserved SDWA DST_U mode");
+        case 0u:
+            value = IrU32(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32,
+                                  {&ir.Constant(0u), &value.Value(), &ir.Constant(offset), &ir.Constant(width)}));
+            break;
+        case 1u: {
+            const IrU32 extended(ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32,
+                                         {&value.Value(), &ir.Constant(0u), &ir.Constant(width)}));
+            value = IrU32(ir.ShiftLeftLogical(extended.Value(), ir.Constant(offset)));
+            break;
+        }
+        case 2u: {
+            const std::uint32_t fieldMask = width == 32u ? 0xffffffffu : (1u << width) - 1u;
+            const IrU32 inserted(
+                ir.ShiftLeftLogical(ir.BitwiseAnd(value.Value(), ir.Constant(fieldMask)), ir.Constant(offset)));
+            const IrU32 cleared(
+                ir.BitwiseAnd(readRawU32(plainOperand(operand)).Value(), ir.Constant(~(fieldMask << offset))));
+            value = IrU32(ir.BitwiseOr(cleared.Value(), inserted.Value()));
+            break;
+        }
+        default:
+            throw std::runtime_error("TranslationContext::writeRawU32 reserved SDWA DST_U mode");
         }
     }
     switch (operand.kind) {
-        case RdnaOperandKind::ScalarRegister: {
-            const ScalarReg reg = static_cast<ScalarReg>(operand.reg);
-            ir.SetScalarReg(reg, value.Value());
-            ir.SetScalarMaskTag(reg, ir.ConstantBool(false));
-            if (RegIndex(reg) > 0u) {
-                ir.SetScalarMaskTag(static_cast<ScalarReg>(RegIndex(reg) - 1u), ir.ConstantBool(false));
-            }
-            break;
+    case RdnaOperandKind::ScalarRegister: {
+        const ScalarReg reg = static_cast<ScalarReg>(operand.reg);
+        ir.SetScalarReg(reg, value.Value());
+        ir.SetScalarMaskTag(reg, ir.ConstantBool(false));
+        if (RegIndex(reg) > 0u) {
+            ir.SetScalarMaskTag(static_cast<ScalarReg>(RegIndex(reg) - 1u), ir.ConstantBool(false));
         }
-        case RdnaOperandKind::VectorRegister: {
-            const VectorReg reg = static_cast<VectorReg>(operand.reg);
-            IrValue& old = ir.GetVectorReg(reg);
-            if (operand.dpp) {
-                const auto flags = dppFlags(operand);
-                value = IrU32(ir.Emit(IrOpcode::DppUpdateU32, IrType::U32, {&value.Value(), &old, &ir.GetExec()}, flags));
-            } else {
-                value = IrU32(ir.Select(ir.GetExec(), value.Value(), old));
-            }
-            ir.SetVectorReg(reg, value.Value());
-            break;
+        break;
+    }
+    case RdnaOperandKind::VectorRegister: {
+        const VectorReg reg = static_cast<VectorReg>(operand.reg);
+        IrValue& old = ir.GetVectorReg(reg);
+        if (operand.dpp) {
+            const auto flags = dppFlags(operand);
+            value = IrU32(ir.Emit(IrOpcode::DppUpdateU32, IrType::U32, {&value.Value(), &old, &ir.GetExec()}, flags));
+        } else {
+            value = IrU32(ir.Select(ir.GetExec(), value.Value(), old));
         }
-        case RdnaOperandKind::VccLo:
-            ir.SetVccLo(value.Value());
-            ir.SetVcc(threadBit({value, IrU32(ir.GetVccHi())}).Value());
-            break;
-        case RdnaOperandKind::VccHi:
-            ir.SetVccHi(value.Value());
-            ir.SetVcc(threadBit({IrU32(ir.GetVccLo()), value}).Value());
-            break;
-        case RdnaOperandKind::M0: ir.SetM0(value.Value()); break;
-        case RdnaOperandKind::ExecLo:
-            ir.SetExecLo(value.Value());
-            ir.SetExec(threadBit({value, IrU32(ir.GetExecHi())}).Value());
-            break;
-        case RdnaOperandKind::ExecHi:
-            ir.SetExecHi(value.Value());
-            ir.SetExec(threadBit({IrU32(ir.GetExecLo()), value}).Value());
-            break;
-        case RdnaOperandKind::Scc:
-            ir.SetScc(ir.INotEqual(value.Value(), ir.Constant(0u)));
-            break;
-        default: throw std::runtime_error("TranslationContext::writeRawU32 invalid decoded operand used as a destination");
+        ir.SetVectorReg(reg, value.Value());
+        break;
+    }
+    case RdnaOperandKind::VccLo:
+        ir.SetVccLo(value.Value());
+        ir.SetVcc(threadBit({value, IrU32(ir.GetVccHi())}).Value());
+        break;
+    case RdnaOperandKind::VccHi:
+        ir.SetVccHi(value.Value());
+        ir.SetVcc(threadBit({IrU32(ir.GetVccLo()), value}).Value());
+        break;
+    case RdnaOperandKind::M0:
+        ir.SetM0(value.Value());
+        break;
+    case RdnaOperandKind::ExecLo:
+        ir.SetExecLo(value.Value());
+        ir.SetExec(threadBit({value, IrU32(ir.GetExecHi())}).Value());
+        break;
+    case RdnaOperandKind::ExecHi:
+        ir.SetExecHi(value.Value());
+        ir.SetExec(threadBit({IrU32(ir.GetExecLo()), value}).Value());
+        break;
+    case RdnaOperandKind::Scc:
+        ir.SetScc(ir.INotEqual(value.Value(), ir.Constant(0u)));
+        break;
+    default:
+        throw std::runtime_error("TranslationContext::writeRawU32 invalid decoded operand used as a destination");
     }
 }
 

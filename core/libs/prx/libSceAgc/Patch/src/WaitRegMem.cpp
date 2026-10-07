@@ -24,9 +24,11 @@ int SetWriteDataAddress(std::uint32_t* cmd, std::uint64_t address, const char* f
 int SetWriteDataDst(std::uint32_t* cmd, std::uint8_t dst, bool compute, const char* function) {
     ValidateWriteData(cmd, function);
     Agc::Command::CheckBits(dst, compute ? 0xfu : 0x1fu, function);
-    Agc::Command::Require(dst != 0 || (cmd[1] & (1u << 20u)) == 0, function, "register writes do not support write confirmation");
+    Agc::Command::Require(dst != 0 || (cmd[1] & (1u << 20u)) == 0, function,
+                          "register writes do not support write confirmation");
     const auto mask = compute ? 0xfu << 8u : (1u << 30u) | (0xfu << 8u);
-    const auto destination = compute ? static_cast<std::uint32_t>(dst) << 8u : ((dst & 1u) << 30u) | ((dst & 0x1eu) << 7u);
+    const auto destination =
+        compute ? static_cast<std::uint32_t>(dst) << 8u : ((dst & 1u) << 30u) | ((dst & 0x1eu) << 7u);
     cmd[1] = (cmd[1] & ~mask) | destination;
     return 0;
 }
@@ -99,5 +101,4 @@ int APS5_VABI sceAgcWriteDataPatchSetCachePolicy(std::uint32_t* cmd, std::uint8_
 int APS5_VABI sceAgcAsyncWriteDataPatchSetCachePolicy(std::uint32_t* cmd, std::uint8_t cachePolicy) {
     return SetWriteDataCachePolicy(cmd, cachePolicy, __func__);
 }
-
 }

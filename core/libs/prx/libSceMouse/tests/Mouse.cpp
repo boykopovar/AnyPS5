@@ -13,7 +13,10 @@ int APS5_VABI sceMouseClose(std::int32_t);
 int APS5_VABI sceMouseRead(std::int32_t, MouseData*, std::int32_t);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     MouseData data[64]{};

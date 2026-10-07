@@ -9,18 +9,13 @@
 
 namespace Elfpatcher::Linux {
 
-LinuxElfPatcher::LinuxElfPatcher(
-    std::shared_ptr<IEntryStubBuilder> entryStubBuilder,
-    std::shared_ptr<IProgramHeaderLayoutBuilder> programHeaderLayoutBuilder,
-    std::shared_ptr<ISectionHeaderTableBuilder> sectionHeaderTableBuilder,
-    std::shared_ptr<Io::IByteWriter> byteWriter
-)
-    : _entryStubBuilder(std::move(entryStubBuilder))
-    , _programHeaderLayoutBuilder(std::move(programHeaderLayoutBuilder))
-    , _sectionHeaderTableBuilder(std::move(sectionHeaderTableBuilder))
-    , _byteWriter(std::move(byteWriter))
-{
-}
+LinuxElfPatcher::LinuxElfPatcher(std::shared_ptr<IEntryStubBuilder> entryStubBuilder,
+                                 std::shared_ptr<IProgramHeaderLayoutBuilder> programHeaderLayoutBuilder,
+                                 std::shared_ptr<ISectionHeaderTableBuilder> sectionHeaderTableBuilder,
+                                 std::shared_ptr<Io::IByteWriter> byteWriter)
+    : _entryStubBuilder(std::move(entryStubBuilder)),
+      _programHeaderLayoutBuilder(std::move(programHeaderLayoutBuilder)),
+      _sectionHeaderTableBuilder(std::move(sectionHeaderTableBuilder)), _byteWriter(std::move(byteWriter)) {}
 
 void LinuxElfPatcher::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const {
     _byteWriter->AppendI64(buf, tag);
@@ -28,17 +23,17 @@ void LinuxElfPatcher::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64
 }
 
 void LinuxElfPatcher::_appendTrampoline(
-    std::vector<std::uint8_t>& buf,
-    const Codegen::TrampolineSite& site,
-    const std::uint64_t extraBlockOffset,
-    const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset) const
-{
+    std::vector<std::uint8_t>& buf, const Codegen::TrampolineSite& site, const std::uint64_t extraBlockOffset,
+    const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset) const {
     using namespace Codegen::Amd64OnlySubstitutionTable;
-    if (site.Length < kJmpRel32.Size || site.OriginalBytes.size() != site.Length || site.Body.size() < kJmpRel32.Size || site.ReturnBranchOffset > site.Body.size() - kJmpRel32.Size || site.Body[site.ReturnBranchOffset] != kJmpRel32.Bytes[0])
+    if (site.Length < kJmpRel32.Size || site.OriginalBytes.size() != site.Length || site.Body.size() < kJmpRel32.Size ||
+        site.ReturnBranchOffset > site.Body.size() - kJmpRel32.Size ||
+        site.Body[site.ReturnBranchOffset] != kJmpRel32.Bytes[0])
         throw Domain::RelinkerException("Invalid AMD-only trampoline site", site.Offset);
     if (site.Offset > extraBlockOffset || site.Length > extraBlockOffset - site.Offset)
         throw Domain::RelinkerException("AMD-only instruction is outside the original image", site.Offset);
-    if (!std::equal(site.OriginalBytes.begin(), site.OriginalBytes.end(), buf.begin() + static_cast<std::ptrdiff_t>(site.Offset)))
+    if (!std::equal(site.OriginalBytes.begin(), site.OriginalBytes.end(),
+                    buf.begin() + static_cast<std::ptrdiff_t>(site.Offset)))
         throw Domain::RelinkerException("AMD-only site bytes changed before patching", site.Offset);
 
     while (buf.size() % kStubAlignment != 0)
@@ -49,29 +44,29 @@ void LinuxElfPatcher::_appendTrampoline(
         buf.push_back(b);
 
     const auto inRange = [](const std::int64_t displacement) {
-        return displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max();
+        return displacement >= std::numeric_limits<std::int32_t>::min() &&
+               displacement <= std::numeric_limits<std::int32_t>::max();
     };
-    const auto returnDisplacement = static_cast<std::int64_t>(site.Address + site.Length) - static_cast<std::int64_t>(bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size);
-    const auto jumpDisplacement = static_cast<std::int64_t>(bodyVaddr) - static_cast<std::int64_t>(site.Address + kJmpRel32.Size);
+    const auto returnDisplacement = static_cast<std::int64_t>(site.Address + site.Length) -
+                                    static_cast<std::int64_t>(bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size);
+    const auto jumpDisplacement =
+        static_cast<std::int64_t>(bodyVaddr) - static_cast<std::int64_t>(site.Address + kJmpRel32.Size);
     if (!inRange(returnDisplacement) || !inRange(jumpDisplacement))
         throw Domain::RelinkerException("AMD-only stub exceeds rel32 range", site.Offset);
-    _byteWriter->WriteU32(buf, static_cast<std::size_t>(bodyOff + site.ReturnBranchOffset + 1), static_cast<std::uint32_t>(returnDisplacement));
+    _byteWriter->WriteU32(buf, static_cast<std::size_t>(bodyOff + site.ReturnBranchOffset + 1),
+                          static_cast<std::uint32_t>(returnDisplacement));
 
     std::fill_n(buf.begin() + static_cast<std::ptrdiff_t>(site.Offset), site.Length, kNop1.Bytes[0]);
     buf[static_cast<std::size_t>(site.Offset)] = kJmpRel32.Bytes[0];
     _byteWriter->WriteU32(buf, static_cast<std::size_t>(site.Offset + 1), static_cast<std::uint32_t>(jumpDisplacement));
 }
 
-std::vector<std::uint8_t> LinuxElfPatcher::Patch(
-    const std::vector<std::uint8_t>& sourceElf,
-    const std::vector<Domain::ProgramHeader>& originalHeaders,
-    const Domain::SysVDynamicSection& dynSection,
-    const std::uint64_t originalPltGotVaddr,
-    const std::string& runPath,
-    const bool lazyBinding,
-    const bool dependencyDiagnostics,
-    const std::vector<Codegen::TrampolineSite>& trampolines)
-{
+std::vector<std::uint8_t> LinuxElfPatcher::Patch(const std::vector<std::uint8_t>& sourceElf,
+                                                 const std::vector<Domain::ProgramHeader>& originalHeaders,
+                                                 const Domain::SysVDynamicSection& dynSection,
+                                                 const std::uint64_t originalPltGotVaddr, const std::string& runPath,
+                                                 const bool lazyBinding, const bool dependencyDiagnostics,
+                                                 const std::vector<Codegen::TrampolineSite>& trampolines) {
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("Linux target does not support --windows-diagnostics");
 
@@ -119,7 +114,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     alignBuf(buf, kRelaPltAlignment);
 
     const std::uint64_t extraBlockOff = dynStrOff;
-    const std::uint64_t extraBlockVaddr = _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders, extraBlockOff);
+    const std::uint64_t extraBlockVaddr =
+        _programHeaderLayoutBuilder->ComputeExtraBlockVaddr(originalHeaders, extraBlockOff);
 
     const auto vaddrOfExtraBlockOffset = [extraBlockOff, extraBlockVaddr](std::uint64_t fileOffset) -> std::uint64_t {
         if (fileOffset < extraBlockOff)

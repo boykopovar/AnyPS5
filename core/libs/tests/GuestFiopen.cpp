@@ -23,7 +23,7 @@ static void Check(bool value, int line) {
 #define Require(value) Check((value), __LINE__)
 
 constexpr int In = 0x01, Out = 0x02, Ate = 0x04, App = 0x08, Trunc = 0x10, Nocreate = 0x20, Noreplace = 0x40,
-    Binary = 0x80;
+              Binary = 0x80;
 
 static FileStream* Open(const char* name, int mode) {
     return _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(name, mode, 0x1b6);
@@ -33,7 +33,8 @@ static std::string Contents(const char* name) {
     auto* stream = fopen_nid_postfix(name, "rb");
     Require(stream != nullptr);
     std::string text;
-    for (int c; (c = std::fgetc(stream->GetHandle())) != EOF;) text += static_cast<char>(c);
+    for (int c; (c = std::fgetc(stream->GetHandle())) != EOF;)
+        text += static_cast<char>(c);
     fclose_nid_postfix(stream);
     return text;
 }
@@ -46,7 +47,8 @@ static void Write(FileStream* stream, const char* text) {
 
 static bool Exists(const char* name) {
     auto* stream = fopen_nid_postfix(name, "r");
-    if (stream) fclose_nid_postfix(stream);
+    if (stream)
+        fclose_nid_postfix(stream);
     return stream != nullptr;
 }
 
@@ -58,7 +60,7 @@ int main() {
     const char* missing = "guest_fiopen_dir/missing";
 
     for (int mode : {0, Ate, Trunc, Binary, Nocreate, Noreplace, In | Trunc, In | Trunc | Binary, Out | App | Trunc,
-            In | Out | App | Trunc, Trunc | Binary, App | Trunc}) {
+                     In | Out | App | Trunc, Trunc | Binary, App | Trunc}) {
         Require(Open(missing, mode) == nullptr);
         Require(!Exists(missing));
     }

@@ -22,8 +22,7 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
-template <typename F>
-static bool Throws(F f) {
+template <typename F> static bool Throws(F f) {
     try {
         f();
     } catch (const std::exception&) {
@@ -48,14 +47,14 @@ static bool NoSpace(void* line) {
     float inner = 1.0f;
     float tail = 1.0f;
     float advance = 1.0f;
-    return sceFontWritingLineGetOrderingSpace(line, &head, &inner, &tail, &advance) == SCE_FONT_OK && head == 0.0f && inner == 0.0f &&
-           tail == 0.0f && advance == 0.0f;
+    return sceFontWritingLineGetOrderingSpace(line, &head, &inner, &tail, &advance) == SCE_FONT_OK && head == 0.0f &&
+           inner == 0.0f && tail == 0.0f && advance == 0.0f;
 }
 
 static bool StepIs(const FontWritingLineStep* step, float x, const FontWritingMetrics& run, void* orderer) {
-    return step && step->x == x && step->y == 0.0f && step->advanceX == run.advanceX && step->advanceY == run.advanceY &&
-           step->spacingProgress == 0.0f && step->writingOrderer == orderer && step->Adjusting.x == 0.0f &&
-           step->Adjusting.y == 0.0f && Same(step->Metrics, run);
+    return step && step->x == x && step->y == 0.0f && step->advanceX == run.advanceX &&
+           step->advanceY == run.advanceY && step->spacingProgress == 0.0f && step->writingOrderer == orderer &&
+           step->Adjusting.x == 0.0f && step->Adjusting.y == 0.0f && Same(step->Metrics, run);
 }
 
 int main() {

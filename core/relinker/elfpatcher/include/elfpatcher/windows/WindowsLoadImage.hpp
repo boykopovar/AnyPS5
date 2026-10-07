@@ -8,7 +8,8 @@ namespace Elfpatcher::Windows {
 
 class WindowsLoadImage {
 public:
-    WindowsLoadImage(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, bool requireEntry = true);
+    WindowsLoadImage(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers,
+                     bool requireEntry = true);
     std::uint32_t GetRva(std::uint64_t address, std::uint64_t size = 1) const;
     std::uint32_t GetEndRva() const;
     std::uint32_t GetEntryRva() const;

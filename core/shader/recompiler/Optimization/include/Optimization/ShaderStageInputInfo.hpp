@@ -22,7 +22,9 @@ struct ShaderBufferResource {
     [[nodiscard]] std::uint16_t Stride() const { return (fields[1] >> 16u) & 0x3FFFu; }
     [[nodiscard]] bool SwizzleEnabled() const { return ((fields[1] >> 31u) & 0x1u) == 1u; }
     [[nodiscard]] std::uint32_t NumRecords() const { return fields[2]; }
-    [[nodiscard]] std::uint64_t GetSize() const { return Stride() == 0 ? NumRecords() : static_cast<std::uint64_t>(Stride()) * NumRecords(); }
+    [[nodiscard]] std::uint64_t GetSize() const {
+        return Stride() == 0 ? NumRecords() : static_cast<std::uint64_t>(Stride()) * NumRecords();
+    }
     [[nodiscard]] std::uint8_t DstSelX() const { return (fields[3] >> 0u) & 0x7u; }
     [[nodiscard]] std::uint8_t DstSelY() const { return (fields[3] >> 3u) & 0x7u; }
     [[nodiscard]] std::uint8_t DstSelZ() const { return (fields[3] >> 6u) & 0x7u; }
@@ -32,8 +34,13 @@ struct ShaderBufferResource {
     [[nodiscard]] std::uint32_t DstSelXYZW() const { return (fields[3] >> 0u) & 0xFFFu; }
     [[nodiscard]] bool AddTid() const { return ((fields[3] >> 23u) & 0x1u) == 1u; }
     [[nodiscard]] std::uint8_t IndexStride() const { return (fields[3] >> 21u) & 0x3u; }
-    [[nodiscard]] std::uint32_t PackedStride() const { return Stride() | (static_cast<std::uint32_t>(SwizzleEnabled()) << 14u) | (static_cast<std::uint32_t>(IndexStride()) << 16u) | (static_cast<std::uint32_t>(AddTid()) << 20u); }
-    [[nodiscard]] std::uint64_t Base48() const { return (fields[0] | (static_cast<std::uint64_t>(fields[1]) << 32u)) & 0xFFFFFFFFFFFFull; }
+    [[nodiscard]] std::uint32_t PackedStride() const {
+        return Stride() | (static_cast<std::uint32_t>(SwizzleEnabled()) << 14u) |
+               (static_cast<std::uint32_t>(IndexStride()) << 16u) | (static_cast<std::uint32_t>(AddTid()) << 20u);
+    }
+    [[nodiscard]] std::uint64_t Base48() const {
+        return (fields[0] | (static_cast<std::uint64_t>(fields[1]) << 32u)) & 0xFFFFFFFFFFFFull;
+    }
     [[nodiscard]] std::uint8_t RawFormat() const { return (fields[3] >> 12u) & 0x7Fu; }
     [[nodiscard]] IrBufferFormat Format() const { return static_cast<IrBufferFormat>(RawFormat()); }
     [[nodiscard]] std::uint8_t OutOfBounds() const { return (fields[3] >> 28u) & 0x3u; }
@@ -44,12 +51,8 @@ struct ShaderColorComponentMapping {
     static constexpr std::uint8_t Identity = 0xe4u;
     std::uint8_t packed = Identity;
 
-    [[nodiscard]] std::uint32_t Map(std::uint32_t component) const {
-        return (packed >> (component * 2u)) & 0x3u;
-    }
-    [[nodiscard]] bool IsIdentity() const {
-        return packed == Identity;
-    }
+    [[nodiscard]] std::uint32_t Map(std::uint32_t component) const { return (packed >> (component * 2u)) & 0x3u; }
+    [[nodiscard]] bool IsIdentity() const { return packed == Identity; }
 };
 
 struct ShaderVertexInputBuffer {
@@ -75,9 +78,7 @@ struct ShaderStageRuntime {
     const CompiledShaderInfo* program = nullptr;
     ResourceSnapshot resources;
 
-    [[nodiscard]] explicit operator bool() const {
-        throw std::runtime_error("shader input helper not implemented");
-    }
+    [[nodiscard]] explicit operator bool() const { throw std::runtime_error("shader input helper not implemented"); }
 };
 
 struct ShaderClipSpaceTransform {
@@ -95,7 +96,7 @@ struct ShaderWorkgroupInputInfo {
     std::uint32_t waveSize = 64;
 };
 
-struct ShaderMeshInputInfo: ShaderWorkgroupInputInfo {
+struct ShaderMeshInputInfo : ShaderWorkgroupInputInfo {
     std::uint32_t inputPrimitive = 0;
     std::uint32_t primitivesPerGroup = 0;
     std::uint32_t verticesPerGroup = 0;
@@ -149,7 +150,7 @@ struct ShaderVertexInputInfo {
     bool fetchEmbedded = false;
 };
 
-struct ShaderComputeInputInfo: ShaderWorkgroupInputInfo {
+struct ShaderComputeInputInfo : ShaderWorkgroupInputInfo {
     bool groupId[3] = {false, false, false};
     bool partialGroups = false;
     int threadIdsNum = 0;
@@ -187,9 +188,7 @@ struct ShaderPixelInputInfo {
     ConservativeZExport psConservativeZExport = ConservativeZExport::AnyZ;
     ShaderStageRuntime stage;
 
-    bool HasPositionInput() const {
-        return psPosX || psPosY || psPosZ || psPosW;
-    }
+    bool HasPositionInput() const { return psPosX || psPosY || psPosZ || psPosW; }
 
     [[nodiscard]] bool InputIsDefault(std::uint32_t input) const {
         return input < inputNum && input < 32u && (interpolatorSettings[input] & 0x420u) == 0x20u;
@@ -213,10 +212,12 @@ struct ShaderPixelInputInfo {
         return one ? 0x3f800000u : 0u;
     }
 
-    [[nodiscard]] bool InputIsLinear(std::uint32_t input, std::uint32_t linearInputs, std::uint32_t perspectiveInputs) const {
+    [[nodiscard]] bool InputIsLinear(std::uint32_t input, std::uint32_t linearInputs,
+                                     std::uint32_t perspectiveInputs) const {
         const auto bit = input < 32u ? 1u << input : 0u;
         if ((linearInputs & perspectiveInputs & bit) != 0u) {
-            throw std::runtime_error("pixel input " + std::to_string(input) + " is interpolated through both a perspective and a linear I/J pair");
+            throw std::runtime_error("pixel input " + std::to_string(input) +
+                                     " is interpolated through both a perspective and a linear I/J pair");
         }
         return (linearInputs & bit) != 0u || ((perspectiveInputs & bit) == 0u && psNoPerspective);
     }

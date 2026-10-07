@@ -10,26 +10,29 @@
 
 namespace LibcException {
 struct Header {
-    std::type_info* type {};
-    void (*destructor)(void*) {};
-    void (*unexpected)() {};
-    void (*terminate)() {};
-    Header* next {};
-    int handlers {};
-    int selector {};
-    std::uint32_t _pad {};
-    std::uint32_t _pad2 {};
-    const unsigned char* action {};
-    const unsigned char* lsda {};
-    std::uintptr_t landing {};
-    void* adjusted {};
-    _Unwind_Exception unwind {};
+    std::type_info* type{};
+    void (*destructor)(void*){};
+    void (*unexpected)(){};
+    void (*terminate)(){};
+    Header* next{};
+    int handlers{};
+    int selector{};
+    std::uint32_t _pad{};
+    std::uint32_t _pad2{};
+    const unsigned char* action{};
+    const unsigned char* lsda{};
+    std::uintptr_t landing{};
+    void* adjusted{};
+    _Unwind_Exception unwind{};
 };
 struct alignas(16) Allocation {
-    std::atomic<std::size_t> references {1};
-    Header header {};
+    std::atomic<std::size_t> references{1};
+    Header header{};
 };
-struct Globals { Header* caught {}; unsigned uncaught {}; };
+struct Globals {
+    Header* caught{};
+    unsigned uncaught{};
+};
 inline thread_local Globals globals;
 inline constexpr std::uint64_t PrimaryClass = 0x414e5950432b2b00;
 inline constexpr std::uint64_t DependentClass = PrimaryClass | 1;
@@ -43,7 +46,8 @@ inline Allocation* AllocationOf(Header* header) {
 }
 inline bool Native(std::uint64_t value) { return (value & ~std::uint64_t(1)) == PrimaryClass; }
 inline Header* Primary(Header* header) {
-    return header->unwind.exception_class == DependentClass ? FromObject(reinterpret_cast<void*>(header->type)) : header;
+    return header->unwind.exception_class == DependentClass ? FromObject(reinterpret_cast<void*>(header->type))
+                                                            : header;
 }
 const char* Kind(const std::type_info*);
 bool Match(const std::type_info* caught, const std::type_info* thrown, void*& object);

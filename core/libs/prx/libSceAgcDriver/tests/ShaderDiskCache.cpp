@@ -21,7 +21,8 @@ namespace {
 using namespace ShaderRecompiler;
 
 void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
 void setEnvironment(const char* name, const std::string& value) {
@@ -33,13 +34,22 @@ void setEnvironment(const char* name, const std::string& value) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.samplerUnnormalized == right.samplerUnnormalized && left.imageUnnormalized == right.imageUnnormalized && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet &&
+           left.binding == right.binding && left.count == right.count &&
+           left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly &&
+           left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare &&
+           left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare &&
+           left.imageAtomic == right.imageAtomic && left.bufferAtomic == right.bufferAtomic &&
+           left.bufferWritten == right.bufferWritten && left.samplerUnnormalized == right.samplerUnnormalized &&
+           left.imageUnnormalized == right.imageUnnormalized && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
-    if (left.size() != right.size()) return false;
+    if (left.size() != right.size())
+        return false;
     for (std::size_t i = 0; i < left.size(); ++i) {
-        if (!sameBinding(left[i], right[i])) return false;
+        if (!sameBinding(left[i], right[i]))
+            return false;
     }
     return true;
 }
@@ -54,16 +64,26 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     for (std::size_t i = 0; i < left.vertexAttributes.size(); ++i) {
         const auto& a = left.vertexAttributes[i];
         const auto& b = right.vertexAttributes[i];
-        require(a.location == b.location && a.components == b.components && a.resource.fields == b.resource.fields && a.fetchIndex == b.fetchIndex, prefix + "vertex attribute differs");
+        require(a.location == b.location && a.components == b.components && a.resource.fields == b.resource.fields &&
+                    a.fetchIndex == b.fetchIndex,
+                prefix + "vertex attribute differs");
     }
-    require(left.vertexOffsetSgpr == right.vertexOffsetSgpr && left.instanceOffsetSgpr == right.instanceOffsetSgpr, prefix + "offset SGPRs differ");
-    require(left.vertexOffsetShared == right.vertexOffsetShared && left.instanceOffsetShared == right.instanceOffsetShared && left.vertexOffsetConflict == right.vertexOffsetConflict && left.instanceOffsetConflict == right.instanceOffsetConflict, prefix + "offset flags differ");
+    require(left.vertexOffsetSgpr == right.vertexOffsetSgpr && left.instanceOffsetSgpr == right.instanceOffsetSgpr,
+            prefix + "offset SGPRs differ");
+    require(left.vertexOffsetShared == right.vertexOffsetShared &&
+                left.instanceOffsetShared == right.instanceOffsetShared &&
+                left.vertexOffsetConflict == right.vertexOffsetConflict &&
+                left.instanceOffsetConflict == right.instanceOffsetConflict,
+            prefix + "offset flags differ");
     require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
-    require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
+    require(left.fragmentParameters.size() == right.fragmentParameters.size(),
+            prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
         const auto& a = left.fragmentParameters[i];
         const auto& b = right.fragmentParameters[i];
-        require(a.location == b.location && a.sourceLocation == b.sourceLocation && a.flat == b.flat && a.perVertex == b.perVertex, prefix + "fragment parameter differs");
+        require(a.location == b.location && a.sourceLocation == b.sourceLocation && a.flat == b.flat &&
+                    a.perVertex == b.perVertex,
+                prefix + "fragment parameter differs");
     }
 }
 
@@ -72,12 +92,17 @@ void requireSameVariant(const CompiledVariant& left, const CompiledVariant& righ
     const std::string prefix = std::string(what) + ": ";
     const auto& a = left.info;
     const auto& b = right.info;
-    require(a.stage == b.stage && a.shaderHash == b.shaderHash && a.waveSize == b.waveSize && a.userDataBase == b.userDataBase && a.userDataCount == b.userDataCount && a.scratchDwords == b.scratchDwords && a.paramExportMask == b.paramExportMask, prefix + "compiled info differs");
+    require(a.stage == b.stage && a.shaderHash == b.shaderHash && a.waveSize == b.waveSize &&
+                a.userDataBase == b.userDataBase && a.userDataCount == b.userDataCount &&
+                a.scratchDwords == b.scratchDwords && a.paramExportMask == b.paramExportMask,
+            prefix + "compiled info differs");
     require(a.info == b.info, prefix + "shader info differs");
     require(a.bindings == b.bindings, prefix + "info binding layout differs");
     require(sameBindings(left.bindings.bindings, right.bindings.bindings), prefix + "allocation bindings differ");
     require(left.bindings.layout == right.bindings.layout, prefix + "allocation layout differs");
-    require(left.bindings.pushConstantOffsetBytes == right.bindings.pushConstantOffsetBytes && left.bindings.pushConstantSizeBytes == right.bindings.pushConstantSizeBytes, prefix + "push constant range differs");
+    require(left.bindings.pushConstantOffsetBytes == right.bindings.pushConstantOffsetBytes &&
+                left.bindings.pushConstantSizeBytes == right.bindings.pushConstantSizeBytes,
+            prefix + "push constant range differs");
     require(left.bindings.pushConstants == right.bindings.pushConstants, prefix + "allocation push constants differ");
 }
 
@@ -106,7 +131,8 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
 RecompileResult sampleResult() {
     RecompileResult result;
     std::vector<std::uint32_t> words(1000);
-    for (std::size_t i = 0; i < words.size(); ++i) words[i] = static_cast<std::uint32_t>(i * 2654435761u);
+    for (std::size_t i = 0; i < words.size(); ++i)
+        words[i] = static_cast<std::uint32_t>(i * 2654435761u);
     words[0] = 0x07230203u;
     result.spirv = std::move(words);
     result.bindings = {sampleBinding(1), sampleBinding(2)};
@@ -255,7 +281,8 @@ void verifyResultRoundTrip() {
     require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
     for (std::size_t size = 0; size < bytes.size(); size += size < 256 ? 1 : 97) {
         RecompileResult partial;
-        require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");
+        require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial),
+                "a result truncated to " + std::to_string(size) + " bytes decodes");
     }
     auto longer = bytes;
     longer.push_back(std::byte{0});
@@ -272,26 +299,32 @@ void verifyEntryRoundTrip() {
     const auto variant = sampleVariant();
     const auto file = ShaderDiskCache::EncodeEntry(key, variant);
     CompiledVariant decoded;
-    require(ShaderDiskCache::DecodeEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded, "an encoded entry does not decode");
+    require(ShaderDiskCache::DecodeEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded,
+            "an encoded entry does not decode");
     requireSameVariant(variant, decoded, "entry round trip");
 
     for (std::size_t size = 0; size < file.size(); size += size < 512 ? 1 : 131) {
         CompiledVariant partial;
-        require(ShaderDiskCache::DecodeEntry(std::span(file).first(size), key, partial) == ShaderDiskCache::LoadStatus::Rejected, "an entry truncated to " + std::to_string(size) + " bytes is not rejected");
+        require(ShaderDiskCache::DecodeEntry(std::span(file).first(size), key, partial) ==
+                    ShaderDiskCache::LoadStatus::Rejected,
+                "an entry truncated to " + std::to_string(size) + " bytes is not rejected");
     }
     for (std::size_t offset = 0; offset < file.size(); offset += offset < 512 ? 1 : 61) {
         auto damaged = file;
         damaged[offset] ^= std::byte{0x10};
         CompiledVariant partial;
         const auto status = ShaderDiskCache::DecodeEntry(damaged, key, partial);
-        require(status == ShaderDiskCache::LoadStatus::Rejected, "an entry with byte " + std::to_string(offset) + " damaged is not rejected");
+        require(status == ShaderDiskCache::LoadStatus::Rejected,
+                "an entry with byte " + std::to_string(offset) + " damaged is not rejected");
     }
     auto longer = file;
     longer.push_back(std::byte{0});
-    require(ShaderDiskCache::DecodeEntry(longer, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with a trailing byte is not rejected");
+    require(ShaderDiskCache::DecodeEntry(longer, key, decoded) == ShaderDiskCache::LoadStatus::Rejected,
+            "an entry with a trailing byte is not rejected");
     auto otherKey = key;
     otherKey.back() ^= std::byte{1};
-    require(ShaderDiskCache::DecodeEntry(file, otherKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, "an entry for another key loads");
+    require(ShaderDiskCache::DecodeEntry(file, otherKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch,
+            "an entry for another key loads");
 }
 
 void verifyKeySensitivity() {
@@ -305,59 +338,85 @@ void verifyKeySensitivity() {
         change(sample);
         const auto changed = sample.Key();
         require(changed != key, "the key ignores " + what);
-        require(ShaderDiskCache::EntryName(changed) != ShaderDiskCache::EntryName(key), "the entry name ignores " + what);
+        require(ShaderDiskCache::EntryName(changed) != ShaderDiskCache::EntryName(key),
+                "the entry name ignores " + what);
     };
     for (std::size_t word = 0; word < base.code.size(); ++word) {
         for (std::uint32_t bit = 0; bit < 32; ++bit) {
-            changes("code word " + std::to_string(word) + " bit " + std::to_string(bit), [&](SampleRequest& sample) { sample.code[word] ^= 1u << bit; });
+            changes("code word " + std::to_string(word) + " bit " + std::to_string(bit),
+                    [&](SampleRequest& sample) { sample.code[word] ^= 1u << bit; });
         }
     }
     changes("a code word appended", [](SampleRequest& sample) { sample.code.push_back(0); });
-    changes("the stage", [](SampleRequest& sample) { sample.request.shader.stage = ShaderStage::Fragment; sample.request.context.compute.reset(); });
+    changes("the stage", [](SampleRequest& sample) {
+        sample.request.shader.stage = ShaderStage::Fragment;
+        sample.request.context.compute.reset();
+    });
     changes("the wave size", [](SampleRequest& sample) { sample.request.context.waveSize = 32; });
     changes("the user data base", [](SampleRequest& sample) { sample.request.context.userDataBaseRegister = 2; });
     changes("the user data count", [](SampleRequest& sample) { sample.userData.push_back(0); });
     for (std::size_t axis = 0; axis < 3; ++axis) {
-        changes("thread count " + std::to_string(axis), [&](SampleRequest& sample) { sample.request.context.compute->numThreads[axis] += 1; });
-        changes("group id enable " + std::to_string(axis), [&](SampleRequest& sample) { sample.request.context.compute->groupIdEnable[axis] = true; });
+        changes("thread count " + std::to_string(axis),
+                [&](SampleRequest& sample) { sample.request.context.compute->numThreads[axis] += 1; });
+        changes("group id enable " + std::to_string(axis),
+                [&](SampleRequest& sample) { sample.request.context.compute->groupIdEnable[axis] = true; });
     }
     changes("the LDS size", [](SampleRequest& sample) { sample.request.context.compute->ldsSizeDwords = 64; });
-    changes("the thread group size enable", [](SampleRequest& sample) { sample.request.context.compute->tgSizeEnable = true; });
-    changes("the thread id component count", [](SampleRequest& sample) { sample.request.context.compute->threadIdComponentCount = 3; });
+    changes("the thread group size enable",
+            [](SampleRequest& sample) { sample.request.context.compute->tgSizeEnable = true; });
+    changes("the thread id component count",
+            [](SampleRequest& sample) { sample.request.context.compute->threadIdComponentCount = 3; });
     changes("the Vulkan version", [](SampleRequest& sample) { sample.request.target.vulkanVersion = 0x00402000u; });
     changes("the SPIR-V version", [](SampleRequest& sample) { sample.request.target.spirvVersion = 0x00010500u; });
     changes("the target subgroup size", [](SampleRequest& sample) { sample.request.target.subgroupSize = 64; });
     changes("the BDA ABI version", [](SampleRequest& sample) { sample.request.target.bdaAbiVersion = 2; });
     changes("a capability", [](SampleRequest& sample) { sample.capabilities[1] = 62u; });
-    changes("an extension", [](SampleRequest& sample) { sample.extensions[0] = "SPV_KHR_storage_buffer_storage_clasS"; });
-    changes("barycentrics", [](SampleRequest& sample) { sample.request.target.fragmentShaderBarycentricEnabled = true; });
-    changes("non-constant texel offsets", [](SampleRequest& sample) { sample.request.target.nonConstantImageOffsets = true; });
-    changes("the sRGB formats decoded in the shader", [](SampleRequest& sample) { sample.request.target.srgbDecodeFormats = 2u; });
+    changes("an extension",
+            [](SampleRequest& sample) { sample.extensions[0] = "SPV_KHR_storage_buffer_storage_clasS"; });
+    changes("barycentrics",
+            [](SampleRequest& sample) { sample.request.target.fragmentShaderBarycentricEnabled = true; });
+    changes("non-constant texel offsets",
+            [](SampleRequest& sample) { sample.request.target.nonConstantImageOffsets = true; });
+    changes("the sRGB formats decoded in the shader",
+            [](SampleRequest& sample) { sample.request.target.srgbDecodeFormats = 2u; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
-    changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
+    changes("the shared memory limit",
+            [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
     changes("the host subgroup size", [](SampleRequest& sample) { sample.hostSubgroupSize = 64; });
     changes("the descriptor set", [](SampleRequest& sample) { sample.request.layout.descriptorSet = 1; });
     changes("the first binding", [](SampleRequest& sample) { sample.request.layout.firstBinding = 1; });
-    changes("the push constant offset", [](SampleRequest& sample) { sample.request.layout.pushConstantOffsetBytes = 16; });
+    changes("the push constant offset",
+            [](SampleRequest& sample) { sample.request.layout.pushConstantOffsetBytes = 16; });
     changes("the push constant size", [](SampleRequest& sample) { sample.request.layout.pushConstantSizeBytes = 64; });
     changes("a buffer stride", [](SampleRequest& sample) { sample.specialization.buffers[0].packedStride = 32; });
-    changes("a buffer format", [](SampleRequest& sample) { sample.specialization.buffers[0].descriptorFormat = static_cast<IrBufferFormat>(1); });
-    changes("a buffer swizzle", [](SampleRequest& sample) { sample.specialization.buffers[0].descriptorSwizzle = 0xfadu; });
+    changes("a buffer format", [](SampleRequest& sample) {
+        sample.specialization.buffers[0].descriptorFormat = static_cast<IrBufferFormat>(1);
+    });
+    changes("a buffer swizzle",
+            [](SampleRequest& sample) { sample.specialization.buffers[0].descriptorSwizzle = 0xfadu; });
     changes("the buffer count", [](SampleRequest& sample) { sample.specialization.buffers.emplace_back(); });
-    changes("an image class", [](SampleRequest& sample) { sample.specialization.images[0].numericClass = IrTextureNumericClass::Float; });
-    changes("an image dimension", [](SampleRequest& sample) { sample.specialization.images[0].dimension = static_cast<RdnaImageDimension>(1); });
+    changes("an image class",
+            [](SampleRequest& sample) { sample.specialization.images[0].numericClass = IrTextureNumericClass::Float; });
+    changes("an image dimension", [](SampleRequest& sample) {
+        sample.specialization.images[0].dimension = static_cast<RdnaImageDimension>(1);
+    });
     changes("an image mip count", [](SampleRequest& sample) { sample.specialization.images[0].mipCount = 2; });
-    changes("an image conversion", [](SampleRequest& sample) { sample.specialization.images[0].conversionFormat = static_cast<IrBufferFormat>(1); });
+    changes("an image conversion", [](SampleRequest& sample) {
+        sample.specialization.images[0].conversionFormat = static_cast<IrBufferFormat>(1);
+    });
     changes("an image swizzle", [](SampleRequest& sample) { sample.specialization.images[0].shaderSwizzle = 0; });
     changes("an image indirect root", [](SampleRequest& sample) { sample.specialization.images[0].indirectRoot = 0; });
-    changes("an image mapping offset", [](SampleRequest& sample) { sample.specialization.images[0].indirectMappingOffset = 4; });
-    changes("an image search depth", [](SampleRequest& sample) { sample.specialization.images[0].indirectSearchIterations = 2; });
+    changes("an image mapping offset",
+            [](SampleRequest& sample) { sample.specialization.images[0].indirectMappingOffset = 4; });
+    changes("an image search depth",
+            [](SampleRequest& sample) { sample.specialization.images[0].indirectSearchIterations = 2; });
     changes("an image cube flag", [](SampleRequest& sample) { sample.specialization.images[0].cube = true; });
     changes("an image FMASK flag", [](SampleRequest& sample) { sample.specialization.images[0].fmask = true; });
     changes("an image sRGB decode", [](SampleRequest& sample) { sample.specialization.images[0].srgbDecode = true; });
     changes("the image count", [](SampleRequest& sample) { sample.specialization.images.emplace_back(); });
-    changes("the bound descriptors", [](SampleRequest& sample) { sample.specialization.boundDescriptors.push_back(1); });
+    changes("the bound descriptors",
+            [](SampleRequest& sample) { sample.specialization.boundDescriptors.push_back(1); });
 
     SampleRequest moved;
     moved.userData[0] ^= 0x10000u;
@@ -423,7 +482,9 @@ int runLoadingProcess() {
     ComputeRequest cached(true);
     const auto loaded = Recompile(cached.request);
     const auto totals = ShaderDiskCache::Totals();
-    require(totals.hits == 1 && totals.misses == 0 && totals.loadFailures == 0, "the second process did not load the stored variant (hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + ")");
+    require(totals.hits == 1 && totals.misses == 0 && totals.loadFailures == 0,
+            "the second process did not load the stored variant (hits " + std::to_string(totals.hits) + ", misses " +
+                std::to_string(totals.misses) + ")");
     ComputeRequest fresh(false);
     const auto compiled = Recompile(fresh.request);
     requireSameResult(compiled, loaded, "loaded against compiled");
@@ -438,14 +499,16 @@ void verifyAcrossProcesses(const char* self) {
     const auto compiled = Recompile(request.request);
     ShaderDiskCache::Flush();
     const auto after = ShaderDiskCache::Totals();
-    require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
+    require(after.misses == before.misses + 1 && after.writes == before.writes + 1,
+            "the first compile was not looked up and stored");
     require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
     const std::string command = "\"" + std::string(self) + "\" --load";
     require(std::system(command.c_str()) == 0, "the loading process failed");
 }
 
 struct ClockRequest {
-    std::vector<std::uint32_t> code{0xf4900100u, 0x00000000u, 0xbf8cc07fu, 0x7e020204u, 0xe0700000u, 0x80000100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    std::vector<std::uint32_t> code{0xf4900100u, 0x00000000u, 0xbf8cc07fu, 0x7e020204u, 0xe0700000u,
+                                    0x80000100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
     std::array<std::uint32_t, 4> userData{0x10000000u, 0x00000000u, 0x40u, 0x00027facu};
     std::array<std::uint32_t, 1> capabilities{1u};
     RecompileRequest request{};
@@ -475,15 +538,15 @@ std::string emissionFailure(const RecompileRequest& request) {
         static_cast<void>(Recompile(request));
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
-        require(message.find("reads the shader clock, which needs the device's VK_KHR_shader_clock") != std::string::npos, "unexpected failure: " + message.substr(0, message.find("RecompileRequest:")));
+        require(message.find("reads the shader clock, which needs the device's VK_KHR_shader_clock") !=
+                    std::string::npos,
+                "unexpected failure: " + message.substr(0, message.find("RecompileRequest:")));
         return message;
     }
     throw std::runtime_error("a shader clock read compiled without VK_KHR_shader_clock");
 }
 
-std::uint64_t diskMisses() {
-    return ShaderDiskCache::Totals().misses;
-}
+std::uint64_t diskMisses() { return ShaderDiskCache::Totals().misses; }
 
 void verifyEmissionFailureMemo() {
     const auto before = ShaderDiskCache::Totals();
@@ -504,16 +567,22 @@ void verifyEmissionFailureMemo() {
     relocated.request.shader.codeAddress += 0x1000u;
     static_cast<void>(emissionFailure(relocated.request));
     require(diskMisses() == before.misses + 4, "a relocated copy reused the failure");
-    require(emissionFailure(clock.request) == first && diskMisses() == before.misses + 4, "the other requests replaced the failure");
+    require(emissionFailure(clock.request) == first && diskMisses() == before.misses + 4,
+            "the other requests replaced the failure");
 
     ClockRequest concurrent;
     concurrent.request.layout.pushConstantSizeBytes = 64;
     std::array<std::future<std::string>, 4> failures;
-    for (auto& future : failures) future = std::async(std::launch::async, [&concurrent] { return emissionFailure(concurrent.request); });
+    for (auto& future : failures)
+        future = std::async(std::launch::async, [&concurrent] { return emissionFailure(concurrent.request); });
     std::vector<std::string> messages;
-    for (auto& future : failures) messages.push_back(future.get());
-    require(std::all_of(messages.begin(), messages.end(), [&](const std::string& message) { return message == messages.front(); }), "concurrent requests failed with different messages");
-    require(diskMisses() == before.misses + 5, "concurrent requests emitted the program " + std::to_string(diskMisses() - before.misses - 4) + " times");
+    for (auto& future : failures)
+        messages.push_back(future.get());
+    require(std::all_of(messages.begin(), messages.end(),
+                        [&](const std::string& message) { return message == messages.front(); }),
+            "concurrent requests failed with different messages");
+    require(diskMisses() == before.misses + 5,
+            "concurrent requests emitted the program " + std::to_string(diskMisses() - before.misses - 4) + " times");
 
     ShaderDiskCache::Flush();
     require(ShaderDiskCache::Totals().writes == before.writes, "an emission failure was stored in the disk cache");
@@ -523,7 +592,8 @@ int runWithoutFailureMemo() {
     ClockRequest clock;
     const auto first = emissionFailure(clock.request);
     require(emissionFailure(clock.request) == first, "the second compile failed with another message");
-    require(diskMisses() == 2, "APS5_NO_FAILURE_MEMO=1 did not emit the program again (" + std::to_string(diskMisses()) + " lookups)");
+    require(diskMisses() == 2,
+            "APS5_NO_FAILURE_MEMO=1 did not emit the program again (" + std::to_string(diskMisses()) + " lookups)");
     std::cout << "APS5_NO_FAILURE_MEMO=1 emitted the failing program twice\n";
     return 0;
 }
@@ -542,16 +612,22 @@ void verifyDefaultDirectory(const char* self) {
     const auto directory = ShaderRecompiler::ShaderCacheDirectory();
     require(directory.filename() == "shader_cache", "the default cache directory is not named shader_cache");
     std::error_code error;
-    require(std::filesystem::equivalent(directory.parent_path(), std::filesystem::absolute(self).parent_path(), error) && !error, "the default cache directory is not beside the executable");
+    require(
+        std::filesystem::equivalent(directory.parent_path(), std::filesystem::absolute(self).parent_path(), error) &&
+            !error,
+        "the default cache directory is not beside the executable");
 }
 
 }
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
-        if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
-        const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
+        if (argc == 2 && std::string_view(argv[1]) == "--load")
+            return runLoadingProcess();
+        if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo")
+            return runWithoutFailureMemo();
+        const auto directory = std::filesystem::temp_directory_path() /
+                               ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(argv[0]);
         setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");

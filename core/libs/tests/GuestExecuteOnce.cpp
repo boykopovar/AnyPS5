@@ -4,12 +4,15 @@
 #include <cstdlib>
 #include <thread>
 
-using Callback = int (APS5_VABI *)(void*, void*, void**);
+using Callback = int(APS5_VABI*)(void*, void*, void**);
 extern "C" int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(int*, Callback, void*);
 static int ExecuteOnce(int* flag, Callback callback, void* arg) {
     return _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(flag, callback, arg);
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static std::atomic<int> calls{0}, arrived{0};
 static int control = 0, nested = 0, failing = 0, throwing = 0;
@@ -27,7 +30,8 @@ static int APS5_VABI Initialize(void* first, void* arg, void** third) {
     seenFirst = first;
     seenArg = arg;
     seenThird = third;
-    while (arrived.load() != 16) std::this_thread::yield();
+    while (arrived.load() != 16)
+        std::this_thread::yield();
     int value = 17;
     Require(ExecuteOnce(&nested, Nested, &value) == 1);
     published = 42;
@@ -38,22 +42,23 @@ static int APS5_VABI Fail(void*, void*, void**) {
     return 0;
 }
 static int APS5_VABI Throw(void*, void*, void**) {
-    if (++throws == 1) throw 7;
+    if (++throws == 1)
+        throw 7;
     return 1;
 }
-static int APS5_VABI Unreachable(void*, void*, void**) {
-    std::abort();
-}
+static int APS5_VABI Unreachable(void*, void*, void**) { std::abort(); }
 
 int main() {
     int token = 0;
     std::array<std::thread, 16> workers;
-    for (auto& worker : workers) worker = std::thread([&token] {
-        ++arrived;
-        Require(ExecuteOnce(&control, Initialize, &token) == 1);
-        Require(published == 42 && nestedValue == 17);
-    });
-    for (auto& worker : workers) worker.join();
+    for (auto& worker : workers)
+        worker = std::thread([&token] {
+            ++arrived;
+            Require(ExecuteOnce(&control, Initialize, &token) == 1);
+            Require(published == 42 && nestedValue == 17);
+        });
+    for (auto& worker : workers)
+        worker.join();
     Require(calls == 1 && control == 1 && nested == 1);
     Require(seenFirst == nullptr && seenArg == &token && seenThird == nullptr);
     Require(ExecuteOnce(&control, Unreachable, nullptr) == 1 && calls == 1);
@@ -61,8 +66,12 @@ int main() {
     Require(ExecuteOnce(&failing, Fail, nullptr) == 0 && failing == 0 && failures == 1);
     Require(ExecuteOnce(&failing, Fail, nullptr) == 0 && failing == 0 && failures == 2);
 
-    try { ExecuteOnce(&throwing, Throw, nullptr); std::abort(); }
-    catch (int value) { Require(value == 7 && throwing == 0); }
+    try {
+        ExecuteOnce(&throwing, Throw, nullptr);
+        std::abort();
+    } catch (int value) {
+        Require(value == 7 && throwing == 0);
+    }
     Require(ExecuteOnce(&throwing, Throw, nullptr) == 1 && throwing == 1 && throws == 2);
 
     int preset = -3;

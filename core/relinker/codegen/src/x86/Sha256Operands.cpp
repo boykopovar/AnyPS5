@@ -23,8 +23,7 @@ Sha256Operands DecodeSha256(const std::uint8_t* data, const std::size_t length) 
         if (b == PrefixOperandSize || b == PrefixRepne || b == PrefixRep) {
             throw CodegenException("Not a SHA-256 instruction");
         }
-        if (b != PrefixLock && b != PrefixAddressSize &&
-            b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
+        if (b != PrefixLock && b != PrefixAddressSize && b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
             b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
             break;
         }
@@ -54,7 +53,8 @@ Sha256Operands DecodeSha256(const std::uint8_t* data, const std::size_t length) 
     }
 
     const std::uint8_t modrm = data[pos + 3];
-    operands.Destination = static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (((rex & 0x4) != 0) ? 8 : 0));
+    operands.Destination =
+        static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (((rex & 0x4) != 0) ? 8 : 0));
     if (((modrm >> ModRmModShift) & ModRmModMask) != ModRmModRegister) {
         operands.Memory = DecodeMemoryOperand(data, length, pos + 3, rex, std::move(prefixes));
         return operands;

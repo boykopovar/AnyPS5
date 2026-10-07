@@ -7,10 +7,12 @@ extern "C" int APS5_VABI sceContentExportTerm(void);
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
-template <typename TAction>
-bool Throws(TAction action) {
+template <typename TAction> bool Throws(TAction action) {
     try {
         action();
     } catch (const std::logic_error&) {

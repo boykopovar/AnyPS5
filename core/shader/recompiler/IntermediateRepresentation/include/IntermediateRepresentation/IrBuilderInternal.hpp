@@ -6,9 +6,9 @@
 
 namespace ShaderRecompiler {
 
-    [[nodiscard]] IrValue& createLeafValue(IrProgram& program, IrType type);
-    [[nodiscard]] IrValue& createRegisterOperand(IrProgram& program, RegisterBank bank, std::uint32_t index, IrType type);
-    [[nodiscard]] IrValue& createLabelValue(IrProgram& program, const IrBlock& block);
+[[nodiscard]] IrValue& createLeafValue(IrProgram& program, IrType type);
+[[nodiscard]] IrValue& createRegisterOperand(IrProgram& program, RegisterBank bank, std::uint32_t index, IrType type);
+[[nodiscard]] IrValue& createLabelValue(IrProgram& program, const IrBlock& block);
 
 }
 

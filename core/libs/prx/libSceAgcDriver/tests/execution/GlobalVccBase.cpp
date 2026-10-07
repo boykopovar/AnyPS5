@@ -43,8 +43,8 @@ alignas(256) constexpr std::array<std::uint32_t, 22> VccBaseCode{
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 12> VccAddtidCode{
-    0xbeea0400, 0x340c0085, 0x4a0c0cff, 0x00001000, 0xdc588600, 0x056a0000, 0xbf8c3f70, 0xdc708018,
-    0x006a0506, 0xdc5c8400, 0x006a0500, 0xbf810000,
+    0xbeea0400, 0x340c0085, 0x4a0c0cff, 0x00001000, 0xdc588600, 0x056a0000,
+    0xbf8c3f70, 0xdc708018, 0x006a0506, 0xdc5c8400, 0x006a0500, 0xbf810000,
 };
 
 class GuestBlock {
@@ -85,7 +85,8 @@ std::string Hex(std::uint32_t value) {
 
 std::vector<std::uint32_t> Initial() {
     std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
-    for (std::uint32_t dword = 0; dword < InputDwords; ++dword) memory[dword] = 0x51000000u + dword * 0x00010203u;
+    for (std::uint32_t dword = 0; dword < InputDwords; ++dword)
+        memory[dword] = 0x51000000u + dword * 0x00010203u;
     return memory;
 }
 
@@ -94,7 +95,8 @@ std::vector<std::uint32_t> ExpectedBase() {
     auto memory = initial;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         auto* out = &memory[OutputBase + tid * OutputDwords];
-        for (std::uint32_t component = 0; component < 4u; ++component) out[component] = initial[VectorBase + tid * 4u + component];
+        for (std::uint32_t component = 0; component < 4u; ++component)
+            out[component] = initial[VectorBase + tid * 4u + component];
         out[4] = initial[DwordBase + tid];
         out[5] = initial[AtomicBase + tid];
         memory[AtomicBase + tid] = initial[AtomicBase + tid] + tid * 16u;
@@ -113,20 +115,24 @@ std::vector<std::uint32_t> ExpectedAddtid(std::uint32_t waveSize) {
     return memory;
 }
 
-ShaderRecompiler::RecompileResult Recompile(std::span<const std::uint32_t> code, std::uint32_t waveSize, std::span<const std::uint32_t> userData, const ShaderRecompiler::SpirvTarget& target) {
-    const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+ShaderRecompiler::RecompileResult Recompile(std::span<const std::uint32_t> code, std::uint32_t waveSize,
+                                            std::span<const std::uint32_t> userData,
+                                            const ShaderRecompiler::SpirvTarget& target) {
+    const std::array<ShaderRecompiler::MemoryRegion, 1> regions{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, regions},
         target,
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::vector<std::uint32_t>& expected, const std::string& name) {
+void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code,
+         std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target,
+         const std::vector<std::uint32_t>& expected, const std::string& name) {
     auto memory = Initial();
     std::memcpy(guest.Data(), memory.data(), BlockBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
@@ -138,11 +144,14 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std
     device.WaitIdle();
     std::memcpy(memory.data(), guest.Data(), BlockBytes);
     for (std::size_t dword = 0; dword < memory.size(); ++dword) {
-        Require(memory[dword] == expected[dword], "global vcc base: " + name + " byte " + std::to_string(dword * 4u) + " is " + Hex(memory[dword]) + ", expected " + Hex(expected[dword]));
+        Require(memory[dword] == expected[dword], "global vcc base: " + name + " byte " + std::to_string(dword * 4u) +
+                                                      " is " + Hex(memory[dword]) + ", expected " +
+                                                      Hex(expected[dword]));
     }
 }
 
-void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& reason) {
+void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code,
+                   const std::string& reason) {
     const std::vector<std::uint32_t> userData(2, 0u);
     std::string failure;
     try {
@@ -150,7 +159,8 @@ void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::u
     } catch (const std::exception& error) {
         failure = error.what();
     }
-    Require(failure.find(reason) != std::string::npos, "global vcc base: expected '" + reason + "', got '" + failure + "'");
+    Require(failure.find(reason) != std::string::npos,
+            "global vcc base: expected '" + reason + "', got '" + failure + "'");
 }
 
 void CheckRejections(const AgcDriver::VulkanDevice& device) {
@@ -169,7 +179,8 @@ void CheckRejections(const AgcDriver::VulkanDevice& device) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         CheckRejections(*device);
         GuestBlock guest;
         const auto base = ExpectedBase();
@@ -177,11 +188,13 @@ int main() {
         Run(*device, guest, VccBaseCode, 64, device->Target(), base, "wave64");
         Run(*device, guest, VccBaseCode, 64, device->ComputeTarget(32), base, "wave64 split");
         if (device->Target().subgroupSize < 32u) {
-            std::printf("addtid cases skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
+            std::printf("addtid cases skipped, the device's subgroups are narrower than a wave (%u lanes)\n",
+                        device->Target().subgroupSize);
         } else {
             Run(*device, guest, VccAddtidCode, 32, device->Target(), ExpectedAddtid(32), "addtid wave32");
             Run(*device, guest, VccAddtidCode, 64, device->Target(), ExpectedAddtid(64), "addtid wave64");
-            Run(*device, guest, VccAddtidCode, 64, device->ComputeTarget(32), ExpectedAddtid(64), "addtid wave64 split");
+            Run(*device, guest, VccAddtidCode, 64, device->ComputeTarget(32), ExpectedAddtid(64),
+                "addtid wave64 split");
         }
         std::puts("global vcc base tests passed");
         return 0;

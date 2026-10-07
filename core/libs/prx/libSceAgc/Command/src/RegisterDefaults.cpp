@@ -56,7 +56,8 @@ void* GetRegisterDefaults(std::uint32_t version, bool internal, const char* func
         RegisterDefaults defaults{};
         for (std::size_t bank = 0; bank < pointers.size(); ++bank) {
             const auto& input = source->banks[bank];
-            Require(input.pointerCount == 0 || (input.registers != nullptr && input.offsets != nullptr), function, "invalid register defaults bank");
+            Require(input.pointerCount == 0 || (input.registers != nullptr && input.offsets != nullptr), function,
+                    "invalid register defaults bank");
             auto& table = pointers[bank];
             table.reserve(input.pointerCount);
             for (std::uint32_t index = 0; index < input.pointerCount; ++index) {

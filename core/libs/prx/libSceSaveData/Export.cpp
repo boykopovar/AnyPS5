@@ -15,16 +15,16 @@
 
 namespace {
 // Logs the first three calls of each entry point, then stays silent, keeping guest logs readable.
-#define SAVEDATA_TRACE(...) \
-    do { \
-        static std::atomic<int> traceCount{0}; \
-        if (traceCount.fetch_add(1, std::memory_order_relaxed) < 3) { \
-            std::fprintf(stderr, "[SAVEDATA:core] " __VA_ARGS__); \
-            std::fputc('\n', stderr); \
-            std::fflush(stderr); \
-        } \
+#define SAVEDATA_TRACE(...)                                                                                            \
+    do {                                                                                                               \
+        static std::atomic<int> traceCount{0};                                                                         \
+        if (traceCount.fetch_add(1, std::memory_order_relaxed) < 3) {                                                  \
+            std::fprintf(stderr, "[SAVEDATA:core] " __VA_ARGS__);                                                      \
+            std::fputc('\n', stderr);                                                                                  \
+            std::fflush(stderr);                                                                                       \
+        }                                                                                                              \
     } while (0)
-}  // namespace
+} // namespace
 
 extern "C" {
 
@@ -54,7 +54,7 @@ int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
     }
     const int rc = savedata::get_memory_internal(get_param);
     SAVEDATA_TRACE("get2 user=%d slot=%u -> 0x%08x", static_cast<int>(get_param->user_id),
-             static_cast<unsigned>(get_param->slot_id), static_cast<unsigned>(rc));
+                   static_cast<unsigned>(get_param->slot_id), static_cast<unsigned>(rc));
     return rc;
 }
 int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param) {
@@ -62,16 +62,16 @@ int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param)
         return savedata::SD_ERROR_PARAMETER;
     }
     const int rc = savedata::set_memory_internal(set_param);
-    SAVEDATA_TRACE("set2 user=%d slot=%u num=%u -> 0x%08x",
-             static_cast<int>(set_param->user_id), static_cast<unsigned>(set_param->slot_id),
-             static_cast<unsigned>(set_param->data_num), static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("set2 user=%d slot=%u num=%u -> 0x%08x", static_cast<int>(set_param->user_id),
+                   static_cast<unsigned>(set_param->slot_id), static_cast<unsigned>(set_param->data_num),
+                   static_cast<unsigned>(rc));
     return rc;
 }
 int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param,
                                               SaveDataMemorySetupResult* result) {
     const int rc = savedata::setup_memory_internal(setup_param, result, nullptr);
     SAVEDATA_TRACE("setup2 -> 0x%08x existed=0x%zx", static_cast<unsigned>(rc),
-             result != nullptr ? result->existed_memory_size : static_cast<std::size_t>(0));
+                   result != nullptr ? result->existed_memory_size : static_cast<std::size_t>(0));
     return rc;
 }
 int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
@@ -81,12 +81,11 @@ int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
     const auto* sync = static_cast<const savedata::MemorySync*>(sync_param);
     const int rc = savedata::sync_memory_internal(sync->user_id, sync->slot_id, sync->option, nullptr, true);
     SAVEDATA_TRACE("sync user=%d slot=%u option=%u -> 0x%08x", static_cast<int>(sync->user_id),
-             static_cast<unsigned>(sync->slot_id), static_cast<unsigned>(sync->option),
-             static_cast<unsigned>(rc));
+                   static_cast<unsigned>(sync->slot_id), static_cast<unsigned>(sync->option),
+                   static_cast<unsigned>(rc));
     return rc;
 }
-int APS5_VABI sceSaveDataTransferringMount(const SaveDataTransferringMount* mount,
-                                           SaveDataMountResult* mount_result) {
+int APS5_VABI sceSaveDataTransferringMount(const SaveDataTransferringMount* mount, SaveDataMountResult* mount_result) {
     const int rc = savedata::transferring_mount_internal(mount, mount_result);
     SAVEDATA_TRACE("sceSaveDataTransferringMount -> 0x%08x", static_cast<unsigned>(rc));
     return rc;

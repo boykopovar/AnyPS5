@@ -9,7 +9,8 @@
 namespace AgcDriver::DriverDetail {
 
 struct SubmissionCosts {
-    std::atomic<std::uint64_t> submissions{0}, validateNs{0}, copyNs{0}, dequeueNs{0}, completeNs{0}, suspendNs{0}, suspends{0}, suspendsSkipped{0}, endSubmits{0}, endSkipped{0}, notifiesSkipped{0};
+    std::atomic<std::uint64_t> submissions{0}, validateNs{0}, copyNs{0}, dequeueNs{0}, completeNs{0}, suspendNs{0},
+        suspends{0}, suspendsSkipped{0}, endSubmits{0}, endSkipped{0}, notifiesSkipped{0};
 };
 
 extern std::atomic<std::uint64_t> gpuLabels, completionLabels, notImportedLabels, noOpLabels, unlockedDrains;
@@ -18,7 +19,8 @@ extern std::atomic<std::uint64_t> labelFallbacks[5];
 
 extern std::atomic<std::uint64_t> queuedLabels, labelGroups, immediateLabels;
 
-extern std::atomic<std::uint64_t> packetLockRecords, packetLockSubmits, packetLockDeferred, packetSubmitDeferred, captureTryRecords, captureRetries, suspendPoints;
+extern std::atomic<std::uint64_t> packetLockRecords, packetLockSubmits, packetLockDeferred, packetSubmitDeferred,
+    captureTryRecords, captureRetries, suspendPoints;
 
 extern std::atomic<std::uint64_t> recordTriesSkipped;
 

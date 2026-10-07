@@ -27,7 +27,10 @@ static constexpr std::int64_t BURN_NANOS = 200 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t IDLE_LIMIT_NANOS = 100 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t GIVE_UP_NANOS = 10 * NANOS_PER_SECOND;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static KernelTimespec Read(int clockId) {
     KernelTimespec time{-1, -1};
@@ -106,7 +109,8 @@ static void BusyProcessAccumulatesUserTime() {
     volatile std::uint64_t work = 0;
     while (user - userStart < BURN_NANOS) {
         Require(Nanos(GUEST_CLOCK_MONOTONIC) - wallStart < GIVE_UP_NANOS);
-        for (int i = 0; i < 1000000; ++i) work = work + 1;
+        for (int i = 0; i < 1000000; ++i)
+            work = work + 1;
         const std::int64_t current = Nanos(GUEST_CLOCK_VIRTUAL);
         Require(current >= user);
         user = current;

@@ -11,7 +11,8 @@ namespace Codegen {
 class ClzeroLowering {
 public:
     void EmitOutOfLine(StubBodyBuilder& body, const ClzeroOperands& operands) const;
-    [[nodiscard]] LoweredBody LowerOutOfLine(const ClzeroOperands& operands, std::span<const std::uint8_t> trailing = {}) const;
+    [[nodiscard]] LoweredBody LowerOutOfLine(const ClzeroOperands& operands,
+                                             std::span<const std::uint8_t> trailing = {}) const;
 };
 
 }

@@ -28,7 +28,8 @@ struct TlsAccess {
 };
 
 bool isAluReadOpcode(std::uint8_t opcode) {
-    return opcode == 0x03 || opcode == 0x0b || opcode == 0x13 || opcode == 0x1b || opcode == 0x23 || opcode == 0x2b || opcode == 0x33 || opcode == 0x3b;
+    return opcode == 0x03 || opcode == 0x0b || opcode == 0x13 || opcode == 0x1b || opcode == 0x23 || opcode == 0x2b ||
+           opcode == 0x33 || opcode == 0x3b;
 }
 
 void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, const std::uint32_t target) {
@@ -50,7 +51,10 @@ void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, cons
 
 }
 
-PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva) const {
+PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source,
+                                     const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image,
+                                     std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations,
+                                     std::uint32_t& nextRva, std::uint32_t* tlsIndexRva) const {
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
 
@@ -66,14 +70,17 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         }
         if (header.Type != 1 || (header.Flags & 1) == 0)
             continue;
-        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+        for (auto instruction = instructions.lower_bound(header.MappedAddress);
+             instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize;
+             ++instruction) {
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
             const auto rva = image.GetRva(header.MappedAddress + offset, info.Length);
 
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-                const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
+                const auto target =
+                    static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
                 if (target >= 0 && target <= std::numeric_limits<std::uint32_t>::max())
                     branchTargets.insert(static_cast<std::uint32_t>(target));
             }
@@ -84,13 +91,26 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                 bool supportedPrefixes = info.SegmentPrefix == 0x64;
                 for (std::size_t prefix = 0; prefix < position; ++prefix) {
                     const auto value = bytes[prefix];
-                    if (value == 0x66) hasOperandSizePrefix = true;
-                    else if (value != 0x64 && !(prefix + 1 == position && value >= 0x40 && value <= 0x4f)) supportedPrefixes = false;
+                    if (value == 0x66)
+                        hasOperandSizePrefix = true;
+                    else if (value != 0x64 && !(prefix + 1 == position && value >= 0x40 && value <= 0x4f))
+                        supportedPrefixes = false;
                 }
-                const auto loadRegister = info.Length - position == 7 ? static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1)) : std::uint8_t{4};
-                const bool loadValue = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && bytes[position] == 0x8b && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
-                const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
-                const bool aluRead = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && info.Length - position == 7 && isAluReadOpcode(bytes[position]) && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
+                const auto loadRegister =
+                    info.Length - position == 7
+                        ? static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1))
+                        : std::uint8_t{4};
+                const bool loadValue = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) &&
+                                       loadRegister != 4 && bytes[position] == 0x8b &&
+                                       (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
+                const bool storeImmediate =
+                    supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) &&
+                    info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 &&
+                    bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
+                const bool aluRead = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) &&
+                                     loadRegister != 4 && info.Length - position == 7 &&
+                                     isAluReadOpcode(bytes[position]) && (bytes[position + 1] & 0xc7) == 0x04 &&
+                                     bytes[position + 2] == 0x25;
                 if (!loadValue && !storeImmediate && !aluRead) {
                     std::ostringstream message;
                     message << "Unsupported Windows guest TLS instruction (bytes:" << std::hex << std::setfill('0');
@@ -99,7 +119,11 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     message << ')';
                     throw Domain::RelinkerException(message.str(), header.Offset + offset);
                 }
-                accesses.push_back({rva, header.Offset + offset, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3), aluRead ? bytes[position] : std::uint8_t{0}});
+                accesses.push_back({rva, header.Offset + offset, info.Length, storeImmediate,
+                                    storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0,
+                                    storeImmediate ? std::uint8_t{0} : loadRegister,
+                                    storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3),
+                                    aluRead ? bytes[position] : std::uint8_t{0}});
             }
         }
     }
@@ -110,7 +134,9 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         return {};
     }
 
-    if (tls->FileSize > tls->MemorySize || tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
+    if (tls->FileSize > tls->MemorySize || tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset ||
+        (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 ||
+        tls->MemorySize > 0x7fff0000u)
         throw Domain::RelinkerException("Invalid or unsupported ELF TLS layout", tls->Offset);
     // Native homebrew linkers can emit an empty PT_TLS placeholder.
     // It needs no Windows TLS directory unless guest code accesses TLS.
@@ -125,15 +151,21 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     constexpr std::uint32_t threadControlBlockSize = 0x30;
     constexpr std::int64_t stackGuardDisplacement = 0x28;
     for (const auto& access : accesses) {
-        if (access.StoreImmediate || access.Displacement == 0) continue;
+        if (access.StoreImmediate || access.Displacement == 0)
+            continue;
         const auto displacement = static_cast<std::int64_t>(std::bit_cast<std::int32_t>(access.Displacement));
-        if (displacement != stackGuardDisplacement && (displacement > 0 || displacement < -static_cast<std::int64_t>(blockSize)))
-            throw Domain::RelinkerException("Windows guest TLS load displacement " + std::to_string(displacement) + " is not in the thread TLS block, 0 or the stack guard at 0x28", access.FileOffset);
+        if (displacement != stackGuardDisplacement &&
+            (displacement > 0 || displacement < -static_cast<std::int64_t>(blockSize)))
+            throw Domain::RelinkerException("Windows guest TLS load displacement " + std::to_string(displacement) +
+                                                " is not in the thread TLS block, 0 or the stack guard at 0x28",
+                                            access.FileOffset);
     }
-    PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(templateOffset + blockSize + threadControlBlockSize)};
+    PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u,
+                   std::vector<std::uint8_t>(templateOffset + blockSize + threadControlBlockSize)};
 
     const auto indexRva = nextRva + 40;
-    if (tlsIndexRva != nullptr) *tlsIndexRva = indexRva;
+    if (tlsIndexRva != nullptr)
+        *tlsIndexRva = indexRva;
     const auto callbackTableRva = nextRva + 48;
     const auto templateRva = nextRva + templateOffset;
     const auto codeRva = AlignRva(nextRva + data.Data.size());
@@ -186,13 +218,16 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         } else {
             const bool preserveAccumulator = access.StoreImmediate || access.Register != 0;
             const bool preserveCounter = access.Register != 1;
-            if (preserveCounter) code.Emit({0x51});
-            if (preserveAccumulator) code.Emit({0x50});
+            if (preserveCounter)
+                code.Emit({0x51});
+            if (preserveAccumulator)
+                code.Emit({0x50});
             loadPointer();
             if (access.AluOpcode != 0) {
                 code.Emit({0x48, 0x8b, 0x80});
                 code.U32(access.Displacement);
-                code.Emit({static_cast<std::uint8_t>(0x48 | ((access.Register >> 3) << 2)), access.AluOpcode, static_cast<std::uint8_t>(0xc0 | ((access.Register & 7) << 3))});
+                code.Emit({static_cast<std::uint8_t>(0x48 | ((access.Register >> 3) << 2)), access.AluOpcode,
+                           static_cast<std::uint8_t>(0xc0 | ((access.Register & 7) << 3))});
             } else if (!access.StoreImmediate && access.Displacement != 0) {
                 code.Emit({0x48, 0x8b, 0x80});
                 code.U32(access.Displacement);
@@ -201,10 +236,13 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                 code.Emit({0xc7, 0x40, 0x28});
                 code.U32(access.Immediate);
             } else if (access.AluOpcode == 0 && access.Register != 0) {
-                code.Emit({static_cast<std::uint8_t>(0x48 | (access.Register >> 3)), 0x89, static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
+                code.Emit({static_cast<std::uint8_t>(0x48 | (access.Register >> 3)), 0x89,
+                           static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
             }
-            if (preserveAccumulator) code.Emit({0x58});
-            if (preserveCounter) code.Emit({0x59});
+            if (preserveAccumulator)
+                code.Emit({0x58});
+            if (preserveCounter)
+                code.Emit({0x59});
         }
         code.Emit({0x48, 0x8d, 0xa4, 0x24, 0x80, 0, 0, 0});
         code.Rip({0xe9}, CheckedRva(access.Rva + access.Length));

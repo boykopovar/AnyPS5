@@ -33,20 +33,19 @@ constexpr std::array<std::uint32_t, 256> CRC_TABLE = [] {
     std::array<std::uint32_t, 256> table{};
     for (std::uint32_t index = 0; index < table.size(); ++index) {
         std::uint32_t value = index;
-        for (int bit = 0; bit < 8; ++bit) value = (value >> 1) ^ ((value & 1) != 0 ? 0xEDB88320u : 0u);
+        for (int bit = 0; bit < 8; ++bit)
+            value = (value >> 1) ^ ((value & 1) != 0 ? 0xEDB88320u : 0u);
         table[index] = value;
     }
     return table;
 }();
 
 std::uint32_t readBigEndian32(const std::uint8_t* bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) << 24 | static_cast<std::uint32_t>(bytes[1]) << 16
-        | static_cast<std::uint32_t>(bytes[2]) << 8 | static_cast<std::uint32_t>(bytes[3]);
+    return static_cast<std::uint32_t>(bytes[0]) << 24 | static_cast<std::uint32_t>(bytes[1]) << 16 |
+           static_cast<std::uint32_t>(bytes[2]) << 8 | static_cast<std::uint32_t>(bytes[3]);
 }
 
-bool isChunkType(const std::uint8_t* bytes, const char* type) {
-    return std::equal(bytes, bytes + 4, type);
-}
+bool isChunkType(const std::uint8_t* bytes, const char* type) { return std::equal(bytes, bytes + 4, type); }
 
 bool isValidFormat(std::uint8_t bitDepth, std::uint8_t colorType) {
     switch (colorType) {
@@ -64,7 +63,8 @@ bool isValidFormat(std::uint8_t bitDepth, std::uint8_t colorType) {
 }
 
 void appendBigEndian32(std::vector<std::uint8_t>& output, std::uint32_t value) {
-    for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(value >> shift));
+    for (int shift = 24; shift >= 0; shift -= 8)
+        output.push_back(static_cast<std::uint8_t>(value >> shift));
 }
 
 void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data) {
@@ -73,7 +73,8 @@ void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<
     output.insert(output.end(), type, type + 4);
     output.insert(output.end(), data.begin(), data.end());
     std::uint32_t crc = 0xFFFFFFFFu;
-    for (std::size_t i = checkedFrom; i < output.size(); ++i) crc = (crc >> 8) ^ CRC_TABLE[(crc ^ output[i]) & 0xFF];
+    for (std::size_t i = checkedFrom; i < output.size(); ++i)
+        crc = (crc >> 8) ^ CRC_TABLE[(crc ^ output[i]) & 0xFF];
     appendBigEndian32(output, ~crc);
 }
 
@@ -82,12 +83,13 @@ int paethPredictor(int left, int up, int upLeft) {
     const int leftDistance = std::abs(estimate - left);
     const int upDistance = std::abs(estimate - up);
     const int upLeftDistance = std::abs(estimate - upLeft);
-    if (leftDistance <= upDistance && leftDistance <= upLeftDistance) return left;
+    if (leftDistance <= upDistance && leftDistance <= upLeftDistance)
+        return left;
     return upDistance <= upLeftDistance ? up : upLeft;
 }
 
-std::uint64_t filterRow(const std::uint8_t* row, const std::uint8_t* previousRow, std::size_t rowSize, std::size_t pixelSize,
-                        std::uint8_t filterType, std::uint8_t* filtered) {
+std::uint64_t filterRow(const std::uint8_t* row, const std::uint8_t* previousRow, std::size_t rowSize,
+                        std::size_t pixelSize, std::uint8_t filterType, std::uint8_t* filtered) {
     std::uint64_t cost = 0;
     for (std::size_t i = 0; i < rowSize; ++i) {
         const int left = i >= pixelSize ? row[i - pixelSize] : 0;
@@ -116,13 +118,16 @@ std::uint64_t filterRow(const std::uint8_t* row, const std::uint8_t* previousRow
     return cost;
 }
 
-}  // namespace
+} // namespace
 
 std::optional<Header> ParseHeader(std::span<const std::uint8_t> png) {
     const std::size_t firstChunk = SIGNATURE.size();
-    if (png.size() < firstChunk + CHUNK_OVERHEAD + IHDR_SIZE) return std::nullopt;
-    if (!std::equal(SIGNATURE.begin(), SIGNATURE.end(), png.begin())) return std::nullopt;
-    if (readBigEndian32(&png[firstChunk]) != IHDR_SIZE || !isChunkType(&png[firstChunk + 4], "IHDR")) return std::nullopt;
+    if (png.size() < firstChunk + CHUNK_OVERHEAD + IHDR_SIZE)
+        return std::nullopt;
+    if (!std::equal(SIGNATURE.begin(), SIGNATURE.end(), png.begin()))
+        return std::nullopt;
+    if (readBigEndian32(&png[firstChunk]) != IHDR_SIZE || !isChunkType(&png[firstChunk + 4], "IHDR"))
+        return std::nullopt;
 
     const std::uint8_t* ihdr = &png[firstChunk + 8];
     Header header{};
@@ -131,29 +136,36 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> png) {
     header.bitDepth = ihdr[8];
     header.colorType = static_cast<ColorType>(ihdr[9]);
     header.interlaced = ihdr[12] == 1;
-    if (header.width == 0 || header.height == 0 || header.width > MAX_DIMENSION || header.height > MAX_DIMENSION) return std::nullopt;
-    if (!isValidFormat(ihdr[8], ihdr[9]) || ihdr[10] != 0 || ihdr[11] != 0 || ihdr[12] > 1) return std::nullopt;
+    if (header.width == 0 || header.height == 0 || header.width > MAX_DIMENSION || header.height > MAX_DIMENSION)
+        return std::nullopt;
+    if (!isValidFormat(ihdr[8], ihdr[9]) || ihdr[10] != 0 || ihdr[11] != 0 || ihdr[12] > 1)
+        return std::nullopt;
 
     std::size_t offset = firstChunk + CHUNK_OVERHEAD + IHDR_SIZE;
     while (png.size() - offset >= CHUNK_OVERHEAD) {
         const std::uint32_t length = readBigEndian32(&png[offset]);
         const std::uint8_t* type = &png[offset + 4];
-        if (isChunkType(type, "tRNS")) header.hasTransparency = true;
-        if (isChunkType(type, "tRNS") || isChunkType(type, "IDAT") || isChunkType(type, "IEND")) break;
-        if (length > png.size() - offset - CHUNK_OVERHEAD) break;
+        if (isChunkType(type, "tRNS"))
+            header.hasTransparency = true;
+        if (isChunkType(type, "tRNS") || isChunkType(type, "IDAT") || isChunkType(type, "IEND"))
+            break;
+        if (length > png.size() - offset - CHUNK_OVERHEAD)
+            break;
         offset += CHUNK_OVERHEAD + length;
     }
     return header;
 }
 
 std::optional<Image> Decode(std::span<const std::uint8_t> png) {
-    if (png.empty() || png.size() > INT_MAX) return std::nullopt;
+    if (png.empty() || png.size() > INT_MAX)
+        return std::nullopt;
 
     int width = 0;
     int height = 0;
     int channels = 0;
     stbi_uc* decoded = stbi_load_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, &channels, 4);
-    if (!decoded) return std::nullopt;
+    if (!decoded)
+        return std::nullopt;
 
     Image image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), {}};
     image.pixels.assign(decoded, decoded + static_cast<std::size_t>(image.width) * image.height * 4);
@@ -163,8 +175,10 @@ std::optional<Image> Decode(std::span<const std::uint8_t> png) {
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
                                  std::uint32_t channels, EncodeOptions options) {
-    if (channels < 1 || channels > 4) throw std::invalid_argument("Png::Encode: channels must be 1-4");
-    if (options.compressionLevel < 0 || options.compressionLevel > 9 || options.filters == 0 || (options.filters & ~FILTER_ALL) != 0) {
+    if (channels < 1 || channels > 4)
+        throw std::invalid_argument("Png::Encode: channels must be 1-4");
+    if (options.compressionLevel < 0 || options.compressionLevel > 9 || options.filters == 0 ||
+        (options.filters & ~FILTER_ALL) != 0) {
         throw std::invalid_argument("Png::Encode: unsupported options");
     }
     const std::uint64_t rowSize = static_cast<std::uint64_t>(width) * channels;
@@ -183,9 +197,11 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
         std::uint8_t* filteredRow = filtered.data() + (rowSize + 1) * y;
         std::uint64_t bestCost = UINT64_MAX;
         for (std::uint8_t filterType = 0; filterType < FILTER_TYPE_COUNT; ++filterType) {
-            if ((options.filters & (1u << filterType)) == 0) continue;
-            const std::uint64_t cost =filterRow(row, previousRow, rowSize, channels, filterType, candidate.data());
-            if (cost >= bestCost) continue;
+            if ((options.filters & (1u << filterType)) == 0)
+                continue;
+            const std::uint64_t cost = filterRow(row, previousRow, rowSize, channels, filterType, candidate.data());
+            if (cost >= bestCost)
+                continue;
             bestCost = cost;
             filteredRow[0] = filterType;
             std::copy(candidate.begin(), candidate.end(), filteredRow + 1);
@@ -194,9 +210,11 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
 
     int compressedSize = 0;
     const std::unique_ptr<unsigned char, void (*)(unsigned char*)> compressed(
-        stbi_zlib_compress(filtered.data(), static_cast<int>(filtered.size()), &compressedSize, options.compressionLevel),
+        stbi_zlib_compress(filtered.data(), static_cast<int>(filtered.size()), &compressedSize,
+                           options.compressionLevel),
         [](unsigned char* memory) { STBIW_FREE(memory); });
-    if (!compressed) throw std::runtime_error("Png::Encode: encoding failed");
+    if (!compressed)
+        throw std::runtime_error("Png::Encode: encoding failed");
 
     std::vector<std::uint8_t> header;
     appendBigEndian32(header, width);
@@ -206,9 +224,10 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
     std::vector<std::uint8_t> output(SIGNATURE.begin(), SIGNATURE.end());
     output.reserve(SIGNATURE.size() + 3 * CHUNK_OVERHEAD + IHDR_SIZE + static_cast<std::size_t>(compressedSize));
     appendChunk(output, "IHDR", header);
-    appendChunk(output, "IDAT", std::span<const std::uint8_t>(compressed.get(), static_cast<std::size_t>(compressedSize)));
+    appendChunk(output, "IDAT",
+                std::span<const std::uint8_t>(compressed.get(), static_cast<std::size_t>(compressedSize)));
     appendChunk(output, "IEND", {});
     return output;
 }
 
-}  // namespace Decoder::Png
+} // namespace Decoder::Png

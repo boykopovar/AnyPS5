@@ -35,7 +35,8 @@ std::unordered_set<WritingLine*> lines;
 WritingLine* GetLine(const char* function, void* writingLine) {
     auto* line = static_cast<WritingLine*>(writingLine);
     std::lock_guard lock(linesMutex);
-    if (!lines.contains(line)) Unsupported(function, "unknown writing line handle (error code not verified)");
+    if (!lines.contains(line))
+        Unsupported(function, "unknown writing line handle (error code not verified)");
     return line;
 }
 
@@ -45,12 +46,15 @@ WritingLine* GetLine(const char* function, void* writingLine) {
 
 extern "C" {
 
-int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm, const void* writingLineDetail, void** pWritingLine) {
+int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm,
+                                       const void* writingLineDetail, void** pWritingLine) {
     (void)memory;
-    if (!pWritingLine) Unsupported(__func__, "null writing line pointer (error code not verified)");
+    if (!pWritingLine)
+        Unsupported(__func__, "null writing line pointer (error code not verified)");
     if (writingForm != WRITING_FORM_HORIZONTAL && writingForm != WRITING_FORM_HORIZONTAL_LTR)
         Unsupported(__func__, "writing form " + std::to_string(writingForm) + " is not modelled");
-    if (writingLineDetail && static_cast<const CreateWritingLineDetail*>(writingLineDetail)->detailId != CREATE_WRITING_LINE_DETAIL_ID)
+    if (writingLineDetail &&
+        static_cast<const CreateWritingLineDetail*>(writingLineDetail)->detailId != CREATE_WRITING_LINE_DETAIL_ID)
         Unsupported(__func__, "unknown writing line detail id");
     auto* line = new WritingLine{};
     {
@@ -62,7 +66,8 @@ int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t wr
 }
 
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine) {
-    if (!pWritingLine || !*pWritingLine) return SCE_FONT_OK;
+    if (!pWritingLine || !*pWritingLine)
+        return SCE_FONT_OK;
     auto* line = GetLine(__func__, *pWritingLine);
     {
         std::lock_guard lock(linesMutex);
@@ -81,10 +86,13 @@ int APS5_VABI sceFontWritingLineClear(void* writingLine) {
     return SCE_FONT_OK;
 }
 
-int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t writingAttribute, const FontWritingMetrics* writingMetrics, void* writingOrderer) {
+int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t writingAttribute,
+                                            const FontWritingMetrics* writingMetrics, void* writingOrderer) {
     auto* line = GetLine(__func__, writingLine);
-    if (writingAttribute != 0) Unsupported(__func__, "writing attribute " + std::to_string(writingAttribute) + " is not modelled");
-    if (!writingMetrics) Unsupported(__func__, "null writing metrics are not modelled");
+    if (writingAttribute != 0)
+        Unsupported(__func__, "writing attribute " + std::to_string(writingAttribute) + " is not modelled");
+    if (!writingMetrics)
+        Unsupported(__func__, "null writing metrics are not modelled");
     const FontWritingMetrics& order = *writingMetrics;
     const float pen = line->metrics.advanceX;
     FontWritingLineStep step{};
@@ -93,7 +101,8 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
     step.advanceY = order.advanceY;
     step.writingOrderer = writingOrderer;
     step.Metrics = order;
-    const FontWritingExtent extent{order.Extent.top, order.Extent.bottom, pen + order.Extent.left, pen + order.Extent.right};
+    const FontWritingExtent extent{order.Extent.top, order.Extent.bottom, pen + order.Extent.left,
+                                   pen + order.Extent.right};
     if (line->steps.empty()) {
         line->metrics.Extent = extent;
     } else {
@@ -110,30 +119,35 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
 }
 
 const FontWritingLineStep* APS5_VABI sceFontWritingLineRefersRenderStep(void* writingLine) {
-    if (!writingLine) return nullptr;
+    if (!writingLine)
+        return nullptr;
     auto* line = GetLine(__func__, writingLine);
-    if (line->cursor >= line->steps.size()) return nullptr;
+    if (line->cursor >= line->steps.size())
+        return nullptr;
     return &line->steps[line->cursor++];
 }
 
 int APS5_VABI sceFontWritingLineGetRenderMetrics(void* writingLine, FontWritingMetrics* writingMetrics) {
     auto* line = GetLine(__func__, writingLine);
-    if (!writingMetrics) Unsupported(__func__, "null metrics pointer (error code not verified)");
-    if (line->steps.empty()) Unsupported(__func__, "metrics of an empty line are not modelled");
+    if (!writingMetrics)
+        Unsupported(__func__, "null metrics pointer (error code not verified)");
+    if (line->steps.empty())
+        Unsupported(__func__, "metrics of an empty line are not modelled");
     *writingMetrics = line->metrics;
     return SCE_FONT_OK;
 }
 
-int APS5_VABI sceFontWritingLineGetOrderingSpace(void* writingLine, float* headSpace, float* inlineSpace, float* tailSpace, float* advanceSpace) {
+int APS5_VABI sceFontWritingLineGetOrderingSpace(void* writingLine, float* headSpace, float* inlineSpace,
+                                                 float* tailSpace, float* advanceSpace) {
     GetLine(__func__, writingLine);
-    if (!headSpace || !inlineSpace || !tailSpace || !advanceSpace) Unsupported(__func__, "null space pointer (error code not verified)");
+    if (!headSpace || !inlineSpace || !tailSpace || !advanceSpace)
+        Unsupported(__func__, "null space pointer (error code not verified)");
     *headSpace = 0.0f;
     *inlineSpace = 0.0f;
     *tailSpace = 0.0f;
     *advanceSpace = 0.0f;
     return SCE_FONT_OK;
 }
-
 }
 
 #pragma GCC visibility pop

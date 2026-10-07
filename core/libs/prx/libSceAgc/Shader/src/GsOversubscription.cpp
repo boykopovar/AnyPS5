@@ -78,8 +78,10 @@ int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs
         const GsOccupancyLimits base = getGsOccupancyLimits(gs, 1024u, 128u);
         const GsOccupancyLimits expanded = getGsOccupancyLimits(gs, 2048u, 382u);
         const std::uint32_t baseMin = std::min(base.vertex, base.exportCount);
-        const std::uint32_t limitShift = (gs->specials->vgt_shader_stages_en.value & VGT_SHADER_STAGES_GS_W32_BIT) != 0 ? 5u : 6u;
-        const std::uint32_t expandedLimit = std::min({expanded.vertex, expanded.exportCount, budget >> limitShift, 1024u});
+        const std::uint32_t limitShift =
+            (gs->specials->vgt_shader_stages_en.value & VGT_SHADER_STAGES_GS_W32_BIT) != 0 ? 5u : 6u;
+        const std::uint32_t expandedLimit =
+            std::min({expanded.vertex, expanded.exportCount, budget >> limitShift, 1024u});
         const std::uint32_t headroom = expandedLimit > baseMin ? expandedLimit - baseMin : 0u;
         const float scaled = std::fma(factor, static_cast<float>(headroom), static_cast<float>(baseMin));
         if (!(scaled >= 0.0f && scaled < 4294967296.0f)) {
@@ -90,13 +92,15 @@ int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs
         if (target > baseMin) {
             if (target < base.exportCount) {
                 const std::uint32_t range = std::max(expanded.vertex - base.vertex, 1u);
-                std::uint32_t value = static_cast<std::uint32_t>(std::min<std::uint64_t>((static_cast<std::uint64_t>(target - base.vertex) << 10u) / range, 1024u));
+                std::uint32_t value = static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>((static_cast<std::uint64_t>(target - base.vertex) << 10u) / range, 1024u));
                 value = std::max(value, 1u);
                 pcAlloc.value = ((value << 1u) - 1u) & GE_PC_ALLOC_FULL;
                 rsrc4.value = LATE_ALLOC_GS_FULL;
             } else {
                 const std::uint32_t range = std::max(expanded.exportCount - base.exportCount, 1u);
-                const auto value = static_cast<std::uint32_t>(std::min<std::uint64_t>((static_cast<std::uint64_t>(target - base.exportCount) * 127u) / range, 127u));
+                const auto value = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                    (static_cast<std::uint64_t>(target - base.exportCount) * 127u) / range, 127u));
                 pcAlloc.value = GE_PC_ALLOC_FULL;
                 rsrc4.value = value << 16u;
             }
@@ -107,5 +111,4 @@ int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs
     regs[1] = rsrc4;
     return 0;
 }
-
 }

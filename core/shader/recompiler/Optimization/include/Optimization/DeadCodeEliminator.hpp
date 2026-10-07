@@ -13,7 +13,6 @@ public:
     void Eliminate(std::span<IrBlock* const> blocks) const;
     void RemoveIdentities(IrProgram& program) const;
     void RemoveIdentities(std::span<IrBlock* const> blocks) const;
-
 };
 
 }

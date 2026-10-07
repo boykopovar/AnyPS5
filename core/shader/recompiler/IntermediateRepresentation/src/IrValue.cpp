@@ -5,28 +5,18 @@
 
 namespace ShaderRecompiler {
 
-IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr) {
-}
+IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id)
+    : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr) {}
 
-std::uint32_t IrValue::Id() const {
-    return id;
-}
+std::uint32_t IrValue::Id() const { return id; }
 
-const std::vector<IrValue*>& IrValue::Arguments() const {
-    return arguments;
-}
+const std::vector<IrValue*>& IrValue::Arguments() const { return arguments; }
 
-const std::vector<IrValue*>& IrValue::Uses() const {
-    return uses;
-}
+const std::vector<IrValue*>& IrValue::Uses() const { return uses; }
 
-IrBlock* IrValue::Parent() const {
-    return parent;
-}
+IrBlock* IrValue::Parent() const { return parent; }
 
-std::uint32_t IrValue::ImmediateU32() const {
-    return static_cast<std::uint32_t>(immediateBits);
-}
+std::uint32_t IrValue::ImmediateU32() const { return static_cast<std::uint32_t>(immediateBits); }
 
 void IrValue::AddArgument(IrValue* argument) {
     arguments.push_back(argument);
@@ -47,9 +37,9 @@ void IrValue::ReplaceArgument(std::size_t index, IrValue* argument) {
         if (useIt != previous->uses.end()) {
             previous->uses.erase(useIt);
         }
-        const auto operandIt = std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
-            return use.user == this && use.operand == index;
-        });
+        const auto operandIt =
+            std::find_if(previous->operandUses.begin(), previous->operandUses.end(),
+                         [this, index](const IrUse& use) { return use.user == this && use.operand == index; });
         if (operandIt != previous->operandUses.end()) {
             previous->operandUses.erase(operandIt);
         }
@@ -76,33 +66,19 @@ void IrValue::SetImmediateU32(std::uint32_t value) {
     hasImmediate = true;
 }
 
-void IrValue::SetParent(IrBlock* parent) {
-    this->parent = parent;
-}
+void IrValue::SetParent(IrBlock* parent) { this->parent = parent; }
 
-bool IrValue::IsEmpty() const {
-    return opcode == IrOpcode::Void;
-}
+bool IrValue::IsEmpty() const { return opcode == IrOpcode::Void; }
 
-bool IrValue::IsPhi() const {
-    return opcode == IrOpcode::Phi;
-}
+bool IrValue::IsPhi() const { return opcode == IrOpcode::Phi; }
 
-bool IrValue::MayHaveSideEffects() const {
-    return IrOpcodeHasSideEffects(opcode);
-}
+bool IrValue::MayHaveSideEffects() const { return IrOpcodeHasSideEffects(opcode); }
 
-bool IrValue::HasUses() const {
-    return !uses.empty();
-}
+bool IrValue::HasUses() const { return !uses.empty(); }
 
-std::size_t IrValue::UseCount() const {
-    return uses.size();
-}
+std::size_t IrValue::UseCount() const { return uses.size(); }
 
-std::size_t IrValue::PhiBlockCount() const {
-    return phiBlocks.size();
-}
+std::size_t IrValue::PhiBlockCount() const { return phiBlocks.size(); }
 
 IrBlock* IrValue::PhiBlock(std::size_t index) const {
     if (index >= phiBlocks.size()) {
@@ -111,37 +87,21 @@ IrBlock* IrValue::PhiBlock(std::size_t index) const {
     return phiBlocks[index];
 }
 
-const std::vector<IrUse>& IrValue::OperandUses() const {
-    return operandUses;
-}
+const std::vector<IrUse>& IrValue::OperandUses() const { return operandUses; }
 
-std::uint64_t IrValue::ImmediateU64() const {
-    return immediateBits;
-}
+std::uint64_t IrValue::ImmediateU64() const { return immediateBits; }
 
-std::uint16_t IrValue::ImmediateF16Bits() const {
-    return static_cast<std::uint16_t>(immediateBits);
-}
+std::uint16_t IrValue::ImmediateF16Bits() const { return static_cast<std::uint16_t>(immediateBits); }
 
-float IrValue::ImmediateF32() const {
-    return std::bit_cast<float>(static_cast<std::uint32_t>(immediateBits));
-}
+float IrValue::ImmediateF32() const { return std::bit_cast<float>(static_cast<std::uint32_t>(immediateBits)); }
 
-bool IrValue::ImmediateBool() const {
-    return immediateBits != 0u;
-}
+bool IrValue::ImmediateBool() const { return immediateBits != 0u; }
 
-std::uint8_t IrValue::ImmediateU8() const {
-    return static_cast<std::uint8_t>(immediateBits);
-}
+std::uint8_t IrValue::ImmediateU8() const { return static_cast<std::uint8_t>(immediateBits); }
 
-std::uint16_t IrValue::ImmediateU16() const {
-    return static_cast<std::uint16_t>(immediateBits);
-}
+std::uint16_t IrValue::ImmediateU16() const { return static_cast<std::uint16_t>(immediateBits); }
 
-GuestRegister IrValue::Register() const {
-    return registerValue;
-}
+GuestRegister IrValue::Register() const { return registerValue; }
 
 void IrValue::SetImmediateU64(std::uint64_t value) {
     immediateBits = value;
@@ -173,9 +133,7 @@ void IrValue::SetImmediateU16(std::uint16_t value) {
     hasImmediate = true;
 }
 
-void IrValue::SetRegister(const GuestRegister& reg) {
-    registerValue = reg;
-}
+void IrValue::SetRegister(const GuestRegister& reg) { registerValue = reg; }
 
 void IrValue::AddPhiOperand(IrBlock* predecessor, IrValue* value) {
     if (!IsPhi()) {
@@ -188,9 +146,7 @@ void IrValue::AddPhiOperand(IrBlock* predecessor, IrValue* value) {
     AddArgument(value);
 }
 
-void IrValue::ReplaceOpcode(IrOpcode opcode) {
-    this->opcode = opcode;
-}
+void IrValue::ReplaceOpcode(IrOpcode opcode) { this->opcode = opcode; }
 
 void IrValue::Invalidate() {
     if (!uses.empty()) {
@@ -243,8 +199,6 @@ bool IrValue::operator==(const IrValue& other) const {
     return true;
 }
 
-bool IrUse::operator==(const IrUse& other) const {
-    return user == other.user && operand == other.operand;
-}
+bool IrUse::operator==(const IrUse& other) const { return user == other.user && operand == other.operand; }
 
 }

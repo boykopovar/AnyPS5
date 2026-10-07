@@ -13,18 +13,20 @@ constexpr std::uint32_t MoveSdwa = 0x7e0602f9u;
 constexpr std::uint32_t SourceVector = 4;
 constexpr std::uint32_t DestinationVector = 3;
 
-constexpr std::uint32_t Modifier(std::uint32_t destinationSelector, std::uint32_t unused, std::uint32_t sourceSelector, std::uint32_t signExtend) {
+constexpr std::uint32_t Modifier(std::uint32_t destinationSelector, std::uint32_t unused, std::uint32_t sourceSelector,
+                                 std::uint32_t signExtend) {
     return SourceVector | (destinationSelector << 8u) | (unused << 11u) | (sourceSelector << 16u) | (signExtend << 19u);
 }
 
-bool Matches(const RdnaInstruction& instruction, std::uint32_t destinationSelector, std::uint32_t unused, std::uint32_t sourceSelector, std::uint32_t signExtend) {
+bool Matches(const RdnaInstruction& instruction, std::uint32_t destinationSelector, std::uint32_t unused,
+             std::uint32_t sourceSelector, std::uint32_t signExtend) {
     return instruction.op == RdnaOpcode::VMovB32 && instruction.wordCount == 2u && instruction.sourceCount == 1u &&
-        instruction.destination.kind == RdnaOperandKind::VectorRegister && instruction.destination.reg == DestinationVector &&
-        instruction.destination.explicitSdwaDst && instruction.destination.sdwaSel == destinationSelector &&
-        instruction.destination.sdwaDstUnused == unused &&
-        instruction.source0.kind == RdnaOperandKind::VectorRegister && instruction.source0.reg == SourceVector &&
-        instruction.source0.sdwaSel == sourceSelector && instruction.source0.sdwaSext == (signExtend != 0u) &&
-        !instruction.source0.negate && !instruction.source0.absolute;
+           instruction.destination.kind == RdnaOperandKind::VectorRegister &&
+           instruction.destination.reg == DestinationVector && instruction.destination.explicitSdwaDst &&
+           instruction.destination.sdwaSel == destinationSelector && instruction.destination.sdwaDstUnused == unused &&
+           instruction.source0.kind == RdnaOperandKind::VectorRegister && instruction.source0.reg == SourceVector &&
+           instruction.source0.sdwaSel == sourceSelector && instruction.source0.sdwaSext == (signExtend != 0u) &&
+           !instruction.source0.negate && !instruction.source0.absolute;
 }
 
 }
@@ -35,14 +37,20 @@ int main() {
         for (std::uint32_t signExtend = 0; signExtend < 2u; ++signExtend) {
             for (std::uint32_t destinationSelector = 0; destinationSelector < 7u; ++destinationSelector) {
                 for (std::uint32_t unused = 0; unused < 3u; ++unused) {
-                    const std::array<std::uint32_t, 2> words{MoveSdwa, Modifier(destinationSelector, unused, sourceSelector, signExtend)};
+                    const std::array<std::uint32_t, 2> words{
+                        MoveSdwa, Modifier(destinationSelector, unused, sourceSelector, signExtend)};
                     try {
-                        if (!Matches(DecodeRdnaInstruction(0u, words, 0u), destinationSelector, unused, sourceSelector, signExtend)) {
-                            std::fprintf(stderr, "dst_sel %u dst_unused %u src0_sel %u sext %u decodes with the wrong operands\n", destinationSelector, unused, sourceSelector, signExtend);
+                        if (!Matches(DecodeRdnaInstruction(0u, words, 0u), destinationSelector, unused, sourceSelector,
+                                     signExtend)) {
+                            std::fprintf(
+                                stderr,
+                                "dst_sel %u dst_unused %u src0_sel %u sext %u decodes with the wrong operands\n",
+                                destinationSelector, unused, sourceSelector, signExtend);
                             ++failures;
                         }
                     } catch (const std::exception& error) {
-                        std::fprintf(stderr, "dst_sel %u dst_unused %u src0_sel %u sext %u: %s\n", destinationSelector, unused, sourceSelector, signExtend, error.what());
+                        std::fprintf(stderr, "dst_sel %u dst_unused %u src0_sel %u sext %u: %s\n", destinationSelector,
+                                     unused, sourceSelector, signExtend, error.what());
                         ++failures;
                     }
                 }

@@ -14,22 +14,20 @@ struct ChainResult {
     IrValue* write = nullptr;
 };
 
-bool isImmediateU32(const IrValue& value) {
-    return value.HasImmediate() && value.Type() == IrType::U32;
-}
+bool isImmediateU32(const IrValue& value) { return value.HasImmediate() && value.Type() == IrType::U32; }
 
 ChainResult searchChain(IrValue* value, std::uint32_t lane, std::uint32_t waveSize) {
     for (;;) {
         value = value->Resolve();
         if (value->Opcode() != IrOpcode::WriteLane) {
-            return ChainResult {value, nullptr};
+            return ChainResult{value, nullptr};
         }
         IrValue* selector = value->Argument(1)->Resolve();
         if (!isImmediateU32(*selector)) {
-            return ChainResult {value, nullptr};
+            return ChainResult{value, nullptr};
         }
         if (selector->ImmediateU32() % waveSize == lane) {
-            return ChainResult {value, value};
+            return ChainResult{value, value};
         }
         value = value->Argument(2);
     }
@@ -109,9 +107,11 @@ struct LaneValues {
 };
 
 void collectLaneValues(IrValue* value, std::uint32_t lane, std::uint32_t waveSize, bool throughPhi, LaneValues& out) {
-    if (out.failed) return;
+    if (out.failed)
+        return;
     value = value->Resolve();
-    if (!out.visited.insert(value).second) return;
+    if (!out.visited.insert(value).second)
+        return;
     if (out.visited.size() > 4096u) {
         out.failed = true;
         return;
@@ -136,10 +136,12 @@ void collectLaneValues(IrValue* value, std::uint32_t lane, std::uint32_t waveSiz
         return;
     default:
         if (value->IsPhi()) {
-            for (std::size_t index = 0; index < value->ArgumentCount(); index++) collectLaneValues(value->Argument(index), lane, waveSize, true, out);
+            for (std::size_t index = 0; index < value->ArgumentCount(); index++)
+                collectLaneValues(value->Argument(index), lane, waveSize, true, out);
             return;
         }
-        if (!throughPhi) out.failed = true;
+        if (!throughPhi)
+            out.failed = true;
         return;
     }
 }
@@ -151,9 +153,12 @@ bool dependsOn(IrValue* value, IrValue* target) {
     while (!pending.empty()) {
         IrValue* current = pending.back()->Resolve();
         pending.pop_back();
-        if (current == target) return true;
-        if (!visited.insert(current).second || visited.size() > 65536u) continue;
-        for (std::size_t index = 0; index < current->ArgumentCount(); index++) pending.push_back(current->Argument(index));
+        if (current == target)
+            return true;
+        if (!visited.insert(current).second || visited.size() > 65536u)
+            continue;
+        for (std::size_t index = 0; index < current->ArgumentCount(); index++)
+            pending.push_back(current->Argument(index));
     }
     return false;
 }
@@ -164,18 +169,23 @@ IrValue* uniqueLaneValue(IrValue* read, std::unordered_set<IrValue*> candidates)
     for (bool changed = true; changed;) {
         changed = false;
         for (IrValue* candidate : std::vector<IrValue*>(candidates.begin(), candidates.end())) {
-            if (!candidate->IsPhi() || !expanded.insert(candidate).second) continue;
+            if (!candidate->IsPhi() || !expanded.insert(candidate).second)
+                continue;
             std::vector<IrValue*> operands;
             bool closed = true;
             for (std::size_t index = 0; index < candidate->ArgumentCount(); index++) {
                 IrValue* operand = candidate->Argument(index)->Resolve();
-                if (operand == read || operand == candidate || expanded.contains(operand)) continue;
+                if (operand == read || operand == candidate || expanded.contains(operand))
+                    continue;
                 operands.push_back(operand);
             }
-            if (operands.empty()) closed = false;
-            if (!closed) continue;
+            if (operands.empty())
+                closed = false;
+            if (!closed)
+                continue;
             candidates.erase(candidate);
-            for (IrValue* operand : operands) candidates.insert(operand);
+            for (IrValue* operand : operands)
+                candidates.insert(operand);
             changed = true;
         }
     }
@@ -211,8 +221,10 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
             if (!chain.value->IsPhi() || !isPossibleToEliminate(chain.value, lane, waveSize)) {
                 LaneValues values;
                 collectLaneValues(inst->Argument(0), lane, waveSize, false, values);
-                if (values.failed || values.values.empty()) continue;
-                if (IrValue* unique = uniqueLaneValue(inst, values.values); unique != nullptr && !dependsOn(unique, inst)) {
+                if (values.failed || values.values.empty())
+                    continue;
+                if (IrValue* unique = uniqueLaneValue(inst, values.values);
+                    unique != nullptr && !dependsOn(unique, inst)) {
                     inst->ReplaceUsesWith(unique, true);
                     stats.rewrittenReads++;
                 }

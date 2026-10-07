@@ -14,11 +14,11 @@
 #include "prx/libc/include/General.hpp"
 #include "SceUltTypes.hpp"
 
-extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                                          const char* name);
 extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 
 namespace {
-
 
 std::mutex gMutex;
 std::unordered_map<void*, std::shared_ptr<UltMutexState>> gMutexes;
@@ -55,14 +55,18 @@ int queueGetState(void* queue, std::shared_ptr<UltQueueState>* out) {
 
 int QueueTransfer(void* queue, void* data, const void* source, bool push, bool blocking) {
     std::shared_ptr<UltQueueState> state;
-    if (int result = queueGetState(queue, &state); result != ULT_OK) return result;
-    if ((push ? source : data) == nullptr) return ULT_ERROR_NULL;
+    if (int result = queueGetState(queue, &state); result != ULT_OK)
+        return result;
+    if ((push ? source : data) == nullptr)
+        return ULT_ERROR_NULL;
     auto& pool = *state->_pool;
     std::unique_lock lock(pool._mutex);
-    if (!state->_alive) return ULT_ERROR_STATE;
+    if (!state->_alive)
+        return ULT_ERROR_STATE;
     const auto ready = [&] { return !state->_alive || (push ? pool._free : state->_head) != UINT32_MAX; };
     if (!ready()) {
-        if (!blocking) return ULT_ERROR_AGAIN;
+        if (!blocking)
+            return ULT_ERROR_AGAIN;
         ++state->_waiters;
         try {
             (push ? pool._spaceAvailable : state->_dataAvailable).wait(lock, ready);
@@ -71,27 +75,33 @@ int QueueTransfer(void* queue, void* data, const void* source, bool push, bool b
             throw;
         }
         --state->_waiters;
-        if (!state->_alive) return ULT_ERROR_STATE;
+        if (!state->_alive)
+            return ULT_ERROR_STATE;
     }
     if (push) {
         const auto slot = pool._free;
         std::memcpy(pool._data.data() + slot * pool._dataSize, source, state->_dataSize);
         pool._free = pool._next[slot];
         pool._next[slot] = UINT32_MAX;
-        if (state->_tail == UINT32_MAX) state->_head = slot;
-        else pool._next[state->_tail] = slot;
+        if (state->_tail == UINT32_MAX)
+            state->_head = slot;
+        else
+            pool._next[state->_tail] = slot;
         state->_tail = slot;
     } else {
         const auto slot = state->_head;
         std::memcpy(data, pool._data.data() + slot * pool._dataSize, state->_dataSize);
         state->_head = pool._next[slot];
-        if (state->_head == UINT32_MAX) state->_tail = UINT32_MAX;
+        if (state->_head == UINT32_MAX)
+            state->_tail = UINT32_MAX;
         pool._next[slot] = pool._free;
         pool._free = slot;
     }
     lock.unlock();
-    if (push) state->_dataAvailable.notify_one();
-    else pool._spaceAvailable.notify_one();
+    if (push)
+        state->_dataAvailable.notify_one();
+    else
+        pool._spaceAvailable.notify_one();
     return ULT_OK;
 }
 
@@ -115,9 +125,7 @@ void* APS5_VABI ulthreadRunner(void* arg) {
 
 extern "C" {
 
-int APS5_VABI sceUltInitialize() {
-    return ULT_OK;
-}
+int APS5_VABI sceUltInitialize() { return ULT_OK; }
 
 int APS5_VABI sceUltFinalize() {
     std::vector<std::shared_ptr<UltSemaphoreState>> semaphores;
@@ -160,7 +168,8 @@ int APS5_VABI sceUltMutexOptParamInitialize(UltMutexOptParam* optParam, std::uin
     return ULT_OK;
 }
 
-int APS5_VABI sceUltMutexCreate(void* mutex, const char* name, void* waitingQueueResourcePool, const UltMutexOptParam* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltMutexCreate(void* mutex, const char* name, void* waitingQueueResourcePool,
+                                const UltMutexOptParam* optParam, std::uint32_t buildVersion) {
     (void)name;
     (void)buildVersion;
     if (mutex == nullptr) {
@@ -209,7 +218,9 @@ int APS5_VABI sceUltWaitingQueueResourcePoolGetWorkAreaSize(std::uint32_t numThr
     return static_cast<int>(alignUp(static_cast<std::uint64_t>(numThreads + numSyncObjects) * 256u, 8u));
 }
 
-int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name, std::uint32_t numThreads, std::uint32_t numSyncObjects, void* workArea, const void* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name, std::uint32_t numThreads,
+                                                   std::uint32_t numSyncObjects, void* workArea, const void* optParam,
+                                                   std::uint32_t buildVersion) {
     (void)name;
     (void)optParam;
     (void)buildVersion;
@@ -222,8 +233,10 @@ int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name,
     return ULT_OK;
 }
 
-std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t numData, std::uint64_t dataSize, std::uint32_t numQueueObject) {
-    if (dataSize > UINT64_MAX - 7u) throw std::out_of_range("ULT queue data size overflow");
+std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t numData, std::uint64_t dataSize,
+                                                                   std::uint32_t numQueueObject) {
+    if (dataSize > UINT64_MAX - 7u)
+        throw std::out_of_range("ULT queue data size overflow");
     const auto stride = alignUp(dataSize, 8u);
     const auto queueArea = static_cast<std::uint64_t>(numQueueObject) * 512u;
     if (stride != 0 && numData > (UINT64_MAX - queueArea) / stride) {
@@ -233,21 +246,28 @@ std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t
     return alignUp(dataArea + queueArea, 8u);
 }
 
-int APS5_VABI sceUltQueueDataResourcePoolCreate(void* pool, const char* name, std::uint32_t numData, std::uint64_t dataSize, std::uint32_t numQueueObject, void* waitingQueueResourcePool, void* workArea, const void* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltQueueDataResourcePoolCreate(void* pool, const char* name, std::uint32_t numData,
+                                                std::uint64_t dataSize, std::uint32_t numQueueObject,
+                                                void* waitingQueueResourcePool, void* workArea, const void* optParam,
+                                                std::uint32_t buildVersion) {
     (void)name;
     (void)buildVersion;
     if (pool == nullptr) {
         return ULT_ERROR_NULL;
     }
-    if ((reinterpret_cast<std::uintptr_t>(pool) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
+    if ((reinterpret_cast<std::uintptr_t>(pool) & 7u) != 0)
+        return ULT_ERROR_ALIGNMENT;
     if (numData == 0 || numQueueObject == 0 || dataSize == 0 ||
-        dataSize > std::numeric_limits<std::size_t>::max() / numData) return ULT_ERROR_RANGE;
-    if (optParam != nullptr) NotImplemented_nid_no_patch("sceUltQueueDataResourcePoolCreate: optParam");
+        dataSize > std::numeric_limits<std::size_t>::max() / numData)
+        return ULT_ERROR_RANGE;
+    if (optParam != nullptr)
+        NotImplemented_nid_no_patch("sceUltQueueDataResourcePoolCreate: optParam");
     std::lock_guard<std::mutex> lock(gMutex);
     if (waitingQueueResourcePool != nullptr && gResourcePools.find(waitingQueueResourcePool) == gResourcePools.end()) {
         return ULT_ERROR_INVALID;
     }
-    if (gQueueDataPools.contains(pool)) return ULT_ERROR_STATE;
+    if (gQueueDataPools.contains(pool))
+        return ULT_ERROR_STATE;
     auto state = std::make_shared<UltQueueDataPoolState>();
     state->_numData = numData;
     state->_dataSize = dataSize;
@@ -266,26 +286,33 @@ int APS5_VABI sceUltQueueDataResourcePoolCreate(void* pool, const char* name, st
 }
 
 int APS5_VABI sceUltQueueDataResourcePoolDestroy(void* pool) {
-    if (pool == nullptr) return ULT_ERROR_NULL;
+    if (pool == nullptr)
+        return ULT_ERROR_NULL;
     std::lock_guard lock(gMutex);
     const auto it = gQueueDataPools.find(pool);
-    if (it == gQueueDataPools.end()) return ULT_ERROR_STATE;
+    if (it == gQueueDataPools.end())
+        return ULT_ERROR_STATE;
     auto state = it->second;
     std::lock_guard stateLock(state->_mutex);
-    if (state->_queues != 0) return ULT_ERROR_BUSY;
+    if (state->_queues != 0)
+        return ULT_ERROR_BUSY;
     gQueueDataPools.erase(it);
     return ULT_OK;
 }
 
-int APS5_VABI sceUltQueueCreate(void* queue, const char* name, std::uint64_t dataSize, void* waitingQueueResourcePool, void* queueDataResourcePool, const void* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltQueueCreate(void* queue, const char* name, std::uint64_t dataSize, void* waitingQueueResourcePool,
+                                void* queueDataResourcePool, const void* optParam, std::uint32_t buildVersion) {
     (void)name;
     (void)buildVersion;
     if (queue == nullptr) {
         return ULT_ERROR_NULL;
     }
-    if ((reinterpret_cast<std::uintptr_t>(queue) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (dataSize == 0) return ULT_ERROR_RANGE;
-    if (optParam != nullptr) NotImplemented_nid_no_patch("sceUltQueueCreate: optParam");
+    if ((reinterpret_cast<std::uintptr_t>(queue) & 7u) != 0)
+        return ULT_ERROR_ALIGNMENT;
+    if (dataSize == 0)
+        return ULT_ERROR_RANGE;
+    if (optParam != nullptr)
+        NotImplemented_nid_no_patch("sceUltQueueCreate: optParam");
     auto state = std::make_shared<UltQueueState>();
     state->_dataSize = dataSize;
     std::lock_guard<std::mutex> lock(gMutex);
@@ -296,44 +323,44 @@ int APS5_VABI sceUltQueueCreate(void* queue, const char* name, std::uint64_t dat
     if (waitingQueueResourcePool != nullptr && gResourcePools.find(waitingQueueResourcePool) == gResourcePools.end()) {
         return ULT_ERROR_INVALID;
     }
-    if (gQueues.contains(queue)) return ULT_ERROR_STATE;
+    if (gQueues.contains(queue))
+        return ULT_ERROR_STATE;
     state->_pool = dataPoolIt->second;
     auto& pool = *state->_pool;
     std::lock_guard stateLock(pool._mutex);
-    if (dataSize > pool._dataSize || waitingQueueResourcePool != pool._waitingPool) return ULT_ERROR_INVALID;
-    if (pool._queues == pool._numQueueObject) return ULT_ERROR_AGAIN;
+    if (dataSize > pool._dataSize || waitingQueueResourcePool != pool._waitingPool)
+        return ULT_ERROR_INVALID;
+    if (pool._queues == pool._numQueueObject)
+        return ULT_ERROR_AGAIN;
     gQueues.emplace(queue, std::move(state));
     ++pool._queues;
     std::memset(queue, 0, 512);
     return ULT_OK;
 }
 
-int APS5_VABI sceUltQueuePush(void* queue, const void* data) {
-    return QueueTransfer(queue, nullptr, data, true, true);
-}
+int APS5_VABI sceUltQueuePush(void* queue, const void* data) { return QueueTransfer(queue, nullptr, data, true, true); }
 
 int APS5_VABI sceUltQueueTryPush(void* queue, const void* data) {
     return QueueTransfer(queue, nullptr, data, true, false);
 }
 
-int APS5_VABI sceUltQueuePop(void* queue, void* data) {
-    return QueueTransfer(queue, data, nullptr, false, true);
-}
+int APS5_VABI sceUltQueuePop(void* queue, void* data) { return QueueTransfer(queue, data, nullptr, false, true); }
 
-int APS5_VABI sceUltQueueTryPop(void* queue, void* data) {
-    return QueueTransfer(queue, data, nullptr, false, false);
-}
+int APS5_VABI sceUltQueueTryPop(void* queue, void* data) { return QueueTransfer(queue, data, nullptr, false, false); }
 
 int APS5_VABI sceUltQueueDestroy(void* queue) {
-    if (queue == nullptr) return ULT_ERROR_NULL;
+    if (queue == nullptr)
+        return ULT_ERROR_NULL;
     std::lock_guard lock(gMutex);
     const auto it = gQueues.find(queue);
-    if (it == gQueues.end()) return ULT_ERROR_STATE;
+    if (it == gQueues.end())
+        return ULT_ERROR_STATE;
     auto state = it->second;
     auto& pool = *state->_pool;
     {
         std::lock_guard stateLock(pool._mutex);
-        if (state->_waiters != 0) return ULT_ERROR_BUSY;
+        if (state->_waiters != 0)
+            return ULT_ERROR_BUSY;
         ReleaseQueue(*state);
         gQueues.erase(it);
     }
@@ -341,7 +368,8 @@ int APS5_VABI sceUltQueueDestroy(void* queue) {
     return ULT_OK;
 }
 
-int APS5_VABI sceUltSemaphoreCreate(void* semaphore, const char* name, std::int32_t numInitialResource, void* waitingQueueResourcePool, const void* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltSemaphoreCreate(void* semaphore, const char* name, std::int32_t numInitialResource,
+                                    void* waitingQueueResourcePool, const void* optParam, std::uint32_t buildVersion) {
     (void)name;
     (void)optParam;
     (void)buildVersion;
@@ -450,7 +478,8 @@ int APS5_VABI sceUltSemaphoreDestroy(void* semaphore) {
     return ULT_OK;
 }
 
-int APS5_VABI sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptParam* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptParam* optParam,
+                                                      std::uint32_t buildVersion) {
     (void)buildVersion;
     if (optParam == nullptr) {
         return ULT_ERROR_NULL;
@@ -459,11 +488,16 @@ int APS5_VABI sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptParam
     return ULT_OK;
 }
 
-std::uint64_t APS5_VABI sceUltUlthreadRuntimeGetWorkAreaSize(std::uint32_t maxNumUlthread, std::uint32_t numWorkerThread) {
-    return alignUp(static_cast<std::uint64_t>(maxNumUlthread) * 256u + static_cast<std::uint64_t>(numWorkerThread) * 16u * 1024u, 8u);
+std::uint64_t APS5_VABI sceUltUlthreadRuntimeGetWorkAreaSize(std::uint32_t maxNumUlthread,
+                                                             std::uint32_t numWorkerThread) {
+    return alignUp(static_cast<std::uint64_t>(maxNumUlthread) * 256u +
+                       static_cast<std::uint64_t>(numWorkerThread) * 16u * 1024u,
+                   8u);
 }
 
-int APS5_VABI sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::uint32_t maxNumUlthread, std::uint32_t numWorkerThread, void* workArea, const void* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::uint32_t maxNumUlthread,
+                                          std::uint32_t numWorkerThread, void* workArea, const void* optParam,
+                                          std::uint32_t buildVersion) {
     (void)name;
     (void)optParam;
     (void)buildVersion;
@@ -476,7 +510,9 @@ int APS5_VABI sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::
     return ULT_OK;
 }
 
-int APS5_VABI sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthreadEntry entry, std::uint64_t arg, void* context, std::uint64_t sizeContext, void* runtime, const void* optParam, std::uint32_t buildVersion) {
+int APS5_VABI sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthreadEntry entry, std::uint64_t arg,
+                                   void* context, std::uint64_t sizeContext, void* runtime, const void* optParam,
+                                   std::uint32_t buildVersion) {
     (void)context;
     (void)sizeContext;
     (void)optParam;
@@ -498,7 +534,8 @@ int APS5_VABI sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthread
         std::memset(ulthread, 0, 512);
         gUlthreads[ulthread] = state;
     }
-    const int result = scePthreadCreate(&state->_thread, nullptr, ulthreadRunner, state.get(), name != nullptr ? name : "");
+    const int result =
+        scePthreadCreate(&state->_thread, nullptr, ulthreadRunner, state.get(), name != nullptr ? name : "");
     if (result != 0) {
         std::lock_guard<std::mutex> lock(gMutex);
         gUlthreads.erase(ulthread);
@@ -531,5 +568,4 @@ int APS5_VABI sceUltUlthreadJoin(void* ulthread, std::int32_t* status) {
     gUlthreads.erase(ulthread);
     return ULT_OK;
 }
-
 }

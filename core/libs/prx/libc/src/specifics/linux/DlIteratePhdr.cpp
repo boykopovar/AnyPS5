@@ -15,5 +15,4 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
     throw std::runtime_error("dl_iterate_phdr not available on this platform");
 #endif
 }
-
 }

@@ -27,12 +27,8 @@ std::uint8_t _scratch(const ReciprocalOperands& operands) {
 
 void _vexMovaps(StubBodyBuilder& body, const std::uint8_t dst, const std::uint8_t src) {
     const std::array<std::uint8_t, 5> bytes{
-        0xC4,
-        static_cast<std::uint8_t>(((dst & 8) != 0 ? 0x00 : 0x80) | 0x40 | ((src & 8) != 0 ? 0x00 : 0x20) | 0x01),
-        0x78,
-        kMovaps,
-        static_cast<std::uint8_t>(0xC0 | ((dst & 7) << 3) | (src & 7))
-    };
+        0xC4, static_cast<std::uint8_t>(((dst & 8) != 0 ? 0x00 : 0x80) | 0x40 | ((src & 8) != 0 ? 0x00 : 0x20) | 0x01),
+        0x78, kMovaps, static_cast<std::uint8_t>(0xC0 | ((dst & 7) << 3) | (src & 7))};
     body.Raw(bytes);
 }
 
@@ -55,7 +51,8 @@ void ReciprocalLowering::EmitOutOfLine(StubBodyBuilder& body, const ReciprocalOp
     body.Restore(scratch);
 }
 
-LoweredBody ReciprocalLowering::LowerOutOfLine(const ReciprocalOperands& operands, std::span<const std::uint8_t> trailing) const {
+LoweredBody ReciprocalLowering::LowerOutOfLine(const ReciprocalOperands& operands,
+                                               std::span<const std::uint8_t> trailing) const {
     StubBodyBuilder body;
     EmitOutOfLine(body, operands);
     body.Raw(trailing);

@@ -17,14 +17,16 @@ struct Owned {
 
 inline void DestroyAll(void* value) {
     auto* owned = static_cast<std::vector<Owned>*>(value);
-    for (auto it = owned->rbegin(); it != owned->rend(); ++it) it->destroy(it->object);
+    for (auto it = owned->rbegin(); it != owned->rend(); ++it)
+        it->destroy(it->object);
     delete owned;
 }
 
 inline pthread_key_t Key() {
     static const pthread_key_t key = [] {
         pthread_key_t created{};
-        if (pthread_key_create(&created, DestroyAll) != 0) throw std::runtime_error("ThreadOwned: pthread_key_create failed");
+        if (pthread_key_create(&created, DestroyAll) != 0)
+            throw std::runtime_error("ThreadOwned: pthread_key_create failed");
         return created;
     }();
     return key;
@@ -44,8 +46,7 @@ inline void DestroyAtThreadExit(void* object, void (*destroy)(void*)) {
 
 }
 
-template<typename T>
-T& ThreadOwned(T*& slot) {
+template <typename T> T& ThreadOwned(T*& slot) {
     if (slot == nullptr) {
         auto object = std::make_unique<T>();
         ThreadOwnedDetail::DestroyAtThreadExit(object.get(), [](void* value) { delete static_cast<T*>(value); });

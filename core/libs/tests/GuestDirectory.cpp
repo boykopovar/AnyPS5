@@ -14,13 +14,19 @@ int APS5_VABI closedir_nid_postfix(void*);
 void APS5_VABI rewinddir_nid_postfix(void*);
 int* APS5_VABI __error_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
-    const auto root = std::filesystem::path("anyps5-directory-test-" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::path(
+        "anyps5-directory-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     Require(std::filesystem::create_directory(root / "subdirectory"));
-    { std::ofstream file(root / "sample.txt"); file << "test"; }
+    {
+        std::ofstream file(root / "sample.txt");
+        file << "test";
+    }
     void* directory = opendir_nid_postfix(root.string().c_str());
     Require(directory != nullptr);
     std::map<std::string, int> entries;
@@ -37,7 +43,8 @@ int main() {
     Require(entries.at(".") == 4 && entries.at("..") == 4);
     rewinddir_nid_postfix(directory);
     std::size_t count = 0;
-    while (readdir_nid_postfix(directory)) ++count;
+    while (readdir_nid_postfix(directory))
+        ++count;
     Require(count == entries.size());
     Require(closedir_nid_postfix(directory) == 0);
     Require(opendir_nid_postfix((root / "missing").string().c_str()) == nullptr);

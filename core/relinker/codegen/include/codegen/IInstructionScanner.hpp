@@ -12,11 +12,9 @@ class IInstructionScanner {
 public:
     virtual ~IInstructionScanner() = default;
 
-    [[nodiscard]] virtual std::vector<InstructionMatch> ScanCodeSection(
-        const std::vector<std::uint8_t>& codeSection,
-        Domain::FileByteOffset codeSectionOffset,
-        Domain::FileByteOffset codeSectionSize
-    ) const = 0;
+    [[nodiscard]] virtual std::vector<InstructionMatch>
+    ScanCodeSection(const std::vector<std::uint8_t>& codeSection, Domain::FileByteOffset codeSectionOffset,
+                    Domain::FileByteOffset codeSectionSize) const = 0;
 };
 
 std::unique_ptr<IInstructionScanner> MakeInstructionScanner();

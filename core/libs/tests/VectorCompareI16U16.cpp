@@ -4,7 +4,10 @@
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("vector compare regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("vector compare regression");
+}
 static void Check(std::uint32_t encoding, RdnaOpcode opcode) {
     const std::array<std::uint32_t, 1> code{(encoding << 17u) | (1u << 9u) | 100u};
     const RdnaInstruction instruction = DecodeRdnaVopc(0u, code, 0u);

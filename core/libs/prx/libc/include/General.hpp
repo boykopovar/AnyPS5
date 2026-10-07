@@ -19,10 +19,10 @@ extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix);
 
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
 
-#define APS5_DUMMY_FUN \
-int DummyFunction_nid_no_patch() { \
-    NotImplemented_nid_no_patch(__func__); \
-    return 0; \
-}
+#define APS5_DUMMY_FUN                                                                                                 \
+    int DummyFunction_nid_no_patch() {                                                                                 \
+        NotImplemented_nid_no_patch(__func__);                                                                         \
+        return 0;                                                                                                      \
+    }
 
 #endif

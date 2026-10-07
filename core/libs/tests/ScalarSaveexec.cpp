@@ -4,7 +4,10 @@
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("scalar saveexec regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("scalar saveexec regression");
+}
 static void Check(std::uint32_t encoding, RdnaOpcode opcode) {
     const std::array<std::uint32_t, 1> code{0x80000000u | (106u << 16u) | (encoding << 8u) | 10u};
     const RdnaInstruction instruction = DecodeRdnaSop1(0u, code, 0u);

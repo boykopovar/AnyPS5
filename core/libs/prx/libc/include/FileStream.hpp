@@ -43,7 +43,8 @@ class FileStream {
 
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
-        if (!_handle) throw std::runtime_error("FileStream: null handle");
+        if (!_handle)
+            throw std::runtime_error("FileStream: null handle");
         _guest.flags = handle == stdin ? 4 : handle == stdout || handle == stderr ? 8 : 0x10;
 #ifdef _WIN32
         const int descriptor = _fileno(handle);
@@ -57,13 +58,12 @@ public:
     FileStream& operator=(const FileStream&) = delete;
 
     std::FILE* GetHandle() const {
-        if (!_handle) throw std::runtime_error("FileStream: closed stream");
+        if (!_handle)
+            throw std::runtime_error("FileStream: closed stream");
         return _handle;
     }
 
-    bool IsDynamic() const {
-        return _dynamic;
-    }
+    bool IsDynamic() const { return _dynamic; }
 
     GuestFilePrefix& GuestState() { return _guest; }
     bool Reopen(const char* filename, const char* mode) {
@@ -71,7 +71,8 @@ public:
         _guest = {};
         encodingError = false;
         _handle = std::freopen(filename, mode, previous);
-        if (!_handle) return false;
+        if (!_handle)
+            return false;
         _guest.flags = 0x10;
 #ifdef _WIN32
         const int descriptor = _fileno(_handle);
@@ -84,8 +85,8 @@ public:
     void SyncStatus() {
         _guest.readRemaining = 0;
         _guest.writeRemaining = 0;
-        _guest.flags = static_cast<std::int16_t>((_guest.flags & ~0x60) |
-            (std::feof(GetHandle()) ? 0x20 : 0) | (std::ferror(GetHandle()) || encodingError ? 0x40 : 0));
+        _guest.flags = static_cast<std::int16_t>((_guest.flags & ~0x60) | (std::feof(GetHandle()) ? 0x20 : 0) |
+                                                 (std::ferror(GetHandle()) || encodingError ? 0x40 : 0));
     }
 
     void SetEncodingError() {
@@ -101,7 +102,8 @@ public:
 
     void Close() {
         GetHandle();
-        if (std::fclose(std::exchange(_handle, nullptr)) != 0) throw std::runtime_error("FileStream: close failed");
+        if (std::fclose(std::exchange(_handle, nullptr)) != 0)
+            throw std::runtime_error("FileStream: close failed");
         _guest.flags = 0;
         _guest.descriptor = -1;
     }
@@ -109,7 +111,8 @@ public:
 static_assert(std::is_standard_layout_v<FileStream>);
 
 inline std::FILE* GetNativeStream(FileStream* stream) {
-    if (!stream) throw std::runtime_error("FileStream: null stream");
+    if (!stream)
+        throw std::runtime_error("FileStream: null stream");
     return stream->GetHandle();
 }
 

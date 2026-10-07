@@ -59,7 +59,8 @@ constexpr std::uint32_t Sop1(std::uint32_t opcode, std::uint32_t destination, st
     return 0xbe800000u | (destination << 16u) | (opcode << 8u) | source;
 }
 
-constexpr std::uint32_t Sop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0, std::uint32_t source1) {
+constexpr std::uint32_t Sop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0,
+                             std::uint32_t source1) {
     return 0x80000000u | (opcode << 23u) | (destination << 16u) | (source1 << 8u) | source0;
 }
 
@@ -75,7 +76,8 @@ constexpr std::uint32_t Vop1(std::uint32_t opcode, std::uint32_t destination, st
     return 0x7e000000u | (destination << 17u) | (opcode << 9u) | source;
 }
 
-constexpr std::uint32_t Vop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0, std::uint32_t source1) {
+constexpr std::uint32_t Vop2(std::uint32_t opcode, std::uint32_t destination, std::uint32_t source0,
+                             std::uint32_t source1) {
     return (opcode << 25u) | (destination << 17u) | (source1 << 9u) | source0;
 }
 
@@ -88,7 +90,8 @@ constexpr std::array<std::uint32_t, CodeWords> BuildCode() {
     constexpr std::uint32_t vMovB32 = 0x01u;
     constexpr std::uint32_t vLshlrevB32 = 0x1au;
     constexpr std::uint32_t bufferStoreDwordIndexed = 0xe0702000u;
-    constexpr std::uint32_t storeOperands = (ConstantZero << 24u) | ((OutputRegister / 4u) << 16u) | (DataVector << 8u) | IndexVector;
+    constexpr std::uint32_t storeOperands =
+        (ConstantZero << 24u) | ((OutputRegister / 4u) << 16u) | (DataVector << 8u) | IndexVector;
     std::array<std::uint32_t, CodeWords> code{};
     std::size_t count = 0;
     std::uint32_t result = 0;
@@ -122,7 +125,8 @@ alignas(256) constexpr std::array<std::uint32_t, CodeWords> WaitCode = BuildCode
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -138,14 +142,14 @@ void Run(AgcDriver::VulkanDevice& device) {
     std::copy(output.begin(), output.end(), userData.begin() + OutputRegister);
     userData[ValueRegister] = Value;
     const std::span<const std::uint32_t> code(WaitCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -158,13 +162,15 @@ void Check() {
         for (const Wait& wait : Waits) {
             for (const std::uint32_t reg : Registers) {
                 for (const std::uint16_t level : Levels) {
-                    const std::string label = "scalar sopk waitcnt: thread " + std::to_string(tid) + " " + wait.name + " register " + Hex(reg) + ", level " + Hex(level);
+                    const std::string label = "scalar sopk waitcnt: thread " + std::to_string(tid) + " " + wait.name +
+                                              " register " + Hex(reg) + ", level " + Hex(level);
                     const std::uint32_t mask = Output[tid * Results + result++];
                     const std::uint32_t value = Output[tid * Results + result++];
                     Require((mask & SccKept) != 0u, label + " cleared SCC");
                     Require((mask & SccRaised) == 0u, label + " set SCC");
                     Require(mask == SccKept, label + " left the flags at " + Hex(mask));
-                    Require(value == Value, label + " left s" + std::to_string(ValueRegister) + " at " + Hex(value) + ", expected " + Hex(Value));
+                    Require(value == Value, label + " left s" + std::to_string(ValueRegister) + " at " + Hex(value) +
+                                                ", expected " + Hex(Value));
                 }
             }
         }
@@ -176,7 +182,8 @@ void Check() {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         Run(*device);
         Check();
         std::puts("scalar sopk waitcnt tests passed");

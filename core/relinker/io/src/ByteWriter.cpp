@@ -28,9 +28,7 @@ void ByteWriter::WriteU64(std::vector<std::uint8_t>& buf, std::size_t offset, st
     std::memcpy(buf.data() + offset, &v, 8);
 }
 
-void ByteWriter::AppendU8(std::vector<std::uint8_t>& buf, std::uint8_t v) const {
-    buf.push_back(v);
-}
+void ByteWriter::AppendU8(std::vector<std::uint8_t>& buf, std::uint8_t v) const { buf.push_back(v); }
 
 void ByteWriter::AppendU16(std::vector<std::uint8_t>& buf, std::uint16_t v) const {
     const std::size_t pos = buf.size();

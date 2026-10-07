@@ -18,13 +18,13 @@ constexpr int SaveDataErrorNotFound = -2137063416;
 int failures = 0;
 
 void Check(bool condition, const std::string& what) {
-    if (condition) return;
+    if (condition)
+        return;
     std::fprintf(stderr, "savedata ps4 check failed: %s\n", what.c_str());
     ++failures;
 }
 
-template <typename TFunction>
-bool ThrowsRuntimeError(TFunction function) {
+template <typename TFunction> bool ThrowsRuntimeError(TFunction function) {
     try {
         function();
     } catch (const std::runtime_error&) {
@@ -44,7 +44,8 @@ void TestTransferringMountPs4() {
     mount.dir_name = &dir;
     SaveDataMountResult result{};
     std::memset(&result, 0xAA, sizeof(result));
-    Check(sceSaveDataTransferringMountPs4(&mount, &result) == SaveDataErrorNotFound, "TransferringMountPs4 returns NOT_FOUND");
+    Check(sceSaveDataTransferringMountPs4(&mount, &result) == SaveDataErrorNotFound,
+          "TransferringMountPs4 returns NOT_FOUND");
     Check(result.mount_point.data[0] == '\0', "TransferringMountPs4 reports no mount point");
 }
 
@@ -59,7 +60,8 @@ void TestDirNameSearchPs4() {
     result.dir_names = names;
     result.dir_names_num = 4;
 
-    Check(sceSaveDataDirNameSearch(&cond, &result) == 0 && result.hit_num == 1 && result.set_num == 1, "the PS5 search finds the PS5 save");
+    Check(sceSaveDataDirNameSearch(&cond, &result) == 0 && result.hit_num == 1 && result.set_num == 1,
+          "the PS5 search finds the PS5 save");
 
     std::memset(names, 0x5A, sizeof(names));
     result.hit_num = 7;
@@ -76,7 +78,8 @@ void TestDirNameSearchPs4() {
 }
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() / ("anyps5-savedata-ps4-" + std::to_string(std::random_device{}()));
+    const auto root =
+        std::filesystem::temp_directory_path() / ("anyps5-savedata-ps4-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root / "_sd" / "kept");
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(root);
@@ -87,7 +90,8 @@ int main() {
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    if (failures != 0) return 1;
+    if (failures != 0)
+        return 1;
     std::printf("savedata ps4 tests passed\n");
     return 0;
 }

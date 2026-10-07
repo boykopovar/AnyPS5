@@ -24,13 +24,7 @@ enum class BranchCondition {
     Unknown
 };
 
-enum class TerminatorKind {
-    Branch,
-    ConditionalBranch,
-    IndirectBranch,
-    Return,
-    Unsupported
-};
+enum class TerminatorKind { Branch, ConditionalBranch, IndirectBranch, Return, Unsupported };
 
 enum class FailureKind {
     None,
@@ -120,7 +114,8 @@ struct ControlFlowGraph {
     [[nodiscard]] BasicBlock& FindBlockByProgramCounter(std::uint32_t programCounter);
     [[nodiscard]] bool Dominates(std::uint32_t dominator, std::uint32_t blockId) const;
     [[nodiscard]] bool PostDominates(std::uint32_t postDominator, std::uint32_t blockId) const;
-    [[nodiscard]] std::uint32_t FindNearestCommonPostDominator(std::uint32_t firstBlock, std::uint32_t secondBlock) const;
+    [[nodiscard]] std::uint32_t FindNearestCommonPostDominator(std::uint32_t firstBlock,
+                                                               std::uint32_t secondBlock) const;
 };
 
 [[nodiscard]] std::string BranchConditionToString(BranchCondition condition);

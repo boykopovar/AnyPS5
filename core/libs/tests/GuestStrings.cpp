@@ -43,9 +43,12 @@ static bool CheckMemcpyOverlap() {
         const auto* source = destination + offset;
         const int error = memcpy_s_nid_postfix(destination, 8, source, 4);
         bool cleared = true;
-        for (unsigned i = 4; i < 12; ++i) cleared &= bytes[i] == 0;
+        for (unsigned i = 4; i < 12; ++i)
+            cleared &= bytes[i] == 0;
         const bool matches = error == 22 && cleared && bytes[3] == 0x5a && bytes[12] == 0x5a;
-        if (!matches) std::fprintf(stderr, "memcpy_s overlap %+d: expected EINVAL 22 and eight zero bytes, received %d\n", offset, error);
+        if (!matches)
+            std::fprintf(stderr, "memcpy_s overlap %+d: expected EINVAL 22 and eight zero bytes, received %d\n", offset,
+                         error);
         correct &= matches;
     }
     unsigned char adjacent[] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -81,7 +84,8 @@ static void CheckBoundsCheckedFunctions() {
     const char haystack[] = "haystack";
     Require(strnstr_nid_postfix(haystack, "st", 6) == haystack + 3);
     char formatted[8];
-    Require(snprintf_s_nid_postfix(formatted, sizeof(formatted), "%d-%s", 42, "x") == 4 && std::strcmp(formatted, "42-x") == 0);
+    Require(snprintf_s_nid_postfix(formatted, sizeof(formatted), "%d-%s", 42, "x") == 4 &&
+            std::strcmp(formatted, "42-x") == 0);
 }
 
 static void CheckSscanfS() {
@@ -90,9 +94,11 @@ static void CheckSscanfS() {
     char word[4] = "zz";
     char letter = 0;
     char value[8] = {};
-    Require(sscanf_s_nid_postfix(" 12 abc x", "%d %s %c", &number, word, 4u, &letter, 1u) == 3 && number == 12 && std::strcmp(word, "abc") == 0 && letter == 'x');
+    Require(sscanf_s_nid_postfix(" 12 abc x", "%d %s %c", &number, word, 4u, &letter, 1u) == 3 && number == 12 &&
+            std::strcmp(word, "abc") == 0 && letter == 'x');
     Require(sscanf_s_nid_postfix("12 abcd", "%d %s", &number, word, 4u) == 1 && word[0] == '\0');
-    Require(sscanf_s_nid_postfix("key=val", "%3[a-z]=%3s", word, 4u, value, 8u) == 2 && std::strcmp(word, "key") == 0 && std::strcmp(value, "val") == 0);
+    Require(sscanf_s_nid_postfix("key=val", "%3[a-z]=%3s", word, 4u, value, 8u) == 2 && std::strcmp(word, "key") == 0 &&
+            std::strcmp(value, "val") == 0);
     int position = 0;
     Require(sscanf_s_nid_postfix("7 %", "%d %%%n", &number, &position) == 1 && position == 3);
     Require(sscanf_s_nid_postfix("   ", "%d", &number) == EOF);

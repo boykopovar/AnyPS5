@@ -8,7 +8,8 @@
 
 extern "C" {
 
-int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* out_attrib, uint32_t flags) {
+int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source,
+                               Ngs2GeomAttribute* out_attrib, uint32_t flags) {
     (void)listener;
     (void)source;
     (void)out_attrib;
@@ -17,7 +18,8 @@ int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2G
     return 0;
 }
 
-int APS5_VABI sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* out_work, uint32_t flags) {
+int APS5_VABI sceNgs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* out_work,
+                                      uint32_t flags) {
     (void)param;
     (void)out_work;
     (void)flags;
@@ -37,7 +39,8 @@ int APS5_VABI sceNgs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param)
     return 0;
 }
 
-int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
+int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params,
+                                        uint32_t matrix_format, float* out_volume_matrix) {
     (void)work;
     (void)params;
     (void)num_params;
@@ -55,7 +58,6 @@ int APS5_VABI sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, flo
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }
 
 #pragma GCC visibility pop

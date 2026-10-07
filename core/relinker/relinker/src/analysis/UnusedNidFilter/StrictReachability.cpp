@@ -37,25 +37,32 @@ public:
     StrictReachabilityResult Run() {
         if (input.Text.empty() || input.Text.size() > std::numeric_limits<VirtualAddress>::max() - input.TextVaddr)
             throw RelinkerException("Strict filter: invalid text range");
-        if (input.Entries.empty()) throw RelinkerException("Strict filter: no entry points");
+        if (input.Entries.empty())
+            throw RelinkerException("Strict filter: no entry points");
         buildRegions();
         buildEdges();
-        for (const auto& [slot, target] : input.Pointers) addAddressTaken(target);
+        for (const auto& [slot, target] : input.Pointers)
+            addAddressTaken(target);
         collectDataPointers();
         collectRelativeTables();
         std::deque<VirtualAddress> pending;
         std::set<VirtualAddress> live;
         const auto enqueue = [&](VirtualAddress target) {
-            if (input.ImportSlots.contains(target)) result.ImportSlots.insert(target);
-            if (!isCode(target)) return;
+            if (input.ImportSlots.contains(target))
+                result.ImportSlots.insert(target);
+            if (!isCode(target))
+                return;
             const auto begin = owner(target).Begin;
-            if (live.insert(begin).second) pending.push_back(begin);
+            if (live.insert(begin).second)
+                pending.push_back(begin);
         };
         for (const auto entry : input.Entries) {
-            if (!isCode(entry)) throw RelinkerException("Strict filter: entry point lies outside code", entry);
+            if (!isCode(entry))
+                throw RelinkerException("Strict filter: entry point lies outside code", entry);
             enqueue(entry);
         }
-        for (const auto root : addressTaken) enqueue(root);
+        for (const auto root : addressTaken)
+            enqueue(root);
         while (!pending.empty()) {
             const auto begin = pending.front();
             pending.pop_front();
@@ -63,7 +70,8 @@ public:
             result.Instructions.insert(region.Instructions.begin(), region.Instructions.end());
             result.ImportSlots.insert(region.Imports.begin(), region.Imports.end());
             result.IndirectTransfers += region.IndirectTransfers;
-            for (const auto target : region.Edges) enqueue(target);
+            for (const auto target : region.Edges)
+                enqueue(target);
         }
         result.LiveRegions = live.size();
         result.TotalRegions = regions.size();
@@ -98,7 +106,8 @@ private:
         } catch (const Codegen::CodegenException& error) {
             throw RelinkerException(std::string("Strict filter: ") + error.what(), address);
         }
-        if (info.Length == 0 || info.Length > end - address) throw RelinkerException("Strict filter: instruction crosses a region boundary", address);
+        if (info.Length == 0 || info.Length > end - address)
+            throw RelinkerException("Strict filter: instruction crosses a region boundary", address);
         return {address, info};
     }
 
@@ -111,7 +120,8 @@ private:
     void addGap(VirtualAddress begin, VirtualAddress end) {
         VirtualAddress regionBegin = begin;
         for (auto address = begin; address < end;) {
-            if (isZeroPadding(address, end)) break;
+            if (isZeroPadding(address, end))
+                break;
             const auto instruction = decode(address, end);
             address += instruction.Info.Length;
             if (endsFlow(instruction.Info.FlowKind)) {
@@ -119,12 +129,14 @@ private:
                 regionBegin = address;
             }
         }
-        if (regionBegin != end) regions.emplace(regionBegin, Region{regionBegin, end, {}, {}, {}});
+        if (regionBegin != end)
+            regions.emplace(regionBegin, Region{regionBegin, end, {}, {}, {}});
     }
 
     void buildRegions() {
         auto functions = input.Functions;
-        std::sort(functions.begin(), functions.end(), [](const auto& left, const auto& right) { return left.Begin < right.Begin; });
+        std::sort(functions.begin(), functions.end(),
+                  [](const auto& left, const auto& right) { return left.Begin < right.Begin; });
         auto previousEnd = input.TextVaddr;
         const auto textEnd = input.TextVaddr + input.Text.size();
         for (const auto& function : functions) {
@@ -140,7 +152,8 @@ private:
     }
 
     void addAddressTaken(VirtualAddress target) {
-        if (isCode(target) || input.ImportSlots.contains(target)) addressTaken.insert(target);
+        if (isCode(target) || input.ImportSlots.contains(target))
+            addressTaken.insert(target);
     }
 
     void buildEdges() {
@@ -158,25 +171,33 @@ private:
                 region.Instructions.push_back(address);
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                     const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
-                    if (!isCode(target)) throw RelinkerException("Strict filter: direct branch leaves code", address);
+                    if (!isCode(target))
+                        throw RelinkerException("Strict filter: direct branch leaves code", address);
                     region.Edges.insert(target);
                 }
                 if (info.HasRipRelativeDisp) {
                     std::int32_t displacement;
-                    std::memcpy(&displacement, input.Text.data() + offset + info.RipRelativeDispOffset, sizeof(displacement));
+                    std::memcpy(&displacement, input.Text.data() + offset + info.RipRelativeDispOffset,
+                                sizeof(displacement));
                     const auto target = next + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
-                    if (input.ImportSlots.contains(target)) region.Imports.insert(target);
+                    if (input.ImportSlots.contains(target))
+                        region.Imports.insert(target);
                     if (!info.IsTwoByteOpcode && info.Opcode == 0x8D) {
                         addAddressTaken(target);
                         tableBases.insert(target);
                     }
-                    if (const auto pointer = input.Pointers.find(target); pointer != input.Pointers.end()) region.Edges.insert(pointer->second);
+                    if (const auto pointer = input.Pointers.find(target); pointer != input.Pointers.end())
+                        region.Edges.insert(pointer->second);
                 }
                 using enum Codegen::ControlFlowKind;
-                if (info.FlowKind == IndirectCall || info.FlowKind == IndirectJump || ((info.FlowKind == Call || info.FlowKind == UnconditionalJump) && info.HasRipRelativeDisp)) ++region.IndirectTransfers;
-                if (!info.IsTwoByteOpcode && ((info.Opcode >= 0xB8 && info.Opcode <= 0xBF) || info.Opcode == 0x68 || info.Opcode == 0xC7)) {
+                if (info.FlowKind == IndirectCall || info.FlowKind == IndirectJump ||
+                    ((info.FlowKind == Call || info.FlowKind == UnconditionalJump) && info.HasRipRelativeDisp))
+                    ++region.IndirectTransfers;
+                if (!info.IsTwoByteOpcode &&
+                    ((info.Opcode >= 0xB8 && info.Opcode <= 0xBF) || info.Opcode == 0x68 || info.Opcode == 0xC7)) {
                     for (const auto width : {4u, 8u}) {
-                        if (info.Length <= width) continue;
+                        if (info.Length <= width)
+                            continue;
                         std::uint64_t value = 0;
                         std::memcpy(&value, input.Text.data() + offset + info.Length - width, width);
                         addAddressTaken(value);
@@ -185,7 +206,8 @@ private:
                 lastFlow = info.FlowKind;
                 address = next;
             }
-            if (!endsFlow(lastFlow) && isCode(region.End)) region.Edges.insert(region.End);
+            if (!endsFlow(lastFlow) && isCode(region.End))
+                region.Edges.insert(region.End);
         }
     }
 
@@ -202,12 +224,15 @@ private:
     void collectRelativeTables() {
         for (const auto base : tableBases) {
             for (const auto& data : input.Data) {
-                if (base < data.Address || base - data.Address >= data.Bytes.size()) continue;
-                for (auto offset = static_cast<std::size_t>(base - data.Address); offset + 4 <= data.Bytes.size(); offset += 4) {
+                if (base < data.Address || base - data.Address >= data.Bytes.size())
+                    continue;
+                for (auto offset = static_cast<std::size_t>(base - data.Address); offset + 4 <= data.Bytes.size();
+                     offset += 4) {
                     std::int32_t displacement;
                     std::memcpy(&displacement, data.Bytes.data() + offset, sizeof(displacement));
                     const auto target = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
-                    if (!isCode(target)) break;
+                    if (!isCode(target))
+                        break;
                     addAddressTaken(target);
                 }
             }

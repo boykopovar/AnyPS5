@@ -22,5 +22,4 @@ int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data);
 int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev);
 
 #endif
-
 }

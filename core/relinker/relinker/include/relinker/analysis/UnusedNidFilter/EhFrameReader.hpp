@@ -5,7 +5,10 @@
 
 namespace Relinker::UnusedNidFilter {
 
-std::vector<StrictCodeRegion> ReadExceptionFunctions(const std::vector<std::uint8_t>& bytes, const std::vector<ProgramHeader>& headers, const std::map<VirtualAddress, VirtualAddress>& pointers, const std::set<VirtualAddress>& importSlots);
+std::vector<StrictCodeRegion> ReadExceptionFunctions(const std::vector<std::uint8_t>& bytes,
+                                                     const std::vector<ProgramHeader>& headers,
+                                                     const std::map<VirtualAddress, VirtualAddress>& pointers,
+                                                     const std::set<VirtualAddress>& importSlots);
 
 }
 

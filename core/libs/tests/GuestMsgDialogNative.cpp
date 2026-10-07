@@ -18,7 +18,10 @@ int APS5_VABI sceMsgDialogProgressBarSetValue(int target, std::uint32_t rate);
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 constexpr int kStatusInitialized = 1;
 constexpr int kStatusFinished = 3;

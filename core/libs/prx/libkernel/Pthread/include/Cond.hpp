@@ -20,7 +20,6 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond);
 int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread);
 int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
 int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec);
-
 }
 
 #endif

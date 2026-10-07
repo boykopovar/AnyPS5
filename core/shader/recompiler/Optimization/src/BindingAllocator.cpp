@@ -8,12 +8,10 @@
 namespace ShaderRecompiler {
 namespace {
 
-[[noreturn]] void fail(const std::string& message) {
-    throw std::runtime_error(message);
-}
+[[noreturn]] void fail(const std::string& message) { throw std::runtime_error(message); }
 
 std::vector<std::uint32_t> collectUserData(const IrProgram& program) {
-    std::array<bool, NumScalarRegs> registers {};
+    std::array<bool, NumScalarRegs> registers{};
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() != IrOpcode::GetUserData || !inst->HasUses()) {
@@ -40,7 +38,7 @@ std::vector<std::uint32_t> collectUserData(const IrProgram& program) {
 }
 
 void addBinding(IrBindingLayout& layout, DescriptorBindingKind kind, std::vector<std::uint32_t> resources = {}) {
-    layout.descriptors.push_back(IrDescriptorBinding {kind, std::move(resources)});
+    layout.descriptors.push_back(IrDescriptorBinding{kind, std::move(resources)});
 }
 
 bool usesGds(const IrProgram& program) {
@@ -71,7 +69,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.shaderInfoComplete || metadata.bindingLayoutComplete) {
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
-                                          : "shader binding layout failed: shader info is not ready");
+                                         : "shader binding layout failed: shader info is not ready");
     }
     if (layout.descriptorSet != 0u) {
         fail("shader binding layout failed: descriptor set must be 0");
@@ -140,7 +138,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
             if (slot >= info.images.size() || info.images[slot].indirectRoot != i) {
                 fail("shader binding layout failed: image " + std::to_string(i) + " has an inconsistent table slot");
             }
-            if (slot != i) place(slot);
+            if (slot != i)
+                place(slot);
         }
     }
     for (std::uint32_t i = 0; i < imageGroups.size(); i++) {
@@ -164,8 +163,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         addBinding(next, DescriptorBindingKind::FaultBuffer);
     }
 
-    const bool usesFlattenedRuntime = !program.Resources().srtReads.empty() ||
-        std::ranges::any_of(info.images, [](const ImageResource& image) {
+    const bool usesFlattenedRuntime =
+        !program.Resources().srtReads.empty() || std::ranges::any_of(info.images, [](const ImageResource& image) {
             return image.indirectSearchIterations != 0u;
         });
     if (usesFlattenedRuntime) {
@@ -182,13 +181,16 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     BindingAllocationResult result;
     result.layout = metadata.bindings;
     if (result.layout.UsesPushData()) {
-        result.pushConstantOffsetBytes = result.layout.pushDataStartDword * static_cast<std::uint32_t>(sizeof(std::uint32_t));
-        result.pushConstantSizeBytes = result.layout.ShaderDataDwords() * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+        result.pushConstantOffsetBytes =
+            result.layout.pushDataStartDword * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+        result.pushConstantSizeBytes =
+            result.layout.ShaderDataDwords() * static_cast<std::uint32_t>(sizeof(std::uint32_t));
     }
     return result;
 }
 
-const IrDescriptorBinding& BindingAllocator::FindBinding(const IrBindingLayout& layout, DescriptorBindingKind kind) const {
+const IrDescriptorBinding& BindingAllocator::FindBinding(const IrBindingLayout& layout,
+                                                         DescriptorBindingKind kind) const {
     for (const IrDescriptorBinding& binding : layout.descriptors) {
         if (binding.kind == kind) {
             return binding;

@@ -13,7 +13,10 @@ struct ResourceUsage {
     std::int64_t rest[14];
 };
 extern "C" int APS5_VABI getrusage_nid_postfix(int who, ResourceUsage* usage);
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 static std::int64_t CpuMicros(int who) {
     ResourceUsage usage{};
     Require(getrusage_nid_postfix(who, &usage) == 0);
@@ -23,7 +26,8 @@ static void SpinUntil(int who, std::int64_t micros) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     volatile std::uint64_t sink = 0;
     while (CpuMicros(who) < micros) {
-        for (int i = 0; i < 100000; ++i) sink = sink + i;
+        for (int i = 0; i < 100000; ++i)
+            sink = sink + i;
         Require(std::chrono::steady_clock::now() < deadline);
     }
 }

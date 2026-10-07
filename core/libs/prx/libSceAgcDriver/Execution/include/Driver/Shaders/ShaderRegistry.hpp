@@ -42,7 +42,9 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
 
 std::uint64_t NullPixelProgramAddress();
 
-std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, std::uint64_t deviceSerial, const ShaderRecompiler::RecompileRequest& request, bool bypass, const std::string** poisoned = nullptr);
+std::shared_ptr<const ShaderRecompiler::SourceHandle>
+SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, std::uint64_t deviceSerial,
+                const ShaderRecompiler::RecompileRequest& request, bool bypass, const std::string** poisoned = nullptr);
 
 }
 

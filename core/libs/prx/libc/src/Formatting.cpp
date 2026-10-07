@@ -26,7 +26,8 @@ namespace {
 
 std::string HostLength(const std::string& length, char conversion) {
 #ifdef _WIN32
-    if (length == "l" && std::strchr("diouxXn", conversion) != nullptr) return "ll";
+    if (length == "l" && std::strchr("diouxXn", conversion) != nullptr)
+        return "ll";
 #else
     (void)conversion;
 #endif
@@ -35,7 +36,8 @@ std::string HostLength(const std::string& length, char conversion) {
 
 template <typename NextPointer, typename NextCapacity>
 int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer nextPointer, NextCapacity nextCapacity) {
-    if (buffer == nullptr || format == nullptr) return EOF;
+    if (buffer == nullptr || format == nullptr)
+        return EOF;
     const char* input = buffer;
     int assigned = 0;
     bool converted = false;
@@ -43,35 +45,48 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
     const auto finish = [](int result) { return result; };
     while (*cursor != '\0') {
         if (std::isspace(static_cast<unsigned char>(*cursor))) {
-            while (std::isspace(static_cast<unsigned char>(*cursor))) ++cursor;
-            while (std::isspace(static_cast<unsigned char>(*input))) ++input;
+            while (std::isspace(static_cast<unsigned char>(*cursor)))
+                ++cursor;
+            while (std::isspace(static_cast<unsigned char>(*input)))
+                ++input;
             continue;
         }
         if (*cursor != '%' || cursor[1] == '%') {
             const char expected = *cursor == '%' ? '%' : *cursor;
             cursor += *cursor == '%' ? 2 : 1;
-            if (expected == '%') while (std::isspace(static_cast<unsigned char>(*input))) ++input;
-            if (*input != expected) return finish(!converted && *input == '\0' ? EOF : assigned);
+            if (expected == '%')
+                while (std::isspace(static_cast<unsigned char>(*input)))
+                    ++input;
+            if (*input != expected)
+                return finish(!converted && *input == '\0' ? EOF : assigned);
             ++input;
             continue;
         }
         ++cursor;
         const bool suppress = *cursor == '*';
-        if (suppress) ++cursor;
+        if (suppress)
+            ++cursor;
         unsigned long width = 0;
-        while (std::isdigit(static_cast<unsigned char>(*cursor))) width = width * 10 + static_cast<unsigned long>(*cursor++ - '0');
+        while (std::isdigit(static_cast<unsigned char>(*cursor)))
+            width = width * 10 + static_cast<unsigned long>(*cursor++ - '0');
         const char* lengthStart = cursor;
-        while (std::strchr("hljztL", *cursor) != nullptr && *cursor != '\0') ++cursor;
+        while (std::strchr("hljztL", *cursor) != nullptr && *cursor != '\0')
+            ++cursor;
         const std::string length(lengthStart, cursor);
         const char conversion = *cursor;
-        if (conversion == '\0') return finish(assigned);
+        if (conversion == '\0')
+            return finish(assigned);
         std::string specifier(1, conversion);
         if (conversion == '[') {
             const char* setStart = cursor++;
-            if (*cursor == '^') ++cursor;
-            if (*cursor == ']') ++cursor;
-            while (*cursor != '\0' && *cursor != ']') ++cursor;
-            if (*cursor != ']') return finish(assigned);
+            if (*cursor == '^')
+                ++cursor;
+            if (*cursor == ']')
+                ++cursor;
+            while (*cursor != '\0' && *cursor != ']')
+                ++cursor;
+            if (*cursor != ']')
+                return finish(assigned);
             specifier.assign(setStart, cursor + 1);
         }
         ++cursor;
@@ -79,47 +94,60 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
             if (!suppress) {
                 void* target = nextPointer();
                 const auto count = input - buffer;
-                if (length == "hh") *static_cast<signed char*>(target) = static_cast<signed char>(count);
-                else if (length == "h") *static_cast<short*>(target) = static_cast<short>(count);
-                else if (length.empty()) *static_cast<int*>(target) = static_cast<int>(count);
+                if (length == "hh")
+                    *static_cast<signed char*>(target) = static_cast<signed char>(count);
+                else if (length == "h")
+                    *static_cast<short*>(target) = static_cast<short>(count);
+                else if (length.empty())
+                    *static_cast<int*>(target) = static_cast<int>(count);
                 else if (length == "l" || length == "ll" || length == "j" || length == "z" || length == "t") {
                     const std::int64_t value = count;
                     std::memcpy(target, &value, sizeof(value));
-                } else throw std::invalid_argument("Invalid scan count length");
+                } else
+                    throw std::invalid_argument("Invalid scan count length");
             }
             continue;
         }
         if (conversion != 'c' && conversion != '[') {
             const char* probe = input;
-            while (std::isspace(static_cast<unsigned char>(*probe))) ++probe;
-            if (*probe == '\0') return finish(converted ? assigned : EOF);
+            while (std::isspace(static_cast<unsigned char>(*probe)))
+                ++probe;
+            if (*probe == '\0')
+                return finish(converted ? assigned : EOF);
         }
         const bool sized = secure && (conversion == 's' || conversion == 'c' || conversion == '[');
         std::string directive = "%";
         void* target = nullptr;
-        if (suppress) directive += '*';
-        else target = nextPointer();
+        if (suppress)
+            directive += '*';
+        else
+            target = nextPointer();
         if (sized && !suppress) {
             const auto capacity = static_cast<unsigned long>(nextCapacity());
             const unsigned long limit = conversion == 'c' ? capacity : (capacity == 0 ? 0 : capacity - 1);
             const unsigned long wanted = conversion == 'c' ? (width == 0 ? 1 : width) : width;
             if (limit == 0 || (conversion == 'c' && wanted > limit)) {
-                if (capacity != 0) static_cast<char*>(target)[0] = '\0';
+                if (capacity != 0)
+                    static_cast<char*>(target)[0] = '\0';
                 return finish(assigned);
             }
             width = wanted == 0 ? limit : std::min(wanted, limit);
         }
-        if (width != 0) directive += std::to_string(width);
+        if (width != 0)
+            directive += std::to_string(width);
         directive += HostLength(length, conversion);
         directive += specifier;
         directive += "%n";
         int consumed = -1;
-        const int matched = suppress ? std::sscanf(input, directive.c_str(), &consumed) : std::sscanf(input, directive.c_str(), target, &consumed);
-        if (consumed < 0 || (!suppress && matched != 1)) return finish(!converted && *input == '\0' ? EOF : assigned);
+        const int matched = suppress ? std::sscanf(input, directive.c_str(), &consumed)
+                                     : std::sscanf(input, directive.c_str(), target, &consumed);
+        if (consumed < 0 || (!suppress && matched != 1))
+            return finish(!converted && *input == '\0' ? EOF : assigned);
         if (sized && !suppress && conversion != 'c') {
             const char next = input[consumed];
             bool overflow = false;
-            if (conversion == 's') overflow = next != '\0' && !std::isspace(static_cast<unsigned char>(next));
+            if (conversion == 's')
+                overflow = next != '\0' && !std::isspace(static_cast<unsigned char>(next));
             else if (next != '\0') {
                 char probe[2];
                 const std::string test = "%1" + specifier;
@@ -132,7 +160,8 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
         }
         input += consumed;
         converted = true;
-        if (!suppress) ++assigned;
+        if (!suppress)
+            ++assigned;
     }
     return finish(assigned);
 }
@@ -157,9 +186,15 @@ int APS5_VABI swprintf_nid_postfix(wchar_t* output, size_t capacity, const wchar
 }
 
 int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaList* args) {
-    if (!destination) { errno = 22; return -1; }
+    if (!destination) {
+        errno = 22;
+        return -1;
+    }
     *destination = nullptr;
-    if (!format || !args) { errno = 22; return -1; }
+    if (!format || !args) {
+        errno = 22;
+        return -1;
+    }
     try {
 #ifdef _WIN32
         std::string text;
@@ -169,7 +204,8 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
         char* text = nullptr;
         const int count = ::vasprintf(&text, format, *reinterpret_cast<std::va_list*>(args));
         std::unique_ptr<char, decltype(&std::free)> owner(text, std::free);
-        if (count < 0) return -1;
+        if (count < 0)
+            return -1;
         const char* source = text;
 #endif
         auto* output = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(static_cast<size_t>(count) + 1));
@@ -187,8 +223,8 @@ int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaLis
 #ifdef _WIN32
     std::string buffer;
     const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
-    const int result = std::fwrite(buffer.data(), 1, static_cast<size_t>(count), native) ==
-        static_cast<size_t>(count) ? count : -1;
+    const int result =
+        std::fwrite(buffer.data(), 1, static_cast<size_t>(count), native) == static_cast<size_t>(count) ? count : -1;
 #else
     const int result = std::vfprintf(native, format, *reinterpret_cast<std::va_list*>(args));
 #endif
@@ -275,43 +311,31 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
 }
 
 int APS5_VABI libc_printf_nid_postfix(VA_ARGS) {
-    (void)rcx; (void)r8; (void)r9;
+    (void)rcx;
+    (void)r8;
+    (void)r9;
     LibcDetail::RegSaveArea regs;
-    LibcDetail::FillRegSaveArea(regs, rsi, rdx, rcx, r8, r9, 0,
-        xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
+    LibcDetail::FillRegSaveArea(regs, rsi, rdx, rcx, r8, r9, 0, xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
     LibcDetail::VaListLayout layout;
-    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u,
-        reinterpret_cast<void*>(overflow_arg_area));
+    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u, reinterpret_cast<void*>(overflow_arg_area));
     return std::vprintf(reinterpret_cast<const char*>(rdi), *va);
 }
 
 int APS5_VABI snprintf_nid_postfix(VA_ARGS) {
     LibcDetail::RegSaveArea regs;
-    LibcDetail::FillRegSaveArea(regs, rcx, r8, r9, 0, 0, 0,
-        xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
+    LibcDetail::FillRegSaveArea(regs, rcx, r8, r9, 0, 0, 0, xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
     LibcDetail::VaListLayout layout;
-    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u,
-        reinterpret_cast<void*>(overflow_arg_area));
-    return std::vsnprintf(
-        reinterpret_cast<char*>(rdi),
-        static_cast<size_t>(rsi),
-        reinterpret_cast<const char*>(rdx),
-        *va
-    );
+    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u, reinterpret_cast<void*>(overflow_arg_area));
+    return std::vsnprintf(reinterpret_cast<char*>(rdi), static_cast<size_t>(rsi), reinterpret_cast<const char*>(rdx),
+                          *va);
 }
 
 int APS5_VABI sprintf_nid_postfix(VA_ARGS) {
     LibcDetail::RegSaveArea regs;
-    LibcDetail::FillRegSaveArea(regs, rdx, rcx, r8, r9, 0, 0,
-        xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
+    LibcDetail::FillRegSaveArea(regs, rdx, rcx, r8, r9, 0, 0, xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
     LibcDetail::VaListLayout layout;
-    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u,
-        reinterpret_cast<void*>(overflow_arg_area));
-    return std::vsprintf(
-        reinterpret_cast<char*>(rdi),
-        reinterpret_cast<const char*>(rsi),
-        *va
-    );
+    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u, reinterpret_cast<void*>(overflow_arg_area));
+    return std::vsprintf(reinterpret_cast<char*>(rdi), reinterpret_cast<const char*>(rsi), *va);
 }
 
 #endif
@@ -335,16 +359,10 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
 #else
 int APS5_VABI sscanf_nid_postfix(VA_ARGS) {
     LibcDetail::RegSaveArea regs;
-    LibcDetail::FillRegSaveArea(regs, rdx, rcx, r8, r9, 0, 0,
-        xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
+    LibcDetail::FillRegSaveArea(regs, rdx, rcx, r8, r9, 0, 0, xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
     LibcDetail::VaListLayout layout;
-    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u,
-        reinterpret_cast<void*>(overflow_arg_area));
-    return std::vsscanf(
-        reinterpret_cast<const char*>(rdi),
-        reinterpret_cast<const char*>(rsi),
-        *va
-    );
+    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u, reinterpret_cast<void*>(overflow_arg_area));
+    return std::vsscanf(reinterpret_cast<const char*>(rdi), reinterpret_cast<const char*>(rsi), *va);
 }
 #endif
 
@@ -353,7 +371,9 @@ int APS5_VABI sscanf_nid_postfix(VA_ARGS) {
 int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = ScanGuest(buffer, format, true, [&] { return __builtin_va_arg(args, void*); }, [&] { return __builtin_va_arg(args, unsigned int); });
+    const int result = ScanGuest(
+        buffer, format, true, [&] { return __builtin_va_arg(args, void*); },
+        [&] { return __builtin_va_arg(args, unsigned int); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -363,7 +383,8 @@ int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) 
 int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = ScanGuest(buffer, format, true, [&] { return va_arg(args, void*); }, [&] { return va_arg(args, unsigned int); });
+    const int result = ScanGuest(
+        buffer, format, true, [&] { return va_arg(args, void*); }, [&] { return va_arg(args, unsigned int); });
     va_end(args);
     return result;
 }
@@ -446,8 +467,5 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
 
 #endif
 
-int APS5_VABI puts_nid_postfix(const char* s) {
-    return std::puts(s);
-}
-
+int APS5_VABI puts_nid_postfix(const char* s) { return std::puts(s); }
 }

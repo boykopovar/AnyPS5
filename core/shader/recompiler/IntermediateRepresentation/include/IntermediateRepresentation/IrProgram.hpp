@@ -50,7 +50,8 @@ void ResolveControlFlowIdentities(IrProgram& program);
 bool EquivalentValue(const IrResourcePlan& program, const IrValue* left, const IrValue* right);
 IrValue* ResolveInvariantPhi(const IrResourcePlan& program, IrValue* value);
 bool IsAddressResourceKind(ResourceKind kind);
-PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std::uint32_t positionIndex, std::uint32_t component);
+PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std::uint32_t positionIndex,
+                                                      std::uint32_t component);
 std::uint32_t NativeBinding(IrShaderStage stage, DescriptorBindingKind kind);
 ImageResourceClass ImageBindingResourceClass(DescriptorBindingKind kind);
 std::uint32_t ImageBindingIndex(DescriptorBindingKind kind);

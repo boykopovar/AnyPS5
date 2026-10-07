@@ -5,7 +5,7 @@
 
 namespace {
 
-template<typename TEmit>
+template <typename TEmit>
 std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool stops, const TEmit& emit) {
     using namespace ShaderRecompiler;
     IrProgram program;
@@ -19,7 +19,8 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
     SpirvEmitterState state(program, {});
     EmitBaseHeader(state.module, program);
     const auto define = [&](std::uint32_t binding) {
-        const auto variable = state.module.DefineGlobalVariable(TypeStorageBufferPointer(state), spv::StorageClassStorageBuffer);
+        const auto variable =
+            state.module.DefineGlobalVariable(TypeStorageBufferPointer(state), spv::StorageClassStorageBuffer);
         state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, 0u);
         state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, binding);
         return variable;
@@ -29,8 +30,10 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
     const auto output = define(2);
     std::vector<std::uint32_t> interfaceVariables;
     if (!stops) {
-        interfaceVariables.push_back(state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassInput, TypeU32(state)), spv::StorageClassInput));
-        state.module.AddAnnotation(spv::OpDecorate, interfaceVariables[0], spv::DecorationBuiltIn, spv::BuiltInLocalInvocationIndex);
+        interfaceVariables.push_back(state.module.DefineGlobalVariable(
+            TypePointer(state, spv::StorageClassInput, TypeU32(state)), spv::StorageClassInput));
+        state.module.AddAnnotation(spv::OpDecorate, interfaceVariables[0], spv::DecorationBuiltIn,
+                                   spv::BuiltInLocalInvocationIndex);
     }
     state.bdaStopsInvocations = stops;
     DefineGetBdaPointer(state);
@@ -46,10 +49,12 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
     if (!stops) {
         const auto index = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), index, interfaceVariables[0]);
-        base = Binary(state, spv::OpIAdd, TypeScalarU64(state), base, Unary(state, spv::OpUConvert, TypeScalarU64(state), index));
+        base = Binary(state, spv::OpIAdd, TypeScalarU64(state), base,
+                      Unary(state, spv::OpUConvert, TypeScalarU64(state), index));
     }
     const auto values = emit(ctx, instruction, base);
-    for (std::uint32_t index = 0; index < values.size(); ++index) state.module.AddFunction(spv::OpStore, BdaWord(state, output, ConstantU32(state, index)), values[index]);
+    for (std::uint32_t index = 0; index < values.size(); ++index)
+        state.module.AddFunction(spv::OpStore, BdaWord(state, output, ConstantU32(state, index)), values[index]);
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);
     state.module.AddExecutionMode(main, spv::ExecutionModeLocalSize, 1u, 1u, 1u);
@@ -61,16 +66,24 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
 
 std::vector<std::uint32_t> MakeBdaTestShader(std::uint64_t address, std::uint32_t bits, std::int64_t offset) {
     using namespace ShaderRecompiler;
-    return MakeShader(address, false, true, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {
-        if (offset != 0) base = AddBdaAddress(ctx, instruction, base, BdaConstant(ctx.state, offset < 0 ? std::uint64_t{0} - static_cast<std::uint64_t>(offset) : static_cast<std::uint64_t>(offset)), offset < 0);
-        return std::vector<std::uint32_t>{EmitBdaRead(ctx, instruction, base, bits)};
-    });
+    return MakeShader(
+        address, false, true, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {
+            if (offset != 0)
+                base = AddBdaAddress(ctx, instruction, base,
+                                     BdaConstant(ctx.state, offset < 0
+                                                                ? std::uint64_t{0} - static_cast<std::uint64_t>(offset)
+                                                                : static_cast<std::uint64_t>(offset)),
+                                     offset < 0);
+            return std::vector<std::uint32_t>{EmitBdaRead(ctx, instruction, base, bits)};
+        });
 }
 
-std::vector<std::uint32_t> MakeBdaDwordReadTestShader(std::uint64_t address, std::uint32_t dwords, bool coherent, bool stops) {
+std::vector<std::uint32_t> MakeBdaDwordReadTestShader(std::uint64_t address, std::uint32_t dwords, bool coherent,
+                                                      bool stops) {
     using namespace ShaderRecompiler;
-    return MakeShader(address, coherent, stops, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {
-        const auto values = EmitBdaDwordReads(ctx, instruction, base, 0u, dwords, true);
-        return std::vector<std::uint32_t>(values.begin(), values.begin() + dwords);
-    });
+    return MakeShader(address, coherent, stops,
+                      [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {
+                          const auto values = EmitBdaDwordReads(ctx, instruction, base, 0u, dwords, true);
+                          return std::vector<std::uint32_t>(values.begin(), values.begin() + dwords);
+                      });
 }

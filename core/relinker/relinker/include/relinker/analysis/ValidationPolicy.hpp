@@ -15,7 +15,8 @@ public:
     void ValidateNidBelongsToLibrary(const std::string& nid, const std::string& library) override;
     void ValidateSceStructureSize(ByteCount expectedSize, ByteCount actualSize, FileByteOffset fileByteOffset) override;
     void ValidateDynamicFieldInterpretable(const std::string& fieldName, FileByteOffset fileByteOffset) override;
-    void ValidateNoSyscallInstructions(const std::vector<std::uint8_t>& codeSection, FileByteOffset codeOffset) override;
+    void ValidateNoSyscallInstructions(const std::vector<std::uint8_t>& codeSection,
+                                       FileByteOffset codeOffset) override;
 
     void RegisterLibraryImport(const std::string& library);
 

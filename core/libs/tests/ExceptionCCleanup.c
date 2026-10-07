@@ -1,4 +1,6 @@
-struct CleanupCounter { int* count; };
+struct CleanupCounter {
+    int* count;
+};
 
 static void Leave(struct CleanupCounter* counter) { ++*counter->count; }
 

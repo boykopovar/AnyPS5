@@ -7,11 +7,7 @@
 
 namespace ShaderRecompiler {
 
-enum class SpirvFormattedSourceKind {
-    Memory,
-    Zero,
-    One
-};
+enum class SpirvFormattedSourceKind { Memory, Zero, One };
 
 struct SpirvFormattedSource {
     SpirvFormattedSourceKind kind = SpirvFormattedSourceKind::Zero;

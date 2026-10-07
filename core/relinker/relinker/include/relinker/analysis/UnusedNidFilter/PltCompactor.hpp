@@ -11,7 +11,9 @@ struct CompactedPlt {
     std::uint32_t SlotCount = 0;
 };
 
-CompactedPlt CompactPlt(const std::vector<NidReference>& originalReferences, const std::vector<NidReference>& keptReferences, const std::vector<std::uint8_t>& text, VirtualAddress textVaddr, FileByteOffset textOffset, FileByteOffset tableOffset);
+CompactedPlt CompactPlt(const std::vector<NidReference>& originalReferences,
+                        const std::vector<NidReference>& keptReferences, const std::vector<std::uint8_t>& text,
+                        VirtualAddress textVaddr, FileByteOffset textOffset, FileByteOffset tableOffset);
 
 }
 

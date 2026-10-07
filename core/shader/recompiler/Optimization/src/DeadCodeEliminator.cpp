@@ -19,9 +19,7 @@ void DeadCodeEliminator::RemoveIdentities(std::span<IrBlock* const> blocks) cons
     }
 }
 
-void DeadCodeEliminator::RemoveIdentities(IrProgram& program) const {
-    RemoveIdentities(program.BlockOrder());
-}
+void DeadCodeEliminator::RemoveIdentities(IrProgram& program) const { RemoveIdentities(program.BlockOrder()); }
 
 void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks) const {
     bool changed;
@@ -45,8 +43,6 @@ void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks) const {
     } while (changed);
 }
 
-void DeadCodeEliminator::Eliminate(IrProgram& program) const {
-    Eliminate(program.BlockOrder());
-}
+void DeadCodeEliminator::Eliminate(IrProgram& program) const { Eliminate(program.BlockOrder()); }
 
 }

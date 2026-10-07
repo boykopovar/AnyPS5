@@ -7,10 +7,7 @@
 
 namespace Codegen {
 
-enum class ReciprocalOperation : std::uint8_t {
-    Reciprocal,
-    ReciprocalSquareRoot
-};
+enum class ReciprocalOperation : std::uint8_t { Reciprocal, ReciprocalSquareRoot };
 
 struct ReciprocalOperands {
     ReciprocalOperation Operation;

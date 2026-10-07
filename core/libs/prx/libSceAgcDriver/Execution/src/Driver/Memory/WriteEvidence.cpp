@@ -7,22 +7,26 @@
 namespace AgcDriver::DriverDetail {
 
 SampledReadScope::SampledReadScope(std::atomic<std::uint64_t>& reads) : previous(Driver::sampledRead()) {
-    Driver::sampledRead() = Driver::writeEvidenceEnabled() && reads.fetch_add(1, std::memory_order_relaxed) % Driver::writeEvidenceSampleEvery() == 0;
+    Driver::sampledRead() = Driver::writeEvidenceEnabled() &&
+                            reads.fetch_add(1, std::memory_order_relaxed) % Driver::writeEvidenceSampleEvery() == 0;
 }
 
 SampledReadScope::~SampledReadScope() { Driver::sampledRead() = previous; }
 
 void PendingView::Load() {
-    if (Driver::validateLegacy()) return;
+    if (Driver::validateLegacy())
+        return;
     const auto current = Graphics::Recorder::PublishGeneration();
-    if (loaded && current == generation) return;
+    if (loaded && current == generation)
+        return;
     snapshot = Graphics::Recorder::PendingWriteSnapshot();
     generation = current;
     loaded = true;
 }
 
 bool PendingView::Overlaps(std::uint64_t address, std::size_t bytes) const {
-    return Driver::validateLegacy() ? Graphics::Recorder::SnapshotWriteOverlaps(address, bytes) : Graphics::Recorder::SnapshotOverlaps(snapshot.get(), address, bytes);
+    return Driver::validateLegacy() ? Graphics::Recorder::SnapshotWriteOverlaps(address, bytes)
+                                    : Graphics::Recorder::SnapshotOverlaps(snapshot.get(), address, bytes);
 }
 
 bool& Driver::sampledRead() {
@@ -55,13 +59,9 @@ bool Driver::siteSampling() {
     return perSite;
 }
 
-std::uint64_t Driver::hookWaits() {
-    return Graphics::Recorder::ThreadHookWaits();
-}
+std::uint64_t Driver::hookWaits() { return Graphics::Recorder::ThreadHookWaits(); }
 
-ShaderMemory::HookWaitCounter Driver::hookWaitCounter() {
-    return observationGuard() ? &hookWaits : nullptr;
-}
+ShaderMemory::HookWaitCounter Driver::hookWaitCounter() { return observationGuard() ? &hookWaits : nullptr; }
 
 bool Driver::validateSkipEnabled() {
     static const bool enabled = std::getenv("APS5_NO_VALIDATE_SKIP") == nullptr;
@@ -84,17 +84,27 @@ bool Driver::validateSkipVerify() {
 }
 
 std::uint32_t Driver::writeEvidenceAfter() {
-    static const std::uint32_t value = [] { const char* text = std::getenv("APS5_WRITE_EVIDENCE_AFTER"); return text ? static_cast<std::uint32_t>(std::atoi(text)) : 4u; }();
+    static const std::uint32_t value = [] {
+        const char* text = std::getenv("APS5_WRITE_EVIDENCE_AFTER");
+        return text ? static_cast<std::uint32_t>(std::atoi(text)) : 4u;
+    }();
     return value;
 }
 
 std::uint32_t Driver::writeEvidenceSampleEvery() {
-    static const std::uint32_t value = [] { const char* text = std::getenv("APS5_WRITE_EVIDENCE_SAMPLE"); const auto parsed = text ? std::atoi(text) : 16; return parsed > 0 ? static_cast<std::uint32_t>(parsed) : 16u; }();
+    static const std::uint32_t value = [] {
+        const char* text = std::getenv("APS5_WRITE_EVIDENCE_SAMPLE");
+        const auto parsed = text ? std::atoi(text) : 16;
+        return parsed > 0 ? static_cast<std::uint32_t>(parsed) : 16u;
+    }();
     return value;
 }
 
 std::uint64_t Driver::writeEvidenceMaxBytes() {
-    static const std::uint64_t value = [] { const char* text = std::getenv("APS5_WRITE_EVIDENCE_MAX_KIB"); return (text ? std::strtoull(text, nullptr, 10) : 16ull) << 10u; }();
+    static const std::uint64_t value = [] {
+        const char* text = std::getenv("APS5_WRITE_EVIDENCE_MAX_KIB");
+        return (text ? std::strtoull(text, nullptr, 10) : 16ull) << 10u;
+    }();
     return value;
 }
 
@@ -104,15 +114,19 @@ bool Driver::traceCapSync() {
 }
 
 void Driver::observeDword(std::uint64_t address, bool unchanged) {
-    if (!writeEvidenceEnabled()) return;
+    if (!writeEvidenceEnabled())
+        return;
     (unchanged ? observedUnchanged : observedChanged).fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(writtenBuffersMutex);
-    if (dwordEvidence.size() >= DwordEvidenceEntries && !dwordEvidence.contains(address)) dwordEvidence.clear();
+    if (dwordEvidence.size() >= DwordEvidenceEntries && !dwordEvidence.contains(address))
+        dwordEvidence.clear();
     auto& evidence = dwordEvidence[address];
     if (writerKeyedEvidence()) {
         const auto writer = newestWriterLocked(address, address + 4);
-        const std::uint64_t program = writer ? writer->program : 0, begin = writer ? writer->begin : 0, end = writer ? writer->end : 0;
-        if (program != evidence.program || begin != evidence.begin || end != evidence.end) evidence = DwordEvidence{0, 0, program, begin, end};
+        const std::uint64_t program = writer ? writer->program : 0, begin = writer ? writer->begin : 0,
+                            end = writer ? writer->end : 0;
+        if (program != evidence.program || begin != evidence.begin || end != evidence.end)
+            evidence = DwordEvidence{0, 0, program, begin, end};
     }
     if (!unchanged) {
         evidence.streak = 0;
@@ -123,16 +137,15 @@ void Driver::observeDword(std::uint64_t address, bool unchanged) {
 }
 
 void Driver::observeRange(std::uint64_t address, std::span<const std::byte> before) {
-    if (before.empty() || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), before.size())) return;
+    if (before.empty() || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), before.size()))
+        return;
     const auto* now = reinterpret_cast<const std::byte*>(address);
     for (std::size_t offset = 0; offset + 4 <= before.size(); offset += 4) {
         observeDword(address + offset, std::memcmp(before.data() + offset, now + offset, 4) == 0);
     }
 }
 
-void Driver::observePendingWrite(std::uint64_t address, bool unchanged) {
-    Get().observeDword(address, unchanged);
-}
+void Driver::observePendingWrite(std::uint64_t address, bool unchanged) { Get().observeDword(address, unchanged); }
 
 bool Driver::knownValueCurrent(const WrittenBuffer& writer) {
     const auto bytes = static_cast<std::size_t>(writer.end - writer.begin);
@@ -140,16 +153,20 @@ bool Driver::knownValueCurrent(const WrittenBuffer& writer) {
     return GuestMemory::UnchangedSince(writer.begin, bytes, writer.generation);
 }
 
-ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, std::size_t bytes, std::uint64_t ValidateCounters::*& reason, const PendingView& pending, std::span<std::byte> known) {
+ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, std::size_t bytes,
+                                                        std::uint64_t ValidateCounters::*& reason,
+                                                        const PendingView& pending, std::span<std::byte> known) {
     using Policy = ShaderMemory::PendingWrite;
-    if (!pending.Overlaps(address, bytes)) return Policy::None;
+    if (!pending.Overlaps(address, bytes))
+        return Policy::None;
 
     if (Graphics::AnyShadowedOverlaps(address, bytes)) {
         reason = &ValidateCounters::syncedShadow;
         return Policy::Sync;
     }
     reason = &ValidateCounters::syncedOff;
-    if (!writeEvidenceEnabled()) return Policy::Sync;
+    if (!writeEvidenceEnabled())
+        return Policy::Sync;
     const auto writer = newestWriter(address, address + bytes);
     if (!writer) {
         reason = &ValidateCounters::syncedNoWriter;
@@ -159,7 +176,8 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
         reason = &ValidateCounters::syncedForeign;
         return Policy::Sync;
     }
-    if (writer->end - writer->begin > writeEvidenceMaxBytes() || writer->begin < 4 || pending.Overlaps(writer->begin - 4, 4) || pending.Overlaps(writer->end, 4)) {
+    if (writer->end - writer->begin > writeEvidenceMaxBytes() || writer->begin < 4 ||
+        pending.Overlaps(writer->begin - 4, 4) || pending.Overlaps(writer->end, 4)) {
         reason = &ValidateCounters::syncedLargeRange;
         return Policy::Sync;
     }
@@ -175,7 +193,8 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
             return Policy::Sync;
         }
     }
-    if (writer->value && writer->begin <= address && limit <= writer->end && (known.empty() || known.size() == bytes) && knownValueCurrent(*writer)) {
+    if (writer->value && writer->begin <= address && limit <= writer->end && (known.empty() || known.size() == bytes) &&
+        knownValueCurrent(*writer)) {
         if (!known.empty()) {
             std::memcpy(known.data(), writer->value->data() + (address - writer->begin), bytes);
             knownValueReads.fetch_add(1, std::memory_order_relaxed);
@@ -190,7 +209,8 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
                 reason = &ValidateCounters::syncedEvidence;
                 return Policy::Sync;
             }
-            if (writerKeyedEvidence() && (found->second.program != writer->program || found->second.begin != writer->begin || found->second.end != writer->end)) {
+            if (writerKeyedEvidence() && (found->second.program != writer->program ||
+                                          found->second.begin != writer->begin || found->second.end != writer->end)) {
                 reason = &ValidateCounters::syncedWriterChanged;
                 return Policy::Sync;
             }
@@ -203,8 +223,9 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
     return validateSkipVerify() ? Policy::VerifyRaw : Policy::Raw;
 }
 
-ShaderMemory::PendingWrite Driver::queryPendingWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte> known) {
-    std::uint64_t ValidateCounters::*reason = nullptr;
+ShaderMemory::PendingWrite Driver::queryPendingWrite(std::uint64_t address, std::size_t bytes,
+                                                     std::span<std::byte> known) {
+    std::uint64_t ValidateCounters::* reason = nullptr;
     PendingView pending;
     pending.Load();
     return Get().classifyPendingWrite(address, bytes, reason, pending, known);

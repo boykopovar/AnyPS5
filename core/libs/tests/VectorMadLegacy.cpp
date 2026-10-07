@@ -4,7 +4,10 @@
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("vector legacy mad regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("vector legacy mad regression");
+}
 static void Check(std::uint32_t encoding, RdnaOpcode opcode, IrOpcode expected) {
     const std::array<std::uint32_t, 2> code{(encoding << 16u) | 1u, 1u | (2u << 9u) | (3u << 18u)};
     const RdnaInstruction instruction = DecodeRdnaVop3(0u, code, 0u);
@@ -17,7 +20,8 @@ static void Check(std::uint32_t encoding, RdnaOpcode opcode, IrOpcode expected) 
     TranslationContext context(program, block, 256);
     context.TranslateInstruction(instruction);
     bool found = false;
-    for (auto* value : block.Instructions()) found = found || value->Opcode() == expected;
+    for (auto* value : block.Instructions())
+        found = found || value->Opcode() == expected;
     Require(found);
 }
 int main() {

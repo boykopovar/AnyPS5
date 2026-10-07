@@ -13,8 +13,8 @@ struct Entry {
     std::size_t Size;
 };
 
-#define AMD64_STUB(name, ...) \
-    inline constexpr std::uint8_t k##name##Bytes[] = {__VA_ARGS__}; \
+#define AMD64_STUB(name, ...)                                                                                          \
+    inline constexpr std::uint8_t k##name##Bytes[] = {__VA_ARGS__};                                                    \
     inline constexpr Entry k##name = {#name, k##name##Bytes, sizeof(k##name##Bytes)};
 
 AMD64_STUB(JmpRel32, 0xE9, 0x00, 0x00, 0x00, 0x00)

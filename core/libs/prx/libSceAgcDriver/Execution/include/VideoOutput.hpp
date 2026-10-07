@@ -49,7 +49,9 @@ public:
 
 }
 
-extern "C" void AgcDriverRegisterVideoOutput_nid_postfix(std::uint32_t handle, const std::shared_ptr<AgcDriver::IVideoOutput>& output);
-extern "C" void AgcDriverUnregisterVideoOutput_nid_postfix(std::uint32_t handle, const std::shared_ptr<AgcDriver::IVideoOutput>& output);
+extern "C" void AgcDriverRegisterVideoOutput_nid_postfix(std::uint32_t handle,
+                                                         const std::shared_ptr<AgcDriver::IVideoOutput>& output);
+extern "C" void AgcDriverUnregisterVideoOutput_nid_postfix(std::uint32_t handle,
+                                                           const std::shared_ptr<AgcDriver::IVideoOutput>& output);
 
 #endif

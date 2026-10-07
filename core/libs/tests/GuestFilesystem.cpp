@@ -81,11 +81,14 @@ int main() {
     Require(std::memcmp(received, payload, sizeof(payload)) == 0);
     Require(read_nid_postfix(descriptors[0], received, sizeof(received)) == 0);
     Require(close_nid_postfix(descriptors[0]) == 0);
-    const auto root = std::filesystem::path("anyps5-filesystem-test-" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::path(
+        "anyps5-filesystem-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     const auto file = root / "file.txt";
-    { std::ofstream stream(file); stream << "retained until removal"; }
+    {
+        std::ofstream stream(file);
+        stream << "retained until removal";
+    }
     Require(remove_nid_postfix(root.string().c_str()) == -1);
     Require(*__error_nid_postfix() == 66);
     Require(std::filesystem::is_regular_file(file));
@@ -93,11 +96,18 @@ int main() {
     Require(remove_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
     Require(remove_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
     const auto renamed = root / "renamed.txt";
-    { std::ofstream stream(renamed); stream << "old contents"; }
+    {
+        std::ofstream stream(renamed);
+        stream << "old contents";
+    }
     Require(rename_nid_postfix(file.string().c_str(), renamed.string().c_str()) == 0);
     Require(!std::filesystem::exists(file));
-    { std::ifstream stream(renamed); std::string contents; std::getline(stream, contents);
-      Require(contents == "retained until removal"); }
+    {
+        std::ifstream stream(renamed);
+        std::string contents;
+        std::getline(stream, contents);
+        Require(contents == "retained until removal");
+    }
     Require(rename_nid_postfix(renamed.string().c_str(), renamed.string().c_str()) == 0);
     Require(rename_nid_postfix(file.string().c_str(), renamed.string().c_str()) == -1);
     Require(*__error_nid_postfix() == 2);
@@ -106,12 +116,19 @@ int main() {
     Require(!std::filesystem::exists(file));
     Require(remove_nid_postfix(file.string().c_str()) == -1 && *__error_nid_postfix() == 2);
     const auto sized = root / "sized.txt";
-    { std::ofstream stream(sized); stream << "0123456789abcdef"; }
+    {
+        std::ofstream stream(sized);
+        stream << "0123456789abcdef";
+    }
     Require(sceKernelChmod_nid_postfix(sized.string().c_str(), 0600) == 0);
     Require(sceKernelTruncate_nid_postfix(sized.string().c_str(), 6) == 0);
     Require(std::filesystem::file_size(sized) == 6);
-    { std::ifstream stream(sized); std::string contents; std::getline(stream, contents);
-      Require(contents == "012345"); }
+    {
+        std::ifstream stream(sized);
+        std::string contents;
+        std::getline(stream, contents);
+        Require(contents == "012345");
+    }
     Require(sceKernelTruncate_nid_postfix((sized / "missing").string().c_str(), 6) == static_cast<int>(0x80020002u));
     Require(sceKernelUtimes_nid_postfix(sized.string().c_str(), nullptr) == 0);
     std::FILE* native = std::fopen(sized.string().c_str(), "r+b");
@@ -123,7 +140,8 @@ int main() {
 #endif
     Require(descriptor >= 0 && sceKernelFsync(descriptor) == 0);
     const auto ownerWrite = [&] {
-        return (std::filesystem::status(sized).permissions() & std::filesystem::perms::owner_write) != std::filesystem::perms::none;
+        return (std::filesystem::status(sized).permissions() & std::filesystem::perms::owner_write) !=
+               std::filesystem::perms::none;
     };
     Require(sceKernelFchmod(descriptor, 0400) == 0 && !ownerWrite());
     Require(fchmod_nid_postfix(descriptor, 0600) == 0 && ownerWrite());
@@ -158,7 +176,10 @@ int main() {
     const auto presentName = present.string();
     const auto missingName = (root / "missing.txt").string();
     const auto rootName = root.string();
-    { std::ofstream stream(present); stream << "posix"; }
+    {
+        std::ofstream stream(present);
+        stream << "posix";
+    }
     FileStat status{};
     Require(stat_nid_postfix(presentName.c_str(), &status) == 0 && status.st_size == 5);
     Require(stat_nid_postfix(missingName.c_str(), &status) == -1 && *__error_nid_postfix() == 2);

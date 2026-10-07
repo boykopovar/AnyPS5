@@ -23,7 +23,8 @@ void Driver::UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<I
     outputs.erase(it);
 }
 
-void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque, void (*gpuReady)(void*), void* context) {
+void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque,
+                     void (*gpuReady)(void*), void* context) {
 
     PerformanceContext timingContext(window.timing.get());
     PerformanceTimer timing("Driver.Present");
@@ -49,7 +50,8 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
         double waitedMs = 0;
         {
             std::unique_lock replacing(deviceReplacement, std::defer_lock);
-            if (const auto current = device.Load(); current == nullptr || current->Window() == nullptr) replacing.lock();
+            if (const auto current = device.Load(); current == nullptr || current->Window() == nullptr)
+                replacing.lock();
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
             std::lock_guard lock(GuestMemory::GpuMutex());
             timing.Mark("gpu_mutex_wait");
@@ -69,7 +71,9 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
             presenting->Resize(drawableWidth, drawableHeight);
             timing.Mark("resize");
             presentable = presenting->Presentable();
-            if (buffer != nullptr) require(buffer->width == window.width && buffer->height == window.height, "display buffer extent differs from output");
+            if (buffer != nullptr)
+                require(buffer->width == window.width && buffer->height == window.height,
+                        "display buffer extent differs from output");
         }
 
         if (presentable && !syncFlip) {
@@ -123,7 +127,8 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
         }
         gpuReady(context);
         timing.Mark("release_and_callback");
-        if (profile) reportPresents(waitedMs, inFlight);
+        if (profile)
+            reportPresents(waitedMs, inFlight);
         CheckFailure();
     } catch (const ProcessShutdown&) {
         throw;
@@ -139,19 +144,42 @@ void Driver::reportPresents(double waitedMs, std::size_t inFlight) {
     static std::uint64_t previousFlips = 0, windowSerial = 0, previousUnsignaled = 0;
     static auto lastReport = std::chrono::steady_clock::now();
     waits.push_back(waitedMs);
-    if (waits.size() == 1) windowSerial = flipSerial.load();
+    if (waits.size() == 1)
+        windowSerial = flipSerial.load();
     const auto now = std::chrono::steady_clock::now();
-    if (now - lastReport < std::chrono::seconds(10)) return;
+    if (now - lastReport < std::chrono::seconds(10))
+        return;
     lastReport = now;
     std::sort(waits.begin(), waits.end());
-    const auto percentile = [&](double fraction) { return waits.empty() ? 0.0 : waits[std::min(waits.size() - 1, static_cast<std::size_t>(fraction * static_cast<double>(waits.size())))]; };
+    const auto percentile = [&](double fraction) {
+        return waits.empty() ? 0.0
+                             : waits[std::min(waits.size() - 1,
+                                              static_cast<std::size_t>(fraction * static_cast<double>(waits.size())))];
+    };
     const auto counts = VulkanDevice::PresentCounts();
     const auto presents = counts.presents - previous.presents;
     const double perPresent = presents != 0 ? 1.0 / static_cast<double>(presents) : 0.0;
     const auto flips = flipsCounted.load() - previousFlips;
     const double perFlip = flips != 0 ? 1.0 / static_cast<double>(flips) : 0.0;
     const auto serial = flipSerial.load();
-    AgcDriver::ProfilePrint_nid_no_patch( "[present] %llu presents over 10 s (%zu may trail on the GPU); %s p50 %.2f ms, p90 %.2f ms, max %.2f ms over %zu; per present: GPU busy %.1f ms, idle gaps %.1f ms (%llu batches without a completion record); per flip: %.1f batches recorded (%.1f unsignaled at the flip); per present: %.1f batches ahead of the blit, %.1f after it; after the flip packet: last submit %.1f ms, blit submit %.1f ms; in-place reads overwritten before execution: %llu of %llu checked\n", static_cast<unsigned long long>(presents), inFlight, inFlight != 0 ? "inflight_wait" : "render_fence_wait", percentile(0.5), percentile(0.9), waits.empty() ? 0.0 : waits.back(), waits.size(), (counts.gpuBusyMs - previous.gpuBusyMs) * perPresent, (counts.gpuGapMs - previous.gpuGapMs) * perPresent, static_cast<unsigned long long>(counts.gpuUnread - previous.gpuUnread), static_cast<double>(serial - windowSerial) * perFlip, static_cast<double>(flipBatchesUnsignaled.load() - previousUnsignaled) * perFlip, static_cast<double>(counts.batchesAheadOfBlit - previous.batchesAheadOfBlit) * perPresent, static_cast<double>(counts.batchesAfterFlip - previous.batchesAfterFlip) * perPresent, (counts.lastSubmitAfterFlipMs - previous.lastSubmitAfterFlipMs) * perPresent, (counts.blitSubmitAfterFlipMs - previous.blitSubmitAfterFlipMs) * perPresent, static_cast<unsigned long long>(counts.readsOverwritten - previous.readsOverwritten), static_cast<unsigned long long>(counts.readsChecked - previous.readsChecked));
+    AgcDriver::ProfilePrint_nid_no_patch(
+        "[present] %llu presents over 10 s (%zu may trail on the GPU); %s p50 %.2f ms, p90 %.2f ms, max %.2f ms over "
+        "%zu; per present: GPU busy %.1f ms, idle gaps %.1f ms (%llu batches without a completion record); per flip: "
+        "%.1f batches recorded (%.1f unsignaled at the flip); per present: %.1f batches ahead of the blit, %.1f after "
+        "it; after the flip packet: last submit %.1f ms, blit submit %.1f ms; in-place reads overwritten before "
+        "execution: %llu of %llu checked\n",
+        static_cast<unsigned long long>(presents), inFlight, inFlight != 0 ? "inflight_wait" : "render_fence_wait",
+        percentile(0.5), percentile(0.9), waits.empty() ? 0.0 : waits.back(), waits.size(),
+        (counts.gpuBusyMs - previous.gpuBusyMs) * perPresent, (counts.gpuGapMs - previous.gpuGapMs) * perPresent,
+        static_cast<unsigned long long>(counts.gpuUnread - previous.gpuUnread),
+        static_cast<double>(serial - windowSerial) * perFlip,
+        static_cast<double>(flipBatchesUnsignaled.load() - previousUnsignaled) * perFlip,
+        static_cast<double>(counts.batchesAheadOfBlit - previous.batchesAheadOfBlit) * perPresent,
+        static_cast<double>(counts.batchesAfterFlip - previous.batchesAfterFlip) * perPresent,
+        (counts.lastSubmitAfterFlipMs - previous.lastSubmitAfterFlipMs) * perPresent,
+        (counts.blitSubmitAfterFlipMs - previous.blitSubmitAfterFlipMs) * perPresent,
+        static_cast<unsigned long long>(counts.readsOverwritten - previous.readsOverwritten),
+        static_cast<unsigned long long>(counts.readsChecked - previous.readsChecked));
     previous = counts;
     previousFlips = flipsCounted.load();
     previousUnsignaled = flipBatchesUnsignaled.load();
@@ -160,7 +188,8 @@ void Driver::reportPresents(double waitedMs, std::size_t inFlight) {
 
 void Driver::ReleaseWindow(void* window) {
     std::lock_guard lock(GuestMemory::GpuMutex());
-    if (device && device->Window() == window) device.Reset();
+    if (device && device->Window() == window)
+        device.Reset();
 }
 
 }

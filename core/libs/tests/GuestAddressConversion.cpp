@@ -9,7 +9,10 @@ int APS5_VABI __inet_pton_nid_postfix(int, const char*, void*);
 const char* APS5_VABI __inet_ntop_nid_postfix(int, const void*, char*, std::uint32_t);
 int* APS5_VABI __error_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     for (int family : {2, 28}) {
         const char* input = family == 2 ? "192.0.2.17" : "2001:db8::17";

@@ -22,8 +22,6 @@ struct VariableTypeVisitor {
 
 }
 
-IrType VariableType(const Variable& variable) {
-    return std::visit(VariableTypeVisitor{}, variable);
-}
+IrType VariableType(const Variable& variable) { return std::visit(VariableTypeVisitor{}, variable); }
 
 }

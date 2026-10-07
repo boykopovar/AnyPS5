@@ -51,32 +51,31 @@ std::array<std::uint32_t, 8> pack(const Fields& f) {
     const auto widthMinus1 = f.width - 1u;
     const auto heightMinus1 = f.height - 1u;
     words[0] = static_cast<std::uint32_t>(f.base40 & 0xffffffffull);
-    words[1] = static_cast<std::uint32_t>((f.base40 >> 32u) & 0xffull)
-        | ((f.minLod & 0xfffu) << 8u)
-        | ((f.format & 0x1ffu) << 20u)
-        | ((widthMinus1 & 0x3u) << 30u);
+    words[1] = static_cast<std::uint32_t>((f.base40 >> 32u) & 0xffull) | ((f.minLod & 0xfffu) << 8u) |
+               ((f.format & 0x1ffu) << 20u) | ((widthMinus1 & 0x3u) << 30u);
     words[2] = ((widthMinus1 >> 2u) & 0xfffu) | ((heightMinus1 & 0x3fffu) << 14u);
-    words[3] = (f.dstSelX & 0x7u) | ((f.dstSelY & 0x7u) << 3u) | ((f.dstSelZ & 0x7u) << 6u) | ((f.dstSelW & 0x7u) << 9u)
-        | ((f.baseLevel & 0xfu) << 12u) | ((f.lastLevel & 0xfu) << 16u) | ((f.tileModeRaw & 0x1fu) << 20u)
-        | ((f.bcSwizzle & 0x7u) << 25u) | ((f.typeRaw & 0xfu) << 28u);
+    words[3] = (f.dstSelX & 0x7u) | ((f.dstSelY & 0x7u) << 3u) | ((f.dstSelZ & 0x7u) << 6u) |
+               ((f.dstSelW & 0x7u) << 9u) | ((f.baseLevel & 0xfu) << 12u) | ((f.lastLevel & 0xfu) << 16u) |
+               ((f.tileModeRaw & 0x1fu) << 20u) | ((f.bcSwizzle & 0x7u) << 25u) | ((f.typeRaw & 0xfu) << 28u);
     words[4] = (f.depth & 0x1fffu) | ((f.baseArray & 0x1fffu) << 16u);
-    words[5] = (f.arrayPitch & 0xfu) | ((f.maxMip & 0xfu) << 4u) | ((f.minLodWarn & 0xfffu) << 8u)
-        | ((f.perfMod & 0x7u) << 20u) | ((f.cornerSample ? 1u : 0u) << 23u) | ((f.mipStatsCntEn ? 1u : 0u) << 25u)
-        | ((f.prtDefColor ? 1u : 0u) << 26u);
-    words[6] = (f.mipStatsCntId & 0xffu) | ((f.msaaDepth ? 1u : 0u) << 10u) | ((f.maxUncompBlkSize & 0x3u) << 15u)
-        | ((f.maxCompBlkSize & 0x3u) << 17u) | ((f.metaPipeAligned ? 1u : 0u) << 19u) | ((f.writeCompress ? 1u : 0u) << 20u)
-        | ((f.metaCompress ? 1u : 0u) << 21u) | ((f.dccAlphaPos ? 1u : 0u) << 22u) | ((f.dccColorTransf ? 1u : 0u) << 23u)
-        | static_cast<std::uint32_t>((f.metaAddr & 0xffull) << 24u);
+    words[5] = (f.arrayPitch & 0xfu) | ((f.maxMip & 0xfu) << 4u) | ((f.minLodWarn & 0xfffu) << 8u) |
+               ((f.perfMod & 0x7u) << 20u) | ((f.cornerSample ? 1u : 0u) << 23u) |
+               ((f.mipStatsCntEn ? 1u : 0u) << 25u) | ((f.prtDefColor ? 1u : 0u) << 26u);
+    words[6] = (f.mipStatsCntId & 0xffu) | ((f.msaaDepth ? 1u : 0u) << 10u) | ((f.maxUncompBlkSize & 0x3u) << 15u) |
+               ((f.maxCompBlkSize & 0x3u) << 17u) | ((f.metaPipeAligned ? 1u : 0u) << 19u) |
+               ((f.writeCompress ? 1u : 0u) << 20u) | ((f.metaCompress ? 1u : 0u) << 21u) |
+               ((f.dccAlphaPos ? 1u : 0u) << 22u) | ((f.dccColorTransf ? 1u : 0u) << 23u) |
+               static_cast<std::uint32_t>((f.metaAddr & 0xffull) << 24u);
     words[7] = static_cast<std::uint32_t>(f.metaAddr >> 8u);
     return words;
 }
 
-template<typename TAction>
-void reject(TAction action, std::string_view reason) {
+template <typename TAction> void reject(TAction action, std::string_view reason) {
     try {
         action();
     } catch (const std::runtime_error& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected guest texture test error: ") + error.what());
+        Require(std::string_view(error.what()).find(reason) != std::string_view::npos,
+                std::string("unexpected guest texture test error: ") + error.what());
         return;
     }
     throw std::runtime_error(std::string("expected guest texture rejection: ") + std::string(reason));
@@ -99,25 +98,31 @@ void RunGuestTextureResourceTests() {
     Require(result.tileMode == TextureTileMode::kLinear, "decoded tile mode changed");
     Require(result.dimension == TextureDimension::k2D, "decoded dimension changed");
     Require(result.format == 56, "decoded format changed");
-    Require(result.dstSelX == 4 && result.dstSelY == 5 && result.dstSelZ == 6 && result.dstSelW == 7, "decoded destination selectors changed");
+    Require(result.dstSelX == 4 && result.dstSelY == 5 && result.dstSelZ == 6 && result.dstSelW == 7,
+            "decoded destination selectors changed");
 
     Fields wide = base;
     wide.width = 8192;
     wide.height = 4096;
     result = DecodeTextureResource(pack(wide));
-    Require(result.width == 8192 && result.height == 4096, "wide texture dimensions were split across dwords incorrectly");
+    Require(result.width == 8192 && result.height == 4096,
+            "wide texture dimensions were split across dwords incorrectly");
 
     Fields tileModes = base;
     tileModes.tileModeRaw = 0x01;
-    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard256B, "tile mode 0x01 must decode to standard 256B");
+    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard256B,
+            "tile mode 0x01 must decode to standard 256B");
     tileModes.tileModeRaw = 0x05;
-    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard4KB, "tile mode 0x05 must decode to standard 4KB");
+    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard4KB,
+            "tile mode 0x05 must decode to standard 4KB");
     tileModes.tileModeRaw = 0x09;
-    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard64KB, "tile mode 0x09 must decode to standard 64KB");
+    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard64KB,
+            "tile mode 0x09 must decode to standard 64KB");
     tileModes.tileModeRaw = 0x1b;
     rejectFields(tileModes, "pipe/bank XOR base");
     tileModes.base40 = 0x120000ull;
-    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::RenderTarget64KB, "tile mode 0x1b must decode to render target 64KB");
+    Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::RenderTarget64KB,
+            "tile mode 0x1b must decode to render target 64KB");
     tileModes.base40 = base.base40;
     tileModes.tileModeRaw = 0x02;
     rejectFields(tileModes, "unsupported tile mode");
@@ -142,7 +147,8 @@ void RunGuestTextureResourceTests() {
     array.depth = 3;
     array.baseArray = 1;
     result = DecodeTextureResource(pack(array));
-    Require(result.dimension == TextureDimension::k2DArray && result.depthOrLastArray == 3 && result.baseArray == 1, "2D array descriptor decoded incorrectly");
+    Require(result.dimension == TextureDimension::k2DArray && result.depthOrLastArray == 3 && result.baseArray == 1,
+            "2D array descriptor decoded incorrectly");
     array.baseArray = 5;
     rejectFields(array, "base array past its last array slice");
 
@@ -185,7 +191,8 @@ void RunGuestTextureResourceTests() {
     minLod.lastLevel = 3;
     minLod.minLod = 0x180;
     auto clamped = DecodeTextureResource(pack(minLod));
-    Require(clamped.minLod == 0x180 && EffectiveMinLod(clamped) == 1.5f, "MIN_LOD 1.5 over levels 1..3 did not clamp at 1.5");
+    Require(clamped.minLod == 0x180 && EffectiveMinLod(clamped) == 1.5f,
+            "MIN_LOD 1.5 over levels 1..3 did not clamp at 1.5");
     minLod.minLod = 0x100;
     clamped = DecodeTextureResource(pack(minLod));
     Require(EffectiveMinLod(clamped) == 0.0f, "MIN_LOD at BASE_LEVEL cannot bind but was applied");
@@ -199,7 +206,8 @@ void RunGuestTextureResourceTests() {
     minLod.minLod = 0x001;
     clamped = DecodeTextureResource(pack(minLod));
     Require(EffectiveMinLod(clamped) == 1.0f / 256.0f, "the smallest MIN_LOD step above level 0 was lost");
-    Require(DecodeTextureResource(pack(base)).minLod == 0 && EffectiveMinLod(DecodeTextureResource(pack(base))) == 0.0f, "an unclamped descriptor gained a MIN_LOD");
+    Require(DecodeTextureResource(pack(base)).minLod == 0 && EffectiveMinLod(DecodeTextureResource(pack(base))) == 0.0f,
+            "an unclamped descriptor gained a MIN_LOD");
 
     // Streaming feedback fields decode; nothing is reported back.
     Fields feedback = base;
@@ -213,10 +221,19 @@ void RunGuestTextureResourceTests() {
         Fields modulated = base;
         modulated.perfMod = perfMod;
         const auto decoded = DecodeTextureResource(pack(modulated));
-        Require(decoded.baseAddress == unmodulated.baseAddress && decoded.width == unmodulated.width && decoded.height == unmodulated.height, "performance modulation changed texture storage");
-        Require(decoded.depthOrLastArray == unmodulated.depthOrLastArray && decoded.baseArray == unmodulated.baseArray && decoded.mipCount == unmodulated.mipCount && decoded.baseLevel == unmodulated.baseLevel, "performance modulation changed texture subresources");
-        Require(decoded.tileMode == unmodulated.tileMode && decoded.dimension == unmodulated.dimension && decoded.format == unmodulated.format, "performance modulation changed texture format or layout");
-        Require(decoded.dstSelX == unmodulated.dstSelX && decoded.dstSelY == unmodulated.dstSelY && decoded.dstSelZ == unmodulated.dstSelZ && decoded.dstSelW == unmodulated.dstSelW, "performance modulation changed texture channel selectors");
+        Require(decoded.baseAddress == unmodulated.baseAddress && decoded.width == unmodulated.width &&
+                    decoded.height == unmodulated.height,
+                "performance modulation changed texture storage");
+        Require(decoded.depthOrLastArray == unmodulated.depthOrLastArray &&
+                    decoded.baseArray == unmodulated.baseArray && decoded.mipCount == unmodulated.mipCount &&
+                    decoded.baseLevel == unmodulated.baseLevel,
+                "performance modulation changed texture subresources");
+        Require(decoded.tileMode == unmodulated.tileMode && decoded.dimension == unmodulated.dimension &&
+                    decoded.format == unmodulated.format,
+                "performance modulation changed texture format or layout");
+        Require(decoded.dstSelX == unmodulated.dstSelX && decoded.dstSelY == unmodulated.dstSelY &&
+                    decoded.dstSelZ == unmodulated.dstSelZ && decoded.dstSelW == unmodulated.dstSelW,
+                "performance modulation changed texture channel selectors");
         modulated.cornerSample = true;
         rejectFields(modulated, "corner sampling");
     }
@@ -240,7 +257,8 @@ void RunGuestTextureResourceTests() {
     Fields blockSize = base;
     blockSize.maxUncompBlkSize = 1;
     blockSize.maxCompBlkSize = 1;
-    Require(DecodeTextureResource(pack(blockSize)).baseAddress == DecodeTextureResource(pack(base)).baseAddress, "DCC block size overrides changed texture storage");
+    Require(DecodeTextureResource(pack(blockSize)).baseAddress == DecodeTextureResource(pack(base)).baseAddress,
+            "DCC block size overrides changed texture storage");
 
     Fields meta = base;
     meta.metaPipeAligned = true;
@@ -248,7 +266,8 @@ void RunGuestTextureResourceTests() {
     meta.dccColorTransf = true;
     meta.metaAddr = 1;
     const auto uncompressed = DecodeTextureResource(pack(meta));
-    Require(uncompressed.dccAddress == 0 && !uncompressed.dccAlphaOnMsb, "DCC metadata without compression was decoded");
+    Require(uncompressed.dccAddress == 0 && !uncompressed.dccAlphaOnMsb,
+            "DCC metadata without compression was decoded");
     meta.metaCompress = true;
     meta.dccAlphaPos = true;
     const auto compressed = DecodeTextureResource(pack(meta));
@@ -280,24 +299,38 @@ void RunGuestTextureResourceTests() {
     pastLast.baseLevel = 6;
     pastLast.lastLevel = 6;
     const auto tailView = DecodeTextureResource(pack(pastLast));
-    Require(tailView.baseLevel == 6 && tailView.lastLevel == 6 && tailView.mipCount == 7, "a view one level past the last mip must address that level of the chain");
+    Require(tailView.baseLevel == 6 && tailView.lastLevel == 6 && tailView.mipCount == 7,
+            "a view one level past the last mip must address that level of the chain");
     auto allocated = tailView;
     allocated.mipCount = 6;
     const auto allocatedSurface = DescribeSurface(allocated);
     const auto viewSurface = DescribeSurface(tailView);
-    Require(allocatedSurface.guestBytes == 0x1640000u && viewSurface.guestBytes == 0x1640000u, "a 1920x1080 64 bpp SW_64KB_R_X chain must take addrlib's 0x1640000 bytes with 6 and with 7 levels");
+    Require(allocatedSurface.guestBytes == 0x1640000u && viewSurface.guestBytes == 0x1640000u,
+            "a 1920x1080 64 bpp SW_64KB_R_X chain must take addrlib's 0x1640000 bytes with 6 and with 7 levels");
     constexpr std::array<std::uint64_t, 7> addrlibOffsets{0x650000u, 0x1d0000u, 0x90000u, 0x30000u, 0x10000u, 0u, 0u};
     for (std::uint32_t level = 0; level < 7; ++level) {
-        Require(viewSurface.mips[level].tiledOffset == addrlibOffsets[level] && viewSurface.mips[level].tail == (level >= 5), "the 7-level chain must place each level at its addrlib offset");
-        if (level < 6) Require(allocatedSurface.mips[level].tiledOffset == addrlibOffsets[level] && allocatedSurface.mips[level].tail == viewSurface.mips[level].tail && allocatedSurface.mips[level].tailX == viewSurface.mips[level].tailX && allocatedSurface.mips[level].tailY == viewSurface.mips[level].tailY, "the level past the last mip must not move the allocated levels");
+        Require(viewSurface.mips[level].tiledOffset == addrlibOffsets[level] &&
+                    viewSurface.mips[level].tail == (level >= 5),
+                "the 7-level chain must place each level at its addrlib offset");
+        if (level < 6)
+            Require(allocatedSurface.mips[level].tiledOffset == addrlibOffsets[level] &&
+                        allocatedSurface.mips[level].tail == viewSurface.mips[level].tail &&
+                        allocatedSurface.mips[level].tailX == viewSurface.mips[level].tailX &&
+                        allocatedSurface.mips[level].tailY == viewSurface.mips[level].tailY,
+                    "the level past the last mip must not move the allocated levels");
     }
-    Require(viewSurface.mips[5].tailX == 64 && viewSurface.mips[5].tailY == 0, "the last allocated level must sit in its addrlib tail slot");
-    Require(viewSurface.mips[6].tailX == 0 && viewSurface.mips[6].tailY == 32, "the level past the last mip must sit in its addrlib tail slot");
+    Require(viewSurface.mips[5].tailX == 64 && viewSurface.mips[5].tailY == 0,
+            "the last allocated level must sit in its addrlib tail slot");
+    Require(viewSurface.mips[6].tailX == 0 && viewSurface.mips[6].tailY == 32,
+            "the level past the last mip must sit in its addrlib tail slot");
     pastLast.lastLevel = 8;
     const auto deeperView = DecodeTextureResource(pack(pastLast));
     Require(deeperView.mipCount == 9, "a view past the last mip must cover every level it names");
     const auto deeperSurface = DescribeSurface(deeperView);
-    Require(deeperSurface.guestBytes == 0x1640000u && deeperSurface.mips[7].tail && deeperSurface.mips[7].tailX == 32 && deeperSurface.mips[7].tailY == 0 && deeperSurface.mips[8].tail && deeperSurface.mips[8].tailX == 0 && deeperSurface.mips[8].tailY == 16, "levels 7 and 8 must sit in their addrlib tail slots");
+    Require(deeperSurface.guestBytes == 0x1640000u && deeperSurface.mips[7].tail && deeperSurface.mips[7].tailX == 32 &&
+                deeperSurface.mips[7].tailY == 0 && deeperSurface.mips[8].tail && deeperSurface.mips[8].tailX == 0 &&
+                deeperSurface.mips[8].tailY == 16,
+            "levels 7 and 8 must sit in their addrlib tail slots");
 
     Fields pastLinear = base;
     pastLinear.maxMip = 1;
@@ -308,7 +341,8 @@ void RunGuestTextureResourceTests() {
     linearChain.mipCount = 2;
     const auto linearAllocated = DescribeSurface(linearChain).guestBytes;
     linearChain.mipCount = 3;
-    Require(linearAllocated == 0x1800u && DescribeSurface(linearChain).guestBytes == 0x1c00u, "a third level must grow a 16x16 32 bpp linear chain from addrlib's 0x1800 to 0x1c00 bytes");
+    Require(linearAllocated == 0x1800u && DescribeSurface(linearChain).guestBytes == 0x1c00u,
+            "a third level must grow a 16x16 32 bpp linear chain from addrlib's 0x1800 to 0x1c00 bytes");
 
     Fields pastUntailed = pastLast;
     pastUntailed.maxMip = 0;
@@ -319,7 +353,9 @@ void RunGuestTextureResourceTests() {
     untailedChain.mipCount = 1;
     const auto untailedAllocated = DescribeSurface(untailedChain).guestBytes;
     untailedChain.mipCount = 2;
-    Require(untailedAllocated == 0xff0000u && DescribeSurface(untailedChain).guestBytes == 0x1470000u, "a second level must grow a 1920x1080 64 bpp SW_64KB_R_X surface from addrlib's 0xff0000 to 0x1470000 bytes");
+    Require(
+        untailedAllocated == 0xff0000u && DescribeSurface(untailedChain).guestBytes == 0x1470000u,
+        "a second level must grow a 1920x1080 64 bpp SW_64KB_R_X surface from addrlib's 0xff0000 to 0x1470000 bytes");
 
     std::array<std::uint32_t, 4> shortWords{};
     reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");
@@ -327,13 +363,20 @@ void RunGuestTextureResourceTests() {
     Require(MatchesGuestDimension(Shape::Image1D, TextureDimension::k1D), "1D shape must match 1D dimension");
     Require(!MatchesGuestDimension(Shape::Image1D, TextureDimension::k2D), "1D shape must not match 2D dimension");
     Require(MatchesGuestDimension(Shape::Image2D, TextureDimension::k2D), "2D shape must match 2D dimension");
-    Require(!MatchesGuestDimension(Shape::Image2D, TextureDimension::k2DArray), "2D shape must not match 2D array dimension");
-    Require(MatchesGuestDimension(Shape::Image2DArray, TextureDimension::k2DArray), "2D array shape must match 2D array dimension");
-    Require(MatchesGuestDimension(Shape::Image2DArray, TextureDimension::kCube), "a cube must be readable as a 2D array of its faces");
+    Require(!MatchesGuestDimension(Shape::Image2D, TextureDimension::k2DArray),
+            "2D shape must not match 2D array dimension");
+    Require(MatchesGuestDimension(Shape::Image2DArray, TextureDimension::k2DArray),
+            "2D array shape must match 2D array dimension");
+    Require(MatchesGuestDimension(Shape::Image2DArray, TextureDimension::kCube),
+            "a cube must be readable as a 2D array of its faces");
     Require(MatchesGuestDimension(Shape::ImageCube, TextureDimension::kCube), "cube shape must match cube dimension");
     Require(!MatchesGuestDimension(Shape::ImageCube, TextureDimension::k1D), "cube shape must not match 1D dimension");
-    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k1D), "3D shape must never match a guest dimension");
-    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2D), "3D shape must never match a guest dimension");
-    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2DArray), "3D shape must never match a guest dimension");
-    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::kCube), "3D shape must never match a guest dimension");
+    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k1D),
+            "3D shape must never match a guest dimension");
+    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2D),
+            "3D shape must never match a guest dimension");
+    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2DArray),
+            "3D shape must never match a guest dimension");
+    Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::kCube),
+            "3D shape must never match a guest dimension");
 }

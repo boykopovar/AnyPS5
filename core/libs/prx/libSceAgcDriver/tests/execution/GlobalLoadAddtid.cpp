@@ -49,7 +49,8 @@ constexpr std::array<Workgroup, 4> Workgroups{{{32, 32}, {128, 32}, {64, 64}, {1
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -58,15 +59,17 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-ShaderRecompiler::RecompileResult Recompile(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const Workgroup& workgroup, std::span<const std::uint32_t> userData) {
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{workgroup.threads, 1, 1}, 0, {false, false, false}, false, 1};
+ShaderRecompiler::RecompileResult Recompile(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code,
+                                            const Workgroup& workgroup, std::span<const std::uint32_t> userData) {
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{
+        {workgroup.threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {workgroup.waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
 }
@@ -81,7 +84,8 @@ std::vector<std::uint32_t> UserData() {
 }
 
 void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
-    for (std::uint32_t i = 0; i < Table.size(); ++i) Table[i] = 0x51000000u + i * 0x00010203u;
+    for (std::uint32_t i = 0; i < Table.size(); ++i)
+        Table[i] = 0x51000000u + i * 0x00010203u;
     Output.fill(Untouched);
     const auto userData = UserData();
     const std::span<const std::uint32_t> code(AddtidCode);
@@ -97,16 +101,20 @@ void Check(const Workgroup& workgroup) {
         const auto where = "global load addtid: " + workgroup.Name() + " thread " + std::to_string(tid);
         if (tid >= workgroup.threads) {
             for (std::uint32_t j = 0; j < Results; ++j) {
-                Require(out[j] == Untouched, where + " is outside the workgroup but result " + std::to_string(j) + " was written");
+                Require(out[j] == Untouched,
+                        where + " is outside the workgroup but result " + std::to_string(j) + " was written");
             }
             continue;
         }
         const auto lane = out[0];
         Require(lane < workgroup.waveSize, where + " reports lane " + std::to_string(lane));
         const bool active = lane >= 32u || ((MaskedExecLo >> lane) & 1u) != 0u;
-        const std::array<std::uint32_t, 4> expected{Table[PositiveOffsetDword + lane], Table[NegativeOffsetDword + lane], active ? Table[lane] : Sentinel, Table[tid]};
+        const std::array<std::uint32_t, 4> expected{Table[PositiveOffsetDword + lane],
+                                                    Table[NegativeOffsetDword + lane], active ? Table[lane] : Sentinel,
+                                                    Table[tid]};
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
-            Require(out[j + 1u] == expected[j], where + " lane " + std::to_string(lane) + " " + names[j] + " is " + Hex(out[j + 1u]) + ", expected " + Hex(expected[j]));
+            Require(out[j + 1u] == expected[j], where + " lane " + std::to_string(lane) + " " + names[j] + " is " +
+                                                    Hex(out[j + 1u]) + ", expected " + Hex(expected[j]));
         }
         for (std::uint32_t j = Written; j < Results; ++j) {
             Require(out[j] == Untouched, where + " result " + std::to_string(j) + " was written");
@@ -114,7 +122,8 @@ void Check(const Workgroup& workgroup) {
     }
 }
 
-void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& reason) {
+void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code,
+                   const std::string& reason) {
     const auto userData = UserData();
     std::string failure;
     try {
@@ -122,7 +131,8 @@ void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::u
     } catch (const std::exception& error) {
         failure = error.what();
     }
-    Require(failure.find(reason) != std::string::npos, "global load addtid: expected '" + reason + "', got '" + failure + "'");
+    Require(failure.find(reason) != std::string::npos,
+            "global load addtid: expected '" + reason + "', got '" + failure + "'");
 }
 
 void CheckRejections(const AgcDriver::VulkanDevice& device) {
@@ -139,7 +149,8 @@ void CheckRejections(const AgcDriver::VulkanDevice& device) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         for (const auto& workgroup : Workgroups) {
             Run(*device, workgroup);
             Check(workgroup);

@@ -10,12 +10,10 @@ class ICallSiteResolver {
 public:
     virtual ~ICallSiteResolver() = default;
 
-    virtual std::vector<FileByteOffset> ResolveCallSites(
-        const std::vector<std::uint8_t>& textSection,
-        FileByteOffset textSectionVAddr,
-        VirtualAddress targetGotOrPltAddress,
-        ByteCount targetGotOrPltSize
-    ) = 0;
+    virtual std::vector<FileByteOffset> ResolveCallSites(const std::vector<std::uint8_t>& textSection,
+                                                         FileByteOffset textSectionVAddr,
+                                                         VirtualAddress targetGotOrPltAddress,
+                                                         ByteCount targetGotOrPltSize) = 0;
 };
 
 }

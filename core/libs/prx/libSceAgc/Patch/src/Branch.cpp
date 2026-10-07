@@ -9,7 +9,8 @@
 
 namespace {
 
-void PatchBranchTarget(std::uint32_t* cmd, std::uint32_t field, const volatile std::uint32_t* target, std::uint32_t sizeInDwords, const char* function) {
+void PatchBranchTarget(std::uint32_t* cmd, std::uint32_t field, const volatile std::uint32_t* target,
+                       std::uint32_t sizeInDwords, const char* function) {
     Agc::Command::ValidatePacket(cmd, 0x3fu, 14, function);
     const auto address = reinterpret_cast<std::uintptr_t>(target);
     Agc::Command::CheckAddress(address, 4, function);
@@ -32,14 +33,15 @@ int APS5_VABI sceAgcBranchPatchSetCompareAddress(std::uint32_t* cmd, const volat
     return 0;
 }
 
-int APS5_VABI sceAgcBranchPatchSetThenTarget(std::uint32_t* cmd, const volatile std::uint32_t* target, std::uint32_t sizeInDwords) {
+int APS5_VABI sceAgcBranchPatchSetThenTarget(std::uint32_t* cmd, const volatile std::uint32_t* target,
+                                             std::uint32_t sizeInDwords) {
     PatchBranchTarget(cmd, 8, target, sizeInDwords, __func__);
     return 0;
 }
 
-int APS5_VABI sceAgcBranchPatchSetElseTarget(std::uint32_t* cmd, const volatile std::uint32_t* target, std::uint32_t sizeInDwords) {
+int APS5_VABI sceAgcBranchPatchSetElseTarget(std::uint32_t* cmd, const volatile std::uint32_t* target,
+                                             std::uint32_t sizeInDwords) {
     PatchBranchTarget(cmd, 11, target, sizeInDwords, __func__);
     return 0;
 }
-
 }

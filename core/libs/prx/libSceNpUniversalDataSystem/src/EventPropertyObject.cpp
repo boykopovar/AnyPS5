@@ -19,81 +19,73 @@ int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalData
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetString(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, const char* value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetString(NpUniversalDataSystemEventPropertyObject* object,
+                                                                   const char* key, const char* value) {
     if (object == nullptr || key == nullptr || value == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, int32_t value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(NpUniversalDataSystemEventPropertyObject* object,
+                                                                  const char* key, int32_t value) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, uint32_t value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(NpUniversalDataSystemEventPropertyObject* object,
+                                                                   const char* key, uint32_t value) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, int64_t value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(NpUniversalDataSystemEventPropertyObject* object,
+                                                                  const char* key, int64_t value) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, uint64_t value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(NpUniversalDataSystemEventPropertyObject* object,
+                                                                   const char* key, uint64_t value) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, float value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(NpUniversalDataSystemEventPropertyObject* object,
+                                                                    const char* key, float value) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat64(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, double value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat64(NpUniversalDataSystemEventPropertyObject* object,
+                                                                    const char* key, double value) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBool(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, bool value)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBool(NpUniversalDataSystemEventPropertyObject* object,
+                                                                 const char* key, bool value) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBinary(
-    NpUniversalDataSystemEventPropertyObject* object, const char* key, const void* value, size_t value_size)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBinary(NpUniversalDataSystemEventPropertyObject* object,
+                                                                   const char* key, const void* value,
+                                                                   size_t value_size) {
     if (object == nullptr || key == nullptr || value == nullptr) {
         APS5_INVALID_ARG_EX;
     }
@@ -101,37 +93,29 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBinary(
 }
 
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetObject(
-    NpUniversalDataSystemEventPropertyObject* object,
-    const char* key,
-    const NpUniversalDataSystemEventPropertyObject* value,
-    NpUniversalDataSystemEventPropertyObject** value_ptr)
-{
+    NpUniversalDataSystemEventPropertyObject* object, const char* key,
+    const NpUniversalDataSystemEventPropertyObject* value, NpUniversalDataSystemEventPropertyObject** value_ptr) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     if (value_ptr != nullptr) {
-        *value_ptr = (value != nullptr
-            ? const_cast<NpUniversalDataSystemEventPropertyObject*>(value)
-            : new NpUniversalDataSystemEventPropertyObject);
+        *value_ptr = (value != nullptr ? const_cast<NpUniversalDataSystemEventPropertyObject*>(value)
+                                       : new NpUniversalDataSystemEventPropertyObject);
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetArray(
-    NpUniversalDataSystemEventPropertyObject* object,
-    const char* key,
-    const NpUniversalDataSystemEventPropertyArray* value,
-    NpUniversalDataSystemEventPropertyArray** value_ptr)
-{
+int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetArray(NpUniversalDataSystemEventPropertyObject* object,
+                                                                  const char* key,
+                                                                  const NpUniversalDataSystemEventPropertyArray* value,
+                                                                  NpUniversalDataSystemEventPropertyArray** value_ptr) {
     if (object == nullptr || key == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     if (value_ptr != nullptr) {
-        *value_ptr = (value != nullptr
-            ? const_cast<NpUniversalDataSystemEventPropertyArray*>(value)
-            : new NpUniversalDataSystemEventPropertyArray);
+        *value_ptr = (value != nullptr ? const_cast<NpUniversalDataSystemEventPropertyArray*>(value)
+                                       : new NpUniversalDataSystemEventPropertyArray);
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
-
 }

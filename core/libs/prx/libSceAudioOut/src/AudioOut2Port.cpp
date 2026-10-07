@@ -35,7 +35,8 @@ static std::vector<AudioOut2Port> g_ports;
 
 static AudioOut2Port* FromHandle(AudioOut2PortHandle handle) {
     const auto index = handle - 1;
-    if (handle == 0 || index >= g_ports.size() || !g_ports[index].used) return nullptr;
+    if (handle == 0 || index >= g_ports.size() || !g_ports[index].used)
+        return nullptr;
     return &g_ports[index];
 }
 
@@ -52,20 +53,25 @@ static constexpr AudioOut2StereoFold STEREO_FOLDS[] = {
     {1, {1.0f}, {1.0f}},
     {2, {1.0f, 0.0f}, {0.0f, 1.0f}},
     {6, {1.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f}, {0.0f, 1.0f, FOLD_GAIN, 0.0f, 0.0f, FOLD_GAIN}},
-    {8, {1.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f}, {0.0f, 1.0f, FOLD_GAIN, 0.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN}},
-    {12, {1.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN_TWICE, 0.0f},
-        {0.0f, 1.0f, FOLD_GAIN, 0.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN_TWICE}},
+    {8,
+     {1.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f},
+     {0.0f, 1.0f, FOLD_GAIN, 0.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN}},
+    {12,
+     {1.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN_TWICE, 0.0f},
+     {0.0f, 1.0f, FOLD_GAIN, 0.0f, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN, 0.0f, FOLD_GAIN_TWICE}},
 };
 
 static const AudioOut2StereoFold* StereoFoldFor(std::uint32_t channels) {
-    const auto found = std::find_if(std::begin(STEREO_FOLDS), std::end(STEREO_FOLDS), [channels](const AudioOut2StereoFold& fold) { return fold.channels == channels; });
+    const auto found = std::find_if(std::begin(STEREO_FOLDS), std::end(STEREO_FOLDS),
+                                    [channels](const AudioOut2StereoFold& fold) { return fold.channels == channels; });
     return found == std::end(STEREO_FOLDS) ? nullptr : found;
 }
 
 static void ReadFrame(const AudioOut2Port& port, std::uint32_t frame, float* in) {
     const auto first = static_cast<std::size_t>(frame) * port.channels;
     for (std::uint32_t c = 0; c < port.channels; c++) {
-        in[c] = port.int16 ? static_cast<const std::int16_t*>(port.data)[first + c] / 32768.0f : static_cast<const float*>(port.data)[first + c];
+        in[c] = port.int16 ? static_cast<const std::int16_t*>(port.data)[first + c] / 32768.0f
+                           : static_cast<const float*>(port.data)[first + c];
     }
 }
 
@@ -73,7 +79,8 @@ static void AccumulatePadPort(const AudioOut2Port& port, AudioOut2Route route, f
     float in[AUDIO_OUT2_PORT_CHANNELS_MAX];
     for (std::uint32_t frame = 0; frame < frames; frame++) {
         ReadFrame(port, frame, in);
-        AudioOut2AccumulatePadFrame(route, in, port.channels, port.volume, out + static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS);
+        AudioOut2AccumulatePadFrame(route, in, port.channels, port.volume,
+                                    out + static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS);
     }
 }
 
@@ -86,8 +93,10 @@ static void AccumulatePort(const AudioOut2Port& port, float* out, std::uint32_t 
         float right = 0.0f;
         for (std::uint32_t c = 0; c < port.channels; c++) {
             const float sample = in[c] * port.volume[c];
-            if (fold.left[c] != 0.0f) left += sample * fold.left[c];
-            if (fold.right[c] != 0.0f) right += sample * fold.right[c];
+            if (fold.left[c] != 0.0f)
+                left += sample * fold.left[c];
+            if (fold.right[c] != 0.0f)
+                right += sample * fold.right[c];
         }
         out[frame * AUDIO_OUT2_OUTPUT_CHANNELS] += left;
         out[frame * AUDIO_OUT2_OUTPUT_CHANNELS + 1] += right;
@@ -98,10 +107,13 @@ std::uint32_t AudioOut2MixPorts(const AudioOut2Context& context, float* out, flo
     std::lock_guard lock(g_portsLock);
     std::uint32_t mixed = 0;
     for (const auto& port : g_ports) {
-        if (!port.used || port.context != &context || port.data == nullptr || port.channels == 0) continue;
+        if (!port.used || port.context != &context || port.data == nullptr || port.channels == 0)
+            continue;
         const auto route = padOut != nullptr ? AudioOut2RouteForPort(port.type, port.channels) : AudioOut2Route::Main;
-        if (route == AudioOut2Route::Main) AccumulatePort(port, out, frames);
-        else AccumulatePadPort(port, route, padOut, frames);
+        if (route == AudioOut2Route::Main)
+            AccumulatePort(port, out, frames);
+        else
+            AccumulatePadPort(port, route, padOut, frames);
         mixed++;
     }
     return mixed;
@@ -110,19 +122,23 @@ std::uint32_t AudioOut2MixPorts(const AudioOut2Context& context, float* out, flo
 bool AudioOut2HasPadPorts(const AudioOut2Context& context) {
     std::lock_guard lock(g_portsLock);
     return std::any_of(g_ports.begin(), g_ports.end(), [&context](const AudioOut2Port& port) {
-        return port.used && port.context == &context && AudioOut2RouteForPort(port.type, port.channels) != AudioOut2Route::Main;
+        return port.used && port.context == &context &&
+               AudioOut2RouteForPort(port.type, port.channels) != AudioOut2Route::Main;
     });
 }
 
 void AudioOut2ReleasePorts(const AudioOut2Context& context) {
     std::lock_guard lock(g_portsLock);
     for (auto& port : g_ports) {
-        if (port.used && port.context == &context) port = AudioOut2Port{};
+        if (port.used && port.context == &context)
+            port = AudioOut2Port{};
     }
 }
 
-static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port, const AudioOut2Attribute& attribute, const char* verdict) {
-    if (!AudioOut2TraceEnabled()) return;
+static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port, const AudioOut2Attribute& attribute,
+                           const char* verdict) {
+    if (!AudioOut2TraceEnabled())
+        return;
     char values[128] = "";
     if (attribute.value != nullptr) {
         std::size_t used = 0;
@@ -132,23 +148,30 @@ static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port
             float value = 0.0f;
             std::memcpy(&bits, static_cast<const std::uint8_t*>(attribute.value) + index * sizeof(bits), sizeof(bits));
             std::memcpy(&value, &bits, sizeof(value));
-            used += static_cast<std::size_t>(std::snprintf(values + used, sizeof(values) - used, " %08x(%g)", bits, static_cast<double>(value)));
+            used += static_cast<std::size_t>(
+                std::snprintf(values + used, sizeof(values) - used, " %08x(%g)", bits, static_cast<double>(value)));
         }
     }
-    std::fprintf(stderr, "[audioout2] t=%.3f port %llu set attribute id=0x%x size=%zu value=%p%s: %s (data sets so far %llu)\n",
-        AudioOut2TraceSeconds(), static_cast<unsigned long long>(handle), attribute.attribute_id, attribute.value_size, attribute.value, values, verdict,
-        static_cast<unsigned long long>(port.dataSets));
+    std::fprintf(
+        stderr, "[audioout2] t=%.3f port %llu set attribute id=0x%x size=%zu value=%p%s: %s (data sets so far %llu)\n",
+        AudioOut2TraceSeconds(), static_cast<unsigned long long>(handle), attribute.attribute_id, attribute.value_size,
+        attribute.value, values, verdict, static_cast<unsigned long long>(port.dataSets));
 }
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) {
-    if (!ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
-    if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params,
+                                     AudioOut2PortHandle* port) {
+    if (!ctx)
+        return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!params || !port)
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_portsLock);
     std::size_t index = 0;
-    while (index < g_ports.size() && g_ports[index].used) index++;
-    if (index == g_ports.size()) g_ports.emplace_back();
+    while (index < g_ports.size() && g_ports[index].used)
+        index++;
+    if (index == g_ports.size())
+        g_ports.emplace_back();
     auto& entry = g_ports[index];
     entry = AudioOut2Port{};
     entry.used = true;
@@ -162,29 +185,39 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     entry.fold = StereoFoldFor(entry.channels);
     if (entry.fold == nullptr || sampleType > 1 || (params->data_format & ~FORMAT_FIELDS_MASK) != 0) {
         entry = AudioOut2Port{};
-        throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%x", params->data_format); return std::string(text); }() + " is not implemented");
+        throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] {
+            char text[16];
+            std::snprintf(text, sizeof(text), "%x", params->data_format);
+            return std::string(text);
+        }() + " is not implemented");
     }
     entry.int16 = sampleType == 1;
     *port = static_cast<AudioOut2PortHandle>(index) + 1;
-    AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u float ch) sampling_freq=%u flags=0x%x user=%llx\n",
-        AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(*port), params->port_type, params->data_format,
-        entry.channels, params->sampling_freq, params->flags, static_cast<unsigned long long>(params->user_handle));
+    AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u float ch) "
+                    "sampling_freq=%u flags=0x%x user=%llx\n",
+                    AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx),
+                    static_cast<unsigned long long>(*port), params->port_type, params->data_format, entry.channels,
+                    params->sampling_freq, params->flags, static_cast<unsigned long long>(params->user_handle));
     return 0;
 }
 
 int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle port) {
     std::lock_guard lock(g_portsLock);
     auto* entry = FromHandle(port);
-    if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
-    AUDIOOUT2_TRACE("t=%.3f PortDestroy port %llu (data sets %llu)\n", AudioOut2TraceSeconds(), static_cast<unsigned long long>(port), static_cast<unsigned long long>(entry->dataSets));
+    if (!entry)
+        return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    AUDIOOUT2_TRACE("t=%.3f PortDestroy port %llu (data sets %llu)\n", AudioOut2TraceSeconds(),
+                    static_cast<unsigned long long>(port), static_cast<unsigned long long>(entry->dataSets));
     *entry = AudioOut2Port{};
     return 0;
 }
 
 int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortState* state) {
     std::lock_guard lock(g_portsLock);
-    if (!FromHandle(port)) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
-    if (!state) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (!FromHandle(port))
+        return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!state)
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     state->output = OUTPUT_MAIN;
     state->num_channels = AUDIO_OUT2_OUTPUT_CHANNELS;
     state->volume = VOLUME_MAX;
@@ -193,11 +226,14 @@ int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortSt
     return 0;
 }
 
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num) {
+int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const AudioOut2Attribute* attributes,
+                                            uint32_t num) {
     std::lock_guard lock(g_portsLock);
     auto* entry = FromHandle(port);
-    if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
-    if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (!entry)
+        return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!attributes && num != 0)
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     for (uint32_t index = 0; index < num; index++) {
         const auto& attribute = attributes[index];
         const char* verdict = "ignored";
@@ -207,14 +243,15 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
             entry->dataSets++;
             verdict = "pcm data pointer";
-        } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {
+        } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 &&
+                   attribute.value_size == entry->channels * sizeof(float)) {
             std::memcpy(entry->volume, attribute.value, attribute.value_size);
             verdict = "volume";
         }
         const auto traces = entry->attributeTraces++;
-        if (traces < ATTRIBUTE_TRACE_FULL || traces % ATTRIBUTE_TRACE_EVERY == 0) TraceAttribute(port, *entry, attribute, verdict);
+        if (traces < ATTRIBUTE_TRACE_FULL || traces % ATTRIBUTE_TRACE_EVERY == 0)
+            TraceAttribute(port, *entry, attribute, verdict);
     }
     return 0;
 }
-
 }

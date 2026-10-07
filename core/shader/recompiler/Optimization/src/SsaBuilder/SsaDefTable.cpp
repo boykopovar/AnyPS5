@@ -51,13 +51,9 @@ void DefTable::Set(IrBlock& block, ScalarMaskTag variable, IrValue* value) {
     block.ssaScalarMaskTags[index] = value;
 }
 
-IrValue* DefTable::Get(IrBlock& block, VectorReg reg) const {
-    return block.ssaVectorValues[RegIndex(reg)];
-}
+IrValue* DefTable::Get(IrBlock& block, VectorReg reg) const { return block.ssaVectorValues[RegIndex(reg)]; }
 
-void DefTable::Set(IrBlock& block, VectorReg reg, IrValue* value) {
-    block.ssaVectorValues[RegIndex(reg)] = value;
-}
+void DefTable::Set(IrBlock& block, VectorReg reg, IrValue* value) { block.ssaVectorValues[RegIndex(reg)] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, GotoVariable variable) const {
     const auto found = _gotoVariables.find(variable.index);
@@ -80,71 +76,55 @@ IrValue* DefTable::Get(IrBlock& block, SccTag) const {
     return found == _scc.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, SccTag, IrValue* value) {
-    _scc[&block] = value;
-}
+void DefTable::Set(IrBlock& block, SccTag, IrValue* value) { _scc[&block] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, ExecTag) const {
     const auto found = _exec.find(&block);
     return found == _exec.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, ExecTag, IrValue* value) {
-    _exec[&block] = value;
-}
+void DefTable::Set(IrBlock& block, ExecTag, IrValue* value) { _exec[&block] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, ExecLoTag) const {
     const auto found = _execLo.find(&block);
     return found == _execLo.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, ExecLoTag, IrValue* value) {
-    _execLo[&block] = value;
-}
+void DefTable::Set(IrBlock& block, ExecLoTag, IrValue* value) { _execLo[&block] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, ExecHiTag) const {
     const auto found = _execHi.find(&block);
     return found == _execHi.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, ExecHiTag, IrValue* value) {
-    _execHi[&block] = value;
-}
+void DefTable::Set(IrBlock& block, ExecHiTag, IrValue* value) { _execHi[&block] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, VccTag) const {
     const auto found = _vcc.find(&block);
     return found == _vcc.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, VccTag, IrValue* value) {
-    _vcc[&block] = value;
-}
+void DefTable::Set(IrBlock& block, VccTag, IrValue* value) { _vcc[&block] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, VccLoTag) const {
     const auto found = _vccLo.find(&block);
     return found == _vccLo.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, VccLoTag, IrValue* value) {
-    _vccLo[&block] = value;
-}
+void DefTable::Set(IrBlock& block, VccLoTag, IrValue* value) { _vccLo[&block] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, VccHiTag) const {
     const auto found = _vccHi.find(&block);
     return found == _vccHi.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, VccHiTag, IrValue* value) {
-    _vccHi[&block] = value;
-}
+void DefTable::Set(IrBlock& block, VccHiTag, IrValue* value) { _vccHi[&block] = value; }
 
 IrValue* DefTable::Get(IrBlock& block, M0Tag) const {
     const auto found = _m0.find(&block);
     return found == _m0.end() ? nullptr : found->second;
 }
 
-void DefTable::Set(IrBlock& block, M0Tag, IrValue* value) {
-    _m0[&block] = value;
-}
+void DefTable::Set(IrBlock& block, M0Tag, IrValue* value) { _m0[&block] = value; }
 
 }

@@ -59,18 +59,9 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
         unsigned int devMinor = 0;
         std::uint64_t inode = 0;
         char path[4096] = {};
-        int parsed = std::sscanf(
-            line.c_str(),
-            "%llx-%llx %7s %llx %x:%x %llu %4095s",
-            (unsigned long long*)&start,
-            (unsigned long long*)&end,
-            perms,
-            (unsigned long long*)&offset,
-            &devMajor,
-            &devMinor,
-            (unsigned long long*)&inode,
-            path
-        );
+        int parsed = std::sscanf(line.c_str(), "%llx-%llx %7s %llx %x:%x %llu %4095s", (unsigned long long*)&start,
+                                 (unsigned long long*)&end, perms, (unsigned long long*)&offset, &devMajor, &devMinor,
+                                 (unsigned long long*)&inode, path);
         if (parsed < 7 || addr < start || addr >= end) {
             continue;
         }
@@ -131,7 +122,8 @@ int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
     return 0;
 }
 
-int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret) {
+int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk,
+                                                    int* ret) {
     (void)argc;
     (void)argv;
     (void)unk;
@@ -139,7 +131,8 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
         throw std::runtime_error("sceSysmoduleLoadModuleInternalWithArg: invalid id 0");
     }
     if (!findModuleName(id)) {
-        throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternalWithArg: unknown id ") + std::to_string(id));
+        throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternalWithArg: unknown id ") +
+                                 std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
     gLoadCount[id]++;
@@ -193,5 +186,4 @@ int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id) {
     it->second--;
     return 0;
 }
-
 }

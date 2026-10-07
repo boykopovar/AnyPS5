@@ -6,5 +6,4 @@
 extern "C" {
 
 APS5_DUMMY_FUN
-
 }

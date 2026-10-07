@@ -46,10 +46,14 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return sScratchLoad(inst);
     case RdnaOpcode::SGetWaveidInWorkgroup: {
         if (program.Resources().stage != IrShaderStage::Compute) {
-            throw std::runtime_error("s_get_waveid_in_workgroup is supported only in compute shaders, at pc " + std::to_string(inst.programCounter));
+            throw std::runtime_error("s_get_waveid_in_workgroup is supported only in compute shaders, at pc " +
+                                     std::to_string(inst.programCounter));
         }
-        IrValue& localIndex = ir.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&ir.Constant(static_cast<std::uint32_t>(StageInputKind::LocalInvocationIndex)), &ir.Constant(0u)});
-        writeOperand(inst.destination, &ir.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&localIndex, &ir.Constant(program.WaveSize())}));
+        IrValue& localIndex =
+            ir.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin),
+                    {&ir.Constant(static_cast<std::uint32_t>(StageInputKind::LocalInvocationIndex)), &ir.Constant(0u)});
+        writeOperand(inst.destination, &ir.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32),
+                                                {&localIndex, &ir.Constant(program.WaveSize())}));
         return true;
     }
 
@@ -127,7 +131,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return bufferAtomic(inst, IrOpcode::BufferAtomicISub32);
     case RdnaOpcode::BufferAtomicCsub:
         if (!inst.glc) {
-            throw std::runtime_error("buffer_atomic_csub without glc is not supported, at pc " + std::to_string(inst.programCounter));
+            throw std::runtime_error("buffer_atomic_csub without glc is not supported, at pc " +
+                                     std::to_string(inst.programCounter));
         }
         return bufferAtomic(inst, IrOpcode::BufferAtomicUSubSat32);
     case RdnaOpcode::BufferAtomicSmin:
@@ -223,7 +228,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return flatAtomic(inst, IrOpcode::AddressAtomicISub32);
     case RdnaOpcode::GlobalAtomicCsub:
         if (!inst.glc) {
-            throw std::runtime_error("global_atomic_csub without glc is not supported, at pc " + std::to_string(inst.programCounter));
+            throw std::runtime_error("global_atomic_csub without glc is not supported, at pc " +
+                                     std::to_string(inst.programCounter));
         }
         return flatAtomic(inst, IrOpcode::AddressAtomicUSubSat32);
     case RdnaOpcode::FlatAtomicSmin:

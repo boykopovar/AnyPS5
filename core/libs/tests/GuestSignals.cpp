@@ -2,7 +2,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
-using Handler = void (APS5_VABI *)(int);
+using Handler = void(APS5_VABI*)(int);
 extern "C" {
 Handler APS5_VABI signal_nid_postfix(int, Handler);
 int APS5_VABI raise_nid_postfix(int);
@@ -19,7 +19,10 @@ void APS5_VABI Callback(int value) {
     received = value;
     handlerReturn = reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     const auto invalid = reinterpret_cast<Handler>(static_cast<std::uintptr_t>(-1));
     const auto ignore = reinterpret_cast<Handler>(std::uintptr_t{1});

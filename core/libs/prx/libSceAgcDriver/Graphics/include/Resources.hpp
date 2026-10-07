@@ -8,7 +8,9 @@ namespace AgcDriver::Graphics {
 
 class Buffer {
 public:
-    Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage,
+           VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     ~Buffer();
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
@@ -65,10 +67,13 @@ private:
 };
 
 // Records a whole-range buffer copy.
-void CopyBuffer(const Context& context, VkCommandBuffer commands, VkBuffer source, VkDeviceSize sourceOffset, VkBuffer destination, VkDeviceSize destinationOffset, VkDeviceSize bytes);
+void CopyBuffer(const Context& context, VkCommandBuffer commands, VkBuffer source, VkDeviceSize sourceOffset,
+                VkBuffer destination, VkDeviceSize destinationOffset, VkDeviceSize bytes);
 
 // Records a global memory barrier.
-void RecordMemoryBarrier(const Context& context, VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess);
+void RecordMemoryBarrier(const Context& context, VkCommandBuffer commands, VkPipelineStageFlags sourceStage,
+                         VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess,
+                         VkAccessFlags destinationAccess);
 
 // Resolves every DeviceFunctions entry point of the context's device (once, at device setup).
 void FillDeviceFunctions(const Context& context, DeviceFunctions& functions);

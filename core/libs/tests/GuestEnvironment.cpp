@@ -8,7 +8,10 @@ int APS5_VABI unsetenv_nid_postfix(const char*);
 int APS5_VABI putenv_nid_postfix(char*);
 int* APS5_VABI __error_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     const char* key = "ANYPS5_GUEST_ENV_TEST_4C27";
 #ifdef _WIN32

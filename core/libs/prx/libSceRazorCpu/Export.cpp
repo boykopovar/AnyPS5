@@ -5,39 +5,35 @@
 
 extern "C" {
 
-uint32_t APS5_VABI sceRazorCpuIsCapturing(void) {
- return 0;
-}
+uint32_t APS5_VABI sceRazorCpuIsCapturing(void) { return 0; }
 
 int APS5_VABI sceRazorCpuJobManagerDispatch(const void* args) {
- (void)args;
- return 0;
+    (void)args;
+    return 0;
 }
 
 int APS5_VABI sceRazorCpuJobManagerJob(const void* args) {
- (void)args;
- return 0;
+    (void)args;
+    return 0;
 }
 
 int APS5_VABI sceRazorCpuJobManagerSequence(const void* args) {
- (void)args;
- return 0;
+    (void)args;
+    return 0;
 }
 
 int APS5_VABI sceRazorCpuPushMarkerStatic(const char* name, uint32_t color, uint32_t flags) {
- (void)name;
- (void)color;
- (void)flags;
- return 0;
+    (void)name;
+    (void)color;
+    (void)flags;
+    return 0;
 }
 
-int APS5_VABI sceRazorCpuPopMarker(void) {
- return 0;
-}
+int APS5_VABI sceRazorCpuPopMarker(void) { return 0; }
 
 int APS5_VABI sceRazorCpuFlushOccurred(uint64_t* timeSpentInFlush) {
- if (timeSpentInFlush != nullptr) *timeSpentInFlush = 0;
- return 0;
+    if (timeSpentInFlush != nullptr)
+        *timeSpentInFlush = 0;
+    return 0;
 }
-
 }

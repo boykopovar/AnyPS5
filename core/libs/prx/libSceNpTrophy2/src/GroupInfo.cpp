@@ -9,7 +9,8 @@
 
 extern "C" {
 
-int APS5_VABI sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, NpTrophy2GroupDetails* details, NpTrophy2GroupData* data) {
+int APS5_VABI sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, NpTrophy2GroupDetails* details,
+                                       NpTrophy2GroupData* data) {
     if (details == nullptr || data == nullptr) {
         APS5_INVALID_ARG_EX;
     }
@@ -39,7 +40,9 @@ int APS5_VABI sceNpTrophy2GetGroupInfo(int context, int handle, int group_id, Np
     return SCE_NP_TROPHY2_OK;
 }
 
-int APS5_VABI sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t offset, uint32_t limit, NpTrophy2GroupDetails* details_array, NpTrophy2GroupData* data_array, uint32_t* count) {
+int APS5_VABI sceNpTrophy2GetGroupInfoArray(int context, int handle, uint32_t offset, uint32_t limit,
+                                            NpTrophy2GroupDetails* details_array, NpTrophy2GroupData* data_array,
+                                            uint32_t* count) {
     if (count == nullptr) {
         APS5_INVALID_ARG_EX;
     }
@@ -80,5 +83,4 @@ int APS5_VABI sceNpTrophy2GetGroupIcon(int context, int handle, int group_id, vo
     }
     throw std::runtime_error(std::string(__func__) + ": icon file not found");
 }
-
 }

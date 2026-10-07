@@ -13,7 +13,10 @@ int APS5_VABI sceErrorDialogTerminate(void);
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 constexpr int kStatusRunning = 2;
 constexpr int kStatusFinished = 3;

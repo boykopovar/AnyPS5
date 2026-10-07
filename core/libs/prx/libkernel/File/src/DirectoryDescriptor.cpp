@@ -34,7 +34,8 @@ namespace File {
 
 int OpenDirectoryDescriptor(const std::filesystem::path& path) {
     const int fd = ::_open("NUL", _O_RDONLY | _O_BINARY);
-    if (fd < 0) return -1;
+    if (fd < 0)
+        return -1;
     std::lock_guard lock(g_mutex);
     g_directories[fd] = DirectoryState{path};
     return fd;
@@ -43,7 +44,8 @@ int OpenDirectoryDescriptor(const std::filesystem::path& path) {
 std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd) {
     std::lock_guard lock(g_mutex);
     const auto found = g_directories.find(fd);
-    if (found == g_directories.end()) return std::nullopt;
+    if (found == g_directories.end())
+        return std::nullopt;
     return found->second.path;
 }
 
@@ -55,7 +57,8 @@ void ForgetDirectoryDescriptor(int fd) {
 int ReadDirectoryDescriptor(int fd, char* buf, int nbytes) {
     std::lock_guard lock(g_mutex);
     const auto found = g_directories.find(fd);
-    if (found == g_directories.end()) return SCE_KERNEL_ERROR_ENOTDIR;
+    if (found == g_directories.end())
+        return SCE_KERNEL_ERROR_ENOTDIR;
     auto& state = found->second;
     if (!state.loaded) {
         state.loaded = true;
@@ -64,7 +67,8 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes) {
         std::error_code error;
         for (const auto& entry : std::filesystem::directory_iterator(state.path, error)) {
             std::error_code typeError;
-            state.entries.emplace_back(entry.path().filename().string(), entry.is_directory(typeError) ? GuestDirectoryType : GuestRegularType);
+            state.entries.emplace_back(entry.path().filename().string(),
+                                       entry.is_directory(typeError) ? GuestDirectoryType : GuestRegularType);
         }
     }
     std::size_t used = 0;
@@ -72,7 +76,8 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes) {
         const auto& [name, type] = state.entries[state.cursor];
         const std::size_t record = (8 + name.size() + 1 + 3) & ~std::size_t{3};
         if (used + record > static_cast<std::size_t>(nbytes)) {
-            if (used == 0) return SCE_KERNEL_ERROR_EINVAL;
+            if (used == 0)
+                return SCE_KERNEL_ERROR_EINVAL;
             break;
         }
         char* out = buf + used;

@@ -43,9 +43,8 @@ alignas(256) constexpr std::array<std::uint32_t, 24> StoreCode{
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 17> MipCode{
-    0x4a500081, 0xd5690014, 0x0201ff28, 0x9e3779b1, 0x4a2a28ff, 0x7f4a7c15, 0x4a2c28ff, 0xfe94f82a,
-    0x4a2e28ff, 0x7ddf743f, 0x2c3c0081, 0x36400081, 0x34424081, 0x4c3e4284, 0xf02c1b08, 0x0001141e,
-    0xbf810000,
+    0x4a500081, 0xd5690014, 0x0201ff28, 0x9e3779b1, 0x4a2a28ff, 0x7f4a7c15, 0x4a2c28ff, 0xfe94f82a, 0x4a2e28ff,
+    0x7ddf743f, 0x2c3c0081, 0x36400081, 0x34424081, 0x4c3e4284, 0xf02c1b08, 0x0001141e, 0xbf810000,
 };
 
 class GuestBlock {
@@ -97,16 +96,17 @@ constexpr std::array<Format, 10> Formats{{
     {"32_32_32_32_FLOAT", 77u, 16u},
 }};
 
-std::uint32_t Levels(bool mip) {
-    return mip ? 2u : 1u;
-}
+std::uint32_t Levels(bool mip) { return mip ? 2u : 1u; }
 
 std::vector<AgcDriver::Graphics::TileMipLayout> Mips(const Format& format, bool mip) {
-    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width, Height, Levels(mip));
+    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width,
+                                                 Height, Levels(mip));
 }
 
-std::uint64_t TexelOffset(const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x, std::uint32_t y) {
-    return mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + static_cast<std::uint64_t>(x) * format.bytes;
+std::uint64_t TexelOffset(const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x,
+                          std::uint32_t y) {
+    return mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes +
+           static_cast<std::uint64_t>(x) * format.bytes;
 }
 
 std::vector<std::uint8_t> Initial() {
@@ -117,11 +117,10 @@ std::vector<std::uint8_t> Initial() {
     return bytes;
 }
 
-std::uint32_t Data(std::uint32_t tid, std::uint32_t index) {
-    return (tid + 1u) * 0x9e3779b1u + index * 0x7f4a7c15u;
-}
+std::uint32_t Data(std::uint32_t tid, std::uint32_t index) { return (tid + 1u) * 0x9e3779b1u + index * 0x7f4a7c15u; }
 
-void Store(std::vector<std::uint8_t>& bytes, const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x, std::uint32_t y, std::uint32_t dmask, std::uint32_t tid) {
+void Store(std::vector<std::uint8_t>& bytes, const AgcDriver::Graphics::TileMipLayout& mip, const Format& format,
+           std::uint32_t x, std::uint32_t y, std::uint32_t dmask, std::uint32_t tid) {
     std::array<std::uint32_t, 4> words{};
     std::uint32_t next = 0;
     for (std::uint32_t word = 0; word < 4u; ++word) {
@@ -149,7 +148,8 @@ std::vector<std::uint8_t> Expected(const Format& format, bool mip) {
     return bytes;
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format, std::uint32_t swizzle, std::uint32_t levels) {
+std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format, std::uint32_t swizzle,
+                                               std::uint32_t levels) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
     return {
         static_cast<std::uint32_t>(address >> 8u),
@@ -163,27 +163,30 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t f
     };
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, const Format& format, std::uint32_t swizzle, bool mip) {
+void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code,
+         const Format& format, std::uint32_t swizzle, bool mip) {
     const auto mips = Mips(format, mip);
-    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= TexelBytes, std::string("image store packed: the mip chain of ") + format.name + " does not fit the texel storage");
+    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= TexelBytes,
+            std::string("image store packed: the mip chain of ") + format.name + " does not fit the texel storage");
     const auto initial = Initial();
     std::copy(initial.begin(), initial.end(), texels);
     std::vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, format.format, swizzle, Levels(mip));
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr,
+                                                      "test");
     device.WaitIdle();
 }
 
@@ -202,7 +205,9 @@ void Check(const std::uint8_t* texels, const Format& format, bool mip, const std
                     std::memcpy(&wanted, expected.data() + offset + word * chunk, chunk);
                     if (actual != wanted) {
                         char message[200];
-                        std::snprintf(message, sizeof(message), "%s %s: level %u texel (%u, %u) dword %u is 0x%08x, expected 0x%08x", what.c_str(), format.name, level, x, y, word, actual, wanted);
+                        std::snprintf(message, sizeof(message),
+                                      "%s %s: level %u texel (%u, %u) dword %u is 0x%08x, expected 0x%08x",
+                                      what.c_str(), format.name, level, x, y, word, actual, wanted);
                         Require(false, message);
                     }
                 }
@@ -211,14 +216,16 @@ void Check(const std::uint8_t* texels, const Format& format, bool mip, const std
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& format, const std::string& reason) {
+void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& format,
+                    const std::string& reason) {
     std::string refusal;
     try {
         Run(device, texels, StoreCode, format, IdentitySwizzle, false);
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find(reason) != std::string::npos, std::string("image_store_pck of ") + format.name + " was not refused: " + refusal);
+    Require(refusal.find(reason) != std::string::npos,
+            std::string("image_store_pck of ") + format.name + " was not refused: " + refusal);
 }
 
 }
@@ -226,7 +233,8 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         GuestBlock block;
         auto* texels = block.Data();
         for (const auto& format : Formats) {

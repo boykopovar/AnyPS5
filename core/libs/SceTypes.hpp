@@ -11,7 +11,9 @@ typedef float __m128 __attribute__((__vector_size__(16), __aligned__(16)));
 #elif defined(_MSC_VER)
 #include <xmmintrin.h>
 #else
-struct alignas(16) __m128 { float v[4]; };
+struct alignas(16) __m128 {
+    float v[4];
+};
 #endif
 
 using Bool = std::uint8_t;
@@ -163,7 +165,7 @@ struct PthreadSemPrivate;
 using KernelSema = KernelSemaPrivate*;
 using KernelEventFlag = KernelEventFlagPrivate*;
 using Pthread = PthreadPrivate*;
-using PthreadEntry = void* (APS5_VABI *)(void*);
+using PthreadEntry = void*(APS5_VABI*)(void*);
 using PthreadAttr = PthreadAttrPrivate*;
 using PthreadMutex = PthreadMutexPrivate*;
 using PthreadMutexattr = PthreadMutexattrPrivate*;
@@ -175,9 +177,9 @@ using PthreadSem = PthreadSemPrivate*;
 using PthreadKey = int;
 using pthread_entry_func_t = void* (*)(void*);
 using pthread_key_destructor_func_t = void (*)(void*);
-using thread_dtors_func_t = void (APS5_VABI *)();
-using get_thread_atexit_count_func_t = int (APS5_VABI *)(KernelModule);
-using thread_atexit_report_func_t = void (APS5_VABI *)(KernelModule);
+using thread_dtors_func_t = void(APS5_VABI*)();
+using get_thread_atexit_count_func_t = int(APS5_VABI*)(KernelModule);
+using thread_atexit_report_func_t = void(APS5_VABI*)(KernelModule);
 
 struct FileStat {
     std::uint32_t st_dev;
@@ -349,7 +351,7 @@ struct RtcTick {
 };
 
 struct CommandBuffer {
-    using Callback = bool (APS5_VABI *)(CommandBuffer*, std::uint32_t, void*);
+    using Callback = bool(APS5_VABI*)(CommandBuffer*, std::uint32_t, void*);
     std::uint32_t* bottom;
     std::uint32_t* top;
     std::uint32_t* cursor_up;
@@ -476,7 +478,11 @@ struct AudioOut2SystemState {
     std::uint64_t reserved[7];
 };
 
-struct AudioOut2Position { float x; float y; float z; };
+struct AudioOut2Position {
+    float x;
+    float y;
+    float z;
+};
 
 struct AudioOut2SpeakerAngle {
     std::int16_t azimuth;
@@ -660,10 +666,10 @@ struct AvPlayerStreamInfoEx {
 static_assert(sizeof(AvPlayerStreamInfoEx) == 104);
 static_assert(offsetof(AvPlayerStreamInfoEx, details) == 16 && offsetof(AvPlayerStreamInfoEx, duration) == 96);
 
-using AvPlayerAllocate = void* (APS5_VABI*)(void*, std::uint32_t, std::uint32_t);
-using AvPlayerDeallocate = void (APS5_VABI*)(void*, void*);
-using AvPlayerAllocateTexture = void* (APS5_VABI*)(void*, std::uint32_t, std::uint32_t);
-using AvPlayerDeallocateTexture = void (APS5_VABI*)(void*, void*);
+using AvPlayerAllocate = void*(APS5_VABI*)(void*, std::uint32_t, std::uint32_t);
+using AvPlayerDeallocate = void(APS5_VABI*)(void*, void*);
+using AvPlayerAllocateTexture = void*(APS5_VABI*)(void*, std::uint32_t, std::uint32_t);
+using AvPlayerDeallocateTexture = void(APS5_VABI*)(void*, void*);
 
 struct AvPlayerMemAllocator {
     void* object_ptr;
@@ -673,10 +679,10 @@ struct AvPlayerMemAllocator {
     AvPlayerDeallocateTexture deallocate_texture;
 };
 
-using AvPlayerOpenFile = std::int32_t (APS5_VABI*)(void*, const char*);
-using AvPlayerCloseFile = std::int32_t (APS5_VABI*)(void*);
-using AvPlayerReadOffsetFile = std::int32_t (APS5_VABI*)(void*, std::uint8_t*, std::uint64_t, std::uint32_t);
-using AvPlayerSizeFile = std::uint64_t (APS5_VABI*)(void*);
+using AvPlayerOpenFile = std::int32_t(APS5_VABI*)(void*, const char*);
+using AvPlayerCloseFile = std::int32_t(APS5_VABI*)(void*);
+using AvPlayerReadOffsetFile = std::int32_t(APS5_VABI*)(void*, std::uint8_t*, std::uint64_t, std::uint32_t);
+using AvPlayerSizeFile = std::uint64_t(APS5_VABI*)(void*);
 
 struct AvPlayerFileReplacement {
     void* object_ptr;
@@ -686,7 +692,7 @@ struct AvPlayerFileReplacement {
     AvPlayerSizeFile size;
 };
 
-using AvPlayerEventCallback = void (APS5_VABI*)(void*, std::int32_t, std::int32_t, void*);
+using AvPlayerEventCallback = void(APS5_VABI*)(void*, std::int32_t, std::int32_t, void*);
 
 struct AvPlayerEventReplacement {
     void* object_ptr;
@@ -846,9 +852,19 @@ struct VoicePortParam {
     std::uint16_t mute;
     float volume;
     union {
-        struct { std::int32_t bitrate; } voice;
-        struct { std::uint32_t buffer_size; std::int32_t data_type; std::int32_t sample_rate; } pcmaudio;
-        struct { std::int32_t user_id; std::int32_t type; std::int32_t index; } device;
+        struct {
+            std::int32_t bitrate;
+        } voice;
+        struct {
+            std::uint32_t buffer_size;
+            std::int32_t data_type;
+            std::int32_t sample_rate;
+        } pcmaudio;
+        struct {
+            std::int32_t user_id;
+            std::int32_t type;
+            std::int32_t index;
+        } device;
     };
 };
 
@@ -869,87 +885,97 @@ struct VoiceStartParam {
 };
 
 struct PadTouchPadInformation {
- float pixelDensity;
- struct { std::uint16_t x; std::uint16_t y; } resolution;
+    float pixelDensity;
+    struct {
+        std::uint16_t x;
+        std::uint16_t y;
+    } resolution;
 };
 
 struct PadStickInformation {
- std::uint8_t deadZoneLeft;
- std::uint8_t deadZoneRight;
+    std::uint8_t deadZoneLeft;
+    std::uint8_t deadZoneRight;
 };
 
 struct PadControllerInformation {
- PadTouchPadInformation touchPadInfo;
- PadStickInformation stickInfo;
- std::uint8_t connectionType;
- std::uint8_t connectedCount;
- bool connected;
- std::uint8_t pad[3];
- std::int32_t deviceClass;
- std::uint8_t reserve[8];
+    PadTouchPadInformation touchPadInfo;
+    PadStickInformation stickInfo;
+    std::uint8_t connectionType;
+    std::uint8_t connectedCount;
+    bool connected;
+    std::uint8_t pad[3];
+    std::int32_t deviceClass;
+    std::uint8_t reserve[8];
 };
 
-struct PadVibrationParam { std::uint8_t large_motor; std::uint8_t small_motor; };
-struct PadLightBarParam { std::uint8_t r; std::uint8_t g; std::uint8_t b; };
+struct PadVibrationParam {
+    std::uint8_t large_motor;
+    std::uint8_t small_motor;
+};
+struct PadLightBarParam {
+    std::uint8_t r;
+    std::uint8_t g;
+    std::uint8_t b;
+};
 
 struct PadDeviceClassData {
- std::int32_t deviceClass;
- bool dataValid;
- std::uint8_t pad[3];
- union {
-  struct {
-   float angle;
-   std::uint16_t wheel;
-   std::uint16_t accelerator;
-   std::uint16_t brake;
-   std::uint16_t clutch;
-   std::uint16_t handBrake;
-   std::uint8_t gear;
-   std::uint8_t reserved[1];
-  } steeringWheel;
-  struct {
-   std::uint8_t toneNumber;
-   std::uint8_t whammyBar;
-   std::uint8_t tilt;
-   std::uint8_t fret;
-   std::uint8_t fretSolo;
-   std::uint8_t reserved[11];
-  } guitar;
-  struct {
-   std::uint8_t snare;
-   std::uint8_t tom1;
-   std::uint8_t tom2;
-   std::uint8_t floorTom;
-   std::uint8_t hihatCymbal;
-   std::uint8_t rideCymbal;
-   std::uint8_t crashCymbal;
-   std::uint8_t reserved[9];
-  } drum;
-  std::uint8_t data[16];
- } classData;
+    std::int32_t deviceClass;
+    bool dataValid;
+    std::uint8_t pad[3];
+    union {
+        struct {
+            float angle;
+            std::uint16_t wheel;
+            std::uint16_t accelerator;
+            std::uint16_t brake;
+            std::uint16_t clutch;
+            std::uint16_t handBrake;
+            std::uint8_t gear;
+            std::uint8_t reserved[1];
+        } steeringWheel;
+        struct {
+            std::uint8_t toneNumber;
+            std::uint8_t whammyBar;
+            std::uint8_t tilt;
+            std::uint8_t fret;
+            std::uint8_t fretSolo;
+            std::uint8_t reserved[11];
+        } guitar;
+        struct {
+            std::uint8_t snare;
+            std::uint8_t tom1;
+            std::uint8_t tom2;
+            std::uint8_t floorTom;
+            std::uint8_t hihatCymbal;
+            std::uint8_t rideCymbal;
+            std::uint8_t crashCymbal;
+            std::uint8_t reserved[9];
+        } drum;
+        std::uint8_t data[16];
+    } classData;
 };
 
 struct PadDeviceClassExtendedInformation {
- std::int32_t deviceClass;
- std::uint8_t reserved[4];
- union {
-  struct {
-   std::uint8_t capability;
-   std::uint8_t reserved1[1];
-   std::uint16_t maxPhysicalWheelAngle;
-   std::uint8_t reserved2[8];
-  } steeringWheel;
-  struct {
-   std::uint8_t capability;
-   std::uint8_t quantityOfSelectorSwitch;
-   std::uint8_t reserved[10];
-  } guitar;
-  struct {
-   std::uint8_t capability;
-   std::uint8_t reserved[11];
-  } drum;
-  std::uint8_t data[12];
- } classData;
+    std::int32_t deviceClass;
+    std::uint8_t reserved[4];
+    union {
+        struct {
+            std::uint8_t capability;
+            std::uint8_t reserved1[1];
+            std::uint16_t maxPhysicalWheelAngle;
+            std::uint8_t reserved2[8];
+        } steeringWheel;
+        struct {
+            std::uint8_t capability;
+            std::uint8_t quantityOfSelectorSwitch;
+            std::uint8_t reserved[10];
+        } guitar;
+        struct {
+            std::uint8_t capability;
+            std::uint8_t reserved[11];
+        } drum;
+        std::uint8_t data[12];
+    } classData;
 };
 struct PadTriggerEffectStateInformation {
     std::int32_t state[2];
@@ -1047,8 +1073,10 @@ struct ImeKeycode {
     std::uint64_t timestamp;
 };
 
-using ImeTextFilter = std::int32_t (*)(char16_t* out_text, std::uint32_t* out_text_length, const char16_t* source_text, std::uint32_t source_text_length);
-using ImeExtKeyboardFilter = int (*)(const ImeKeycode* source_keycode, std::uint16_t* out_keycode, std::uint32_t* out_status, void* reserved);
+using ImeTextFilter = std::int32_t (*)(char16_t* out_text, std::uint32_t* out_text_length, const char16_t* source_text,
+                                       std::uint32_t source_text_length);
+using ImeExtKeyboardFilter = int (*)(const ImeKeycode* source_keycode, std::uint16_t* out_keycode,
+                                     std::uint32_t* out_status, void* reserved);
 
 struct ImeExtendedParam {
     std::uint32_t option;
@@ -1194,7 +1222,9 @@ struct PositionAndForm {
     std::uint32_t height;
 };
 
-struct NetEtherAddr { std::uint8_t data[6]; };
+struct NetEtherAddr {
+    std::uint8_t data[6];
+};
 
 union NetEpollData {
     void* ptr;
@@ -1210,9 +1240,13 @@ struct NetEpollEvent {
     NetEpollData data;
 };
 
-struct NetCtlNatInfo { std::uint8_t opaque[128]; };
+struct NetCtlNatInfo {
+    std::uint8_t opaque[128];
+};
 
-union NetCtlInfo { std::uint8_t opaque[256]; };
+union NetCtlInfo {
+    std::uint8_t opaque[256];
+};
 
 using NetCtlCallback = void (*)(int, void*);
 
@@ -1220,7 +1254,9 @@ struct HttpEpoll {};
 using HttpEpollHandle = HttpEpoll*;
 using HttpsCallback = int (*)(int, unsigned int, void* const*, int, void*);
 
-struct HttpNBEvent { std::uint8_t opaque[64]; };
+struct HttpNBEvent {
+    std::uint8_t opaque[64];
+};
 
 struct SceHttpUriElement {
     int opaque = 0;
@@ -1243,30 +1279,51 @@ struct Http2AsyncResult {
     void* reserved;
 };
 
-struct NpTitleId { char data[13]; char pad[3]; };
-struct NpTitleSecret { std::uint8_t data[128]; };
-struct NpContentRestriction { std::uint8_t opaque[128]; };
-struct NpOnlineId { char data[17]; char pad[3]; };
-struct NpId { NpOnlineId online_id; std::uint8_t opaque[4]; };
-struct NpCreateAsyncRequestParameter { std::uint8_t opaque[64]; };
-struct NpCheckPremiumParameter { std::uint8_t opaque[64]; };
-struct NpCheckPremiumResult { std::uint8_t opaque[64]; };
+struct NpTitleId {
+    char data[13];
+    char pad[3];
+};
+struct NpTitleSecret {
+    std::uint8_t data[128];
+};
+struct NpContentRestriction {
+    std::uint8_t opaque[128];
+};
+struct NpOnlineId {
+    char data[17];
+    char pad[3];
+};
+struct NpId {
+    NpOnlineId online_id;
+    std::uint8_t opaque[4];
+};
+struct NpCreateAsyncRequestParameter {
+    std::uint8_t opaque[64];
+};
+struct NpCheckPremiumParameter {
+    std::uint8_t opaque[64];
+};
+struct NpCheckPremiumResult {
+    std::uint8_t opaque[64];
+};
 
 struct NpUnifiedEntitlementLabel {
     char data[17];
     char padding[3];
 };
 
-struct NpEntitlementAccessInitParam { char reserved[32]; };
-struct NpEntitlementAccessBootParam { char reserved[32]; };
+struct NpEntitlementAccessInitParam {
+    char reserved[32];
+};
+struct NpEntitlementAccessBootParam {
+    char reserved[32];
+};
 
 struct NpEntitlementAccessAddcontEntitlementInfo {
     NpUnifiedEntitlementLabel entitlement_label;
     std::uint32_t package_type;
     std::uint32_t download_status;
 };
-
-
 
 struct NpUniversalDataSystemInitParam {
     std::size_t size;
@@ -1340,7 +1397,9 @@ struct GameUpdateAddcontVersionInfo {
     std::uint32_t reserved[6];
 };
 
-struct SaveDataMountPoint { char data[16]; };
+struct SaveDataMountPoint {
+    char data[16];
+};
 
 struct SaveDataParam {
     char title[128];
@@ -1374,10 +1433,22 @@ struct SaveDataMountInfo {
     std::uint8_t reserved[32];
 };
 
-struct SceSaveDataTitleId { char data[10]; char pad[2]; };
-struct SceSaveDataDirName { char data[33]; char pad[3]; };
-struct SaveDataSearchInfo { std::uint8_t opaque[128]; };
-struct SaveDataMemoryData { void* buf; std::size_t buf_size; std::size_t offset; };
+struct SceSaveDataTitleId {
+    char data[10];
+    char pad[2];
+};
+struct SceSaveDataDirName {
+    char data[33];
+    char pad[3];
+};
+struct SaveDataSearchInfo {
+    std::uint8_t opaque[128];
+};
+struct SaveDataMemoryData {
+    void* buf;
+    std::size_t buf_size;
+    std::size_t offset;
+};
 
 struct SaveDataMount3 {
     int user_id;
@@ -1499,7 +1570,9 @@ struct SaveDataBackup {
     std::uint8_t reserved[32];
 };
 
-struct AppContentInitParam { char reserved[32]; };
+struct AppContentInitParam {
+    char reserved[32];
+};
 
 struct AppContentBootParam {
     char reserved1[4];
@@ -1507,7 +1580,9 @@ struct AppContentBootParam {
     char reserved2[32];
 };
 
-struct AppContentMountPoint { char data[16]; };
+struct AppContentMountPoint {
+    char data[16];
+};
 
 struct ContentExportInitParam2 {
     void* malloc_func;
@@ -1518,7 +1593,9 @@ struct ContentExportInitParam2 {
     std::int64_t reserved1;
 };
 
-struct ContentSearchInitParam { std::size_t memory_size; };
+struct ContentSearchInitParam {
+    std::size_t memory_size;
+};
 
 struct PngEncCreateParam {
     std::uint32_t this_size;
@@ -1693,7 +1770,10 @@ struct SystemServiceHdrToneMapLuminance {
     float min_tone_map_luminance;
 };
 
-struct SystemGestureVector2 { float x; float y; };
+struct SystemGestureVector2 {
+    float x;
+    float y;
+};
 
 struct SystemGesturePrimitiveTouchEvent {
     std::int32_t event_state;
@@ -1716,7 +1796,9 @@ struct SystemGestureRectangle {
     std::uint8_t reserve[8];
 };
 
-struct SystemGestureTouchRecognizer { std::uint64_t reserve[361]; };
+struct SystemGestureTouchRecognizer {
+    std::uint64_t reserve[361];
+};
 
 struct SystemGestureTouchRecognizerInformation {
     std::int32_t gesture_type;
@@ -1725,11 +1807,17 @@ struct SystemGestureTouchRecognizerInformation {
     std::uint8_t reserve[256];
 };
 
-struct SystemGestureTouchEvent { std::uint8_t reserve[168]; };
+struct SystemGestureTouchEvent {
+    std::uint8_t reserve[168];
+};
 
-struct UserServiceLoginUserIdList { int user_id[4]; };
+struct UserServiceLoginUserIdList {
+    int user_id[4];
+};
 
-struct UserServiceRegisteredUserIdList { int user_id[16]; };
+struct UserServiceRegisteredUserIdList {
+    int user_id[16];
+};
 
 struct SceUserServiceEvent {
     std::uint32_t event_type;
@@ -1754,9 +1842,11 @@ struct UltMutexOptParam {
     std::uint32_t reserved0;
 };
 
-struct UltUlthreadRuntimeOptParam { std::uint8_t bytes[128]; };
+struct UltUlthreadRuntimeOptParam {
+    std::uint8_t bytes[128];
+};
 
-using UltUlthreadEntry = std::int32_t (APS5_VABI *)(std::uint64_t);
+using UltUlthreadEntry = std::int32_t(APS5_VABI*)(std::uint64_t);
 
 struct VideoOutBufferAttribute2 {
     std::uint32_t reserved0;
@@ -1812,13 +1902,14 @@ struct VideoOutOutputStatus {
     std::uint64_t reserved[3] = {};
 };
 
-struct VideoOutOutputOptions { std::uint32_t internalData[16] = {}; };
+struct VideoOutOutputOptions {
+    std::uint32_t internalData[16] = {};
+};
 
 struct VideoOutColorSettings {
     float gamma = 1.0f;
     std::uint32_t reserved[3] = {};
 };
-
 
 using atexit_func_t = void (*)();
 
@@ -1838,11 +1929,10 @@ struct LibcHeapInfo {
 
 using Info = LibcHeapInfo;
 
-#define VA_ARGS \
-    std::uint64_t rdi, std::uint64_t rsi, std::uint64_t rdx, std::uint64_t rcx, \
-    std::uint64_t r8, std::uint64_t r9, std::uint64_t overflow_arg_area, \
-    __m128 xmm0, __m128 xmm1, __m128 xmm2, __m128 xmm3, \
-    __m128 xmm4, __m128 xmm5, __m128 xmm6, __m128 xmm7, ...
+#define VA_ARGS                                                                                                        \
+    std::uint64_t rdi, std::uint64_t rsi, std::uint64_t rdx, std::uint64_t rcx, std::uint64_t r8, std::uint64_t r9,    \
+        std::uint64_t overflow_arg_area, __m128 xmm0, __m128 xmm1, __m128 xmm2, __m128 xmm3, __m128 xmm4, __m128 xmm5, \
+        __m128 xmm6, __m128 xmm7, ...
 
 struct Packet {
     std::uint32_t* addr;

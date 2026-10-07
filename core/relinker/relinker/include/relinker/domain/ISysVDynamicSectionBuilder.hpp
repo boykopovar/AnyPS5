@@ -10,12 +10,10 @@ class ISysVDynamicSectionBuilder {
 public:
     virtual ~ISysVDynamicSectionBuilder() = default;
 
-    virtual SysVDynamicSection BuildDynamicSection(
-        const std::vector<NidReference>& nidReferences,
-        const std::vector<std::string>& neededLibraries,
-        FileByteOffset originalJmprelOffset,
-        std::uint32_t originalJmprelCount
-    ) = 0;
+    virtual SysVDynamicSection BuildDynamicSection(const std::vector<NidReference>& nidReferences,
+                                                   const std::vector<std::string>& neededLibraries,
+                                                   FileByteOffset originalJmprelOffset,
+                                                   std::uint32_t originalJmprelCount) = 0;
 };
 
 }

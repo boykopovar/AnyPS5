@@ -45,11 +45,14 @@ static std::string Contents(const std::filesystem::path& path) {
 }
 
 int main() {
-    const auto root = std::filesystem::path("anyps5-file-vector-test-" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::path(
+        "anyps5-file-vector-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     const auto path = root / "data.bin";
-    { std::ofstream stream(path, std::ios::binary); stream << "0123456789"; }
+    {
+        std::ofstream stream(path, std::ios::binary);
+        stream << "0123456789";
+    }
 
     const int file = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
     Require(file >= 0);

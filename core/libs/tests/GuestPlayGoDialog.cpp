@@ -14,7 +14,10 @@ int APS5_VABI scePlayGoDialogGetStatus(void);
 int APS5_VABI scePlayGoDialogGetResult(void* result);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     constexpr std::int32_t notInitialized = static_cast<std::int32_t>(0x80ED0001);

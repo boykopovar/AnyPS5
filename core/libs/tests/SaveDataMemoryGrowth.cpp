@@ -34,7 +34,8 @@ static std::vector<char> Read(const std::filesystem::path& path) {
 
 int main(int argc, char**) {
     const auto previousDirectory = std::filesystem::current_path();
-    const auto root = std::filesystem::temp_directory_path() /
+    const auto root =
+        std::filesystem::temp_directory_path() /
         ("anyps5-save-growth-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     std::filesystem::current_path(root);
@@ -58,8 +59,8 @@ int main(int argc, char**) {
         setup.init_param = &param;
         result.existed_memory_size = 123;
 #ifdef _WIN32
-        HANDLE lock = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        HANDLE lock = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         Require(lock != INVALID_HANDLE_VALUE);
 #else
         const auto permissions = std::filesystem::status(path).permissions();

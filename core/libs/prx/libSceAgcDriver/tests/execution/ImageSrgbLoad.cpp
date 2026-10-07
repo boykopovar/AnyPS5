@@ -47,22 +47,35 @@ alignas(256) std::array<std::uint8_t, Width * 2> Texels{};
 
 constexpr std::array<std::uint32_t, 15> LoadCode(std::uint32_t dmask) {
     return {
-        0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x34063c84u, 0x7e3e0280u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
-        0x7e1a0280u, 0xf0001008u | (dmask << 8u), 0x00010a1eu, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u,
+        0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x34063c84u, 0x7e3e0280u,
+        0x7e140280u, 0x7e160280u, 0x7e180280u, 0x7e1a0280u, 0xf0001008u | (dmask << 8u),
+        0x00010a1eu, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u,
     };
 }
 
 constexpr std::array<std::uint32_t, 15> StoreCode(std::uint32_t dmask) {
     return {
-        0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x7e3e0280u, 0x7e140d1eu, 0x4c163cffu, 0x000000ffu, 0x7e160d0bu,
-        0x101414ffu, 0x3b808081u, 0x101616ffu, 0x3b808081u, 0xf0201008u | (dmask << 8u), 0x00010a1eu, 0xbf810000u,
+        0x7e080218u,
+        0x343c0885u,
+        0x4a3c3d00u,
+        0x7e3e0280u,
+        0x7e140d1eu,
+        0x4c163cffu,
+        0x000000ffu,
+        0x7e160d0bu,
+        0x101414ffu,
+        0x3b808081u,
+        0x101616ffu,
+        0x3b808081u,
+        0xf0201008u | (dmask << 8u),
+        0x00010a1eu,
+        0xbf810000u,
     };
 }
 
 constexpr std::array<std::uint32_t, 9> SamplerCode(std::uint32_t word0) {
     return {
-        0x34060084u, 0x7e280280u, 0x7e2a0280u, word0, 0x00610a14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u,
-        0xbf810000u,
+        0x34060084u, 0x7e280280u, 0x7e2a0280u, word0, 0x00610a14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u,
     };
 }
 
@@ -119,7 +132,8 @@ std::uint32_t Linear(std::uint32_t code) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t format, std::uint32_t swizzle) {
@@ -147,7 +161,8 @@ void Fill(std::uint32_t format) {
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const void* texels, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const void* texels, std::uint32_t format,
+         std::uint32_t swizzle, std::uint32_t groups) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
@@ -155,14 +170,14 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(PointSampler.begin(), PointSampler.end(), userData.begin() + 12);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {true, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -174,27 +189,34 @@ void Verify(std::uint32_t dmask, std::uint32_t format, std::uint32_t swizzle, co
         const std::array<std::uint32_t, 4> channels{Linear(x), format == Srgb8 ? 0u : Linear(255u - x), 0u, One};
         std::uint32_t slot = 0;
         for (std::uint32_t component = 0; component < 4u; ++component) {
-            if (((dmask >> component) & 1u) == 0u) continue;
+            if (((dmask >> component) & 1u) == 0u)
+                continue;
             const auto selector = (swizzle >> (component * 3u)) & 7u;
             const auto expected = selector == 0u ? 0u : selector == 1u ? One : channels[selector - 4u];
             const auto actual = Output[x * 4u + slot++];
-            Require(actual == expected, what + ": texel " + std::to_string(x) + " component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            Require(actual == expected, what + ": texel " + std::to_string(x) + " component " +
+                                            std::to_string(component) + " is " + Hex(actual) + ", expected " +
+                                            Hex(expected));
         }
     }
 }
 
-void CheckLoad(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t dmask, std::uint32_t format, std::uint32_t swizzle, const std::string& what) {
+void CheckLoad(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t dmask,
+               std::uint32_t format, std::uint32_t swizzle, const std::string& what) {
     Fill(format);
     Run(device, code, Texels.data(), format, swizzle, Groups);
     Verify(dmask, format, swizzle, what);
 }
 
-void CheckStoredLoad(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<const std::uint32_t> code, std::uint32_t dmask, std::uint32_t format, std::uint32_t swizzle, const std::string& what) {
+void CheckStoredLoad(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<const std::uint32_t> code,
+                     std::uint32_t dmask, std::uint32_t format, std::uint32_t swizzle, const std::string& what) {
     const auto address = reinterpret_cast<std::uintptr_t>(block.Data());
     const auto bytes = Width * (format == Srgb8 ? 1u : 2u);
     std::fill(block.Data(), block.Data() + BlockBytes, std::uint8_t{0x5au});
-    Run(device, format == Srgb8 ? std::span<const std::uint32_t>(StoreX) : std::span<const std::uint32_t>(StoreXy), block.Data(), format == Srgb8 ? Unorm8 : Unorm8_8, SwizzleXY01, Groups);
-    Require(AgcDriver::Graphics::StorageTexture::FindPending(address, bytes) != nullptr, what + ": the image_store results are not pending in the storage image");
+    Run(device, format == Srgb8 ? std::span<const std::uint32_t>(StoreX) : std::span<const std::uint32_t>(StoreXy),
+        block.Data(), format == Srgb8 ? Unorm8 : Unorm8_8, SwizzleXY01, Groups);
+    Require(AgcDriver::Graphics::StorageTexture::FindPending(address, bytes) != nullptr,
+            what + ": the image_store results are not pending in the storage image");
     Run(device, code, block.Data(), format, swizzle, Groups);
     Verify(dmask, format, swizzle, what);
     AgcDriver::Graphics::StorageTexture::FlushPending(address, BlockBytes, nullptr, "test");
@@ -209,7 +231,8 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("samples or gathers an sRGB image the device cannot sample") != std::string::npos, what + " of an 8_8_SRGB image read through its UNORM view was not refused: " + refusal);
+    Require(refusal.find("samples or gathers an sRGB image the device cannot sample") != std::string::npos,
+            what + " of an 8_8_SRGB image read through its UNORM view was not refused: " + refusal);
 }
 
 }
@@ -222,15 +245,19 @@ int main() {
         setenv("APS5_SRGB_SHADER_DECODE", "1", 1);
 #endif
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         CheckLoad(*device, LoadXyzw, 0xfu, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0xf X Y 0 1");
         CheckLoad(*device, LoadXyzw, 0xfu, Srgb8_8, SwizzleYX10, "8_8_SRGB image_load dmask:0xf Y X 1 0");
         CheckLoad(*device, LoadXy, 0x3u, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0x3 X Y 0 1");
         CheckLoad(*device, LoadXyzw, 0xfu, Srgb8, SwizzleXXX1, "8_SRGB image_load dmask:0xf X X X 1");
         GuestBlock block;
-        CheckStoredLoad(*device, block, LoadXy, 0x3u, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0x3 X Y 0 1 of 8_8_UNORM image_stores");
-        CheckStoredLoad(*device, block, LoadXyzw, 0xfu, Srgb8_8, SwizzleYX10, "8_8_SRGB image_load dmask:0xf Y X 1 0 of 8_8_UNORM image_stores");
-        CheckStoredLoad(*device, block, LoadXyzw, 0xfu, Srgb8, SwizzleXXX1, "8_SRGB image_load dmask:0xf X X X 1 of 8_UNORM image_stores");
+        CheckStoredLoad(*device, block, LoadXy, 0x3u, Srgb8_8, SwizzleXY01,
+                        "8_8_SRGB image_load dmask:0x3 X Y 0 1 of 8_8_UNORM image_stores");
+        CheckStoredLoad(*device, block, LoadXyzw, 0xfu, Srgb8_8, SwizzleYX10,
+                        "8_8_SRGB image_load dmask:0xf Y X 1 0 of 8_8_UNORM image_stores");
+        CheckStoredLoad(*device, block, LoadXyzw, 0xfu, Srgb8, SwizzleXXX1,
+                        "8_SRGB image_load dmask:0xf X X X 1 of 8_UNORM image_stores");
         RequireRefused(*device, SampleLz, "image_sample_lz");
         RequireRefused(*device, Gather4Lz, "image_gather4_lz");
         std::puts("image sRGB load tests passed");

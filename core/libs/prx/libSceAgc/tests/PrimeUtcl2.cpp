@@ -21,11 +21,11 @@ constexpr std::uint64_t Address = 0x0000112233440000ull;
 constexpr std::uint32_t SizeInBytes = 0x00345000u;
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error&) {
@@ -36,15 +36,12 @@ void expectFailure(TAction action) {
 
 struct Storage {
     std::array<std::uint32_t, 16> words{};
-    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    CommandBuffer buffer{
+        words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
 
-    Storage() {
-        words.fill(Sentinel);
-    }
+    Storage() { words.fill(Sentinel); }
 
-    void limitTo(std::uint32_t count) {
-        buffer.cursor_down = buffer.cursor_up + count;
-    }
+    void limitTo(std::uint32_t count) { buffer.cursor_down = buffer.cursor_up + count; }
 };
 
 std::uint32_t* writeCompute(CommandBuffer* buffer) {
@@ -55,30 +52,36 @@ std::uint32_t* writeDraw(CommandBuffer* buffer) {
     return sceAgcDcbPrimeUtcl2(buffer, reinterpret_cast<const volatile void*>(Address), SizeInBytes);
 }
 
-template <typename TWriter, typename TSize>
-void testCommand(TWriter writer, TSize size) {
+template <typename TWriter, typename TSize> void testCommand(TWriter writer, TSize size) {
     const std::array expected{0xc0031000u, 0u, 0x33440000u, 0x1122u, SizeInBytes};
     const auto count = static_cast<std::uint32_t>(expected.size());
     check(size() == count * sizeof(std::uint32_t), "size query does not match the prime packet");
 
     Storage storage;
     auto* packet = writer(&storage.buffer);
-    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect prime packet");
-    check(storage.buffer.cursor_up == packet + size() / sizeof(std::uint32_t), "cursor advance does not match the size query");
-    check(std::all_of(storage.words.begin() + count, storage.words.end(), [](std::uint32_t word) { return word == Sentinel; }), "prime command overwrote following words");
+    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet),
+          "incorrect prime packet");
+    check(storage.buffer.cursor_up == packet + size() / sizeof(std::uint32_t),
+          "cursor advance does not match the size query");
+    check(std::all_of(storage.words.begin() + count, storage.words.end(),
+                      [](std::uint32_t word) { return word == Sentinel; }),
+          "prime command overwrote following words");
 
     auto* second = writer(&storage.buffer);
-    check(second == packet + count && std::equal(expected.begin(), expected.end(), second), "second prime packet does not follow the first");
+    check(second == packet + count && std::equal(expected.begin(), expected.end(), second),
+          "second prime packet does not follow the first");
 
     Storage exact;
     exact.limitTo(size() / sizeof(std::uint32_t));
-    check(writer(&exact.buffer) == exact.words.data() && exact.buffer.cursor_up == exact.buffer.cursor_down, "prime packet does not fill the queried size");
+    check(writer(&exact.buffer) == exact.words.data() && exact.buffer.cursor_up == exact.buffer.cursor_down,
+          "prime packet does not fill the queried size");
 
     Storage shortBuffer;
     shortBuffer.limitTo(size() / sizeof(std::uint32_t) - 1u);
     const auto before = shortBuffer.words;
     expectFailure([&] { writer(&shortBuffer.buffer); });
-    check(shortBuffer.words == before && shortBuffer.buffer.cursor_up == shortBuffer.words.data(), "failed prime write modified the buffer");
+    check(shortBuffer.words == before && shortBuffer.buffer.cursor_up == shortBuffer.words.data(),
+          "failed prime write modified the buffer");
 
     expectFailure([&] { writer(nullptr); });
 }

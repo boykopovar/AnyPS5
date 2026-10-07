@@ -6,16 +6,12 @@
 
 namespace Elfpatcher {
 
-ProgramHeaderLayoutBuilder::ProgramHeaderLayoutBuilder(
-    std::shared_ptr<ISegmentFilter> segmentFilter,
-    std::shared_ptr<Io::IByteWriter> byteWriter
-)
-    : _segmentFilter(std::move(segmentFilter))
-    , _byteWriter(std::move(byteWriter))
-{
-}
+ProgramHeaderLayoutBuilder::ProgramHeaderLayoutBuilder(std::shared_ptr<ISegmentFilter> segmentFilter,
+                                                       std::shared_ptr<Io::IByteWriter> byteWriter)
+    : _segmentFilter(std::move(segmentFilter)), _byteWriter(std::move(byteWriter)) {}
 
-void ProgramHeaderLayoutBuilder::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset, const Domain::ProgramHeader& ph) const {
+void ProgramHeaderLayoutBuilder::_writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset,
+                                                     const Domain::ProgramHeader& ph) const {
     _byteWriter->WriteU32(buf, offset + kPhdrTypeOffset, ph.Type);
     _byteWriter->WriteU32(buf, offset + kPhdrFlagsOffset, ph.Flags);
     _byteWriter->WriteU64(buf, offset + kPhdrOffsetOffset, ph.Offset);
@@ -26,7 +22,8 @@ void ProgramHeaderLayoutBuilder::_writeProgramHeader(std::vector<std::uint8_t>& 
     _byteWriter->WriteU64(buf, offset + kPhdrAlignOffset, ph.Alignment);
 }
 
-Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeLoadHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const {
+Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeLoadHeader(std::uint64_t offset, std::uint64_t vaddr,
+                                                                  std::uint64_t size) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_LOAD;
     ph.Flags = PF_R | PF_W | PF_X;
@@ -39,7 +36,8 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeLoadHeader(std::uint64_t 
     return ph;
 }
 
-Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeHeaderBlockLoad(std::uint64_t vaddr, std::uint64_t size, std::uint64_t align) const {
+Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeHeaderBlockLoad(std::uint64_t vaddr, std::uint64_t size,
+                                                                       std::uint64_t align) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_LOAD;
     ph.Flags = PF_R;
@@ -52,7 +50,8 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeHeaderBlockLoad(std::uint
     return ph;
 }
 
-Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makePhdrHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const {
+Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makePhdrHeader(std::uint64_t offset, std::uint64_t vaddr,
+                                                                  std::uint64_t size) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_PHDR;
     ph.Flags = PF_R;
@@ -65,7 +64,8 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makePhdrHeader(std::uint64_t 
     return ph;
 }
 
-Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeDynamicHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const {
+Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeDynamicHeader(std::uint64_t offset, std::uint64_t vaddr,
+                                                                     std::uint64_t size) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_DYNAMIC;
     ph.Flags = PF_R | PF_W;
@@ -78,7 +78,8 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeDynamicHeader(std::uint64
     return ph;
 }
 
-Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeInterpHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const {
+Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeInterpHeader(std::uint64_t offset, std::uint64_t vaddr,
+                                                                    std::uint64_t size) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_INTERP;
     ph.Flags = PF_R;
@@ -92,14 +93,14 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeInterpHeader(std::uint64_
 }
 
 std::uint32_t ProgramHeaderLayoutBuilder::_fixLoadFlags(std::uint32_t originalFlags) const {
-    if (originalFlags == 0) return PF_R | PF_W | PF_X;
+    if (originalFlags == 0)
+        return PF_R | PF_W | PF_X;
     return originalFlags | PF_R;
 }
 
-std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
-    const std::vector<Domain::ProgramHeader>& originalHeaders,
-    std::uint64_t extraBlockOffset
-) const {
+std::uint64_t
+ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(const std::vector<Domain::ProgramHeader>& originalHeaders,
+                                                   std::uint64_t extraBlockOffset) const {
     bool foundLoad = false;
     std::uint64_t highestVaddrEnd = 0;
     for (const auto& ph : originalHeaders) {
@@ -126,10 +127,8 @@ std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
     return vaddr;
 }
 
-std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
-    std::vector<std::uint8_t>& buf,
-    const ProgramHeaderLayoutRequest& request
-) const {
+std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(std::vector<std::uint8_t>& buf,
+                                                      const ProgramHeaderLayoutRequest& request) const {
     std::uint16_t keptCount = 0;
     for (const auto& ph : request.OriginalHeaders) {
         if (_segmentFilter->ShouldSkip(ph))
@@ -139,14 +138,14 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
 
     const std::uint16_t neededPh = keptCount + kSyntheticProgramHeaderCount;
     if (neededPh > request.PhNum)
-        throw Domain::RelinkerException(
-            "Not enough program header slots: need " + std::to_string(neededPh) +
-            ", available " + std::to_string(request.PhNum));
+        throw Domain::RelinkerException("Not enough program header slots: need " + std::to_string(neededPh) +
+                                        ", available " + std::to_string(request.PhNum));
 
     const std::uint64_t headerBlockSize = request.PhOff + static_cast<std::uint64_t>(neededPh) * request.PhEntSize;
     std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
     for (const auto& ph : request.OriginalHeaders) {
-        if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && (ph.Alignment & (ph.Alignment - 1)) == 0)
+        if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign &&
+            (ph.Alignment & (ph.Alignment - 1)) == 0)
             headerBlockAlign = ph.Alignment;
     }
     const std::uint64_t headerBlockVaddr =
@@ -161,17 +160,21 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     if (request.InterpOffset + request.InterpSize > request.ExtraBlockOffset + request.ExtraBlockSize)
         throw Domain::RelinkerException("Interp data does not fit within the extra block");
 
-    const std::uint64_t dynamicSegmentVaddr = request.ExtraBlockVaddr + (request.DynamicSegmentOffset - request.ExtraBlockOffset);
+    const std::uint64_t dynamicSegmentVaddr =
+        request.ExtraBlockVaddr + (request.DynamicSegmentOffset - request.ExtraBlockOffset);
     const std::uint64_t interpVaddr = request.ExtraBlockVaddr + (request.InterpOffset - request.ExtraBlockOffset);
 
     std::uint16_t writtenPh = 0;
 
     const std::size_t phdrEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-    _writeProgramHeader(buf, phdrEntOff, _makePhdrHeader(request.PhOff, headerBlockVaddr + request.PhOff, static_cast<std::uint64_t>(neededPh) * request.PhEntSize));
+    _writeProgramHeader(buf, phdrEntOff,
+                        _makePhdrHeader(request.PhOff, headerBlockVaddr + request.PhOff,
+                                        static_cast<std::uint64_t>(neededPh) * request.PhEntSize));
     writtenPh++;
 
     const std::size_t headerLoadEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-    _writeProgramHeader(buf, headerLoadEntOff, _makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, headerBlockAlign));
+    _writeProgramHeader(buf, headerLoadEntOff,
+                        _makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, headerBlockAlign));
     writtenPh++;
 
     for (const auto& ph : request.OriginalHeaders) {
@@ -190,13 +193,16 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
 
     {
         const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-        _writeProgramHeader(buf, phEntOff, _makeLoadHeader(request.ExtraBlockOffset, request.ExtraBlockVaddr, request.ExtraBlockSize));
+        _writeProgramHeader(buf, phEntOff,
+                            _makeLoadHeader(request.ExtraBlockOffset, request.ExtraBlockVaddr, request.ExtraBlockSize));
         writtenPh++;
     }
 
     {
         const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-        _writeProgramHeader(buf, phEntOff, _makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
+        _writeProgramHeader(
+            buf, phEntOff,
+            _makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
         writtenPh++;
     }
 

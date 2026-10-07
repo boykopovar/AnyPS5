@@ -4,12 +4,12 @@
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("scalar scratch load regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("scalar scratch load regression");
+}
 static void Check(std::uint32_t opcode, RdnaOpcode expected, std::uint32_t dwords) {
-    const std::array<std::uint32_t, 2> code{
-        (0x3du << 26u) | (opcode << 18u) | (2u << 6u) | 1u,
-        (125u << 25u) | 0x10u
-    };
+    const std::array<std::uint32_t, 2> code{(0x3du << 26u) | (opcode << 18u) | (2u << 6u) | 1u, (125u << 25u) | 0x10u};
     const RdnaInstruction instruction = DecodeRdnaSmem(0u, code, 0u);
     Require(instruction.op == expected);
     Require(instruction.family == RdnaInstructionFamily::SMEM);

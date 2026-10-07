@@ -52,7 +52,9 @@ struct DrawParameters {
         std::int32_t startInstanceSgpr = -1;
         std::int32_t drawIndexSgpr = -1;
         // Bytes of the record range: (count - 1) * stride + recordBytes, or 0 for no records.
-        std::uint64_t RangeBytes() const { return count == 0 ? 0 : static_cast<std::uint64_t>(count - 1) * stride + recordBytes; }
+        std::uint64_t RangeBytes() const {
+            return count == 0 ? 0 : static_cast<std::uint64_t>(count - 1) * stride + recordBytes;
+        }
         std::uint32_t VertexDwordOffset() const { return recordBytes == 20 ? 12u : 8u; }
         std::uint32_t InstanceDwordOffset() const { return recordBytes == 20 ? 16u : 12u; }
     };
@@ -72,14 +74,20 @@ struct DrawArguments {
 // path (which waits for recorded GPU work that writes them).
 DrawArguments ReadDrawArguments(const DrawParameters::IndirectDraw& indirect, std::uint32_t record);
 std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect);
-inline bool IndirectDrawOpcode(std::uint32_t opcode) { return opcode == 0x24 || opcode == 0x25 || opcode == 0x2c || opcode == 0x38; }
-inline bool DrawOpcode(std::uint32_t opcode) { return opcode == 0x27 || opcode == 0x2d || opcode == 0x35 || IndirectDrawOpcode(opcode); }
+inline bool IndirectDrawOpcode(std::uint32_t opcode) {
+    return opcode == 0x24 || opcode == 0x25 || opcode == 0x2c || opcode == 0x38;
+}
+inline bool DrawOpcode(std::uint32_t opcode) {
+    return opcode == 0x27 || opcode == 0x2d || opcode == 0x35 || IndirectDrawOpcode(opcode);
+}
 
 std::string Name(std::uint32_t header);
 // A PM4 type-2 packet is a one-dword filler (command-buffer padding); type 3 and type 0 carry a
 // dword count in bits 29:16. Type 1 is undefined.
 inline bool FillerPacket(std::uint32_t header) { return (header >> 30u) == 2u; }
-inline std::size_t PacketWords(std::uint32_t header) { return FillerPacket(header) ? 1u : static_cast<std::size_t>((header >> 16u) & 0x3fffu) + 2u; }
+inline std::size_t PacketWords(std::uint32_t header) {
+    return FillerPacket(header) ? 1u : static_cast<std::size_t>((header >> 16u) & 0x3fffu) + 2u;
+}
 std::string_view UnsupportedReason(std::uint32_t header);
 void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue);
 void Execute(std::span<const std::uint32_t> packet, QueueState& queue);
@@ -110,7 +118,9 @@ struct LabelWrite {
     std::span<const std::byte> packetBytes;
     std::array<std::byte, 8> inlineBytes{};
     std::size_t inlineSize = 0;
-    std::span<const std::byte> Bytes() const { return inlineSize != 0 ? std::span<const std::byte>(inlineBytes).first(inlineSize) : packetBytes; }
+    std::span<const std::byte> Bytes() const {
+        return inlineSize != 0 ? std::span<const std::byte>(inlineBytes).first(inlineSize) : packetBytes;
+    }
 };
 std::optional<LabelWrite> DecodeLabelWrite(std::span<const std::uint32_t> packet);
 // A memory store the CPU can resolve before the GPU runs it (COPY_DATA and DMA_DATA to memory,
@@ -125,9 +135,12 @@ struct StoreWrite {
     std::uint64_t address;
     std::span<const std::byte> viewBytes;
     std::vector<std::byte> ownedBytes;
-    std::span<const std::byte> Bytes() const { return ownedBytes.empty() ? viewBytes : std::span<const std::byte>(ownedBytes); }
+    std::span<const std::byte> Bytes() const {
+        return ownedBytes.empty() ? viewBytes : std::span<const std::byte>(ownedBytes);
+    }
 };
-std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, const QueueState& queue, std::size_t limit);
+std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, const QueueState& queue,
+                                       std::size_t limit);
 struct MemoryCopy {
     std::uint64_t source;
     std::uint64_t destination;

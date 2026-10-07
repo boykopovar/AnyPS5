@@ -13,8 +13,6 @@ inline bool GccAtomicCompareExchangeWeak(volatile unsigned int* target, unsigned
     return __atomic_compare_exchange_n(target, expected, desired, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
-inline unsigned int GccAtomicLoad(volatile unsigned int* target) {
-    return __atomic_load_n(target, __ATOMIC_SEQ_CST);
-}
+inline unsigned int GccAtomicLoad(volatile unsigned int* target) { return __atomic_load_n(target, __ATOMIC_SEQ_CST); }
 
 #endif

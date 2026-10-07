@@ -46,14 +46,16 @@ public:
     void SetImmediateU32(std::uint32_t value);
     void SetParent(IrBlock* parent);
 
-    template<typename TValue> requires(sizeof(TValue) <= sizeof(std::uint64_t) && std::is_trivially_copyable_v<TValue>)
+    template <typename TValue>
+        requires(sizeof(TValue) <= sizeof(std::uint64_t) && std::is_trivially_copyable_v<TValue>)
     [[nodiscard]] TValue Flags() const {
         TValue result{};
         std::memcpy(&result, &flags, sizeof(result));
         return result;
     }
 
-    template<typename TValue> requires(sizeof(TValue) <= sizeof(std::uint64_t) && std::is_trivially_copyable_v<TValue>)
+    template <typename TValue>
+        requires(sizeof(TValue) <= sizeof(std::uint64_t) && std::is_trivially_copyable_v<TValue>)
     void SetFlags(TValue value) {
         flags = 0;
         std::memcpy(&flags, &value, sizeof(value));
@@ -106,25 +108,15 @@ private:
     IrBlock* parent;
 };
 
-inline IrOpcode IrValue::Opcode() const {
-    return opcode;
-}
+inline IrOpcode IrValue::Opcode() const { return opcode; }
 
-inline IrType IrValue::Type() const {
-    return type;
-}
+inline IrType IrValue::Type() const { return type; }
 
-inline bool IrValue::HasImmediate() const {
-    return hasImmediate;
-}
+inline bool IrValue::HasImmediate() const { return hasImmediate; }
 
-inline bool IrValue::IsIdentity() const {
-    return opcode == IrOpcode::Identity;
-}
+inline bool IrValue::IsIdentity() const { return opcode == IrOpcode::Identity; }
 
-inline std::size_t IrValue::ArgumentCount() const {
-    return arguments.size();
-}
+inline std::size_t IrValue::ArgumentCount() const { return arguments.size(); }
 
 inline IrValue* IrValue::Argument(std::size_t index) const {
     if (index >= arguments.size()) {
@@ -144,8 +136,7 @@ inline IrValue* IrValue::Resolve() const {
     return const_cast<IrValue*>(current);
 }
 
-template<IrType TValueType>
-class IrTypedValue {
+template <IrType TValueType> class IrTypedValue {
 public:
     IrTypedValue() = default;
 
@@ -155,9 +146,9 @@ public:
         }
     }
 
-    template<IrType TOtherType> requires((static_cast<std::uint32_t>(TValueType) & static_cast<std::uint32_t>(TOtherType)) != 0u)
-    IrTypedValue(const IrTypedValue<TOtherType>& other) : value(other.value) {
-    }
+    template <IrType TOtherType>
+        requires((static_cast<std::uint32_t>(TValueType) & static_cast<std::uint32_t>(TOtherType)) != 0u)
+    IrTypedValue(const IrTypedValue<TOtherType>& other) : value(other.value) {}
 
     [[nodiscard]] IrValue& Value() const {
         if (value == nullptr) {
@@ -167,7 +158,7 @@ public:
     }
 
 private:
-    template<IrType> friend class IrTypedValue;
+    template <IrType> friend class IrTypedValue;
 
     IrValue* value = nullptr;
 };
@@ -179,7 +170,8 @@ using IrU32 = IrTypedValue<IrType::U32>;
 using IrU64 = IrTypedValue<IrType::U64>;
 using IrF16 = IrTypedValue<IrType::F16>;
 using IrF32 = IrTypedValue<IrType::F32>;
-using IrU32F32 = IrTypedValue<static_cast<IrType>(static_cast<std::uint32_t>(IrType::U32) | static_cast<std::uint32_t>(IrType::F32))>;
+using IrU32F32 = IrTypedValue<static_cast<IrType>(static_cast<std::uint32_t>(IrType::U32) |
+                                                  static_cast<std::uint32_t>(IrType::F32))>;
 
 }
 

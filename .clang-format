@@ -1,0 +1,18 @@
+# clang-format configuration for AnyPS5.
+# Based on the stock LLVM style with a small set of deliberate, documented
+# deviations that match the existing tree and avoid gratuitous churn:
+#   IndentWidth 4 / AccessModifierOffset -4  - the tree is 4-space indented
+#   ColumnLimit 120                          - long shader-dump/profile lines are atomic
+#   PointerAlignment Left                    - matches the tree (and Google style)
+#   SortIncludes Never                       - include order is load-bearing here
+#   FixNamespaceComments false               - the tree does not use namespace comments
+#
+# Reformatted with clang-format 21.1.8 (the version pinned in .pre-commit-config.yaml).
+
+BasedOnStyle: LLVM
+IndentWidth: 4
+AccessModifierOffset: -4
+ColumnLimit: 120
+PointerAlignment: Left
+SortIncludes: Never
+FixNamespaceComments: false

@@ -7,7 +7,8 @@
 
 extern "C" {
 
-int APS5_VABI sceNpUniversalDataSystemCreateContext(int* context, int user_id, uint32_t service_label, uint64_t options) {
+int APS5_VABI sceNpUniversalDataSystemCreateContext(int* context, int user_id, uint32_t service_label,
+                                                    uint64_t options) {
     if (context == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": invalid argument context");
     }
@@ -15,12 +16,9 @@ int APS5_VABI sceNpUniversalDataSystemCreateContext(int* context, int user_id, u
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemDestroyContext(int context) {
-    return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
-}
+int APS5_VABI sceNpUniversalDataSystemDestroyContext(int context) { return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK; }
 
 int APS5_VABI sceNpUniversalDataSystemRegisterContext(int context, int handle, uint64_t options) {
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
-
 }

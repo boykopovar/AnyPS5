@@ -11,7 +11,8 @@ extern "C" {
 
 int APS5_VABI sceAudioOut2UserCreate(uint32_t user_id, AudioOut2UserHandle* handle) {
     (void)user_id;
-    if (!handle) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (!handle)
+        return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     *handle = g_nextUser.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
@@ -20,5 +21,4 @@ int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle handle) {
     (void)handle;
     return 0;
 }
-
 }

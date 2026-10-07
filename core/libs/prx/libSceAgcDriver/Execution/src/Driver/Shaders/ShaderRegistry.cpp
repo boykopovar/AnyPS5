@@ -20,8 +20,10 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
     std::shared_ptr<const ShaderSnapshot> cached;
     {
         std::lock_guard lock(cacheMutex);
-        const auto found = std::find_if(cache.begin(), cache.end(), [address](const auto& entry) { return entry->codeAddress == address; });
-        if (found != cache.end()) cached = *found;
+        const auto found = std::find_if(cache.begin(), cache.end(),
+                                        [address](const auto& entry) { return entry->codeAddress == address; });
+        if (found != cache.end())
+            cached = *found;
     }
     if (cached) {
         const auto code = std::as_bytes(std::span(cached->code));
@@ -29,7 +31,8 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
         if (GuestMemory::CompareMapped(address, code) == GuestMemory::Compare::Equal) {
             std::lock_guard lock(cacheMutex);
             const auto found = std::find(cache.begin(), cache.end(), cached);
-            if (found != cache.end()) cache.splice(cache.begin(), cache, found);
+            if (found != cache.end())
+                cache.splice(cache.begin(), cache, found);
             return cached;
         }
     }
@@ -37,7 +40,8 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
     const auto ranges = GuestMemory::CommittedRanges(address, limit);
     std::uint64_t end = address;
     for (const auto& range : ranges) {
-        if (range.first != end) break;
+        if (range.first != end)
+            break;
         end = range.second;
     }
     const auto available = static_cast<std::size_t>(end - address) / sizeof(std::uint32_t);
@@ -46,14 +50,15 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
         const auto previous = snapshot.code.size();
         snapshot.code.resize(std::min(available, std::max<std::size_t>(64, previous * 2)));
         GuestMemory::Read(address + previous * sizeof(std::uint32_t),
-            std::as_writable_bytes(std::span(snapshot.code).subspan(previous)), alignof(std::uint32_t));
+                          std::as_writable_bytes(std::span(snapshot.code).subspan(previous)), alignof(std::uint32_t));
         try {
             const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(snapshot.code);
             const auto& last = decoded.instructions.back();
             snapshot.code.resize(last.programCounter / sizeof(std::uint32_t) + last.wordCount);
             auto result = std::make_shared<const ShaderSnapshot>(std::move(snapshot));
             std::lock_guard lock(cacheMutex);
-            const auto found = std::find_if(cache.begin(), cache.end(), [address](const auto& entry) { return entry->codeAddress == address; });
+            const auto found = std::find_if(cache.begin(), cache.end(),
+                                            [address](const auto& entry) { return entry->codeAddress == address; });
             if (found != cache.end()) {
                 if ((*found)->code == result->code) {
                     result = *found;
@@ -72,10 +77,12 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
             cacheBytes += bytes;
             return result;
         } catch (const std::out_of_range&) {
-            if (snapshot.code.size() == available) break;
+            if (snapshot.code.size() == available)
+                break;
         }
     }
-    throw std::runtime_error("AGC driver: raw compute program has no reachable end within mapped code or the size limit");
+    throw std::runtime_error(
+        "AGC driver: raw compute program has no reachable end within mapped code or the size limit");
 }
 
 bool FailureMemo() {
@@ -83,12 +90,17 @@ bool FailureMemo() {
     return memo;
 }
 
-std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, std::uint64_t deviceSerial, const ShaderRecompiler::RecompileRequest& request, bool bypass, const std::string** poisoned) {
-    static const bool enabled = std::getenv("APS5_NO_SOURCE_HANDLE_CACHE") == nullptr && std::getenv("APS5_NO_CAPTURE_REUSE") == nullptr;
+std::shared_ptr<const ShaderRecompiler::SourceHandle>
+SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, std::uint64_t deviceSerial,
+                const ShaderRecompiler::RecompileRequest& request, bool bypass, const std::string** poisoned) {
+    static const bool enabled =
+        std::getenv("APS5_NO_SOURCE_HANDLE_CACHE") == nullptr && std::getenv("APS5_NO_CAPTURE_REUSE") == nullptr;
     static const bool verify = std::getenv("APS5_VERIFY_SOURCE_HANDLE") != nullptr;
-    if (!enabled || bypass || ShaderRecompiler::DebugProbeActive() || !request.useCache) return nullptr;
+    if (!enabled || bypass || ShaderRecompiler::DebugProbeActive() || !request.useCache)
+        return nullptr;
     std::uint64_t key = 0xcbf29ce484222325ull;
-    for (const auto value : {static_cast<std::uint64_t>(codeOffset), deviceSerial, ShaderRecompiler::RecompileCacheKey::ContextHash(request)}) {
+    for (const auto value : {static_cast<std::uint64_t>(codeOffset), deviceSerial,
+                             ShaderRecompiler::RecompileCacheKey::ContextHash(request)}) {
         key ^= value;
         key *= 0x100000001b3ull;
     }
@@ -104,7 +116,8 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     {
         std::lock_guard lock(memos.mutex);
         for (const auto& entry : memos.entries) {
-            if (entry.key != key || (entry.handle == nullptr && entry.failure == nullptr)) continue;
+            if (entry.key != key || (entry.handle == nullptr && entry.failure == nullptr))
+                continue;
             if (entry.handle == nullptr) {
                 if (verify) {
                     bool resolved = true;
@@ -113,14 +126,17 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
                     } catch (const std::exception&) {
                         resolved = false;
                     }
-                    if (resolved) throw std::runtime_error("AGC driver: source handle memo poisoned but the source resolved");
+                    if (resolved)
+                        throw std::runtime_error("AGC driver: source handle memo poisoned but the source resolved");
                 }
                 ShaderMemory::CountHandleMemo(true);
-                if (poisoned == nullptr) throw std::runtime_error(*entry.failure);
+                if (poisoned == nullptr)
+                    throw std::runtime_error(*entry.failure);
                 *poisoned = entry.failure.get();
                 return nullptr;
             }
-            if (verify && ShaderRecompiler::ResolveSource(request)->source != entry.handle->source) throw std::runtime_error("AGC driver: source handle memo answered a different source");
+            if (verify && ShaderRecompiler::ResolveSource(request)->source != entry.handle->source)
+                throw std::runtime_error("AGC driver: source handle memo answered a different source");
             ShaderMemory::CountHandleMemo(true);
             return entry.handle;
         }
@@ -138,7 +154,8 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
         throw;
     }
     ShaderMemory::CountHandleMemo(false);
-    if (handle == nullptr) return nullptr;
+    if (handle == nullptr)
+        return nullptr;
     std::lock_guard lock(memos.mutex);
     memos.entries[memos.next] = {key, handle, nullptr};
     memos.next = (memos.next + 1) % memos.entries.size();
@@ -157,9 +174,7 @@ static const Shader NullPixelShader = [] {
     return shader;
 }();
 
-std::uint64_t NullPixelProgramAddress() {
-    return reinterpret_cast<std::uintptr_t>(NullPixelCode);
-}
+std::uint64_t NullPixelProgramAddress() { return reinterpret_cast<std::uintptr_t>(NullPixelCode); }
 
 void Driver::RegisterShader(const Shader* shader) {
     CheckFailure();
@@ -170,29 +185,40 @@ void Driver::RegisterShader(const Shader* shader) {
     GuestMemory::CheckRange(shader, shader->header_size, alignof(Shader));
     const auto* code = const_cast<const void*>(shader->code);
     GuestMemory::CheckRange(code, shader->shader_size, 256);
-    ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(shader), shader->type, {}, {}};
+    ShaderSnapshot snapshot{
+        reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(shader), shader->type, {}, {}};
     snapshot.code.resize(shader->shader_size / sizeof(std::uint32_t));
     std::memcpy(snapshot.code.data(), code, shader->shader_size);
     snapshot.header.resize(shader->header_size);
     std::memcpy(snapshot.header.data(), shader, shader->header_size);
 
     static const char* traceRegs = std::getenv("APS5_TRACE_SHADER_REGS");
-    if (traceRegs != nullptr && (std::string(traceRegs) == "all" || std::strtoull(traceRegs, nullptr, 16) == snapshot.codeAddress)) {
-        std::fprintf(stderr, "[shader] 0x%llx type %u cx", static_cast<unsigned long long>(snapshot.codeAddress), shader->type);
-        for (std::uint32_t i = 0; i < shader->num_cx_registers && shader->cx_registers != nullptr; ++i) std::fprintf(stderr, " %x=%08x", shader->cx_registers[i].offset, shader->cx_registers[i].value);
+    if (traceRegs != nullptr &&
+        (std::string(traceRegs) == "all" || std::strtoull(traceRegs, nullptr, 16) == snapshot.codeAddress)) {
+        std::fprintf(stderr, "[shader] 0x%llx type %u cx", static_cast<unsigned long long>(snapshot.codeAddress),
+                     shader->type);
+        for (std::uint32_t i = 0; i < shader->num_cx_registers && shader->cx_registers != nullptr; ++i)
+            std::fprintf(stderr, " %x=%08x", shader->cx_registers[i].offset, shader->cx_registers[i].value);
         std::fprintf(stderr, " sh");
-        for (std::uint32_t i = 0; i < shader->num_sh_registers && shader->sh_registers != nullptr; ++i) std::fprintf(stderr, " %x=%08x", shader->sh_registers[i].offset, shader->sh_registers[i].value);
+        for (std::uint32_t i = 0; i < shader->num_sh_registers && shader->sh_registers != nullptr; ++i)
+            std::fprintf(stderr, " %x=%08x", shader->sh_registers[i].offset, shader->sh_registers[i].value);
         std::fprintf(stderr, "\n");
     }
     std::lock_guard lock(mutex);
     rethrowFailure();
     const auto address = snapshot.codeAddress;
 
-    if (shaders == nullptr) shaders = std::make_shared<ShaderRegistry>();
-    else if (shaders.use_count() != 1) shaders = std::make_shared<ShaderRegistry>(*shaders);
+    if (shaders == nullptr)
+        shaders = std::make_shared<ShaderRegistry>();
+    else if (shaders.use_count() != 1)
+        shaders = std::make_shared<ShaderRegistry>(*shaders);
     shaders->insert_or_assign(address, std::make_shared<const ShaderSnapshot>(std::move(snapshot)));
     if (shaders->find(NullPixelProgramAddress()) == shaders->end()) {
-        ShaderSnapshot null{NullPixelProgramAddress(), reinterpret_cast<std::uintptr_t>(&NullPixelShader), NullPixelShader.type, {}, {}};
+        ShaderSnapshot null{NullPixelProgramAddress(),
+                            reinterpret_cast<std::uintptr_t>(&NullPixelShader),
+                            NullPixelShader.type,
+                            {},
+                            {}};
         null.code.assign(std::begin(NullPixelCode), std::end(NullPixelCode));
         null.header.resize(sizeof(Shader));
         std::memcpy(null.header.data(), &NullPixelShader, sizeof(Shader));

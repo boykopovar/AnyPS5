@@ -35,34 +35,43 @@ static bool HostHasAddress(int family) {
         WSADATA data{};
         return WSAStartup(MAKEWORD(2, 2), &data);
     }();
-    if (socket_status != 0) return false;
+    if (socket_status != 0)
+        return false;
     ULONG size = 0;
     const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
-    if (GetAdaptersAddresses(family, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return false;
+    if (GetAdaptersAddresses(family, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW)
+        return false;
     std::vector<std::uint8_t> storage(size);
     auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
-    if (GetAdaptersAddresses(family, flags, nullptr, adapters, &size) != NO_ERROR) return false;
+    if (GetAdaptersAddresses(family, flags, nullptr, adapters, &size) != NO_ERROR)
+        return false;
     for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
-        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+            continue;
         for (auto* address = adapter->FirstUnicastAddress; address; address = address->Next) {
-            if (!address->Address.lpSockaddr) continue;
+            if (!address->Address.lpSockaddr)
+                continue;
             if (address->Address.lpSockaddr->sa_family == AF_INET) {
                 const auto* v4 = reinterpret_cast<const sockaddr_in*>(address->Address.lpSockaddr);
                 const auto host = ntohl(v4->sin_addr.s_addr);
-                if (host != 0 && (host >> 24) != 127) return true;
+                if (host != 0 && (host >> 24) != 127)
+                    return true;
             } else if (address->Address.lpSockaddr->sa_family == AF_INET6) {
                 const auto* v6 = reinterpret_cast<const sockaddr_in6*>(address->Address.lpSockaddr);
-                if (!IN6_IS_ADDR_UNSPECIFIED(&v6->sin6_addr) && !IN6_IS_ADDR_LOOPBACK(&v6->sin6_addr)) return true;
+                if (!IN6_IS_ADDR_UNSPECIFIED(&v6->sin6_addr) && !IN6_IS_ADDR_LOOPBACK(&v6->sin6_addr))
+                    return true;
             }
         }
     }
     return false;
 #else
     ifaddrs* interfaces = nullptr;
-    if (getifaddrs(&interfaces) != 0) return false;
+    if (getifaddrs(&interfaces) != 0)
+        return false;
     bool found = false;
     for (auto* item = interfaces; item && !found; item = item->ifa_next) {
-        if (!item->ifa_addr || !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        if (!item->ifa_addr || !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK))
+            continue;
         const int address_family = item->ifa_addr->sa_family;
         if ((family == AF_UNSPEC || family == address_family) && address_family == AF_INET) {
             const auto* v4 = reinterpret_cast<const sockaddr_in*>(item->ifa_addr);
@@ -80,9 +89,7 @@ static bool HostHasAddress(int family) {
 
 extern "C" {
 
-int APS5_VABI sceNetCtlCheckCallback(void) {
-    return 0;
-}
+int APS5_VABI sceNetCtlCheckCallback(void) { return 0; }
 
 int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
     (void)code;
@@ -97,29 +104,31 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* nat_info) {
 
 int APS5_VABI sceNetCtlGetResult(int event_type, int* error_code) {
     (void)event_type;
-    if (!error_code) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!error_code)
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
     *error_code = 0;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetState(int* state) {
-    if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!state)
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
     *state = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetStateV6(int* state) {
-    if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!state)
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
     *state = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
     return 0;
 }
 
-int APS5_VABI sceNetCtlInit(void) {
-    return 0;
-}
+int APS5_VABI sceNetCtlInit(void) { return 0; }
 
 int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback func, void* arg, int* cid) {
-    if (!func || !cid) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (!func || !cid)
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
     std::lock_guard lock(g_callbackLock);
     for (int index = 0; index < MAX_CALLBACKS; ++index) {
         if (!g_callbacks[index]) {
@@ -131,14 +140,13 @@ int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback func, void* arg, int* cid
     return SCE_NET_CTL_ERROR_CALLBACK_MAX;
 }
 
-void APS5_VABI sceNetCtlTerm(void) {
-}
+void APS5_VABI sceNetCtlTerm(void) {}
 
 int APS5_VABI sceNetCtlUnregisterCallback(int cid) {
-    if (cid < 0 || cid >= MAX_CALLBACKS) return SCE_NET_CTL_ERROR_INVALID_ID;
+    if (cid < 0 || cid >= MAX_CALLBACKS)
+        return SCE_NET_CTL_ERROR_INVALID_ID;
     std::lock_guard lock(g_callbackLock);
     g_callbacks[cid] = nullptr;
     return 0;
 }
-
 }

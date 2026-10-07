@@ -46,7 +46,10 @@ static constexpr int PRIO_PROTECT = 2;
 static constexpr int MUTEX_TYPE_ADAPTIVE = 4;
 static constexpr int POSIX_EDEADLK = 11;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     constexpr int maximum = std::numeric_limits<int>::max();

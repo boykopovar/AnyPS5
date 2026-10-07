@@ -48,5 +48,4 @@ int APS5_VABI sceAgcAsyncCondExecPatchSetCommandAddress(std::uint32_t* cmd, cons
 int APS5_VABI sceAgcAsyncCondExecPatchSetEnd(std::uint32_t* cmd, const volatile std::uint32_t* buffer) {
     return SetEnd(cmd, buffer, __func__);
 }
-
 }

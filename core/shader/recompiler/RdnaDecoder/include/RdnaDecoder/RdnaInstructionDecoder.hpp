@@ -17,15 +17,19 @@ private:
 };
 
 RdnaInstructionFamily GetRdnaInstructionFamily(std::uint32_t word);
-RdnaInstruction DecodeRdnaInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex);
+RdnaInstruction DecodeRdnaInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                                      std::uint32_t wordIndex);
 RdnaProgram DecodeRdnaFrontProgram(std::span<const std::uint32_t> front);
 void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program);
 RdnaOperand DecodeRdnaScalarSource(std::uint32_t code, std::uint32_t programCounter);
 RdnaOperand DecodeRdnaScalarDestination(std::uint32_t code, std::uint32_t programCounter);
 RdnaOperand DecodeRdnaVectorGpr(std::uint32_t reg);
-void ReadRdnaLiteralOperands(std::span<const std::uint32_t> code, std::uint32_t wordIndex, RdnaInstruction& instruction);
-void SetRdnaRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t wordCount);
-void SetRdnaUnsupported(RdnaInstruction& instruction, RdnaInstructionFamily family, std::uint32_t opcodeId, const char* reason);
+void ReadRdnaLiteralOperands(std::span<const std::uint32_t> code, std::uint32_t wordIndex,
+                             RdnaInstruction& instruction);
+void SetRdnaRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> code, std::uint32_t wordIndex,
+                     std::uint32_t wordCount);
+void SetRdnaUnsupported(RdnaInstruction& instruction, RdnaInstructionFamily family, std::uint32_t opcodeId,
+                        const char* reason);
 std::string RdnaOperandToString(const RdnaOperand& operand);
 const char* RdnaImageDimensionToString(RdnaImageDimension dimension);
 std::string RdnaInstructionToString(const RdnaInstruction& instruction);

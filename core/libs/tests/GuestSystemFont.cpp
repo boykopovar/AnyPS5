@@ -11,7 +11,8 @@
 #include <vector>
 
 extern "C" {
-int APS5_VABI sceFontMemoryInit(FontMemory*, void*, std::uint32_t, const FontMemoryInterface*, void*, FontMemoryDestroyFunction, void*);
+int APS5_VABI sceFontMemoryInit(FontMemory*, void*, std::uint32_t, const FontMemoryInterface*, void*,
+                                FontMemoryDestroyFunction, void*);
 int APS5_VABI sceFontCreateLibrary(const FontMemory*, const void*, FontLibrary*);
 int APS5_VABI sceFontDestroyLibrary(FontLibrary*);
 int APS5_VABI sceFontSupportSystemFonts(FontLibrary);
@@ -40,7 +41,8 @@ static void* APS5_VABI Allocate(void*, std::uint32_t size) {
     return std::malloc(size);
 }
 static void APS5_VABI Release(void*, void* pointer) {
-    if (pointer) --allocations;
+    if (pointer)
+        --allocations;
     std::free(pointer);
 }
 
@@ -55,7 +57,8 @@ static void Put32(std::vector<unsigned char>& out, std::uint32_t value) {
 }
 
 static void PutAll16(std::vector<unsigned char>& out, std::initializer_list<int> values) {
-    for (const int value : values) Put16(out, static_cast<std::uint32_t>(static_cast<std::uint16_t>(value)));
+    for (const int value : values)
+        Put16(out, static_cast<std::uint32_t>(static_cast<std::uint16_t>(value)));
 }
 
 static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int width) {
@@ -82,9 +85,11 @@ static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int w
     std::vector<unsigned char> cmap;
     PutAll16(cmap, {0, 1, 3, 1});
     Put32(cmap, 12);
-    PutAll16(cmap, {4, 32, 0, 4, 4, 1, 0, static_cast<int>(codepoint), 0xFFFF, 0, static_cast<int>(codepoint), 0xFFFF, 1 - static_cast<int>(codepoint), 1, 0, 0});
+    PutAll16(cmap, {4, 32, 0, 4, 4, 1, 0, static_cast<int>(codepoint), 0xFFFF, 0, static_cast<int>(codepoint), 0xFFFF,
+                    1 - static_cast<int>(codepoint), 1, 0, 0});
     const std::vector<std::pair<const char*, const std::vector<unsigned char>*>> tables = {
-        {"cmap", &cmap}, {"glyf", &glyf}, {"head", &head}, {"hhea", &hhea}, {"hmtx", &hmtx}, {"loca", &loca}, {"maxp", &maxp}};
+        {"cmap", &cmap}, {"glyf", &glyf}, {"head", &head}, {"hhea", &hhea},
+        {"hmtx", &hmtx}, {"loca", &loca}, {"maxp", &maxp}};
     std::vector<unsigned char> font;
     Put32(font, 0x00010000u);
     PutAll16(font, {static_cast<int>(tables.size()), 64, 2, static_cast<int>(tables.size()) * 16 - 64});
@@ -154,8 +159,10 @@ int main() {
 
     FontHandle font = nullptr;
     SetFontDirectory(empty);
-    Require(sceFontOpenFontSet(library, EuropeanBold, 1, nullptr, &font) == SCE_FONT_ERROR_FONT_OPEN_FAILED && font == nullptr);
-    Require(sceFontOpenFontSet(library, 0x18070046u, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FONTSET && font == nullptr);
+    Require(sceFontOpenFontSet(library, EuropeanBold, 1, nullptr, &font) == SCE_FONT_ERROR_FONT_OPEN_FAILED &&
+            font == nullptr);
+    Require(sceFontOpenFontSet(library, 0x18070046u, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FONTSET &&
+            font == nullptr);
     SetFontDirectory(root / "missing");
     bool threw = false;
     try {
@@ -174,7 +181,8 @@ int main() {
     FontGlyphMetrics metrics{};
     Require(sceFontGetCharGlyphMetrics(font, 'B', &metrics) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
     FontHorizontalLayout layout{};
-    Require(sceFontGetHorizontalLayout(font, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f && layout.lineAdvance >= layout.baselineOffset);
+    Require(sceFontGetHorizontalLayout(font, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f &&
+            layout.lineAdvance >= layout.baselineOffset);
 
     FontHandle again = nullptr;
     Require(sceFontOpenFontSet(library, EuropeanBold, 2, nullptr, &again) == SCE_FONT_OK && again != font);
@@ -183,8 +191,11 @@ int main() {
     Require(sceFontGetHorizontalLayout(instance, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f);
 
     const std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, float>>> expected = {
-        {EuropeanLight, {'A', 50.0f}}, {EuropeanItalic, {'A', 52.0f}}, {ThaiMedium, {0x0E01, 54.0f}},
-        {VietnameseBold, {0x1EA0, 56.0f}}, {JapaneseJg2Light, {0x3042, 58.0f}}};
+        {EuropeanLight, {'A', 50.0f}},
+        {EuropeanItalic, {'A', 52.0f}},
+        {ThaiMedium, {0x0E01, 54.0f}},
+        {VietnameseBold, {0x1EA0, 56.0f}},
+        {JapaneseJg2Light, {0x3042, 58.0f}}};
     for (const auto& [type, glyph] : expected) {
         FontHandle set = nullptr;
         Require(sceFontOpenFontSet(library, type, 1, nullptr, &set) == SCE_FONT_OK);
@@ -194,7 +205,8 @@ int main() {
     }
     Require(sceFontCloseFont(again) == SCE_FONT_OK);
     FontHandle missing = nullptr;
-    Require(sceFontOpenFontSet(library, ChineseGb, 1, nullptr, &missing) == SCE_FONT_ERROR_FONT_OPEN_FAILED && missing == nullptr);
+    Require(sceFontOpenFontSet(library, ChineseGb, 1, nullptr, &missing) == SCE_FONT_ERROR_FONT_OPEN_FAILED &&
+            missing == nullptr);
 
     std::filesystem::remove(fonts / "SST-Bold.otf");
     FontHandle substitute = nullptr;
@@ -206,12 +218,14 @@ int main() {
     Require(sceFontSupportExternalFonts(library, 2, 0x52) == SCE_FONT_OK);
     const std::vector<unsigned char> external = SquareGlyphFont('A', 900);
     FontHandle memoryFont = nullptr;
-    Require(sceFontOpenFontMemory(library, external.data(), static_cast<std::uint32_t>(external.size()), nullptr, &memoryFont) == SCE_FONT_OK);
+    Require(sceFontOpenFontMemory(library, external.data(), static_cast<std::uint32_t>(external.size()), nullptr,
+                                  &memoryFont) == SCE_FONT_OK);
     Require(sceFontSetScalePixel(memoryFont, 100.0f, 100.0f) == SCE_FONT_OK);
     Require(AdvanceOf(memoryFont, 'A') == 90.0f);
     Require(sceFontGetHorizontalLayout(memoryFont, &layout) == SCE_FONT_OK);
 
-    for (FontHandle handle : {font, instance, substitute, memoryFont}) Require(sceFontCloseFont(handle) == SCE_FONT_OK);
+    for (FontHandle handle : {font, instance, substitute, memoryFont})
+        Require(sceFontCloseFont(handle) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(allocations == 0);
     std::filesystem::remove_all(root);

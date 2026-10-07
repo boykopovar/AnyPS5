@@ -45,9 +45,11 @@ Voice& State() {
 }
 
 Port& RequirePort(Voice& voice, std::uint32_t id, const char* function) {
-    if (!voice.initialized) Fail(function, "library not initialized");
+    if (!voice.initialized)
+        Fail(function, "library not initialized");
     const auto found = voice.ports.find(id);
-    if (found == voice.ports.end()) Fail(function, "unknown port " + std::to_string(id));
+    if (found == voice.ports.end())
+        Fail(function, "unknown port " + std::to_string(id));
     return found->second;
 }
 
@@ -59,24 +61,29 @@ extern "C" {
 
 int APS5_VABI sceVoiceInit(VoiceInitParam* param, int32_t version) {
     (void)version;
-    if (param == nullptr) APS5_INVALID_ARG_EX;
+    if (param == nullptr)
+        APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
-    if (voice.initialized) Fail(__func__, "already initialized");
+    if (voice.initialized)
+        Fail(__func__, "already initialized");
     voice.initialized = true;
     return 0;
 }
 
 int APS5_VABI sceVoiceSetThreadsParams(void* params) {
-    if (params == nullptr) APS5_INVALID_ARG_EX;
+    if (params == nullptr)
+        APS5_INVALID_ARG_EX;
     return 0;
 }
 
 int APS5_VABI sceVoiceStart(const VoiceStartParam* param) {
-    if (param == nullptr) APS5_INVALID_ARG_EX;
+    if (param == nullptr)
+        APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
-    if (!voice.initialized) Fail(__func__, "library not initialized");
+    if (!voice.initialized)
+        Fail(__func__, "library not initialized");
     voice.started = true;
     return 0;
 }
@@ -84,7 +91,8 @@ int APS5_VABI sceVoiceStart(const VoiceStartParam* param) {
 int APS5_VABI sceVoiceStop(void) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
-    if (!voice.initialized) Fail(__func__, "library not initialized");
+    if (!voice.initialized)
+        Fail(__func__, "library not initialized");
     voice.started = false;
     return 0;
 }
@@ -92,7 +100,8 @@ int APS5_VABI sceVoiceStop(void) {
 int APS5_VABI sceVoiceEnd_nid_postfix(void) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
-    if (!voice.initialized) Fail(__func__, "library not initialized");
+    if (!voice.initialized)
+        Fail(__func__, "library not initialized");
     voice.ports.clear();
     voice.connections.clear();
     voice.started = false;
@@ -101,14 +110,18 @@ int APS5_VABI sceVoiceEnd_nid_postfix(void) {
 }
 
 int APS5_VABI sceVoiceCreatePort(uint32_t* port_id, const VoicePortParam* param) {
-    if (port_id == nullptr || param == nullptr) APS5_INVALID_ARG_EX;
-    if (param->port_type < PortInDevice || param->port_type > PortOutDevice) Fail(__func__, "unknown port type " + std::to_string(param->port_type));
+    if (port_id == nullptr || param == nullptr)
+        APS5_INVALID_ARG_EX;
+    if (param->port_type < PortInDevice || param->port_type > PortOutDevice)
+        Fail(__func__, "unknown port type " + std::to_string(param->port_type));
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
-    if (!voice.initialized) Fail(__func__, "library not initialized");
+    if (!voice.initialized)
+        Fail(__func__, "library not initialized");
     const bool voicePort = param->port_type == PortInVoice || param->port_type == PortOutVoice;
     const auto id = voice.nextId++;
-    voice.ports.emplace(id, Port{param->port_type, param->volume, voicePort ? static_cast<std::uint32_t>(param->voice.bitrate) : 0u});
+    voice.ports.emplace(
+        id, Port{param->port_type, param->volume, voicePort ? static_cast<std::uint32_t>(param->voice.bitrate) : 0u});
     *port_id = id;
     return 0;
 }
@@ -117,7 +130,8 @@ int APS5_VABI sceVoiceDeletePort(uint32_t port_id) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     RequirePort(voice, port_id, __func__);
-    std::erase_if(voice.connections, [port_id](const auto& link) { return link.first == port_id || link.second == port_id; });
+    std::erase_if(voice.connections,
+                  [port_id](const auto& link) { return link.first == port_id || link.second == port_id; });
     voice.ports.erase(port_id);
     return 0;
 }
@@ -125,8 +139,10 @@ int APS5_VABI sceVoiceDeletePort(uint32_t port_id) {
 int APS5_VABI sceVoiceConnectIPortToOPort(uint32_t input_port_id, uint32_t output_port_id) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
-    if (!IsInput(RequirePort(voice, input_port_id, __func__).type)) Fail(__func__, "first port is not an input port");
-    if (IsInput(RequirePort(voice, output_port_id, __func__).type)) Fail(__func__, "second port is not an output port");
+    if (!IsInput(RequirePort(voice, input_port_id, __func__).type))
+        Fail(__func__, "first port is not an input port");
+    if (IsInput(RequirePort(voice, output_port_id, __func__).type))
+        Fail(__func__, "second port is not an output port");
     voice.connections.emplace(input_port_id, output_port_id);
     return 0;
 }
@@ -136,16 +152,19 @@ int APS5_VABI sceVoiceDisconnectIPortFromOPort(uint32_t input_port_id, uint32_t 
     std::lock_guard lock(voice.mutex);
     RequirePort(voice, input_port_id, __func__);
     RequirePort(voice, output_port_id, __func__);
-    if (voice.connections.erase({input_port_id, output_port_id}) == 0) Fail(__func__, "ports are not connected");
+    if (voice.connections.erase({input_port_id, output_port_id}) == 0)
+        Fail(__func__, "ports are not connected");
     return 0;
 }
 
 int APS5_VABI sceVoiceGetBitRate(uint32_t port_id, uint32_t* bitrate) {
-    if (bitrate == nullptr) APS5_INVALID_ARG_EX;
+    if (bitrate == nullptr)
+        APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     const auto& port = RequirePort(voice, port_id, __func__);
-    if (port.type != PortInVoice && port.type != PortOutVoice) Fail(__func__, "port does not carry encoded voice");
+    if (port.type != PortInVoice && port.type != PortOutVoice)
+        Fail(__func__, "port does not carry encoded voice");
     *bitrate = port.bitrate;
     return 0;
 }
@@ -158,7 +177,8 @@ int APS5_VABI sceVoiceSetVolume(uint32_t port_id, float volume) {
 }
 
 int APS5_VABI sceVoiceGetVolume(uint32_t port_id, float* volume) {
-    if (volume == nullptr) APS5_INVALID_ARG_EX;
+    if (volume == nullptr)
+        APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     *volume = RequirePort(voice, port_id, __func__).volume;
@@ -166,14 +186,16 @@ int APS5_VABI sceVoiceGetVolume(uint32_t port_id, float* volume) {
 }
 
 int APS5_VABI sceVoiceGetPortInfo(uint32_t port_id, VoicePortInfo* info) {
-    if (info == nullptr) APS5_INVALID_ARG_EX;
+    if (info == nullptr)
+        APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     const auto& port = RequirePort(voice, port_id, __func__);
     *info = VoicePortInfo{};
     info->port_type = port.type;
     info->state = PortStateReady;
-    if (port.bitrate != 0) info->frame_size = (port.bitrate * VoiceFrameMs + 7999u) / 8000u;
+    if (port.bitrate != 0)
+        info->frame_size = (port.bitrate * VoiceFrameMs + 7999u) / 8000u;
     return 0;
 }
 
@@ -187,10 +209,12 @@ int APS5_VABI sceVoiceGetPortAttr(uint32_t port_id, int32_t attr, void* value, i
 }
 
 int APS5_VABI sceVoiceReadFromOPort(uint32_t output_port_id, void* data, uint32_t* size) {
-    if (data == nullptr || size == nullptr) APS5_INVALID_ARG_EX;
+    if (data == nullptr || size == nullptr)
+        APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
-    if (IsInput(RequirePort(voice, output_port_id, __func__).type)) Fail(__func__, "port is not an output port");
+    if (IsInput(RequirePort(voice, output_port_id, __func__).type))
+        Fail(__func__, "port is not an output port");
     *size = 0;
     return 0;
 }
@@ -228,5 +252,4 @@ int APS5_VABI sceVoiceDisableChat(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

@@ -52,9 +52,15 @@ struct SamplerCase {
 };
 
 constexpr std::array<SamplerCase, 5> Samplers{{
-    {"bilinear clamp-to-last-texel, point mips, MAX_LOD 0xfff", {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, true, false},
+    {"bilinear clamp-to-last-texel, point mips, MAX_LOD 0xfff",
+     {0x00008092u, 0x00fff000u, 0x05500000u, 0u},
+     true,
+     false},
     {"point clamp-to-last-texel, point mips", {0x00008092u, 0x00fff000u, 0x04000000u, 0u}, false, false},
-    {"bilinear clamp-to-last-texel, linear mips, MIN_LOD 1, LOD bias 1.5", {0x00008092u, 0x00fff100u, 0x09500180u, 0u}, true, false},
+    {"bilinear clamp-to-last-texel, linear mips, MIN_LOD 1, LOD bias 1.5",
+     {0x00008092u, 0x00fff100u, 0x09500180u, 0u},
+     true,
+     false},
     {"bilinear clamp-to-border, transparent black", {0x000080b6u, 0x00fff000u, 0x05500000u, 0u}, true, true},
     {"point clamp-to-border, no mips, transparent black", {0x000080b6u, 0u, 0u, 0u}, false, true},
 }};
@@ -67,14 +73,17 @@ struct Coordinate {
 std::vector<Coordinate> Coordinates() {
     std::vector<float> us;
     for (std::int32_t k = 0; k < Width; ++k) {
-        for (const float fraction : {0.5f, 0.0f, 0.25f, 0.75f}) us.push_back(static_cast<float>(k) + fraction);
+        for (const float fraction : {0.5f, 0.0f, 0.25f, 0.75f})
+            us.push_back(static_cast<float>(k) + fraction);
     }
-    for (const float edge : {-1.0f, -0.5f, 13.0f, 14.0f, 12.75f}) us.push_back(edge);
+    for (const float edge : {-1.0f, -0.5f, 13.0f, 14.0f, 12.75f})
+        us.push_back(edge);
     constexpr std::array<float, 3> fractions{0.5f, 0.0f, 0.75f};
     std::vector<Coordinate> result;
     for (std::size_t index = 0; index < us.size(); ++index) {
         for (std::size_t fraction = 0; fraction < fractions.size(); ++fraction) {
-            result.push_back({us[index], static_cast<float>((index * fractions.size() + fraction) % Height) + fractions[fraction]});
+            result.push_back(
+                {us[index], static_cast<float>((index * fractions.size() + fraction) % Height) + fractions[fraction]});
         }
     }
     for (std::int32_t x = 0; x < Width; ++x) {
@@ -90,8 +99,10 @@ std::array<double, 4> TexelOf(std::int32_t x, std::int32_t y) {
 }
 
 void FillTexture(std::span<std::uint8_t> texels, std::uint32_t levels) {
-    const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, Format8888UNorm, Width, Height, levels);
-    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= texels.size(), "image sample unnormalized: the mip chain does not fit the texel storage");
+    const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear,
+                                                            Format8888UNorm, Width, Height, levels);
+    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= texels.size(),
+            "image sample unnormalized: the mip chain does not fit the texel storage");
     std::fill(texels.begin(), texels.end(), std::uint8_t{0xeeu});
     for (std::uint32_t level = 0; level < levels; ++level) {
         const auto& mip = mips[level];
@@ -109,14 +120,16 @@ void FillTexture(std::span<std::uint8_t> texels, std::uint32_t levels) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t lastLevel, std::uint32_t maxMip) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) | ((static_cast<std::uint32_t>(Width - 1) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) |
+            ((static_cast<std::uint32_t>(Width - 1) & 3u) << 30u),
         (static_cast<std::uint32_t>(Width - 1) >> 2u) | (static_cast<std::uint32_t>(Height - 1) << 14u),
         0xfacu | (lastLevel << 16u) | (Type2D << 28u),
         0u,
@@ -128,12 +141,14 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t l
 
 using Samples = std::vector<std::array<std::uint32_t, Results>>;
 
-Samples Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::array<std::uint32_t, 4>& sampler, const std::vector<Coordinate>& coordinates) {
+Samples Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture,
+            const std::array<std::uint32_t, 4>& sampler, const std::vector<Coordinate>& coordinates) {
     Samples samples;
     for (std::size_t first = 0; first < coordinates.size(); first += Threads) {
         Buffer.fill(0xdeadbeefu);
         for (std::uint32_t lane = 0; lane < Threads; ++lane) {
-            const auto coordinate = first + lane < coordinates.size() ? coordinates[first + lane] : Coordinate{0.5f, 0.5f};
+            const auto coordinate =
+                first + lane < coordinates.size() ? coordinates[first + lane] : Coordinate{0.5f, 0.5f};
             Buffer[lane * Words] = std::bit_cast<std::uint32_t>(coordinate.u);
             Buffer[lane * Words + 1u] = std::bit_cast<std::uint32_t>(coordinate.v);
         }
@@ -143,14 +158,14 @@ Samples Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>&
         std::copy(texture.begin(), texture.end(), userData.begin() + 4);
         std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
         const std::span<const std::uint32_t> code(Code);
-        const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+        const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+            {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
         const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
         ShaderRecompiler::RecompileRequest request{
             {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
             {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
             device.Target(),
-            {0, 0, 0, 128}
-        };
+            {0, 0, 0, 128}};
         request.useCache = false;
         const auto result = ShaderRecompiler::Recompile(request);
         device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -165,12 +180,15 @@ Samples Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>&
 }
 
 std::array<double, 4> Fetch(const SamplerCase& sampler, std::int32_t x, std::int32_t y) {
-    if (sampler.border && (x < 0 || x >= Width || y < 0 || y >= Height)) return {0.0, 0.0, 0.0, 0.0};
+    if (sampler.border && (x < 0 || x >= Width || y < 0 || y >= Height))
+        return {0.0, 0.0, 0.0, 0.0};
     return TexelOf(std::clamp(x, 0, Width - 1), std::clamp(y, 0, Height - 1));
 }
 
 std::array<double, 4> Reference(const SamplerCase& sampler, const Coordinate& coordinate) {
-    if (!sampler.linear) return Fetch(sampler, static_cast<std::int32_t>(std::floor(coordinate.u)), static_cast<std::int32_t>(std::floor(coordinate.v)));
+    if (!sampler.linear)
+        return Fetch(sampler, static_cast<std::int32_t>(std::floor(coordinate.u)),
+                     static_cast<std::int32_t>(std::floor(coordinate.v)));
     const double u = static_cast<double>(coordinate.u) - 0.5;
     const double v = static_cast<double>(coordinate.v) - 0.5;
     const auto i = static_cast<std::int32_t>(std::floor(u));
@@ -179,32 +197,42 @@ std::array<double, 4> Reference(const SamplerCase& sampler, const Coordinate& co
     const double beta = v - j;
     std::array<double, 4> result{};
     for (std::uint32_t component = 0; component < 4u; ++component) {
-        result[component] = (1.0 - alpha) * (1.0 - beta) * Fetch(sampler, i, j)[component] + alpha * (1.0 - beta) * Fetch(sampler, i + 1, j)[component]
-            + (1.0 - alpha) * beta * Fetch(sampler, i, j + 1)[component] + alpha * beta * Fetch(sampler, i + 1, j + 1)[component];
+        result[component] = (1.0 - alpha) * (1.0 - beta) * Fetch(sampler, i, j)[component] +
+                            alpha * (1.0 - beta) * Fetch(sampler, i + 1, j)[component] +
+                            (1.0 - alpha) * beta * Fetch(sampler, i, j + 1)[component] +
+                            alpha * beta * Fetch(sampler, i + 1, j + 1)[component];
     }
     return result;
 }
 
-void Check(const SamplerCase& sampler, const char* image, const std::vector<Coordinate>& coordinates, const Samples& samples) {
+void Check(const SamplerCase& sampler, const char* image, const std::vector<Coordinate>& coordinates,
+           const Samples& samples) {
     Require(samples.size() == coordinates.size(), "image sample unnormalized: a dispatch lost samples");
     const double tolerance = sampler.linear ? 0.5 : 0.25;
     for (std::size_t index = 0; index < coordinates.size(); ++index) {
         const auto expected = Reference(sampler, coordinates[index]);
         for (std::uint32_t instruction = 0; instruction < Instructions.size(); ++instruction) {
             for (std::uint32_t component = 0; component < 4u; ++component) {
-                const double value = static_cast<double>(std::bit_cast<float>(samples[index][instruction * 4u + component])) * 255.0;
-                Require(std::fabs(value - expected[component]) <= tolerance, std::string(Instructions[instruction]) + ", " + sampler.name + ", " + image + ": (" + std::to_string(coordinates[index].u) + ", " + std::to_string(coordinates[index].v) + ") component " + std::to_string(component) + " is " + std::to_string(value) + ", expected " + std::to_string(expected[component]));
+                const double value =
+                    static_cast<double>(std::bit_cast<float>(samples[index][instruction * 4u + component])) * 255.0;
+                Require(std::fabs(value - expected[component]) <= tolerance,
+                        std::string(Instructions[instruction]) + ", " + sampler.name + ", " + image + ": (" +
+                            std::to_string(coordinates[index].u) + ", " + std::to_string(coordinates[index].v) +
+                            ") component " + std::to_string(component) + " is " + std::to_string(value) +
+                            ", expected " + std::to_string(expected[component]));
             }
         }
     }
 }
 
-void ExpectFailure(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::array<std::uint32_t, 4>& sampler, std::string_view reason, const char* what) {
+void ExpectFailure(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture,
+                   const std::array<std::uint32_t, 4>& sampler, std::string_view reason, const char* what) {
     const std::vector<Coordinate> one{{0.5f, 0.5f}};
     try {
         static_cast<void>(Run(device, texture, sampler, one));
     } catch (const std::exception& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string(what) + ": unexpected error: " + error.what());
+        Require(std::string_view(error.what()).find(reason) != std::string_view::npos,
+                std::string(what) + ": unexpected error: " + error.what());
         return;
     }
     throw std::runtime_error(std::string(what) + " was accepted");
@@ -215,7 +243,8 @@ void ExpectFailure(AgcDriver::VulkanDevice& device, const std::array<std::uint32
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         FillTexture(SingleLevel, 1);
         FillTexture(MultiLevel, StorageLevels);
         const auto coordinates = Coordinates();
@@ -226,10 +255,14 @@ int main() {
             Check(sampler, "1-level image", coordinates, singleSamples);
             const auto multiSamples = Run(*device, multi, sampler.words, coordinates);
             Check(sampler, "first level of a 4-level image", coordinates, multiSamples);
-            Require(multiSamples == singleSamples, std::string(sampler.name) + ": the first level of a 4-level image does not sample like a 1-level image");
+            Require(multiSamples == singleSamples,
+                    std::string(sampler.name) +
+                        ": the first level of a 4-level image does not sample like a 1-level image");
         }
-        ExpectFailure(*device, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view");
-        ExpectFailure(*device, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, "different minification", "unequal minification and magnification filters");
+        ExpectFailure(*device, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level",
+                      "a 3-level view");
+        ExpectFailure(*device, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, "different minification",
+                      "unequal minification and magnification filters");
         ExpectFailure(*device, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, "clamp mode 0", "wrap on X");
         std::puts("image sample unnormalized tests passed");
         return 0;

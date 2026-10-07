@@ -14,7 +14,10 @@ int APS5_VABI sceRazorCpuFlushOccurred(std::uint64_t* timeSpentInFlush);
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 }
 

@@ -11,34 +11,39 @@ namespace {
 
 RdnaOperand d16Half(RdnaOperand operand, RdnaOpcode opcode) {
     switch (opcode) {
-        case RdnaOpcode::BufferLoadUbyteD16:
-        case RdnaOpcode::BufferLoadSbyteD16:
-        case RdnaOpcode::BufferLoadShortD16:
-        case RdnaOpcode::FlatLoadUbyteD16:
-        case RdnaOpcode::FlatLoadSbyteD16:
-        case RdnaOpcode::FlatLoadShortD16:
-        case RdnaOpcode::DsReadU8D16:
-        case RdnaOpcode::DsReadI8D16:
-        case RdnaOpcode::DsReadU16D16:
-        case RdnaOpcode::BufferLoadFormatD16X:
-        case RdnaOpcode::TbufferLoadFormatD16X: operand.sdwaSel = 4u; break;
-        case RdnaOpcode::BufferLoadUbyteD16Hi:
-        case RdnaOpcode::BufferLoadSbyteD16Hi:
-        case RdnaOpcode::BufferLoadShortD16Hi:
-        case RdnaOpcode::BufferLoadFormatD16HiX:
-        case RdnaOpcode::BufferStoreByteD16Hi:
-        case RdnaOpcode::BufferStoreShortD16Hi:
-        case RdnaOpcode::FlatLoadUbyteD16Hi:
-        case RdnaOpcode::FlatLoadSbyteD16Hi:
-        case RdnaOpcode::FlatLoadShortD16Hi:
-        case RdnaOpcode::FlatStoreByteD16Hi:
-        case RdnaOpcode::FlatStoreShortD16Hi:
-        case RdnaOpcode::DsReadU8D16Hi:
-        case RdnaOpcode::DsReadI8D16Hi:
-        case RdnaOpcode::DsReadU16D16Hi:
-        case RdnaOpcode::DsWriteB8D16Hi:
-        case RdnaOpcode::DsWriteB16D16Hi: operand.sdwaSel = 5u; break;
-        default: break;
+    case RdnaOpcode::BufferLoadUbyteD16:
+    case RdnaOpcode::BufferLoadSbyteD16:
+    case RdnaOpcode::BufferLoadShortD16:
+    case RdnaOpcode::FlatLoadUbyteD16:
+    case RdnaOpcode::FlatLoadSbyteD16:
+    case RdnaOpcode::FlatLoadShortD16:
+    case RdnaOpcode::DsReadU8D16:
+    case RdnaOpcode::DsReadI8D16:
+    case RdnaOpcode::DsReadU16D16:
+    case RdnaOpcode::BufferLoadFormatD16X:
+    case RdnaOpcode::TbufferLoadFormatD16X:
+        operand.sdwaSel = 4u;
+        break;
+    case RdnaOpcode::BufferLoadUbyteD16Hi:
+    case RdnaOpcode::BufferLoadSbyteD16Hi:
+    case RdnaOpcode::BufferLoadShortD16Hi:
+    case RdnaOpcode::BufferLoadFormatD16HiX:
+    case RdnaOpcode::BufferStoreByteD16Hi:
+    case RdnaOpcode::BufferStoreShortD16Hi:
+    case RdnaOpcode::FlatLoadUbyteD16Hi:
+    case RdnaOpcode::FlatLoadSbyteD16Hi:
+    case RdnaOpcode::FlatLoadShortD16Hi:
+    case RdnaOpcode::FlatStoreByteD16Hi:
+    case RdnaOpcode::FlatStoreShortD16Hi:
+    case RdnaOpcode::DsReadU8D16Hi:
+    case RdnaOpcode::DsReadI8D16Hi:
+    case RdnaOpcode::DsReadU16D16Hi:
+    case RdnaOpcode::DsWriteB8D16Hi:
+    case RdnaOpcode::DsWriteB16D16Hi:
+        operand.sdwaSel = 5u;
+        break;
+    default:
+        break;
     }
     return operand;
 }
@@ -343,7 +348,8 @@ constexpr MemoryOpcodeInfo dsOpcodes[] = {
 };
 
 template <std::size_t Size>
-const MemoryOpcodeInfo& lookupOpcode(const MemoryOpcodeInfo (&table)[Size], std::uint32_t encoding, const char* notSupportedReason) {
+const MemoryOpcodeInfo& lookupOpcode(const MemoryOpcodeInfo (&table)[Size], std::uint32_t encoding,
+                                     const char* notSupportedReason) {
     for (const auto& entry : table) {
         if (entry.encoding == encoding) {
             return entry;
@@ -360,9 +366,7 @@ std::uint32_t signExtend(std::uint32_t value, std::uint32_t bits) {
     return (value ^ sign) - sign;
 }
 
-std::uint32_t floatBits(float value) {
-    return std::bit_cast<std::uint32_t>(value);
-}
+std::uint32_t floatBits(float value) { return std::bit_cast<std::uint32_t>(value); }
 
 void applyMemoryInfo(RdnaInstruction& instruction, const MemoryOpcodeInfo& info) {
     instruction.op = info.opcode;
@@ -406,18 +410,42 @@ RdnaOperand scalarSource(std::uint32_t code) {
         return operand;
     }
     switch (code) {
-        case 106u: operand.kind = RdnaOperandKind::VccLo; return operand;
-        case 107u: operand.kind = RdnaOperandKind::VccHi; return operand;
-        case 124u: operand.kind = RdnaOperandKind::M0; return operand;
-        case 125u: operand.kind = RdnaOperandKind::Null; return operand;
-        case 126u: operand.kind = RdnaOperandKind::ExecLo; return operand;
-        case 127u: operand.kind = RdnaOperandKind::ExecHi; return operand;
-        case 239u: operand.kind = RdnaOperandKind::PopsExitingWaveId; return operand;
-        case 248u: operand.kind = RdnaOperandKind::FloatInlineConstant; operand.value = floatBits(0.15915494309189535f); return operand;
-        case 251u: operand.kind = RdnaOperandKind::VccZ; return operand;
-        case 252u: operand.kind = RdnaOperandKind::ExecZ; return operand;
-        case 253u: operand.kind = RdnaOperandKind::Scc; return operand;
-        default: throw std::runtime_error("unsupported scalar source operand");
+    case 106u:
+        operand.kind = RdnaOperandKind::VccLo;
+        return operand;
+    case 107u:
+        operand.kind = RdnaOperandKind::VccHi;
+        return operand;
+    case 124u:
+        operand.kind = RdnaOperandKind::M0;
+        return operand;
+    case 125u:
+        operand.kind = RdnaOperandKind::Null;
+        return operand;
+    case 126u:
+        operand.kind = RdnaOperandKind::ExecLo;
+        return operand;
+    case 127u:
+        operand.kind = RdnaOperandKind::ExecHi;
+        return operand;
+    case 239u:
+        operand.kind = RdnaOperandKind::PopsExitingWaveId;
+        return operand;
+    case 248u:
+        operand.kind = RdnaOperandKind::FloatInlineConstant;
+        operand.value = floatBits(0.15915494309189535f);
+        return operand;
+    case 251u:
+        operand.kind = RdnaOperandKind::VccZ;
+        return operand;
+    case 252u:
+        operand.kind = RdnaOperandKind::ExecZ;
+        return operand;
+    case 253u:
+        operand.kind = RdnaOperandKind::Scc;
+        return operand;
+    default:
+        throw std::runtime_error("unsupported scalar source operand");
     }
 }
 
@@ -429,13 +457,26 @@ RdnaOperand scalarDestination(std::uint32_t code) {
         return operand;
     }
     switch (code) {
-        case 106u: operand.kind = RdnaOperandKind::VccLo; return operand;
-        case 107u: operand.kind = RdnaOperandKind::VccHi; return operand;
-        case 124u: operand.kind = RdnaOperandKind::M0; return operand;
-        case 125u: operand.kind = RdnaOperandKind::Null; return operand;
-        case 126u: operand.kind = RdnaOperandKind::ExecLo; return operand;
-        case 127u: operand.kind = RdnaOperandKind::ExecHi; return operand;
-        default: throw std::runtime_error("unsupported scalar destination operand");
+    case 106u:
+        operand.kind = RdnaOperandKind::VccLo;
+        return operand;
+    case 107u:
+        operand.kind = RdnaOperandKind::VccHi;
+        return operand;
+    case 124u:
+        operand.kind = RdnaOperandKind::M0;
+        return operand;
+    case 125u:
+        operand.kind = RdnaOperandKind::Null;
+        return operand;
+    case 126u:
+        operand.kind = RdnaOperandKind::ExecLo;
+        return operand;
+    case 127u:
+        operand.kind = RdnaOperandKind::ExecHi;
+        return operand;
+    default:
+        throw std::runtime_error("unsupported scalar destination operand");
     }
 }
 
@@ -452,185 +493,199 @@ RdnaOperand scalarDescriptorBase(std::uint32_t reg, std::uint32_t registerCount,
 
 bool isDsWriteOpcode(RdnaOpcode opcode) {
     switch (opcode) {
-        case RdnaOpcode::DsWriteB8:
-        case RdnaOpcode::DsWriteB16:
-        case RdnaOpcode::DsWriteB16D16Hi:
-        case RdnaOpcode::DsWriteB8D16Hi:
-        case RdnaOpcode::DsWrite2B32:
-        case RdnaOpcode::DsWrite2st64B32:
-        case RdnaOpcode::DsWrite2B64:
-        case RdnaOpcode::DsWrite2st64B64:
-        case RdnaOpcode::DsWriteB32:
-        case RdnaOpcode::DsWriteB64:
-        case RdnaOpcode::DsWriteB96:
-        case RdnaOpcode::DsWriteB128: return true;
-        default: return false;
+    case RdnaOpcode::DsWriteB8:
+    case RdnaOpcode::DsWriteB16:
+    case RdnaOpcode::DsWriteB16D16Hi:
+    case RdnaOpcode::DsWriteB8D16Hi:
+    case RdnaOpcode::DsWrite2B32:
+    case RdnaOpcode::DsWrite2st64B32:
+    case RdnaOpcode::DsWrite2B64:
+    case RdnaOpcode::DsWrite2st64B64:
+    case RdnaOpcode::DsWriteB32:
+    case RdnaOpcode::DsWriteB64:
+    case RdnaOpcode::DsWriteB96:
+    case RdnaOpcode::DsWriteB128:
+        return true;
+    default:
+        return false;
     }
 }
 
 bool isDsAtomicOpcode(RdnaOpcode opcode) {
     switch (opcode) {
-        case RdnaOpcode::DsAddU32:
-        case RdnaOpcode::DsAddRtnU32:
-        case RdnaOpcode::DsSubU32:
-        case RdnaOpcode::DsSubRtnU32:
-        case RdnaOpcode::DsIncRtnU32:
-        case RdnaOpcode::DsDecRtnU32:
-        case RdnaOpcode::DsMinI32:
-        case RdnaOpcode::DsMinRtnI32:
-        case RdnaOpcode::DsMaxI32:
-        case RdnaOpcode::DsMaxRtnI32:
-        case RdnaOpcode::DsMinU32:
-        case RdnaOpcode::DsMinRtnU32:
-        case RdnaOpcode::DsMaxU32:
-        case RdnaOpcode::DsMaxRtnU32:
-        case RdnaOpcode::DsAndB32:
-        case RdnaOpcode::DsAndRtnB32:
-        case RdnaOpcode::DsOrB32:
-        case RdnaOpcode::DsOrRtnB32:
-        case RdnaOpcode::DsXorB32:
-        case RdnaOpcode::DsXorRtnB32:
-        case RdnaOpcode::DsWrxchgRtnB32:
-        case RdnaOpcode::DsRsubU32:
-        case RdnaOpcode::DsIncU32:
-        case RdnaOpcode::DsDecU32:
-        case RdnaOpcode::DsAddF32:
-        case RdnaOpcode::DsRsubRtnU32:
-        case RdnaOpcode::DsMinRtnF32:
-        case RdnaOpcode::DsMaxRtnF32:
-        case RdnaOpcode::DsAddRtnF32:
-        case RdnaOpcode::DsAddU64:
-        case RdnaOpcode::DsSubU64:
-        case RdnaOpcode::DsRsubU64:
-        case RdnaOpcode::DsIncU64:
-        case RdnaOpcode::DsDecU64:
-        case RdnaOpcode::DsMinI64:
-        case RdnaOpcode::DsMaxI64:
-        case RdnaOpcode::DsMinU64:
-        case RdnaOpcode::DsMaxU64:
-        case RdnaOpcode::DsAndB64:
-        case RdnaOpcode::DsOrB64:
-        case RdnaOpcode::DsXorB64:
-        case RdnaOpcode::DsMinF64:
-        case RdnaOpcode::DsMaxF64:
-        case RdnaOpcode::DsAddRtnU64:
-        case RdnaOpcode::DsSubRtnU64:
-        case RdnaOpcode::DsRsubRtnU64:
-        case RdnaOpcode::DsIncRtnU64:
-        case RdnaOpcode::DsDecRtnU64:
-        case RdnaOpcode::DsMinRtnI64:
-        case RdnaOpcode::DsMaxRtnI64:
-        case RdnaOpcode::DsMinRtnU64:
-        case RdnaOpcode::DsMaxRtnU64:
-        case RdnaOpcode::DsAndRtnB64:
-        case RdnaOpcode::DsOrRtnB64:
-        case RdnaOpcode::DsXorRtnB64:
-        case RdnaOpcode::DsWrxchgRtnB64:
-        case RdnaOpcode::DsMinRtnF64:
-        case RdnaOpcode::DsMaxRtnF64:
-            return true;
-        default: return false;
+    case RdnaOpcode::DsAddU32:
+    case RdnaOpcode::DsAddRtnU32:
+    case RdnaOpcode::DsSubU32:
+    case RdnaOpcode::DsSubRtnU32:
+    case RdnaOpcode::DsIncRtnU32:
+    case RdnaOpcode::DsDecRtnU32:
+    case RdnaOpcode::DsMinI32:
+    case RdnaOpcode::DsMinRtnI32:
+    case RdnaOpcode::DsMaxI32:
+    case RdnaOpcode::DsMaxRtnI32:
+    case RdnaOpcode::DsMinU32:
+    case RdnaOpcode::DsMinRtnU32:
+    case RdnaOpcode::DsMaxU32:
+    case RdnaOpcode::DsMaxRtnU32:
+    case RdnaOpcode::DsAndB32:
+    case RdnaOpcode::DsAndRtnB32:
+    case RdnaOpcode::DsOrB32:
+    case RdnaOpcode::DsOrRtnB32:
+    case RdnaOpcode::DsXorB32:
+    case RdnaOpcode::DsXorRtnB32:
+    case RdnaOpcode::DsWrxchgRtnB32:
+    case RdnaOpcode::DsRsubU32:
+    case RdnaOpcode::DsIncU32:
+    case RdnaOpcode::DsDecU32:
+    case RdnaOpcode::DsAddF32:
+    case RdnaOpcode::DsRsubRtnU32:
+    case RdnaOpcode::DsMinRtnF32:
+    case RdnaOpcode::DsMaxRtnF32:
+    case RdnaOpcode::DsAddRtnF32:
+    case RdnaOpcode::DsAddU64:
+    case RdnaOpcode::DsSubU64:
+    case RdnaOpcode::DsRsubU64:
+    case RdnaOpcode::DsIncU64:
+    case RdnaOpcode::DsDecU64:
+    case RdnaOpcode::DsMinI64:
+    case RdnaOpcode::DsMaxI64:
+    case RdnaOpcode::DsMinU64:
+    case RdnaOpcode::DsMaxU64:
+    case RdnaOpcode::DsAndB64:
+    case RdnaOpcode::DsOrB64:
+    case RdnaOpcode::DsXorB64:
+    case RdnaOpcode::DsMinF64:
+    case RdnaOpcode::DsMaxF64:
+    case RdnaOpcode::DsAddRtnU64:
+    case RdnaOpcode::DsSubRtnU64:
+    case RdnaOpcode::DsRsubRtnU64:
+    case RdnaOpcode::DsIncRtnU64:
+    case RdnaOpcode::DsDecRtnU64:
+    case RdnaOpcode::DsMinRtnI64:
+    case RdnaOpcode::DsMaxRtnI64:
+    case RdnaOpcode::DsMinRtnU64:
+    case RdnaOpcode::DsMaxRtnU64:
+    case RdnaOpcode::DsAndRtnB64:
+    case RdnaOpcode::DsOrRtnB64:
+    case RdnaOpcode::DsXorRtnB64:
+    case RdnaOpcode::DsWrxchgRtnB64:
+    case RdnaOpcode::DsMinRtnF64:
+    case RdnaOpcode::DsMaxRtnF64:
+        return true;
+    default:
+        return false;
     }
 }
 
 std::uint32_t dsSourceCount(RdnaOpcode opcode) {
     switch (opcode) {
-        case RdnaOpcode::DsWrxchg2RtnB32:
-        case RdnaOpcode::DsWrxchg2st64RtnB32:
-        case RdnaOpcode::DsWrxchg2RtnB64:
-        case RdnaOpcode::DsWrxchg2st64RtnB64:
-        case RdnaOpcode::DsWrite2B32:
-        case RdnaOpcode::DsWrite2st64B32:
-        case RdnaOpcode::DsWrite2B64:
-        case RdnaOpcode::DsWrite2st64B64:
-        case RdnaOpcode::DsMskorB32:
-        case RdnaOpcode::DsCmpstB32:
-        case RdnaOpcode::DsCmpstF32:
-        case RdnaOpcode::DsMskorRtnB32:
-        case RdnaOpcode::DsCmpstRtnB32:
-        case RdnaOpcode::DsCmpstRtnF32:
-        case RdnaOpcode::DsWrapRtnB32:
-        case RdnaOpcode::DsMskorB64:
-        case RdnaOpcode::DsCmpstB64:
-        case RdnaOpcode::DsCmpstF64:
-        case RdnaOpcode::DsMskorRtnB64:
-        case RdnaOpcode::DsCmpstRtnB64:
-        case RdnaOpcode::DsCmpstRtnF64: return 3u;
-        case RdnaOpcode::DsMinF32:
-        case RdnaOpcode::DsMaxF32: return 2u;
-        case RdnaOpcode::DsNop: return 0u;
-        case RdnaOpcode::DsPermuteB32:
-        case RdnaOpcode::DsBpermuteB32: return 2u;
-        case RdnaOpcode::DsReadAddtidB32:
-        case RdnaOpcode::DsConsume:
-        case RdnaOpcode::DsAppend: return 0u;
-        default: return isDsWriteOpcode(opcode) || isDsAtomicOpcode(opcode) ? 2u : 1u;
+    case RdnaOpcode::DsWrxchg2RtnB32:
+    case RdnaOpcode::DsWrxchg2st64RtnB32:
+    case RdnaOpcode::DsWrxchg2RtnB64:
+    case RdnaOpcode::DsWrxchg2st64RtnB64:
+    case RdnaOpcode::DsWrite2B32:
+    case RdnaOpcode::DsWrite2st64B32:
+    case RdnaOpcode::DsWrite2B64:
+    case RdnaOpcode::DsWrite2st64B64:
+    case RdnaOpcode::DsMskorB32:
+    case RdnaOpcode::DsCmpstB32:
+    case RdnaOpcode::DsCmpstF32:
+    case RdnaOpcode::DsMskorRtnB32:
+    case RdnaOpcode::DsCmpstRtnB32:
+    case RdnaOpcode::DsCmpstRtnF32:
+    case RdnaOpcode::DsWrapRtnB32:
+    case RdnaOpcode::DsMskorB64:
+    case RdnaOpcode::DsCmpstB64:
+    case RdnaOpcode::DsCmpstF64:
+    case RdnaOpcode::DsMskorRtnB64:
+    case RdnaOpcode::DsCmpstRtnB64:
+    case RdnaOpcode::DsCmpstRtnF64:
+        return 3u;
+    case RdnaOpcode::DsMinF32:
+    case RdnaOpcode::DsMaxF32:
+        return 2u;
+    case RdnaOpcode::DsNop:
+        return 0u;
+    case RdnaOpcode::DsPermuteB32:
+    case RdnaOpcode::DsBpermuteB32:
+        return 2u;
+    case RdnaOpcode::DsReadAddtidB32:
+    case RdnaOpcode::DsConsume:
+    case RdnaOpcode::DsAppend:
+        return 0u;
+    default:
+        return isDsWriteOpcode(opcode) || isDsAtomicOpcode(opcode) ? 2u : 1u;
     }
 }
 
 bool isFlatStoreOpcode(RdnaOpcode opcode) {
     switch (opcode) {
-        case RdnaOpcode::FlatStoreByte:
-        case RdnaOpcode::FlatStoreShort:
-        case RdnaOpcode::FlatStoreByteD16Hi:
-        case RdnaOpcode::FlatStoreShortD16Hi:
-        case RdnaOpcode::FlatStoreDword:
-        case RdnaOpcode::FlatStoreDwordx2:
-        case RdnaOpcode::FlatStoreDwordx3:
-        case RdnaOpcode::FlatStoreDwordx4:
-        case RdnaOpcode::GlobalStoreDwordAddtid: return true;
-        default: return false;
+    case RdnaOpcode::FlatStoreByte:
+    case RdnaOpcode::FlatStoreShort:
+    case RdnaOpcode::FlatStoreByteD16Hi:
+    case RdnaOpcode::FlatStoreShortD16Hi:
+    case RdnaOpcode::FlatStoreDword:
+    case RdnaOpcode::FlatStoreDwordx2:
+    case RdnaOpcode::FlatStoreDwordx3:
+    case RdnaOpcode::FlatStoreDwordx4:
+    case RdnaOpcode::GlobalStoreDwordAddtid:
+        return true;
+    default:
+        return false;
     }
 }
 
 bool isFlatAtomicOpcode(RdnaOpcode opcode) {
     switch (opcode) {
-        case RdnaOpcode::FlatAtomicSwap:
-        case RdnaOpcode::FlatAtomicCmpswap:
-        case RdnaOpcode::FlatAtomicAdd:
-        case RdnaOpcode::FlatAtomicSub:
-        case RdnaOpcode::FlatAtomicSmin:
-        case RdnaOpcode::FlatAtomicUmin:
-        case RdnaOpcode::FlatAtomicSmax:
-        case RdnaOpcode::FlatAtomicUmax:
-        case RdnaOpcode::FlatAtomicAnd:
-        case RdnaOpcode::FlatAtomicOr:
-        case RdnaOpcode::FlatAtomicXor:
-        case RdnaOpcode::FlatAtomicInc:
-        case RdnaOpcode::FlatAtomicDec:
-        case RdnaOpcode::FlatAtomicSwapX2:
-        case RdnaOpcode::FlatAtomicCmpswapX2:
-        case RdnaOpcode::FlatAtomicAddX2:
-        case RdnaOpcode::FlatAtomicSubX2:
-        case RdnaOpcode::FlatAtomicSminX2:
-        case RdnaOpcode::FlatAtomicUminX2:
-        case RdnaOpcode::FlatAtomicSmaxX2:
-        case RdnaOpcode::FlatAtomicUmaxX2:
-        case RdnaOpcode::FlatAtomicAndX2:
-        case RdnaOpcode::FlatAtomicOrX2:
-        case RdnaOpcode::FlatAtomicXorX2:
-        case RdnaOpcode::FlatAtomicFcmpswap:
-        case RdnaOpcode::FlatAtomicFmin:
-        case RdnaOpcode::FlatAtomicFmax:
-        case RdnaOpcode::FlatAtomicFcmpswapX2:
-        case RdnaOpcode::FlatAtomicFminX2:
-        case RdnaOpcode::FlatAtomicFmaxX2:
-        case RdnaOpcode::FlatAtomicIncX2:
-        case RdnaOpcode::FlatAtomicDecX2:
-        case RdnaOpcode::GlobalAtomicCsub:
-            return true;
-        default: return false;
+    case RdnaOpcode::FlatAtomicSwap:
+    case RdnaOpcode::FlatAtomicCmpswap:
+    case RdnaOpcode::FlatAtomicAdd:
+    case RdnaOpcode::FlatAtomicSub:
+    case RdnaOpcode::FlatAtomicSmin:
+    case RdnaOpcode::FlatAtomicUmin:
+    case RdnaOpcode::FlatAtomicSmax:
+    case RdnaOpcode::FlatAtomicUmax:
+    case RdnaOpcode::FlatAtomicAnd:
+    case RdnaOpcode::FlatAtomicOr:
+    case RdnaOpcode::FlatAtomicXor:
+    case RdnaOpcode::FlatAtomicInc:
+    case RdnaOpcode::FlatAtomicDec:
+    case RdnaOpcode::FlatAtomicSwapX2:
+    case RdnaOpcode::FlatAtomicCmpswapX2:
+    case RdnaOpcode::FlatAtomicAddX2:
+    case RdnaOpcode::FlatAtomicSubX2:
+    case RdnaOpcode::FlatAtomicSminX2:
+    case RdnaOpcode::FlatAtomicUminX2:
+    case RdnaOpcode::FlatAtomicSmaxX2:
+    case RdnaOpcode::FlatAtomicUmaxX2:
+    case RdnaOpcode::FlatAtomicAndX2:
+    case RdnaOpcode::FlatAtomicOrX2:
+    case RdnaOpcode::FlatAtomicXorX2:
+    case RdnaOpcode::FlatAtomicFcmpswap:
+    case RdnaOpcode::FlatAtomicFmin:
+    case RdnaOpcode::FlatAtomicFmax:
+    case RdnaOpcode::FlatAtomicFcmpswapX2:
+    case RdnaOpcode::FlatAtomicFminX2:
+    case RdnaOpcode::FlatAtomicFmaxX2:
+    case RdnaOpcode::FlatAtomicIncX2:
+    case RdnaOpcode::FlatAtomicDecX2:
+    case RdnaOpcode::GlobalAtomicCsub:
+        return true;
+    default:
+        return false;
     }
 }
 
-void setRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t wordCount) {
+void setRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> code, std::uint32_t wordIndex,
+                 std::uint32_t wordCount) {
     instruction.wordCount = wordCount;
     for (std::uint32_t i = 0; i < wordCount; ++i) {
         instruction.rawWords[i] = code[wordIndex + i];
     }
 }
 
-void requireTwoWords(std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t programCounter, const char* reason) {
+void requireTwoWords(std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t programCounter,
+                     const char* reason) {
     const std::size_t index = wordIndex;
     if (index >= code.size() || code.size() - index < 2u) {
         throw std::runtime_error(reason);
@@ -650,24 +705,37 @@ std::uint32_t toProgramCounter(std::uint32_t wordIndex) {
 RdnaOpcode cacheControlOpcode(RdnaInstructionFamily family, std::uint32_t opcode) {
     if (family == RdnaInstructionFamily::SMEM) {
         switch (opcode) {
-            case 0x1fu: return RdnaOpcode::SGl1Inv;
-            case 0x20u: return RdnaOpcode::SDcacheInv;
-            case 0x21u: return RdnaOpcode::SDcacheWb;
-            case 0x26u: return RdnaOpcode::SAtcProbe;
-            case 0x27u: return RdnaOpcode::SAtcProbeBuffer;
-            case 0x28u: return RdnaOpcode::SDcacheDiscard;
-            case 0x29u: return RdnaOpcode::SDcacheDiscardX2;
-            default: return RdnaOpcode::Invalid;
+        case 0x1fu:
+            return RdnaOpcode::SGl1Inv;
+        case 0x20u:
+            return RdnaOpcode::SDcacheInv;
+        case 0x21u:
+            return RdnaOpcode::SDcacheWb;
+        case 0x26u:
+            return RdnaOpcode::SAtcProbe;
+        case 0x27u:
+            return RdnaOpcode::SAtcProbeBuffer;
+        case 0x28u:
+            return RdnaOpcode::SDcacheDiscard;
+        case 0x29u:
+            return RdnaOpcode::SDcacheDiscardX2;
+        default:
+            return RdnaOpcode::Invalid;
         }
     }
     switch (opcode) {
-        case 0x71u: return RdnaOpcode::BufferGl0Inv;
-        case 0x72u: return RdnaOpcode::BufferGl1Inv;
-        default: return RdnaOpcode::Invalid;
+    case 0x71u:
+        return RdnaOpcode::BufferGl0Inv;
+    case 0x72u:
+        return RdnaOpcode::BufferGl1Inv;
+    default:
+        return RdnaOpcode::Invalid;
     }
 }
 
-RdnaInstruction cacheControlInstruction(RdnaInstructionFamily family, RdnaOpcode op, std::uint32_t opcode, std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+RdnaInstruction cacheControlInstruction(RdnaInstructionFamily family, RdnaOpcode op, std::uint32_t opcode,
+                                        std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                                        std::uint32_t wordIndex) {
     RdnaInstruction instruction{};
     instruction.programCounter = programCounter;
     instruction.family = family;
@@ -679,7 +747,8 @@ RdnaInstruction cacheControlInstruction(RdnaInstructionFamily family, RdnaOpcode
 
 }
 
-RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                               std::uint32_t wordIndex) {
     requireTwoWords(code, wordIndex, programCounter, "truncated SMEM instruction");
     const std::size_t index = wordIndex;
     const auto word0 = code[index];
@@ -692,7 +761,8 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     const auto sbase = word0 & 0x3Fu;
     const auto soffsetCode = (word1 >> 25u) & 0x7Fu;
     if (opcode == 0x2au) {
-        auto instruction = cacheControlInstruction(RdnaInstructionFamily::SMEM, RdnaOpcode::SGetWaveidInWorkgroup, opcode, programCounter, code, wordIndex);
+        auto instruction = cacheControlInstruction(RdnaInstructionFamily::SMEM, RdnaOpcode::SGetWaveidInWorkgroup,
+                                                   opcode, programCounter, code, wordIndex);
         instruction.destination = scalarDestination(sdst);
         return instruction;
     }
@@ -700,7 +770,9 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
         return cacheControlInstruction(RdnaInstructionFamily::SMEM, cacheOp, opcode, programCounter, code, wordIndex);
     }
     if (opcode == 0x24u || opcode == 0x25u) {
-        auto instruction = cacheControlInstruction(RdnaInstructionFamily::SMEM, opcode == 0x24u ? RdnaOpcode::SMemtime : RdnaOpcode::SMemrealtime, opcode, programCounter, code, wordIndex);
+        auto instruction = cacheControlInstruction(RdnaInstructionFamily::SMEM,
+                                                   opcode == 0x24u ? RdnaOpcode::SMemtime : RdnaOpcode::SMemrealtime,
+                                                   opcode, programCounter, code, wordIndex);
         instruction.destination = scalarDestination(sdst);
         return instruction;
     }
@@ -723,7 +795,9 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
         instruction.source0 = vcc;
     } else if (sbase * 2u > 104u) {
         char reason[96];
-        std::snprintf(reason, sizeof(reason), "SMEM base register range overflow (sbase s%u at pc 0x%x, words %08x %08x)", sbase * 2u, programCounter, word0, word1);
+        std::snprintf(reason, sizeof(reason),
+                      "SMEM base register range overflow (sbase s%u at pc 0x%x, words %08x %08x)", sbase * 2u,
+                      programCounter, word0, word1);
         throw std::runtime_error(reason);
     } else {
         instruction.source0 = scalarDescriptorBase(sbase * 2u, 2u, "SMEM base register range overflow");
@@ -733,7 +807,8 @@ RdnaInstruction DecodeRdnaSmem(std::uint32_t programCounter, std::span<const std
     return instruction;
 }
 
-RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                                std::uint32_t wordIndex) {
     requireTwoWords(code, wordIndex, programCounter, "truncated MUBUF instruction");
     const std::size_t index = wordIndex;
     const auto word0 = code[index];
@@ -772,7 +847,8 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     return instruction;
 }
 
-RdnaInstruction DecodeRdnaMtbuf(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+RdnaInstruction DecodeRdnaMtbuf(std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                                std::uint32_t wordIndex) {
     requireTwoWords(code, wordIndex, programCounter, "truncated MTBUF instruction");
     const std::size_t index = wordIndex;
     const auto word0 = code[index];
@@ -812,7 +888,8 @@ RdnaInstruction DecodeRdnaMtbuf(std::uint32_t programCounter, std::span<const st
     return instruction;
 }
 
-RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                               std::uint32_t wordIndex) {
     requireTwoWords(code, wordIndex, programCounter, "truncated FLAT instruction");
     const std::size_t index = wordIndex;
     const auto word0 = code[index];
@@ -854,11 +931,13 @@ RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std
 
     instruction.destination = d16Half(vectorRegister(isFlatStoreOpcode(instruction.op) ? data : vdst), instruction.op);
     if (instruction.op == RdnaOpcode::GlobalLoadDwordAddtid || instruction.op == RdnaOpcode::GlobalStoreDwordAddtid) {
-        const std::string name = instruction.op == RdnaOpcode::GlobalLoadDwordAddtid ? "global_load_dword_addtid" : "global_store_dword_addtid";
+        const std::string name = instruction.op == RdnaOpcode::GlobalLoadDwordAddtid ? "global_load_dword_addtid"
+                                                                                     : "global_store_dword_addtid";
         if (seg != 2u) {
             throw std::runtime_error(name + " is available only in the global segment");
         }
-        instruction.source0 = scalarDescriptorBase(saddr, 2u, (name + " supports only an SGPR pair as base address").c_str());
+        instruction.source0 =
+            scalarDescriptorBase(saddr, 2u, (name + " supports only an SGPR pair as base address").c_str());
         instruction.sourceCount = 1;
         return instruction;
     }
@@ -883,7 +962,8 @@ RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std
     return instruction;
 }
 
-RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                             std::uint32_t wordIndex) {
     requireTwoWords(code, wordIndex, programCounter, "truncated DS instruction");
     const std::size_t index = wordIndex;
     const auto word0 = code[index];
@@ -904,10 +984,13 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
     if (info.opcode == RdnaOpcode::DsSwizzleB32 && combinedOffset >= 0xE000u) {
         throw std::runtime_error("DS swizzle FFT mode is not supported");
     }
-    if (gds && (info.opcode == RdnaOpcode::DsSwizzleB32 || info.opcode == RdnaOpcode::DsBpermuteB32 || info.opcode == RdnaOpcode::DsPermuteB32 || info.opcode == RdnaOpcode::DsWriteAddtidB32 || info.opcode == RdnaOpcode::DsReadAddtidB32)) {
+    if (gds && (info.opcode == RdnaOpcode::DsSwizzleB32 || info.opcode == RdnaOpcode::DsBpermuteB32 ||
+                info.opcode == RdnaOpcode::DsPermuteB32 || info.opcode == RdnaOpcode::DsWriteAddtidB32 ||
+                info.opcode == RdnaOpcode::DsReadAddtidB32)) {
         throw std::runtime_error("DS lane operation is available only for LDS");
     }
-    if (info.opcode == RdnaOpcode::DsWrxchg2RtnB32 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB32 || info.opcode == RdnaOpcode::DsWrxchg2RtnB64 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB64) {
+    if (info.opcode == RdnaOpcode::DsWrxchg2RtnB32 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB32 ||
+        info.opcode == RdnaOpcode::DsWrxchg2RtnB64 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB64) {
         if (offset0 == offset1) {
             throw std::runtime_error("DS write exchange of one location through both offsets is not supported");
         }
@@ -931,23 +1014,28 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    if (instruction.op == RdnaOpcode::DsWrite2B32 || instruction.op == RdnaOpcode::DsRead2B32 || instruction.op == RdnaOpcode::DsWrxchg2RtnB32) {
+    if (instruction.op == RdnaOpcode::DsWrite2B32 || instruction.op == RdnaOpcode::DsRead2B32 ||
+        instruction.op == RdnaOpcode::DsWrxchg2RtnB32) {
         instruction.memoryOffset = offset0 * 4u;
         instruction.secondaryOffset = offset1 * 4u;
-    } else if (instruction.op == RdnaOpcode::DsWrite2st64B32 || instruction.op == RdnaOpcode::DsRead2st64B32 || instruction.op == RdnaOpcode::DsWrxchg2st64RtnB32) {
+    } else if (instruction.op == RdnaOpcode::DsWrite2st64B32 || instruction.op == RdnaOpcode::DsRead2st64B32 ||
+               instruction.op == RdnaOpcode::DsWrxchg2st64RtnB32) {
         instruction.memoryOffset = offset0 * 256u;
         instruction.secondaryOffset = offset1 * 256u;
-    } else if (instruction.op == RdnaOpcode::DsWrite2B64 || instruction.op == RdnaOpcode::DsRead2B64 || instruction.op == RdnaOpcode::DsWrxchg2RtnB64) {
+    } else if (instruction.op == RdnaOpcode::DsWrite2B64 || instruction.op == RdnaOpcode::DsRead2B64 ||
+               instruction.op == RdnaOpcode::DsWrxchg2RtnB64) {
         instruction.memoryOffset = offset0 * 8u;
         instruction.secondaryOffset = offset1 * 8u;
-    } else if (instruction.op == RdnaOpcode::DsWrite2st64B64 || instruction.op == RdnaOpcode::DsRead2st64B64 || instruction.op == RdnaOpcode::DsWrxchg2st64RtnB64) {
+    } else if (instruction.op == RdnaOpcode::DsWrite2st64B64 || instruction.op == RdnaOpcode::DsRead2st64B64 ||
+               instruction.op == RdnaOpcode::DsWrxchg2st64RtnB64) {
         instruction.memoryOffset = offset0 * 512u;
         instruction.secondaryOffset = offset1 * 512u;
     }
 
     instruction.destination = d16Half(vectorRegister(vdst), instruction.op);
     instruction.source0 = vectorRegister(addr);
-    instruction.source1 = isDsWriteOpcode(instruction.op) ? d16Half(vectorRegister(data0), instruction.op) : vectorRegister(data0);
+    instruction.source1 =
+        isDsWriteOpcode(instruction.op) ? d16Half(vectorRegister(data0), instruction.op) : vectorRegister(data0);
     instruction.source2 = vectorRegister(data1);
     instruction.sourceCount = dsSourceCount(instruction.op);
     return instruction;
@@ -959,12 +1047,18 @@ RdnaInstruction DecodeRdnaMemoryOp(std::span<const std::uint32_t> code, std::uin
         throw std::runtime_error("truncated memory instruction");
     }
     switch (code[wordIndex] >> 26u) {
-        case 0x36u: return DecodeRdnaDs(programCounter, code, wordIndex);
-        case 0x37u: return DecodeRdnaFlat(programCounter, code, wordIndex);
-        case 0x38u: return DecodeRdnaMubuf(programCounter, code, wordIndex);
-        case 0x3Au: return DecodeRdnaMtbuf(programCounter, code, wordIndex);
-        case 0x3Du: return DecodeRdnaSmem(programCounter, code, wordIndex);
-        default: throw std::runtime_error("instruction is not a memory operation");
+    case 0x36u:
+        return DecodeRdnaDs(programCounter, code, wordIndex);
+    case 0x37u:
+        return DecodeRdnaFlat(programCounter, code, wordIndex);
+    case 0x38u:
+        return DecodeRdnaMubuf(programCounter, code, wordIndex);
+    case 0x3Au:
+        return DecodeRdnaMtbuf(programCounter, code, wordIndex);
+    case 0x3Du:
+        return DecodeRdnaSmem(programCounter, code, wordIndex);
+    default:
+        throw std::runtime_error("instruction is not a memory operation");
     }
 }
 

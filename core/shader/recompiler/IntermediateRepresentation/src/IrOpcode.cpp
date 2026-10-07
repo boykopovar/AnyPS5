@@ -15,8 +15,7 @@ struct OpcodeMeta {
     std::size_t argCount = 0;
 };
 
-template <typename... TArgs>
-consteval OpcodeMeta makeMeta(std::string_view name, IrType type, TArgs... args) {
+template <typename... TArgs> consteval OpcodeMeta makeMeta(std::string_view name, IrType type, TArgs... args) {
     static_assert(sizeof...(TArgs) <= MaxOpcodeArgs);
     OpcodeMeta meta{.name = name, .type = type, .argCount = sizeof...(TArgs)};
     meta.args.fill(IrType::Void);
@@ -518,13 +517,9 @@ const OpcodeMeta& metaOf(IrOpcode opcode) {
 
 }
 
-std::size_t IrOpcodeOperandCount(IrOpcode opcode) {
-    return metaOf(opcode).argCount;
-}
+std::size_t IrOpcodeOperandCount(IrOpcode opcode) { return metaOf(opcode).argCount; }
 
-IrType IrOpcodeType(IrOpcode opcode) {
-    return metaOf(opcode).type;
-}
+IrType IrOpcodeType(IrOpcode opcode) { return metaOf(opcode).type; }
 
 IrType IrOpcodeArgumentType(IrOpcode opcode, std::size_t index) {
     const OpcodeMeta& meta = metaOf(opcode);
@@ -536,299 +531,299 @@ IrType IrOpcodeArgumentType(IrOpcode opcode, std::size_t index) {
 
 BufferAccess BufferAccessOf(IrOpcode opcode) {
     switch (opcode) {
-        case IrOpcode::LoadBuffer:
-        case IrOpcode::ReadConstBuffer:
-        case IrOpcode::LoadBufferU8:
-        case IrOpcode::LoadBufferU16:
-        case IrOpcode::LoadBufferU32:
-        case IrOpcode::LoadBufferU32x2:
-        case IrOpcode::LoadBufferU32x3:
-        case IrOpcode::LoadBufferU32x4:
-            return BufferAccess::Read;
-        case IrOpcode::StoreBuffer:
-        case IrOpcode::StoreBufferU8:
-        case IrOpcode::StoreBufferU16:
-        case IrOpcode::StoreBufferU32:
-        case IrOpcode::StoreBufferU32x2:
-        case IrOpcode::StoreBufferU32x3:
-        case IrOpcode::StoreBufferU32x4:
-            return BufferAccess::Write;
-        case IrOpcode::BufferAtomicSwap32:
-        case IrOpcode::BufferAtomicCmpSwap32:
-        case IrOpcode::BufferAtomicSwap64:
-        case IrOpcode::BufferAtomicIAdd32:
-        case IrOpcode::BufferAtomicISub32:
-        case IrOpcode::BufferAtomicSMin32:
-        case IrOpcode::BufferAtomicUMin32:
-        case IrOpcode::BufferAtomicSMax32:
-        case IrOpcode::BufferAtomicUMax32:
-        case IrOpcode::BufferAtomicAnd32:
-        case IrOpcode::BufferAtomicOr32:
-        case IrOpcode::BufferAtomicOr64:
-        case IrOpcode::BufferAtomicXor32:
-        case IrOpcode::BufferAtomicFMin32:
-        case IrOpcode::BufferAtomicFMax32:
-        case IrOpcode::BufferAtomicInc32:
-        case IrOpcode::BufferAtomicDec32:
-        case IrOpcode::BufferAtomicUSubSat32:
-        case IrOpcode::BufferAtomicIAdd64:
-        case IrOpcode::BufferAtomicISub64:
-        case IrOpcode::BufferAtomicSMin64:
-        case IrOpcode::BufferAtomicUMin64:
-        case IrOpcode::BufferAtomicSMax64:
-        case IrOpcode::BufferAtomicUMax64:
-        case IrOpcode::BufferAtomicAnd64:
-        case IrOpcode::BufferAtomicXor64:
-        case IrOpcode::BufferAtomicCmpSwap64:
-        case IrOpcode::BufferAtomicFCmpSwap32:
-        case IrOpcode::BufferAtomicFCmpSwap64:
-        case IrOpcode::BufferAtomicFMin64:
-        case IrOpcode::BufferAtomicFMax64:
-        case IrOpcode::BufferAtomicInc64:
-        case IrOpcode::BufferAtomicDec64:
-            return BufferAccess::Atomic;
-        default:
-            return BufferAccess::None;
+    case IrOpcode::LoadBuffer:
+    case IrOpcode::ReadConstBuffer:
+    case IrOpcode::LoadBufferU8:
+    case IrOpcode::LoadBufferU16:
+    case IrOpcode::LoadBufferU32:
+    case IrOpcode::LoadBufferU32x2:
+    case IrOpcode::LoadBufferU32x3:
+    case IrOpcode::LoadBufferU32x4:
+        return BufferAccess::Read;
+    case IrOpcode::StoreBuffer:
+    case IrOpcode::StoreBufferU8:
+    case IrOpcode::StoreBufferU16:
+    case IrOpcode::StoreBufferU32:
+    case IrOpcode::StoreBufferU32x2:
+    case IrOpcode::StoreBufferU32x3:
+    case IrOpcode::StoreBufferU32x4:
+        return BufferAccess::Write;
+    case IrOpcode::BufferAtomicSwap32:
+    case IrOpcode::BufferAtomicCmpSwap32:
+    case IrOpcode::BufferAtomicSwap64:
+    case IrOpcode::BufferAtomicIAdd32:
+    case IrOpcode::BufferAtomicISub32:
+    case IrOpcode::BufferAtomicSMin32:
+    case IrOpcode::BufferAtomicUMin32:
+    case IrOpcode::BufferAtomicSMax32:
+    case IrOpcode::BufferAtomicUMax32:
+    case IrOpcode::BufferAtomicAnd32:
+    case IrOpcode::BufferAtomicOr32:
+    case IrOpcode::BufferAtomicOr64:
+    case IrOpcode::BufferAtomicXor32:
+    case IrOpcode::BufferAtomicFMin32:
+    case IrOpcode::BufferAtomicFMax32:
+    case IrOpcode::BufferAtomicInc32:
+    case IrOpcode::BufferAtomicDec32:
+    case IrOpcode::BufferAtomicUSubSat32:
+    case IrOpcode::BufferAtomicIAdd64:
+    case IrOpcode::BufferAtomicISub64:
+    case IrOpcode::BufferAtomicSMin64:
+    case IrOpcode::BufferAtomicUMin64:
+    case IrOpcode::BufferAtomicSMax64:
+    case IrOpcode::BufferAtomicUMax64:
+    case IrOpcode::BufferAtomicAnd64:
+    case IrOpcode::BufferAtomicXor64:
+    case IrOpcode::BufferAtomicCmpSwap64:
+    case IrOpcode::BufferAtomicFCmpSwap32:
+    case IrOpcode::BufferAtomicFCmpSwap64:
+    case IrOpcode::BufferAtomicFMin64:
+    case IrOpcode::BufferAtomicFMax64:
+    case IrOpcode::BufferAtomicInc64:
+    case IrOpcode::BufferAtomicDec64:
+        return BufferAccess::Atomic;
+    default:
+        return BufferAccess::None;
     }
 }
 
 std::uint32_t BufferComponentCount(IrOpcode opcode) {
     switch (opcode) {
-        case IrOpcode::BufferAtomicSwap64:
-        case IrOpcode::BufferAtomicOr64:
-        case IrOpcode::BufferAtomicIAdd64:
-        case IrOpcode::BufferAtomicISub64:
-        case IrOpcode::BufferAtomicSMin64:
-        case IrOpcode::BufferAtomicUMin64:
-        case IrOpcode::BufferAtomicSMax64:
-        case IrOpcode::BufferAtomicUMax64:
-        case IrOpcode::BufferAtomicAnd64:
-        case IrOpcode::BufferAtomicXor64:
-        case IrOpcode::BufferAtomicCmpSwap64:
-        case IrOpcode::BufferAtomicFCmpSwap64:
-        case IrOpcode::BufferAtomicFMin64:
-        case IrOpcode::BufferAtomicFMax64:
-        case IrOpcode::BufferAtomicInc64:
-        case IrOpcode::BufferAtomicDec64:
-        case IrOpcode::LoadBufferU32x2:
-        case IrOpcode::StoreBufferU32x2:
-            return 2u;
-        case IrOpcode::LoadBufferU32x3:
-        case IrOpcode::StoreBufferU32x3:
-            return 3u;
-        case IrOpcode::LoadBufferU32x4:
-        case IrOpcode::StoreBufferU32x4:
-            return 4u;
-        default:
-            return BufferAccessOf(opcode) == BufferAccess::None ? 0u : 1u;
+    case IrOpcode::BufferAtomicSwap64:
+    case IrOpcode::BufferAtomicOr64:
+    case IrOpcode::BufferAtomicIAdd64:
+    case IrOpcode::BufferAtomicISub64:
+    case IrOpcode::BufferAtomicSMin64:
+    case IrOpcode::BufferAtomicUMin64:
+    case IrOpcode::BufferAtomicSMax64:
+    case IrOpcode::BufferAtomicUMax64:
+    case IrOpcode::BufferAtomicAnd64:
+    case IrOpcode::BufferAtomicXor64:
+    case IrOpcode::BufferAtomicCmpSwap64:
+    case IrOpcode::BufferAtomicFCmpSwap64:
+    case IrOpcode::BufferAtomicFMin64:
+    case IrOpcode::BufferAtomicFMax64:
+    case IrOpcode::BufferAtomicInc64:
+    case IrOpcode::BufferAtomicDec64:
+    case IrOpcode::LoadBufferU32x2:
+    case IrOpcode::StoreBufferU32x2:
+        return 2u;
+    case IrOpcode::LoadBufferU32x3:
+    case IrOpcode::StoreBufferU32x3:
+        return 3u;
+    case IrOpcode::LoadBufferU32x4:
+    case IrOpcode::StoreBufferU32x4:
+        return 4u;
+    default:
+        return BufferAccessOf(opcode) == BufferAccess::None ? 0u : 1u;
     }
 }
 
 SharedAccess SharedAccessOf(IrOpcode opcode) {
     switch (opcode) {
-        case IrOpcode::LoadShared:
-        case IrOpcode::LoadSharedU8:
-        case IrOpcode::LoadSharedU16:
-        case IrOpcode::LoadSharedU32:
-        case IrOpcode::LoadSharedU32x2:
-        case IrOpcode::LoadSharedU32x3:
-        case IrOpcode::LoadSharedU32x4:
-            return SharedAccess::Read;
-        case IrOpcode::StoreShared:
-        case IrOpcode::WriteSharedU8:
-        case IrOpcode::WriteSharedU16:
-        case IrOpcode::WriteSharedU32:
-        case IrOpcode::WriteSharedU32x2:
-        case IrOpcode::WriteSharedU32x3:
-        case IrOpcode::WriteSharedU32x4:
-            return SharedAccess::Write;
-        case IrOpcode::SharedAtomicFMin32:
-        case IrOpcode::SharedAtomicFMax32:
-        case IrOpcode::SharedAtomicSwap32:
-        case IrOpcode::SharedAtomicIAdd32:
-        case IrOpcode::SharedAtomicISub32:
-        case IrOpcode::SharedAtomicInc32:
-        case IrOpcode::SharedAtomicDec32:
-        case IrOpcode::SharedAtomicSMin32:
-        case IrOpcode::SharedAtomicUMin32:
-        case IrOpcode::SharedAtomicSMax32:
-        case IrOpcode::SharedAtomicUMax32:
-        case IrOpcode::SharedAtomicAnd32:
-        case IrOpcode::SharedAtomicOr32:
-        case IrOpcode::SharedAtomicXor32:
-        case IrOpcode::SharedAtomicRsub32:
-        case IrOpcode::SharedAtomicFAdd32:
-        case IrOpcode::SharedAtomicCmpst32:
-        case IrOpcode::SharedAtomicCmpstF32:
-        case IrOpcode::SharedAtomicMskor32:
-        case IrOpcode::SharedAtomicWrap32:
-        case IrOpcode::SharedAtomicSwap64:
-        case IrOpcode::SharedAtomicIAdd64:
-        case IrOpcode::SharedAtomicISub64:
-        case IrOpcode::SharedAtomicRsub64:
-        case IrOpcode::SharedAtomicInc64:
-        case IrOpcode::SharedAtomicDec64:
-        case IrOpcode::SharedAtomicSMin64:
-        case IrOpcode::SharedAtomicUMin64:
-        case IrOpcode::SharedAtomicSMax64:
-        case IrOpcode::SharedAtomicUMax64:
-        case IrOpcode::SharedAtomicAnd64:
-        case IrOpcode::SharedAtomicOr64:
-        case IrOpcode::SharedAtomicXor64:
-        case IrOpcode::SharedAtomicFMin64:
-        case IrOpcode::SharedAtomicFMax64:
-        case IrOpcode::SharedAtomicCmpst64:
-        case IrOpcode::SharedAtomicCmpstF64:
-        case IrOpcode::SharedAtomicMskor64:
-            return SharedAccess::Atomic;
-        case IrOpcode::DataAppend:
-            return SharedAccess::Append;
-        case IrOpcode::DataConsume:
-            return SharedAccess::Consume;
-        default:
-            return SharedAccess::None;
+    case IrOpcode::LoadShared:
+    case IrOpcode::LoadSharedU8:
+    case IrOpcode::LoadSharedU16:
+    case IrOpcode::LoadSharedU32:
+    case IrOpcode::LoadSharedU32x2:
+    case IrOpcode::LoadSharedU32x3:
+    case IrOpcode::LoadSharedU32x4:
+        return SharedAccess::Read;
+    case IrOpcode::StoreShared:
+    case IrOpcode::WriteSharedU8:
+    case IrOpcode::WriteSharedU16:
+    case IrOpcode::WriteSharedU32:
+    case IrOpcode::WriteSharedU32x2:
+    case IrOpcode::WriteSharedU32x3:
+    case IrOpcode::WriteSharedU32x4:
+        return SharedAccess::Write;
+    case IrOpcode::SharedAtomicFMin32:
+    case IrOpcode::SharedAtomicFMax32:
+    case IrOpcode::SharedAtomicSwap32:
+    case IrOpcode::SharedAtomicIAdd32:
+    case IrOpcode::SharedAtomicISub32:
+    case IrOpcode::SharedAtomicInc32:
+    case IrOpcode::SharedAtomicDec32:
+    case IrOpcode::SharedAtomicSMin32:
+    case IrOpcode::SharedAtomicUMin32:
+    case IrOpcode::SharedAtomicSMax32:
+    case IrOpcode::SharedAtomicUMax32:
+    case IrOpcode::SharedAtomicAnd32:
+    case IrOpcode::SharedAtomicOr32:
+    case IrOpcode::SharedAtomicXor32:
+    case IrOpcode::SharedAtomicRsub32:
+    case IrOpcode::SharedAtomicFAdd32:
+    case IrOpcode::SharedAtomicCmpst32:
+    case IrOpcode::SharedAtomicCmpstF32:
+    case IrOpcode::SharedAtomicMskor32:
+    case IrOpcode::SharedAtomicWrap32:
+    case IrOpcode::SharedAtomicSwap64:
+    case IrOpcode::SharedAtomicIAdd64:
+    case IrOpcode::SharedAtomicISub64:
+    case IrOpcode::SharedAtomicRsub64:
+    case IrOpcode::SharedAtomicInc64:
+    case IrOpcode::SharedAtomicDec64:
+    case IrOpcode::SharedAtomicSMin64:
+    case IrOpcode::SharedAtomicUMin64:
+    case IrOpcode::SharedAtomicSMax64:
+    case IrOpcode::SharedAtomicUMax64:
+    case IrOpcode::SharedAtomicAnd64:
+    case IrOpcode::SharedAtomicOr64:
+    case IrOpcode::SharedAtomicXor64:
+    case IrOpcode::SharedAtomicFMin64:
+    case IrOpcode::SharedAtomicFMax64:
+    case IrOpcode::SharedAtomicCmpst64:
+    case IrOpcode::SharedAtomicCmpstF64:
+    case IrOpcode::SharedAtomicMskor64:
+        return SharedAccess::Atomic;
+    case IrOpcode::DataAppend:
+        return SharedAccess::Append;
+    case IrOpcode::DataConsume:
+        return SharedAccess::Consume;
+    default:
+        return SharedAccess::None;
     }
 }
 
 std::uint32_t SharedComponentCount(IrOpcode opcode) {
     switch (opcode) {
-        case IrOpcode::LoadSharedU32x2:
-        case IrOpcode::WriteSharedU32x2:
-        case IrOpcode::SharedAtomicSwap64:
-        case IrOpcode::SharedAtomicIAdd64:
-        case IrOpcode::SharedAtomicISub64:
-        case IrOpcode::SharedAtomicRsub64:
-        case IrOpcode::SharedAtomicInc64:
-        case IrOpcode::SharedAtomicDec64:
-        case IrOpcode::SharedAtomicSMin64:
-        case IrOpcode::SharedAtomicUMin64:
-        case IrOpcode::SharedAtomicSMax64:
-        case IrOpcode::SharedAtomicUMax64:
-        case IrOpcode::SharedAtomicAnd64:
-        case IrOpcode::SharedAtomicOr64:
-        case IrOpcode::SharedAtomicXor64:
-        case IrOpcode::SharedAtomicFMin64:
-        case IrOpcode::SharedAtomicFMax64:
-        case IrOpcode::SharedAtomicCmpst64:
-        case IrOpcode::SharedAtomicCmpstF64:
-        case IrOpcode::SharedAtomicMskor64:
-            return 2u;
-        case IrOpcode::LoadSharedU32x3:
-        case IrOpcode::WriteSharedU32x3:
-            return 3u;
-        case IrOpcode::LoadSharedU32x4:
-        case IrOpcode::WriteSharedU32x4:
-            return 4u;
-        default:
-            return SharedAccessOf(opcode) == SharedAccess::None ? 0u : 1u;
+    case IrOpcode::LoadSharedU32x2:
+    case IrOpcode::WriteSharedU32x2:
+    case IrOpcode::SharedAtomicSwap64:
+    case IrOpcode::SharedAtomicIAdd64:
+    case IrOpcode::SharedAtomicISub64:
+    case IrOpcode::SharedAtomicRsub64:
+    case IrOpcode::SharedAtomicInc64:
+    case IrOpcode::SharedAtomicDec64:
+    case IrOpcode::SharedAtomicSMin64:
+    case IrOpcode::SharedAtomicUMin64:
+    case IrOpcode::SharedAtomicSMax64:
+    case IrOpcode::SharedAtomicUMax64:
+    case IrOpcode::SharedAtomicAnd64:
+    case IrOpcode::SharedAtomicOr64:
+    case IrOpcode::SharedAtomicXor64:
+    case IrOpcode::SharedAtomicFMin64:
+    case IrOpcode::SharedAtomicFMax64:
+    case IrOpcode::SharedAtomicCmpst64:
+    case IrOpcode::SharedAtomicCmpstF64:
+    case IrOpcode::SharedAtomicMskor64:
+        return 2u;
+    case IrOpcode::LoadSharedU32x3:
+    case IrOpcode::WriteSharedU32x3:
+        return 3u;
+    case IrOpcode::LoadSharedU32x4:
+    case IrOpcode::WriteSharedU32x4:
+        return 4u;
+    default:
+        return SharedAccessOf(opcode) == SharedAccess::None ? 0u : 1u;
     }
 }
 
 AddressOpcodeInfo AddressOpcodeInfoOf(IrOpcode opcode) {
     switch (opcode) {
-        case IrOpcode::LoadAddressU8:
-            return {AddressAccess::Read, 8u};
-        case IrOpcode::LoadAddressU16:
-            return {AddressAccess::Read, 16u};
-        case IrOpcode::LoadAddressU32:
-            return {AddressAccess::Read, 32u};
-        case IrOpcode::LoadAddressU32x2:
-            return {AddressAccess::Read, 32u, 2u};
-        case IrOpcode::LoadAddressU32x3:
-            return {AddressAccess::Read, 32u, 3u};
-        case IrOpcode::LoadAddressU32x4:
-            return {AddressAccess::Read, 32u, 4u};
-        case IrOpcode::StoreAddressU8:
-            return {AddressAccess::Write, 8u};
-        case IrOpcode::StoreAddressU16:
-            return {AddressAccess::Write, 16u};
-        case IrOpcode::StoreAddressU32:
-            return {AddressAccess::Write, 32u};
-        case IrOpcode::AddressAtomicSwap32:
-        case IrOpcode::AddressAtomicCmpSwap32:
-        case IrOpcode::AddressAtomicIAdd32:
-        case IrOpcode::AddressAtomicISub32:
-        case IrOpcode::AddressAtomicSMin32:
-        case IrOpcode::AddressAtomicUMin32:
-        case IrOpcode::AddressAtomicSMax32:
-        case IrOpcode::AddressAtomicUMax32:
-        case IrOpcode::AddressAtomicAnd32:
-        case IrOpcode::AddressAtomicOr32:
-        case IrOpcode::AddressAtomicXor32:
-        case IrOpcode::AddressAtomicInc32:
-        case IrOpcode::AddressAtomicDec32:
-        case IrOpcode::AddressAtomicUSubSat32:
-        case IrOpcode::AddressAtomicFCmpSwap32:
-        case IrOpcode::AddressAtomicFMin32:
-        case IrOpcode::AddressAtomicFMax32:
-            return {AddressAccess::Atomic, 32u};
-        case IrOpcode::AddressAtomicSwap64:
-        case IrOpcode::AddressAtomicCmpSwap64:
-        case IrOpcode::AddressAtomicIAdd64:
-        case IrOpcode::AddressAtomicISub64:
-        case IrOpcode::AddressAtomicSMin64:
-        case IrOpcode::AddressAtomicUMin64:
-        case IrOpcode::AddressAtomicSMax64:
-        case IrOpcode::AddressAtomicUMax64:
-        case IrOpcode::AddressAtomicAnd64:
-        case IrOpcode::AddressAtomicOr64:
-        case IrOpcode::AddressAtomicXor64:
-        case IrOpcode::AddressAtomicFCmpSwap64:
-        case IrOpcode::AddressAtomicFMin64:
-        case IrOpcode::AddressAtomicFMax64:
-        case IrOpcode::AddressAtomicInc64:
-        case IrOpcode::AddressAtomicDec64:
-            return {AddressAccess::Atomic, 32u, 2u};
-        default:
-            return {};
+    case IrOpcode::LoadAddressU8:
+        return {AddressAccess::Read, 8u};
+    case IrOpcode::LoadAddressU16:
+        return {AddressAccess::Read, 16u};
+    case IrOpcode::LoadAddressU32:
+        return {AddressAccess::Read, 32u};
+    case IrOpcode::LoadAddressU32x2:
+        return {AddressAccess::Read, 32u, 2u};
+    case IrOpcode::LoadAddressU32x3:
+        return {AddressAccess::Read, 32u, 3u};
+    case IrOpcode::LoadAddressU32x4:
+        return {AddressAccess::Read, 32u, 4u};
+    case IrOpcode::StoreAddressU8:
+        return {AddressAccess::Write, 8u};
+    case IrOpcode::StoreAddressU16:
+        return {AddressAccess::Write, 16u};
+    case IrOpcode::StoreAddressU32:
+        return {AddressAccess::Write, 32u};
+    case IrOpcode::AddressAtomicSwap32:
+    case IrOpcode::AddressAtomicCmpSwap32:
+    case IrOpcode::AddressAtomicIAdd32:
+    case IrOpcode::AddressAtomicISub32:
+    case IrOpcode::AddressAtomicSMin32:
+    case IrOpcode::AddressAtomicUMin32:
+    case IrOpcode::AddressAtomicSMax32:
+    case IrOpcode::AddressAtomicUMax32:
+    case IrOpcode::AddressAtomicAnd32:
+    case IrOpcode::AddressAtomicOr32:
+    case IrOpcode::AddressAtomicXor32:
+    case IrOpcode::AddressAtomicInc32:
+    case IrOpcode::AddressAtomicDec32:
+    case IrOpcode::AddressAtomicUSubSat32:
+    case IrOpcode::AddressAtomicFCmpSwap32:
+    case IrOpcode::AddressAtomicFMin32:
+    case IrOpcode::AddressAtomicFMax32:
+        return {AddressAccess::Atomic, 32u};
+    case IrOpcode::AddressAtomicSwap64:
+    case IrOpcode::AddressAtomicCmpSwap64:
+    case IrOpcode::AddressAtomicIAdd64:
+    case IrOpcode::AddressAtomicISub64:
+    case IrOpcode::AddressAtomicSMin64:
+    case IrOpcode::AddressAtomicUMin64:
+    case IrOpcode::AddressAtomicSMax64:
+    case IrOpcode::AddressAtomicUMax64:
+    case IrOpcode::AddressAtomicAnd64:
+    case IrOpcode::AddressAtomicOr64:
+    case IrOpcode::AddressAtomicXor64:
+    case IrOpcode::AddressAtomicFCmpSwap64:
+    case IrOpcode::AddressAtomicFMin64:
+    case IrOpcode::AddressAtomicFMax64:
+    case IrOpcode::AddressAtomicInc64:
+    case IrOpcode::AddressAtomicDec64:
+        return {AddressAccess::Atomic, 32u, 2u};
+    default:
+        return {};
     }
 }
 
 ImageOpcodeInfo ImageOpcodeInfoOf(IrOpcode opcode) {
     switch (opcode) {
-        case IrOpcode::ImageQueryDimensions:
-        case IrOpcode::ImageRead:
-        case IrOpcode::LoadImage:
-            return {ImageAccess::Read, ImageResourceClass::Sampled, false};
-        case IrOpcode::ImageQueryLod:
-        case IrOpcode::ImageSampleRaw:
-        case IrOpcode::ImageGatherRaw:
-        case IrOpcode::ImageSampleImplicitLod:
-        case IrOpcode::ImageSampleExplicitLod:
-            return {ImageAccess::Read, ImageResourceClass::Sampled, true};
-        case IrOpcode::ImageWrite:
-        case IrOpcode::StoreImage:
-            return {ImageAccess::Write, ImageResourceClass::Storage, false};
-        case IrOpcode::ImageAtomicSwap32:
-        case IrOpcode::ImageAtomicIAdd32:
-        case IrOpcode::ImageAtomicUMin32:
-        case IrOpcode::ImageAtomicUMax32:
-        case IrOpcode::ImageAtomicAnd32:
-        case IrOpcode::ImageAtomicOr32:
-        case IrOpcode::ImageAtomicXor32:
-        case IrOpcode::ImageAtomicCmpSwap32:
-        case IrOpcode::ImageAtomicISub32:
-        case IrOpcode::ImageAtomicSMin32:
-        case IrOpcode::ImageAtomicSMax32:
-        case IrOpcode::ImageAtomicInc32:
-        case IrOpcode::ImageAtomicDec32:
-        case IrOpcode::ImageAtomicFCmpSwap32:
-        case IrOpcode::ImageAtomicFMin32:
-        case IrOpcode::ImageAtomicFMax32:
-        case IrOpcode::ImageAtomicSwap64:
-        case IrOpcode::ImageAtomicIAdd64:
-        case IrOpcode::ImageAtomicISub64:
-        case IrOpcode::ImageAtomicUMin64:
-        case IrOpcode::ImageAtomicUMax64:
-        case IrOpcode::ImageAtomicSMin64:
-        case IrOpcode::ImageAtomicSMax64:
-        case IrOpcode::ImageAtomicAnd64:
-        case IrOpcode::ImageAtomicOr64:
-        case IrOpcode::ImageAtomicXor64:
-        case IrOpcode::ImageAtomicCmpSwap64:
-            return {ImageAccess::Atomic, ImageResourceClass::Storage, false};
-        default:
-            return {};
+    case IrOpcode::ImageQueryDimensions:
+    case IrOpcode::ImageRead:
+    case IrOpcode::LoadImage:
+        return {ImageAccess::Read, ImageResourceClass::Sampled, false};
+    case IrOpcode::ImageQueryLod:
+    case IrOpcode::ImageSampleRaw:
+    case IrOpcode::ImageGatherRaw:
+    case IrOpcode::ImageSampleImplicitLod:
+    case IrOpcode::ImageSampleExplicitLod:
+        return {ImageAccess::Read, ImageResourceClass::Sampled, true};
+    case IrOpcode::ImageWrite:
+    case IrOpcode::StoreImage:
+        return {ImageAccess::Write, ImageResourceClass::Storage, false};
+    case IrOpcode::ImageAtomicSwap32:
+    case IrOpcode::ImageAtomicIAdd32:
+    case IrOpcode::ImageAtomicUMin32:
+    case IrOpcode::ImageAtomicUMax32:
+    case IrOpcode::ImageAtomicAnd32:
+    case IrOpcode::ImageAtomicOr32:
+    case IrOpcode::ImageAtomicXor32:
+    case IrOpcode::ImageAtomicCmpSwap32:
+    case IrOpcode::ImageAtomicISub32:
+    case IrOpcode::ImageAtomicSMin32:
+    case IrOpcode::ImageAtomicSMax32:
+    case IrOpcode::ImageAtomicInc32:
+    case IrOpcode::ImageAtomicDec32:
+    case IrOpcode::ImageAtomicFCmpSwap32:
+    case IrOpcode::ImageAtomicFMin32:
+    case IrOpcode::ImageAtomicFMax32:
+    case IrOpcode::ImageAtomicSwap64:
+    case IrOpcode::ImageAtomicIAdd64:
+    case IrOpcode::ImageAtomicISub64:
+    case IrOpcode::ImageAtomicUMin64:
+    case IrOpcode::ImageAtomicUMax64:
+    case IrOpcode::ImageAtomicSMin64:
+    case IrOpcode::ImageAtomicSMax64:
+    case IrOpcode::ImageAtomicAnd64:
+    case IrOpcode::ImageAtomicOr64:
+    case IrOpcode::ImageAtomicXor64:
+    case IrOpcode::ImageAtomicCmpSwap64:
+        return {ImageAccess::Atomic, ImageResourceClass::Storage, false};
+    default:
+        return {};
     }
 }
 
@@ -836,9 +831,7 @@ bool IsImageAtomic64Opcode(IrOpcode opcode) {
     return opcode >= IrOpcode::ImageAtomicSwap64 && opcode <= IrOpcode::ImageAtomicCmpSwap64;
 }
 
-bool IsFloat64Opcode(IrOpcode opcode) {
-    return opcode >= IrOpcode::FPAdd64 && opcode <= IrOpcode::ConvertU32F64;
-}
+bool IsFloat64Opcode(IrOpcode opcode) { return opcode >= IrOpcode::FPAdd64 && opcode <= IrOpcode::ConvertU32F64; }
 
 bool IrOpcodeHasSideEffects(IrOpcode opcode) {
     const BufferAccess bufferAccess = BufferAccessOf(opcode);
@@ -846,7 +839,8 @@ bool IrOpcodeHasSideEffects(IrOpcode opcode) {
         return true;
     }
     const SharedAccess sharedAccess = SharedAccessOf(opcode);
-    if (sharedAccess == SharedAccess::Write || sharedAccess == SharedAccess::Atomic || sharedAccess == SharedAccess::Append || sharedAccess == SharedAccess::Consume) {
+    if (sharedAccess == SharedAccess::Write || sharedAccess == SharedAccess::Atomic ||
+        sharedAccess == SharedAccess::Append || sharedAccess == SharedAccess::Consume) {
         return true;
     }
     const AddressAccess addressAccess = AddressOpcodeInfoOf(opcode).access;
@@ -858,46 +852,44 @@ bool IrOpcodeHasSideEffects(IrOpcode opcode) {
         return true;
     }
     switch (opcode) {
-        case IrOpcode::SetRegister:
-        case IrOpcode::Branch:
-        case IrOpcode::BranchConditional:
-        case IrOpcode::Loop:
-        case IrOpcode::LoopMerge:
-        case IrOpcode::Return:
-        case IrOpcode::Unreachable:
-        case IrOpcode::EmitVertex:
-        case IrOpcode::Discard:
-        case IrOpcode::Reference:
-        case IrOpcode::ReferenceU32:
-        case IrOpcode::SetTessellationAttribute:
-        case IrOpcode::SetThreadBitScalarRegister:
-        case IrOpcode::SetScalarMaskTag:
-        case IrOpcode::SetScalarRegister:
-        case IrOpcode::SetVectorRegister:
-        case IrOpcode::SetGotoVariable:
-        case IrOpcode::SetScc:
-        case IrOpcode::SetExec:
-        case IrOpcode::SetExecLo:
-        case IrOpcode::SetExecHi:
-        case IrOpcode::SetVcc:
-        case IrOpcode::SetVccLo:
-        case IrOpcode::SetVccHi:
-        case IrOpcode::SetM0:
-        case IrOpcode::MeshAllocate:
-        case IrOpcode::Barrier:
-        case IrOpcode::Waitcnt:
-        case IrOpcode::Sendmsg:
-        case IrOpcode::TtraceData:
-        case IrOpcode::InstPrefetch:
-        case IrOpcode::SetAttribute:
-            return true;
-        default:
-            return false;
+    case IrOpcode::SetRegister:
+    case IrOpcode::Branch:
+    case IrOpcode::BranchConditional:
+    case IrOpcode::Loop:
+    case IrOpcode::LoopMerge:
+    case IrOpcode::Return:
+    case IrOpcode::Unreachable:
+    case IrOpcode::EmitVertex:
+    case IrOpcode::Discard:
+    case IrOpcode::Reference:
+    case IrOpcode::ReferenceU32:
+    case IrOpcode::SetTessellationAttribute:
+    case IrOpcode::SetThreadBitScalarRegister:
+    case IrOpcode::SetScalarMaskTag:
+    case IrOpcode::SetScalarRegister:
+    case IrOpcode::SetVectorRegister:
+    case IrOpcode::SetGotoVariable:
+    case IrOpcode::SetScc:
+    case IrOpcode::SetExec:
+    case IrOpcode::SetExecLo:
+    case IrOpcode::SetExecHi:
+    case IrOpcode::SetVcc:
+    case IrOpcode::SetVccLo:
+    case IrOpcode::SetVccHi:
+    case IrOpcode::SetM0:
+    case IrOpcode::MeshAllocate:
+    case IrOpcode::Barrier:
+    case IrOpcode::Waitcnt:
+    case IrOpcode::Sendmsg:
+    case IrOpcode::TtraceData:
+    case IrOpcode::InstPrefetch:
+    case IrOpcode::SetAttribute:
+        return true;
+    default:
+        return false;
     }
 }
 
-std::string_view IrOpcodeName(IrOpcode opcode) {
-    return metaOf(opcode).name;
-}
+std::string_view IrOpcodeName(IrOpcode opcode) { return metaOf(opcode).name; }
 
 }

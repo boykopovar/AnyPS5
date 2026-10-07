@@ -27,8 +27,7 @@ static void Check(bool value, int line) {
 
 static constexpr int ErrorEnotdir = static_cast<int>(0x80020014u);
 
-static void VerifyCloseReuse(const std::filesystem::path& root, const char* scenario,
-                             bool useUnderscoreClose) {
+static void VerifyCloseReuse(const std::filesystem::path& root, const char* scenario, bool useUnderscoreClose) {
     const auto directoryPath = root / scenario;
     Require(std::filesystem::create_directory(directoryPath));
     const auto filePath = directoryPath / "entry.txt";
@@ -39,8 +38,8 @@ static void VerifyCloseReuse(const std::filesystem::path& root, const char* scen
         Require(static_cast<bool>(file));
     }
 
-    const int directory = sceKernelOpen(directoryPath.string().c_str(),
-        SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    const int directory =
+        sceKernelOpen(directoryPath.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     Require((useUnderscoreClose ? _close_nid_postfix(directory) : close_nid_postfix(directory)) == 0);
 
@@ -54,9 +53,9 @@ static void VerifyCloseReuse(const std::filesystem::path& root, const char* scen
 }
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() /
-        ("anyps5-directory-close-" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        ("anyps5-directory-close-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
 
     VerifyCloseReuse(root, "close", false);

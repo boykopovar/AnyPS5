@@ -23,17 +23,15 @@ constexpr std::size_t kNidDisambigMarkerLen = sizeof(kNidDisambigMarker) - 1u;
 constexpr char kSDLPrefix[] = "SDL_";
 constexpr std::size_t kSDLPrefixLen = sizeof(kSDLPrefix) - 1u;
 
-
 inline bool IsNidNoPatch(const std::string& name) {
-    return (
-        name.size() >= kNidNoPatchLen &&
-        name.compare(name.size() - kNidNoPatchLen, kNidNoPatchLen, kNidNoPatch) == 0
-    ) || name.compare(0, kSDLPrefixLen, kSDLPrefix) == 0;
+    return (name.size() >= kNidNoPatchLen &&
+            name.compare(name.size() - kNidNoPatchLen, kNidNoPatchLen, kNidNoPatch) == 0) ||
+           name.compare(0, kSDLPrefixLen, kSDLPrefix) == 0;
 }
 
 inline bool IsNidNoPatchCut(const std::string& name) {
     return name.size() >= kNidNoPatchCutLen &&
-        name.compare(name.size() - kNidNoPatchCutLen, kNidNoPatchCutLen, kNidNoPatchCut) == 0;
+           name.compare(name.size() - kNidNoPatchCutLen, kNidNoPatchCutLen, kNidNoPatchCut) == 0;
 }
 
 inline std::string StripNidNoPatchCut(const std::string& name) {
@@ -49,32 +47,31 @@ inline std::string StripNidPostfix(const std::string& name) {
     const auto disambigPos = result.rfind(kNidDisambigMarker);
     if (disambigPos != std::string::npos) {
         const auto suffixStart = disambigPos + kNidDisambigMarkerLen;
-        const bool allDigits = std::all_of(
-            result.begin() + static_cast<std::ptrdiff_t>(suffixStart), result.end(),
-            [](unsigned char c) { return std::isdigit(c) != 0; }
-        );
+        const bool allDigits = std::all_of(result.begin() + static_cast<std::ptrdiff_t>(suffixStart), result.end(),
+                                           [](unsigned char c) { return std::isdigit(c) != 0; });
         if (allDigits && suffixStart < result.size())
             result.resize(disambigPos);
     }
     return result;
 }
 
-template<typename T>
-T Read(const std::vector<std::uint8_t>& buf, std::size_t offset) {
-    if (offset + sizeof(T) > buf.size()) throw std::runtime_error("read out of bounds");
+template <typename T> T Read(const std::vector<std::uint8_t>& buf, std::size_t offset) {
+    if (offset + sizeof(T) > buf.size())
+        throw std::runtime_error("read out of bounds");
     T v;
     std::memcpy(&v, buf.data() + offset, sizeof(T));
     return v;
 }
 
-template<typename T>
-void Write(std::vector<std::uint8_t>& buf, std::size_t offset, const T& v) {
-    if (offset + sizeof(T) > buf.size()) throw std::runtime_error("write out of bounds");
+template <typename T> void Write(std::vector<std::uint8_t>& buf, std::size_t offset, const T& v) {
+    if (offset + sizeof(T) > buf.size())
+        throw std::runtime_error("write out of bounds");
     std::memcpy(buf.data() + offset, &v, sizeof(T));
 }
 
 inline std::string ReadCStr(const std::vector<std::uint8_t>& buf, std::size_t offset) {
-    if (offset >= buf.size()) throw std::runtime_error("cstr offset out of bounds");
+    if (offset >= buf.size())
+        throw std::runtime_error("cstr offset out of bounds");
     std::string s;
     while (offset < buf.size() && buf[offset] != 0u)
         s.push_back(static_cast<char>(buf[offset++]));

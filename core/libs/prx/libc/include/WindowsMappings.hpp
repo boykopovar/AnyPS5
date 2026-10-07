@@ -25,7 +25,8 @@ public:
     }
 
     void* Reserve(void* address, std::size_t bytes) {
-        return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
+        return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
+                        nullptr, 0);
     }
 
     void Commit(void* address, std::size_t bytes, DWORD protection, std::size_t granule, bool watched) {
@@ -39,16 +40,21 @@ public:
                 auto placeholderEnd = stop;
                 while (placeholderEnd < limit) {
                     const auto next = query(placeholderEnd);
-                    if (next.State != MEM_RESERVE) break;
+                    if (next.State != MEM_RESERVE)
+                        break;
                     placeholderEnd = reinterpret_cast<std::uintptr_t>(next.BaseAddress) + next.RegionSize;
                 }
                 const auto size = std::min(limit, placeholderEnd) - cursor;
                 reset(cursor, size);
-                const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
-                if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
+                const DWORD flags =
+                    MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
+                if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr,
+                              0))
+                    fail("replace guest placeholder with private memory");
                 cursor += size;
             } else {
-                if (memory.State != MEM_COMMIT) throw std::runtime_error("guest memory is not committed");
+                if (memory.State != MEM_COMMIT)
+                    throw std::runtime_error("guest memory is not committed");
                 const auto mapped = views.find(cursor & ~(pageBytes - 1));
                 if (mapped != views.end()) {
                     mapped->second.protection = protection;
@@ -56,7 +62,8 @@ public:
                     invalidate(*mapped->second.page);
                 }
                 DWORD previous;
-                if (!VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous)) fail("protect guest memory");
+                if (!VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous))
+                    fail("protect guest memory");
                 cursor = stop;
             }
         }
@@ -72,14 +79,19 @@ public:
         auto cursor = reinterpret_cast<std::uintptr_t>(address);
         reset(cursor, bytes);
         HANDLE duplicate = nullptr;
-        if (!DuplicateHandle(GetCurrentProcess(), section, GetCurrentProcess(), &duplicate, 0, FALSE, DUPLICATE_SAME_ACCESS)) fail("keep shared guest section");
+        if (!DuplicateHandle(GetCurrentProcess(), section, GetCurrentProcess(), &duplicate, 0, FALSE,
+                             DUPLICATE_SAME_ACCESS))
+            fail("keep shared guest section");
         const auto owned = std::make_shared<Section>(duplicate);
         for (std::size_t done = 0; done < bytes; done += pageBytes) {
             split(cursor + done, pageBytes);
             void* page = reinterpret_cast<void*>(cursor + done);
-            if (!map(section, GetCurrentProcess(), page, offset + done, pageBytes, MEM_REPLACE_PLACEHOLDER, PAGE_EXECUTE_READWRITE, nullptr, 0)) fail("map shared guest page");
+            if (!map(section, GetCurrentProcess(), page, offset + done, pageBytes, MEM_REPLACE_PLACEHOLDER,
+                     PAGE_EXECUTE_READWRITE, nullptr, 0))
+                fail("map shared guest page");
             DWORD previous;
-            if (!VirtualProtect(page, pageBytes, protection, &previous)) fail("protect shared guest page");
+            if (!VirtualProtect(page, pageBytes, protection, &previous))
+                fail("protect shared guest page");
             const auto key = std::make_pair(reinterpret_cast<std::uintptr_t>(section), offset + done);
             auto shared = physical[key].lock();
             if (!shared) {
@@ -106,11 +118,13 @@ public:
         std::lock_guard lock(mutex);
         const auto base = address & ~(pageBytes - 1);
         const auto found = views.find(base);
-        if (found == views.end() || !writable(found->second.protection)) return false;
+        if (found == views.end() || !writable(found->second.protection))
+            return false;
         auto& view = found->second;
         invalidate(*view.page);
         DWORD previous;
-        if (!VirtualProtect(reinterpret_cast<void*>(base), pageBytes, view.protection, &previous)) fail("resume shared memory write");
+        if (!VirtualProtect(reinterpret_cast<void*>(base), pageBytes, view.protection, &previous))
+            fail("resume shared memory write");
         view.armed = false;
         return true;
     }
@@ -120,15 +134,18 @@ public:
         const auto first = views.lower_bound(address & ~(pageBytes - 1));
         const auto end = address + bytes;
         for (auto it = first; it != views.end() && it->first < end; ++it) {
-            if (!writable(it->second.protection)) return false;
+            if (!writable(it->second.protection))
+                return false;
         }
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             auto& view = it->second;
             ++view.hostWrites;
             invalidate(*view.page);
-            if (!view.armed) continue;
+            if (!view.armed)
+                continue;
             DWORD previous;
-            if (!VirtualProtect(reinterpret_cast<void*>(it->first), pageBytes, view.protection, &previous)) fail("open shared memory to a host write");
+            if (!VirtualProtect(reinterpret_cast<void*>(it->first), pageBytes, view.protection, &previous))
+                fail("open shared memory to a host write");
             view.armed = false;
         }
         return true;
@@ -147,42 +164,54 @@ public:
         std::lock_guard lock(mutex);
         const auto refuse = [&](const char* reason) {
             char text[192];
-            std::snprintf(text, sizeof(text), "read-write alias of shared guest memory 0x%llx+0x%llx: %s", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), reason);
+            std::snprintf(text, sizeof(text), "read-write alias of shared guest memory 0x%llx+0x%llx: %s",
+                          static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), reason);
             return std::runtime_error(text);
         };
-        if (address % pageBytes != 0 || bytes % pageBytes != 0 || bytes == 0) throw refuse("the range is not made of whole shared pages");
+        if (address % pageBytes != 0 || bytes % pageBytes != 0 || bytes == 0)
+            throw refuse("the range is not made of whole shared pages");
         auto view = views.find(address);
-        if (view == views.end()) throw refuse("the range does not start at a shared view");
+        if (view == views.end())
+            throw refuse("the range does not start at a shared view");
         const auto section = view->second.section;
         const auto offset = view->second.offset;
         SYSTEM_INFO system{};
         GetSystemInfo(&system);
         for (std::size_t done = 0; done < bytes; done += pageBytes, ++view) {
-            if (view == views.end() || view->first != address + done || view->second.offset != offset + done) throw refuse("the range is not one contiguous run of views of a section");
-            if (view->second.section != section && !sameSection(view->second.section->handle, section->handle)) throw refuse("the range spans several sections");
+            if (view == views.end() || view->first != address + done || view->second.offset != offset + done)
+                throw refuse("the range is not one contiguous run of views of a section");
+            if (view->second.section != section && !sameSection(view->second.section->handle, section->handle))
+                throw refuse("the range spans several sections");
         }
         const auto lead = offset % system.dwAllocationGranularity;
-        void* alias = map(section->handle, GetCurrentProcess(), nullptr, offset - lead, lead + bytes, 0, PAGE_READWRITE, nullptr, 0);
+        void* alias = map(section->handle, GetCurrentProcess(), nullptr, offset - lead, lead + bytes, 0, PAGE_READWRITE,
+                          nullptr, 0);
         if (alias == nullptr) {
             char text[160];
-            std::snprintf(text, sizeof(text), "MapViewOfFile3 of a read-write alias of shared guest memory 0x%llx+0x%llx", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
+            std::snprintf(text, sizeof(text),
+                          "MapViewOfFile3 of a read-write alias of shared guest memory 0x%llx+0x%llx",
+                          static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
             throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), text);
         }
         return static_cast<char*>(alias) + lead;
     }
 
     void UnmapAlias(void* alias) {
-        if (alias == nullptr) return;
+        if (alias == nullptr)
+            return;
         SYSTEM_INFO system{};
         GetSystemInfo(&system);
-        const auto base = reinterpret_cast<std::uintptr_t>(alias) & ~(static_cast<std::uintptr_t>(system.dwAllocationGranularity) - 1);
-        if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(base), 0)) fail("unmap shared guest alias");
+        const auto base = reinterpret_cast<std::uintptr_t>(alias) &
+                          ~(static_cast<std::uintptr_t>(system.dwAllocationGranularity) - 1);
+        if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(base), 0))
+            fail("unmap shared guest alias");
     }
 
     bool Protection(std::uintptr_t address, std::uint32_t* protection) {
         std::lock_guard lock(mutex);
         const auto found = views.find(address & ~(pageBytes - 1));
-        if (found == views.end()) return false;
+        if (found == views.end())
+            return false;
         *protection = found->second.protection;
         return true;
     }
@@ -206,22 +235,28 @@ public:
             if (found != views.end()) {
                 auto& view = found->second;
                 const auto stop = std::min(end, base + pageBytes);
-                if (view.protection == PAGE_NOACCESS) return false;
+                if (view.protection == PAGE_NOACCESS)
+                    return false;
                 if (view.seen != view.page->generation) {
                     const auto needed = (stop - cursor + 4095) / 4096;
                     if (needed > capacity - *count) {
-                        for (auto at = cursor; *count < capacity; at += 4096) pages[(*count)++] = reinterpret_cast<void*>(at);
+                        for (auto at = cursor; *count < capacity; at += 4096)
+                            pages[(*count)++] = reinterpret_cast<void*>(at);
                         return true;
                     }
-                    for (auto at = cursor; at < stop; at += 4096) pages[(*count)++] = reinterpret_cast<void*>(at);
+                    for (auto at = cursor; at < stop; at += 4096)
+                        pages[(*count)++] = reinterpret_cast<void*>(at);
                 }
                 if (clear) {
                     for (const auto alias : view.page->aliases) {
                         auto& other = views.at(alias);
-                        if (!writable(other.protection) || other.armed || other.hostWrites != 0) continue;
+                        if (!writable(other.protection) || other.armed || other.hostWrites != 0)
+                            continue;
                         DWORD previous;
-                        const DWORD protection = other.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY;
-                        if (!VirtualProtect(reinterpret_cast<void*>(alias), pageBytes, protection, &previous)) fail("arm shared memory write tracking");
+                        const DWORD protection =
+                            other.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY;
+                        if (!VirtualProtect(reinterpret_cast<void*>(alias), pageBytes, protection, &previous))
+                            fail("arm shared memory write tracking");
                         other.armed = true;
                     }
                     view.seen = view.page->generation;
@@ -230,14 +265,20 @@ public:
                 cursor = stop;
             } else {
                 const auto memory = query(cursor);
-                if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
-                const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE)
+                    return false;
+                const auto stop =
+                    std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
                 ULONG_PTR available = capacity - *count;
-                if (available == 0) return true;
+                if (available == 0)
+                    return true;
                 DWORD granularity = 0;
-                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) fail("collect private guest writes");
+                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor,
+                                  pages + *count, &available, &granularity) != 0)
+                    fail("collect private guest writes");
                 *count += available;
-                if (*count == capacity) return true;
+                if (*count == capacity)
+                    return true;
                 cursor = stop;
             }
         }
@@ -268,19 +309,23 @@ private:
     };
     void forgetClean(std::uintptr_t start, std::uintptr_t end) {
         auto it = cleanRanges.lower_bound(start);
-        if (it != cleanRanges.begin() && std::prev(it)->second > start) --it;
+        if (it != cleanRanges.begin() && std::prev(it)->second > start)
+            --it;
         while (it != cleanRanges.end() && it->first < end) {
             const auto first = it->first;
             const auto last = it->second;
             it = cleanRanges.erase(it);
-            if (first < start) cleanRanges.emplace(first, start);
-            if (last > end) it = cleanRanges.emplace(end, last).first;
+            if (first < start)
+                cleanRanges.emplace(first, start);
+            if (last > end)
+                it = cleanRanges.emplace(end, last).first;
         }
     }
 
     void rememberClean(std::uintptr_t start, std::uintptr_t end) {
         auto it = cleanRanges.lower_bound(start);
-        if (it != cleanRanges.begin() && std::prev(it)->second >= start) --it;
+        if (it != cleanRanges.begin() && std::prev(it)->second >= start)
+            --it;
         while (it != cleanRanges.end() && it->first <= end) {
             start = std::min(start, it->first);
             end = std::max(end, it->second);
@@ -291,28 +336,30 @@ private:
 
     void invalidate(SharedPage& page) {
         ++page.generation;
-        for (const auto alias : page.aliases) forgetClean(alias, alias + pageBytes);
+        for (const auto alias : page.aliases)
+            forgetClean(alias, alias + pageBytes);
     }
 
-    bool sameSection(HANDLE first, HANDLE second) const {
-        return compare != nullptr && compare(first, second);
-    }
+    bool sameSection(HANDLE first, HANDLE second) const { return compare != nullptr && compare(first, second); }
 
     static bool writable(DWORD protection) {
         return protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE;
     }
-    using AllocateFunction = PVOID (WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
-    using MapFunction = PVOID (WINAPI*)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
-    using UnmapFunction = BOOL (WINAPI*)(HANDLE, PVOID, ULONG);
-    using CompareFunction = BOOL (WINAPI*)(HANDLE, HANDLE);
+    using AllocateFunction = PVOID(WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+    using MapFunction = PVOID(WINAPI*)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*,
+                                       ULONG);
+    using UnmapFunction = BOOL(WINAPI*)(HANDLE, PVOID, ULONG);
+    using CompareFunction = BOOL(WINAPI*)(HANDLE, HANDLE);
 
     WindowsMappings() {
         const auto module = GetModuleHandleW(L"KernelBase.dll");
-        if (!module) fail("load Windows memory API");
+        if (!module)
+            fail("load Windows memory API");
         allocate = reinterpret_cast<AllocateFunction>(GetProcAddress(module, "VirtualAlloc2"));
         map = reinterpret_cast<MapFunction>(GetProcAddress(module, "MapViewOfFile3"));
         unmap = reinterpret_cast<UnmapFunction>(GetProcAddress(module, "UnmapViewOfFile2"));
-        if (!allocate || !map || !unmap) throw std::runtime_error("Windows placeholder memory APIs are required");
+        if (!allocate || !map || !unmap)
+            throw std::runtime_error("Windows placeholder memory APIs are required");
         compare = reinterpret_cast<CompareFunction>(GetProcAddress(module, "CompareObjectHandles"));
     }
 
@@ -322,21 +369,27 @@ private:
 
     static MEMORY_BASIC_INFORMATION query(std::uintptr_t address) {
         MEMORY_BASIC_INFORMATION memory{};
-        if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory)) fail("query guest memory");
+        if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory))
+            fail("query guest memory");
         return memory;
     }
 
     static void split(std::uintptr_t address, std::size_t bytes) {
         auto memory = query(address);
         memory = query(reinterpret_cast<std::uintptr_t>(memory.AllocationBase));
-        if (memory.State != MEM_RESERVE) throw std::runtime_error("guest mapping requires a placeholder");
+        if (memory.State != MEM_RESERVE)
+            throw std::runtime_error("guest mapping requires a placeholder");
         const auto base = reinterpret_cast<std::uintptr_t>(memory.BaseAddress);
         if (address != base) {
-            if (!VirtualFree(reinterpret_cast<void*>(base), address - base, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("split guest placeholder prefix");
+            if (!VirtualFree(reinterpret_cast<void*>(base), address - base, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER))
+                fail("split guest placeholder prefix");
             memory = query(address);
         }
-        if (memory.RegionSize < bytes) throw std::runtime_error("guest placeholder is too small");
-        if (memory.RegionSize != bytes && !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("split guest placeholder suffix");
+        if (memory.RegionSize < bytes)
+            throw std::runtime_error("guest placeholder is too small");
+        if (memory.RegionSize != bytes &&
+            !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER))
+            fail("split guest placeholder suffix");
     }
 
     void reset(std::uintptr_t address, std::size_t bytes) {
@@ -348,23 +401,29 @@ private:
                 cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
                 continue;
             }
-            if (reinterpret_cast<std::uintptr_t>(memory.AllocationBase) != cursor) throw std::runtime_error("cannot release part of a host allocation");
+            if (reinterpret_cast<std::uintptr_t>(memory.AllocationBase) != cursor)
+                throw std::runtime_error("cannot release part of a host allocation");
             auto allocationEnd = cursor;
             do {
                 const auto part = query(allocationEnd);
-                if (part.AllocationBase != memory.AllocationBase) break;
+                if (part.AllocationBase != memory.AllocationBase)
+                    break;
                 allocationEnd = reinterpret_cast<std::uintptr_t>(part.BaseAddress) + part.RegionSize;
             } while (allocationEnd < end);
-            if (allocationEnd > end || query(allocationEnd).AllocationBase == memory.AllocationBase) throw std::runtime_error("guest release truncates a host allocation");
+            if (allocationEnd > end || query(allocationEnd).AllocationBase == memory.AllocationBase)
+                throw std::runtime_error("guest release truncates a host allocation");
             if (memory.Type == MEM_MAPPED) {
-                if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(cursor), MEM_PRESERVE_PLACEHOLDER)) fail("unmap shared guest page");
+                if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(cursor), MEM_PRESERVE_PLACEHOLDER))
+                    fail("unmap shared guest page");
                 const auto found = views.find(cursor);
                 if (found != views.end()) {
                     std::erase(found->second.page->aliases, cursor);
                     views.erase(found);
                 }
             } else if (memory.Type == MEM_PRIVATE) {
-                if (!VirtualFree(reinterpret_cast<void*>(cursor), allocationEnd - cursor, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("release private guest memory");
+                if (!VirtualFree(reinterpret_cast<void*>(cursor), allocationEnd - cursor,
+                                 MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER))
+                    fail("release private guest memory");
             } else {
                 throw std::runtime_error("unsupported guest mapping type");
             }
@@ -372,10 +431,14 @@ private:
         }
         const auto last = query(reinterpret_cast<std::uintptr_t>(query(end - 1).AllocationBase));
         const auto lastBase = reinterpret_cast<std::uintptr_t>(last.BaseAddress);
-        if (lastBase + last.RegionSize > end) split(lastBase, end - lastBase);
+        if (lastBase + last.RegionSize > end)
+            split(lastBase, end - lastBase);
         const auto first = query(address);
-        split(address, std::min(bytes, reinterpret_cast<std::uintptr_t>(first.BaseAddress) + first.RegionSize - address));
-        if (query(address).RegionSize != bytes && !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS)) fail("coalesce guest placeholders");
+        split(address,
+              std::min(bytes, reinterpret_cast<std::uintptr_t>(first.BaseAddress) + first.RegionSize - address));
+        if (query(address).RegionSize != bytes &&
+            !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS))
+            fail("coalesce guest placeholders");
     }
 
     std::map<std::uintptr_t, std::uintptr_t> cleanRanges;

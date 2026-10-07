@@ -96,7 +96,8 @@ int main(int argc, char** argv) {
         std::cout << "memory regions: " << request.context.memory.size() << "\n";
 
         for (const auto& memory : request.context.memory) {
-            std::cout << "region addr=0x" << std::hex << memory.guestAddress << std::dec << " size=" << memory.bytes.size() << "\n";
+            std::cout << "region addr=0x" << std::hex << memory.guestAddress << std::dec
+                      << " size=" << memory.bytes.size() << "\n";
         }
 
         for (std::uint32_t i = 0; i < request.context.userData.size(); ++i) {
@@ -106,7 +107,9 @@ int main(int argc, char** argv) {
         if (request.context.vertex) {
             const auto& vertex = *request.context.vertex;
 
-            std::cout << "vertex resourcesNum=" << vertex.resourcesNum << " fetchAttribReg=" << vertex.fetchAttribReg << " fetchBufferReg=" << vertex.fetchBufferReg << " fetchEmbedded=" << vertex.fetchEmbedded << "\n";
+            std::cout << "vertex resourcesNum=" << vertex.resourcesNum << " fetchAttribReg=" << vertex.fetchAttribReg
+                      << " fetchBufferReg=" << vertex.fetchBufferReg << " fetchEmbedded=" << vertex.fetchEmbedded
+                      << "\n";
 
             if (vertex.resources.size() < vertex.resourcesNum) {
                 throw std::runtime_error("vertex resources size is smaller than resourcesNum");
@@ -125,13 +128,16 @@ int main(int argc, char** argv) {
                     std::cout << std::hex << field << " ";
                 }
 
-                std::cout << std::dec << "dst registerStart=" << dst.registerStart << " registersNum=" << dst.registersNum << " attrId=" << dst.attrId << " fetchIndex=" << dst.fetchIndex << "\n";
+                std::cout << std::dec << "dst registerStart=" << dst.registerStart
+                          << " registersNum=" << dst.registersNum << " attrId=" << dst.attrId
+                          << " fetchIndex=" << dst.fetchIndex << "\n";
             }
         }
 
         if (request.context.compute) {
             const auto& compute = *request.context.compute;
-            std::cout << "compute numThreads=" << compute.numThreads[0] << "," << compute.numThreads[1] << "," << compute.numThreads[2] << " ldsSizeDwords=" << compute.ldsSizeDwords << "\n";
+            std::cout << "compute numThreads=" << compute.numThreads[0] << "," << compute.numThreads[1] << ","
+                      << compute.numThreads[2] << " ldsSizeDwords=" << compute.ldsSizeDwords << "\n";
         }
 
         RdnaInstructionDecoder decoder;
@@ -153,7 +159,9 @@ int main(int argc, char** argv) {
         std::cout << "Disassembly written to disasm.txt (" << disasm.size() << " bytes)\n";
 
         const ShaderStageKind stageKind = ToShaderStageKind(request.shader.stage);
-        const auto inputInfo = BuildShaderStageInputInfo(stageKind, request.context, request.target.subgroupSize, request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr);
+        const auto inputInfo =
+            BuildShaderStageInputInfo(stageKind, request.context, request.target.subgroupSize,
+                                      request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr);
 
         GraphBuilder graphBuilder;
         auto cfg = graphBuilder.Build(decoded);
@@ -170,9 +178,13 @@ int main(int argc, char** argv) {
 
         EmbeddedFetchPlan embeddedFetch;
 
-        if ((stageKind == ShaderStageKind::Vertex || stageKind == ShaderStageKind::Local) && inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded) {
+        if ((stageKind == ShaderStageKind::Vertex || stageKind == ShaderStageKind::Local) &&
+            inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded) {
             EmbeddedVertexFetchAnalyzer embeddedFetchAnalyzer;
-            embeddedFetch = embeddedFetchAnalyzer.Analyze(decoded, inputInfo.vertex->fetchAttribReg, inputInfo.vertex->fetchBufferReg, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize);
+            embeddedFetch = embeddedFetchAnalyzer.Analyze(
+                decoded, inputInfo.vertex->fetchAttribReg, inputInfo.vertex->fetchBufferReg,
+                request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()),
+                request.context.waveSize);
         }
 
         translateOptions.embeddedFetch = embeddedFetch.loads.empty() ? nullptr : &embeddedFetch;

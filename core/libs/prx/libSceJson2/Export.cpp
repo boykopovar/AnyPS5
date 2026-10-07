@@ -27,13 +27,25 @@ enum ValueType : std::int32_t {
 constexpr int JsonErrorParse = static_cast<int>(0x80920101);
 
 struct Node;
-struct Value { Node* node; };
-struct String { std::string* text; };
-struct Array { std::list<Value>* items; };
+struct Value {
+    Node* node;
+};
+struct String {
+    std::string* text;
+};
+struct Array {
+    std::list<Value>* items;
+};
 struct Pair;
-struct Object { std::list<Pair>* items; };
-struct ArrayIterator { std::list<Value>::iterator it; };
-struct ObjectIterator { std::list<Pair>::iterator it; };
+struct Object {
+    std::list<Pair>* items;
+};
+struct ArrayIterator {
+    std::list<Value>::iterator it;
+};
+struct ObjectIterator {
+    std::list<Pair>::iterator it;
+};
 struct Pair {
     String key;
     std::uint64_t reserved;
@@ -54,7 +66,7 @@ struct Node {
     Object object{};
 };
 
-using NullAccessCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
+using NullAccessCallback = const Value&(APS5_VABI*)(ValueType, const Value*, void*);
 
 struct Globals {
     std::mutex mutex;
@@ -73,15 +85,21 @@ void Construct(Object& o) { o.items = new std::list<Pair>(); }
 void Destroy(Value& v);
 void CopyInto(Value& destination, const Value& source);
 
-void Destroy(String& s) { delete s.text; s.text = nullptr; }
+void Destroy(String& s) {
+    delete s.text;
+    s.text = nullptr;
+}
 void Destroy(Array& a) {
-    if (!a.items) return;
-    for (auto& item : *a.items) Destroy(item);
+    if (!a.items)
+        return;
+    for (auto& item : *a.items)
+        Destroy(item);
     delete a.items;
     a.items = nullptr;
 }
 void Destroy(Object& o) {
-    if (!o.items) return;
+    if (!o.items)
+        return;
     for (auto& pair : *o.items) {
         Destroy(pair.key);
         Destroy(pair.value);
@@ -91,21 +109,26 @@ void Destroy(Object& o) {
 }
 
 void Clear(Node& n) {
-    if (n.type == TypeString) Destroy(n.string);
-    if (n.type == TypeArray) Destroy(n.array);
-    if (n.type == TypeObject) Destroy(n.object);
+    if (n.type == TypeString)
+        Destroy(n.string);
+    if (n.type == TypeArray)
+        Destroy(n.array);
+    if (n.type == TypeObject)
+        Destroy(n.object);
     n = Node{};
 }
 
 void Destroy(Value& v) {
-    if (!v.node) return;
+    if (!v.node)
+        return;
     Clear(*v.node);
     delete v.node;
     v.node = nullptr;
 }
 
 Node& NodeOf(const Value& v) {
-    if (!v.node) throw std::runtime_error("sce::Json::Value used before construction");
+    if (!v.node)
+        throw std::runtime_error("sce::Json::Value used before construction");
     return *v.node;
 }
 
@@ -137,9 +160,12 @@ void AssignNode(Node& destination, const Node& source) {
     copy.integer = source.integer;
     copy.uinteger = source.uinteger;
     copy.real = source.real;
-    if (source.type == TypeString) Construct(copy.string, *source.string.text);
-    if (source.type == TypeArray) CopyArray(copy.array, source.array);
-    if (source.type == TypeObject) CopyObject(copy.object, source.object);
+    if (source.type == TypeString)
+        Construct(copy.string, *source.string.text);
+    if (source.type == TypeArray)
+        CopyArray(copy.array, source.array);
+    if (source.type == TypeObject)
+        CopyObject(copy.object, source.object);
     Clear(destination);
     destination = copy;
 }
@@ -152,10 +178,14 @@ void CopyInto(Value& destination, const Value& source) {
 void SetType(Node& n, ValueType type) {
     Clear(n);
     n.type = type;
-    if (type == TypeString) Construct(n.string, std::string());
-    if (type == TypeArray) Construct(n.array);
-    if (type == TypeObject) Construct(n.object);
-    if (type < TypeNull || type > TypeObject) throw std::invalid_argument("sce::Json::Value::set: invalid value type");
+    if (type == TypeString)
+        Construct(n.string, std::string());
+    if (type == TypeArray)
+        Construct(n.array);
+    if (type == TypeObject)
+        Construct(n.object);
+    if (type < TypeNull || type > TypeObject)
+        throw std::invalid_argument("sce::Json::Value::set: invalid value type");
 }
 
 const Value& Defaults(ValueType type) {
@@ -181,14 +211,16 @@ const Value& NullAccess(ValueType requested, const Value* parent) {
     }
     if (callback) {
         const Value& result = callback(requested, parent, context);
-        if (result.node && (requested == TypeNull || result.node->type == requested)) return result;
+        if (result.node && (requested == TypeNull || result.node->type == requested))
+            return result;
     }
     return Defaults(requested);
 }
 
 const Node& Typed(const Value* self, ValueType requested) {
     const Node& n = NodeOf(*self);
-    if (n.type == requested) return n;
+    if (n.type == requested)
+        return n;
     return NodeOf(NullAccess(requested, self));
 }
 
@@ -196,26 +228,42 @@ void AppendEscaped(std::string& out, const std::string& text) {
     out += '"';
     for (const unsigned char c : text) {
         switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\b': out += "\\b"; break;
-            case '\f': out += "\\f"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (c < 0x20) {
-                    char buffer[8];
-                    std::snprintf(buffer, sizeof(buffer), "\\u%04x", c);
-                    out += buffer;
-                } else out += static_cast<char>(c);
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (c < 0x20) {
+                char buffer[8];
+                std::snprintf(buffer, sizeof(buffer), "\\u%04x", c);
+                out += buffer;
+            } else
+                out += static_cast<char>(c);
         }
     }
     out += '"';
 }
 
 std::string RealText(double value) {
-    if (!std::isfinite(value)) throw std::runtime_error("sce::Json: cannot serialize a non-finite number");
+    if (!std::isfinite(value))
+        throw std::runtime_error("sce::Json: cannot serialize a non-finite number");
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "%.17g", value);
     return buffer;
@@ -223,36 +271,50 @@ std::string RealText(double value) {
 
 void Serialize(std::string& out, const Node& n) {
     switch (n.type) {
-        case TypeNull: out += "null"; return;
-        case TypeBoolean: out += n.boolean ? "true" : "false"; return;
-        case TypeInteger: out += std::to_string(n.integer); return;
-        case TypeUInteger: out += std::to_string(n.uinteger); return;
-        case TypeReal: out += RealText(n.real); return;
-        case TypeString: AppendEscaped(out, *n.string.text); return;
-        case TypeArray: {
-            out += '[';
-            bool first = true;
-            for (const auto& item : *n.array.items) {
-                if (!first) out += ',';
-                first = false;
-                Serialize(out, NodeOf(item));
-            }
-            out += ']';
-            return;
+    case TypeNull:
+        out += "null";
+        return;
+    case TypeBoolean:
+        out += n.boolean ? "true" : "false";
+        return;
+    case TypeInteger:
+        out += std::to_string(n.integer);
+        return;
+    case TypeUInteger:
+        out += std::to_string(n.uinteger);
+        return;
+    case TypeReal:
+        out += RealText(n.real);
+        return;
+    case TypeString:
+        AppendEscaped(out, *n.string.text);
+        return;
+    case TypeArray: {
+        out += '[';
+        bool first = true;
+        for (const auto& item : *n.array.items) {
+            if (!first)
+                out += ',';
+            first = false;
+            Serialize(out, NodeOf(item));
         }
-        case TypeObject: {
-            out += '{';
-            bool first = true;
-            for (const auto& pair : *n.object.items) {
-                if (!first) out += ',';
-                first = false;
-                AppendEscaped(out, *pair.key.text);
-                out += ':';
-                Serialize(out, NodeOf(pair.value));
-            }
-            out += '}';
-            return;
+        out += ']';
+        return;
+    }
+    case TypeObject: {
+        out += '{';
+        bool first = true;
+        for (const auto& pair : *n.object.items) {
+            if (!first)
+                out += ',';
+            first = false;
+            AppendEscaped(out, *pair.key.text);
+            out += ':';
+            Serialize(out, NodeOf(pair.value));
         }
+        out += '}';
+        return;
+    }
     }
     throw std::runtime_error("sce::Json: invalid value type");
 }
@@ -263,7 +325,8 @@ public:
 
     bool Parse(Node& out) {
         skip();
-        if (!value(out)) return false;
+        if (!value(out))
+            return false;
         skip();
         return _text == _end || *_text == '\0';
     }
@@ -275,168 +338,279 @@ private:
     const char* _end;
     std::size_t _depth = 0;
 
-    void skip() { while (_text < _end && (*_text == ' ' || *_text == '\t' || *_text == '\n' || *_text == '\r')) ++_text; }
+    void skip() {
+        while (_text < _end && (*_text == ' ' || *_text == '\t' || *_text == '\n' || *_text == '\r'))
+            ++_text;
+    }
     bool literal(const char* word) {
         const auto length = std::strlen(word);
-        if (static_cast<std::size_t>(_end - _text) < length || std::memcmp(_text, word, length) != 0) return false;
+        if (static_cast<std::size_t>(_end - _text) < length || std::memcmp(_text, word, length) != 0)
+            return false;
         _text += length;
         return true;
     }
     static void appendUtf8(std::string& out, std::uint32_t code) {
-        if (code < 0x80) out += static_cast<char>(code);
-        else if (code < 0x800) { out += static_cast<char>(0xc0 | (code >> 6)); out += static_cast<char>(0x80 | (code & 0x3f)); }
-        else if (code < 0x10000) { out += static_cast<char>(0xe0 | (code >> 12)); out += static_cast<char>(0x80 | ((code >> 6) & 0x3f)); out += static_cast<char>(0x80 | (code & 0x3f)); }
-        else { out += static_cast<char>(0xf0 | (code >> 18)); out += static_cast<char>(0x80 | ((code >> 12) & 0x3f)); out += static_cast<char>(0x80 | ((code >> 6) & 0x3f)); out += static_cast<char>(0x80 | (code & 0x3f)); }
+        if (code < 0x80)
+            out += static_cast<char>(code);
+        else if (code < 0x800) {
+            out += static_cast<char>(0xc0 | (code >> 6));
+            out += static_cast<char>(0x80 | (code & 0x3f));
+        } else if (code < 0x10000) {
+            out += static_cast<char>(0xe0 | (code >> 12));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3f));
+            out += static_cast<char>(0x80 | (code & 0x3f));
+        } else {
+            out += static_cast<char>(0xf0 | (code >> 18));
+            out += static_cast<char>(0x80 | ((code >> 12) & 0x3f));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3f));
+            out += static_cast<char>(0x80 | (code & 0x3f));
+        }
     }
     bool hex4(std::uint32_t& code) {
-        if (_end - _text < 4) return false;
+        if (_end - _text < 4)
+            return false;
         code = 0;
         for (int i = 0; i < 4; ++i) {
             const char c = *_text++;
             code <<= 4;
-            if (c >= '0' && c <= '9') code |= static_cast<std::uint32_t>(c - '0');
-            else if (c >= 'a' && c <= 'f') code |= static_cast<std::uint32_t>(c - 'a' + 10);
-            else if (c >= 'A' && c <= 'F') code |= static_cast<std::uint32_t>(c - 'A' + 10);
-            else return false;
+            if (c >= '0' && c <= '9')
+                code |= static_cast<std::uint32_t>(c - '0');
+            else if (c >= 'a' && c <= 'f')
+                code |= static_cast<std::uint32_t>(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F')
+                code |= static_cast<std::uint32_t>(c - 'A' + 10);
+            else
+                return false;
         }
         return true;
     }
     bool string(std::string& out) {
-        if (_text >= _end || *_text != '"') return false;
+        if (_text >= _end || *_text != '"')
+            return false;
         ++_text;
         while (_text < _end && *_text != '"') {
             const char c = *_text++;
-            if (static_cast<unsigned char>(c) < 0x20) return false;
-            if (c != '\\') { out += c; continue; }
-            if (_text >= _end) return false;
+            if (static_cast<unsigned char>(c) < 0x20)
+                return false;
+            if (c != '\\') {
+                out += c;
+                continue;
+            }
+            if (_text >= _end)
+                return false;
             switch (*_text++) {
-                case '"': out += '"'; break;
-                case '\\': out += '\\'; break;
-                case '/': out += '/'; break;
-                case 'b': out += '\b'; break;
-                case 'f': out += '\f'; break;
-                case 'n': out += '\n'; break;
-                case 'r': out += '\r'; break;
-                case 't': out += '\t'; break;
-                case 'u': {
-                    std::uint32_t code = 0;
-                    if (!hex4(code)) return false;
-                    if (code >= 0xd800 && code < 0xdc00) {
-                        std::uint32_t low = 0;
-                        if (!literal("\\u") || !hex4(low) || low < 0xdc00 || low >= 0xe000) return false;
-                        code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
-                    } else if (code >= 0xdc00 && code < 0xe000) return false;
-                    appendUtf8(out, code);
-                    break;
-                }
-                default: return false;
+            case '"':
+                out += '"';
+                break;
+            case '\\':
+                out += '\\';
+                break;
+            case '/':
+                out += '/';
+                break;
+            case 'b':
+                out += '\b';
+                break;
+            case 'f':
+                out += '\f';
+                break;
+            case 'n':
+                out += '\n';
+                break;
+            case 'r':
+                out += '\r';
+                break;
+            case 't':
+                out += '\t';
+                break;
+            case 'u': {
+                std::uint32_t code = 0;
+                if (!hex4(code))
+                    return false;
+                if (code >= 0xd800 && code < 0xdc00) {
+                    std::uint32_t low = 0;
+                    if (!literal("\\u") || !hex4(low) || low < 0xdc00 || low >= 0xe000)
+                        return false;
+                    code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+                } else if (code >= 0xdc00 && code < 0xe000)
+                    return false;
+                appendUtf8(out, code);
+                break;
+            }
+            default:
+                return false;
             }
         }
-        if (_text >= _end) return false;
+        if (_text >= _end)
+            return false;
         ++_text;
         return true;
     }
     bool number(Node& out) {
         const char* start = _text;
-        if (_text < _end && *_text == '-') ++_text;
-        if (_text >= _end || *_text < '0' || *_text > '9') return false;
-        if (*_text == '0') ++_text;
-        else while (_text < _end && *_text >= '0' && *_text <= '9') ++_text;
+        if (_text < _end && *_text == '-')
+            ++_text;
+        if (_text >= _end || *_text < '0' || *_text > '9')
+            return false;
+        if (*_text == '0')
+            ++_text;
+        else
+            while (_text < _end && *_text >= '0' && *_text <= '9')
+                ++_text;
         bool integral = true;
         if (_text < _end && *_text == '.') {
             integral = false;
             ++_text;
-            if (_text >= _end || *_text < '0' || *_text > '9') return false;
-            while (_text < _end && *_text >= '0' && *_text <= '9') ++_text;
+            if (_text >= _end || *_text < '0' || *_text > '9')
+                return false;
+            while (_text < _end && *_text >= '0' && *_text <= '9')
+                ++_text;
         }
         if (_text < _end && (*_text == 'e' || *_text == 'E')) {
             integral = false;
             ++_text;
-            if (_text < _end && (*_text == '+' || *_text == '-')) ++_text;
-            if (_text >= _end || *_text < '0' || *_text > '9') return false;
-            while (_text < _end && *_text >= '0' && *_text <= '9') ++_text;
+            if (_text < _end && (*_text == '+' || *_text == '-'))
+                ++_text;
+            if (_text >= _end || *_text < '0' || *_text > '9')
+                return false;
+            while (_text < _end && *_text >= '0' && *_text <= '9')
+                ++_text;
         }
         const std::string text(start, _text);
         if (integral) {
             errno = 0;
             if (text[0] == '-') {
                 const long long value = std::strtoll(text.c_str(), nullptr, 10);
-                if (errno == 0) { out.type = TypeInteger; out.integer = value; return true; }
+                if (errno == 0) {
+                    out.type = TypeInteger;
+                    out.integer = value;
+                    return true;
+                }
             } else {
                 const unsigned long long value = std::strtoull(text.c_str(), nullptr, 10);
                 if (errno == 0) {
-                    if (value <= static_cast<unsigned long long>(INT64_MAX)) { out.type = TypeInteger; out.integer = static_cast<std::int64_t>(value); }
-                    else { out.type = TypeUInteger; out.uinteger = value; }
+                    if (value <= static_cast<unsigned long long>(INT64_MAX)) {
+                        out.type = TypeInteger;
+                        out.integer = static_cast<std::int64_t>(value);
+                    } else {
+                        out.type = TypeUInteger;
+                        out.uinteger = value;
+                    }
                     return true;
                 }
             }
         }
         const double real = std::strtod(text.c_str(), nullptr);
-        if (!std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
+        if (!std::isfinite(real))
+            throw std::runtime_error("sce::Json::Parser::parse: number " + text +
+                                     " overflows a double; the console's behaviour is unverified");
         out.type = TypeReal;
         out.real = real;
         return true;
     }
     bool value(Node& out) {
-        if (_text >= _end) return false;
+        if (_text >= _end)
+            return false;
         switch (*_text) {
-            case 'n': if (!literal("null")) return false; SetType(out, TypeNull); return true;
-            case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; return true;
-            case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); return true;
-            case '"': {
-                std::string text;
-                if (!string(text)) return false;
-                SetType(out, TypeString);
-                *out.string.text = std::move(text);
+        case 'n':
+            if (!literal("null"))
+                return false;
+            SetType(out, TypeNull);
+            return true;
+        case 't':
+            if (!literal("true"))
+                return false;
+            SetType(out, TypeBoolean);
+            out.boolean = true;
+            return true;
+        case 'f':
+            if (!literal("false"))
+                return false;
+            SetType(out, TypeBoolean);
+            return true;
+        case '"': {
+            std::string text;
+            if (!string(text))
+                return false;
+            SetType(out, TypeString);
+            *out.string.text = std::move(text);
+            return true;
+        }
+        case '[': {
+            if (_depth == MaxNestingDepth)
+                return false;
+            ++_text;
+            ++_depth;
+            SetType(out, TypeArray);
+            skip();
+            if (_text < _end && *_text == ']') {
+                ++_text;
+                --_depth;
                 return true;
             }
-            case '[': {
-                if (_depth == MaxNestingDepth) return false;
-                ++_text;
-                ++_depth;
-                SetType(out, TypeArray);
+            for (;;) {
+                Value item{};
+                Construct(item);
+                out.array.items->push_back(item);
                 skip();
-                if (_text < _end && *_text == ']') { ++_text; --_depth; return true; }
-                for (;;) {
-                    Value item{};
-                    Construct(item);
-                    out.array.items->push_back(item);
-                    skip();
-                    if (!value(*item.node)) return false;
-                    skip();
-                    if (_text < _end && *_text == ',') { ++_text; continue; }
-                    if (_text < _end && *_text == ']') { ++_text; --_depth; return true; }
+                if (!value(*item.node))
                     return false;
-                }
-            }
-            case '{': {
-                if (_depth == MaxNestingDepth) return false;
-                ++_text;
-                ++_depth;
-                SetType(out, TypeObject);
                 skip();
-                if (_text < _end && *_text == '}') { ++_text; --_depth; return true; }
-                for (;;) {
-                    skip();
-                    std::string key;
-                    if (!string(key)) return false;
-                    skip();
-                    if (_text >= _end || *_text != ':') return false;
+                if (_text < _end && *_text == ',') {
                     ++_text;
-                    skip();
-                    Pair pair{};
-                    Construct(pair.key, key);
-                    Construct(pair.value);
-                    out.object.items->push_back(pair);
-                    if (!value(*pair.value.node)) return false;
-                    skip();
-                    if (_text < _end && *_text == ',') { ++_text; continue; }
-                    if (_text < _end && *_text == '}') { ++_text; --_depth; return true; }
-                    return false;
+                    continue;
                 }
+                if (_text < _end && *_text == ']') {
+                    ++_text;
+                    --_depth;
+                    return true;
+                }
+                return false;
             }
-            default:
-                return number(out);
+        }
+        case '{': {
+            if (_depth == MaxNestingDepth)
+                return false;
+            ++_text;
+            ++_depth;
+            SetType(out, TypeObject);
+            skip();
+            if (_text < _end && *_text == '}') {
+                ++_text;
+                --_depth;
+                return true;
+            }
+            for (;;) {
+                skip();
+                std::string key;
+                if (!string(key))
+                    return false;
+                skip();
+                if (_text >= _end || *_text != ':')
+                    return false;
+                ++_text;
+                skip();
+                Pair pair{};
+                Construct(pair.key, key);
+                Construct(pair.value);
+                out.object.items->push_back(pair);
+                if (!value(*pair.value.node))
+                    return false;
+                skip();
+                if (_text < _end && *_text == ',') {
+                    ++_text;
+                    continue;
+                }
+                if (_text < _end && *_text == '}') {
+                    ++_text;
+                    --_depth;
+                    return true;
+                }
+                return false;
+            }
+        }
+        default:
+            return number(out);
         }
     }
 };
@@ -446,15 +620,20 @@ private:
 }
 
 void* const JsonMemAllocatorVtable[] = {
-    nullptr, nullptr,
-    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
-    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
-    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
+    nullptr,
+    nullptr,
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
 };
 
 Value& ObjectEntry(Object& object, const std::string& key) {
     for (auto& pair : *object.items)
-        if (*pair.key.text == key) return pair.value;
+        if (*pair.key.text == key)
+            return pair.value;
     Pair pair{};
     Construct(pair.key, key);
     Construct(pair.value);
@@ -478,7 +657,8 @@ int APS5_VABI _ZN3sce4Json11InitializerD1Ev(void* self) {
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void* self, const void* parameter) {
     (void)self;
-    if (parameter == nullptr) throw std::invalid_argument("sce::Json::Initializer::initialize: null parameter");
+    if (parameter == nullptr)
+        throw std::invalid_argument("sce::Json::Initializer::initialize: null parameter");
     return 0;
 }
 
@@ -491,7 +671,8 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void* self, NullAccessCallback callback, void* context) {
+int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(
+    void* self, NullAccessCallback callback, void* context) {
     (void)self;
     auto& state = State();
     std::lock_guard lock(state.mutex);
@@ -510,19 +691,23 @@ void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void* self) {
 
 void APS5_VABI _ZN3sce4Json6StringC1Ev(String* self) { Construct(*self, std::string()); }
 void APS5_VABI _ZN3sce4Json6StringC1EPKc(String* self, const char* text) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::String: null text");
+    if (text == nullptr)
+        throw std::invalid_argument("sce::Json::String: null text");
     Construct(*self, text);
 }
 void APS5_VABI _ZN3sce4Json6StringC1ERKS1_(String* self, const String* other) { Construct(*self, *other->text); }
 void APS5_VABI _ZN3sce4Json6StringD1Ev(String* self) { Destroy(*self); }
 String* APS5_VABI _ZN3sce4Json6StringaSERKS1_(String* self, const String* other) {
-    if (self != other) *self->text = *other->text;
+    if (self != other)
+        *self->text = *other->text;
     return self;
 }
 const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String* self) { return self->text->c_str(); }
 bool APS5_VABI _ZNK3sce4Json6String5emptyEv(const String* self) { return self->text->empty(); }
 std::size_t APS5_VABI _ZNK3sce4Json6String6lengthEv(const String* self) { return self->text->size(); }
-bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) { return text != nullptr && *self->text == text; }
+bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) {
+    return text != nullptr && *self->text == text;
+}
 
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
@@ -531,24 +716,37 @@ void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Val
     CopyInto(copy, *value);
     self->items->push_back(copy);
 }
-ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) { result->it = self->items->begin(); return result; }
-ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) { result->it = self->items->end(); return result; }
+ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) {
+    result->it = self->items->begin();
+    return result;
+}
+ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) {
+    result->it = self->items->end();
+    return result;
+}
 bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array* self) { return self->items->empty(); }
 std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array* self) { return self->items->size(); }
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
-    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::back: empty array");
+    if (self->items->empty())
+        throw std::out_of_range("sce::Json::Array::back: empty array");
     return &self->items->back();
 }
 void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { (void)self; }
-ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) { ++self->it; return self; }
+ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {
+    ++self->it;
+    return self;
+}
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const ArrayIterator* self) { return &*self->it; }
-bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const ArrayIterator* self, const ArrayIterator* other) { return self->it != other->it; }
+bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const ArrayIterator* self, const ArrayIterator* other) {
+    return self->it != other->it;
+}
 
 void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) { CopyObject(*self, *other); }
 void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) { Destroy(*self); }
 Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object* self, const Object* other) {
-    if (self == other) return self;
+    if (self == other)
+        return self;
     Object copy{};
     CopyObject(copy, *other);
     Destroy(*self);
@@ -562,22 +760,52 @@ void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) {
     }
     self->items->clear();
 }
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return &ObjectEntry(*self, *key->text); }
-ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) { result->it = self->items->begin(); return result; }
-ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) { result->it = self->items->end(); return result; }
+Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) {
+    return &ObjectEntry(*self, *key->text);
+}
+ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) {
+    result->it = self->items->begin();
+    return result;
+}
+ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) {
+    result->it = self->items->end();
+    return result;
+}
 void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { (void)self; }
-ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) { ++self->it; return self; }
+ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) {
+    ++self->it;
+    return self;
+}
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) { return &*self->it; }
-bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) { return self->it != other->it; }
+bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
+    return self->it != other->it;
+}
 std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items->size(); }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
-void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) { Construct(*self); self->node->type = TypeBoolean; self->node->boolean = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) { Construct(*self); self->node->type = TypeInteger; self->node->integer = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Construct(*self); self->node->type = TypeUInteger; self->node->uinteger = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); self->node->type = TypeReal; self->node->real = value; }
+void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) {
+    Construct(*self);
+    self->node->type = TypeBoolean;
+    self->node->boolean = value;
+}
+void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) {
+    Construct(*self);
+    self->node->type = TypeInteger;
+    self->node->integer = value;
+}
+void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) {
+    Construct(*self);
+    self->node->type = TypeUInteger;
+    self->node->uinteger = value;
+}
+void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) {
+    Construct(*self);
+    self->node->type = TypeReal;
+    self->node->real = value;
+}
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::Value: null text");
+    if (text == nullptr)
+        throw std::invalid_argument("sce::Json::Value: null text");
     Construct(*self);
     SetType(*self->node, TypeString);
     *self->node->string.text = text;
@@ -600,17 +828,38 @@ void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value* self, const Object* ob
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value* self, const Value* other) { CopyInto(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value* self) { Destroy(*self); }
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value* self, const Value* other) {
-    if (self != other) AssignNode(NodeOf(*self), NodeOf(*other));
+    if (self != other)
+        AssignNode(NodeOf(*self), NodeOf(*other));
     return self;
 }
 
-int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) { SetType(NodeOf(*self), type); return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) { SetType(NodeOf(*self), TypeBoolean); self->node->boolean = value; return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) { SetType(NodeOf(*self), TypeInteger); self->node->integer = value; return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetType(NodeOf(*self), TypeUInteger); self->node->uinteger = value; return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { SetType(NodeOf(*self), TypeReal); self->node->real = value; return 0; }
+int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) {
+    SetType(NodeOf(*self), type);
+    return 0;
+}
+int APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) {
+    SetType(NodeOf(*self), TypeBoolean);
+    self->node->boolean = value;
+    return 0;
+}
+int APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) {
+    SetType(NodeOf(*self), TypeInteger);
+    self->node->integer = value;
+    return 0;
+}
+int APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) {
+    SetType(NodeOf(*self), TypeUInteger);
+    self->node->uinteger = value;
+    return 0;
+}
+int APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) {
+    SetType(NodeOf(*self), TypeReal);
+    self->node->real = value;
+    return 0;
+}
 int APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
+    if (text == nullptr)
+        throw std::invalid_argument("sce::Json::Value::set: null text");
     const std::string copy(text);
     SetType(NodeOf(*self), TypeString);
     *self->node->string.text = copy;
@@ -639,7 +888,8 @@ int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value* self, const Object* o
     return 0;
 }
 int APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
-    if (self != other) AssignNode(NodeOf(*self), NodeOf(*other));
+    if (self != other)
+        AssignNode(NodeOf(*self), NodeOf(*other));
     return 0;
 }
 
@@ -674,15 +924,18 @@ const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value* self) { retur
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value* self) { return &Typed(self, TypeObject).object; }
 std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value* self) {
     const Node& n = NodeOf(*self);
-    if (n.type == TypeArray) return n.array.items->size();
-    if (n.type == TypeObject) return n.object.items->size();
+    if (n.type == TypeArray)
+        return n.array.items->size();
+    if (n.type == TypeObject)
+        return n.object.items->size();
     return 0;
 }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value* self, const char* key) {
     const Node& n = NodeOf(*self);
     if (key != nullptr && n.type == TypeObject)
         for (const auto& pair : *n.object.items)
-            if (*pair.key.text == key) return &pair.value;
+            if (*pair.key.text == key)
+                return &pair.value;
     return &NullAccess(TypeNull, self);
 }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t index) {
@@ -698,38 +951,48 @@ void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value* self, ValueType type)
     Construct(*self);
     SetType(*self->node, type);
 }
-const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value* self, std::size_t index) { return _ZNK3sce4Json5ValueixEm(self, index); }
+const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value* self, std::size_t index) {
+    return _ZNK3sce4Json5ValueixEm(self, index);
+}
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* self, const String* key) {
     const Node& n = NodeOf(*self);
     if (key != nullptr && n.type == TypeObject)
         for (const auto& pair : *n.object.items)
-            if (*pair.key.text == *key->text) return &pair.value;
+            if (*pair.key.text == *key->text)
+                return &pair.value;
     return &NullAccess(TypeNull, self);
 }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index) {
     Node& n = NodeOf(*self);
-    if (n.type != TypeArray || index >= n.array.items->size()) return nullptr;
+    if (n.type != TypeArray || index >= n.array.items->size())
+        return nullptr;
     auto it = n.array.items->begin();
     std::advance(it, static_cast<std::ptrdiff_t>(index));
     return &*it;
 }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value* self, const String* key) {
     Node& n = NodeOf(*self);
-    if (key == nullptr || n.type != TypeObject) return nullptr;
+    if (key == nullptr || n.type != TypeObject)
+        return nullptr;
     for (auto& pair : *n.object.items)
-        if (*pair.key.text == *key->text) return &pair.value;
+        if (*pair.key.text == *key->text)
+            return &pair.value;
     return nullptr;
 }
 Array* APS5_VABI _ZN3sce4Json5Value10referArrayEv(Value* self) {
     Node& n = NodeOf(*self);
-    if (n.type == TypeNull) SetType(n, TypeArray);
-    if (n.type != TypeArray) throw std::runtime_error("sce::Json::Value::referArray: value is not an array");
+    if (n.type == TypeNull)
+        SetType(n, TypeArray);
+    if (n.type != TypeArray)
+        throw std::runtime_error("sce::Json::Value::referArray: value is not an array");
     return &n.array;
 }
 Object* APS5_VABI _ZN3sce4Json5Value11referObjectEv(Value* self) {
     Node& n = NodeOf(*self);
-    if (n.type == TypeNull) SetType(n, TypeObject);
-    if (n.type != TypeObject) throw std::runtime_error("sce::Json::Value::referObject: value is not an object");
+    if (n.type == TypeNull)
+        SetType(n, TypeObject);
+    if (n.type != TypeObject)
+        throw std::runtime_error("sce::Json::Value::referObject: value is not an object");
     return &n.object;
 }
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* out) {
@@ -751,7 +1014,8 @@ int APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Stri
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char* text, std::size_t size) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null text");
+    if (text == nullptr)
+        throw std::invalid_argument("sce::Json::Parser::parse: null text");
     Node parsed{};
     Parser parser(text, size);
     bool parsedOk = false;
@@ -770,7 +1034,6 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
     return 0;
 }
 
-
 APS5_EXPORT("6i18OJSvFWk", sceJson2Unknown00);
 int APS5_VABI sceJson2Unknown00(void) {
     NotImplemented_nid_no_patch("6i18OJSvFWk");
@@ -784,11 +1047,10 @@ struct InitParameter2 {
 };
 static_assert(sizeof(InitParameter2) <= 40);
 
-void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
-    *self = {};
-}
+void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) { *self = {}; }
 
-void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator, void* userData) {
+void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator,
+                                                                                 void* userData) {
     self->allocator = allocator;
     self->userData = userData;
 }
@@ -797,9 +1059,11 @@ void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(InitParameter2*
     self->fileBufferSize = size;
 }
 
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self, const InitParameter2* parameter) {
+int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self,
+                                                                            const InitParameter2* parameter) {
     (void)self;
-    if (parameter == nullptr) throw std::invalid_argument("sce::Json::Initializer::initialize: null parameter");
+    if (parameter == nullptr)
+        throw std::invalid_argument("sce::Json::Initializer::initialize: null parameter");
     return 0;
 }
 
@@ -812,5 +1076,4 @@ int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

@@ -29,12 +29,11 @@ constexpr std::uint32_t Base = 2048;
 constexpr std::uint32_t Fill = 0x5a5a5a5au;
 
 alignas(256) constexpr std::array<std::uint32_t, 41> AddtidCode{
-    0x800aff08, 0x00000800, 0x820b8009, 0x160800ff, 0x00000101, 0x4a0808ff, 0x00005100, 0x36500083,
-    0x3a520880, 0xbefc0380, 0xdc5c8000, 0x000a2900, 0x3a5208ff, 0x11110000, 0xbefc03c0, 0xdc5c8f00,
-    0x000a2900, 0x3a5208ff, 0x22220000, 0xbefc03ff, 0x0000ffff, 0xdc5c8c00, 0x000a2900, 0x3a5208ff,
-    0x33330000, 0xbefc0380, 0x7daa5082, 0xdc5c8200, 0x000a2900, 0xbefe04c1, 0x3a5208ff, 0x44440000,
-    0xbefc0380, 0xdc5c8800, 0x000a2900, 0x3a5208ff, 0x55550000, 0xbefc0380, 0xdc5c87fc, 0x000a2900,
-    0xbf810000,
+    0x800aff08, 0x00000800, 0x820b8009, 0x160800ff, 0x00000101, 0x4a0808ff, 0x00005100, 0x36500083, 0x3a520880,
+    0xbefc0380, 0xdc5c8000, 0x000a2900, 0x3a5208ff, 0x11110000, 0xbefc03c0, 0xdc5c8f00, 0x000a2900, 0x3a5208ff,
+    0x22220000, 0xbefc03ff, 0x0000ffff, 0xdc5c8c00, 0x000a2900, 0x3a5208ff, 0x33330000, 0xbefc0380, 0x7daa5082,
+    0xdc5c8200, 0x000a2900, 0xbefe04c1, 0x3a5208ff, 0x44440000, 0xbefc0380, 0xdc5c8800, 0x000a2900, 0x3a5208ff,
+    0x55550000, 0xbefc0380, 0xdc5c87fc, 0x000a2900, 0xbf810000,
 };
 
 struct Store {
@@ -92,14 +91,16 @@ std::vector<std::uint32_t> Expected(std::uint32_t lanes) {
     std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
     for (const auto& store : Stores) {
         for (std::uint32_t lane = 0; lane < lanes; ++lane) {
-            if (store.masked && (lane & 3u) == 2u) continue;
+            if (store.masked && (lane & 3u) == 2u)
+                continue;
             memory[(Base + store.offset + lane * 4u) / 4u] = (0x5100u + lane * 0x101u) ^ store.pattern;
         }
     }
     return memory;
 }
 
-void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::string& name) {
+void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize,
+         const ShaderRecompiler::SpirvTarget& target, const std::string& name) {
     std::vector<std::uint32_t> memory(BlockBytes / 4u, Fill);
     std::memcpy(guest.Data(), memory.data(), BlockBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
@@ -107,14 +108,14 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     userData[8] = static_cast<std::uint32_t>(address);
     userData[9] = static_cast<std::uint32_t>(address >> 32u);
     const std::span<const std::uint32_t> code(AddtidCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> regions{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{waveSize, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, regions},
         target,
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -122,20 +123,23 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     std::memcpy(memory.data(), guest.Data(), BlockBytes);
     const auto expected = Expected(waveSize);
     for (std::size_t dword = 0; dword < memory.size(); ++dword) {
-        Require(memory[dword] == expected[dword], "global store addtid: " + name + " byte " + std::to_string(dword * 4u) + " is " + Hex(memory[dword]) + ", expected " + Hex(expected[dword]));
+        Require(memory[dword] == expected[dword], "global store addtid: " + name + " byte " +
+                                                      std::to_string(dword * 4u) + " is " + Hex(memory[dword]) +
+                                                      ", expected " + Hex(expected[dword]));
     }
 }
 
-void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& reason) {
-    const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code,
+                   const std::string& reason) {
+    const std::array<ShaderRecompiler::MemoryRegion, 1> regions{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{32, 1, 1}, 0, {false, false, false}, false, 1};
     const std::vector<std::uint32_t> userData(10, 0u);
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, regions},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     std::string failure;
     try {
@@ -143,7 +147,8 @@ void CheckRejected(const AgcDriver::VulkanDevice& device, std::span<const std::u
     } catch (const std::exception& error) {
         failure = error.what();
     }
-    Require(failure.find(reason) != std::string::npos, "global store addtid: expected '" + reason + "', got '" + failure + "'");
+    Require(failure.find(reason) != std::string::npos,
+            "global store addtid: expected '" + reason + "', got '" + failure + "'");
 }
 
 void CheckRejections(const AgcDriver::VulkanDevice& device) {
@@ -160,10 +165,12 @@ void CheckRejections(const AgcDriver::VulkanDevice& device) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         CheckRejections(*device);
         if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
+            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n",
+                        device->Target().subgroupSize);
             return VulkanTestSkipped;
         }
         GuestBlock guest;

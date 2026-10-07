@@ -29,7 +29,8 @@ private:
     void removeSubclass() noexcept;
     void applyAspectRatio(void* hwnd, std::uintptr_t edge, void* rect) const;
 
-    static std::intptr_t windowProc(void* hwnd, unsigned int message, std::uintptr_t wParam, std::intptr_t lParam, std::uintptr_t subclassId, std::uintptr_t referenceData);
+    static std::intptr_t windowProc(void* hwnd, unsigned int message, std::uintptr_t wParam, std::intptr_t lParam,
+                                    std::uintptr_t subclassId, std::uintptr_t referenceData);
 
     SDL_Window* window = nullptr;
     std::uint32_t aspectWidth = 0;

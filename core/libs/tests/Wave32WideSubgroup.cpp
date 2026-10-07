@@ -20,20 +20,17 @@ using Value = std::array<std::uint32_t, 4>;
 using Lanes = std::vector<Value>;
 
 void Require(bool condition, const char* reason) {
-    if (!condition) throw std::runtime_error(reason);
+    if (!condition)
+        throw std::runtime_error(reason);
 }
 
 class Subgroup {
 public:
     explicit Subgroup(std::uint32_t size) : size(size) {}
 
-    void Set(std::uint32_t id, Lanes lanes) {
-        values[id] = std::move(lanes);
-    }
+    void Set(std::uint32_t id, Lanes lanes) { values[id] = std::move(lanes); }
 
-    const Lanes& Get(std::uint32_t id) const {
-        return values.at(id);
-    }
+    const Lanes& Get(std::uint32_t id) const { return values.at(id); }
 
     void Execute(std::span<const std::uint32_t> code) {
         for (std::size_t offset = 5; offset < code.size();) {
@@ -59,31 +56,69 @@ public:
                 const auto arg = [&](std::size_t index) -> const Value& { return values.at(words[index]).at(lane); };
                 auto& value = result[lane];
                 switch (op) {
-                case spv::OpConstant: value[0] = words[3]; break;
-                case spv::OpConstantTrue: value[0] = 1; break;
-                case spv::OpConstantFalse: value[0] = 0; break;
-                case spv::OpLoad: value = arg(3); break;
-                case spv::OpBitwiseAnd: value[0] = arg(3)[0] & arg(4)[0]; break;
-                case spv::OpBitwiseOr: value[0] = arg(3)[0] | arg(4)[0]; break;
-                case spv::OpBitwiseXor: value[0] = arg(3)[0] ^ arg(4)[0]; break;
-                case spv::OpIAdd: value[0] = arg(3)[0] + arg(4)[0]; break;
-                case spv::OpIMul: value[0] = arg(3)[0] * arg(4)[0]; break;
-                case spv::OpShiftRightLogical: value[0] = arg(3)[0] >> arg(4)[0]; break;
-                case spv::OpShiftLeftLogical: value[0] = arg(3)[0] << arg(4)[0]; break;
-                case spv::OpINotEqual: value[0] = arg(3)[0] != arg(4)[0]; break;
-                case spv::OpIEqual: value[0] = arg(3)[0] == arg(4)[0]; break;
-                case spv::OpULessThan: value[0] = arg(3)[0] < arg(4)[0]; break;
-                case spv::OpLogicalAnd: value[0] = arg(3)[0] && arg(4)[0]; break;
-                case spv::OpSelect: value = arg(3)[0] ? arg(4) : arg(5); break;
-                case spv::OpCompositeExtract: value[0] = arg(3).at(words[4]); break;
-                case spv::OpVectorExtractDynamic: value[0] = arg(3).at(arg(4)[0]); break;
+                case spv::OpConstant:
+                    value[0] = words[3];
+                    break;
+                case spv::OpConstantTrue:
+                    value[0] = 1;
+                    break;
+                case spv::OpConstantFalse:
+                    value[0] = 0;
+                    break;
+                case spv::OpLoad:
+                    value = arg(3);
+                    break;
+                case spv::OpBitwiseAnd:
+                    value[0] = arg(3)[0] & arg(4)[0];
+                    break;
+                case spv::OpBitwiseOr:
+                    value[0] = arg(3)[0] | arg(4)[0];
+                    break;
+                case spv::OpBitwiseXor:
+                    value[0] = arg(3)[0] ^ arg(4)[0];
+                    break;
+                case spv::OpIAdd:
+                    value[0] = arg(3)[0] + arg(4)[0];
+                    break;
+                case spv::OpIMul:
+                    value[0] = arg(3)[0] * arg(4)[0];
+                    break;
+                case spv::OpShiftRightLogical:
+                    value[0] = arg(3)[0] >> arg(4)[0];
+                    break;
+                case spv::OpShiftLeftLogical:
+                    value[0] = arg(3)[0] << arg(4)[0];
+                    break;
+                case spv::OpINotEqual:
+                    value[0] = arg(3)[0] != arg(4)[0];
+                    break;
+                case spv::OpIEqual:
+                    value[0] = arg(3)[0] == arg(4)[0];
+                    break;
+                case spv::OpULessThan:
+                    value[0] = arg(3)[0] < arg(4)[0];
+                    break;
+                case spv::OpLogicalAnd:
+                    value[0] = arg(3)[0] && arg(4)[0];
+                    break;
+                case spv::OpSelect:
+                    value = arg(3)[0] ? arg(4) : arg(5);
+                    break;
+                case spv::OpCompositeExtract:
+                    value[0] = arg(3).at(words[4]);
+                    break;
+                case spv::OpVectorExtractDynamic:
+                    value[0] = arg(3).at(arg(4)[0]);
+                    break;
                 case spv::OpCompositeConstruct:
-                    for (std::size_t component = 0; component < count - 3u; ++component) value.at(component) = arg(3u + component)[0];
+                    for (std::size_t component = 0; component < count - 3u; ++component)
+                        value.at(component) = arg(3u + component)[0];
                     break;
                 case spv::OpGroupNonUniformBallot:
                     value.fill(0);
                     for (std::uint32_t source = 0; source < size; ++source) {
-                        if (values.at(words[4])[source][0]) value[source / 32u] |= 1u << (source % 32u);
+                        if (values.at(words[4])[source][0])
+                            value[source / 32u] |= 1u << (source % 32u);
                     }
                     break;
                 case spv::OpGroupNonUniformBallotFindLSB:
@@ -173,13 +208,20 @@ void Check(std::uint32_t size, const Value& masks) {
         const auto base = lane / 32u * 32u;
         Require(subgroup.Get(logicalId)[lane][0] == lane % 32u, "lane id escaped its wave32");
         Require(subgroup.Get(ballot)[lane] == Value{mask, 0, 0, 0}, "ballot mixed independent wave32s");
-        Require(subgroup.Get(readFirst)[lane][0] == 0x1000u + base + (mask == 0 ? 0u : std::countr_zero(mask)), "readfirstlane read a different wave32");
-        Require(subgroup.Get(readLane)[lane][0] == 0x1000u + base + requested[lane][0], "readlane read a different wave32");
-        Require(subgroup.Get(active)[lane][0] == ((mask >> requested[lane][0]) & 1u), "source lane activity came from another wave32");
-        Require(subgroup.Get(quadValue)[lane][0] == 0x1000u + (lane & ~3u) + 3u - lane % 4u, "DPP quad permutation crossed waves");
+        Require(subgroup.Get(readFirst)[lane][0] == 0x1000u + base + (mask == 0 ? 0u : std::countr_zero(mask)),
+                "readfirstlane read a different wave32");
+        Require(subgroup.Get(readLane)[lane][0] == 0x1000u + base + requested[lane][0],
+                "readlane read a different wave32");
+        Require(subgroup.Get(active)[lane][0] == ((mask >> requested[lane][0]) & 1u),
+                "source lane activity came from another wave32");
+        Require(subgroup.Get(quadValue)[lane][0] == 0x1000u + (lane & ~3u) + 3u - lane % 4u,
+                "DPP quad permutation crossed waves");
         Require(subgroup.Get(hardwareActive)[lane][0] == 1u, "upper wave32 lanes were treated as inactive");
-        Require(subgroup.Get(swizzled)[lane][0] == (((mask >> requested[lane][0]) & 1u) != 0 ? 0x1000u + base + requested[lane][0] : 0u), "DS swizzle read another wave32 or ignored source EXEC");
-        Require(subgroup.Get(written)[lane][0] == (lane % 32u == 7u ? 0x12345678u : 0x1000u + lane), "writelane missed the upper wave32");
+        Require(subgroup.Get(swizzled)[lane][0] ==
+                    (((mask >> requested[lane][0]) & 1u) != 0 ? 0x1000u + base + requested[lane][0] : 0u),
+                "DS swizzle read another wave32 or ignored source EXEC");
+        Require(subgroup.Get(written)[lane][0] == (lane % 32u == 7u ? 0x12345678u : 0x1000u + lane),
+                "writelane missed the upper wave32");
     }
 }
 
@@ -188,7 +230,10 @@ void Check(std::uint32_t size, const Value& masks) {
 int main() {
     try {
         for (std::uint32_t size : {32u, 64u, 128u}) {
-            for (const Value& masks : {Value{0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu}, Value{1, 0x80000000u, 0x100, 0x4000}, Value{0x55555555u, 0xaaaaaaaau, 0x12345678u, 0xfedcba98u}, Value{0, 1, 0, 0x80000000u}, Value{1, 0, 0x80000000u, 0}, Value{0, 0, 0, 0}}) {
+            for (const Value& masks :
+                 {Value{0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu}, Value{1, 0x80000000u, 0x100, 0x4000},
+                  Value{0x55555555u, 0xaaaaaaaau, 0x12345678u, 0xfedcba98u}, Value{0, 1, 0, 0x80000000u},
+                  Value{1, 0, 0x80000000u, 0}, Value{0, 0, 0, 0}}) {
                 Check(size, masks);
             }
         }

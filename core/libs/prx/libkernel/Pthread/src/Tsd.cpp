@@ -13,7 +13,7 @@ static constexpr int MAX_KEYS = 512;
 static constexpr int DESTRUCTOR_ITERATIONS = 4;
 static constexpr std::uint64_t FREE_KEY = 0;
 
-using GuestKeyDestructor = void (APS5_VABI*)(void*);
+using GuestKeyDestructor = void(APS5_VABI*)(void*);
 
 struct KeySlot {
     std::atomic<std::uint64_t> sequence{FREE_KEY};
@@ -37,11 +37,14 @@ struct ThreadValues {
             bool called = false;
             for (int key = 0; key < MAX_KEYS; ++key) {
                 const ThreadValue entry = values[key];
-                if (!entry.value) continue;
+                if (!entry.value)
+                    continue;
                 GuestKeyDestructor destructor;
                 {
                     std::lock_guard lock(g_keyLock);
-                    destructor = g_keys[key].sequence.load(std::memory_order_relaxed) == entry.sequence ? g_keys[key].destructor : nullptr;
+                    destructor = g_keys[key].sequence.load(std::memory_order_relaxed) == entry.sequence
+                                     ? g_keys[key].destructor
+                                     : nullptr;
                 }
                 values[key] = {};
                 if (destructor) {
@@ -49,7 +52,8 @@ struct ThreadValues {
                     called = true;
                 }
             }
-            if (!called) return;
+            if (!called)
+                return;
         }
     }
 };
@@ -59,7 +63,8 @@ static thread_local ThreadValues g_values;
 extern "C" {
 
 int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor) {
-    if (!key) throw std::runtime_error("scePthreadKeyCreate: null key");
+    if (!key)
+        throw std::runtime_error("scePthreadKeyCreate: null key");
     std::lock_guard lock(g_keyLock);
     for (int index = 0; index < MAX_KEYS; ++index) {
         if (g_keys[index].sequence.load(std::memory_order_relaxed) == FREE_KEY) {
@@ -73,26 +78,30 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
 }
 
 int APS5_VABI scePthreadKeyDelete(PthreadKey key) {
-    if (key < 0 || key >= MAX_KEYS) return SCE_KERNEL_ERROR_EINVAL;
+    if (key < 0 || key >= MAX_KEYS)
+        return SCE_KERNEL_ERROR_EINVAL;
     std::lock_guard lock(g_keyLock);
-    if (g_keys[key].sequence.load(std::memory_order_relaxed) == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
+    if (g_keys[key].sequence.load(std::memory_order_relaxed) == FREE_KEY)
+        return SCE_KERNEL_ERROR_EINVAL;
     g_keys[key].sequence.store(FREE_KEY, std::memory_order_release);
     g_keys[key].destructor = nullptr;
     return SCE_OK;
 }
 
 void* APS5_VABI scePthreadGetspecific(PthreadKey key) {
-    if (key < 0 || key >= MAX_KEYS) return nullptr;
+    if (key < 0 || key >= MAX_KEYS)
+        return nullptr;
     const ThreadValue& entry = g_values.values[key];
     return entry.sequence == g_keys[key].sequence.load(std::memory_order_acquire) ? entry.value : nullptr;
 }
 
 int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value) {
-    if (key < 0 || key >= MAX_KEYS) return SCE_KERNEL_ERROR_EINVAL;
+    if (key < 0 || key >= MAX_KEYS)
+        return SCE_KERNEL_ERROR_EINVAL;
     const std::uint64_t sequence = g_keys[key].sequence.load(std::memory_order_acquire);
-    if (sequence == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
+    if (sequence == FREE_KEY)
+        return SCE_KERNEL_ERROR_EINVAL;
     g_values.values[key] = {value, sequence};
     return SCE_OK;
 }
-
 }

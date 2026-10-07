@@ -58,7 +58,8 @@ std::int64_t APS5_VABI sceNetRecvmsg(int, NetMsghdr*, int);
 }
 
 static void Require(bool condition) {
-    if (!condition) std::abort();
+    if (!condition)
+        std::abort();
 }
 
 static bool Failed(std::int64_t result, int error) {
@@ -168,7 +169,8 @@ int main() {
     const int nonblocking = 1;
     Require(sceNetSetsockopt(accepted, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
     char pending = 0;
-    Require(sceNetRecv(accepted, &pending, sizeof(pending), 0) == static_cast<int>(0x80410123) && *sceNetErrnoLoc() == 35);
+    Require(sceNetRecv(accepted, &pending, sizeof(pending), 0) == static_cast<int>(0x80410123) &&
+            *sceNetErrnoLoc() == 35);
 
     const int epoll = sceNetEpollCreate("guest-sce-net", 0);
     Require(epoll >= 0);
@@ -200,7 +202,8 @@ int main() {
     bool send_failed = false;
     for (int attempt = 0; attempt < 100 && !send_failed; ++attempt) {
         send_failed = sceNetSend(client, request, sizeof(request), 0) < 0;
-        if (!send_failed) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!send_failed)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     Require(send_failed);
     Require(sceNetSocketClose(client) == 0);
@@ -216,11 +219,12 @@ int main() {
     Require(sceNetGetsockname(udp_receiver, address.data(), &address_size) == 0);
     const char datagram[] = "guest udp loopback";
     char datagram_result[sizeof(datagram)]{};
-    Require(sceNetSendto(udp_sender, datagram, sizeof(datagram), 0, address.data(), address.size()) == sizeof(datagram));
+    Require(sceNetSendto(udp_sender, datagram, sizeof(datagram), 0, address.data(), address.size()) ==
+            sizeof(datagram));
     std::array<std::uint8_t, 16> source{};
     address_size = source.size();
-    Require(sceNetRecvfrom(udp_receiver, datagram_result, sizeof(datagram_result), 0,
-        source.data(), &address_size) == sizeof(datagram_result));
+    Require(sceNetRecvfrom(udp_receiver, datagram_result, sizeof(datagram_result), 0, source.data(), &address_size) ==
+            sizeof(datagram_result));
     Require(std::strcmp(datagram, datagram_result) == 0 && source[1] == 2);
     CheckMessages(udp_receiver, udp_sender, address);
     Require(sceNetSocketClose(udp_sender) == 0);
@@ -232,12 +236,10 @@ int main() {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     std::array<std::uint8_t, 4> ipv4{};
     Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.invalid", ipv4.data(), 5000000, 1, 0) ==
-        static_cast<int>(0x804101E1));
-    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 &&
-        resolver_error == static_cast<int>(0x804101E1));
+            static_cast<int>(0x804101E1));
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == static_cast<int>(0x804101E1));
     Require(sceNetResolverStartNtoa(resolver, nullptr, ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
-    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 &&
-        resolver_error == static_cast<int>(0x804101E1));
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == static_cast<int>(0x804101E1));
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
     Require(ipv4[0] == 127);
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
@@ -245,7 +247,7 @@ int main() {
     Require(sceNetResolverDestroy(resolver) == 0);
     resolver_error = -1;
     Require(sceNetResolverGetError(resolver, &resolver_error) == static_cast<int>(0x80410109) &&
-        *sceNetErrnoLoc() == 9 && resolver_error == -1);
+            *sceNetErrnoLoc() == 9 && resolver_error == -1);
 
     std::array<std::uint8_t, 16> ipv6{};
     Require(sceNetInetPton(28, "::1", ipv6.data()) == 1);

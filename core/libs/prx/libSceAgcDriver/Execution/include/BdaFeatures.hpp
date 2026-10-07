@@ -6,8 +6,12 @@
 
 namespace AgcDriver {
 
-VkPhysicalDeviceBufferDeviceAddressFeatures QueryBdaFeatures(VkPhysicalDevice physical, PFN_vkGetPhysicalDeviceFeatures2 query, std::span<const VkExtensionProperties> extensions);
-VkPhysicalDevice8BitStorageFeatures QueryBdaByteFeatures(VkPhysicalDevice physical, PFN_vkGetPhysicalDeviceFeatures2 query, std::span<const VkExtensionProperties> extensions);
+VkPhysicalDeviceBufferDeviceAddressFeatures QueryBdaFeatures(VkPhysicalDevice physical,
+                                                             PFN_vkGetPhysicalDeviceFeatures2 query,
+                                                             std::span<const VkExtensionProperties> extensions);
+VkPhysicalDevice8BitStorageFeatures QueryBdaByteFeatures(VkPhysicalDevice physical,
+                                                         PFN_vkGetPhysicalDeviceFeatures2 query,
+                                                         std::span<const VkExtensionProperties> extensions);
 
 }
 

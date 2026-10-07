@@ -16,14 +16,21 @@ int APS5_VABI chdir_nid_postfix(const char*);
 int* APS5_VABI __error_nid_postfix();
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
-    const auto name = "anyps5-access-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto name =
+        "anyps5-access-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto directory = std::filesystem::current_path() / name;
     Require(std::filesystem::create_directory(directory));
     const auto file = directory / "sample.txt";
-    { std::ofstream output(file); output << "sample"; }
+    {
+        std::ofstream output(file);
+        output << "sample";
+    }
     Require(chdir_nid_postfix(name.c_str()) == 0);
     *__error_nid_postfix() = 34;
     Require(access_nid_postfix("sample.txt", 0) == 0 && *__error_nid_postfix() == 34);
@@ -45,8 +52,8 @@ int main() {
     Require(SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_NORMAL));
     PSECURITY_DESCRIPTOR original = nullptr;
     PACL originalAcl = nullptr;
-    Require(GetNamedSecurityInfoW(const_cast<wchar_t*>(file.c_str()), SE_FILE_OBJECT,
-        DACL_SECURITY_INFORMATION, nullptr, nullptr, &originalAcl, nullptr, &original) == ERROR_SUCCESS);
+    Require(GetNamedSecurityInfoW(const_cast<wchar_t*>(file.c_str()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                                  nullptr, nullptr, &originalAcl, nullptr, &original) == ERROR_SUCCESS);
     char sid[SECURITY_MAX_SID_SIZE];
     DWORD sidBytes = sizeof(sid);
     Require(CreateWellKnownSid(WinWorldSid, nullptr, sid, &sidBytes));
@@ -57,13 +64,13 @@ int main() {
     denial.Trustee.ptstrName = reinterpret_cast<wchar_t*>(sid);
     PACL deniedAcl = nullptr;
     Require(SetEntriesInAclW(1, &denial, originalAcl, &deniedAcl) == ERROR_SUCCESS);
-    Require(SetNamedSecurityInfoW(const_cast<wchar_t*>(file.c_str()), SE_FILE_OBJECT,
-        DACL_SECURITY_INFORMATION, nullptr, nullptr, deniedAcl, nullptr) == ERROR_SUCCESS);
+    Require(SetNamedSecurityInfoW(const_cast<wchar_t*>(file.c_str()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                                  nullptr, nullptr, deniedAcl, nullptr) == ERROR_SUCCESS);
     const int denied = access_nid_postfix("sample.txt", 1);
     const int deniedError = *__error_nid_postfix();
     const int readable = access_nid_postfix("sample.txt", 4);
-    Require(SetNamedSecurityInfoW(const_cast<wchar_t*>(file.c_str()), SE_FILE_OBJECT,
-        DACL_SECURITY_INFORMATION, nullptr, nullptr, originalAcl, nullptr) == ERROR_SUCCESS);
+    Require(SetNamedSecurityInfoW(const_cast<wchar_t*>(file.c_str()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                                  nullptr, nullptr, originalAcl, nullptr) == ERROR_SUCCESS);
     LocalFree(deniedAcl);
     LocalFree(original);
     Require(denied == -1 && deniedError == 13 && readable == 0);

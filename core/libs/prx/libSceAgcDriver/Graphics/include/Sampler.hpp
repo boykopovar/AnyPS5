@@ -41,7 +41,8 @@ public:
     explicit SamplerCache(std::size_t capacity = 1024);
     SamplerCache(const SamplerCache&) = delete;
     SamplerCache& operator=(const SamplerCache&) = delete;
-    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven = false);
+    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable,
+                                 bool unnormalizedProven = false);
     // APS5_PROFILE_DRAW counters: lookups served by an existing sampler, and samplers created.
     std::uint64_t Hits() const { return hits; }
     std::uint64_t Misses() const { return misses; }
@@ -59,7 +60,8 @@ private:
     std::uint64_t misses = 0;
 };
 
-void RequireFilterMinmax(const Context& context, VkFormat format, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireFilterMinmax(const Context& context, VkFormat format, std::uint32_t samplerMask,
+                         std::span<const std::shared_ptr<Sampler>> samplers);
 
 }
 

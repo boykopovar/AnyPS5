@@ -33,7 +33,8 @@ struct Counters {
 
 [[nodiscard]] std::uint64_t SourceVersion();
 
-void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, const ResourceSpecialization& specialization, std::vector<std::byte>& key);
+void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize,
+              const ResourceSpecialization& specialization, std::vector<std::byte>& key);
 
 [[nodiscard]] std::string EntryName(std::span<const std::byte> key);
 
@@ -41,7 +42,8 @@ void EncodeResult(const RecompileResult& result, std::vector<std::byte>& out);
 [[nodiscard]] bool DecodeResult(std::span<const std::byte> bytes, RecompileResult& result);
 
 [[nodiscard]] std::vector<std::byte> EncodeEntry(std::span<const std::byte> key, const CompiledVariant& variant);
-[[nodiscard]] LoadStatus DecodeEntry(std::span<const std::byte> file, std::span<const std::byte> key, CompiledVariant& variant);
+[[nodiscard]] LoadStatus DecodeEntry(std::span<const std::byte> file, std::span<const std::byte> key,
+                                     CompiledVariant& variant);
 
 [[nodiscard]] bool Enabled();
 [[nodiscard]] std::filesystem::path EntryDirectory();

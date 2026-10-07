@@ -23,13 +23,16 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
     static std::atomic<std::uint64_t> serial{0};
-    const auto unique = std::hash<std::thread::id>{}(std::this_thread::get_id()) ^ static_cast<std::size_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto unique = std::hash<std::thread::id>{}(std::this_thread::get_id()) ^
+                        static_cast<std::size_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     auto temporary = path;
-    temporary += ".tmp." + std::to_string(unique) + "." + std::to_string(serial.fetch_add(1, std::memory_order_relaxed));
+    temporary +=
+        ".tmp." + std::to_string(unique) + "." + std::to_string(serial.fetch_add(1, std::memory_order_relaxed));
     bool written = false;
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        if (!file) return false;
+        if (!file)
+            return false;
         file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         file.close();
         written = !file.fail();
@@ -49,9 +52,11 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
 inline bool ReadWholeFile(const std::filesystem::path& path, std::vector<std::byte>& bytes) {
     bytes.clear();
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) return false;
+    if (!file)
+        return false;
     const auto size = static_cast<std::streamoff>(file.tellg());
-    if (size < 0) return false;
+    if (size < 0)
+        return false;
     file.seekg(0, std::ios::beg);
     bytes.resize(static_cast<std::size_t>(size));
     if (!file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {

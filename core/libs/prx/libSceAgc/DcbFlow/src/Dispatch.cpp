@@ -15,8 +15,5 @@ uint32_t* APS5_VABI sceAgcDcbDispatchIndirect(CommandBuffer* buf, uint32_t data_
     return Agc::Command::Emit(buf, 0x16u, {data_offset_in_bytes, flags | 0x41u}, __func__);
 }
 
-std::uint32_t APS5_VABI sceAgcDcbDispatchIndirectGetSize() {
-    return 12;
-}
-
+std::uint32_t APS5_VABI sceAgcDcbDispatchIndirectGetSize() { return 12; }
 }

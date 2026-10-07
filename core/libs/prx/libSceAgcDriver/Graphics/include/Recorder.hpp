@@ -75,13 +75,17 @@ public:
     // that know their ranges). `seed` (kept) supplies an
     // unaligned head or tail; [begin, end) is the guest range. Debug aid: APS5_DCC_KEYS_EACH=1
     // records every store at once, as before (QueueKeyStore then records and returns).
-    void QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end);
+    void QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed,
+                       std::uint64_t begin, std::uint64_t end);
     bool HasQueuedKeyStores() const { return open != nullptr && !open->keyStores.empty(); }
     bool QueuedKeyStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether `overlaps(begin, end)` holds for a queued store's range.
     bool AnyQueuedKeyStore(const std::function<bool(std::uint64_t, std::uint64_t)>& overlaps) const;
     void FlushKeyStores();
-    void FlushKeyStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedKeyStores() && QueuedKeyStoreOverlaps(address, bytes)) FlushKeyStores(); }
+    void FlushKeyStoresOverlapping(std::uint64_t address, std::size_t bytes) {
+        if (HasQueuedKeyStores() && QueuedKeyStoreOverlaps(address, bytes))
+            FlushKeyStores();
+    }
     bool Recording() const { return open != nullptr; }
     bool Idle() const { return open == nullptr && inFlight.empty(); }
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
@@ -99,8 +103,12 @@ public:
     static constexpr std::size_t DrawSnapshotEntries = 1024;
     static constexpr std::size_t DrawInputBudget = std::size_t{1024} << 20u;
     static constexpr std::size_t DrawInputEntries = 16384;
-    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr);
-    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
+    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes,
+                                                 SnapshotUse use = SnapshotUse::Storage,
+                                                 std::uint32_t* derived = nullptr);
+    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation,
+                          std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer,
+                          SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
     void OnComplete(std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
@@ -120,7 +128,15 @@ public:
     // on the open batch, no snapshot: the only reader holds the mutex. `kind` names the reader for
     // the [recorder] hit counters. APS5_COPY_READ_TRACKING=0 notes nothing (ReadTracking() is then
     // false and the CPU copy falls back to Idle()).
-    enum class ReadKind : std::uint8_t { DispatchElement = 0, GpuCopy, AddressBased, Indirect, StorageUpload, CopySource, Count };
+    enum class ReadKind : std::uint8_t {
+        DispatchElement = 0,
+        GpuCopy,
+        AddressBased,
+        Indirect,
+        StorageUpload,
+        CopySource,
+        Count
+    };
     static bool ReadTracking();
     void NotePendingRead(std::uint64_t address, std::size_t bytes, ReadKind kind);
     void NotePendingReads(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, ReadKind kind);
@@ -178,7 +194,8 @@ public:
     // Submits and waits for every batch, running completions in order.
     void Sync();
     void CountSamples();
-    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
+    bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments,
+                             std::span<const std::uint32_t, 7> rules);
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target);
     void NoteSampledDraw();
@@ -222,7 +239,10 @@ public:
     // Whether `overlaps(begin, end)` holds for a queued store's guest range.
     bool AnyQueuedStore(const std::function<bool(std::uint64_t, std::uint64_t)>& overlaps) const;
     void FlushStores();
-    void FlushStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedStores() && QueuedStoreOverlaps(address, bytes)) FlushStores(); }
+    void FlushStoresOverlapping(std::uint64_t address, std::size_t bytes) {
+        if (HasQueuedStores() && QueuedStoreOverlaps(address, bytes))
+            FlushStores();
+    }
 
     // Pending-label table. A GPU label (RELEASE_MEM/WRITE_DATA recorded as a store into the batch)
     // is noted per 4-byte dword with the value it will store and a record-order stamp (the driver's
@@ -273,7 +293,8 @@ public:
     static LateStatistics LateCounts();
     // The 4- or 8-byte value the table holds for `address` when every dword is present with a stamp
     // newer than `afterStamp`, or trustable under the late rule.
-    std::optional<LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal = nullptr) const;
+    std::optional<LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp,
+                                         LabelRefusal* refusal = nullptr) const;
     std::size_t PendingLabels() const;
     // Whether any tracked label dword (recorded, or queued by a worker and not recorded yet) lies
     // inside [address, address + bytes): a range query for large ranges (a fill of megabytes),
@@ -283,9 +304,11 @@ public:
     // PendingLabel of the active recorder WITHOUT GuestMemory::GpuMutex: the table has a small mutex
     // of its own (every mutation holds both), so a WAIT_REG_MEM consults it without queueing behind
     // device work. Nothing is done under the table mutex but the lookup (it never takes the GPU mutex).
-    static std::optional<LabelHit> LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal = nullptr);
+    static std::optional<LabelHit> LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp,
+                                               LabelRefusal* refusal = nullptr);
     // The value alone, for callers asking whether any label is pending in a dword (afterStamp 0).
-    static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp);
+    static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes,
+                                                         std::uint64_t afterStamp);
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
@@ -297,7 +320,8 @@ public:
     // label of the same dword (an older store still pending on the GPU) keeps serving the other
     // queues' waits and the driver's pending-label checks until the queued one is recorded.
     // Debug aid: APS5_NO_SEPARATE_QUEUED_LABELS=1 lets a queued entry replace the recorded one.
-    static void NoteQueuedLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
+    static void NoteQueuedLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp,
+                                std::uint32_t queue);
     // After the calling worker recorded (or dropped) its queued labels: its ranges are cleared and
     // the entries of its dwords still without a batch (stored by the CPU, or dropped) leave the table.
     static void ForgetQueuedLabels();
@@ -323,7 +347,8 @@ public:
     // range since; the plain store of a label the GPU has no view of always runs. An unconditional
     // completion store would land on memory the game may have reused by then (a stale label value
     // over a fresh command buffer). Debug aid: APS5_LABEL_STORE_ALWAYS=1 stores unconditionally.
-    void AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool storedOnGpu);
+    void AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp,
+                          std::uint32_t queue, bool storedOnGpu);
     bool AfterRecordedWork(std::function<void()> action);
     // A CPU store of GPU results into guest memory (GuestBufferMemory::WriteBack): recorded so a
     // completion label store can tell whether its bytes were overwritten. Under GuestMemory::
@@ -396,7 +421,8 @@ public:
     // queue, flush-hook accesses that had queued labels recorded first, and hook accesses made
     // by a completion action whose queued-label record was skipped.
     struct StoreStatistics {
-        std::uint64_t stores, runs, joined, replaced, wawBarriers, joinsRefused, queuedNoted, queuedOverRecorded, queuedHits, queuedHookRecords, queuedHookInCompletion;
+        std::uint64_t stores, runs, joined, replaced, wawBarriers, joinsRefused, queuedNoted, queuedOverRecorded,
+            queuedHits, queuedHookRecords, queuedHookInCompletion;
         // DCC key stores queued, the runs that recorded them (at Submit, or before a writer of a
         // queued range), and the queued stores a duplicate range joined.
         std::uint64_t keyStores, keyStoreRuns, keyStoreRunsForWriter, keyStoresJoined;
@@ -423,7 +449,26 @@ public:
     // or APS5_PROFILE_GPU). A class range covers the command with its own barriers (a dispatch's
     // barriers are classes of their own, its program range stays keyed by the program), so the
     // union of every range of a batch and the batch span differ by what no class times ('untimed').
-    enum class CommandClass : std::uint8_t { DispatchLeading = 0, DispatchTrailing, IndirectArguments, LabelRun, Fill, FillClear, Copy, StagingIn, StagingOut, Draw, StorageUpload, StorageWriteBack, DccClear, DccKeyStore, PresentBlit, ShadowPublish, TemplateDataRefresh, Count };
+    enum class CommandClass : std::uint8_t {
+        DispatchLeading = 0,
+        DispatchTrailing,
+        IndirectArguments,
+        LabelRun,
+        Fill,
+        FillClear,
+        Copy,
+        StagingIn,
+        StagingOut,
+        Draw,
+        StorageUpload,
+        StorageWriteBack,
+        DccClear,
+        DccKeyStore,
+        PresentBlit,
+        ShadowPublish,
+        TemplateDataRefresh,
+        Count
+    };
     static constexpr std::uint64_t ClassKey(CommandClass which) { return 0x10 + static_cast<std::uint64_t>(which); }
     std::uint32_t BeginGpuTiming(CommandClass which) { return BeginGpuTiming(ClassKey(which)); }
     static void CountBarriers(CommandClass which, std::uint32_t count = 1);
@@ -479,7 +524,8 @@ public:
     // serials of that range not in the ring (not finished yet, or overwritten by newer batches).
     // An entry is overwritten once the batch CompletedRingSize serials later finishes.
     static constexpr std::size_t CompletedRingSize = 512;
-    std::vector<Completed> CompletedBatches(std::uint64_t afterSerial, std::uint64_t throughSerial, std::size_t& missing) const;
+    std::vector<Completed> CompletedBatches(std::uint64_t afterSerial, std::uint64_t throughSerial,
+                                            std::size_t& missing) const;
     // The newest submitted serial and its vkQueueSubmit time (ring mutex only).
     std::uint64_t NewestSubmitted(std::chrono::steady_clock::time_point* submittedAt = nullptr) const;
     // In-flight batches whose fence has not signaled (one status query each); under the mutex.
@@ -651,12 +697,15 @@ private:
     PFN_vkCmdBindPipeline cmdBindPipeline = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
-    template<typename TFunction>
-    TFunction function(TFunction resolved, const char* name) const {
+    template <typename TFunction> TFunction function(TFunction resolved, const char* name) const {
         return resolved != nullptr ? resolved : context.Function<TFunction>(name);
     }
-    VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
-    void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
+    VkResult fenceStatus(VkFence fence) const {
+        return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence);
+    }
+    void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage,
+                       VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess,
+                       VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();
     // Records the run's pending store (vkCmdUpdateBuffer), if any.
@@ -690,7 +739,8 @@ private:
     bool noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel = false);
     // Appends one range to `batch` (open or in flight) and publishes the snapshot if needed.
     void noteWriteOn(Batch& batch, std::uint64_t address, std::size_t bytes, bool ownLabel = false);
-    void noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool behindCompletion = false);
+    void noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp,
+                     std::uint32_t queue, bool behindCompletion = false);
     // Flags the recorded entries of `batch` over [begin, end) as stored by a completion action.
     void markBehindCompletion(const Batch& batch, std::uint64_t begin, std::uint64_t end);
     // Flags the recorded entries of the dwords overlapping [address, end) as overwritten.
@@ -702,7 +752,8 @@ private:
     std::deque<std::array<std::uint64_t, 3>> writtenBack;
     std::uint64_t writtenBackSequence = 0;
     // PendingLabel without the table mutex (the caller holds it, or the GPU mutex).
-    std::optional<LabelHit> lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const;
+    std::optional<LabelHit> lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp,
+                                        LabelRefusal* refusal) const;
     // Whether the in-flight batch with that serial has not signaled its fence (false when it is
     // not in flight any more): what makes a wait for it a real GPU wait (ThreadHookWaits).
     bool unsignaled(std::uint64_t serial) const;

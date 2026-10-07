@@ -32,42 +32,47 @@ struct FtLibraryContext {
 };
 
 void* FtAlloc(FT_Memory memory, long size) {
-    if (!memory || size <= 0) return nullptr;
+    if (!memory || size <= 0)
+        return nullptr;
     auto* ctx = static_cast<FtLibraryContext*>(memory->user);
-    if (!ctx || !ctx->iface || !ctx->iface->alloc) return nullptr;
+    if (!ctx || !ctx->iface || !ctx->iface->alloc)
+        return nullptr;
     return ctx->iface->alloc(ctx->allocCtx, static_cast<std::uint32_t>(size));
 }
 
 void FtFree(FT_Memory memory, void* block) {
-    if (!memory || !block) return;
+    if (!memory || !block)
+        return;
     auto* ctx = static_cast<FtLibraryContext*>(memory->user);
-    if (!ctx || !ctx->iface || !ctx->iface->dealloc) return;
+    if (!ctx || !ctx->iface || !ctx->iface->dealloc)
+        return;
     ctx->iface->dealloc(ctx->allocCtx, block);
 }
 
 void* FtRealloc(FT_Memory memory, long currentSize, long newSize, void* block) {
-    if (!memory) return nullptr;
+    if (!memory)
+        return nullptr;
     auto* ctx = static_cast<FtLibraryContext*>(memory->user);
-    if (!ctx || !ctx->iface) return nullptr;
-    if (ctx->iface->realloc_fn) return ctx->iface->realloc_fn(ctx->allocCtx, block, static_cast<std::uint32_t>(newSize));
+    if (!ctx || !ctx->iface)
+        return nullptr;
+    if (ctx->iface->realloc_fn)
+        return ctx->iface->realloc_fn(ctx->allocCtx, block, static_cast<std::uint32_t>(newSize));
     if (newSize <= 0) {
         FtFree(memory, block);
         return nullptr;
     }
     void* result = FtAlloc(memory, newSize);
-    if (!result) return nullptr;
-    if (block && currentSize > 0) std::memcpy(result, block, static_cast<std::size_t>(std::min(currentSize, newSize)));
+    if (!result)
+        return nullptr;
+    if (block && currentSize > 0)
+        std::memcpy(result, block, static_cast<std::size_t>(std::min(currentSize, newSize)));
     FtFree(memory, block);
     return result;
 }
 
-void* HostAlloc(FT_Memory, long size) {
-    return size > 0 ? std::malloc(static_cast<std::size_t>(size)) : nullptr;
-}
+void* HostAlloc(FT_Memory, long size) { return size > 0 ? std::malloc(static_cast<std::size_t>(size)) : nullptr; }
 
-void HostFree(FT_Memory, void* block) {
-    std::free(block);
-}
+void HostFree(FT_Memory, void* block) { std::free(block); }
 
 void* HostRealloc(FT_Memory, long, long newSize, void* block) {
     if (newSize <= 0) {
@@ -78,9 +83,11 @@ void* HostRealloc(FT_Memory, long, long newSize, void* block) {
 }
 
 FT_Library SystemFontLibrary(FtLibraryContext* ctx) {
-    if (ctx->hostLibrary) return ctx->hostLibrary;
+    if (ctx->hostLibrary)
+        return ctx->hostLibrary;
     auto* hostMemory = static_cast<FT_Memory>(ctx->iface->alloc(ctx->allocCtx, sizeof(FT_MemoryRec_)));
-    if (!hostMemory) return nullptr;
+    if (!hostMemory)
+        return nullptr;
     std::memset(hostMemory, 0, sizeof(*hostMemory));
     hostMemory->user = ctx;
     hostMemory->alloc = &HostAlloc;
@@ -113,26 +120,23 @@ void WritePointer(std::uint8_t* out, std::size_t offset, const void* value) {
     std::memcpy(out + offset, &value, sizeof(value));
 }
 
-float FromF26Dot6(std::int64_t value) {
-    return static_cast<float>(value) * ONE_OVER_64;
-}
+float FromF26Dot6(std::int64_t value) { return static_cast<float>(value) * ONE_OVER_64; }
 
-FT_Face FaceOf(const FontObj* obj) {
-    return static_cast<FT_Face>(obj->ft_face);
-}
+FT_Face FaceOf(const FontObj* obj) { return static_cast<FT_Face>(obj->ft_face); }
 
-std::uint32_t APS5_VABI LibraryGetPixelResolution() {
-    return 0x40;
-}
+std::uint32_t APS5_VABI LibraryGetPixelResolution() { return 0x40; }
 
 int APS5_VABI LibraryInit(const FontMemory* memory, FontLibNative* library) {
-    if (!memory || !library) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!memory->iface || !memory->iface->alloc || !memory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
+    if (!memory || !library)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!memory->iface || !memory->iface->alloc || !memory->iface->dealloc)
+        return SCE_FONT_ERROR_INVALID_MEMORY;
     const auto allocFn = memory->iface->alloc;
     const auto freeFn = memory->iface->dealloc;
     void* allocCtx = memory->mspace_handle;
     auto* ctx = static_cast<FtLibraryContext*>(allocFn(allocCtx, sizeof(FtLibraryContext)));
-    if (!ctx) return SCE_FONT_ERROR_ALLOCATION_FAILED;
+    if (!ctx)
+        return SCE_FONT_ERROR_ALLOCATION_FAILED;
     std::memset(ctx, 0, sizeof(FtLibraryContext));
     ctx->allocCtx = allocCtx;
     ctx->iface = memory->iface;
@@ -161,11 +165,14 @@ int APS5_VABI LibraryInit(const FontMemory* memory, FontLibNative* library) {
 }
 
 int APS5_VABI LibraryTerm(FontLibNative* library) {
-    if (!library) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!library)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto freeFn = library->iface ? library->iface->dealloc : nullptr;
-    if (!freeFn) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!freeFn)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* ctx = static_cast<FtLibraryContext*>(library->fontset_registry);
-    if (!ctx) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!ctx)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (ctx->library) {
         FT_Done_Library(ctx->library);
         ctx->library = nullptr;
@@ -189,38 +196,50 @@ int APS5_VABI LibraryTerm(FontLibNative* library) {
 
 int APS5_VABI LibrarySupport(FontLibNative* library, std::uint32_t formats) {
     (void)formats;
-    if (!library || !library->fontset_registry) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!library || !library->fontset_registry)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
-int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const void* fontAddress, std::uint32_t fontSize, std::uint32_t subFontIndex, std::uint32_t uniqueWord, FontObj** inoutFontObj) {
+int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const void* fontAddress,
+                              std::uint32_t fontSize, std::uint32_t subFontIndex, std::uint32_t uniqueWord,
+                              FontObj** inoutFontObj) {
     (void)uniqueWord;
-    if (!library || !fontAddress || !inoutFontObj) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!library || !fontAddress || !inoutFontObj)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto allocFn = library->iface ? library->iface->alloc : nullptr;
     const auto freeFn = library->iface ? library->iface->dealloc : nullptr;
-    if (!allocFn || !freeFn) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!allocFn || !freeFn)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     const bool fromMemory = mode == 1;
     if (fromMemory) {
-        if (fontSize == 0) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (fontSize == 0)
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
     } else if (mode == 5 || mode == 6 || mode == 7) {
-        if (static_cast<const char*>(fontAddress)[0] == '\0') return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (static_cast<const char*>(fontAddress)[0] == '\0')
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
     } else {
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     auto* ctx = static_cast<FtLibraryContext*>(library->fontset_registry);
-    if (!ctx || !ctx->library) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!ctx || !ctx->library)
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     const bool systemSet = (library->sysfont_flags & SYSFONT_FLAG_SYSTEM_SET) != 0;
     FT_Library* ftLibrary = systemSet ? &ctx->hostLibrary : &ctx->library;
-    if (systemSet && !SystemFontLibrary(ctx)) return SCE_FONT_ERROR_ALLOCATION_FAILED;
+    if (systemSet && !SystemFontLibrary(ctx))
+        return SCE_FONT_ERROR_ALLOCATION_FAILED;
     FT_Face face = nullptr;
     FT_Error error;
     if (fromMemory) {
-        error = FT_New_Memory_Face(*ftLibrary, static_cast<const FT_Byte*>(fontAddress), static_cast<FT_Long>(fontSize), static_cast<FT_Long>(subFontIndex), &face);
+        error = FT_New_Memory_Face(*ftLibrary, static_cast<const FT_Byte*>(fontAddress), static_cast<FT_Long>(fontSize),
+                                   static_cast<FT_Long>(subFontIndex), &face);
     } else {
-        error = FT_New_Face(*ftLibrary, static_cast<const char*>(fontAddress), static_cast<FT_Long>(subFontIndex), &face);
+        error =
+            FT_New_Face(*ftLibrary, static_cast<const char*>(fontAddress), static_cast<FT_Long>(subFontIndex), &face);
     }
     if (error != 0 || !face) {
-        if (fromMemory || error == FT_Err_Unknown_File_Format) return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
+        if (fromMemory || error == FT_Err_Unknown_File_Format)
+            return SCE_FONT_ERROR_NO_SUPPORT_FORMAT;
         return SCE_FONT_ERROR_FS_OPEN_FAILED;
     }
     FT_Select_Charmap(face, FT_ENCODING_UNICODE);
@@ -234,7 +253,8 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
     obj->sub_font_index = subFontIndex;
     obj->prev = nullptr;
     obj->next = *inoutFontObj;
-    if (obj->next) obj->next->prev = obj;
+    if (obj->next)
+        obj->next->prev = obj;
     obj->ft_face = face;
     obj->ft_ctx_0x58 = ftLibrary;
     *inoutFontObj = obj;
@@ -243,7 +263,8 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
 
 int APS5_VABI LibraryCloseFont(FontObj* obj, std::uint32_t flags) {
     (void)flags;
-    if (!obj) return SCE_FONT_ERROR_FATAL;
+    if (!obj)
+        return SCE_FONT_ERROR_FATAL;
     if (obj->refcount > 1) {
         --obj->refcount;
         return SCE_FONT_OK;
@@ -255,19 +276,24 @@ int APS5_VABI LibraryCloseFont(FontObj* obj, std::uint32_t flags) {
         FT_Done_Face(face);
         obj->ft_face = nullptr;
     }
-    if (!freeFn) return SCE_FONT_ERROR_FATAL;
+    if (!freeFn)
+        return SCE_FONT_ERROR_FATAL;
     FontObj* next = obj->next;
     FontObj* prev = obj->prev;
-    if (prev) prev->next = next;
-    if (next) next->prev = prev;
+    if (prev)
+        prev->next = next;
+    if (next)
+        next->prev = prev;
     freeFn(ctx->allocCtx, obj);
     return SCE_FONT_OK;
 }
 
 int APS5_VABI LibraryGetFaceScale(FontObj* obj, std::uint16_t* outUnitsPerEm, float* outScale) {
-    if (!obj || !outUnitsPerEm || !outScale) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !outUnitsPerEm || !outScale)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face) return SCE_FONT_ERROR_FATAL;
+    if (!face)
+        return SCE_FONT_ERROR_FATAL;
     const std::uint16_t units = face->units_per_EM;
     *outUnitsPerEm = units;
     *outScale = static_cast<float>(units) * ONE_OVER_64;
@@ -275,9 +301,11 @@ int APS5_VABI LibraryGetFaceScale(FontObj* obj, std::uint16_t* outUnitsPerEm, fl
 }
 
 int APS5_VABI LibraryGetFaceMetric(FontObj* obj, std::uint32_t metricId, std::uint16_t* outMetric) {
-    if (!obj || !outMetric) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !outMetric)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face) return SCE_FONT_ERROR_FATAL;
+    if (!face)
+        return SCE_FONT_ERROR_FATAL;
     const std::uint16_t units = face->units_per_EM;
     if (metricId == 0x0E00) {
         *outMetric = units;
@@ -296,15 +324,18 @@ int APS5_VABI LibraryGetFaceMetric(FontObj* obj, std::uint32_t metricId, std::ui
 }
 
 int APS5_VABI LibraryGetGlyphsCount(FontObj* obj, std::uint32_t* outCount) {
-    if (!obj || !outCount) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !outCount)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face || face->num_glyphs < 0) return SCE_FONT_ERROR_FATAL;
+    if (!face || face->num_glyphs < 0)
+        return SCE_FONT_ERROR_FATAL;
     *outCount = static_cast<std::uint32_t>(face->num_glyphs);
     return SCE_FONT_OK;
 }
 
 int APS5_VABI LibraryGetGlyphIndex(FontObj* obj, std::uint32_t codepoint, std::uint32_t* outGlyphIndex) {
-    if (!obj || !outGlyphIndex) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !outGlyphIndex)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
     if (!face) {
         *outGlyphIndex = 0;
@@ -315,29 +346,38 @@ int APS5_VABI LibraryGetGlyphIndex(FontObj* obj, std::uint32_t codepoint, std::u
     return glyphIndex ? SCE_FONT_OK : SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
 }
 
-int APS5_VABI LibrarySetCharSizeWithDpi(FontObj* obj, std::uint32_t dpiX, std::uint32_t dpiY, float scaleX, float scaleY, float* outScaleX, float* outScaleY) {
-    if (!obj || !outScaleX || !outScaleY) return SCE_FONT_ERROR_FATAL;
+int APS5_VABI LibrarySetCharSizeWithDpi(FontObj* obj, std::uint32_t dpiX, std::uint32_t dpiY, float scaleX,
+                                        float scaleY, float* outScaleX, float* outScaleY) {
+    if (!obj || !outScaleX || !outScaleY)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face) return SCE_FONT_ERROR_FATAL;
+    if (!face)
+        return SCE_FONT_ERROR_FATAL;
     const auto charW = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(scaleX * 64.0f));
     const auto charH = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(scaleY * 64.0f));
-    if (SetCharSizeCompat(face, charW, charH, dpiX, dpiY) != 0) return SCE_FONT_ERROR_FATAL;
-    if (!face->size) return SCE_FONT_ERROR_FATAL;
+    if (SetCharSizeCompat(face, charW, charH, dpiX, dpiY) != 0)
+        return SCE_FONT_ERROR_FATAL;
+    if (!face->size)
+        return SCE_FONT_ERROR_FATAL;
     const std::uint16_t units = face->units_per_EM;
     *outScaleX = FixedMulUnitsToF26Dot6(static_cast<std::int64_t>(face->size->metrics.x_scale), units);
     *outScaleY = FixedMulUnitsToF26Dot6(static_cast<std::int64_t>(face->size->metrics.y_scale), units);
     return SCE_FONT_OK;
 }
 
-int APS5_VABI LibrarySetCharSizeDefaultDpi(FontObj* obj, float scaleX, float scaleY, float* outScaleX, float* outScaleY) {
-    if (!obj || !outScaleX || !outScaleY) return SCE_FONT_ERROR_FATAL;
+int APS5_VABI LibrarySetCharSizeDefaultDpi(FontObj* obj, float scaleX, float scaleY, float* outScaleX,
+                                           float* outScaleY) {
+    if (!obj || !outScaleX || !outScaleY)
+        return SCE_FONT_ERROR_FATAL;
     return LibrarySetCharSizeWithDpi(obj, 0x48, 0x48, scaleX, scaleY, outScaleX, outScaleY);
 }
 
 int APS5_VABI LibraryComputeLayout(FontObj* obj, const StyleStateBlock* style, std::uint8_t* outWords) {
-    if (!obj || !style || !outWords) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !style || !outWords)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face || !face->size) return SCE_FONT_ERROR_FATAL;
+    if (!face || !face->size)
+        return SCE_FONT_ERROR_FATAL;
     const float effectWidth = style->effect_weight_x;
     const float effectHeight = style->effect_weight_y;
     const float slant = style->slant_ratio;
@@ -377,7 +417,8 @@ int APS5_VABI LibraryComputeLayout(FontObj* obj, const StyleStateBlock* style, s
     StoreFloat(outWords, HORIZONTAL_BASELINE, static_cast<float>(yMaxPx) * ONE_OVER_64);
     StoreFloat(outWords, HORIZONTAL_X_BOUND_LO, static_cast<float>(xMinPx + leftAdjustPx) * ONE_OVER_64);
     StoreFloat(outWords, HORIZONTAL_X_BOUND_HI, static_cast<float>(xMaxPx + halfEffectWidthPx) * ONE_OVER_64);
-    const std::int32_t maxAdvanceWidthPx = RoundMulFixed(static_cast<std::int64_t>(face->max_advance_width) + xShift, xScale);
+    const std::int32_t maxAdvanceWidthPx =
+        RoundMulFixed(static_cast<std::int64_t>(face->max_advance_width) + xShift, xScale);
     StoreFloat(outWords, HORIZONTAL_MAX_ADVANCE_WIDTH, static_cast<float>(maxAdvanceWidthPx) * ONE_OVER_64);
     float caretRiseAdjust = 0.0f;
     if (const auto* hhea = static_cast<const TT_HoriHeader*>(FT_Get_Sfnt_Table(face, FT_SFNT_HHEA))) {
@@ -390,9 +431,11 @@ int APS5_VABI LibraryComputeLayout(FontObj* obj, const StyleStateBlock* style, s
 }
 
 int APS5_VABI LibraryComputeLayoutAlt(FontObj* obj, const StyleStateBlock* style, std::uint8_t* outWords) {
-    if (!obj || !style || !outWords) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !style || !outWords)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face || !face->size) return SCE_FONT_ERROR_FATAL;
+    if (!face || !face->size)
+        return SCE_FONT_ERROR_FATAL;
     const float effectWidth = style->effect_weight_x;
     const float effectHeight = style->effect_weight_y;
     const float slant = style->slant_ratio;
@@ -434,10 +477,12 @@ int APS5_VABI LibraryComputeLayoutAlt(FontObj* obj, const StyleStateBlock* style
         const auto shear = static_cast<std::int64_t>(TruncateFloatToInt(slant * 65536.0f));
         const std::int64_t signAdjustMin = yAscender < 1 ? 0x10000LL : 0LL;
         std::int64_t roundedMin = signAdjustMin + (-yAscender) * shear - 0x8000LL;
-        if (roundedMin < 0) roundedMin = signAdjustMin + 0x7FFFLL + (-yAscender) * shear;
+        if (roundedMin < 0)
+            roundedMin = signAdjustMin + 0x7FFFLL + (-yAscender) * shear;
         const std::int64_t signAdjustMax = yDescender >= 0 ? 0x10000LL : 0LL;
         std::int64_t roundedMax = signAdjustMax + yDescender * shear - 0x8000LL;
-        if (roundedMax < 0) roundedMax = signAdjustMax + 0x7FFFLL + yDescender * shear;
+        if (roundedMax < 0)
+            roundedMax = signAdjustMax + 0x7FFFLL + yDescender * shear;
         const auto roundedMaxBits = static_cast<std::uint64_t>(roundedMax);
         const auto roundedMinBits = static_cast<std::uint64_t>(roundedMin);
         const std::uint64_t roundedMaxHigh = roundedMaxBits >> 16;
@@ -455,7 +500,8 @@ int APS5_VABI LibraryComputeLayoutAlt(FontObj* obj, const StyleStateBlock* style
     StoreFloat(outWords, VERTICAL_BASELINE_OFFSET_X, static_cast<float>(-xAbsMax) * ONE_OVER_64);
     StoreFloat(outWords, VERTICAL_METRICS_0X08, static_cast<float>(RoundMulFixed(yAscender, xScale)) * ONE_OVER_64);
     StoreFloat(outWords, VERTICAL_METRICS_0X0C, static_cast<float>(RoundMulFixed(yDescender, xScale)) * ONE_OVER_64);
-    const std::int32_t advanceHeight = RoundMulFixed(static_cast<std::int64_t>(face->max_advance_height) + yShift, yScale);
+    const std::int32_t advanceHeight =
+        RoundMulFixed(static_cast<std::int64_t>(face->max_advance_height) + yShift, yScale);
     StoreFloat(outWords, VERTICAL_ADVANCE_HEIGHT, static_cast<float>(advanceHeight) * ONE_OVER_64);
     StoreFloat(outWords, VERTICAL_DECORATION_SPAN, outEffectWidth);
     StoreFloat(outWords, VERTICAL_DECORATION_0X08, outSlantB);
@@ -482,16 +528,21 @@ void WriteOutlineSizes(FT_GlyphSlot slot, std::uint64_t* outWords) {
     WriteU32(out, 8, size8);
 }
 
-int APS5_VABI LibraryLoadGlyphCached(FontObj* obj, std::uint32_t glyphIndex, std::int32_t mode, std::uint64_t* outWords) {
+int APS5_VABI LibraryLoadGlyphCached(FontObj* obj, std::uint32_t glyphIndex, std::int32_t mode,
+                                     std::uint64_t* outWords) {
     if (outWords) {
         outWords[0] = 0;
         outWords[1] = 0;
     }
-    if (!obj || !outWords) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !outWords)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face || !face->glyph) return SCE_FONT_ERROR_FATAL;
+    if (!face || !face->glyph)
+        return SCE_FONT_ERROR_FATAL;
     const auto unitsPerEm = static_cast<std::uint16_t>(face->units_per_EM);
-    const bool cachedMatch = obj->cached_glyph_index_0x64 == static_cast<std::int32_t>(glyphIndex) && obj->cached_units_x_0x68 == unitsPerEm && obj->cached_units_y_0x70 == obj->cached_units_x_0x68 && mode == 0;
+    const bool cachedMatch = obj->cached_glyph_index_0x64 == static_cast<std::int32_t>(glyphIndex) &&
+                             obj->cached_units_x_0x68 == unitsPerEm &&
+                             obj->cached_units_y_0x70 == obj->cached_units_x_0x68 && mode == 0;
     if (cachedMatch) {
         obj->shift_cache_x = obj->shift_units_x;
         obj->shift_cache_y = obj->shift_units_y;
@@ -499,7 +550,8 @@ int APS5_VABI LibraryLoadGlyphCached(FontObj* obj, std::uint32_t glyphIndex, std
         WriteOutlineSizes(face->glyph, outWords);
         return SCE_FONT_OK;
     }
-    const FT_Int32 loadFlags = (mode == 0 ? FT_LOAD_NO_SCALE : 0) | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP | FT_LOAD_VERTICAL_LAYOUT;
+    const FT_Int32 loadFlags =
+        (mode == 0 ? FT_LOAD_NO_SCALE : 0) | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP | FT_LOAD_VERTICAL_LAYOUT;
     const FT_Error error = FT_Load_Glyph(face, glyphIndex, loadFlags);
     if (error != 0) {
         obj->cached_glyph_index_0x64 = 0;
@@ -509,7 +561,8 @@ int APS5_VABI LibraryLoadGlyphCached(FontObj* obj, std::uint32_t glyphIndex, std
         obj->layout_scale_vec = {};
         return error == FT_Err_Out_Of_Memory ? SCE_FONT_ERROR_ALLOCATION_FAILED : SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
     }
-    if (!face->glyph) return SCE_FONT_ERROR_FATAL;
+    if (!face->glyph)
+        return SCE_FONT_ERROR_FATAL;
     obj->cached_glyph_index_0x64 = static_cast<std::int32_t>(glyphIndex);
     if (mode == 0) {
         obj->cached_units_x_0x68 = unitsPerEm;
@@ -520,7 +573,8 @@ int APS5_VABI LibraryLoadGlyphCached(FontObj* obj, std::uint32_t glyphIndex, std
         obj->layout_scale_vec[0] = 0x10000;
         obj->layout_scale_vec[1] = 0x10000;
     } else {
-        if (!face->size) return SCE_FONT_ERROR_FATAL;
+        if (!face->size)
+            return SCE_FONT_ERROR_FATAL;
         const auto xScale = static_cast<std::int64_t>(face->size->metrics.x_scale);
         const auto yScale = static_cast<std::int64_t>(face->size->metrics.y_scale);
         obj->cached_units_x_0x68 = static_cast<std::uint64_t>(TruncMulUnits(xScale, unitsPerEm));
@@ -530,7 +584,8 @@ int APS5_VABI LibraryLoadGlyphCached(FontObj* obj, std::uint32_t glyphIndex, std
         const auto seedLow = static_cast<std::int32_t>(static_cast<std::uint32_t>(obj->layout_seed_pair & 0xFFFFFFFFu));
         const auto seedHigh = static_cast<std::int32_t>(static_cast<std::uint32_t>(obj->layout_seed_pair >> 32));
         obj->layout_seed_vec[0] = static_cast<std::uint64_t>(static_cast<std::int64_t>(RoundMulFixed(seedLow, xScale)));
-        obj->layout_seed_vec[1] = static_cast<std::uint64_t>(static_cast<std::int64_t>(RoundMulFixed(seedHigh, yScale)));
+        obj->layout_seed_vec[1] =
+            static_cast<std::uint64_t>(static_cast<std::int64_t>(RoundMulFixed(seedHigh, yScale)));
         obj->layout_scale_vec[0] = static_cast<std::uint64_t>(xScale);
         obj->layout_scale_vec[1] = static_cast<std::uint64_t>(yScale);
     }
@@ -542,10 +597,13 @@ std::int64_t RoundMulFixed64(std::int64_t value, std::int64_t fixed16) {
     return static_cast<std::int64_t>(RoundMulFixed(value, fixed16));
 }
 
-int APS5_VABI LibraryGetGlyphMetrics(FontObj* obj, std::uint32_t* optParam2, std::uint8_t mode, std::uint8_t* outParams, FontGlyphMetrics* outMetrics) {
-    if (!obj || !outParams || !outMetrics) return SCE_FONT_ERROR_FATAL;
+int APS5_VABI LibraryGetGlyphMetrics(FontObj* obj, std::uint32_t* optParam2, std::uint8_t mode, std::uint8_t* outParams,
+                                     FontGlyphMetrics* outMetrics) {
+    if (!obj || !outParams || !outMetrics)
+        return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
-    if (!face || !face->glyph || !face->size) return SCE_FONT_ERROR_FATAL;
+    if (!face || !face->glyph || !face->size)
+        return SCE_FONT_ERROR_FATAL;
     const FT_GlyphSlot slot = face->glyph;
     std::memset(outParams, 0, 0x48);
     const void* outlineBlob = &slot->outline;
@@ -590,8 +648,10 @@ int APS5_VABI LibraryGetGlyphMetrics(FontObj* obj, std::uint32_t* optParam2, std
     auto yScale = static_cast<std::int64_t>(face->size->metrics.y_scale);
     const auto objScaleX = static_cast<std::int64_t>(obj->layout_scale_vec[0]);
     const auto objScaleY = static_cast<std::int64_t>(obj->layout_scale_vec[1]);
-    if (objScaleX != 0 && objScaleX != 0x10000) xScale = (xScale << 16) / objScaleX;
-    if (objScaleY != 0 && objScaleY != 0x10000) yScale = (yScale << 16) / objScaleY;
+    if (objScaleX != 0 && objScaleX != 0x10000)
+        xScale = (xScale << 16) / objScaleX;
+    if (objScaleY != 0 && objScaleY != 0x10000)
+        yScale = (yScale << 16) / objScaleY;
     const bool applyScale = (mode & 0x0Fu) != 0;
     const auto scaleIf = [&](std::int64_t value, std::int64_t scale) {
         return applyScale ? RoundMulFixed64(value, scale) : value;
@@ -681,16 +741,20 @@ int APS5_VABI LibraryGetGlyphMetrics(FontObj* obj, std::uint32_t* optParam2, std
             outMetrics->Horizontal.bearingY += dy;
             outMetrics->Vertical.bearingX -= dx;
             outMetrics->Vertical.bearingY -= dy;
-            if (outMetrics->Horizontal.advance != 0.0f || std::isnan(outMetrics->Horizontal.advance)) outMetrics->Horizontal.advance += dx;
-            if (outMetrics->Vertical.advance != 0.0f || std::isnan(outMetrics->Vertical.advance)) outMetrics->Vertical.advance += dy;
+            if (outMetrics->Horizontal.advance != 0.0f || std::isnan(outMetrics->Horizontal.advance))
+                outMetrics->Horizontal.advance += dx;
+            if (outMetrics->Vertical.advance != 0.0f || std::isnan(outMetrics->Vertical.advance))
+                outMetrics->Vertical.advance += dy;
         }
     }
     return SCE_FONT_OK;
 }
 
-int APS5_VABI LibraryApplyGlyphAdjust(FontObj* obj, std::uint32_t p2, std::uint32_t glyphIndex, std::int32_t p4, std::int32_t p5, std::uint32_t* inoutGlyphIndex) {
+int APS5_VABI LibraryApplyGlyphAdjust(FontObj* obj, std::uint32_t p2, std::uint32_t glyphIndex, std::int32_t p4,
+                                      std::int32_t p5, std::uint32_t* inoutGlyphIndex) {
     (void)p2;
-    if (!obj || !inoutGlyphIndex) return SCE_FONT_ERROR_FATAL;
+    if (!obj || !inoutGlyphIndex)
+        return SCE_FONT_ERROR_FATAL;
     *inoutGlyphIndex = glyphIndex;
     obj->shift_units_x = p4;
     obj->shift_units_y = p5;
@@ -698,9 +762,12 @@ int APS5_VABI LibraryApplyGlyphAdjust(FontObj* obj, std::uint32_t p2, std::uint3
     return SCE_FONT_OK;
 }
 
-int APS5_VABI LibraryConfigureGlyph(FontObj* obj, std::uint32_t* inParams, std::int32_t mode, std::uint32_t* inoutState) {
-    if (!obj || !inParams || !inoutState) return SCE_FONT_ERROR_FATAL;
-    if (*inParams != 0) reinterpret_cast<std::uint8_t*>(inoutState)[3] |= 0x80;
+int APS5_VABI LibraryConfigureGlyph(FontObj* obj, std::uint32_t* inParams, std::int32_t mode,
+                                    std::uint32_t* inoutState) {
+    if (!obj || !inParams || !inoutState)
+        return SCE_FONT_ERROR_FATAL;
+    if (*inParams != 0)
+        reinterpret_cast<std::uint8_t*>(inoutState)[3] |= 0x80;
     obj->glyph_cfg_word_0x130 = *inParams;
     obj->glyph_cfg_mode_0x134 = static_cast<std::uint8_t>(mode);
     obj->glyph_cfg_byte_0x136 = 0;
@@ -709,7 +776,8 @@ int APS5_VABI LibraryConfigureGlyph(FontObj* obj, std::uint32_t* inParams, std::
 }
 
 int APS5_VABI RendererCreate(RendererNative* renderer) {
-    if (!renderer) return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (!renderer)
+        return SCE_FONT_ERROR_INVALID_RENDERER;
     auto* ft = reinterpret_cast<RendererFt*>(renderer);
     ft->ft_backend.renderer_header_0x10 = &ft->base.mem_kind;
     ft->ft_backend.unknown_0x08 = 0;
@@ -720,16 +788,20 @@ int APS5_VABI RendererCreate(RendererNative* renderer) {
 }
 
 int APS5_VABI RendererDestroy(RendererNative* renderer) {
-    if (!renderer) return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (!renderer)
+        return SCE_FONT_ERROR_INVALID_RENDERER;
     reinterpret_cast<RendererFt*>(renderer)->ft_backend.initialized_marker = nullptr;
     return SCE_FONT_OK;
 }
 
-std::uint64_t APS5_VABI RendererQuery(RendererNative* renderer, std::uint8_t* params, std::int64_t* outPtr, std::uint8_t* outVector) {
+std::uint64_t APS5_VABI RendererQuery(RendererNative* renderer, std::uint8_t* params, std::int64_t* outPtr,
+                                      std::uint8_t* outVector) {
     (void)renderer;
     (void)params;
-    if (outVector) std::memset(outVector, 0, 16);
-    if (outPtr) *outPtr = 0;
+    if (outVector)
+        std::memset(outVector, 0, 16);
+    if (outPtr)
+        *outPtr = 0;
     return 0;
 }
 
@@ -761,10 +833,6 @@ const RendererSelection rendererTable{0, sizeof(RendererFt), &RendererCreate, &R
 
 }
 
-const Font::SysDriver* FontFt::DriverTable() {
-    return &driverTable;
-}
+const Font::SysDriver* FontFt::DriverTable() { return &driverTable; }
 
-const Font::RendererSelection* FontFt::RendererTable() {
-    return &rendererTable;
-}
+const Font::RendererSelection* FontFt::RendererTable() { return &rendererTable; }

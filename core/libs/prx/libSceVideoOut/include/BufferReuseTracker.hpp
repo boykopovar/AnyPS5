@@ -9,6 +9,7 @@
 class BufferReuseTracker {
     std::uint64_t _issued = 0;
     std::set<std::uint64_t> _pending;
+
 public:
     std::uint64_t Reserve() {
         if (_issued == std::numeric_limits<std::uint64_t>::max())
@@ -20,10 +21,12 @@ public:
     }
     std::uint64_t Capture() const { return _issued; }
     bool IsComplete(std::uint64_t through) const {
-        if (through > _issued) throw std::invalid_argument("VideoOut: unissued buffer fence");
+        if (through > _issued)
+            throw std::invalid_argument("VideoOut: unissued buffer fence");
         return _pending.empty() || *_pending.begin() > through;
     }
     void Complete(std::uint64_t ticket) noexcept {
-        if (_pending.erase(ticket) != 1) std::terminate();
+        if (_pending.erase(ticket) != 1)
+            std::terminate();
     }
 };

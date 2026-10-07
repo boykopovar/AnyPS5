@@ -32,13 +32,15 @@ MemoryFlags TranslationContext::addMemoryInfo(const MemoryInfo& memory, std::uin
     return MemoryFlags{index, pc};
 }
 
-TranslationContext::AddressOperands TranslationContext::readAddressOperands(const RdnaInstruction& inst, std::uint32_t firstSource) {
+TranslationContext::AddressOperands TranslationContext::readAddressOperands(const RdnaInstruction& inst,
+                                                                            std::uint32_t firstSource) {
     const ResourceKind kind = flatSegmentResourceKind(inst);
     const IrU32 low = readU32(sourceAt(inst, firstSource));
     const RdnaOperand& highOrBase = sourceAt(inst, firstSource + 1u);
     if (kind == ResourceKind::Scratch) {
         IrValue& resource = ir.Emit(IrOpcode::GetScratchResource, IrOpcodeType(IrOpcode::GetScratchResource), {});
-        IrValue& offset = highOrBase.kind != RdnaOperandKind::VectorRegister ? readU32(highOrBase).Value() : low.Value();
+        IrValue& offset =
+            highOrBase.kind != RdnaOperandKind::VectorRegister ? readU32(highOrBase).Value() : low.Value();
         return AddressOperands{&resource, &offset, &ir.Constant(0u)};
     }
     if (kind == ResourceKind::Global && highOrBase.kind != RdnaOperandKind::VectorRegister) {
@@ -61,7 +63,8 @@ IrValue* TranslationContext::getBufferResource(const MemoryInfo& memory) {
     const IrU32 dword1 = getResourceDword(memory.resource, 1u);
     const IrU32 dword2 = getResourceDword(memory.resource, 2u);
     const IrU32 dword3 = getResourceDword(memory.resource, 3u);
-    return &ir.Emit(IrOpcode::GetBufferResource, IrOpcodeType(IrOpcode::GetBufferResource), {&dword0.Value(), &dword1.Value(), &dword2.Value(), &dword3.Value()});
+    return &ir.Emit(IrOpcode::GetBufferResource, IrOpcodeType(IrOpcode::GetBufferResource),
+                    {&dword0.Value(), &dword1.Value(), &dword2.Value(), &dword3.Value()});
 }
 
 IrValue* TranslationContext::getAddressResource(IrValue* low, IrValue* high) {
@@ -82,7 +85,7 @@ IrValue* TranslationContext::getImageResource(const MemoryInfo& memory) {
         return &getResourceDword(memory.resource, index).Value();
     };
     return &ir.Emit(IrOpcode::GetImageResource, IrOpcodeType(IrOpcode::GetImageResource),
-                     {dword(0u), dword(1u), dword(2u), dword(3u), dword(4u), dword(5u), dword(6u), dword(7u)});
+                    {dword(0u), dword(1u), dword(2u), dword(3u), dword(4u), dword(5u), dword(6u), dword(7u)});
 }
 
 IrValue* TranslationContext::getSamplerResource(const MemoryInfo& memory) {
@@ -90,10 +93,12 @@ IrValue* TranslationContext::getSamplerResource(const MemoryInfo& memory) {
     const IrU32 dword1 = getResourceDword(memory.sampler, 1u);
     const IrU32 dword2 = getResourceDword(memory.sampler, 2u);
     const IrU32 dword3 = getResourceDword(memory.sampler, 3u);
-    return &ir.Emit(IrOpcode::GetSamplerResource, IrOpcodeType(IrOpcode::GetSamplerResource), {&dword0.Value(), &dword1.Value(), &dword2.Value(), &dword3.Value()});
+    return &ir.Emit(IrOpcode::GetSamplerResource, IrOpcodeType(IrOpcode::GetSamplerResource),
+                    {&dword0.Value(), &dword1.Value(), &dword2.Value(), &dword3.Value()});
 }
 
-IrValue* TranslationContext::makeImageAddress(const RdnaInstruction& inst, const RdnaOperand& base, std::uint32_t fragmentOffset) {
+IrValue* TranslationContext::makeImageAddress(const RdnaInstruction& inst, const RdnaOperand& base,
+                                              std::uint32_t fragmentOffset) {
     std::array<IrValue*, 13> components{};
     IrValue& zero = ir.Constant(0u);
     components.fill(&zero);
@@ -111,7 +116,8 @@ IrValue* TranslationContext::makeImageAddress(const RdnaInstruction& inst, const
         }
     }
     if (fragmentOffset != 0u) {
-        const RdnaImageAddressComponent fragment = GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, inst.imageAddressComponents - 1u);
+        const RdnaImageAddressComponent fragment =
+            GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, inst.imageAddressComponents - 1u);
         IrValue*& word = components[fragment.bitOffset / 32u];
         word = &ir.IAdd(*word, ir.Constant(fragmentOffset << (fragment.bitOffset % 32u)));
     }
@@ -119,23 +125,32 @@ IrValue* TranslationContext::makeImageAddress(const RdnaInstruction& inst, const
         const auto mask = ballotMask(IrU1(ir.GetExec()));
         IrValue& lane = ir.Emit(IrOpcode::LaneId, IrType::U32, {});
         IrValue& quad = ir.BitwiseAnd(lane, ir.Constant(~3u));
-        IrValue& word = program.WaveSize() == 64u ? ir.Select(ir.ULessThan(lane, ir.Constant(32u)), mask[0].Value(), mask[1].Value()) : mask[0].Value();
-        IrValue& active = ir.BitwiseAnd(ir.ShiftRightLogical(word, ir.BitwiseAnd(quad, ir.Constant(31u))), ir.Constant(15u));
+        IrValue& word = program.WaveSize() == 64u
+                            ? ir.Select(ir.ULessThan(lane, ir.Constant(32u)), mask[0].Value(), mask[1].Value())
+                            : mask[0].Value();
+        IrValue& active =
+            ir.BitwiseAnd(ir.ShiftRightLogical(word, ir.BitwiseAnd(quad, ir.Constant(31u))), ir.Constant(15u));
         IrValue& first = ir.Emit(IrOpcode::FindILsb32, IrType::U32, {&active});
         IrValue& source = ir.Select(ir.INotEqual(active, ir.Constant(0u)), ir.IAdd(quad, first), lane);
         IrValue& address = ir.ShiftLeftLogical(source, ir.Constant(2u));
         IrValue& exec = ir.GetExec();
-        const std::uint32_t gradientStart = std::popcount(inst.imageSampleFlags & (RdnaImageSampleFlagOffset | RdnaImageSampleFlagBias | RdnaImageSampleFlagCompare));
-        const std::uint32_t gradients = 2u * ((inst.imageSampleFlags & RdnaImageSampleGradientCountMask) >> RdnaImageSampleGradientCountShift);
-        const std::uint32_t firstDword = GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, gradientStart).bitOffset / 32u;
-        const std::uint32_t lastDword = GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, gradientStart + gradients - 1u).bitOffset / 32u;
+        const std::uint32_t gradientStart = std::popcount(
+            inst.imageSampleFlags & (RdnaImageSampleFlagOffset | RdnaImageSampleFlagBias | RdnaImageSampleFlagCompare));
+        const std::uint32_t gradients =
+            2u * ((inst.imageSampleFlags & RdnaImageSampleGradientCountMask) >> RdnaImageSampleGradientCountShift);
+        const std::uint32_t firstDword =
+            GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, gradientStart).bitOffset / 32u;
+        const std::uint32_t lastDword =
+            GetRdnaImageAddressComponentLayout(inst.imageSampleFlags, gradientStart + gradients - 1u).bitOffset / 32u;
         for (std::uint32_t index = firstDword; index <= lastDword; ++index) {
-            components[index] = &ir.Emit(IrOpcode::BpermuteU32, IrOpcodeType(IrOpcode::BpermuteU32), {components[index], &address, &exec});
+            components[index] = &ir.Emit(IrOpcode::BpermuteU32, IrOpcodeType(IrOpcode::BpermuteU32),
+                                         {components[index], &address, &exec});
         }
     }
     return &ir.Emit(IrOpcode::MakeImageAddress, IrOpcodeType(IrOpcode::MakeImageAddress),
-                     {components[0], components[1], components[2], components[3], components[4], components[5], components[6],
-                      components[7], components[8], components[9], components[10], components[11], components[12]});
+                    {components[0], components[1], components[2], components[3], components[4], components[5],
+                     components[6], components[7], components[8], components[9], components[10], components[11],
+                     components[12]});
 }
 
 IrValue* TranslationContext::constructU32x4(const RdnaOperand& base, std::uint32_t count) {
@@ -146,10 +161,12 @@ IrValue* TranslationContext::constructU32x4(const RdnaOperand& base, std::uint32
     for (std::uint32_t index = 0; index < std::min(count, 4u); ++index) {
         components[index] = &readRawU32(offsetOperand(plainBase, index)).Value();
     }
-    return &ir.Emit(IrOpcode::CompositeConstructU32x4, IrOpcodeType(IrOpcode::CompositeConstructU32x4), {components[0], components[1], components[2], components[3]});
+    return &ir.Emit(IrOpcode::CompositeConstructU32x4, IrOpcodeType(IrOpcode::CompositeConstructU32x4),
+                    {components[0], components[1], components[2], components[3]});
 }
 
-void TranslationContext::writeImageComponents(const RdnaOperand& dst, IrValue* value, const MemoryInfo& memory, std::uint32_t componentLimit) {
+void TranslationContext::writeImageComponents(const RdnaOperand& dst, IrValue* value, const MemoryInfo& memory,
+                                              std::uint32_t componentLimit) {
     if (memory.dataBits == 16u) {
         for (std::uint32_t index = 0; index < memory.dataDwords; ++index) {
             writeOperand(offsetOperand(dst, index), &ir.CompositeExtract(*value, index));
@@ -169,7 +186,8 @@ void TranslationContext::writeImageComponents(const RdnaOperand& dst, IrValue* v
 // MUBUF/MTBUF sources: VADDR (the index first with IDXEN, then the offset with OFFEN), the resource, SOFFSET.
 TranslationContext::BufferAddress TranslationContext::readBufferAddress(const RdnaInstruction& inst) {
     const IrU32 index = inst.idxen ? readU32(inst.source0) : IrU32(ir.Constant(0u));
-    const IrU32 offset = inst.offen ? readU32(offsetOperand(inst.source0, inst.idxen ? 1u : 0u)) : IrU32(ir.Constant(0u));
+    const IrU32 offset =
+        inst.offen ? readU32(offsetOperand(inst.source0, inst.idxen ? 1u : 0u)) : IrU32(ir.Constant(0u));
     const IrU32 soffset = readU32(inst.source2);
     return BufferAddress{index, offset, soffset};
 }
@@ -180,7 +198,8 @@ IrU32 TranslationContext::widenSubdword(IrValue* value, std::uint32_t bits, bool
     if (!sign) {
         return widened;
     }
-    return IrU32(ir.Emit(IrOpcode::BitFieldSExtract, IrOpcodeType(IrOpcode::BitFieldSExtract), {&widened.Value(), &ir.Constant(0u), &ir.Constant(bits)}));
+    return IrU32(ir.Emit(IrOpcode::BitFieldSExtract, IrOpcodeType(IrOpcode::BitFieldSExtract),
+                         {&widened.Value(), &ir.Constant(0u), &ir.Constant(bits)}));
 }
 
 IrValue* TranslationContext::narrowSubdword(IrU32 value, std::uint32_t bits) {

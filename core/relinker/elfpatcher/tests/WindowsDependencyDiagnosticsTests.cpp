@@ -32,10 +32,8 @@ void checkRuntimeDependencies() {
     };
     check({}, {});
     check({"libkernel.prx"}, {"libkernel.prx"});
-    check({"libSceLibcInternal.prx", "libkernel.prx"},
-          {"libSceLibcInternal.prx", "libkernel.prx", "libc.prx"});
-    check({"libc.prx", "libSceLibcInternal.prx"},
-          {"libc.prx", "libSceLibcInternal.prx"});
+    check({"libSceLibcInternal.prx", "libkernel.prx"}, {"libSceLibcInternal.prx", "libkernel.prx", "libc.prx"});
+    check({"libc.prx", "libSceLibcInternal.prx"}, {"libc.prx", "libSceLibcInternal.prx"});
 }
 
 void writeFile(const Fs::path& path, const std::vector<std::uint8_t>& bytes) {
@@ -44,7 +42,8 @@ void writeFile(const Fs::path& path, const std::vector<std::uint8_t>& bytes) {
         throw std::runtime_error("Cannot write diagnostic fixture");
 }
 
-void createImage(const Fs::path& path, const std::vector<std::pair<std::string, std::string>>& imports, const std::string& exported, const std::string& forwarded = {}) {
+void createImage(const Fs::path& path, const std::vector<std::pair<std::string, std::string>>& imports,
+                 const std::string& exported, const std::string& forwarded = {}) {
     PeSection section{".fixture", LoadRva, SectionRead | SectionExecute | 0x20u, std::vector<std::uint8_t>(4096)};
     auto& bytes = section.Data;
     const auto put = [&](const std::size_t offset, const std::uint64_t value, const std::size_t size = 4) {
@@ -124,7 +123,8 @@ void createRunner(const Fs::path& path, const Fs::path& root) {
     Io::WriteU32(data.Data, table - data.Rva + 8, unwind);
     for (std::size_t index = 0; index < diagnostic.Functions.size(); ++index) {
         for (std::size_t field = 0; field < 3; ++field)
-            Io::WriteU32(data.Data, table - data.Rva + (index + 1) * 12 + field * 4, diagnostic.Functions[index][field]);
+            Io::WriteU32(data.Data, table - data.Rva + (index + 1) * 12 + field * 4,
+                         diagnostic.Functions[index][field]);
     }
     std::array<PeDirectory, 16> directories{};
     directories[1] = imports.Directory;
@@ -148,7 +148,8 @@ void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& ex
     startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     PROCESS_INFORMATION process{};
     const auto filename = runner.string();
-    if (!CreateProcessA(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, runner.parent_path().string().c_str(), &startup, &process))
+    if (!CreateProcessA(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                        runner.parent_path().string().c_str(), &startup, &process))
         throw std::runtime_error("Cannot start diagnostic test: " + std::to_string(GetLastError()));
     CloseHandle(output);
     if (WaitForSingleObject(process.hProcess, 20000) != WAIT_OBJECT_0) {
@@ -193,7 +194,9 @@ int main() {
         createImage(root, {{middle.filename().string(), "Middle"}}, {});
         createImage(middle, {{leaf.filename().string(), "Missing"}}, "Middle");
         createImage(leaf, {}, "Present");
-        expectDiagnostic(runner, {"Importer: " + middle.string(), "Provider: " + leaf.string(), "Symbol: Missing", runner.string() + " -> " + root.string() + " -> " + middle.string() + " -> " + leaf.string()});
+        expectDiagnostic(
+            runner, {"Importer: " + middle.string(), "Provider: " + leaf.string(), "Symbol: Missing",
+                     runner.string() + " -> " + root.string() + " -> " + middle.string() + " -> " + leaf.string()});
         createImage(middle, {{leaf.filename().string(), "#8"}}, "Middle");
         expectDiagnostic(runner, {"Symbol: #8"});
         createImage(middle, {{leaf.filename().string(), "#7"}}, "Middle");
@@ -217,7 +220,8 @@ int main() {
         expectDiagnostic(runner, {"Symbol: RelinkerDiagnosticsMissingExport"});
         {
             std::fstream corrupt(root, std::ios::binary | std::ios::in | std::ios::out);
-            const std::array<char, 4> invalidRva{static_cast<char>(0xf0), static_cast<char>(0xff), static_cast<char>(0xff), static_cast<char>(0xff)};
+            const std::array<char, 4> invalidRva{static_cast<char>(0xf0), static_cast<char>(0xff),
+                                                 static_cast<char>(0xff), static_cast<char>(0xff)};
             corrupt.seekp(LoadRva + 0x300);
             if (!corrupt.write(invalidRva.data(), invalidRva.size()))
                 throw std::runtime_error("Cannot corrupt diagnostic fixture");

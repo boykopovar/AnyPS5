@@ -24,10 +24,12 @@ struct TileMipLayout {
     std::uint32_t tailY;
 };
 
-std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount);
+std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width,
+                                            std::uint32_t height, std::uint32_t mipCount);
 std::uint64_t ComputeSurfaceSize(const std::vector<TileMipLayout>& mips, std::uint32_t arrayLayers);
 // Mip chain of an uncompressed surface given its element size (color targets have no texture format).
-std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount);
+std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement,
+                                                   std::uint32_t width, std::uint32_t height, std::uint32_t mipCount);
 
 // Thick (3D) SW_4KB_S / SW_64KB_S blocks span several depth slices: {width, height, depth} in elements.
 std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uint32_t bytesPerElement);
@@ -39,7 +41,8 @@ std::array<std::uint32_t, 3> ThinBlockLayout(TextureTileMode tileMode, std::uint
 // elements each: its whole tile blocks (every element of the block inside the mip), or its rows
 // without the pitch padding when linear. A tail mip has none (its block also holds the other tail
 // levels and their padding). A retile of the mip writes every byte of these and no other.
-std::vector<std::pair<std::uint64_t, std::uint64_t>> CoveredMipBytes(TextureTileMode tileMode, std::uint32_t bytesPerElement, const TileMipLayout& mip);
+std::vector<std::pair<std::uint64_t, std::uint64_t>>
+CoveredMipBytes(TextureTileMode tileMode, std::uint32_t bytesPerElement, const TileMipLayout& mip);
 
 // 3D surface. Each slab holds the whole mip chain: the mip tail block, if any, then the other levels from the
 // smallest to level 0. Depth slice z of a level is detiled from slab z / blockDepth (slabBytes apart) with the
@@ -52,7 +55,8 @@ struct ThickLayout {
     std::uint64_t sliceLinearBytes;
     std::uint64_t guestBytes;
 };
-ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth, std::uint32_t mipCount);
+ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width,
+                               std::uint32_t height, std::uint32_t depth, std::uint32_t mipCount);
 
 // Guest surface as the texture upload/write-back loops walk it: array layers of thin surfaces, or the
 // depth slices of a volume (which Vulkan holds as one layer with extent depth).
@@ -67,11 +71,18 @@ struct SurfaceGeometry {
     std::uint32_t blockDepth = 1;
     std::uint64_t layerBytes = 0;
 
-    std::uint64_t GuestLayerOffset(std::uint32_t layer) const { return thick ? static_cast<std::uint64_t>(layer / blockDepth) * layerBytes : static_cast<std::uint64_t>(layer) * layerBytes; }
-    std::uint64_t LinearLayerOffset(std::uint32_t layer) const { return static_cast<std::uint64_t>(layer) * sliceLinearBytes; }
+    std::uint64_t GuestLayerOffset(std::uint32_t layer) const {
+        return thick ? static_cast<std::uint64_t>(layer / blockDepth) * layerBytes
+                     : static_cast<std::uint64_t>(layer) * layerBytes;
+    }
+    std::uint64_t LinearLayerOffset(std::uint32_t layer) const {
+        return static_cast<std::uint64_t>(layer) * sliceLinearBytes;
+    }
     std::uint32_t CopyLayer(std::uint32_t layer) const { return imageDepth > 1 ? 0u : layer; }
     std::int32_t CopyDepth(std::uint32_t layer) const { return imageDepth > 1 ? static_cast<std::int32_t>(layer) : 0; }
-    bool HasLayer(std::uint32_t level, std::uint32_t layer) const { return imageDepth <= 1 || layer < std::max(imageDepth >> level, 1u); }
+    bool HasLayer(std::uint32_t level, std::uint32_t layer) const {
+        return imageDepth <= 1 || layer < std::max(imageDepth >> level, 1u);
+    }
 };
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
 bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);

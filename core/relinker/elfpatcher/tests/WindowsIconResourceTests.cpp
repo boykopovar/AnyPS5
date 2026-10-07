@@ -12,15 +12,15 @@
 
 namespace {
 
-const std::vector<std::uint8_t> Png{
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
-    0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
-    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+const std::vector<std::uint8_t> Png{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+                                    0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+                                    0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+                                    0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99,
+                                    0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
 
 void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
 std::uint32_t readU32(const std::vector<std::uint8_t>& data, const std::size_t offset) {
@@ -35,7 +35,8 @@ void writeBytes(const std::filesystem::path& path, const std::vector<std::uint8_
     require(static_cast<bool>(stream), "Cannot write " + path.string());
 }
 
-void requireEmpty(const Elfpatcher::Windows::WindowsIconResourceBuilder& builder, const std::filesystem::path& path, const std::string& name) {
+void requireEmpty(const Elfpatcher::Windows::WindowsIconResourceBuilder& builder, const std::filesystem::path& path,
+                  const std::string& name) {
     std::vector<Elfpatcher::Windows::PeSection> sections;
     const auto directory = builder.Build(path, sections, 0x10000);
     require(sections.empty(), "Section added for " + name);
@@ -56,7 +57,8 @@ void run(const std::filesystem::path& root) {
     require(sections.size() == 1, "Expected one section");
     require(sections[0].Name == ".rsrc", "Unexpected section name: " + sections[0].Name);
     require(sections[0].Rva == nextRva, "Unexpected section RVA");
-    require(sections[0].Characteristics == (Elfpatcher::Windows::SectionRead | 0x40u), "Unexpected section characteristics");
+    require(sections[0].Characteristics == (Elfpatcher::Windows::SectionRead | 0x40u),
+            "Unexpected section characteristics");
     const auto& data = sections[0].Data;
     require(data.size() == 184 + Png.size(), "Unexpected section size");
     require(directory.Rva == nextRva && directory.Size == data.size(), "Unexpected resource directory");
@@ -75,7 +77,8 @@ void run(const std::filesystem::path& root) {
     try {
         builder.Build(badPath, badSections, nextRva);
     } catch (const Domain::RelinkerException& e) {
-        require(std::string(e.what()).find(badPath.string()) != std::string::npos, std::string("Failure does not name the icon: ") + e.what());
+        require(std::string(e.what()).find(badPath.string()) != std::string::npos,
+                std::string("Failure does not name the icon: ") + e.what());
         require(badSections.empty(), "Section added despite the failure");
         return;
     }

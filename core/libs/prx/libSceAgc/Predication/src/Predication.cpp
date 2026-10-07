@@ -35,5 +35,4 @@ int APS5_VABI sceAgcSetRangePredication(uint32_t* start, const volatile uint32_t
     }
     return 0;
 }
-
 }

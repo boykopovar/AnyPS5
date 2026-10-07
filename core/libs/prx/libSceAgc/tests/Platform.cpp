@@ -10,11 +10,11 @@ extern "C" int APS5_VABI sceAgcGetIsTrinityMode(bool* isTrinityMode);
 namespace {
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error& error) {
@@ -46,8 +46,11 @@ int main() {
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
+        try {
+            LibcRunShutdown_nid_postfix();
+        } catch (const std::exception& shutdown) {
+            std::fprintf(stderr, "shutdown: %s\n", shutdown.what());
+        }
         return 1;
     }
 }

@@ -3,6 +3,7 @@
 ## Code
 
 - Follow the [coding conventions](docs/dev/CONVENTIONS.md): naming, no comments except [technical debt](docs/dev/TechnicalDebt.md), Conventional Commits.
+- Format C and C++ with the project's [clang-format](https://clang.llvm.org/docs/ClangFormat.html) style (`.clang-format`, LLVM base: 4-space indent, 120 columns). The repo ships [pre-commit](https://pre-commit.com) hooks (`.pre-commit-config.yaml`); install them with `pre-commit install` and run `pre-commit run --all-files` before opening a pull request. CI enforces the same checks. Vendored code under `3rdparty/` is excluded.
 - Every function either does exactly what it is supposed to or throws. Unimplemented exports call `NotImplemented_nid_no_patch(__func__)` (see [libSceAudioIn](core/libs/prx/libSceAudioIn/Export.cpp)).
 - Pull requests that add or change shader instruction semantics say where they come from: measured on hardware (which GPU and what was checked, e.g. with the [hardware oracle](docs/dev/HW_ORACLE.md)) or the exact source (ISA section, LLVM, ACO or Mesa file). Reviewers check the semantics on hardware. Cases the source doesn't settle throw, and behaviour not verified on hardware is recorded in [technical debt](docs/dev/TechnicalDebt.md).
 - A silent stub is allowed only when it unblocks a title and only affects the UI; add it to [silent stubs](docs/dev/TechnicalDebt.md#silent-stubs).

@@ -5,12 +5,7 @@
 
 extern "C" {
 
-int APS5_VABI scePlayerInvitationDialogTerminate(void) {
- return 0;
-}
+int APS5_VABI scePlayerInvitationDialogTerminate(void) { return 0; }
 
-int APS5_VABI scePlayerInvitationDialogUpdateStatus(void) {
- return 0;
-}
-
+int APS5_VABI scePlayerInvitationDialogUpdateStatus(void) { return 0; }
 }

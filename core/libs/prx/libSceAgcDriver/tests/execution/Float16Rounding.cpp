@@ -22,10 +22,9 @@ alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 25> RoundingCode{
-    0x34020082, 0x34060084, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
-    0x7e1402ff, 0xabcdabcd, 0x7e1602ff, 0xabcdabcd, 0x7e1802ff, 0xabcdabcd, 0xbf8c3f70, 0x7e141504,
-    0x64160d05, 0x6a180d05, 0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03,
-    0xbf810000,
+    0x34020082, 0x34060084, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601, 0x7e1402ff,
+    0xabcdabcd, 0x7e1602ff, 0xabcdabcd, 0x7e1802ff, 0xabcdabcd, 0xbf8c3f70, 0x7e141504, 0x64160d05, 0x6a180d05,
+    0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03, 0xbf810000,
 };
 
 struct Vector {
@@ -296,7 +295,8 @@ constexpr std::array<const char*, 3> Names{"v_cvt_f16_f32", "v_add_f16", "v_mul_
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -305,9 +305,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-bool IsNan16(std::uint32_t bits) {
-    return (bits & 0x7fffu) > 0x7c00u;
-}
+bool IsNan16(std::uint32_t bits) { return (bits & 0x7fffu) > 0x7c00u; }
 
 bool Matches(std::uint32_t actual, std::uint32_t expected) {
     return actual == expected || ((actual >> 16u) == (expected >> 16u) && IsNan16(actual) && IsNan16(expected));
@@ -328,14 +326,14 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t cou
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(RoundingCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -348,7 +346,10 @@ void Check(std::uint32_t first, std::uint32_t count) {
         for (std::uint32_t column = 0; column < Names.size(); ++column) {
             const auto expected = vector.expected[column];
             const auto actual = Output[lane * Results + column];
-            Require(Matches(actual, expected), std::string("f16 rounding: vector ") + std::to_string(first + lane) + " (" + Hex(vector.a) + ", " + Hex(vector.b) + ", " + Hex(vector.c) + ") " + Names[column] + " is " + Hex(actual) + ", expected " + Hex(expected));
+            Require(Matches(actual, expected), std::string("f16 rounding: vector ") + std::to_string(first + lane) +
+                                                   " (" + Hex(vector.a) + ", " + Hex(vector.b) + ", " + Hex(vector.c) +
+                                                   ") " + Names[column] + " is " + Hex(actual) + ", expected " +
+                                                   Hex(expected));
         }
     }
 }
@@ -358,7 +359,8 @@ void Check(std::uint32_t first, std::uint32_t count) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         constexpr std::uint32_t total = sizeof(Vectors) / sizeof(Vectors[0]);
         for (std::uint32_t first = 0; first < total; first += Threads) {
             const auto count = std::min(Threads, total - first);

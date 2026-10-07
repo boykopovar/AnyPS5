@@ -196,23 +196,34 @@ struct FontLibNative {
     std::uint8_t reserved_0xe8[0x18];
 };
 
-using DriverPixelResolutionFunction = std::uint32_t (APS5_VABI*)();
-using DriverInitFunction = int (APS5_VABI*)(const FontMemory* memory, FontLibNative* library);
-using DriverTermFunction = int (APS5_VABI*)(FontLibNative* library);
-using DriverSupportFunction = int (APS5_VABI*)(FontLibNative* library, std::uint32_t formats);
-using DriverOpenFunction = int (APS5_VABI*)(FontLibNative* library, std::uint32_t mode, const void* fontAddress, std::uint32_t fontSize, std::uint32_t subFontIndex, std::uint32_t uniqueWord, FontObj** inoutFontObj);
-using DriverCloseFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t flags);
-using DriverScaleFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint16_t* outUnitsPerEm, float* outScale);
-using DriverMetricFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t metricId, std::uint16_t* outMetric);
-using DriverGlyphsCountFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t* outCount);
-using DriverGlyphIndexFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t codepoint, std::uint32_t* outGlyphIndex);
-using DriverSetCharWithDpiFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t dpiX, std::uint32_t dpiY, float scaleX, float scaleY, float* outScaleX, float* outScaleY);
-using DriverSetCharDefaultDpiFunction = int (APS5_VABI*)(FontObj* fontObj, float scaleX, float scaleY, float* outScaleX, float* outScaleY);
-using DriverComputeLayoutFunction = int (APS5_VABI*)(FontObj* fontObj, const StyleStateBlock* style, std::uint8_t* outWords);
-using DriverLoadGlyphCachedFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t glyphIndex, std::int32_t mode, std::uint64_t* outWords);
-using DriverGetGlyphMetricsFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t* optParam2, std::uint8_t mode, std::uint8_t* outParams, FontGlyphMetrics* outMetrics);
-using DriverApplyGlyphAdjustFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t p2, std::uint32_t glyphIndex, std::int32_t p4, std::int32_t p5, std::uint32_t* inoutGlyphIndex);
-using DriverConfigureGlyphFunction = int (APS5_VABI*)(FontObj* fontObj, std::uint32_t* inParams, std::int32_t mode, std::uint32_t* inoutState);
+using DriverPixelResolutionFunction = std::uint32_t(APS5_VABI*)();
+using DriverInitFunction = int(APS5_VABI*)(const FontMemory* memory, FontLibNative* library);
+using DriverTermFunction = int(APS5_VABI*)(FontLibNative* library);
+using DriverSupportFunction = int(APS5_VABI*)(FontLibNative* library, std::uint32_t formats);
+using DriverOpenFunction = int(APS5_VABI*)(FontLibNative* library, std::uint32_t mode, const void* fontAddress,
+                                           std::uint32_t fontSize, std::uint32_t subFontIndex, std::uint32_t uniqueWord,
+                                           FontObj** inoutFontObj);
+using DriverCloseFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t flags);
+using DriverScaleFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint16_t* outUnitsPerEm, float* outScale);
+using DriverMetricFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t metricId, std::uint16_t* outMetric);
+using DriverGlyphsCountFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t* outCount);
+using DriverGlyphIndexFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t codepoint,
+                                                 std::uint32_t* outGlyphIndex);
+using DriverSetCharWithDpiFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t dpiX, std::uint32_t dpiY,
+                                                     float scaleX, float scaleY, float* outScaleX, float* outScaleY);
+using DriverSetCharDefaultDpiFunction = int(APS5_VABI*)(FontObj* fontObj, float scaleX, float scaleY, float* outScaleX,
+                                                        float* outScaleY);
+using DriverComputeLayoutFunction = int(APS5_VABI*)(FontObj* fontObj, const StyleStateBlock* style,
+                                                    std::uint8_t* outWords);
+using DriverLoadGlyphCachedFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t glyphIndex, std::int32_t mode,
+                                                      std::uint64_t* outWords);
+using DriverGetGlyphMetricsFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t* optParam2, std::uint8_t mode,
+                                                      std::uint8_t* outParams, FontGlyphMetrics* outMetrics);
+using DriverApplyGlyphAdjustFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t p2, std::uint32_t glyphIndex,
+                                                       std::int32_t p4, std::int32_t p5,
+                                                       std::uint32_t* inoutGlyphIndex);
+using DriverConfigureGlyphFunction = int(APS5_VABI*)(FontObj* fontObj, std::uint32_t* inParams, std::int32_t mode,
+                                                     std::uint32_t* inoutState);
 
 struct SysDriver {
     std::uint32_t magic;
@@ -288,9 +299,10 @@ struct RendererFt {
     RendererFtBackend ft_backend;
 };
 
-using RendererCreateFunction = int (APS5_VABI*)(RendererNative* renderer);
-using RendererDestroyFunction = int (APS5_VABI*)(RendererNative* renderer);
-using RendererQueryFunction = std::uint64_t (APS5_VABI*)(RendererNative* renderer, std::uint8_t* params, std::int64_t* outPtr, std::uint8_t* outVector);
+using RendererCreateFunction = int(APS5_VABI*)(RendererNative* renderer);
+using RendererDestroyFunction = int(APS5_VABI*)(RendererNative* renderer);
+using RendererQueryFunction = std::uint64_t(APS5_VABI*)(RendererNative* renderer, std::uint8_t* params,
+                                                        std::int64_t* outPtr, std::uint8_t* outVector);
 
 struct RendererSelection {
     std::uint32_t magic;

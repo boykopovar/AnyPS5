@@ -45,39 +45,32 @@ enum class Format {
 };
 
 static bool formatIsFloat(Format f) {
-    return f == Format::F32Mono || f == Format::F32Stereo ||
-           f == Format::F32_8Ch || f == Format::F32_8ChStd;
+    return f == Format::F32Mono || f == Format::F32Stereo || f == Format::F32_8Ch || f == Format::F32_8ChStd;
 }
 
-static bool formatIsStd(Format f) {
-    return f == Format::S16_8ChStd || f == Format::F32_8ChStd;
-}
+static bool formatIsStd(Format f) { return f == Format::S16_8ChStd || f == Format::F32_8ChStd; }
 
 static int channelsForFormat(Format f) {
     switch (f) {
-        case Format::S16Mono:
-        case Format::F32Mono:
-            return 1;
-        case Format::S16Stereo:
-        case Format::F32Stereo:
-            return 2;
-        case Format::S16_8Ch:
-        case Format::F32_8Ch:
-        case Format::S16_8ChStd:
-        case Format::F32_8ChStd:
-            return 8;
-        default:
-            throw std::runtime_error("channelsForFormat: unknown format");
+    case Format::S16Mono:
+    case Format::F32Mono:
+        return 1;
+    case Format::S16Stereo:
+    case Format::F32Stereo:
+        return 2;
+    case Format::S16_8Ch:
+    case Format::F32_8Ch:
+    case Format::S16_8ChStd:
+    case Format::F32_8ChStd:
+        return 8;
+    default:
+        throw std::runtime_error("channelsForFormat: unknown format");
     }
 }
 
-static SDL_AudioFormat sdlFormat(Format f) {
-    return formatIsFloat(f) ? AUDIO_F32SYS : AUDIO_S16SYS;
-}
+static SDL_AudioFormat sdlFormat(Format f) { return formatIsFloat(f) ? AUDIO_F32SYS : AUDIO_S16SYS; }
 
-static std::uint32_t bytesPerSample(Format f) {
-    return formatIsFloat(f) ? sizeof(float) : sizeof(std::int16_t);
-}
+static std::uint32_t bytesPerSample(Format f) { return formatIsFloat(f) ? sizeof(float) : sizeof(std::int16_t); }
 
 struct Port {
     bool used = false;
@@ -169,7 +162,7 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
             for (std::uint32_t c = 0; c < ch; c++) {
                 const auto srcCh = isStd ? STD_8CH_MAP[c] : c;
                 dst[fr * ch + c] = src[fr * ch + srcCh] *
-                    (static_cast<float>(port.volume[c]) / static_cast<float>(DEFAULT_VOLUME)) * mixLevel;
+                                   (static_cast<float>(port.volume[c]) / static_cast<float>(DEFAULT_VOLUME)) * mixLevel;
             }
         }
     } else {
@@ -178,11 +171,10 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
         for (std::uint32_t fr = 0; fr < frames; fr++) {
             for (std::uint32_t c = 0; c < ch; c++) {
                 const auto srcCh = isStd ? STD_8CH_MAP[c] : c;
-                std::int64_t s = static_cast<std::int64_t>(src[fr * ch + srcCh]) *
-                    port.volume[c] * port.mixLevel / (static_cast<std::int64_t>(DEFAULT_VOLUME) * DEFAULT_VOLUME);
-                s = std::clamp(s,
-                    static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::min()),
-                    static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::max()));
+                std::int64_t s = static_cast<std::int64_t>(src[fr * ch + srcCh]) * port.volume[c] * port.mixLevel /
+                                 (static_cast<std::int64_t>(DEFAULT_VOLUME) * DEFAULT_VOLUME);
+                s = std::clamp(s, static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::min()),
+                               static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::max()));
                 dst[fr * ch + c] = static_cast<std::int16_t>(s);
             }
         }
@@ -194,7 +186,8 @@ static void queueAudio(Port& port, const void* data) {
     // Without an SDL device there is nothing to queue: the callers already sleep for the block's
     // duration so the game's timing holds. A null pointer is the documented way to wait until the
     // port's queued audio has been output (sceAudioOutOutput(handle, NULL)); it queues nothing.
-    if (port.device == 0) return;
+    if (port.device == 0)
+        return;
     if (data == nullptr) {
         const std::uint64_t waitStart = sceKernelGetProcessTime();
         while (SDL_GetQueuedAudioSize(port.device) > 0) {
@@ -212,14 +205,13 @@ static void queueAudio(Port& port, const void* data) {
 
     std::vector<std::uint8_t> prepareBuf;
     const void* prepared = prepareBuffer(port, data, prepareBuf);
-    const std::uint32_t preparedSize = port.samplesNum *
-        static_cast<std::uint32_t>(port.channels) * bytesPerSample(port.format);
+    const std::uint32_t preparedSize =
+        port.samplesNum * static_cast<std::uint32_t>(port.channels) * bytesPerSample(port.format);
 
     SDL_AudioCVT cvt{};
-    const int cvtResult = SDL_BuildAudioCVT(
-        &cvt,
-        sdlFormat(port.format), static_cast<Uint8>(port.channels), static_cast<int>(port.freq),
-        port.spec.format, port.spec.channels, port.spec.freq);
+    const int cvtResult =
+        SDL_BuildAudioCVT(&cvt, sdlFormat(port.format), static_cast<Uint8>(port.channels), static_cast<int>(port.freq),
+                          port.spec.format, port.spec.channels, port.spec.freq);
 
     if (cvtResult < 0) {
         throw std::runtime_error(std::string("SDL_BuildAudioCVT: ") + SDL_GetError());
@@ -241,12 +233,9 @@ static void queueAudio(Port& port, const void* data) {
         queueSize = static_cast<std::uint32_t>(cvt.len_cvt);
     }
 
-    const std::uint64_t bufferUs = port.freq != 0
-        ? (1000000ULL * port.samplesNum) / port.freq
-        : 0;
-    const std::uint32_t buffers = bufferUs != 0
-        ? static_cast<std::uint32_t>((TARGET_LATENCY_US + bufferUs - 1) / bufferUs)
-        : 2u;
+    const std::uint64_t bufferUs = port.freq != 0 ? (1000000ULL * port.samplesNum) / port.freq : 0;
+    const std::uint32_t buffers =
+        bufferUs != 0 ? static_cast<std::uint32_t>((TARGET_LATENCY_US + bufferUs - 1) / bufferUs) : 2u;
     const std::uint32_t minQueued = queueSize * std::clamp(buffers, 2u, 16u);
     const std::uint64_t waitStart = sceKernelGetProcessTime();
 
@@ -264,14 +253,13 @@ static void queueAudio(Port& port, const void* data) {
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
         throw std::runtime_error(std::string("SDL_QueueAudio: ") + SDL_GetError());
     }
-    // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize, SDL_GetQueuedAudioSize(port.device));
+    // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize,
+    // SDL_GetQueuedAudioSize(port.device));
 }
 
 static bool portTypeValid(int type) {
-    return (type >= PORT_TYPE_MAIN && type <= PORT_TYPE_PADSPK) ||
-           type == PORT_TYPE_VIBRATION ||
-           type == PORT_TYPE_AUDIO3D ||
-           type == PORT_TYPE_AUX;
+    return (type >= PORT_TYPE_MAIN && type <= PORT_TYPE_PADSPK) || type == PORT_TYPE_VIBRATION ||
+           type == PORT_TYPE_AUDIO3D || type == PORT_TYPE_AUX;
 }
 
 static Port* getPort(int handle) {
@@ -284,12 +272,10 @@ static Port* getPort(int handle) {
 
 extern "C" {
 
-int APS5_VABI sceAudioOutInit() {
-    return 0;
-}
+int APS5_VABI sceAudioOutInit() { return 0; }
 
-int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len,
-    std::uint32_t freq, std::uint32_t param) {
+int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len, std::uint32_t freq,
+                              std::uint32_t param) {
     (void)userId;
     if (!portTypeValid(type)) {
         return -2144993270;
@@ -306,16 +292,32 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
 
     Format format = Format::Unknown;
     switch (param & FORMAT_MASK) {
-        case 0: format = Format::S16Mono; break;
-        case 1: format = Format::S16Stereo; break;
-        case 2: format = Format::S16_8Ch; break;
-        case 3: format = Format::F32Mono; break;
-        case 4: format = Format::F32Stereo; break;
-        case 5: format = Format::F32_8Ch; break;
-        case 6: format = Format::S16_8ChStd; break;
-        case 7: format = Format::F32_8ChStd; break;
-        default:
-            throw std::runtime_error("sceAudioOutOpen: unknown format param");
+    case 0:
+        format = Format::S16Mono;
+        break;
+    case 1:
+        format = Format::S16Stereo;
+        break;
+    case 2:
+        format = Format::S16_8Ch;
+        break;
+    case 3:
+        format = Format::F32Mono;
+        break;
+    case 4:
+        format = Format::F32Stereo;
+        break;
+    case 5:
+        format = Format::F32_8Ch;
+        break;
+    case 6:
+        format = Format::S16_8ChStd;
+        break;
+    case 7:
+        format = Format::F32_8ChStd;
+        break;
+    default:
+        throw std::runtime_error("sceAudioOutOpen: unknown format param");
     }
 
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -338,7 +340,9 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
                 openDevice(port);
             }
             static const bool trace = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
-            if (trace) std::fprintf(stderr, "[audioout] port %d: type %d, %u samples at %u Hz, format %d, device %u\n", i + 1, type, len, freq, static_cast<int>(format), static_cast<unsigned>(port.device));
+            if (trace)
+                std::fprintf(stderr, "[audioout] port %d: type %d, %u samples at %u Hz, format %d, device %u\n", i + 1,
+                             type, len, freq, static_cast<int>(format), static_cast<unsigned>(port.device));
             return i + 1;
         }
     }
@@ -376,7 +380,8 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) {
 
     queueAudio(*port, ptr);
     port->lastOutputTime = sceKernelGetProcessTime();
-    if (ptr != nullptr) port->lastDataOutputTime = port->lastOutputTime;
+    if (ptr != nullptr)
+        port->lastDataOutputTime = port->lastOutputTime;
     return static_cast<int>(port->samplesNum);
 }
 
@@ -423,14 +428,16 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     }
 
     for (std::uint32_t i = 0; i < num; i++) {
-        if (auto* port = getPort(param[i].handle)) queueAudio(*port, param[i].ptr);
+        if (auto* port = getPort(param[i].handle))
+            queueAudio(*port, param[i].ptr);
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
     for (std::uint32_t i = 0; i < num; i++) {
         if (auto* port = getPort(param[i].handle)) {
             port->lastOutputTime = done;
-            if (param[i].ptr != nullptr) port->lastDataOutputTime = done;
+            if (param[i].ptr != nullptr)
+                port->lastDataOutputTime = done;
         }
     }
 
@@ -453,10 +460,14 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
         }
         int srcIdx = i;
         if (isStd) {
-            if (i == 4) srcIdx = 6;
-            else if (i == 5) srcIdx = 7;
-            else if (i == 6) srcIdx = 4;
-            else if (i == 7) srcIdx = 5;
+            if (i == 4)
+                srcIdx = 6;
+            else if (i == 5)
+                srcIdx = 7;
+            else if (i == 6)
+                srcIdx = 4;
+            else if (i == 7)
+                srcIdx = 5;
         }
         port->volume[i] = vol[srcIdx];
     }
@@ -491,28 +502,28 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
     state->activeState = 0;
     state->reserved[0] = 0;
     switch (port->type) {
-        case PORT_TYPE_MAIN:
-        case PORT_TYPE_BGM:
-        case PORT_TYPE_AUDIO3D:
-            state->output = 1;
-            state->channel = static_cast<std::uint8_t>(port->channels > 2 ? 2 : port->channels);
-            break;
-        case PORT_TYPE_VOICE:
-        case PORT_TYPE_PERSONAL:
-            state->output = 0x40;
-            state->channel = 1;
-            break;
-        case PORT_TYPE_PADSPK:
-        case PORT_TYPE_VIBRATION:
-            state->output = 4;
-            state->channel = 1;
-            break;
-        case PORT_TYPE_AUX:
-            state->output = 0x80;
-            state->channel = 0;
-            break;
-        default:
-            throw std::runtime_error("sceAudioOutGetPortState: unknown port type");
+    case PORT_TYPE_MAIN:
+    case PORT_TYPE_BGM:
+    case PORT_TYPE_AUDIO3D:
+        state->output = 1;
+        state->channel = static_cast<std::uint8_t>(port->channels > 2 ? 2 : port->channels);
+        break;
+    case PORT_TYPE_VOICE:
+    case PORT_TYPE_PERSONAL:
+        state->output = 0x40;
+        state->channel = 1;
+        break;
+    case PORT_TYPE_PADSPK:
+    case PORT_TYPE_VIBRATION:
+        state->output = 4;
+        state->channel = 1;
+        break;
+    case PORT_TYPE_AUX:
+        state->output = 0x80;
+        state->channel = 0;
+        break;
+    default:
+        throw std::runtime_error("sceAudioOutGetPortState: unknown port type");
     }
     return 0;
 }
@@ -535,5 +546,4 @@ int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, int mixLevel) {
     port->mixLevel = mixLevel;
     return 0;
 }
-
 }

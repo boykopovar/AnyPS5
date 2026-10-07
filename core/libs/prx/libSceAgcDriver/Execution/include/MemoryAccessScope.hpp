@@ -9,7 +9,8 @@ namespace AgcDriver::GuestMemory {
 class MemoryAccessScope {
 public:
     using Resolver = void (*)(void*, std::uint64_t, std::size_t, bool);
-    MemoryAccessScope(void* context, Resolver resolver) : previousContext(currentContext), previousResolver(currentResolver) {
+    MemoryAccessScope(void* context, Resolver resolver)
+        : previousContext(currentContext), previousResolver(currentResolver) {
         currentContext = context;
         currentResolver = resolver;
     }
@@ -22,7 +23,8 @@ public:
     static void Resolve(std::uint64_t address, std::size_t bytes, bool writable) {
         const auto resolver = currentResolver;
         const auto context = currentContext;
-        if (resolver == nullptr || bytes == 0) return;
+        if (resolver == nullptr || bytes == 0)
+            return;
         const MemoryAccessScope suspended(nullptr, nullptr);
         resolver(context, address, bytes, writable);
     }

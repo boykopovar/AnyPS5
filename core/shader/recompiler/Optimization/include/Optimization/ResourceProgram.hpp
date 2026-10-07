@@ -28,7 +28,8 @@ struct ResourceCapture {
     // key over the code, the plan) before the walk.
     std::uint64_t sourceNanoseconds = 0;
 };
-[[nodiscard]] std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime);
+[[nodiscard]] std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request,
+                                                                      const SrtRuntime& runtime);
 
 // The resolved source of a request (its cache entry with the plan built), for a driver that
 // memoizes it per registered shader: ResolveSource is what CaptureResources does before the walk
@@ -41,7 +42,8 @@ struct SourceHandle {
     std::shared_ptr<SourceEntry> source;
 };
 [[nodiscard]] std::shared_ptr<const SourceHandle> ResolveSource(const RecompileRequest& request);
-[[nodiscard]] std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime, const SourceHandle& handle);
+[[nodiscard]] std::shared_ptr<const ResourceCapture>
+CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime, const SourceHandle& handle);
 
 }
 

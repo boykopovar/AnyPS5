@@ -31,89 +31,99 @@ std::set<int32_t> g_openKeyboards;
 
 extern "C" {
 
-int APS5_VABI sceImeClose_nid_postfix(void) {
- return ErrorNotOpened;
-}
+int APS5_VABI sceImeClose_nid_postfix(void) { return ErrorNotOpened; }
 
 int APS5_VABI sceImeGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
- if (!param || !width || !height) return ErrorInvalidAddress;
- if (param->type > TypeNumber) return ErrorInvalidType;
- if ((param->option & ~ValidOptions) != 0) return ErrorInvalidOption;
- const uint32_t scale = (param->option & OptionUseOver2K) != 0 ? 2 : 1;
- *width = (param->type == TypeNumber ? 370u : 793u) * scale;
- *height = (param->type == TypeNumber ? 402u : 408u) * scale;
- return 0;
+    if (!param || !width || !height)
+        return ErrorInvalidAddress;
+    if (param->type > TypeNumber)
+        return ErrorInvalidType;
+    if ((param->option & ~ValidOptions) != 0)
+        return ErrorInvalidOption;
+    const uint32_t scale = (param->option & OptionUseOver2K) != 0 ? 2 : 1;
+    *width = (param->type == TypeNumber ? 370u : 793u) * scale;
+    *height = (param->type == TypeNumber ? 402u : 408u) * scale;
+    return 0;
 }
 
 int APS5_VABI sceImeKeyboardClose(int32_t user_id) {
- std::lock_guard lock(g_keyboardMutex);
- if (g_openKeyboards.erase(user_id) == 0) throw std::logic_error("sceImeKeyboardClose: keyboard not open for user " + std::to_string(user_id));
- return 0;
+    std::lock_guard lock(g_keyboardMutex);
+    if (g_openKeyboards.erase(user_id) == 0)
+        throw std::logic_error("sceImeKeyboardClose: keyboard not open for user " + std::to_string(user_id));
+    return 0;
 }
 
 int APS5_VABI sceImeKeyboardGetInfo(uint32_t resource_id, KeyboardInfo* info) {
- (void)resource_id;
- if (!info) return ErrorInvalidAddress;
- std::lock_guard lock(g_keyboardMutex);
- return g_openKeyboards.empty() ? ErrorNotOpened : ErrorNoResourceId;
+    (void)resource_id;
+    if (!info)
+        return ErrorInvalidAddress;
+    std::lock_guard lock(g_keyboardMutex);
+    return g_openKeyboards.empty() ? ErrorNotOpened : ErrorNoResourceId;
 }
 
 int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids) {
- if (!resource_ids) return ErrorInvalidAddress;
- if (user_id == UserIdInvalid) return ErrorInvalidUserId;
- *resource_ids = {};
- resource_ids->user_id = user_id;
- std::lock_guard lock(g_keyboardMutex);
- return g_openKeyboards.contains(user_id) ? ErrorConnectionFailed : ErrorNotOpened;
+    if (!resource_ids)
+        return ErrorInvalidAddress;
+    if (user_id == UserIdInvalid)
+        return ErrorInvalidUserId;
+    *resource_ids = {};
+    resource_ids->user_id = user_id;
+    std::lock_guard lock(g_keyboardMutex);
+    return g_openKeyboards.contains(user_id) ? ErrorConnectionFailed : ErrorNotOpened;
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
- if (!param) APS5_INVALID_ARG_EX;
- std::lock_guard lock(g_keyboardMutex);
- if (!g_openKeyboards.insert(user_id).second) throw std::logic_error("sceImeKeyboardOpen: keyboard already open for user " + std::to_string(user_id));
- return 0;
+    if (!param)
+        APS5_INVALID_ARG_EX;
+    std::lock_guard lock(g_keyboardMutex);
+    if (!g_openKeyboards.insert(user_id).second)
+        throw std::logic_error("sceImeKeyboardOpen: keyboard already open for user " + std::to_string(user_id));
+    return 0;
 }
 
 int APS5_VABI sceImeKeyboardSetMode(int32_t user_id, uint32_t mode) {
- if (user_id == UserIdInvalid) return ErrorInvalidUserId;
- std::lock_guard lock(g_keyboardMutex);
- if (!g_openKeyboards.contains(user_id)) return ErrorNotOpened;
- return (mode & ~ValidKeyboardModes) == 0 ? 0 : ErrorInvalidMode;
+    if (user_id == UserIdInvalid)
+        return ErrorInvalidUserId;
+    std::lock_guard lock(g_keyboardMutex);
+    if (!g_openKeyboards.contains(user_id))
+        return ErrorNotOpened;
+    return (mode & ~ValidKeyboardModes) == 0 ? 0 : ErrorInvalidMode;
 }
 
 int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended) {
- (void)param;
- (void)extended;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)param;
+    (void)extended;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 void APS5_VABI sceImeParamInit(Param* param) {
- if (!param) return;
- std::memset(param, 0, sizeof(*param));
- param->user_id = -1;
+    if (!param)
+        return;
+    std::memset(param, 0, sizeof(*param));
+    param->user_id = -1;
 }
 
 int APS5_VABI sceImeSetCaret(const Caret* caret) {
- (void)caret;
- return ErrorNotOpened;
+    (void)caret;
+    return ErrorNotOpened;
 }
 
 int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length) {
- (void)text;
- (void)length;
- return ErrorNotOpened;
+    (void)text;
+    (void)length;
+    return ErrorNotOpened;
 }
 
 int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geometry) {
- (void)mode;
- (void)geometry;
- return ErrorNotOpened;
+    (void)mode;
+    (void)geometry;
+    return ErrorNotOpened;
 }
 
 int APS5_VABI sceImeUpdate(EventHandler handler) {
- if (!handler) APS5_INVALID_ARG_EX;
- return 0;
+    if (!handler)
+        APS5_INVALID_ARG_EX;
+    return 0;
 }
-
 }

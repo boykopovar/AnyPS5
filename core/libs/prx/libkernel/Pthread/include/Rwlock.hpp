@@ -17,7 +17,6 @@ int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockTimedwrlock(PthreadRwlock* rwlock, KernelUseconds usec);
 int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
-
 }
 
 #endif

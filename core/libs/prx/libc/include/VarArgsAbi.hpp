@@ -20,13 +20,10 @@ struct VaListLayout {
     void* regSaveArea;
 };
 
-inline void FillRegSaveArea(
-    RegSaveArea& regs,
-    std::uint64_t gp0, std::uint64_t gp1, std::uint64_t gp2,
-    std::uint64_t gp3, std::uint64_t gp4, std::uint64_t gp5,
-    X86_64::Xmm fp0, X86_64::Xmm fp1, X86_64::Xmm fp2, X86_64::Xmm fp3,
-    X86_64::Xmm fp4, X86_64::Xmm fp5, X86_64::Xmm fp6, X86_64::Xmm fp7
-) {
+inline void FillRegSaveArea(RegSaveArea& regs, std::uint64_t gp0, std::uint64_t gp1, std::uint64_t gp2,
+                            std::uint64_t gp3, std::uint64_t gp4, std::uint64_t gp5, X86_64::Xmm fp0, X86_64::Xmm fp1,
+                            X86_64::Xmm fp2, X86_64::Xmm fp3, X86_64::Xmm fp4, X86_64::Xmm fp5, X86_64::Xmm fp6,
+                            X86_64::Xmm fp7) {
     regs.gp[0] = gp0;
     regs.gp[1] = gp1;
     regs.gp[2] = gp2;
@@ -43,10 +40,8 @@ inline void FillRegSaveArea(
     regs.fp[7] = fp7;
 }
 
-inline std::va_list* BuildVaList(
-    VaListLayout& layout, RegSaveArea& regs,
-    unsigned int consumedGpRegisters, void* overflowArgArea
-) {
+inline std::va_list* BuildVaList(VaListLayout& layout, RegSaveArea& regs, unsigned int consumedGpRegisters,
+                                 void* overflowArgArea) {
     layout.gpOffset = consumedGpRegisters * 8u;
     layout.fpOffset = 6u * 8u;
     layout.overflowArgArea = overflowArgArea;

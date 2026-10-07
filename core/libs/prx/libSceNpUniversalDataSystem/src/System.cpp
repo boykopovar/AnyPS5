@@ -14,9 +14,7 @@ int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInit
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
-int APS5_VABI sceNpUniversalDataSystemTerminate(void) {
-    return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
-}
+int APS5_VABI sceNpUniversalDataSystemTerminate(void) { return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK; }
 
 int APS5_VABI sceNpUniversalDataSystemGetMemoryStat(NpUniversalDataSystemMemoryStat* stat) {
     if (stat == nullptr) {
@@ -33,5 +31,4 @@ int APS5_VABI sceNpUniversalDataSystemGetStorageStat(int context, NpUniversalDat
     *stat = {};
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
-
 }

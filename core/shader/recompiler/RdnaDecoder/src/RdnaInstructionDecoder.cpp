@@ -18,9 +18,9 @@ namespace {
 
 bool instructionHasLiteral(const RdnaInstruction& instruction) {
     return instruction.source0.kind == RdnaOperandKind::LiteralConstant ||
-        instruction.source1.kind == RdnaOperandKind::LiteralConstant ||
-        instruction.source2.kind == RdnaOperandKind::LiteralConstant ||
-        instruction.source3.kind == RdnaOperandKind::LiteralConstant;
+           instruction.source1.kind == RdnaOperandKind::LiteralConstant ||
+           instruction.source2.kind == RdnaOperandKind::LiteralConstant ||
+           instruction.source3.kind == RdnaOperandKind::LiteralConstant;
 }
 
 void applyLiteral(RdnaOperand& operand, std::uint32_t literal) {
@@ -58,65 +58,104 @@ RdnaInstruction RdnaInstructionDecoder::decodeAt(std::span<const std::uint32_t> 
 RdnaInstructionFamily GetRdnaInstructionFamily(std::uint32_t word) {
     if ((word & 0x80000000u) == 0u) {
         switch ((word >> 25u) & 0x3fu) {
-            case 0x3eu: return RdnaInstructionFamily::VOPC;
-            case 0x3fu: return RdnaInstructionFamily::VOP1;
-            default: return RdnaInstructionFamily::VOP2;
+        case 0x3eu:
+            return RdnaInstructionFamily::VOPC;
+        case 0x3fu:
+            return RdnaInstructionFamily::VOP1;
+        default:
+            return RdnaInstructionFamily::VOP2;
         }
     }
 
     if ((word & 0xc0000000u) == 0x80000000u) {
         const std::uint32_t opcode = (word >> 23u) & 0x7fu;
         switch (opcode) {
-            case 0x7du: return RdnaInstructionFamily::SOP1;
-            case 0x7eu: return RdnaInstructionFamily::SOPC;
-            case 0x7fu: return RdnaInstructionFamily::SOPP;
-            default: return opcode >= 0x60u ? RdnaInstructionFamily::SOPK : RdnaInstructionFamily::SOP2;
+        case 0x7du:
+            return RdnaInstructionFamily::SOP1;
+        case 0x7eu:
+            return RdnaInstructionFamily::SOPC;
+        case 0x7fu:
+            return RdnaInstructionFamily::SOPP;
+        default:
+            return opcode >= 0x60u ? RdnaInstructionFamily::SOPK : RdnaInstructionFamily::SOP2;
         }
     }
 
     switch (word >> 26u) {
-        case 0x32u: return RdnaInstructionFamily::VINTRP;
-        case 0x33u: return RdnaInstructionFamily::VOP3P;
-        case 0x35u: return RdnaInstructionFamily::VOP3;
-        case 0x36u: return RdnaInstructionFamily::DS;
-        case 0x37u: return RdnaInstructionFamily::FLAT;
-        case 0x38u: return RdnaInstructionFamily::MUBUF;
-        case 0x3au: return RdnaInstructionFamily::MTBUF;
-        case 0x3cu: return RdnaInstructionFamily::MIMG;
-        case 0x3du: return RdnaInstructionFamily::SMEM;
-        case 0x3eu: return RdnaInstructionFamily::EXP;
-        default: return RdnaInstructionFamily::Unknown;
+    case 0x32u:
+        return RdnaInstructionFamily::VINTRP;
+    case 0x33u:
+        return RdnaInstructionFamily::VOP3P;
+    case 0x35u:
+        return RdnaInstructionFamily::VOP3;
+    case 0x36u:
+        return RdnaInstructionFamily::DS;
+    case 0x37u:
+        return RdnaInstructionFamily::FLAT;
+    case 0x38u:
+        return RdnaInstructionFamily::MUBUF;
+    case 0x3au:
+        return RdnaInstructionFamily::MTBUF;
+    case 0x3cu:
+        return RdnaInstructionFamily::MIMG;
+    case 0x3du:
+        return RdnaInstructionFamily::SMEM;
+    case 0x3eu:
+        return RdnaInstructionFamily::EXP;
+    default:
+        return RdnaInstructionFamily::Unknown;
     }
 }
 
-RdnaInstruction DecodeRdnaInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
+RdnaInstruction DecodeRdnaInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code,
+                                      std::uint32_t wordIndex) {
     if (wordIndex >= code.size()) {
         throw std::out_of_range("word index is out of the code span bounds");
     }
 
     switch (GetRdnaInstructionFamily(code[wordIndex])) {
-        case RdnaInstructionFamily::SOP1: return DecodeRdnaSop1(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::SOP2: return DecodeRdnaSop2(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::SOPK: return DecodeRdnaSopk(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::SOPC: return DecodeRdnaSopc(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::SOPP: return DecodeRdnaSopp(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::VOP1: return DecodeRdnaVop1(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::VOP2: return DecodeRdnaVop2(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::VOP3: return DecodeRdnaVop3(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::VOP3P: return DecodeRdnaVop3p(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::VOPC: return DecodeRdnaVopc(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::VINTRP: return DecodeRdnaVintrp(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::SMEM: return DecodeRdnaSmem(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::MUBUF: return DecodeRdnaMubuf(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::MTBUF: return DecodeRdnaMtbuf(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::FLAT: return DecodeRdnaFlat(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::DS: return DecodeRdnaDs(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::MIMG: return DecodeRdnaMimg(programCounter, code, wordIndex);
-        case RdnaInstructionFamily::EXP: return DecodeRdnaExportOp(programCounter, code, wordIndex);
-        default: break;
+    case RdnaInstructionFamily::SOP1:
+        return DecodeRdnaSop1(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::SOP2:
+        return DecodeRdnaSop2(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::SOPK:
+        return DecodeRdnaSopk(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::SOPC:
+        return DecodeRdnaSopc(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::SOPP:
+        return DecodeRdnaSopp(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::VOP1:
+        return DecodeRdnaVop1(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::VOP2:
+        return DecodeRdnaVop2(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::VOP3:
+        return DecodeRdnaVop3(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::VOP3P:
+        return DecodeRdnaVop3p(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::VOPC:
+        return DecodeRdnaVopc(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::VINTRP:
+        return DecodeRdnaVintrp(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::SMEM:
+        return DecodeRdnaSmem(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::MUBUF:
+        return DecodeRdnaMubuf(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::MTBUF:
+        return DecodeRdnaMtbuf(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::FLAT:
+        return DecodeRdnaFlat(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::DS:
+        return DecodeRdnaDs(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::MIMG:
+        return DecodeRdnaMimg(programCounter, code, wordIndex);
+    case RdnaInstructionFamily::EXP:
+        return DecodeRdnaExportOp(programCounter, code, wordIndex);
+    default:
+        break;
     }
 
-    throw std::invalid_argument("unknown RDNA instruction family at program counter " + toHexString(programCounter) + " raw word " + toHexString(code[wordIndex]));
+    throw std::invalid_argument("unknown RDNA instruction family at program counter " + toHexString(programCounter) +
+                                " raw word " + toHexString(code[wordIndex]));
 }
 
 RdnaProgram DecodeRdnaFrontProgram(std::span<const std::uint32_t> front) {
@@ -161,7 +200,8 @@ void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program
         wordIndex += instruction.wordCount;
 
         if (IsDirectBranchOpcode(instruction.op)) {
-            const std::uint32_t targetIndex = instruction.branchTarget / static_cast<std::uint32_t>(sizeof(std::uint32_t));
+            const std::uint32_t targetIndex =
+                instruction.branchTarget / static_cast<std::uint32_t>(sizeof(std::uint32_t));
             if (targetIndex >= code.size()) {
                 throw std::out_of_range("branch target is out of the code span bounds");
             }
@@ -211,25 +251,49 @@ RdnaOperand DecodeRdnaScalarSource(std::uint32_t code, std::uint32_t programCoun
     }
 
     switch (code) {
-        case 106u: operand.kind = RdnaOperandKind::VccLo; return operand;
-        case 107u: operand.kind = RdnaOperandKind::VccHi; return operand;
-        case 124u: operand.kind = RdnaOperandKind::M0; return operand;
-        case 125u: operand.kind = RdnaOperandKind::Null; return operand;
-        case 126u: operand.kind = RdnaOperandKind::ExecLo; return operand;
-        case 127u: operand.kind = RdnaOperandKind::ExecHi; return operand;
-        case 239u: operand.kind = RdnaOperandKind::PopsExitingWaveId; return operand;
-        case 248u:
-            operand.kind = RdnaOperandKind::FloatInlineConstant;
-            operand.value = std::bit_cast<std::uint32_t>(0.15915494309189535f);
-            return operand;
-        case 251u: operand.kind = RdnaOperandKind::VccZ; return operand;
-        case 252u: operand.kind = RdnaOperandKind::ExecZ; return operand;
-        case 253u: operand.kind = RdnaOperandKind::Scc; return operand;
-        case 255u: operand.kind = RdnaOperandKind::LiteralConstant; return operand;
-        default: break;
+    case 106u:
+        operand.kind = RdnaOperandKind::VccLo;
+        return operand;
+    case 107u:
+        operand.kind = RdnaOperandKind::VccHi;
+        return operand;
+    case 124u:
+        operand.kind = RdnaOperandKind::M0;
+        return operand;
+    case 125u:
+        operand.kind = RdnaOperandKind::Null;
+        return operand;
+    case 126u:
+        operand.kind = RdnaOperandKind::ExecLo;
+        return operand;
+    case 127u:
+        operand.kind = RdnaOperandKind::ExecHi;
+        return operand;
+    case 239u:
+        operand.kind = RdnaOperandKind::PopsExitingWaveId;
+        return operand;
+    case 248u:
+        operand.kind = RdnaOperandKind::FloatInlineConstant;
+        operand.value = std::bit_cast<std::uint32_t>(0.15915494309189535f);
+        return operand;
+    case 251u:
+        operand.kind = RdnaOperandKind::VccZ;
+        return operand;
+    case 252u:
+        operand.kind = RdnaOperandKind::ExecZ;
+        return operand;
+    case 253u:
+        operand.kind = RdnaOperandKind::Scc;
+        return operand;
+    case 255u:
+        operand.kind = RdnaOperandKind::LiteralConstant;
+        return operand;
+    default:
+        break;
     }
 
-    throw std::invalid_argument("unsupported scalar source operand code " + std::to_string(code) + " at program counter " + std::to_string(programCounter));
+    throw std::invalid_argument("unsupported scalar source operand code " + std::to_string(code) +
+                                " at program counter " + std::to_string(programCounter));
 }
 
 RdnaOperand DecodeRdnaScalarDestination(std::uint32_t code, std::uint32_t programCounter) {
@@ -242,16 +306,30 @@ RdnaOperand DecodeRdnaScalarDestination(std::uint32_t code, std::uint32_t progra
     }
 
     switch (code) {
-        case 106u: operand.kind = RdnaOperandKind::VccLo; return operand;
-        case 107u: operand.kind = RdnaOperandKind::VccHi; return operand;
-        case 124u: operand.kind = RdnaOperandKind::M0; return operand;
-        case 125u: operand.kind = RdnaOperandKind::Null; return operand;
-        case 126u: operand.kind = RdnaOperandKind::ExecLo; return operand;
-        case 127u: operand.kind = RdnaOperandKind::ExecHi; return operand;
-        default: break;
+    case 106u:
+        operand.kind = RdnaOperandKind::VccLo;
+        return operand;
+    case 107u:
+        operand.kind = RdnaOperandKind::VccHi;
+        return operand;
+    case 124u:
+        operand.kind = RdnaOperandKind::M0;
+        return operand;
+    case 125u:
+        operand.kind = RdnaOperandKind::Null;
+        return operand;
+    case 126u:
+        operand.kind = RdnaOperandKind::ExecLo;
+        return operand;
+    case 127u:
+        operand.kind = RdnaOperandKind::ExecHi;
+        return operand;
+    default:
+        break;
     }
 
-    throw std::invalid_argument("unsupported scalar destination operand code " + std::to_string(code) + " at program counter " + std::to_string(programCounter));
+    throw std::invalid_argument("unsupported scalar destination operand code " + std::to_string(code) +
+                                " at program counter " + std::to_string(programCounter));
 }
 
 RdnaOperand DecodeRdnaVectorGpr(std::uint32_t reg) {
@@ -261,7 +339,8 @@ RdnaOperand DecodeRdnaVectorGpr(std::uint32_t reg) {
     return operand;
 }
 
-void SetRdnaRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t wordCount) {
+void SetRdnaRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> code, std::uint32_t wordIndex,
+                     std::uint32_t wordCount) {
     if (wordCount > MaxRdnaInstructionRawWords) {
         throw std::invalid_argument("raw word count exceeds the maximum instruction word capacity");
     }
@@ -275,7 +354,8 @@ void SetRdnaRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t
     }
 }
 
-void ReadRdnaLiteralOperands(std::span<const std::uint32_t> code, std::uint32_t wordIndex, RdnaInstruction& instruction) {
+void ReadRdnaLiteralOperands(std::span<const std::uint32_t> code, std::uint32_t wordIndex,
+                             RdnaInstruction& instruction) {
     if (!instructionHasLiteral(instruction)) {
         return;
     }
@@ -292,29 +372,49 @@ void ReadRdnaLiteralOperands(std::span<const std::uint32_t> code, std::uint32_t 
     SetRdnaRawWords(instruction, code, wordIndex, instruction.wordCount);
 }
 
-void SetRdnaUnsupported(RdnaInstruction& instruction, RdnaInstructionFamily family, std::uint32_t opcodeId, const char* reason) {
-    throw std::invalid_argument("unsupported RDNA instruction, family=" + std::to_string(static_cast<std::uint32_t>(family)) + " opcode=" + toHexString(opcodeId) + " reason=" + reason + " pc=" + toHexString(instruction.programCounter));
+void SetRdnaUnsupported(RdnaInstruction& instruction, RdnaInstructionFamily family, std::uint32_t opcodeId,
+                        const char* reason) {
+    throw std::invalid_argument(
+        "unsupported RDNA instruction, family=" + std::to_string(static_cast<std::uint32_t>(family)) +
+        " opcode=" + toHexString(opcodeId) + " reason=" + reason + " pc=" + toHexString(instruction.programCounter));
 }
 
 std::string RdnaOperandToString(const RdnaOperand& operand) {
     switch (operand.kind) {
-        case RdnaOperandKind::None: return "none";
-        case RdnaOperandKind::ScalarRegister: return "s" + std::to_string(operand.reg);
-        case RdnaOperandKind::VectorRegister: return "v" + std::to_string(operand.reg);
-        case RdnaOperandKind::VccLo: return "vcc_lo";
-        case RdnaOperandKind::VccHi: return "vcc_hi";
-        case RdnaOperandKind::ExecLo: return "exec_lo";
-        case RdnaOperandKind::ExecHi: return "exec_hi";
-        case RdnaOperandKind::Scc: return "scc";
-        case RdnaOperandKind::Null: return "null";
-        case RdnaOperandKind::LiteralConstant: return toHexString(operand.value);
-        case RdnaOperandKind::IntegerInlineConstant: return std::to_string(operand.signedVal);
-        case RdnaOperandKind::FloatInlineConstant: return toHexString(operand.value);
-        case RdnaOperandKind::Unknown: return "unknown";
-        case RdnaOperandKind::VccZ: return "vccz";
-        case RdnaOperandKind::ExecZ: return "execz";
-        case RdnaOperandKind::M0: return "m0";
-        case RdnaOperandKind::PopsExitingWaveId: return "pops_exiting_wave_id";
+    case RdnaOperandKind::None:
+        return "none";
+    case RdnaOperandKind::ScalarRegister:
+        return "s" + std::to_string(operand.reg);
+    case RdnaOperandKind::VectorRegister:
+        return "v" + std::to_string(operand.reg);
+    case RdnaOperandKind::VccLo:
+        return "vcc_lo";
+    case RdnaOperandKind::VccHi:
+        return "vcc_hi";
+    case RdnaOperandKind::ExecLo:
+        return "exec_lo";
+    case RdnaOperandKind::ExecHi:
+        return "exec_hi";
+    case RdnaOperandKind::Scc:
+        return "scc";
+    case RdnaOperandKind::Null:
+        return "null";
+    case RdnaOperandKind::LiteralConstant:
+        return toHexString(operand.value);
+    case RdnaOperandKind::IntegerInlineConstant:
+        return std::to_string(operand.signedVal);
+    case RdnaOperandKind::FloatInlineConstant:
+        return toHexString(operand.value);
+    case RdnaOperandKind::Unknown:
+        return "unknown";
+    case RdnaOperandKind::VccZ:
+        return "vccz";
+    case RdnaOperandKind::ExecZ:
+        return "execz";
+    case RdnaOperandKind::M0:
+        return "m0";
+    case RdnaOperandKind::PopsExitingWaveId:
+        return "pops_exiting_wave_id";
     }
 
     throw std::invalid_argument("unsupported operand kind for string conversion");
@@ -322,21 +422,31 @@ std::string RdnaOperandToString(const RdnaOperand& operand) {
 
 const char* RdnaImageDimensionToString(RdnaImageDimension dimension) {
     switch (dimension) {
-        case RdnaImageDimension::Unknown: return "unknown";
-        case RdnaImageDimension::Dim1D: return "1d";
-        case RdnaImageDimension::Dim1DArray: return "1d_array";
-        case RdnaImageDimension::Dim2D: return "2d";
-        case RdnaImageDimension::Dim3D: return "3d";
-        case RdnaImageDimension::Dim2DArray: return "2d_array";
-        case RdnaImageDimension::Dim2DMsaa: return "2d_msaa";
-        case RdnaImageDimension::Dim2DMsaaArray: return "2d_msaa_array";
+    case RdnaImageDimension::Unknown:
+        return "unknown";
+    case RdnaImageDimension::Dim1D:
+        return "1d";
+    case RdnaImageDimension::Dim1DArray:
+        return "1d_array";
+    case RdnaImageDimension::Dim2D:
+        return "2d";
+    case RdnaImageDimension::Dim3D:
+        return "3d";
+    case RdnaImageDimension::Dim2DArray:
+        return "2d_array";
+    case RdnaImageDimension::Dim2DMsaa:
+        return "2d_msaa";
+    case RdnaImageDimension::Dim2DMsaaArray:
+        return "2d_msaa_array";
     }
 
     throw std::invalid_argument("unsupported image dimension for string conversion");
 }
 
 std::string RdnaInstructionToString(const RdnaInstruction& instruction) {
-    std::string text = toHexString(instruction.programCounter) + ": family=" + std::to_string(static_cast<std::uint32_t>(instruction.family)) + " opcode=" + toHexString(instruction.opcodeId);
+    std::string text = toHexString(instruction.programCounter) +
+                       ": family=" + std::to_string(static_cast<std::uint32_t>(instruction.family)) +
+                       " opcode=" + toHexString(instruction.opcodeId);
 
     if (instruction.destination.kind != RdnaOperandKind::Unknown) {
         text += " dst=" + RdnaOperandToString(instruction.destination);
@@ -345,7 +455,8 @@ std::string RdnaInstructionToString(const RdnaInstruction& instruction) {
         text += " dst2=" + RdnaOperandToString(instruction.destination2);
     }
 
-    const RdnaOperand* sources[] = {&instruction.source0, &instruction.source1, &instruction.source2, &instruction.source3};
+    const RdnaOperand* sources[] = {&instruction.source0, &instruction.source1, &instruction.source2,
+                                    &instruction.source3};
     for (std::uint32_t i = 0; i < instruction.sourceCount && i < 4u; ++i) {
         text += " src" + std::to_string(i) + "=" + RdnaOperandToString(*sources[i]);
     }

@@ -5,7 +5,10 @@
 #include <vector>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("image msaa load regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("image msaa load regression");
+}
 static std::uint32_t Word0(std::uint32_t dmask, std::uint32_t dimension) {
     return (0x3cu << 26u) | (dmask << 8u) | (dimension << 3u) | 1u;
 }
@@ -21,7 +24,8 @@ static bool Rejects(std::uint32_t word0, std::uint32_t word1) {
     }
     return false;
 }
-static void Check(std::uint32_t dimension, bool a16, std::uint32_t components, std::uint32_t fragmentDword, std::uint32_t fragmentShift) {
+static void Check(std::uint32_t dimension, bool a16, std::uint32_t components, std::uint32_t fragmentDword,
+                  std::uint32_t fragmentShift) {
     const RdnaInstruction instruction = Decode(Word0(0x4u, dimension), (a16 ? 0x40000000u : 0u) | (8u << 8u));
     Require(instruction.op == RdnaOpcode::ImageMsaaLoad);
     Require(instruction.family == RdnaInstructionFamily::MIMG);

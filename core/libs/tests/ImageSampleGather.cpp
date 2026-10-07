@@ -4,7 +4,10 @@
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("image sample/gather regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("image sample/gather regression");
+}
 static void Check(std::uint32_t encoding, RdnaOpcode opcode, std::uint32_t dmask) {
     const std::array<std::uint32_t, 2> code{(0x3cu << 26u) | (encoding << 18u) | (dmask << 8u) | (1u << 3u), 0u};
     const RdnaInstruction instruction = DecodeRdnaMimg(0u, code, 0u);

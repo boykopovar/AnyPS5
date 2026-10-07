@@ -75,8 +75,8 @@ struct Ngs2ContextBufferInfo {
 };
 static_assert(sizeof(Ngs2ContextBufferInfo) == 64);
 
-using Ngs2BufferAllocHandler = std::int32_t (APS5_VABI *)(Ngs2ContextBufferInfo*);
-using Ngs2BufferFreeHandler = std::int32_t (APS5_VABI *)(Ngs2ContextBufferInfo*);
+using Ngs2BufferAllocHandler = std::int32_t(APS5_VABI*)(Ngs2ContextBufferInfo*);
+using Ngs2BufferFreeHandler = std::int32_t(APS5_VABI*)(Ngs2ContextBufferInfo*);
 
 struct Ngs2BufferAllocator {
     Ngs2BufferAllocHandler alloc_handler;
@@ -201,10 +201,10 @@ struct Ngs2UserFx2ProcessContext {
 };
 static_assert(sizeof(Ngs2UserFx2ProcessContext) == 104);
 
-using Ngs2UserFx2SetupHandler = std::int32_t (APS5_VABI *)(Ngs2UserFx2SetupContext*);
-using Ngs2UserFx2CleanupHandler = std::int32_t (APS5_VABI *)(Ngs2UserFx2CleanupContext*);
-using Ngs2UserFx2ControlHandler = std::int32_t (APS5_VABI *)(Ngs2UserFx2ControlContext*);
-using Ngs2UserFx2ProcessHandler = std::int32_t (APS5_VABI *)(Ngs2UserFx2ProcessContext*);
+using Ngs2UserFx2SetupHandler = std::int32_t(APS5_VABI*)(Ngs2UserFx2SetupContext*);
+using Ngs2UserFx2CleanupHandler = std::int32_t(APS5_VABI*)(Ngs2UserFx2CleanupContext*);
+using Ngs2UserFx2ControlHandler = std::int32_t(APS5_VABI*)(Ngs2UserFx2ControlContext*);
+using Ngs2UserFx2ProcessHandler = std::int32_t(APS5_VABI*)(Ngs2UserFx2ProcessContext*);
 
 struct Ngs2CustomUserFx2ModuleOption {
     Ngs2CustomModuleOption custom_module_option;
@@ -336,7 +336,7 @@ struct Ngs2VoiceCallbackInfo {
 };
 static_assert(sizeof(Ngs2VoiceCallbackInfo) == 56);
 
-using Ngs2VoiceCallbackHandler = void (APS5_VABI *)(const Ngs2VoiceCallbackInfo*);
+using Ngs2VoiceCallbackHandler = void(APS5_VABI*)(const Ngs2VoiceCallbackInfo*);
 
 struct Ngs2VoiceCallbackParam {
     Ngs2VoiceParamHeader header;

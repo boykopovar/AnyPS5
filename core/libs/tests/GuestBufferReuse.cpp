@@ -1,6 +1,9 @@
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include <cstdlib>
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     BufferReuseTracker buffer;
     Require(buffer.IsComplete(buffer.Capture()));
@@ -20,7 +23,10 @@ int main() {
     Require(next > future && buffer.IsComplete(fence));
     buffer.Complete(next);
     bool rejected = false;
-    try { buffer.IsComplete(next + 1); }
-    catch (const std::invalid_argument&) { rejected = true; }
+    try {
+        buffer.IsComplete(next + 1);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
     Require(rejected);
 }

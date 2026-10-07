@@ -15,11 +15,15 @@ std::int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam*, JpegDecIm
 std::int32_t APS5_VABI sceJpegDecDecode(void*, const JpegDecDecodeParam*, JpegDecImageInfo*);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static std::vector<std::uint8_t> TestJpeg(std::uint32_t width, std::uint32_t height) {
     std::vector<std::uint8_t> rgb(static_cast<std::size_t>(width) * height * 3);
-    for (std::size_t i = 0; i < rgb.size(); ++i) rgb[i] = static_cast<std::uint8_t>(10 + i * 13);
+    for (std::size_t i = 0; i < rgb.size(); ++i)
+        rgb[i] = static_cast<std::uint8_t>(10 + i * 13);
     return Decoder::Jpeg::Encode(rgb, width, height, 3, 90);
 }
 

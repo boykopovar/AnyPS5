@@ -32,7 +32,8 @@ struct Biquad {
     }
 };
 
-static Ngs2SamplerVoiceFilterParam Filter(std::uint32_t index, std::uint32_t location, std::uint32_t type, std::uint64_t mask, float frequency, float q, float level) {
+static Ngs2SamplerVoiceFilterParam Filter(std::uint32_t index, std::uint32_t location, std::uint32_t type,
+                                          std::uint64_t mask, float frequency, float q, float level) {
     Ngs2SamplerVoiceFilterParam param{};
     param.header = {sizeof(param), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER};
     param.index = index;
@@ -49,12 +50,15 @@ static void SetFilter(uintptr_t voice, const Ngs2SamplerVoiceFilterParam& param)
     Require(sceNgs2VoiceControl(voice, &param.header) == SCE_NGS2_OK);
 }
 
-static uintptr_t Sampler(uintptr_t system, const std::vector<std::int16_t>& pcm, std::uint32_t channels, std::uint32_t rate) {
+static uintptr_t Sampler(uintptr_t system, const std::vector<std::int16_t>& pcm, std::uint32_t channels,
+                         std::uint32_t rate) {
     const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
-    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, rate, 0, 0, 0}});
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP,
+            Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, rate, 0, 0, 0}});
     const auto frames = static_cast<std::uint32_t>(pcm.size() / channels);
     const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, frames, 0, 0};
-    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
     return voice;
 }
 
@@ -91,7 +95,8 @@ static void TestLowPassAndTail() {
     }
 
     SetFilter(sampler, Filter(7, 0, 0, 0, NAN, 0.0f, -1.0f));
-    for (float sample : RenderGrain(system, 1)) Require(sample == 0.0f);
+    for (float sample : RenderGrain(system, 1))
+        Require(sample == 0.0f);
     Require(Flags(sampler) == 0);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
@@ -116,7 +121,8 @@ static void TestBypassMaskAndGain() {
     }
     Require(Flags(sampler) == (SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_PLAYING));
     out = RenderGrain(system, 2);
-    for (float sample : out) Require(sample == 0.0f);
+    for (float sample : out)
+        Require(sample == 0.0f);
     Require(Flags(sampler) == 0);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
@@ -132,22 +138,27 @@ static void TestSystemRateAndZeroCutoff() {
     Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
     Biquad reference(18000.0, static_cast<double>(0.70710678f), 1.0, 48000.0);
     const auto out = RenderGrain(system, 1);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(std::abs(out[i] - reference.Next(0.25)) <= 1e-7f);
+    for (std::uint32_t i = 0; i < Grain; i++)
+        Require(std::abs(out[i] - reference.Next(0.25)) <= 1e-7f);
 
     SetFilter(sampler, Filter(1, 1, 1, 0, 0.0f, 0.70710678f, 1.0f));
-    for (float sample : RenderGrain(system, 1)) Require(sample == 0.0f);
+    for (float sample : RenderGrain(system, 1))
+        Require(sample == 0.0f);
 
-    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
-    const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0};
-    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP,
+            Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+    const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0,
+                                  0};
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
     Patch(sampler, master);
     Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
-    for (float sample : RenderGrain(system, 1)) Require(sample == 0.25f);
+    for (float sample : RenderGrain(system, 1))
+        Require(sample == 0.25f);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-template <typename TError>
-static void RequireRejected(uintptr_t voice, const Ngs2SamplerVoiceFilterParam& param) {
+template <typename TError> static void RequireRejected(uintptr_t voice, const Ngs2SamplerVoiceFilterParam& param) {
     bool rejected = false;
     try {
         sceNgs2VoiceControl(voice, &param.header);

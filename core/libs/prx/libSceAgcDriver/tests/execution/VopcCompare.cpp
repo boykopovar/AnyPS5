@@ -24,51 +24,46 @@ alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 364> CompareCode{
-    0x34020083, 0x34060082, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
-    0xe030200c, 0x80000701, 0xe0302010, 0x80000801, 0xe0302014, 0x80000901, 0xe0302018, 0x80000e01,
-    0xe030201c, 0x80000f01, 0x7e140280, 0x7e160280, 0xbf8c3f70, 0xbe9e037e, 0x7e280280, 0x7c200b04,
-    0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290114, 0xbe9e037e, 0x7e280280, 0x7c2e0b04, 0x7e280281,
-    0xbefe031e, 0xd76f000a, 0x04290314, 0xbe9e037e, 0x7e280280, 0x7c300b04, 0x7e280281, 0xbefe031e,
-    0xd76f000a, 0x04290514, 0xbe9e037e, 0x7e280280, 0x7c3e0b04, 0x7e280281, 0xbefe031e, 0xd76f000a,
-    0x04290714, 0xbe9e037e, 0x7e280280, 0x7d200b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290914,
-    0xbe9e037e, 0x7e280280, 0x7d2e0b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290b14, 0xbe9e037e,
-    0x7e280280, 0x7da00b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290d14, 0xbe9e037e, 0x7e280280,
-    0x7dae0b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290f14, 0x7d401106, 0xd5010014, 0x01a90280,
-    0xd76f000a, 0x04291114, 0x7d421106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04291314, 0x7d461106,
-    0xd5010014, 0x01a90280, 0xd76f000a, 0x04291514, 0x7d481106, 0xd5010014, 0x01a90280, 0xd76f000a,
-    0x04291714, 0x7d4a1106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04291914, 0x7d4c1106, 0xd5010014,
-    0x01a90280, 0xd76f000a, 0x04291b14, 0x7d4e1106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04291d14,
-    0xbe9e037e, 0x7e280280, 0x7d601106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04291f14, 0xbe9e037e,
-    0x7e280280, 0x7d621106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04292114, 0xbe9e037e, 0x7e280280,
-    0x7d641106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04292314, 0xbe9e037e, 0x7e280280, 0x7d661106,
-    0x7e280281, 0xbefe031e, 0xd76f000a, 0x04292514, 0xbe9e037e, 0x7e280280, 0x7d681106, 0x7e280281,
-    0xbefe031e, 0xd76f000a, 0x04292714, 0xbe9e037e, 0x7e280280, 0x7d6c1106, 0x7e280281, 0xbefe031e,
-    0xd76f000a, 0x04292914, 0xbe9e037e, 0x7e280280, 0x7d6e1106, 0x7e280281, 0xbefe031e, 0xd76f000a,
-    0x04292b14, 0x7dc01106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04292d14, 0x7dc61106, 0xd5010014,
-    0x01a90280, 0xd76f000a, 0x04292f14, 0x7dcc1106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04293114,
-    0x7dce1106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04293314, 0xbe9e037e, 0x7e280280, 0x7de01106,
-    0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293514, 0xbe9e037e, 0x7e280280, 0x7de21106, 0x7e280281,
-    0xbefe031e, 0xd76f000a, 0x04293714, 0xbe9e037e, 0x7e280280, 0x7de41106, 0x7e280281, 0xbefe031e,
-    0xd76f000a, 0x04293914, 0xbe9e037e, 0x7e280280, 0x7de61106, 0x7e280281, 0xbefe031e, 0xd76f000a,
-    0x04293b14, 0xbe9e037e, 0x7e280280, 0x7de81106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293d14,
-    0xbe9e037e, 0x7e280280, 0x7dec1106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293f14, 0xbe9e037e,
-    0x7e280280, 0x7dee1106, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d0114, 0x7d901f0e, 0xd5010014,
-    0x01a90280, 0xd76f000b, 0x042d0314, 0x7d9e1f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0514,
-    0x7dd01f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0714, 0x7dd21f0e, 0xd5010014, 0x01a90280,
-    0xd76f000b, 0x042d0914, 0x7dd41f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0b14, 0x7dd61f0e,
-    0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0d14, 0x7dd81f0e, 0xd5010014, 0x01a90280, 0xd76f000b,
-    0x042d0f14, 0x7ddc1f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d1114, 0x7dde1f0e, 0xd5010014,
-    0x01a90280, 0xd76f000b, 0x042d1314, 0xbe9e037e, 0x7e280280, 0x7db01f0e, 0x7e280281, 0xbefe031e,
-    0xd76f000b, 0x042d1514, 0xbe9e037e, 0x7e280280, 0x7dba1f0e, 0x7e280281, 0xbefe031e, 0xd76f000b,
-    0x042d1714, 0xbe9e037e, 0x7e280280, 0x7dbe1f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d1914,
-    0xbe9e037e, 0x7e280280, 0x7df01f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d1b14, 0xbe9e037e,
-    0x7e280280, 0x7df21f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d1d14, 0xbe9e037e, 0x7e280280,
-    0x7df41f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d1f14, 0xbe9e037e, 0x7e280280, 0x7df81f0e,
-    0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d2114, 0xbe9e037e, 0x7e280280, 0x7dfe1f0e, 0x7e280281,
-    0xbefe031e, 0xd76f000b, 0x042d2314, 0xd4e9026a, 0x00021f0e, 0xd5010014, 0x01a90280, 0xd76f000b,
-    0x042d2514, 0xd4a3006a, 0x00020d08, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d2714, 0xbe9e037e,
-    0x7e280280, 0xd4f6007e, 0x00020d08, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d2914, 0xbe9e037e,
-    0x7e280280, 0xd417017e, 0x00020b04, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d2b14, 0xe0702000,
+    0x34020083, 0x34060082, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601, 0xe030200c,
+    0x80000701, 0xe0302010, 0x80000801, 0xe0302014, 0x80000901, 0xe0302018, 0x80000e01, 0xe030201c, 0x80000f01,
+    0x7e140280, 0x7e160280, 0xbf8c3f70, 0xbe9e037e, 0x7e280280, 0x7c200b04, 0x7e280281, 0xbefe031e, 0xd76f000a,
+    0x04290114, 0xbe9e037e, 0x7e280280, 0x7c2e0b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290314, 0xbe9e037e,
+    0x7e280280, 0x7c300b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290514, 0xbe9e037e, 0x7e280280, 0x7c3e0b04,
+    0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290714, 0xbe9e037e, 0x7e280280, 0x7d200b04, 0x7e280281, 0xbefe031e,
+    0xd76f000a, 0x04290914, 0xbe9e037e, 0x7e280280, 0x7d2e0b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290b14,
+    0xbe9e037e, 0x7e280280, 0x7da00b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290d14, 0xbe9e037e, 0x7e280280,
+    0x7dae0b04, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04290f14, 0x7d401106, 0xd5010014, 0x01a90280, 0xd76f000a,
+    0x04291114, 0x7d421106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04291314, 0x7d461106, 0xd5010014, 0x01a90280,
+    0xd76f000a, 0x04291514, 0x7d481106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04291714, 0x7d4a1106, 0xd5010014,
+    0x01a90280, 0xd76f000a, 0x04291914, 0x7d4c1106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04291b14, 0x7d4e1106,
+    0xd5010014, 0x01a90280, 0xd76f000a, 0x04291d14, 0xbe9e037e, 0x7e280280, 0x7d601106, 0x7e280281, 0xbefe031e,
+    0xd76f000a, 0x04291f14, 0xbe9e037e, 0x7e280280, 0x7d621106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04292114,
+    0xbe9e037e, 0x7e280280, 0x7d641106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04292314, 0xbe9e037e, 0x7e280280,
+    0x7d661106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04292514, 0xbe9e037e, 0x7e280280, 0x7d681106, 0x7e280281,
+    0xbefe031e, 0xd76f000a, 0x04292714, 0xbe9e037e, 0x7e280280, 0x7d6c1106, 0x7e280281, 0xbefe031e, 0xd76f000a,
+    0x04292914, 0xbe9e037e, 0x7e280280, 0x7d6e1106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04292b14, 0x7dc01106,
+    0xd5010014, 0x01a90280, 0xd76f000a, 0x04292d14, 0x7dc61106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04292f14,
+    0x7dcc1106, 0xd5010014, 0x01a90280, 0xd76f000a, 0x04293114, 0x7dce1106, 0xd5010014, 0x01a90280, 0xd76f000a,
+    0x04293314, 0xbe9e037e, 0x7e280280, 0x7de01106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293514, 0xbe9e037e,
+    0x7e280280, 0x7de21106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293714, 0xbe9e037e, 0x7e280280, 0x7de41106,
+    0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293914, 0xbe9e037e, 0x7e280280, 0x7de61106, 0x7e280281, 0xbefe031e,
+    0xd76f000a, 0x04293b14, 0xbe9e037e, 0x7e280280, 0x7de81106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293d14,
+    0xbe9e037e, 0x7e280280, 0x7dec1106, 0x7e280281, 0xbefe031e, 0xd76f000a, 0x04293f14, 0xbe9e037e, 0x7e280280,
+    0x7dee1106, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d0114, 0x7d901f0e, 0xd5010014, 0x01a90280, 0xd76f000b,
+    0x042d0314, 0x7d9e1f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0514, 0x7dd01f0e, 0xd5010014, 0x01a90280,
+    0xd76f000b, 0x042d0714, 0x7dd21f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0914, 0x7dd41f0e, 0xd5010014,
+    0x01a90280, 0xd76f000b, 0x042d0b14, 0x7dd61f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0d14, 0x7dd81f0e,
+    0xd5010014, 0x01a90280, 0xd76f000b, 0x042d0f14, 0x7ddc1f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d1114,
+    0x7dde1f0e, 0xd5010014, 0x01a90280, 0xd76f000b, 0x042d1314, 0xbe9e037e, 0x7e280280, 0x7db01f0e, 0x7e280281,
+    0xbefe031e, 0xd76f000b, 0x042d1514, 0xbe9e037e, 0x7e280280, 0x7dba1f0e, 0x7e280281, 0xbefe031e, 0xd76f000b,
+    0x042d1714, 0xbe9e037e, 0x7e280280, 0x7dbe1f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d1914, 0xbe9e037e,
+    0x7e280280, 0x7df01f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d1b14, 0xbe9e037e, 0x7e280280, 0x7df21f0e,
+    0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d1d14, 0xbe9e037e, 0x7e280280, 0x7df41f0e, 0x7e280281, 0xbefe031e,
+    0xd76f000b, 0x042d1f14, 0xbe9e037e, 0x7e280280, 0x7df81f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d2114,
+    0xbe9e037e, 0x7e280280, 0x7dfe1f0e, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d2314, 0xd4e9026a, 0x00021f0e,
+    0xd5010014, 0x01a90280, 0xd76f000b, 0x042d2514, 0xd4a3006a, 0x00020d08, 0xd5010014, 0x01a90280, 0xd76f000b,
+    0x042d2714, 0xbe9e037e, 0x7e280280, 0xd4f6007e, 0x00020d08, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d2914,
+    0xbe9e037e, 0x7e280280, 0xd417017e, 0x00020b04, 0x7e280281, 0xbefe031e, 0xd76f000b, 0x042d2b14, 0xe0702000,
     0x80010a03, 0xe0702004, 0x80010b03, 0xbf810000,
 };
 
@@ -82,7 +77,14 @@ constexpr std::array<std::uint16_t, 12> HalfEdges{
 };
 
 constexpr std::array<std::uint64_t, 8> IntegerEdges{
-    0u, ~0ull, 0x8000000000000000ull, 0x7fffffffffffffffull, 1u, 0x00000001ffffffffull, 0x0000000100000000ull, 0xffffffff00000000ull,
+    0u,
+    ~0ull,
+    0x8000000000000000ull,
+    0x7fffffffffffffffull,
+    1u,
+    0x00000001ffffffffull,
+    0x0000000100000000ull,
+    0xffffffff00000000ull,
 };
 
 float HalfValue(std::uint32_t bits) {
@@ -92,7 +94,8 @@ float HalfValue(std::uint32_t bits) {
     if (exponent == 0x1fu) {
         magnitude = fraction != 0u ? std::numeric_limits<float>::quiet_NaN() : std::numeric_limits<float>::infinity();
     } else {
-        magnitude = exponent == 0u ? std::ldexp(static_cast<float>(fraction), -24) : std::ldexp(static_cast<float>(fraction | 0x400u), static_cast<int>(exponent) - 25);
+        magnitude = exponent == 0u ? std::ldexp(static_cast<float>(fraction), -24)
+                                   : std::ldexp(static_cast<float>(fraction | 0x400u), static_cast<int>(exponent) - 25);
     }
     return (bits & 0x8000u) != 0u ? -magnitude : magnitude;
 }
@@ -107,8 +110,10 @@ void FillInput() {
         auto* words = &Input[tid * Inputs];
         words[0] = FloatEdges[tid % FloatEdges.size()];
         words[1] = FloatEdges[(tid / FloatEdges.size() + tid) % FloatEdges.size()];
-        const std::uint64_t a = tid < 16u ? IntegerEdges[tid % IntegerEdges.size()] : (static_cast<std::uint64_t>(next()) << 32u) | next();
-        const std::uint64_t b = tid < 16u ? IntegerEdges[(tid / IntegerEdges.size() + tid * 3u) % IntegerEdges.size()] : (tid % 5u == 0u ? a : (static_cast<std::uint64_t>(next()) << 32u) | next());
+        const std::uint64_t a =
+            tid < 16u ? IntegerEdges[tid % IntegerEdges.size()] : (static_cast<std::uint64_t>(next()) << 32u) | next();
+        const std::uint64_t b = tid < 16u ? IntegerEdges[(tid / IntegerEdges.size() + tid * 3u) % IntegerEdges.size()]
+                                          : (tid % 5u == 0u ? a : (static_cast<std::uint64_t>(next()) << 32u) | next());
         words[2] = static_cast<std::uint32_t>(a);
         words[3] = static_cast<std::uint32_t>(a >> 32u);
         words[4] = static_cast<std::uint32_t>(b);
@@ -120,7 +125,8 @@ void FillInput() {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -131,14 +137,14 @@ void Run(AgcDriver::VulkanDevice& device) {
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(CompareCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -166,17 +172,14 @@ void Check() {
             false,
             true,
             false,
-            sa < sb,
-            sa <= sb,
-            sa > sb,
+            sa<sb, sa <= sb, sa>
+                sb,
             sa != sb,
             sa >= sb,
             true,
             false,
-            sa < sb,
-            sa == sb,
-            sa <= sb,
-            sa > sb,
+            sa<sb, sa == sb, sa <= sb, sa>
+                sb,
             sa >= sb,
             true,
             false,
@@ -184,10 +187,8 @@ void Check() {
             ua >= ub,
             true,
             false,
-            ua < ub,
-            ua == ub,
-            ua <= ub,
-            ua > ub,
+            ua<ub, ua == ub, ua <= ub, ua>
+                ub,
             ua >= ub,
             true,
             false,
@@ -214,7 +215,9 @@ void Check() {
         };
         for (std::uint32_t k = 0; k < expected.size(); ++k) {
             const bool actual = ((Output[tid * Results + k / 32u] >> (k % 32u)) & 1u) != 0u;
-            Require(actual == expected[k], "vopc compares: thread " + std::to_string(tid) + " compare " + std::to_string(k) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[k]));
+            Require(actual == expected[k], "vopc compares: thread " + std::to_string(tid) + " compare " +
+                                               std::to_string(k) + " is " + std::to_string(actual) + ", expected " +
+                                               std::to_string(expected[k]));
         }
     }
 }
@@ -224,7 +227,8 @@ void Check() {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         FillInput();
         Run(*device);
         Check();

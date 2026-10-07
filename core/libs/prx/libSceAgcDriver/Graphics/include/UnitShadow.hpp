@@ -48,12 +48,31 @@ bool UnitShadowEnabled();
 // byte of the range; PartialUnits: a writer of the range (only units it covers partly are published,
 // so the neighbours' results in the rest of the unit reach the import before the write stamps it).
 enum class PublishScope : std::uint8_t { None, Whole, PartialUnits };
-enum class PublishReason : std::uint8_t { Hook, Region, Indirect, CopySource, CopyDestination, Fill, FillClear, Label, Keys, Scanout, Validate, Upload, TailMip, Evict, Retire, Teardown, Count };
+enum class PublishReason : std::uint8_t {
+    Hook,
+    Region,
+    Indirect,
+    CopySource,
+    CopyDestination,
+    Fill,
+    FillClear,
+    Label,
+    Keys,
+    Scanout,
+    Validate,
+    Upload,
+    TailMip,
+    Evict,
+    Retire,
+    Teardown,
+    Count
+};
 // The reason for a FlushPending reason string ("memory access" -> Hook, ...).
 PublishReason PublishReasonFor(const char* flushReason);
 
 struct ShadowSlab {
-    ShadowSlab(const Context& context, VkBuffer buffer, VkDeviceMemory memory, std::uint64_t firstUnit, std::uint32_t units);
+    ShadowSlab(const Context& context, VkBuffer buffer, VkDeviceMemory memory, std::uint64_t firstUnit,
+               std::uint32_t units);
     ShadowSlab(const ShadowSlab&) = delete;
     ShadowSlab& operator=(const ShadowSlab&) = delete;
     // Destroys the handles: safe on the recorder's release thread (Keep's contract).
@@ -110,7 +129,10 @@ struct ShadowRun {
     bool shadow;
     std::shared_ptr<ShadowSlab> slab;
 };
-std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& import, std::uint64_t surfaceBase, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint64_t, std::uint64_t>> tailBlocks, bool countReads = true);
+std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& import, std::uint64_t surfaceBase,
+                                     std::span<const std::pair<std::uint64_t, std::uint64_t>> runs,
+                                     std::span<const std::pair<std::uint64_t, std::uint64_t>> tailBlocks,
+                                     bool countReads = true);
 
 // The slab destination of a retile copy [begin, end) (guest addresses inside one slab: the caller
 // splits at SlabBoundary), making the slab under the budget; nullopt when refused (the caller writes
@@ -125,7 +147,8 @@ struct ShadowDestination {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> seedUnits;
     std::shared_ptr<ShadowSlabPin> pin;
 };
-std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, const HostImport& import, std::uint64_t begin, std::uint64_t end);
+std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, const HostImport& import,
+                                                      std::uint64_t begin, std::uint64_t end);
 // A seed copy (import -> slab of a partly covered unit) the caller recorded: counted and traced.
 void NoteShadowSeed(std::uint64_t begin, std::uint64_t end);
 // The first slab boundary above `address` (a guest address inside the import).
@@ -141,7 +164,8 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
 // The import retires because its registration vanished or changed size, so the rest of its memory
 // belongs to the title again and is dropped (counted `dropped on retire`); `lost on retire` counts
 // the units nothing could record.
-void RetireShadow(const Context& context, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered);
+void RetireShadow(const Context& context, const HostImport& import,
+                  const std::function<bool(std::uint64_t, std::uint64_t)>& registered);
 // Teardown: every shadow of the context's device is published; DestroyShadows then drops them.
 void PublishAllShadows(const Context& context, PublishReason reason);
 void DestroyShadows(VkDevice device);

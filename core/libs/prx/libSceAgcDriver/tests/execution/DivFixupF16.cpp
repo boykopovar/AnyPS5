@@ -33,39 +33,22 @@ alignas(256) constexpr std::array<std::uint32_t, 46> Code{
 };
 
 constexpr std::uint32_t Rows[32][4] = {
-    {0xaa591773u, 0x0912d5a5u, 0x04005e85u, 0x1b9c7ec8u},
-    {0x482c74f4u, 0x71a1f91au, 0xd69e0400u, 0x0cacc82cu},
-    {0x7c018000u, 0x90086eaeu, 0x00007bffu, 0xce9da0ddu},
-    {0x8000fc00u, 0x7c0183ffu, 0x7c010001u, 0x5a145979u},
-    {0xba5f5640u, 0x4fc2fc00u, 0x4d3d82bcu, 0x9ffb2a93u},
-    {0x7b327e00u, 0x0c5c7e00u, 0x00008000u, 0x4449e54eu},
-    {0x7c001694u, 0x7c000000u, 0xa8617c00u, 0x3ebf7466u},
-    {0x000149ddu, 0x80007e00u, 0xc0006dd1u, 0xea791f92u},
-    {0x00015b7bu, 0x66bd3966u, 0x7e008000u, 0x0beb2994u},
-    {0xe5c1fc00u, 0xc0003c00u, 0x56400001u, 0x8b2852b0u},
-    {0xd82c3263u, 0x94600000u, 0x3c000000u, 0x384242e0u},
-    {0x5b660400u, 0x5c84dea4u, 0x8000d995u, 0xea68a771u},
-    {0x7c000001u, 0x48979303u, 0x00000979u, 0xbbf3011du},
-    {0x0001f0fbu, 0x25117bffu, 0x329dad28u, 0x2a5a6250u},
-    {0x2b697c01u, 0x463f9f63u, 0x80008000u, 0x5c0b4c22u},
-    {0x83ff7bffu, 0xc000c000u, 0xfc007e00u, 0x95e109b3u},
-    {0x3c000ecau, 0xc000f24eu, 0xc9823c00u, 0xa2d1d5ffu},
-    {0x3c008000u, 0x7c007c01u, 0x7bff7c00u, 0x02165d7fu},
-    {0x7bff3c00u, 0xec467c00u, 0x00009243u, 0x1424a54fu},
-    {0xc0007bffu, 0x7e0096a1u, 0x0400fc00u, 0x48ce86a2u},
-    {0x56407bffu, 0x9bbd7de0u, 0x0400c000u, 0xb7fc780fu},
-    {0x56403956u, 0x1deca74eu, 0xfe558000u, 0xdd3cfee3u},
-    {0x3c005cb0u, 0xd9133f9du, 0x24353c00u, 0x4aca4572u},
-    {0xf932c000u, 0x7e008000u, 0x0d2bde75u, 0x0a2697e0u},
-    {0x0a72fc00u, 0x41aad71fu, 0xa7bd0000u, 0xc33a46f2u},
-    {0x67d70400u, 0x7c017c01u, 0x86ec7c01u, 0xd107ab16u},
-    {0x40aaa7dfu, 0xd6653312u, 0xc0000400u, 0xabd58d2fu},
-    {0xc60483ffu, 0xe2bec000u, 0x879b0400u, 0x1dc7aeecu},
-    {0xc00083ffu, 0xea3bcb39u, 0x7e003c00u, 0x275116b8u},
-    {0x005b7ebau, 0x5335775eu, 0xbe8b7c00u, 0x99f7867fu},
-    {0x0001c000u, 0xfe55e3cdu, 0x0000fc00u, 0xbb3d5c51u},
-    {0x55f94db8u, 0x38bd1e8eu, 0x0001fc00u, 0x7e4c716cu}
-};
+    {0xaa591773u, 0x0912d5a5u, 0x04005e85u, 0x1b9c7ec8u}, {0x482c74f4u, 0x71a1f91au, 0xd69e0400u, 0x0cacc82cu},
+    {0x7c018000u, 0x90086eaeu, 0x00007bffu, 0xce9da0ddu}, {0x8000fc00u, 0x7c0183ffu, 0x7c010001u, 0x5a145979u},
+    {0xba5f5640u, 0x4fc2fc00u, 0x4d3d82bcu, 0x9ffb2a93u}, {0x7b327e00u, 0x0c5c7e00u, 0x00008000u, 0x4449e54eu},
+    {0x7c001694u, 0x7c000000u, 0xa8617c00u, 0x3ebf7466u}, {0x000149ddu, 0x80007e00u, 0xc0006dd1u, 0xea791f92u},
+    {0x00015b7bu, 0x66bd3966u, 0x7e008000u, 0x0beb2994u}, {0xe5c1fc00u, 0xc0003c00u, 0x56400001u, 0x8b2852b0u},
+    {0xd82c3263u, 0x94600000u, 0x3c000000u, 0x384242e0u}, {0x5b660400u, 0x5c84dea4u, 0x8000d995u, 0xea68a771u},
+    {0x7c000001u, 0x48979303u, 0x00000979u, 0xbbf3011du}, {0x0001f0fbu, 0x25117bffu, 0x329dad28u, 0x2a5a6250u},
+    {0x2b697c01u, 0x463f9f63u, 0x80008000u, 0x5c0b4c22u}, {0x83ff7bffu, 0xc000c000u, 0xfc007e00u, 0x95e109b3u},
+    {0x3c000ecau, 0xc000f24eu, 0xc9823c00u, 0xa2d1d5ffu}, {0x3c008000u, 0x7c007c01u, 0x7bff7c00u, 0x02165d7fu},
+    {0x7bff3c00u, 0xec467c00u, 0x00009243u, 0x1424a54fu}, {0xc0007bffu, 0x7e0096a1u, 0x0400fc00u, 0x48ce86a2u},
+    {0x56407bffu, 0x9bbd7de0u, 0x0400c000u, 0xb7fc780fu}, {0x56403956u, 0x1deca74eu, 0xfe558000u, 0xdd3cfee3u},
+    {0x3c005cb0u, 0xd9133f9du, 0x24353c00u, 0x4aca4572u}, {0xf932c000u, 0x7e008000u, 0x0d2bde75u, 0x0a2697e0u},
+    {0x0a72fc00u, 0x41aad71fu, 0xa7bd0000u, 0xc33a46f2u}, {0x67d70400u, 0x7c017c01u, 0x86ec7c01u, 0xd107ab16u},
+    {0x40aaa7dfu, 0xd6653312u, 0xc0000400u, 0xabd58d2fu}, {0xc60483ffu, 0xe2bec000u, 0x879b0400u, 0x1dc7aeecu},
+    {0xc00083ffu, 0xea3bcb39u, 0x7e003c00u, 0x275116b8u}, {0x005b7ebau, 0x5335775eu, 0xbe8b7c00u, 0x99f7867fu},
+    {0x0001c000u, 0xfe55e3cdu, 0x0000fc00u, 0xbb3d5c51u}, {0x55f94db8u, 0x38bd1e8eu, 0x0001fc00u, 0x7e4c716cu}};
 constexpr std::uint32_t Expected[32][8] = {
     {0x1b9c9773u, 0x1b9c2a59u, 0x97737ec8u, 0x1b9c9773u, 0x1b9c2a59u, 0x1b9cde85u, 0x1b9cbc00u, 0x1b9cd5a5u},
     {0x0cacf4f4u, 0x0cacc82cu, 0xf4f4c82cu, 0x0cacf4f4u, 0x0cac482cu, 0x0cac0400u, 0x0cac3c00u, 0x0cacf91au},
@@ -98,17 +81,16 @@ constexpr std::uint32_t Expected[32][8] = {
     {0x275183ffu, 0x27517e00u, 0x83ff16b8u, 0x275183ffu, 0x2751c000u, 0x2751bc00u, 0x27513c00u, 0x2751cb39u},
     {0x99f77c00u, 0x99f7805bu, 0x7c00867fu, 0x99f7fc00u, 0x99f70000u, 0x99f7fc00u, 0x99f73c00u, 0x99f7fc00u},
     {0xbb3d7c00u, 0xbb3dfe55u, 0x7c005c51u, 0xbb3dfc00u, 0xbb3dfe55u, 0xbb3d7c00u, 0xbb3dfe55u, 0xbb3d7c00u},
-    {0x7e4cfc00u, 0x7e4c55f9u, 0xfc00716cu, 0x7e4cfc00u, 0x7e4c8000u, 0x7e4cfc00u, 0x7e4c3c00u, 0x7e4c7c00u}
-};
-constexpr const char* Names[8] = {"lo", "hi sources", "hi dst", "neg abs", "mixed halves", "neg denominator", "literal quotient", "literal denominator"};
+    {0x7e4cfc00u, 0x7e4c55f9u, 0xfc00716cu, 0x7e4cfc00u, 0x7e4c8000u, 0x7e4cfc00u, 0x7e4c3c00u, 0x7e4c7c00u}};
+constexpr const char* Names[8] = {"lo",           "hi sources",      "hi dst",           "neg abs",
+                                  "mixed halves", "neg denominator", "literal quotient", "literal denominator"};
 
-void Fill(std::uint32_t tid, std::uint32_t* words) {
-    std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words);
-}
+void Fill(std::uint32_t tid, std::uint32_t* words) { std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words); }
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -118,11 +100,13 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("div fixup f16: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Require(actual == expected, std::string("div fixup f16: lane ") + std::to_string(tid) + " " + name + " is " +
+                                    Hex(actual) + ", expected " + Hex(expected));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid)
+        Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -130,14 +114,14 @@ void Run(AgcDriver::VulkanDevice& device) {
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(Code);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -148,7 +132,8 @@ void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t i = 0; i < 8; ++i) Expect(tid, out[i], Expected[tid][i], Names[i]);
+        for (std::uint32_t i = 0; i < 8; ++i)
+            Expect(tid, out[i], Expected[tid][i], Names[i]);
     }
 }
 
@@ -157,7 +142,8 @@ void Check() {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         Run(*device);
         Check();
         std::puts("div fixup f16 tests passed");

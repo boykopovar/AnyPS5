@@ -8,7 +8,9 @@ extern "C" void (*_ZSt13set_terminatePFvvE_nid_postfix(void (*)()))();
 
 int cleanups;
 
-struct Counted { ~Counted() { ++cleanups; } };
+struct Counted {
+    ~Counted() { ++cleanups; }
+};
 
 [[gnu::noinline]] void Throw() { throw 42; }
 [[gnu::noinline]] void Nothing() {}
@@ -26,7 +28,8 @@ bool Caught(void (*function)(), int expectedCleanups) {
 
 bool TerminatesWithoutCleanup() {
     pid_t child = fork();
-    if (child < 0) return false;
+    if (child < 0)
+        return false;
     if (child == 0) {
         cleanups = 0;
         _ZSt13set_terminatePFvvE_nid_postfix([] { _exit(cleanups == 0 ? 61 : 62); });
@@ -38,12 +41,23 @@ bool TerminatesWithoutCleanup() {
 }
 
 int main() {
-    if (!Caught([] { CallWithCleanup(Throw, &cleanups); }, 1)) return 1;
-    if (!Caught([] { CallWithCleanup(ThrowThroughCleanup, &cleanups); }, 2)) return 2;
-    if (!Caught([] { CallAroundCleanup(Throw, Nothing, &cleanups); }, 0)) return 3;
-    if (!Caught([] { CallAroundCleanup(Nothing, Throw, &cleanups); }, 1)) return 4;
-    if (!Caught([] { Counted counted; CallWithCleanup(Throw, &cleanups); }, 2)) return 5;
-    if (!TerminatesWithoutCleanup()) return 6;
+    if (!Caught([] { CallWithCleanup(Throw, &cleanups); }, 1))
+        return 1;
+    if (!Caught([] { CallWithCleanup(ThrowThroughCleanup, &cleanups); }, 2))
+        return 2;
+    if (!Caught([] { CallAroundCleanup(Throw, Nothing, &cleanups); }, 0))
+        return 3;
+    if (!Caught([] { CallAroundCleanup(Nothing, Throw, &cleanups); }, 1))
+        return 4;
+    if (!Caught(
+            [] {
+                Counted counted;
+                CallWithCleanup(Throw, &cleanups);
+            },
+            2))
+        return 5;
+    if (!TerminatesWithoutCleanup())
+        return 6;
     std::puts("exception C cleanup tests passed");
     return 0;
 }

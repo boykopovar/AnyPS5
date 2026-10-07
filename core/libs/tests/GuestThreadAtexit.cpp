@@ -5,18 +5,23 @@
 #include <vector>
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(void (APS5_VABI* destructor)(void*), void* object, void* dsoSymbol);
+int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(void(APS5_VABI* destructor)(void*), void* object,
+                                                       void* dsoSymbol);
 void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
 }
 
 namespace {
 
-using Destructor = void (APS5_VABI*)(void*);
+using Destructor = void(APS5_VABI*)(void*);
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int dsoHandle = 0;
 std::vector<std::intptr_t> calls;

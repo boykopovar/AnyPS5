@@ -4,7 +4,8 @@
 #include <cstdlib>
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end);
 int APS5_VABI sceKernelMapFlexibleMemory(void** addr, std::size_t len, int prot, int flags);
@@ -15,7 +16,10 @@ static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_EACCES = static_cast<int>(0x8002000d);
 static int global = 0;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 struct WorkerContext {
     std::atomic<bool> queried{false};
@@ -32,7 +36,8 @@ static void* APS5_VABI Worker(void* arg) {
     context.local = &local;
     context.result = sceKernelIsStack(&local, &context.start, &context.end);
     context.queried.store(true);
-    while (!context.release.load()) {}
+    while (!context.release.load()) {
+    }
     return nullptr;
 }
 
@@ -52,7 +57,8 @@ int main() {
     WorkerContext context;
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Worker, &context, nullptr) == SCE_OK);
-    while (!context.queried.load()) {}
+    while (!context.queried.load()) {
+    }
     Require(context.result == SCE_OK);
     Require(context.start <= context.local && context.local < context.end);
     Require(sceKernelIsStack(&local, &start, &end) == SCE_OK);

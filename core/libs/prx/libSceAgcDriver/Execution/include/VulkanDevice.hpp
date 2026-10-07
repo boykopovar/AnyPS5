@@ -71,10 +71,13 @@ public:
     // imported (both only with APS5_DRAIN_COMPLETION_LABELS=1), 4 unsuitable size or alignment.
     // `reapFirst` retires finished batches before the checks; a caller recording a group of labels
     // under one lock passes it for the first label only.
-    int WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst = true);
+    int WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp,
+                        std::uint32_t queue, bool reapFirst = true);
     bool AfterRecordedWork(std::function<void()> action, bool reapFirst);
     // Pending-label table lookup and open-batch overlap test for WAIT_REG_MEM (see Recorder).
-    std::optional<Graphics::Recorder::LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, Graphics::Recorder::LabelRefusal* refusal = nullptr) const;
+    std::optional<Graphics::Recorder::LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes,
+                                                             std::uint64_t afterStamp,
+                                                             Graphics::Recorder::LabelRefusal* refusal = nullptr) const;
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Fills [address, address + bytes) of host-imported guest memory with a repeating 16-byte pattern,
     // recorded behind the open batch; false when the range is not imported (the caller stores it).
@@ -123,7 +126,19 @@ public:
         // every writer signaled but a completion store of one is still to land (as for the source).
         // Shadow: a unit shadow holds unpublished results over either range (the GPU path
         // publishes them; see UnitShadow.hpp).
-        enum Refusal { None = 0, Size, Image, SourcePending, SourceUnsettled, DestinationPending, DestinationUnsettled, Label, Reader, Shadow, Refusals };
+        enum Refusal {
+            None = 0,
+            Size,
+            Image,
+            SourcePending,
+            SourceUnsettled,
+            DestinationPending,
+            DestinationUnsettled,
+            Label,
+            Reader,
+            Shadow,
+            Refusals
+        };
         int reason;
         // Path 0 taken although a batch had written the source: every such batch had signaled.
         bool sourceSettledBySignal;
@@ -137,7 +152,9 @@ public:
         bool readerOpen;
     };
     using CopyWriterNote = std::function<void(std::span<const std::byte> value, std::uint64_t generation)>;
-    CopyOutcome CopyBuffer(std::uint64_t destination, std::uint64_t source, std::size_t bytes, std::size_t cpuMax, std::size_t gpuMax, std::size_t knownMax, std::uint64_t programAddress, std::uint32_t queue, const CopyWriterNote& noteWriter);
+    CopyOutcome CopyBuffer(std::uint64_t destination, std::uint64_t source, std::size_t bytes, std::size_t cpuMax,
+                           std::size_t gpuMax, std::size_t knownMax, std::uint64_t programAddress, std::uint32_t queue,
+                           const CopyWriterNote& noteWriter);
     // APS5_COPY_VERIFY=1 totals: CPU copies verified, whose source bytes changed over the sync (a
     // producer the rule missed), whose destination bytes were overwritten (a store the rule
     // missed), and whose destination an unsignaled batch read in place (the rule's own answer
@@ -213,14 +230,18 @@ public:
     // records. Null when nothing is prepared: the resource cache may serve the dispatch (its
     // Revalidate stays under the mutex), or APS5_LOCKED_BUILD=1 keeps the whole build under it as
     // before. `shader` and `snapshots` must outlive the dispatch.
-    std::shared_ptr<PreparedDispatch> PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots);
+    std::shared_ptr<PreparedDispatch> PrepareDispatch(const ShaderRecompiler::RecompileResult& shader,
+                                                      std::span<const Graphics::GuestMemorySnapshot> snapshots);
     // APS5_PROFILE_DRAW: the parts of a PrepareDispatch in milliseconds, in the order key, find,
     // precollect, presync, stage A (the driver's 'prepare:' rows).
     static std::span<const double, 5> PreparePhaseMs(const PreparedDispatch& prepared);
     // `recipe`, when given, receives the Recipe a successful call built for its dispatch-cache
     // variant (design_cpu_final M4): only when the resource cache served or took the object
     // (reusable, cacheable) and recipes are on (APS5_NO_DISPATCH_RECIPE=1 builds none); else null.
-    void Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr, std::shared_ptr<const Recipe>* recipe = nullptr);
+    void Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z,
+                  std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::uint64_t programAddress = 0,
+                  std::shared_ptr<PreparedDispatch> prepared = nullptr,
+                  std::shared_ptr<const Recipe>* recipe = nullptr);
     // A dispatch whose group counts are the three dwords at `arguments` in guest memory
     // (DISPATCH_INDIRECT): the GPU reads them in place from the host import, ordered after everything
     // recorded before, so the CPU never waits for the shader that wrote them. When the GPU could not
@@ -235,7 +256,11 @@ public:
         int cpuReason;
         double argumentReadMs;
     };
-    IndirectOutcome DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr, std::shared_ptr<const Recipe>* recipe = nullptr);
+    IndirectOutcome DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments,
+                                     std::span<const Graphics::GuestMemorySnapshot> snapshots = {},
+                                     std::uint64_t programAddress = 0,
+                                     std::shared_ptr<PreparedDispatch> prepared = nullptr,
+                                     std::shared_ptr<const Recipe>* recipe = nullptr);
     // A value-equal dispatch-cache hit with a recipe (design_cpu_final M4), in two steps.
     // PrepareRecipe, WITHOUT GuestMemory::GpuMutex: the pre-checks (recipes on, the recipe's
     // device is this one, its template and pipeline objects still alive), the template's
@@ -257,7 +282,11 @@ public:
     // with the recipe's, else the process aborts. `refreshByWords`: the driver's data-only hit
     // (`shader` carries live flat-SRT words the recipe's hash does not name), so the template's
     // data refresh is decided by the per-word compare instead of the hash.
-    RecipeOutcome DispatchRecipe(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, const std::shared_ptr<RecipeHit>& hit, IndirectOutcome& outcome, const std::shared_ptr<PreparedDispatch>& verify = nullptr, bool refreshByWords = false);
+    RecipeOutcome DispatchRecipe(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y,
+                                 std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress,
+                                 const std::shared_ptr<RecipeHit>& hit, IndirectOutcome& outcome,
+                                 const std::shared_ptr<PreparedDispatch>& verify = nullptr,
+                                 bool refreshByWords = false);
     // Whether dispatch-cache hits use recipes (APS5_NO_DISPATCH_RECIPE unset) and whether every
     // hit is verified (APS5_VERIFY_RECIPE=1).
     static bool DispatchRecipes();
@@ -276,13 +305,20 @@ public:
     static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
-    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
-    std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
+    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw,
+              std::span<const Graphics::CompiledShader> shaders,
+              std::span<const Graphics::GuestMemorySnapshot> snapshots = {},
+              std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+    std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics,
+                                                  std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
     // A draw-cache hit recorded from its recipe (Graphics::DrawWithRecipe), under the mutex after
     // the packet's labels; Rebuild when the recipe's device is not this one or DrawWithRecipe
     // missed (nothing recorded: the caller runs Draw with the hit's stages and re-attaches).
-    RecipeOutcome DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe);
+    RecipeOutcome DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw,
+                                 std::span<const Graphics::CompiledShader> shaders,
+                                 std::span<const Graphics::GuestMemorySnapshot> snapshots,
+                                 const std::shared_ptr<const DrawRecipe>& recipe);
     // The indirect draw features the device enabled, for the driver's decision whether an indirect
     // draw's records can be read by the GPU (Graphics::Draw) or must be resolved on the CPU.
     struct IndirectDrawSupport {
@@ -291,7 +327,9 @@ public:
         bool count;
     };
     IndirectDrawSupport DrawIndirectSupport() const;
-    void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
+    void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw,
+                     std::span<const Graphics::CompiledShader> shaders,
+                     std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
 
 private:
     // The device's Graphics::Context: a copy of the one built at setup (its instance functions
@@ -299,7 +337,10 @@ private:
     Graphics::Context graphicsContext() const;
     Graphics::Context buildContext() const;
     // Body of Dispatch and DispatchIndirect: `arguments` 0 dispatches x, y, z groups.
-    IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe);
+    IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y,
+                             std::uint32_t z, std::uint64_t arguments,
+                             std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress,
+                             std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe);
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
     std::uint64_t presync(std::span<const std::pair<std::uint64_t, std::uint64_t>> surfaces);
     // A DISPATCH_INDIRECT's argument path (see DispatchIndirect): GPU-side from the host import, or
@@ -308,7 +349,11 @@ private:
     // The tail of a dispatch's device call from the open batch's command buffer to the completion
     // registration: keeps, the template data refresh, barriers, bind, push, dispatch, marks.
     void recordDispatch(RecordedDispatch& record);
-    bool present(std::uint32_t width, std::uint32_t height, bool opaque, std::span<const std::byte> pixels, const DisplayBuffer* display = nullptr, const std::shared_ptr<Graphics::StorageTexture>& resident = nullptr, VkFilter residentFilter = VK_FILTER_LINEAR, bool dumpFrame = false, bool residentConvert = false, const VkClearColorValue* uniform = nullptr);
+    bool present(std::uint32_t width, std::uint32_t height, bool opaque, std::span<const std::byte> pixels,
+                 const DisplayBuffer* display = nullptr,
+                 const std::shared_ptr<Graphics::StorageTexture>& resident = nullptr,
+                 VkFilter residentFilter = VK_FILTER_LINEAR, bool dumpFrame = false, bool residentConvert = false,
+                 const VkClearColorValue* uniform = nullptr);
     struct State;
     std::unique_ptr<State> state;
     std::uint64_t serial;

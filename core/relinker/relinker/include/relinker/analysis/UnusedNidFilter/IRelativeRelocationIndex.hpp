@@ -15,9 +15,7 @@ public:
     virtual std::optional<VirtualAddress> TargetOfSlot(VirtualAddress slotVaddr) const = 0;
 };
 
-std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
-    const std::vector<std::uint8_t>& elfBytes
-);
+std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(const std::vector<std::uint8_t>& elfBytes);
 
 }
 

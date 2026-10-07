@@ -16,8 +16,7 @@ namespace Codegen {
 
 namespace {
 
-template<typename TOperation>
-auto _atFileOffset(const Domain::FileByteOffset base, const TOperation& operation) {
+template <typename TOperation> auto _atFileOffset(const Domain::FileByteOffset base, const TOperation& operation) {
     try {
         return operation();
     } catch (const CodegenException& e) {
@@ -27,10 +26,8 @@ auto _atFileOffset(const Domain::FileByteOffset base, const TOperation& operatio
 
 class Amd64OnlyConverter : public IAmd64OnlyConverter {
 public:
-    [[nodiscard]] ConvertResult Convert(
-        std::vector<std::uint8_t> fileBytes,
-        const std::vector<Domain::ProgramHeader>& codeSegments
-    ) const override;
+    [[nodiscard]] ConvertResult Convert(std::vector<std::uint8_t> fileBytes,
+                                        const std::vector<Domain::ProgramHeader>& codeSegments) const override;
 
 private:
     struct Pending {
@@ -43,24 +40,17 @@ private:
     std::unique_ptr<IAmd64OnlyInstructionMatcher> _matcher = MakeAmd64OnlyInstructionMatcher();
     std::unique_ptr<IInstructionScanner> _scanner = MakeInstructionScanner();
 
-    void _convertSegment(
-        std::vector<std::uint8_t>& fileBytes,
-        const Domain::ProgramHeader& ph,
-        ConvertResult& result
-    ) const;
+    void _convertSegment(std::vector<std::uint8_t>& fileBytes, const Domain::ProgramHeader& ph,
+                         ConvertResult& result) const;
 
-    [[nodiscard]] static std::set<std::uint64_t> _collectBranchTargets(
-        const std::vector<std::uint8_t>& seg,
-        const std::vector<InstructionMatch>& matches,
-        const Domain::ProgramHeader& ph
-    );
+    [[nodiscard]] static std::set<std::uint64_t> _collectBranchTargets(const std::vector<std::uint8_t>& seg,
+                                                                       const std::vector<InstructionMatch>& matches,
+                                                                       const Domain::ProgramHeader& ph);
 };
 
-std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
-    const std::vector<std::uint8_t>& seg,
-    const std::vector<InstructionMatch>& matches,
-    const Domain::ProgramHeader& ph
-) {
+std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(const std::vector<std::uint8_t>& seg,
+                                                                  const std::vector<InstructionMatch>& matches,
+                                                                  const Domain::ProgramHeader& ph) {
     const X64InstructionDecoder decoder;
     std::set<std::uint64_t> targets;
     for (const auto& match : matches) {
@@ -74,27 +64,23 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
     return targets;
 }
 
-void Amd64OnlyConverter::_convertSegment(
-    std::vector<std::uint8_t>& fileBytes,
-    const Domain::ProgramHeader& ph,
-    ConvertResult& result
-) const {
+void Amd64OnlyConverter::_convertSegment(std::vector<std::uint8_t>& fileBytes, const Domain::ProgramHeader& ph,
+                                         ConvertResult& result) const {
     const auto segOffset = static_cast<std::size_t>(ph.Offset);
     const auto segSize = static_cast<std::size_t>(ph.FileSize);
     if (segOffset > fileBytes.size() || segSize > fileBytes.size() - segOffset)
         throw CodegenException("Code segment exceeds the file", ph.Offset);
 
-    std::vector<std::uint8_t> seg(
-        fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset),
-        fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize)
-    );
+    std::vector<std::uint8_t> seg(fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset),
+                                  fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize));
 
     const auto matches = _atFileOffset(ph.Offset, [&] { return _scanner->ScanCodeSection(seg, 0, seg.size()); });
 
     std::vector<Pending> pending;
     for (std::size_t index = 0; index < matches.size(); ++index) {
         const auto& match = matches[index];
-        auto substitution = _atFileOffset(ph.Offset + match.Offset, [&] { return _matcher->Match(seg.data() + match.Offset, match.Length); });
+        auto substitution = _atFileOffset(ph.Offset + match.Offset,
+                                          [&] { return _matcher->Match(seg.data() + match.Offset, match.Length); });
         if (substitution.has_value())
             pending.push_back({index, match, std::move(*substitution)});
     }
@@ -120,7 +106,8 @@ void Amd64OnlyConverter::_convertSegment(
         case Amd64OnlyLowering::InPlace: {
             if (substitution.ReplacementBytes.size() != match.Length)
                 throw CodegenException("Intel substitution changes the instruction length", fileOffset);
-            seg = _atFileOffset(ph.Offset, [&] { return _rewriter.Rewrite(seg, {match.Offset, substitution.ReplacementBytes}).Bytes; });
+            seg = _atFileOffset(
+                ph.Offset, [&] { return _rewriter.Rewrite(seg, {match.Offset, substitution.ReplacementBytes}).Bytes; });
             replacementLength = substitution.ReplacementBytes.size();
             ++result.ReplacedCount;
             break;
@@ -132,11 +119,14 @@ void Amd64OnlyConverter::_convertSegment(
                 auto stub = substitution;
                 if (siteLength < Amd64OnlySubstitutionTable::kJmpRel32.Size) {
                     const X64InstructionDecoder decoder;
-                    std::vector<std::span<const std::uint8_t>> sequence{std::span<const std::uint8_t>(seg.data() + match.Offset, match.Length)};
+                    std::vector<std::span<const std::uint8_t>> sequence{
+                        std::span<const std::uint8_t>(seg.data() + match.Offset, match.Length)};
                     std::size_t trailingBytes = 0;
                     for (auto next = item.Index + 1; siteLength < Amd64OnlySubstitutionTable::kJmpRel32.Size; ++next) {
                         if (next >= matches.size() || matches[next].Offset != match.Offset + siteLength)
-                            throw CodegenException("AMD-only instruction too short for a jump and not followed by an instruction", fileOffset);
+                            throw CodegenException(
+                                "AMD-only instruction too short for a jump and not followed by an instruction",
+                                fileOffset);
                         const auto& following = matches[next];
                         const std::span<const std::uint8_t> bytes(seg.data() + following.Offset, following.Length);
                         const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
@@ -144,48 +134,53 @@ void Amd64OnlyConverter::_convertSegment(
                         if (amdOnly && trailingBytes == 0) {
                             sequence.push_back(bytes);
                             taken.push_back(next);
-                        } else if (amdOnly || info.FlowKind != ControlFlowKind::Sequential || info.HasRipRelativeDisp || info.HasBranchTarget) {
-                            throw CodegenException("AMD-only instruction too short for a jump is followed by an instruction that cannot move", ph.Offset + following.Offset);
+                        } else if (amdOnly || info.FlowKind != ControlFlowKind::Sequential || info.HasRipRelativeDisp ||
+                                   info.HasBranchTarget) {
+                            throw CodegenException("AMD-only instruction too short for a jump is followed by an "
+                                                   "instruction that cannot move",
+                                                   ph.Offset + following.Offset);
                         } else {
                             trailingBytes += following.Length;
                         }
                         siteLength += following.Length;
                     }
-                    const std::span<const std::uint8_t> trailing(seg.data() + match.Offset + siteLength - trailingBytes, trailingBytes);
-                    auto relocated = _atFileOffset(fileOffset, [&] { return _matcher->MatchSequence(sequence, trailing); });
+                    const std::span<const std::uint8_t> trailing(seg.data() + match.Offset + siteLength - trailingBytes,
+                                                                 trailingBytes);
+                    auto relocated =
+                        _atFileOffset(fileOffset, [&] { return _matcher->MatchSequence(sequence, trailing); });
                     if (!relocated.has_value() || relocated->Lowering != Amd64OnlyLowering::Trampoline)
                         throw CodegenException("AMD-only instruction sequence has no out-of-line lowering", fileOffset);
                     stub = std::move(*relocated);
                 }
                 const auto hit = branchTargets.upper_bound(address);
                 if (hit != branchTargets.end() && *hit < address + siteLength)
-                    throw CodegenException("Branch enters an AMD-only instruction", ph.Offset + (*hit - ph.MappedAddress));
+                    throw CodegenException("Branch enters an AMD-only instruction",
+                                           ph.Offset + (*hit - ph.MappedAddress));
                 const auto begin = seg.begin() + static_cast<std::ptrdiff_t>(match.Offset);
-                result.Trampolines.push_back({
-                    fileOffset,
-                    address,
-                    siteLength,
-                    std::vector<std::uint8_t>(begin, begin + static_cast<std::ptrdiff_t>(siteLength)),
-                    stub.StubBody,
-                    stub.ReturnBranchOffset
-                });
+                result.Trampolines.push_back(
+                    {fileOffset, address, siteLength,
+                     std::vector<std::uint8_t>(begin, begin + static_cast<std::ptrdiff_t>(siteLength)), stub.StubBody,
+                     stub.ReturnBranchOffset});
                 replacementLength = stub.StubBody.size();
                 consumed.insert(taken.begin(), taken.end());
             } catch (const CodegenException&) {
                 if (!substitution.Optional)
                     throw;
                 ++result.KeptCount;
-                result.Reports.push_back({substitution.InstructionName, fileOffset, match.Length, 0, Amd64OnlyLowering::Kept});
+                result.Reports.push_back(
+                    {substitution.InstructionName, fileOffset, match.Length, 0, Amd64OnlyLowering::Kept});
                 continue;
             }
             break;
         }
         case Amd64OnlyLowering::Kept:
         case Amd64OnlyLowering::Unsupported:
-            throw CodegenException("AMD-only instruction without Intel lowering: " + substitution.InstructionName, fileOffset);
+            throw CodegenException("AMD-only instruction without Intel lowering: " + substitution.InstructionName,
+                                   fileOffset);
         }
 
-        result.Reports.push_back({substitution.InstructionName, fileOffset, match.Length, replacementLength, substitution.Lowering});
+        result.Reports.push_back(
+            {substitution.InstructionName, fileOffset, match.Length, replacementLength, substitution.Lowering});
     }
 
     if (seg.size() != segSize)
@@ -193,10 +188,8 @@ void Amd64OnlyConverter::_convertSegment(
     std::copy(seg.begin(), seg.end(), fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset));
 }
 
-ConvertResult Amd64OnlyConverter::Convert(
-    std::vector<std::uint8_t> fileBytes,
-    const std::vector<Domain::ProgramHeader>& codeSegments
-) const {
+ConvertResult Amd64OnlyConverter::Convert(std::vector<std::uint8_t> fileBytes,
+                                          const std::vector<Domain::ProgramHeader>& codeSegments) const {
     ConvertResult result{};
     for (const auto& ph : codeSegments)
         _convertSegment(fileBytes, ph, result);
@@ -206,8 +199,6 @@ ConvertResult Amd64OnlyConverter::Convert(
 
 }
 
-std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter() {
-    return std::make_unique<Amd64OnlyConverter>();
-}
+std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter() { return std::make_unique<Amd64OnlyConverter>(); }
 
 }

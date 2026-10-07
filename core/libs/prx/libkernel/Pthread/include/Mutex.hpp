@@ -20,7 +20,6 @@ int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec);
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
-
 }
 
 #endif

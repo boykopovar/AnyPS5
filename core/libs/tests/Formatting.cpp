@@ -13,7 +13,8 @@ int APS5_VABI vprintf_nid_postfix(const char*, VaList*);
 }
 
 static void Require(bool condition) {
-    if (!condition) throw std::runtime_error("Formatting check failed");
+    if (!condition)
+        throw std::runtime_error("Formatting check failed");
 }
 
 static int APS5_VABI FormatList(char* buffer, size_t size, const char* format, ...) {
@@ -40,29 +41,46 @@ static int APS5_VABI PrintList(const char* format, ...) {
 
 static bool CheckWidePrecision() {
     const char16_t input[] = u"A\u00e9\u20ac\U0001f600Z";
-    const char* expected[] = {"", "A", "A", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9\xe2\x82\xac",
-        "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac", "A\xc3\xa9\xe2\x82\xac",
-        "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80", "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80Z"};
+    const char* expected[] = {"",
+                              "A",
+                              "A",
+                              "A\xc3\xa9",
+                              "A\xc3\xa9",
+                              "A\xc3\xa9",
+                              "A\xc3\xa9\xe2\x82\xac",
+                              "A\xc3\xa9\xe2\x82\xac",
+                              "A\xc3\xa9\xe2\x82\xac",
+                              "A\xc3\xa9\xe2\x82\xac",
+                              "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80",
+                              "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80Z"};
     bool correct = true;
     for (int precision = 0; precision < 12; ++precision) {
         char output[32];
         std::memset(output, '!', sizeof(output));
         const int count = snprintf_nid_postfix(output, sizeof(output), "%.*ls", precision, input);
         const auto expectedSize = std::strlen(expected[precision]);
-        const bool matches = count == expectedSize && std::strcmp(output, expected[precision]) == 0 && output[expectedSize + 1] == '!';
-        if (!matches) std::fprintf(stderr, "wide precision %d: expected %zu complete UTF-8 bytes, received %d\n", precision, expectedSize, count);
+        const bool matches =
+            count == expectedSize && std::strcmp(output, expected[precision]) == 0 && output[expectedSize + 1] == '!';
+        if (!matches)
+            std::fprintf(stderr, "wide precision %d: expected %zu complete UTF-8 bytes, received %d\n", precision,
+                         expectedSize, count);
         correct &= matches;
     }
-    if (!correct) return false;
+    if (!correct)
+        return false;
     char output[32];
-    Require(snprintf_nid_postfix(output, sizeof(output), "[%5.1ls]", u"\u00e9") == 7 && std::strcmp(output, "[     ]") == 0);
-    Require(snprintf_nid_postfix(output, sizeof(output), "[%-5.2ls]", u"\u00e9") == 7 && std::strcmp(output, "[\xc3\xa9   ]") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "[%5.1ls]", u"\u00e9") == 7 &&
+            std::strcmp(output, "[     ]") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "[%-5.2ls]", u"\u00e9") == 7 &&
+            std::strcmp(output, "[\xc3\xa9   ]") == 0);
     Require(FormatList(output, sizeof(output), "%.3ls", u"\U0001f600") == 0 && output[0] == 0);
-    Require(FormatList(output, sizeof(output), "%.*ls:%d", -1, u"\u00e9", 7) == 4 && std::strcmp(output, "\xc3\xa9:7") == 0);
+    Require(FormatList(output, sizeof(output), "%.*ls:%d", -1, u"\u00e9", 7) == 4 &&
+            std::strcmp(output, "\xc3\xa9:7") == 0);
     const char16_t bounded[] = {u'A', u'B'};
     Require(snprintf_nid_postfix(output, sizeof(output), "%.2ls", bounded) == 2 && std::strcmp(output, "AB") == 0);
     Require(snprintf_nid_postfix(nullptr, 0, "%.1ls", u"\u00e9") == 0);
-    Require(snprintf_nid_postfix(output, sizeof(output), "%.1s", "\xc3\xa9") == 1 && static_cast<unsigned char>(output[0]) == 0xc3 && output[1] == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%.1s", "\xc3\xa9") == 1 &&
+            static_cast<unsigned char>(output[0]) == 0xc3 && output[1] == 0);
     return correct;
 }
 
@@ -73,22 +91,26 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     for (int index = 0; index < 10000; ++index) {
         snprintf_nid_postfix(buffer, sizeof(buffer), "%d %d %d %d %d %d %d %d", 1, 2, 3, 4, 5, 6, 7, 8);
         Require(std::strcmp(buffer, "1 2 3 4 5 6 7 8") == 0);
-        FormatList(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %d", 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11);
+        FormatList(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %d", 1., 2., 3., 4., 5.,
+                   6., 7., 8., 9., 10., 11);
         Require(std::strcmp(buffer, "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11") == 0);
-        snprintf_nid_postfix(buffer, sizeof(buffer), "%ld %lu %lld %zu %td %jd", -4294967297LL, 4294967297ULL, -5LL, 7ULL, -8LL, 9LL);
+        snprintf_nid_postfix(buffer, sizeof(buffer), "%ld %lu %lld %zu %td %jd", -4294967297LL, 4294967297ULL, -5LL,
+                             7ULL, -8LL, 9LL);
         Require(std::strcmp(buffer, "-4294967297 4294967297 -5 7 -8 9") == 0);
         snprintf_nid_postfix(buffer, sizeof(buffer), "%s:%*.*f:%d", "test", -8, 2, 1.25, 7);
         Require(std::strcmp(buffer, "test:1.25    :7") == 0);
         FormatList(buffer, sizeof(buffer), "%d %d %d %d %d %d %d %.3Lf %.1f", 1, 2, 3, 4, 5, 6, 7, 1.125L, 2.5);
         Require(std::strcmp(buffer, "1 2 3 4 5 6 7 1.125 2.5") == 0);
     }
-    snprintf_nid_postfix(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f", 1., 2., 3., 4., 5., 6., 7., 8., 9., 10.);
+    snprintf_nid_postfix(buffer, sizeof(buffer), "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f", 1., 2., 3., 4.,
+                         5., 6., 7., 8., 9., 10.);
     Require(std::strcmp(buffer, "1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0") == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.3Lf %d %.1f", 1.125L, 7, 2.5);
     Require(std::strcmp(buffer, "1.125 7 2.5") == 0);
     char expected[1024];
     std::snprintf(expected, sizeof(expected), "%#08x %.3e %a %g %p", 42u, 1.25, 1.25, 1.25, static_cast<void*>(buffer));
-    snprintf_nid_postfix(buffer, sizeof(buffer), "%#08x %.3e %a %g %p", 42u, 1.25, 1.25, 1.25, static_cast<void*>(buffer));
+    snprintf_nid_postfix(buffer, sizeof(buffer), "%#08x %.3e %a %g %p", 42u, 1.25, 1.25, 1.25,
+                         static_cast<void*>(buffer));
     Require(std::strcmp(buffer, expected) == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.*s", -1, "unlimited");
     Require(std::strcmp(buffer, "unlimited") == 0);
@@ -96,7 +118,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(snprintf_nid_postfix(buffer, 5, "%s", "abcdef") == 6);
     Require(std::strcmp(buffer, "abcd") == 0 && buffer[5] == '!');
     Require(snprintf_nid_postfix(nullptr, 0, "%s:%d", "abcdef", 123) == 10);
-    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%s]", static_cast<const char*>(nullptr)) == 8 && std::strcmp(buffer, "[(null)]") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%s]", static_cast<const char*>(nullptr)) == 8 &&
+            std::strcmp(buffer, "[(null)]") == 0);
     buffer[0] = 'x';
     Require(snprintf_nid_postfix(buffer, 1, "%d", 123) == 3 && buffer[0] == 0);
     Require(sprintf_nid_postfix(buffer, "%hhd %hhu %hd %hu %%", 255, 257, 65535, 65537) == 11);
@@ -113,4 +136,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     std::puts("Formatting checks passed: 10000 iterations");
 }
 
-int main() { RunChecks(); return CheckWidePrecision() ? 0 : 1; }
+int main() {
+    RunChecks();
+    return CheckWidePrecision() ? 0 : 1;
+}

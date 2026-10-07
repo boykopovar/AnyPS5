@@ -54,13 +54,16 @@ public:
     // by the driver: the [capture] line charges the waits made inside a capture to it.
     using WaitedMsProvider = double (*)();
     static void SetWaitedMsProvider(WaitedMsProvider provider);
-    explicit ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> initial, PendingWriteQuery pendingWrite = nullptr, PendingWriteObserver observe = nullptr, HookWaitCounter hookWaits = nullptr);
+    explicit ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> initial,
+                          PendingWriteQuery pendingWrite = nullptr, PendingWriteObserver observe = nullptr,
+                          HookWaitCounter hookWaits = nullptr);
     // Returns what the capture resolved (plan, snapshot, specialization) for
     // ShaderRecompiler::Recompile(request, capture), which then skips its own materialization. One
     // result per call: the draw path captures several stages on one ShaderMemory. With `handle`
     // (the driver's memoized ShaderRecompiler::ResolveSource result) the capture skips the source
     // resolution.
-    std::shared_ptr<const ShaderRecompiler::ResourceCapture> Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle = nullptr);
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture>
+    Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle = nullptr);
     [[nodiscard]] std::vector<ShaderRecompiler::MemoryRegion> Regions() const;
     // The page regions read since the previous call (or construction), a word read again
     // included, the initial regions excluded: one stage's own reads on the draw path's shared
@@ -106,7 +109,12 @@ struct DataWordPositionCounts {
     std::uint64_t mismatched = 0;
     std::uint64_t aliased = 0;
 };
-DataWordPositionCounts DataWordPositions(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, std::span<const std::pair<std::uint32_t, std::uint64_t>> leaves, std::span<const std::uint64_t> otherReads, std::span<const std::uint32_t> words, std::span<const std::uint32_t> flattenedSrt, std::vector<std::uint32_t>& positions, std::vector<std::uint32_t>& slots);
+DataWordPositionCounts DataWordPositions(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs,
+                                         std::span<const std::pair<std::uint32_t, std::uint64_t>> leaves,
+                                         std::span<const std::uint64_t> otherReads,
+                                         std::span<const std::uint32_t> words,
+                                         std::span<const std::uint32_t> flattenedSrt,
+                                         std::vector<std::uint32_t>& positions, std::vector<std::uint32_t>& slots);
 
 }
 

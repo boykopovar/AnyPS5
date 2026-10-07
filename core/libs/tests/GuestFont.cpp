@@ -9,7 +9,8 @@
 #include <vector>
 
 extern "C" {
-int APS5_VABI sceFontMemoryInit(FontMemory*, void*, std::uint32_t, const FontMemoryInterface*, void*, FontMemoryDestroyFunction, void*);
+int APS5_VABI sceFontMemoryInit(FontMemory*, void*, std::uint32_t, const FontMemoryInterface*, void*,
+                                FontMemoryDestroyFunction, void*);
 int APS5_VABI sceFontMemoryTerm(FontMemory*);
 int APS5_VABI sceFontCreateLibrary(const FontMemory*, const void*, FontLibrary*);
 int APS5_VABI sceFontDestroyLibrary(FontLibrary*);
@@ -51,13 +52,12 @@ static void* APS5_VABI Allocate(void*, std::uint32_t size) {
     return std::malloc(size);
 }
 static void APS5_VABI Release(void*, void* pointer) {
-    if (pointer) --allocations;
+    if (pointer)
+        --allocations;
     std::free(pointer);
 }
 
-static std::uint32_t APS5_VABI CoarsePixelResolution() {
-    return 16;
-}
+static std::uint32_t APS5_VABI CoarsePixelResolution() { return 16; }
 
 static void Put16(std::vector<unsigned char>& out, int value) {
     out.push_back(static_cast<unsigned char>((value >> 8) & 0xFF));
@@ -66,13 +66,15 @@ static void Put16(std::vector<unsigned char>& out, int value) {
 
 static std::vector<unsigned char> Words(std::initializer_list<int> values) {
     std::vector<unsigned char> out;
-    for (const int value : values) Put16(out, value);
+    for (const int value : values)
+        Put16(out, value);
     return out;
 }
 
 static std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string, std::vector<unsigned char>> tables) {
     tables["glyf"] = Words({0, 0});
-    tables["head"] = Words({1, 0, 1, 0, 0, 0, 0x5F0F, 0x3CF5, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 2, 0, 0});
+    tables["head"] =
+        Words({1, 0, 1, 0, 0, 0, 0x5F0F, 0x3CF5, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 2, 0, 0});
     tables["hhea"] = Words({1, 0, 800, -200, 0, 500, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1});
     tables["hmtx"] = Words({500});
     tables["hmtx"].resize(2 + 2 * static_cast<std::size_t>(glyphCount));
@@ -80,12 +82,15 @@ static std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string
     tables["maxp"] = Words({1, 0, glyphCount, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0});
     const int tableCount = static_cast<int>(tables.size());
     int entrySelector = 0;
-    while ((2 << entrySelector) <= tableCount) ++entrySelector;
-    std::vector<unsigned char> font = Words({1, 0, tableCount, 16 << entrySelector, entrySelector, 16 * tableCount - (16 << entrySelector)});
+    while ((2 << entrySelector) <= tableCount)
+        ++entrySelector;
+    std::vector<unsigned char> font =
+        Words({1, 0, tableCount, 16 << entrySelector, entrySelector, 16 * tableCount - (16 << entrySelector)});
     int offset = 12 + 16 * tableCount;
     for (const auto& table : tables) {
         font.insert(font.end(), table.first.begin(), table.first.end());
-        for (const int value : {0, 0, offset >> 16, offset & 0xFFFF, 0, static_cast<int>(table.second.size())}) Put16(font, value);
+        for (const int value : {0, 0, offset >> 16, offset & 0xFFFF, 0, static_cast<int>(table.second.size())})
+            Put16(font, value);
         offset += static_cast<int>((table.second.size() + 3) & ~std::size_t{3});
     }
     for (const auto& table : tables) {
@@ -95,19 +100,19 @@ static std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string
     return font;
 }
 
-static std::vector<unsigned char> EmptyGlyphFont() {
-    return BuildFont(1, {});
-}
+static std::vector<unsigned char> EmptyGlyphFont() { return BuildFont(1, {}); }
 
 static std::vector<unsigned char> KerningFont() {
     return BuildFont(3, {
-        {"cmap", Words({0, 1, 3, 1, 0, 12, 4, 40, 0, 6, 4, 1, 2, 'A', 'V', 0xFFFF, 0, 'A', 'V', 0xFFFF, 1 - 'A', 2 - 'V', 1, 0, 0, 0})},
-        {"kern", Words({0, 1, 0, 20, 1, 1, 6, 0, 0, 1, 2, -200})},
-    });
+                            {"cmap", Words({0,   1,   3,      1, 0,   12,  4,      40,      0,       6, 4, 1, 2,
+                                            'A', 'V', 0xFFFF, 0, 'A', 'V', 0xFFFF, 1 - 'A', 2 - 'V', 1, 0, 0, 0})},
+                            {"kern", Words({0, 1, 0, 20, 1, 1, 6, 0, 0, 1, 2, -200})},
+                        });
 }
 
 static bool KerningIs(const FontKerning& kerning, float offsetX) {
-    return kerning.offsetX == offsetX && kerning.offsetY == 0.0f && kerning.positionX == 0.0f && kerning.positionY == 0.0f;
+    return kerning.offsetX == offsetX && kerning.offsetY == 0.0f && kerning.positionX == 0.0f &&
+           kerning.positionY == 0.0f;
 }
 
 int main() {
@@ -130,7 +135,8 @@ int main() {
     Require(sceFontGetPixelResolution(nullptr, &subPixelCount) == SCE_FONT_ERROR_INVALID_LIBRARY && subPixelCount == 0);
     FontHandleOpaque notALibrary{};
     subPixelCount = 1;
-    Require(sceFontGetPixelResolution(&notALibrary, &subPixelCount) == SCE_FONT_ERROR_INVALID_LIBRARY && subPixelCount == 0);
+    Require(sceFontGetPixelResolution(&notALibrary, &subPixelCount) == SCE_FONT_ERROR_INVALID_LIBRARY &&
+            subPixelCount == 0);
     Font::SysDriver coarseDriver = *static_cast<const Font::SysDriver*>(sceFontSelectLibraryFt(0));
     coarseDriver.pixel_resolution = CoarsePixelResolution;
     FontLibrary coarseLibrary = nullptr;
@@ -138,25 +144,35 @@ int main() {
     Require(sceFontGetPixelResolution(coarseLibrary, &subPixelCount) == SCE_FONT_OK && subPixelCount == 16);
     Require(sceFontGetPixelResolution(library, &subPixelCount) == SCE_FONT_OK && subPixelCount == 64);
     coarseDriver.pixel_resolution = nullptr;
-    Require(sceFontGetPixelResolution(coarseLibrary, &subPixelCount) == SCE_FONT_ERROR_INVALID_LIBRARY && subPixelCount == 0);
+    Require(sceFontGetPixelResolution(coarseLibrary, &subPixelCount) == SCE_FONT_ERROR_INVALID_LIBRARY &&
+            subPixelCount == 0);
     Require(sceFontDestroyLibrary(&coarseLibrary) == SCE_FONT_OK && coarseLibrary == nullptr);
 
     FontHandle font = reinterpret_cast<FontHandle>(&memory);
-    Require(sceFontOpenFontSet(library, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FUNCTION && font == nullptr);
+    Require(sceFontOpenFontSet(library, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FUNCTION &&
+            font == nullptr);
     Require(sceFontSupportSystemFonts(library) == SCE_FONT_OK);
-    Require(sceFontOpenFontSet(library, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_FONT_OPEN_FAILED && font == nullptr);
+    Require(sceFontOpenFontSet(library, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_FONT_OPEN_FAILED &&
+            font == nullptr);
     Require(sceFontOpenFontSet(library, 0x12345678u, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FONTSET);
     Require(sceFontOpenFontSet(library, SystemFontSet, 7, nullptr, &font) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontOpenFontSet(nullptr, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_INVALID_LIBRARY);
     const unsigned char notAFont[64] = {1, 2, 3, 4};
-    Require(sceFontOpenFontMemory(library, notAFont, sizeof(notAFont), nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FUNCTION && font == nullptr);
+    Require(sceFontOpenFontMemory(library, notAFont, sizeof(notAFont), nullptr, &font) ==
+                SCE_FONT_ERROR_NO_SUPPORT_FUNCTION &&
+            font == nullptr);
     Require(sceFontSupportExternalFonts(library, 4, 0x52) == SCE_FONT_OK);
     Require(sceFontSupportExternalFonts(library, 4, 0x52) == SCE_FONT_ERROR_ALREADY_SPECIFIED);
-    Require(sceFontOpenFontMemory(library, nullptr, 0, nullptr, &font) == SCE_FONT_ERROR_INVALID_PARAMETER && font == nullptr);
-    Require(sceFontOpenFontMemory(library, notAFont, sizeof(notAFont), nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FORMAT && font == nullptr);
+    Require(sceFontOpenFontMemory(library, nullptr, 0, nullptr, &font) == SCE_FONT_ERROR_INVALID_PARAMETER &&
+            font == nullptr);
+    Require(sceFontOpenFontMemory(library, notAFont, sizeof(notAFont), nullptr, &font) ==
+                SCE_FONT_ERROR_NO_SUPPORT_FORMAT &&
+            font == nullptr);
 
     const std::vector<unsigned char> fontData = EmptyGlyphFont();
-    Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK && font != nullptr);
+    Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr,
+                                  &font) == SCE_FONT_OK &&
+            font != nullptr);
     std::uint32_t hDpi = 1;
     std::uint32_t vDpi = 1;
     Require(sceFontGetResolutionDpi(font, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 72 && vDpi == 72);
@@ -169,45 +185,55 @@ int main() {
     Require(sceFontGetResolutionDpi(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSetResolutionDpi(font, 0, 300) == SCE_FONT_OK);
     Require(sceFontGetResolutionDpi(font, &hDpi, &vDpi) == SCE_FONT_OK && hDpi == 72 && vDpi == 300);
-    Require(sceFontGetResolutionDpi(nullptr, &hDpi, &vDpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && hDpi == 0 && vDpi == 0);
+    Require(sceFontGetResolutionDpi(nullptr, &hDpi, &vDpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && hDpi == 0 &&
+            vDpi == 0);
     FontHandleOpaque unopened{};
     hDpi = 1;
     vDpi = 1;
-    Require(sceFontGetResolutionDpi(&unopened, &hDpi, &vDpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && hDpi == 0 && vDpi == 0);
+    Require(sceFontGetResolutionDpi(&unopened, &hDpi, &vDpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && hDpi == 0 &&
+            vDpi == 0);
     std::uint32_t glyphsCount = 0;
     Require(sceFontGetFontGlyphsCount(font, &glyphsCount) == SCE_FONT_OK && glyphsCount == 1);
     Require(sceFontGetFontGlyphsCount(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     glyphsCount = 1;
     Require(sceFontGetFontGlyphsCount(nullptr, &glyphsCount) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && glyphsCount == 0);
     glyphsCount = 1;
-    Require(sceFontGetFontGlyphsCount(&unopened, &glyphsCount) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && glyphsCount == 0);
+    Require(sceFontGetFontGlyphsCount(&unopened, &glyphsCount) == SCE_FONT_ERROR_INVALID_FONT_HANDLE &&
+            glyphsCount == 0);
     std::uint32_t glyphCode = 1;
     Require(sceFontGetCharGlyphCode(font, 'A', &glyphCode) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH && glyphCode == 0);
     Require(sceFontGetCharGlyphCode(font, 'A', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     glyphCode = 1;
     Require(sceFontGetCharGlyphCode(nullptr, 'A', &glyphCode) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && glyphCode == 0);
     glyphCode = 1;
-    Require(sceFontGetCharGlyphCode(&unopened, 'A', &glyphCode) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && glyphCode == 0);
+    Require(sceFontGetCharGlyphCode(&unopened, 'A', &glyphCode) == SCE_FONT_ERROR_INVALID_FONT_HANDLE &&
+            glyphCode == 0);
     std::uint32_t resolution = 0;
     float scalePixel = 0.0f;
-    Require(sceFontGetFontResolution(font, &resolution, &scalePixel) == SCE_FONT_OK && resolution == 1000 && scalePixel == 15.625f);
+    Require(sceFontGetFontResolution(font, &resolution, &scalePixel) == SCE_FONT_OK && resolution == 1000 &&
+            scalePixel == 15.625f);
     resolution = 0;
     Require(sceFontGetFontResolution(font, &resolution, nullptr) == SCE_FONT_OK && resolution == 1000);
     scalePixel = 0.0f;
     Require(sceFontGetFontResolution(font, nullptr, &scalePixel) == SCE_FONT_OK && scalePixel == 15.625f);
     Require(sceFontGetFontResolution(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
-    Require(sceFontGetFontResolution(nullptr, &resolution, &scalePixel) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && resolution == 0 && scalePixel == 0.0f);
+    Require(sceFontGetFontResolution(nullptr, &resolution, &scalePixel) == SCE_FONT_ERROR_INVALID_FONT_HANDLE &&
+            resolution == 0 && scalePixel == 0.0f);
     resolution = 1;
     scalePixel = 1.0f;
-    Require(sceFontGetFontResolution(&unopened, &resolution, &scalePixel) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && resolution == 0 && scalePixel == 0.0f);
+    Require(sceFontGetFontResolution(&unopened, &resolution, &scalePixel) == SCE_FONT_ERROR_INVALID_FONT_HANDLE &&
+            resolution == 0 && scalePixel == 0.0f);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);
 
     FontRenderer renderer = nullptr;
-    Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK && renderer != nullptr);
+    Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK &&
+            renderer != nullptr);
 
     const std::vector<unsigned char> kerningData = KerningFont();
     font = nullptr;
-    Require(sceFontOpenFontMemory(library, kerningData.data(), static_cast<std::uint32_t>(kerningData.size()), nullptr, &font) == SCE_FONT_OK && font != nullptr);
+    Require(sceFontOpenFontMemory(library, kerningData.data(), static_cast<std::uint32_t>(kerningData.size()), nullptr,
+                                  &font) == SCE_FONT_OK &&
+            font != nullptr);
     Require(sceFontGetFontGlyphsCount(font, &glyphsCount) == SCE_FONT_OK && glyphsCount == 3);
     Require(sceFontGetCharGlyphCode(font, 'A', &glyphCode) == SCE_FONT_OK && glyphCode == 1);
     Require(sceFontGetCharGlyphCode(font, 'V', &glyphCode) == SCE_FONT_OK && glyphCode == 2);
@@ -220,7 +246,8 @@ int main() {
     FontKerning kerning{1.0f, 1.0f, 1.0f, 1.0f};
     Require(sceFontGetKerning(font, 'A', 'V', &kerning) == SCE_FONT_OK && KerningIs(kerning, -20.0f));
     kerning = {1.0f, 1.0f, 1.0f, 1.0f};
-    Require(sceFontGetRenderScaledKerning(font, 'A', 'V', &kerning) == SCE_FONT_ERROR_NOT_BOUND_RENDERER && KerningIs(kerning, 0.0f));
+    Require(sceFontGetRenderScaledKerning(font, 'A', 'V', &kerning) == SCE_FONT_ERROR_NOT_BOUND_RENDERER &&
+            KerningIs(kerning, 0.0f));
     Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
     Require(sceFontGetRenderScaledKerning(font, 'A', 'V', &kerning) == SCE_FONT_OK && KerningIs(kerning, -20.0f));
     Require(sceFontSetupRenderScalePixel(font, 50.0f, 50.0f) == SCE_FONT_OK);
@@ -234,9 +261,11 @@ int main() {
     Require(sceFontGetRenderScaledKerning(font, 'A', 'B', &kerning) == SCE_FONT_OK && KerningIs(kerning, 0.0f));
     Require(sceFontGetRenderScaledKerning(font, 'A', 'V', nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     kerning = {1.0f, 1.0f, 1.0f, 1.0f};
-    Require(sceFontGetRenderScaledKerning(nullptr, 'A', 'V', &kerning) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && KerningIs(kerning, 0.0f));
+    Require(sceFontGetRenderScaledKerning(nullptr, 'A', 'V', &kerning) == SCE_FONT_ERROR_INVALID_FONT_HANDLE &&
+            KerningIs(kerning, 0.0f));
     kerning = {1.0f, 1.0f, 1.0f, 1.0f};
-    Require(sceFontGetRenderScaledKerning(&unopened, 'A', 'V', &kerning) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && KerningIs(kerning, 0.0f));
+    Require(sceFontGetRenderScaledKerning(&unopened, 'A', 'V', &kerning) == SCE_FONT_ERROR_INVALID_FONT_HANDLE &&
+            KerningIs(kerning, 0.0f));
     Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
     Require(sceFontGetRenderScaledKerning(font, 'A', 'V', &kerning) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);

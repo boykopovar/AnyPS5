@@ -15,7 +15,8 @@ int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2*);
 }
 
 static void Require(bool value) {
-    if (!value) std::abort();
+    if (!value)
+        std::abort();
 }
 
 static std::vector<char> Read(const std::filesystem::path& path) {
@@ -26,13 +27,18 @@ static std::vector<char> Read(const std::filesystem::path& path) {
 
 int main() {
     const auto previous = std::filesystem::current_path();
-    const auto root = std::filesystem::temp_directory_path() /
+    const auto root =
+        std::filesystem::temp_directory_path() /
         ("anyps5-metadata-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     std::filesystem::current_path(root);
     const auto path = std::filesystem::path("_sd_mem/u7531/slot0.param");
     std::filesystem::create_directories(path.parent_path());
-    { std::ofstream file("_sd_mem/u7531/slot0.bin"); file << "save"; Require(static_cast<bool>(file)); }
+    {
+        std::ofstream file("_sd_mem/u7531/slot0.bin");
+        file << "save";
+        Require(static_cast<bool>(file));
+    }
     Require(sceSaveDataInitialize3(nullptr) == 0);
     Require(sceSaveDataInitialize3(nullptr) == 0);
     Require(sceSaveDataTerminate() == 0);

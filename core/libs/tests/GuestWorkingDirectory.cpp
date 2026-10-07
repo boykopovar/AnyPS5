@@ -9,7 +9,10 @@ int APS5_VABI chdir_nid_postfix(const char*);
 char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
 int* APS5_VABI __error_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     const auto host = std::filesystem::canonical(std::filesystem::current_path());
     char path[1024];
@@ -17,7 +20,10 @@ int main() {
     const auto name = "anyps5-cwd-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto directory = host / name;
     Require(std::filesystem::create_directory(directory));
-    { std::ofstream file(directory / "sample.txt"); file << "sample"; }
+    {
+        std::ofstream file(directory / "sample.txt");
+        file << "sample";
+    }
     Require(chdir_nid_postfix(name.c_str()) == 0);
     Require(std::filesystem::current_path() == host);
     Require(getcwd_nid_postfix(path, sizeof(path)) == path && path == "/" + name);

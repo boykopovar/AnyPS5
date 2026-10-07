@@ -8,9 +8,11 @@ void TextureDetiler::BeginBatch() {
     GuestMemory::AssertGpuLockHeld("TextureDetiler::BeginBatch");
     // Sets of recorded work that has not completed stay allocated; the pools are recycled once the
     // recorder is idle again.
-    if (const auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle()) return;
+    if (const auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle())
+        return;
     for (const auto pool : descriptorPools) {
-        Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), "vkResetDescriptorPool texture detiler");
+        Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0),
+              "vkResetDescriptorPool texture detiler");
     }
     allocatedSets = 0;
 }
@@ -26,7 +28,9 @@ VkDescriptorSet TextureDetiler::allocateSet() {
         info.pPoolSizes = &size;
         descriptorPools.reserve(descriptorPools.size() + 1);
         VkDescriptorPool pool = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &info, nullptr, &pool), "vkCreateDescriptorPool texture detiler");
+        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &info, nullptr,
+                                                                                     &pool),
+              "vkCreateDescriptorPool texture detiler");
         descriptorPools.push_back(pool);
     }
     VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -34,7 +38,8 @@ VkDescriptorSet TextureDetiler::allocateSet() {
     allocation.descriptorSetCount = 1;
     allocation.pSetLayouts = &descriptorLayout;
     VkDescriptorSet set = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets texture detiler");
+    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set),
+          "vkAllocateDescriptorSets texture detiler");
     ++allocatedSets;
     return set;
 }

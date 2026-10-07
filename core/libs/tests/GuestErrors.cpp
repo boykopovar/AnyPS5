@@ -8,16 +8,17 @@ char* APS5_VABI strerror_nid_postfix(int);
 int APS5_VABI strerror_r_nid_postfix(int, char*, std::size_t);
 int* APS5_VABI __error_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     *__error_nid_postfix() = 13;
     Require(std::strcmp(strerror_nid_postfix(35), "Resource temporarily unavailable") == 0);
     Require(*__error_nid_postfix() == 13);
     Require(std::strcmp(strerror_nid_postfix(78), "Function not implemented") == 0);
     char* parent = strerror_nid_postfix(22);
-    std::thread worker([] {
-        Require(std::strcmp(strerror_nid_postfix(45), "Operation not supported") == 0);
-    });
+    std::thread worker([] { Require(std::strcmp(strerror_nid_postfix(45), "Operation not supported") == 0); });
     worker.join();
     Require(std::strcmp(parent, "Invalid argument") == 0);
     char buffer[128];

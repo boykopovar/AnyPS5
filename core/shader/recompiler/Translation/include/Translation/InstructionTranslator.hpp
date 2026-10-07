@@ -37,10 +37,12 @@ struct TranslateOptions {
 
 class InstructionTranslator {
 public:
-    [[nodiscard]] IrProgram Translate(const RdnaProgram& decoded, const ControlFlowGraph& cfg, const TranslateOptions& options) const;
+    [[nodiscard]] IrProgram Translate(const RdnaProgram& decoded, const ControlFlowGraph& cfg,
+                                      const TranslateOptions& options) const;
 
 private:
-    void translateInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) const;
+    void translateInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg,
+                              const TranslateOptions& options) const;
 };
 
 }

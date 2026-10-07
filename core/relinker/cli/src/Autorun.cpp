@@ -10,10 +10,9 @@ namespace Cli {
 int Autorun(const std::string& absPath, bool toWindows) {
     if (!toWindows) {
         std::filesystem::permissions(absPath,
-            std::filesystem::perms::owner_exec |
-            std::filesystem::perms::group_exec |
-            std::filesystem::perms::others_exec,
-            std::filesystem::perm_options::add);
+                                     std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+                                         std::filesystem::perms::others_exec,
+                                     std::filesystem::perm_options::add);
     }
 
 #ifdef _WIN32
@@ -21,8 +20,10 @@ int Autorun(const std::string& absPath, bool toWindows) {
 #else
     std::string cmd = "'";
     for (const char character : absPath) {
-        if (character == '\'') cmd += "'\\''";
-        else cmd += character;
+        if (character == '\'')
+            cmd += "'\\''";
+        else
+            cmd += character;
     }
     cmd += '\'';
 #endif

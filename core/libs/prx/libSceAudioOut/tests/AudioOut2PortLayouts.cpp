@@ -22,7 +22,10 @@ int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
 int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32
@@ -32,8 +35,7 @@ static void SetEnvironment(const char* name, const std::string& value) {
 #endif
 }
 
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
+template <typename TFunction> static bool ThrowsRuntimeError(TFunction function) {
     try {
         function();
     } catch (const std::runtime_error&) {
@@ -65,13 +67,13 @@ struct Layout {
 const Layout mono{1, {1.0f}, {1.0f}};
 const Layout stereo{2, {1.0f, 0.0f}, {0.0f, 1.0f}};
 const Layout surround51{6, {1.0f, 0.0f, fold, 0.0f, fold, 0.0f}, {0.0f, 1.0f, fold, 0.0f, 0.0f, fold}};
-const Layout surround71{8, {1.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f}, {0.0f, 1.0f, fold, 0.0f, 0.0f, fold, 0.0f, fold}};
-const Layout surround714{12, {1.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold * fold, 0.0f},
-    {0.0f, 1.0f, fold, 0.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold * fold}};
+const Layout surround71{
+    8, {1.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f}, {0.0f, 1.0f, fold, 0.0f, 0.0f, fold, 0.0f, fold}};
+const Layout surround714{12,
+                         {1.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold* fold, 0.0f},
+                         {0.0f, 1.0f, fold, 0.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold* fold}};
 
-std::uint32_t Format(std::uint32_t channels, std::uint32_t type) {
-    return channels << 8 | type;
-}
+std::uint32_t Format(std::uint32_t channels, std::uint32_t type) { return channels << 8 | type; }
 
 AudioOut2ContextHandle CreateContext() {
     AudioOut2ContextParam params{};
@@ -114,7 +116,8 @@ std::vector<float> Play(std::uint32_t format, const void* data, const std::vecto
     SetData(port, data);
     Require(sceAudioOut2ContextPush(context, 1) == 0);
     SetData(port, nullptr);
-    for (std::uint32_t push = 0; push < silentGrains; push++) Require(sceAudioOut2ContextPush(context, 1) == 0);
+    for (std::uint32_t push = 0; push < silentGrains; push++)
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
     Require(sceAudioOut2PortDestroy(port) == 0);
     Require(sceAudioOut2ContextDestroy(context) == 0);
 
@@ -127,8 +130,10 @@ std::vector<float> Play(std::uint32_t format, const void* data, const std::vecto
     const auto* samples = reinterpret_cast<const float*>(bytes.data());
     std::size_t first = 0;
     std::size_t last = bytes.size() / sizeof(float);
-    while (first < last && samples[first] == 0.0f) first++;
-    while (last > first && samples[last - 1] == 0.0f) last--;
+    while (first < last && samples[first] == 0.0f)
+        first++;
+    while (last > first && samples[last - 1] == 0.0f)
+        last--;
     return {samples + first, samples + last};
 }
 
@@ -140,7 +145,8 @@ float Sample(std::uint32_t channel, std::uint32_t frame) {
 std::vector<float> FloatGrain(std::uint32_t channels) {
     std::vector<float> data(static_cast<std::size_t>(grain) * channels);
     for (std::uint32_t frame = 0; frame < grain; frame++) {
-        for (std::uint32_t channel = 0; channel < channels; channel++) data[frame * channels + channel] = Sample(channel, frame);
+        for (std::uint32_t channel = 0; channel < channels; channel++)
+            data[frame * channels + channel] = Sample(channel, frame);
     }
     return data;
 }
@@ -148,19 +154,23 @@ std::vector<float> FloatGrain(std::uint32_t channels) {
 std::vector<std::int16_t> S16Grain(std::uint32_t channels) {
     std::vector<std::int16_t> data(static_cast<std::size_t>(grain) * channels);
     for (std::uint32_t frame = 0; frame < grain; frame++) {
-        for (std::uint32_t channel = 0; channel < channels; channel++) data[frame * channels + channel] = static_cast<std::int16_t>(std::lround(Sample(channel, frame) * 32768.0f));
+        for (std::uint32_t channel = 0; channel < channels; channel++)
+            data[frame * channels + channel] =
+                static_cast<std::int16_t>(std::lround(Sample(channel, frame) * 32768.0f));
     }
     return data;
 }
 
 std::vector<float> Volume(std::uint32_t channels) {
     std::vector<float> volume(channels);
-    for (std::uint32_t channel = 0; channel < channels; channel++) volume[channel] = 1.0f - 0.05f * static_cast<float>(channel);
+    for (std::uint32_t channel = 0; channel < channels; channel++)
+        volume[channel] = 1.0f - 0.05f * static_cast<float>(channel);
     return volume;
 }
 
-template<typename TSample>
-void RequireFold(const std::vector<float>& played, const Layout& layout, const std::vector<TSample>& data, const std::vector<float>& volume, float scale) {
+template <typename TSample>
+void RequireFold(const std::vector<float>& played, const Layout& layout, const std::vector<TSample>& data,
+                 const std::vector<float>& volume, float scale) {
     Require(played.size() == static_cast<std::size_t>(grain) * 2);
     for (std::uint32_t frame = 0; frame < grain; frame++) {
         float left = 0.0f;
@@ -212,7 +222,8 @@ void TestDroppedLfe() {
         expected[frame * surround714.channels + 3] = 0.0f;
     }
     const auto volume = Volume(surround714.channels);
-    RequireFold(Play(Format(surround714.channels, formatFloat), data.data(), volume), surround714, expected, volume, 1.0f);
+    RequireFold(Play(Format(surround714.channels, formatFloat), data.data(), volume), surround714, expected, volume,
+                1.0f);
 }
 
 void TestRejectedLayouts() {

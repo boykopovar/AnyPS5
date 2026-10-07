@@ -13,10 +13,13 @@ namespace Codegen {
 
 class Sse4aLowering {
 public:
-    [[nodiscard]] std::optional<std::vector<std::uint8_t>> LowerInPlace(const Sse4aOperands& operands, std::size_t originalLength) const;
+    [[nodiscard]] std::optional<std::vector<std::uint8_t>> LowerInPlace(const Sse4aOperands& operands,
+                                                                        std::size_t originalLength) const;
     void EmitOutOfLine(StubBodyBuilder& body, const Sse4aOperands& operands) const;
-    [[nodiscard]] LoweredBody LowerOutOfLine(const Sse4aOperands& operands, std::span<const std::uint8_t> trailing = {}) const;
-    [[nodiscard]] LoweredBody LowerOutOfLine(std::span<const Sse4aOperands> sequence, std::span<const std::uint8_t> trailing) const;
+    [[nodiscard]] LoweredBody LowerOutOfLine(const Sse4aOperands& operands,
+                                             std::span<const std::uint8_t> trailing = {}) const;
+    [[nodiscard]] LoweredBody LowerOutOfLine(std::span<const Sse4aOperands> sequence,
+                                             std::span<const std::uint8_t> trailing) const;
 };
 
 }

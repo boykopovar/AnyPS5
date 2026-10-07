@@ -26,7 +26,8 @@ int APS5_VABI sceNgs2SystemUnlock(uintptr_t);
 int APS5_VABI sceNgs2SystemRender(uintptr_t, const Ngs2RenderBufferInfo*, uint32_t);
 int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t, const Ngs2RackOption*, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2RackCreate(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2ContextBufferInfo*, uintptr_t*);
-int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2BufferAllocator*, uintptr_t*);
+int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2BufferAllocator*,
+                                             uintptr_t*);
 int APS5_VABI sceNgs2RackDestroy(uintptr_t, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t, uint32_t, uintptr_t*);
 int APS5_VABI sceNgs2RackGetInfo(uintptr_t, Ngs2RackInfo*, size_t);
@@ -85,8 +86,7 @@ inline uintptr_t Voice(uintptr_t rack) {
     return voice;
 }
 
-template <typename TParam>
-inline void Control(uintptr_t voice, std::uint32_t id, TParam param) {
+template <typename TParam> inline void Control(uintptr_t voice, std::uint32_t id, TParam param) {
     param.header = {static_cast<std::uint16_t>(sizeof(TParam)), 0, id};
     Require(sceNgs2VoiceControl(voice, &param.header) == SCE_NGS2_OK);
 }

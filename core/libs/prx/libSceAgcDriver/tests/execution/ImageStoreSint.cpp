@@ -41,25 +41,27 @@ alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
 alignas(256) std::array<std::uint32_t, Threads * 4> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 12> StoreCode{
-    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0201f08, 0x0001141e,
-    0x7e3e0281, 0xf0201508, 0x0001141e, 0xbf810000,
+    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280,
+    0xf0201f08, 0x0001141e, 0x7e3e0281, 0xf0201508, 0x0001141e, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 9> TitleCode{
-    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0202108, 0x0001141e,
-    0xbf810000,
+    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0202108, 0x0001141e, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 9> LoadCode{
-    0x34020084, 0x7e3c0300, 0x7e3e0280, 0xf0001f08, 0x0001141e, 0xbf8c3f70, 0xe0781000, 0x80001401,
-    0xbf810000,
+    0x34020084, 0x7e3c0300, 0x7e3e0280, 0xf0001f08, 0x0001141e, 0xbf8c3f70, 0xe0781000, 0x80001401, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 5> D16Code{0x7e3c0300, 0x7e3e0280, 0xf0201108, 0x8001141e, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 5> PackedCode{0x7e3c0300, 0x7e3e0280, 0xf0281108, 0x0001141e, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 7> AtomicD16Code{0x7e3c0300, 0x7e3e0280, 0xf0441108, 0x0001141e, 0xf0201108, 0x8001141e, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 9> PackedWideCode{0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0281308, 0x0001141e, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 5> AtomicCode{0x7e3c0300, 0x7e3e0280, 0xf0441108, 0x0001141e, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 5> PackedCode{0x7e3c0300, 0x7e3e0280, 0xf0281108, 0x0001141e,
+                                                               0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 7> AtomicD16Code{0x7e3c0300, 0x7e3e0280, 0xf0441108, 0x0001141e,
+                                                                  0xf0201108, 0x8001141e, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 9> PackedWideCode{
+    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0281308, 0x0001141e, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 5> AtomicCode{0x7e3c0300, 0x7e3e0280, 0xf0441108, 0x0001141e,
+                                                               0xbf810000};
 
 constexpr std::array<std::uint32_t, 24> Edges{
     0x00000000u, 0x00000001u, 0xffffffffu, 0x0000007fu, 0x00000080u, 0xffffff80u, 0xffffff7fu, 0x000000ffu,
@@ -131,39 +133,41 @@ std::string Hex(std::uint32_t value) {
 }
 
 std::uint32_t Value(std::uint32_t tid, std::uint32_t index) {
-    if (tid < Edges.size()) return Edges[(tid + 7u * index) % Edges.size()];
+    if (tid < Edges.size())
+        return Edges[(tid + 7u * index) % Edges.size()];
     const auto mixed = (tid * 4u + index + 1u) * 0x9e3779b1u;
     return static_cast<std::uint32_t>(static_cast<std::int32_t>(mixed) >> ((tid * 4u + index) % 25u));
 }
 
 std::uint32_t Saturate(std::uint32_t value, std::uint32_t bits) {
-    if (bits == 32u) return value;
+    if (bits == 32u)
+        return value;
     const auto high = (std::int64_t{1} << (bits - 1u)) - 1;
     const auto clamped = std::clamp<std::int64_t>(static_cast<std::int32_t>(value), -high - 1, high);
     return static_cast<std::uint32_t>(clamped) & ((1u << bits) - 1u);
 }
 
 std::uint32_t SignExtend(std::uint32_t value, std::uint32_t bits) {
-    if (bits == 32u) return value;
+    if (bits == 32u)
+        return value;
     const auto shift = 32u - bits;
     return static_cast<std::uint32_t>(static_cast<std::int32_t>(value << shift) >> shift);
 }
 
-std::uint32_t SwizzleOf(const Format& format) {
-    return format.components == 2u ? TwoChannelSwizzle : IdentitySwizzle;
-}
+std::uint32_t SwizzleOf(const Format& format) { return format.components == 2u ? TwoChannelSwizzle : IdentitySwizzle; }
 
-std::uint32_t TexelBytesOf(const Format& format) {
-    return format.components * format.bits / 8u;
-}
+std::uint32_t TexelBytesOf(const Format& format) { return format.components * format.bits / 8u; }
 
 AgcDriver::Graphics::TileMipLayout Mip(const Format& format) {
-    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width, Height, 1u).at(0);
+    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width,
+                                                 Height, 1u)
+        .at(0);
 }
 
 std::uint64_t TexelOffset(const Format& format, std::uint32_t x, std::uint32_t y) {
     const auto mip = Mip(format);
-    return mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + static_cast<std::uint64_t>(x) * TexelBytesOf(format);
+    return mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes +
+           static_cast<std::uint64_t>(x) * TexelBytesOf(format);
 }
 
 std::vector<std::uint8_t> Initial() {
@@ -175,9 +179,11 @@ std::vector<std::uint8_t> Initial() {
 }
 
 std::uint32_t StoredComponent(const Format& format, std::uint32_t tid, std::uint32_t dmask, std::uint32_t component) {
-    if (((dmask >> component) & 1u) == 0u) return 0u;
+    if (((dmask >> component) & 1u) == 0u)
+        return 0u;
     std::uint32_t index = 0;
-    for (std::uint32_t lower = 0; lower < component; ++lower) index += (dmask >> lower) & 1u;
+    for (std::uint32_t lower = 0; lower < component; ++lower)
+        index += (dmask >> lower) & 1u;
     return Saturate(Value(tid, index), format.bits);
 }
 
@@ -197,7 +203,8 @@ std::vector<std::uint8_t> Expected(const Format& format, std::span<const Write> 
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format, std::uint32_t swizzle) {
@@ -214,37 +221,43 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t f
     };
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t format, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& buffer) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code,
+              std::uint32_t format, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& buffer) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(texels, format, swizzle);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr,
+                                                      "test");
     device.WaitIdle();
 }
 
-void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t format, std::uint32_t swizzle) {
+void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code,
+           std::uint32_t format, std::uint32_t swizzle) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        for (std::uint32_t index = 0; index < 4u; ++index) Input[tid * 4u + index] = Value(tid, index);
+        for (std::uint32_t index = 0; index < 4u; ++index)
+            Input[tid * 4u + index] = Value(tid, index);
     }
     const auto initial = Initial();
     std::copy(initial.begin(), initial.end(), texels);
-    Dispatch(device, texels, code, format, swizzle, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)));
+    Dispatch(device, texels, code, format, swizzle,
+             BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)));
 }
 
-void CheckTexels(const std::uint8_t* texels, const Format& format, std::span<const Write> writes, const std::string& what) {
+void CheckTexels(const std::uint8_t* texels, const Format& format, std::span<const Write> writes,
+                 const std::string& what) {
     const auto expected = Expected(format, writes);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
@@ -254,7 +267,9 @@ void CheckTexels(const std::uint8_t* texels, const Format& format, std::span<con
                 std::uint32_t wanted = 0;
                 std::memcpy(&actual, texels + offset + component * format.bits / 8u, format.bits / 8u);
                 std::memcpy(&wanted, expected.data() + offset + component * format.bits / 8u, format.bits / 8u);
-                Require(actual == wanted, what + " " + format.name + ": texel (" + std::to_string(x) + ", " + std::to_string(y) + ") component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(wanted));
+                Require(actual == wanted, what + " " + format.name + ": texel (" + std::to_string(x) + ", " +
+                                              std::to_string(y) + ") component " + std::to_string(component) + " is " +
+                                              Hex(actual) + ", expected " + Hex(wanted));
             }
         }
     }
@@ -262,17 +277,21 @@ void CheckTexels(const std::uint8_t* texels, const Format& format, std::span<con
 
 void CheckLoad(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& format) {
     Output.fill(0xdeadbeefu);
-    Dispatch(device, texels, LoadCode, format.format, SwizzleOf(format), BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u)));
+    Dispatch(device, texels, LoadCode, format.format, SwizzleOf(format),
+             BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u)));
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t component = 0; component < format.components; ++component) {
             const auto actual = Output[tid * 4u + component];
             const auto wanted = SignExtend(StoredComponent(format, tid, 0xfu, component), format.bits);
-            Require(actual == wanted, std::string("image_load after image_store of ") + format.name + ": thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(wanted));
+            Require(actual == wanted, std::string("image_load after image_store of ") + format.name + ": thread " +
+                                          std::to_string(tid) + " component " + std::to_string(component) + " is " +
+                                          Hex(actual) + ", expected " + Hex(wanted));
         }
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t format, const std::string& reason, const std::string& what) {
+void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code,
+                    std::uint32_t format, const std::string& reason, const std::string& what) {
     std::string refusal;
     try {
         Store(device, texels, code, format, IdentitySwizzle);
@@ -287,7 +306,8 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         GuestBlock block;
         auto* texels = block.Data();
         for (const auto& format : Formats) {
@@ -297,16 +317,22 @@ int main() {
         }
         Store(*device, texels, TitleCode, Formats[0].format, TitleSwizzle);
         CheckTexels(texels, Formats[0], TitleWrites, "image_store dmask:0x1 glc with DST_SEL X,1,1,1");
-        RequireRefused(*device, texels, D16Code, 12u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 16_SINT");
-        RequireRefused(*device, texels, D16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 32_SINT");
-        RequireRefused(*device, texels, PackedCode, 12u, "storage image descriptor uses an unsupported format", "image_store_pck of 16_SINT");
-        RequireRefused(*device, texels, AtomicCode, 12u, "atomic image descriptor uses an unsupported format 12", "image_atomic_add of 16_SINT");
-        RequireRefused(*device, texels, StoreCode, 73u, "storage image descriptor uses an unsupported format", "image_store of 32_32_32_SINT");
+        RequireRefused(*device, texels, D16Code, 12u, "stores 16-bit data to an image of a SINT format",
+                       "image_store d16 of 16_SINT");
+        RequireRefused(*device, texels, D16Code, 21u, "stores 16-bit data to an image of a SINT format",
+                       "image_store d16 of 32_SINT");
+        RequireRefused(*device, texels, PackedCode, 12u, "storage image descriptor uses an unsupported format",
+                       "image_store_pck of 16_SINT");
+        RequireRefused(*device, texels, AtomicCode, 12u, "atomic image descriptor uses an unsupported format 12",
+                       "image_atomic_add of 16_SINT");
+        RequireRefused(*device, texels, StoreCode, 73u, "storage image descriptor uses an unsupported format",
+                       "image_store of 32_32_32_SINT");
         for (const auto index : {2u, 5u, 7u}) {
             Store(*device, texels, PackedWideCode, Formats[index].format, SwizzleOf(Formats[index]));
             CheckTexels(texels, Formats[index], PackedWideWrites, "image_store_pck dmask:0x3");
         }
-        RequireRefused(*device, texels, AtomicD16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of an atomically updated 32_SINT image");
+        RequireRefused(*device, texels, AtomicD16Code, 21u, "stores 16-bit data to an image of a SINT format",
+                       "image_store d16 of an atomically updated 32_SINT image");
         std::puts("image store sint tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -10,7 +10,8 @@
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
-std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
+std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(
+    GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
 }
 
 namespace {
@@ -22,13 +23,17 @@ void* lastAllocation = nullptr;
 void* lastFree = nullptr;
 
 void require(bool condition) {
-    if (!condition) std::abort();
+    if (!condition)
+        std::abort();
 }
 
-template<typename TAction>
-void reject(TAction action) {
+template <typename TAction> void reject(TAction action) {
     bool rejected = false;
-    try { action(); } catch (const std::exception&) { rejected = true; }
+    try {
+        action();
+    } catch (const std::exception&) {
+        rejected = true;
+    }
     require(rejected);
 }
 
@@ -56,7 +61,8 @@ const GuestLocale::CollateVtable& Vtable(const GuestLocale::Facet* facet) {
 }
 
 int Compare(const GuestLocale::CollateFacet* facet, const std::string& left, const std::string& right) {
-    return Vtable(&facet->base).compare(facet, left.data(), left.data() + left.size(), right.data(), right.data() + right.size());
+    return Vtable(&facet->base)
+        .compare(facet, left.data(), left.data() + left.size(), right.data(), right.data() + right.size());
 }
 
 std::uint64_t Hash(const GuestLocale::CollateFacet* facet, const std::string& text) {
@@ -66,7 +72,10 @@ std::uint64_t Hash(const GuestLocale::CollateFacet* facet, const std::string& te
 }
 
 int main() {
-    const std::array<void*, 10> api{reinterpret_cast<void*>(&allocate), reinterpret_cast<void*>(&release), reinterpret_cast<void*>(&allocateZeroed), reinterpret_cast<void*>(&reallocate), reinterpret_cast<void*>(&align), reinterpret_cast<void*>(&realign), reinterpret_cast<void*>(&posixAlign)};
+    const std::array<void*, 10> api{reinterpret_cast<void*>(&allocate),       reinterpret_cast<void*>(&release),
+                                    reinterpret_cast<void*>(&allocateZeroed), reinterpret_cast<void*>(&reallocate),
+                                    reinterpret_cast<void*>(&align),          reinterpret_cast<void*>(&realign),
+                                    reinterpret_cast<void*>(&posixAlign)};
     ApplicationHeapRegister_nid_no_patch(api.data());
 
     const GuestLocale::Implementation* const* classic = &_ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -84,7 +93,8 @@ int main() {
     require(facet == nullptr && allocations == 0);
 
     require(_ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&facet, classic) == 1);
-    require(facet != nullptr && allocations == 1 && lastSize == sizeof(GuestLocale::CollateFacet) && lastAllocation == facet);
+    require(facet != nullptr && allocations == 1 && lastSize == sizeof(GuestLocale::CollateFacet) &&
+            lastAllocation == facet);
     const auto* collate = reinterpret_cast<const GuestLocale::CollateFacet*>(facet);
     require(facet->references == 0 && collate->collation == nullptr && collate->wideCollation == nullptr);
 
@@ -113,8 +123,10 @@ int main() {
     GuestLocale::String result;
     std::memset(&result, 0xcd, sizeof(result));
     const std::string shortText = "hello";
-    require(Vtable(facet).transform(&result, collate, shortText.data(), shortText.data() + shortText.size()) == &result);
-    require(result.reserved == 0xcdcdcdcdcdcdcdcdull && result.size == 5 && result.capacity == 15 && std::strcmp(result.buffer, "hello") == 0);
+    require(Vtable(facet).transform(&result, collate, shortText.data(), shortText.data() + shortText.size()) ==
+            &result);
+    require(result.reserved == 0xcdcdcdcdcdcdcdcdull && result.size == 5 && result.capacity == 15 &&
+            std::strcmp(result.buffer, "hello") == 0);
     require(allocations == 1);
 
     std::memset(&result, 0xcd, sizeof(result));
@@ -128,7 +140,8 @@ int main() {
     const std::string longText = "collation of a longer text";
     require(Vtable(facet).transform(&result, collate, longText.data(), longText.data() + longText.size()) == &result);
     require(allocations == 2 && lastSize == longText.size() + 1 && result.pointer == lastAllocation);
-    require(result.size == longText.size() && result.capacity == longText.size() && std::string(result.pointer) == longText);
+    require(result.size == longText.size() && result.capacity == longText.size() &&
+            std::string(result.pointer) == longText);
     std::free(result.pointer);
 
     const std::string largest(4094, 'z');

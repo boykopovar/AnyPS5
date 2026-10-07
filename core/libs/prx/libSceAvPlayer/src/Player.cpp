@@ -14,7 +14,8 @@ namespace AvPlayer {
 namespace {
 
 bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
-    return std::ranges::equal(left, right, [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+    return std::ranges::equal(left, right,
+                              [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
 }
 
 bool SameLanguage(const char* preferred, const char* code) {
@@ -25,9 +26,7 @@ void* APS5_VABI GuestAllocate_nid_no_patch(void*, std::uint32_t alignment, std::
     return GuestHeap::GuestHeapAlign_nid_postfix(std::max<std::uint32_t>(alignment, 16), size);
 }
 
-void APS5_VABI GuestDeallocate_nid_no_patch(void*, void* memory) {
-    GuestHeap::GuestHeapFree_nid_postfix(memory);
-}
+void APS5_VABI GuestDeallocate_nid_no_patch(void*, void* memory) { GuestHeap::GuestHeapFree_nid_postfix(memory); }
 
 AvPlayerMemAllocator WithGuestHeapFallback(AvPlayerMemAllocator memory) {
     if (!memory.allocate || !memory.deallocate) {
@@ -45,26 +44,33 @@ AvPlayerMemAllocator WithGuestHeapFallback(AvPlayerMemAllocator memory) {
 
 std::uint32_t DetectSourceType(std::string_view path) {
     std::string_view name = path;
-    if (name.find("://") != std::string_view::npos) name = name.substr(0, name.find_first_of("?#"));
+    if (name.find("://") != std::string_view::npos)
+        name = name.substr(0, name.find_first_of("?#"));
     const auto dot = name.rfind('.');
-    if (dot == std::string_view::npos) return SourceTypeUnknown;
+    if (dot == std::string_view::npos)
+        return SourceTypeUnknown;
     auto extension = name.substr(dot);
     extension = extension.substr(0, extension.find('/'));
     for (const auto mp4 : {".mp4", ".m4v", ".m3d", ".m4a", ".mov"}) {
-        if (EqualsIgnoreCase(extension, mp4)) return SourceTypeFileMp4;
+        if (EqualsIgnoreCase(extension, mp4))
+            return SourceTypeFileMp4;
     }
-    if (EqualsIgnoreCase(extension, ".m3u8")) return SourceTypeHls;
+    if (EqualsIgnoreCase(extension, ".m3u8"))
+        return SourceTypeHls;
     return SourceTypeUnknown;
 }
 
 Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount)
-    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement), videoBuffers(bufferCount) {
-    if (init.file_replacement.open && init.file_replacement.close && init.file_replacement.read_offset && init.file_replacement.size) {
+    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement),
+      videoBuffers(bufferCount) {
+    if (init.file_replacement.open && init.file_replacement.close && init.file_replacement.read_offset &&
+        init.file_replacement.size) {
         file = init.file_replacement;
     }
     autoStartEnabled = init.auto_start || callback.event_callback == nullptr;
     if (init.default_language) {
-        for (std::size_t index = 0; index < 3 && init.default_language[index] != '\0'; ++index) language[index] = init.default_language[index];
+        for (std::size_t index = 0; index < 3 && init.default_language[index] != '\0'; ++index)
+            language[index] = init.default_language[index];
     }
     controller = std::thread([this] { controllerLoop(); });
 }
@@ -88,13 +94,9 @@ void Player::queue(const Event& event) {
     eventCondition.notify_all();
 }
 
-void Player::OnWarning(std::int32_t code) {
-    queue({EventWarningId, code, false, false});
-}
+void Player::OnWarning(std::int32_t code) { queue({EventWarningId, code, false, false}); }
 
-void Player::OnError() {
-    queue({0, 0, false, true});
-}
+void Player::OnError() { queue({0, 0, false, true}); }
 
 void Player::controllerLoop() {
     for (;;) {
@@ -103,7 +105,8 @@ void Player::controllerLoop() {
         {
             std::unique_lock lock(eventMutex);
             eventCondition.wait_for(lock, std::chrono::milliseconds(5), [this] { return quit || !events.empty(); });
-            if (quit) return;
+            if (quit)
+                return;
             if (!events.empty()) {
                 event = events.front();
                 events.pop_front();
@@ -131,7 +134,8 @@ void Player::deliver(const Event& event) {
         autoStart();
         return;
     }
-    if (!callback.event_callback) return;
+    if (!callback.event_callback)
+        return;
     std::int32_t warning = event.warning;
     callback.event_callback(callback.object_ptr, event.id, 0, event.id == EventWarningId ? &warning : nullptr);
 }
@@ -150,18 +154,23 @@ void Player::autoStart() {
             Stop();
             return;
         }
-        if (info.type == StreamTypeVideo && (video == -1 || SameLanguage(language, info.details.video.language_code))) video = index;
-        if (info.type == StreamTypeAudio && (audio == -1 || SameLanguage(language, info.details.audio.language_code))) audio = index;
+        if (info.type == StreamTypeVideo && (video == -1 || SameLanguage(language, info.details.video.language_code)))
+            video = index;
+        if (info.type == StreamTypeAudio && (audio == -1 || SameLanguage(language, info.details.audio.language_code)))
+            audio = index;
     }
-    if (video != -1) EnableStream(static_cast<std::uint32_t>(video));
-    if (audio != -1) EnableStream(static_cast<std::uint32_t>(audio));
+    if (video != -1)
+        EnableStream(static_cast<std::uint32_t>(video));
+    if (audio != -1)
+        EnableStream(static_cast<std::uint32_t>(audio));
     Start();
 }
 
 void Player::checkEndOfFile() {
     {
         std::lock_guard lock(mutex);
-        if (!source || state != State::Play || !source->Finished()) return;
+        if (!source || state != State::Play || !source->Finished())
+            return;
         previous = state;
         state = State::EndOfFile;
     }
@@ -171,16 +180,21 @@ void Player::checkEndOfFile() {
 int Player::PostInit(const AvPlayerPostInitData& data) {
     std::lock_guard lock(mutex);
     demuxVideoBytes = data.demux_video_buffer_size;
-    if (source) source->SetDemuxVideoBufferSize(demuxVideoBytes);
+    if (source)
+        source->SetDemuxVideoBufferSize(demuxVideoBytes);
     return SCE_OK;
 }
 
 int Player::AddSource(std::string_view path, std::uint32_t sourceType) {
-    if (path.empty()) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (sourceType == SourceTypeUnknown) sourceType = DetectSourceType(path);
-    if (sourceType == SourceTypeHls) NotImplemented_nid_no_patch("sceAvPlayerAddSource (HLS)");
+    if (path.empty())
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (sourceType == SourceTypeUnknown)
+        sourceType = DetectSourceType(path);
+    if (sourceType == SourceTypeHls)
+        NotImplemented_nid_no_patch("sceAvPlayerAddSource (HLS)");
     std::lock_guard lock(mutex);
-    if (source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (source)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     auto opened = OpenSource({memory, file, videoBuffers}, std::string(path), *this);
     if (!opened) {
         previous = state;
@@ -207,20 +221,23 @@ int Player::AddSource(std::string_view path, std::uint32_t sourceType) {
 
 int Player::StreamCount() {
     std::lock_guard lock(mutex);
-    if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     return static_cast<int>(source->StreamCount());
 }
 
 int Player::GetStreamInfo(std::uint32_t index, AvPlayerStreamInfo& info) {
     std::lock_guard lock(mutex);
-    if (!source || !source->GetStreamInfo(index, info)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || !source->GetStreamInfo(index, info))
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     return SCE_OK;
 }
 
 int Player::GetStreamInfoEx(std::uint32_t index, AvPlayerStreamInfoEx& info) {
     std::lock_guard lock(mutex);
     AvPlayerStreamInfoEx described{};
-    if (!source || !source->GetStreamInfoEx(index, described)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || !source->GetStreamInfoEx(index, described))
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     described.this_size = info.this_size;
     info = described;
     return SCE_OK;
@@ -228,26 +245,31 @@ int Player::GetStreamInfoEx(std::uint32_t index, AvPlayerStreamInfoEx& info) {
 
 int Player::EnableStream(std::uint32_t index) {
     std::lock_guard lock(mutex);
-    if (!source || !source->EnableStream(index)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || !source->EnableStream(index))
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     return SCE_OK;
 }
 
 int Player::DisableStream(std::uint32_t index) {
     std::lock_guard lock(mutex);
-    if (!source || !source->DisableStream(index)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || !source->DisableStream(index))
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     return SCE_OK;
 }
 
 int Player::ChangeStream(std::uint32_t from, std::uint32_t to) {
     std::lock_guard lock(mutex);
-    if (!source || state == State::Error || !source->ChangeStream(from, to)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || state == State::Error || !source->ChangeStream(from, to))
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     return SCE_OK;
 }
 
 int Player::Start() {
     std::lock_guard lock(mutex);
-    if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (state != State::Ready && state != State::Stop && stopLocked() != SCE_OK) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (state != State::Ready && state != State::Stop && stopLocked() != SCE_OK)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     const int result = source->Start();
     if (result != SCE_OK) {
         previous = state;
@@ -261,7 +283,8 @@ int Player::Start() {
 }
 
 int Player::stopLocked() {
-    if (!source || state == State::Initial || state == State::Ready || state == State::Stop) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || state == State::Initial || state == State::Ready || state == State::Stop)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     source->Stop();
     previous = state;
     state = State::Stop;
@@ -276,8 +299,10 @@ int Player::Stop() {
 
 int Player::Pause() {
     std::lock_guard lock(mutex);
-    if (state == State::EndOfFile) return SCE_OK;
-    if (!source || state != State::Play) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (state == State::EndOfFile)
+        return SCE_OK;
+    if (!source || state != State::Play)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     source->Pause();
     previous = state;
     state = State::Pause;
@@ -287,7 +312,8 @@ int Player::Pause() {
 
 int Player::Resume() {
     std::lock_guard lock(mutex);
-    if (!source || state != State::Pause) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || state != State::Pause)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     source->Resume();
     std::swap(state, previous);
     queue({EventStatePlay, 0, false, false});
@@ -296,7 +322,8 @@ int Player::Resume() {
 
 int Player::JumpToTime(std::uint64_t milliseconds) {
     std::lock_guard lock(mutex);
-    if (!source || (state != State::Ready && state != State::Play && state != State::Pause)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (!source || (state != State::Ready && state != State::Play && state != State::Pause))
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     source->Jump(milliseconds);
     return SCE_OK;
 }
@@ -304,55 +331,67 @@ int Player::JumpToTime(std::uint64_t milliseconds) {
 int Player::SetLooping(bool enabled) {
     std::lock_guard lock(mutex);
     looping = enabled;
-    if (source) source->SetLooping(enabled);
+    if (source)
+        source->SetLooping(enabled);
     return SCE_OK;
 }
 
 int Player::SetTrickSpeed(std::int32_t trickSpeed) {
-    if (trickSpeed == 0) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    if (trickSpeed == 0)
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     std::lock_guard lock(mutex);
-    if (state == State::Stop || state == State::EndOfFile || state == State::Error) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
+    if (state == State::Stop || state == State::EndOfFile || state == State::Error)
+        return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     speed = trickSpeed;
-    if (source) source->SetSpeed(trickSpeed);
+    if (source)
+        source->SetSpeed(trickSpeed);
     return SCE_OK;
 }
 
 int Player::SetAvSyncMode(std::uint32_t mode) {
-    if (mode != SyncModeDefault && mode != SyncModeNone) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
+    if (mode != SyncModeDefault && mode != SyncModeNone)
+        return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     std::lock_guard lock(mutex);
     syncMode = mode;
-    if (source) source->SetSyncMode(mode);
+    if (source)
+        source->SetSyncMode(mode);
     return SCE_OK;
 }
 
 bool Player::GetVideoData(AvPlayerFrameInfoEx& info) {
     std::lock_guard lock(mutex);
-    if (!source || (state != State::Play && state != State::Pause)) return false;
+    if (!source || (state != State::Play && state != State::Pause))
+        return false;
     return source->GetVideoData(info);
 }
 
 bool Player::GetVideoData(AvPlayerFrameInfo& info) {
     AvPlayerFrameInfoEx extended{};
-    if (!GetVideoData(extended)) return false;
+    if (!GetVideoData(extended))
+        return false;
     info = {};
     info.p_data = static_cast<std::uint8_t*>(extended.p_data);
     info.timestamp = extended.timestamp;
     info.details.video.width = extended.details.video.width;
     info.details.video.height = extended.details.video.height;
     info.details.video.aspect_ratio = extended.details.video.aspect_ratio;
-    std::memcpy(info.details.video.language_code, extended.details.video.language_code, sizeof(info.details.video.language_code));
+    std::memcpy(info.details.video.language_code, extended.details.video.language_code,
+                sizeof(info.details.video.language_code));
     return true;
 }
 
 bool Player::GetAudioData(AvPlayerFrameInfo& info) {
     std::lock_guard lock(mutex);
-    if (!source || state != State::Play) return false;
+    if (!source || state != State::Play)
+        return false;
     return source->GetAudioData(info);
 }
 
 bool Player::IsActive() {
     std::lock_guard lock(mutex);
-    if (!source || state == State::Initial || state == State::Stop || state == State::EndOfFile || state == State::Error) return false;
+    if (!source || state == State::Initial || state == State::Stop || state == State::EndOfFile ||
+        state == State::Error)
+        return false;
     return !source->Finished();
 }
 

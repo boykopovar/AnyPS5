@@ -51,13 +51,10 @@ uint32_t* APS5_VABI sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, uint
     return packet;
 }
 
-uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf) {
-    return Agc::Marker::Pop(buf, __func__);
-}
+uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf) { return Agc::Marker::Pop(buf, __func__); }
 
 uint32_t* APS5_VABI sceAgcDcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {
     (void)color;
     return Agc::Marker::Push(buf, str, __func__);
 }
-
 }

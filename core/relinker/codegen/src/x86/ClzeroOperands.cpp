@@ -43,7 +43,8 @@ ClzeroOperands DecodeClzero(const std::uint8_t* data, const std::size_t length) 
         pos += 1;
     }
 
-    if (pos + 3 != length || data[pos] != TwoByteOpcodeEscape || data[pos + 1] != TwoByteGrp7 || data[pos + 2] != 0xFC) {
+    if (pos + 3 != length || data[pos] != TwoByteOpcodeEscape || data[pos + 1] != TwoByteGrp7 ||
+        data[pos + 2] != 0xFC) {
         throw CodegenException("Not a CLZERO instruction");
     }
 

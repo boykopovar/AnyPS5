@@ -5,7 +5,9 @@
 
 namespace Elfpatcher::Windows {
 
-std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& sections, const std::uint32_t entryRva, const std::array<PeDirectory, 16>& directories, const bool windowsGui) const {
+std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& sections, const std::uint32_t entryRva,
+                                                 const std::array<PeDirectory, 16>& directories,
+                                                 const bool windowsGui) const {
     constexpr std::size_t peOffset = 0x80;
     constexpr std::size_t optionalOffset = peOffset + 24;
     constexpr std::size_t sectionTable = optionalOffset + 240;
@@ -72,7 +74,8 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
     Io::WriteU32(result, optionalOffset + 56, endRva);
     for (std::size_t index = 0; index < directories.size(); ++index) {
         const auto& directory = directories[index];
-        if ((directory.Rva == 0) != (directory.Size == 0) || directory.Rva > endRva || directory.Size > endRva - directory.Rva)
+        if ((directory.Rva == 0) != (directory.Size == 0) || directory.Rva > endRva ||
+            directory.Size > endRva - directory.Rva)
             throw Domain::RelinkerException("Invalid PE data directory", index);
         Io::WriteU32(result, optionalOffset + 112 + index * 8, directory.Rva);
         Io::WriteU32(result, optionalOffset + 116 + index * 8, directory.Size);

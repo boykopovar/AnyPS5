@@ -39,7 +39,8 @@ struct PeSectionHeader {
 
 class PeNidPatcher final : public IBinaryPatcher {
 public:
-    void PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports) const override;
+    void PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName,
+                   const std::unordered_set<std::string>& excludedExports) const override;
 };
 
 }

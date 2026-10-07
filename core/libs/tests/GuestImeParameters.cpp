@@ -21,7 +21,8 @@ static_assert(offsetof(Param, option) == 32);
 static_assert(offsetof(Param, reserved) == 88);
 
 static void Require(bool value, const char* message) {
-    if (value) return;
+    if (value)
+        return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
 }
@@ -40,14 +41,16 @@ static void CheckInitialization() {
     for (size_t i = sizeof(guarded.param.user_id); i < sizeof(Param); ++i) {
         Require(bytes[i] == 0, "all remaining parameter bytes must be cleared");
     }
-    for (unsigned char value : guarded.before) Require(value == 0xa5, "parameter underrun");
-    for (unsigned char value : guarded.after) Require(value == 0xa5, "parameter overrun");
+    for (unsigned char value : guarded.before)
+        Require(value == 0xa5, "parameter underrun");
+    for (unsigned char value : guarded.after)
+        Require(value == 0xa5, "parameter overrun");
     guarded.param.type = 4;
     guarded.param.option = 0x4000;
     guarded.param.max_text_length = 32;
     sceImeParamInit(&guarded.param);
-    Require(guarded.param.user_id == -1 && guarded.param.type == 0 &&
-            guarded.param.option == 0 && guarded.param.max_text_length == 0,
+    Require(guarded.param.user_id == -1 && guarded.param.type == 0 && guarded.param.option == 0 &&
+                guarded.param.max_text_length == 0,
             "reinitialization must reset previous values");
 }
 
@@ -59,21 +62,23 @@ static void CheckPanelSizes() {
             param.type = type;
             param.option = options;
             const Param original = param;
-            struct GuardedSize { uint32_t before; uint32_t value; uint32_t after; };
+            struct GuardedSize {
+                uint32_t before;
+                uint32_t value;
+                uint32_t after;
+            };
             GuardedSize width{0x12345678, 0, 0x87654321};
             GuardedSize height = width;
-            Require(sceImeGetPanelSize(&param, &width.value, &height.value) == 0,
-                    "valid panel query failed");
+            Require(sceImeGetPanelSize(&param, &width.value, &height.value) == 0, "valid panel query failed");
             const bool scaled = (options & 0x4000) != 0;
             Require(width.value == (type == 4 ? (scaled ? 740u : 370u) : (scaled ? 1586u : 793u)),
                     "incorrect panel width");
             Require(height.value == (type == 4 ? (scaled ? 804u : 402u) : (scaled ? 816u : 408u)),
                     "incorrect panel height");
-            Require(width.before == 0x12345678 && width.after == 0x87654321 &&
-                    height.before == 0x12345678 && height.after == 0x87654321,
+            Require(width.before == 0x12345678 && width.after == 0x87654321 && height.before == 0x12345678 &&
+                        height.after == 0x87654321,
                     "panel query wrote outside its outputs");
-            Require(std::memcmp(&param, &original, sizeof(param)) == 0,
-                    "panel query modified parameters");
+            Require(std::memcmp(&param, &original, sizeof(param)) == 0, "panel query modified parameters");
         }
     }
 }
@@ -100,7 +105,8 @@ static void CheckErrors() {
         uint32_t queriedHeight = height;
         Require(sceImeGetPanelSize(&param, &queriedWidth, &queriedHeight) == (valid ? 0 : InvalidOption),
                 "option bit validation");
-        if (!valid) Require(queriedWidth == width && queriedHeight == height, "outputs changed on invalid option");
+        if (!valid)
+            Require(queriedWidth == width && queriedHeight == height, "outputs changed on invalid option");
     }
     param.type = 5;
     param.option = 0x80000000;
@@ -131,16 +137,19 @@ static void CheckKeyboardResourceIds() {
     Require(sceImeKeyboardGetResourceId(1, nullptr) == InvalidAddress, "null resource id array");
     Require(sceImeKeyboardGetResourceId(-1, &ids) == InvalidUserId, "invalid user");
     const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
-    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed on argument error");
+    for (size_t i = 0; i < sizeof(ids); ++i)
+        Require(bytes[i] == 0xa5, "outputs changed on argument error");
     Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "keyboard not opened");
     Require(ids.user_id == 1, "user not reported for an unopened keyboard");
-    for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported for an unopened keyboard");
+    for (uint32_t id : ids.resource_id)
+        Require(id == 0, "resource id reported for an unopened keyboard");
     KeyboardParam param{};
     Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
     std::memset(&ids, 0xa5, sizeof(ids));
     Require(sceImeKeyboardGetResourceId(1, &ids) == ConnectionFailed, "a keyboard was reported as connected");
     Require(ids.user_id == 1, "user not reported");
-    for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported without a keyboard");
+    for (uint32_t id : ids.resource_id)
+        Require(id == 0, "resource id reported without a keyboard");
     Require(sceImeKeyboardGetResourceId(2, &ids) == NotOpened, "keyboard of another user reported as opened");
     Require(ids.user_id == 2, "other user not reported");
     Require(sceImeKeyboardClose(1) == 0, "keyboard close failed");

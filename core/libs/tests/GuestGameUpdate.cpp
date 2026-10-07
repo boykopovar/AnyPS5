@@ -11,7 +11,10 @@ int APS5_VABI sceGameUpdateTerminate(void);
 int APS5_VABI sceGameUpdateGetAddcontLatestVersion(std::uint32_t, const void*, GameUpdateAddcontVersionInfo*);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x80412801);
@@ -28,8 +31,11 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, label, nullptr) == invalidArgument);
 
     bool threw = false;
-    try { sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info); }
-    catch (const std::runtime_error&) { threw = true; }
+    try {
+        sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
     Require(threw);
 
     info.size = sizeof(info) - 1;
@@ -40,7 +46,8 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, label, &info) == 0);
     Require(info.size == sizeof(info) + 8 && !info.found);
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(&info);
-    for (std::size_t i = sizeof(info.size); i < sizeof(info); ++i) Require(bytes[i] == 0);
+    for (std::size_t i = sizeof(info.size); i < sizeof(info); ++i)
+        Require(bytes[i] == 0);
 
     Require(sceGameUpdateTerminate() == 0);
     info.size = sizeof(info);

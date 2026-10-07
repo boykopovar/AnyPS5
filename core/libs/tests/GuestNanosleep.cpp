@@ -10,7 +10,7 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
 int* APS5_VABI __error_nid_postfix();
 }
 
-using Nanosleep = int (APS5_VABI *)(const KernelTimespec*, KernelTimespec*);
+using Nanosleep = int(APS5_VABI*)(const KernelTimespec*, KernelTimespec*);
 
 static constexpr int SCE_OK = 0;
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
@@ -27,7 +27,10 @@ static constexpr std::int64_t SLEEP_NANOS = 50 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t EARLY_WAKE_MARGIN_NANOS = 5 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t NO_SLEEP_LIMIT_NANOS = 2 * NANOS_PER_SECOND;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static std::int64_t MonotonicNanos() {
     KernelTimespec time{-1, -1};

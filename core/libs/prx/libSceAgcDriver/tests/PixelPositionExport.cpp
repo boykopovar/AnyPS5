@@ -27,7 +27,9 @@ int main() {
         static_cast<void>(Recompile(request));
         std::fprintf(stderr, "a pixel shader exporting a position recompiled\n");
     } catch (const std::runtime_error& error) {
-        if (std::string_view(error.what()).find("vertex input info is missing for a position export") != std::string_view::npos) return 0;
+        if (std::string_view(error.what()).find("vertex input info is missing for a position export") !=
+            std::string_view::npos)
+            return 0;
         std::fprintf(stderr, "unexpected error: %s\n", error.what());
     }
     return 1;

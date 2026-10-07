@@ -15,7 +15,7 @@ extern "C" void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors);
 
 namespace {
 
-using ThreadDestructorFunction = void (APS5_VABI*)(void*);
+using ThreadDestructorFunction = void(APS5_VABI*)(void*);
 
 struct ThreadDestructor {
     ThreadDestructorFunction function;
@@ -34,7 +34,8 @@ bool IsInLoadedImage(const void* address) {
         return false;
 #ifdef _WIN32
     HMODULE module = nullptr;
-    return GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(address), &module) != 0;
+    return GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                              static_cast<LPCSTR>(address), &module) != 0;
 #else
     Dl_info info{};
     return dladdr(address, &info) != 0;
@@ -49,7 +50,8 @@ void APS5_VABI RunThreadDestructors_nid_no_patch() {
         const auto* function = reinterpret_cast<const void*>(destructor.function);
         if (!IsInLoadedImage(function)) {
             std::ostringstream message;
-            message << "thread_local destructor " << function << " of dso " << destructor.dsoSymbol << " is not in a loaded image";
+            message << "thread_local destructor " << function << " of dso " << destructor.dsoSymbol
+                    << " is not in a loaded image";
             throw std::runtime_error(message.str());
         }
         destructor.function(destructor.object);
@@ -69,28 +71,22 @@ extern "C" {
 
 int Need_sceLibcInternal_nid_postfix = 1;
 
-void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
-    CxaFinalize_nid_no_patch(dsoHandle);
-}
+void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) { CxaFinalize_nid_no_patch(dsoHandle); }
 
-void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info) {
-    LibcHeapTraceInfo_nid_no_patch(info);
-}
+void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info) { LibcHeapTraceInfo_nid_no_patch(info); }
 
-int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol) {
+int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object,
+                                                       void* dsoSymbol) {
     RegisterThreadExitHook();
     ThreadDestructors().push_back({destructor, object, dsoSymbol});
     return 0;
 }
 
-void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix() {
-    RunThreadDestructors_nid_no_patch();
-}
+void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix() { RunThreadDestructors_nid_no_patch(); }
 
 int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle) {
     (void)handle;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

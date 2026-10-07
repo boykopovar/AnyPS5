@@ -5,7 +5,10 @@
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("ray tracing miss regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("ray tracing miss regression");
+}
 struct Form {
     std::uint32_t word0;
     std::uint32_t word1;
@@ -19,7 +22,8 @@ static void Check(const Form& form) {
     Require(instruction.family == RdnaInstructionFamily::MIMG);
     Require(IsImageOpcode(instruction.op));
     Require(instruction.imageAddressComponents == form.addressDwords);
-    Require(GetRdnaImageAddressDwordCount(instruction.imageSampleFlags, instruction.imageAddressComponents) == form.addressDwords);
+    Require(GetRdnaImageAddressDwordCount(instruction.imageSampleFlags, instruction.imageAddressComponents) ==
+            form.addressDwords);
     IrProgram program;
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
@@ -35,7 +39,8 @@ static void Check(const Form& form) {
     } else {
         context.TranslateInstruction(instruction);
         bool emitted = false;
-        for (auto* value : block.Instructions()) emitted = emitted || value->Opcode() == IrOpcode::ImageBvhIntersectRay;
+        for (auto* value : block.Instructions())
+            emitted = emitted || value->Opcode() == IrOpcode::ImageBvhIntersectRay;
         Require(emitted != RayTracingMiss());
     }
 }

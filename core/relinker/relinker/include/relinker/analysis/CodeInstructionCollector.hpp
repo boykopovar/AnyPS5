@@ -8,7 +8,8 @@ namespace Relinker {
 
 class CodeInstructionCollector {
 public:
-    std::set<Domain::VirtualAddress> Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers) const;
+    std::set<Domain::VirtualAddress> Collect(const std::vector<std::uint8_t>& bytes,
+                                             const std::vector<Domain::ProgramHeader>& headers) const;
 };
 
 }

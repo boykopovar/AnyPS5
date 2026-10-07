@@ -20,8 +20,8 @@ struct BindingAllocationResult {
 class BindingAllocator {
 public:
     [[nodiscard]] BindingAllocationResult Allocate(IrProgram& program, const BindingLayout& layout) const;
-    [[nodiscard]] const IrDescriptorBinding& FindBinding(const IrBindingLayout& layout, DescriptorBindingKind kind) const;
-
+    [[nodiscard]] const IrDescriptorBinding& FindBinding(const IrBindingLayout& layout,
+                                                         DescriptorBindingKind kind) const;
 };
 
 }

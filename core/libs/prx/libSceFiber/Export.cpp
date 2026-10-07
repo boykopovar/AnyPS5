@@ -29,7 +29,7 @@ static constexpr std::size_t FIBER_OPT_PARAM_SIZE = 0x80;
 static constexpr std::size_t FIBER_MIN_CONTEXT_SIZE = 512;
 static constexpr std::uint64_t FIBER_CONTEXT_FILL = 0xdeadbeefdeadbeefull;
 
-using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
+using GuestFiberEntry = void(APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
 
 // A fiber that is switching away stays Suspending until its context is saved; whoever runs next
 // on that host thread publishes Suspended. Fibers migrate between threads, so a resumer must never
@@ -170,7 +170,8 @@ struct InitialFrame {
     std::uint64_t r15, r14, r13, r12, rsi, rdi, rbx, rbp;
     std::uint64_t returnAddress;
 };
-static_assert(sizeof(InitialFrame) == 0xa8 + 8 * 8 + 8, "initial fiber frame must match Aps5FiberSwitchStack_nid_no_patch");
+static_assert(sizeof(InitialFrame) == 0xa8 + 8 * 8 + 8,
+              "initial fiber frame must match Aps5FiberSwitchStack_nid_no_patch");
 
 static StackBounds CurrentBounds() {
     auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
@@ -236,11 +237,10 @@ struct InitialFrame {
     std::uint64_t r15, r14, r13, r12, rbx, rbp;
     std::uint64_t returnAddress;
 };
-static_assert(sizeof(InitialFrame) == 8 + 6 * 8 + 8, "initial fiber frame must match Aps5FiberSwitchStack_nid_no_patch");
+static_assert(sizeof(InitialFrame) == 8 + 6 * 8 + 8,
+              "initial fiber frame must match Aps5FiberSwitchStack_nid_no_patch");
 
-static StackBounds CurrentBounds() {
-    return {};
-}
+static StackBounds CurrentBounds() { return {}; }
 
 static void SetBounds(const StackBounds&) {}
 
@@ -262,7 +262,8 @@ extern "C" [[noreturn]] void Aps5FiberMain_nid_no_patch(Fiber* fiber) {
 }
 
 static void PrepareInitialStack(Fiber* fiber) {
-    const auto top = reinterpret_cast<std::uintptr_t>(fiber->context + fiber->contextSize) & ~static_cast<std::uintptr_t>(15);
+    const auto top =
+        reinterpret_cast<std::uintptr_t>(fiber->context + fiber->contextSize) & ~static_cast<std::uintptr_t>(15);
     auto* frame = reinterpret_cast<InitialFrame*>(top - 256);
     std::memset(frame, 0, sizeof(*frame));
     frame->mxcsr = _mm_getcsr();
@@ -281,9 +282,11 @@ static bool AcquireForResume(Fiber* target) {
             std::this_thread::yield();
             continue;
         }
-        if (state != FiberState::Idle && state != FiberState::Suspended) return false;
+        if (state != FiberState::Idle && state != FiberState::Suspended)
+            return false;
         if (target->state.compare_exchange_weak(state, FiberState::Running, std::memory_order_acq_rel)) {
-            if (state == FiberState::Idle) PrepareInitialStack(target);
+            if (state == FiberState::Idle)
+                PrepareInitialStack(target);
             return true;
         }
     }
@@ -292,10 +295,14 @@ static bool AcquireForResume(Fiber* target) {
 static void Resume(Fiber* target, void** save, std::uint64_t argOnRun) {
     const auto* frame = static_cast<const InitialFrame*>(target->savedStack);
     if (frame->returnAddress == 0) {
-        std::fprintf(stderr, "[fiber] resuming '%s' with a wiped context: saved=%p context=%p size=0x%llx\n", target->name, target->savedStack,
-                     static_cast<void*>(target->context), static_cast<unsigned long long>(target->contextSize));
+        std::fprintf(stderr, "[fiber] resuming '%s' with a wiped context: saved=%p context=%p size=0x%llx\n",
+                     target->name, target->savedStack, static_cast<void*>(target->context),
+                     static_cast<unsigned long long>(target->contextSize));
         const auto* words = static_cast<const std::uint64_t*>(target->savedStack);
-        for (int i = 0; i < 40; i += 4) std::fprintf(stderr, "[fiber]   +0x%03x %016llx %016llx %016llx %016llx\n", i * 8, static_cast<unsigned long long>(words[i]), static_cast<unsigned long long>(words[i + 1]), static_cast<unsigned long long>(words[i + 2]), static_cast<unsigned long long>(words[i + 3]));
+        for (int i = 0; i < 40; i += 4)
+            std::fprintf(stderr, "[fiber]   +0x%03x %016llx %016llx %016llx %016llx\n", i * 8,
+                         static_cast<unsigned long long>(words[i]), static_cast<unsigned long long>(words[i + 1]),
+                         static_cast<unsigned long long>(words[i + 2]), static_cast<unsigned long long>(words[i + 3]));
         std::fflush(stderr);
         std::abort();
     }
@@ -307,15 +314,24 @@ static void Resume(Fiber* target, void** save, std::uint64_t argOnRun) {
 
 extern "C" {
 
-int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const char* name, GuestFiberEntry entry, uint64_t arg_on_initialize, void* addr_context, uint64_t size_context, const void* opt_param, uint32_t build_version) {
+int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const char* name, GuestFiberEntry entry,
+                                                      uint64_t arg_on_initialize, void* addr_context,
+                                                      uint64_t size_context, const void* opt_param,
+                                                      uint32_t build_version) {
     (void)opt_param;
     (void)build_version;
-    if (!object || !name || !entry) return SCE_FIBER_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(object) & 7) != 0) return SCE_FIBER_ERROR_ALIGNMENT;
-    if (addr_context == nullptr && size_context != 0) return SCE_FIBER_ERROR_INVALID;
-    if ((reinterpret_cast<std::uintptr_t>(addr_context) & 15) != 0 || (size_context & 15) != 0) return SCE_FIBER_ERROR_ALIGNMENT;
-    if (addr_context == nullptr) return SCE_FIBER_ERROR_INVALID;
-    if (size_context < FIBER_MIN_CONTEXT_SIZE) return SCE_FIBER_ERROR_RANGE;
+    if (!object || !name || !entry)
+        return SCE_FIBER_ERROR_NULL;
+    if ((reinterpret_cast<std::uintptr_t>(object) & 7) != 0)
+        return SCE_FIBER_ERROR_ALIGNMENT;
+    if (addr_context == nullptr && size_context != 0)
+        return SCE_FIBER_ERROR_INVALID;
+    if ((reinterpret_cast<std::uintptr_t>(addr_context) & 15) != 0 || (size_context & 15) != 0)
+        return SCE_FIBER_ERROR_ALIGNMENT;
+    if (addr_context == nullptr)
+        return SCE_FIBER_ERROR_INVALID;
+    if (size_context < FIBER_MIN_CONTEXT_SIZE)
+        return SCE_FIBER_ERROR_RANGE;
     auto* fiber = reinterpret_cast<Fiber*>(object);
     std::memset(object, 0, FIBER_OBJECT_SIZE);
     fiber->magic = FIBER_MAGIC;
@@ -330,39 +346,52 @@ int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const
         auto* words = static_cast<std::uint64_t*>(addr_context);
         std::fill(words, words + size_context / sizeof(std::uint64_t), FIBER_CONTEXT_FILL);
     }
-    if (TraceFibers()) std::fprintf(stderr, "[fiber] init %s object=%p context=%p+0x%llx entry=%p\n", fiber->name, static_cast<void*>(object), addr_context, static_cast<unsigned long long>(size_context), reinterpret_cast<void*>(entry));
+    if (TraceFibers())
+        std::fprintf(stderr, "[fiber] init %s object=%p context=%p+0x%llx entry=%p\n", fiber->name,
+                     static_cast<void*>(object), addr_context, static_cast<unsigned long long>(size_context),
+                     reinterpret_cast<void*>(entry));
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberFinalize(FiberObject* object) {
     auto* fiber = AsFiber(object);
-    if (!fiber) return object ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
+    if (!fiber)
+        return object ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
     const auto state = fiber->state.load(std::memory_order_acquire);
-    if (state == FiberState::Running || state == FiberState::Suspending) return SCE_FIBER_ERROR_STATE;
+    if (state == FiberState::Running || state == FiberState::Suspending)
+        return SCE_FIBER_ERROR_STATE;
     fiber->magic = 0;
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberRun_nid_postfix(FiberObject* object, uint64_t arg_on_run, uint64_t* arg_on_return) {
     auto* fiber = AsFiber(object);
-    if (!fiber) return object ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
-    if (ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
-    if (!AcquireForResume(fiber)) return SCE_FIBER_ERROR_STATE;
-    ThreadState().threadFramePointer = reinterpret_cast<std::uint64_t>(static_cast<void**>(__builtin_frame_address(0))[0]);
+    if (!fiber)
+        return object ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
+    if (ThreadState().current)
+        return SCE_FIBER_ERROR_PERMISSION;
+    if (!AcquireForResume(fiber))
+        return SCE_FIBER_ERROR_STATE;
+    ThreadState().threadFramePointer =
+        reinterpret_cast<std::uint64_t>(static_cast<void**>(__builtin_frame_address(0))[0]);
     ThreadState().threadBounds = CurrentBounds();
     Resume(fiber, &ThreadState().threadStack, arg_on_run);
     CompletePendingSuspend();
     SetBounds(ThreadState().threadBounds);
-    if (arg_on_return) *arg_on_return = ThreadState().transfer;
+    if (arg_on_return)
+        *arg_on_return = ThreadState().transfer;
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberSwitch(FiberObject* object, uint64_t arg_on_run, uint64_t* arg_on_run_out) {
     auto* target = AsFiber(object);
-    if (!target) return object ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
+    if (!target)
+        return object ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
     auto* self = ThreadState().current;
-    if (!self) return SCE_FIBER_ERROR_PERMISSION;
-    if (target == self || !AcquireForResume(target)) return SCE_FIBER_ERROR_STATE;
+    if (!self)
+        return SCE_FIBER_ERROR_PERMISSION;
+    if (target == self || !AcquireForResume(target))
+        return SCE_FIBER_ERROR_STATE;
     if (TraceFibers()) {
         auto** frame = static_cast<void**>(__builtin_frame_address(0));
         void* chain[6] = {};
@@ -371,20 +400,24 @@ int32_t APS5_VABI sceFiberSwitch(FiberObject* object, uint64_t arg_on_run, uint6
             chain[depth] = guest[1];
             guest = static_cast<void**>(guest[0]);
         }
-        std::fprintf(stderr, "[fiber] switch %s -> %s from %p %p %p %p %p %p\n", self->name, target->name, chain[0], chain[1], chain[2], chain[3], chain[4], chain[5]);
+        std::fprintf(stderr, "[fiber] switch %s -> %s from %p %p %p %p %p %p\n", self->name, target->name, chain[0],
+                     chain[1], chain[2], chain[3], chain[4], chain[5]);
     }
     self->state.store(FiberState::Suspending, std::memory_order_relaxed);
     ThreadState().pendingSuspend = self;
     Resume(target, &self->savedStack, arg_on_run);
     CompletePendingSuspend();
-    if (arg_on_run_out) *arg_on_run_out = ThreadState().transfer;
+    if (arg_on_run_out)
+        *arg_on_run_out = ThreadState().transfer;
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_on_run) {
     auto* self = ThreadState().current;
-    if (!self) return SCE_FIBER_ERROR_PERMISSION;
-    if (TraceFibers()) std::fprintf(stderr, "[fiber] return %s from %p\n", self->name, __builtin_return_address(0));
+    if (!self)
+        return SCE_FIBER_ERROR_PERMISSION;
+    if (TraceFibers())
+        std::fprintf(stderr, "[fiber] return %s from %p\n", self->name, __builtin_return_address(0));
     self->state.store(FiberState::Suspending, std::memory_order_relaxed);
     ThreadState().pendingSuspend = self;
     ThreadState().current = nullptr;
@@ -392,21 +425,26 @@ int32_t APS5_VABI sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_o
     SetBounds(ThreadState().threadBounds);
     Aps5FiberSwitchStack_nid_no_patch(&self->savedStack, ThreadState().threadStack);
     CompletePendingSuspend();
-    if (arg_on_run) *arg_on_run = ThreadState().transfer;
+    if (arg_on_run)
+        *arg_on_run = ThreadState().transfer;
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberGetSelf(FiberObject** fiber) {
-    if (!fiber) return SCE_FIBER_ERROR_NULL;
-    if (!ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
+    if (!fiber)
+        return SCE_FIBER_ERROR_NULL;
+    if (!ThreadState().current)
+        return SCE_FIBER_ERROR_PERMISSION;
     *fiber = reinterpret_cast<FiberObject*>(ThreadState().current);
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     auto* fiber = AsFiber(object);
-    if (!fiber || !fiber_info) return object && fiber_info ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
-    if (fiber_info->size != sizeof(FiberInfo)) return SCE_FIBER_ERROR_INVALID;
+    if (!fiber || !fiber_info)
+        return object && fiber_info ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
+    if (fiber_info->size != sizeof(FiberInfo))
+        return SCE_FIBER_ERROR_INVALID;
     fiber_info->entry = reinterpret_cast<FiberEntry>(fiber->entry);
     fiber_info->arg_on_initialize = fiber->argOnInitialize;
     fiber_info->addr_context = fiber->context;
@@ -416,34 +454,42 @@ int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     if (fiber->contextSizeCheck) {
         const auto* words = reinterpret_cast<const std::uint64_t*>(fiber->context);
         const auto* end = words + fiber->contextSize / sizeof(std::uint64_t);
-        fiber_info->size_context_margin = static_cast<uint64_t>(std::find_if(words, end, [](std::uint64_t word) { return word != FIBER_CONTEXT_FILL; }) - words) * sizeof(std::uint64_t);
+        fiber_info->size_context_margin =
+            static_cast<uint64_t>(
+                std::find_if(words, end, [](std::uint64_t word) { return word != FIBER_CONTEXT_FILL; }) - words) *
+            sizeof(std::uint64_t);
     }
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberRename(FiberObject* object, const char* name) {
     auto* fiber = AsFiber(object);
-    if (!fiber || !name) return object && name ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
+    if (!fiber || !name)
+        return object && name ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
     std::memset(fiber->name, 0, sizeof(fiber->name));
     std::strncpy(fiber->name, name, FIBER_MAX_NAME_LENGTH);
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberOptParamInitialize(FiberOptParam* opt_param) {
-    if (!opt_param) return SCE_FIBER_ERROR_NULL;
+    if (!opt_param)
+        return SCE_FIBER_ERROR_NULL;
     std::memset(opt_param, 0, FIBER_OPT_PARAM_SIZE);
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberGetThreadFramePointerAddress(uint64_t* addr_frame_pointer) {
-    if (!addr_frame_pointer) return SCE_FIBER_ERROR_NULL;
-    if (!ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
+    if (!addr_frame_pointer)
+        return SCE_FIBER_ERROR_NULL;
+    if (!ThreadState().current)
+        return SCE_FIBER_ERROR_PERMISSION;
     *addr_frame_pointer = ThreadState().threadFramePointer;
     return SCE_OK;
 }
 
 int32_t APS5_VABI sceFiberStartContextSizeCheck(uint32_t flags) {
-    if (flags != 0) return SCE_FIBER_ERROR_INVALID;
+    if (flags != 0)
+        return SCE_FIBER_ERROR_INVALID;
     bool expected = false;
     return g_contextSizeCheck.compare_exchange_strong(expected, true) ? SCE_OK : SCE_FIBER_ERROR_STATE;
 }
@@ -452,6 +498,4 @@ int32_t APS5_VABI sceFiberStopContextSizeCheck(void) {
     bool expected = true;
     return g_contextSizeCheck.compare_exchange_strong(expected, false) ? SCE_OK : SCE_FIBER_ERROR_STATE;
 }
-
 }
-

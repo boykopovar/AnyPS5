@@ -11,9 +11,11 @@ void* APS5_VABI dlsym_nid_postfix(void*, const char*);
 int APS5_VABI dlclose_nid_postfix(void*);
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t, int, ModuleInfoEx*);
 }
-static void Require(bool value) { if (!value) std::abort(); }
-template<typename TFunction>
-static bool ThrowsInvalidArgument(TFunction function) {
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
+template <typename TFunction> static bool ThrowsInvalidArgument(TFunction function) {
     try {
         function();
     } catch (const std::invalid_argument&) {
@@ -41,11 +43,13 @@ int main(int argc, char** argv) {
     bool executable = false;
     for (std::uint32_t i = 0; i < info.segment_count; ++i) {
         const auto& segment = info.segments[i];
-        if (reinterpret_cast<std::uintptr_t>(add) >= segment.address && reinterpret_cast<std::uintptr_t>(add) - segment.address < segment.size)
+        if (reinterpret_cast<std::uintptr_t>(add) >= segment.address &&
+            reinterpret_cast<std::uintptr_t>(add) - segment.address < segment.size)
             executable = (segment.prot & 5) == 5;
     }
     Require(executable);
-    Require(info.eh_frame_hdr_addr != 0 && info.eh_frame_hdr_size != 0 && info.eh_frame_addr != 0 && info.eh_frame_size != 0);
+    Require(info.eh_frame_hdr_addr != 0 && info.eh_frame_hdr_size != 0 && info.eh_frame_addr != 0 &&
+            info.eh_frame_size != 0);
     Require(info.init_proc_addr == 0 || info.init_proc_addr >= info.segments[0].address);
     const auto self = Query(reinterpret_cast<const void*>(&Require), 0);
     Require(self.id != info.id && Query(reinterpret_cast<const void*>(&Query), 0).id == self.id);
@@ -54,11 +58,14 @@ int main(int argc, char** argv) {
     Require(dlclose_nid_postfix(second) == 0);
     int local = 0;
     Query(&local, SCE_KERNEL_ERROR_ESRCH);
-    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, nullptr) ==
+            SCE_KERNEL_ERROR_EFAULT);
     ModuleInfoEx invalid{};
     invalid.st_size = sizeof(ModuleInfoEx);
-    Require(ThrowsInvalidArgument([&] { sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 1, &invalid); }));
+    Require(ThrowsInvalidArgument(
+        [&] { sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 1, &invalid); }));
     invalid.st_size = sizeof(ModuleInfoEx) - 8;
-    Require(ThrowsInvalidArgument([&] { sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, &invalid); }));
+    Require(ThrowsInvalidArgument(
+        [&] { sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, &invalid); }));
     Require(dlclose_nid_postfix(module) == 0);
 }

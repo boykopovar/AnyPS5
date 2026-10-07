@@ -14,7 +14,8 @@ extern "C" {
 int APS5_VABI sceUltInitialize();
 int APS5_VABI sceUltFinalize();
 std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t, std::uint64_t, std::uint32_t);
-int APS5_VABI sceUltQueueDataResourcePoolCreate(void*, const char*, std::uint32_t, std::uint64_t, std::uint32_t, void*, void*, const void*, std::uint32_t);
+int APS5_VABI sceUltQueueDataResourcePoolCreate(void*, const char*, std::uint32_t, std::uint64_t, std::uint32_t, void*,
+                                                void*, const void*, std::uint32_t);
 int APS5_VABI sceUltQueueDataResourcePoolDestroy(void*);
 int APS5_VABI sceUltQueueCreate(void*, const char*, std::uint64_t, void*, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltQueueDestroy(void*);
@@ -41,7 +42,9 @@ static void Require(bool value, int line) {
 
 #define CHECK(value) Require((value), __LINE__)
 
-struct alignas(8) Object { std::array<std::uint8_t, 512> bytes{}; };
+struct alignas(8) Object {
+    std::array<std::uint8_t, 512> bytes{};
+};
 
 struct Fixture {
     Object pool;
@@ -51,12 +54,14 @@ struct Fixture {
     void Create(std::uint32_t slots, std::uint32_t queues = 1, std::uint64_t size = sizeof(std::uint64_t)) {
         CHECK(sceUltQueueDataResourcePoolCreate(&pool, "pool", slots, size, queues, nullptr, nullptr, nullptr, 0) == 0);
         CHECK(sceUltQueueCreate(&first, "first", size, nullptr, &pool, nullptr, 0) == 0);
-        if (queues > 1) CHECK(sceUltQueueCreate(&second, "second", size, nullptr, &pool, nullptr, 0) == 0);
+        if (queues > 1)
+            CHECK(sceUltQueueCreate(&second, "second", size, nullptr, &pool, nullptr, 0) == 0);
     }
 
     void Destroy(bool secondQueue = false) {
         CHECK(sceUltQueueDestroy(&first) == 0);
-        if (secondQueue) CHECK(sceUltQueueDestroy(&second) == 0);
+        if (secondQueue)
+            CHECK(sceUltQueueDestroy(&second) == 0);
         CHECK(sceUltQueueDataResourcePoolDestroy(&pool) == 0);
     }
 };
@@ -66,11 +71,13 @@ static void Validation() {
     Object extra;
     std::uint64_t value = 99;
     CHECK(sceUltQueueDataResourcePoolCreate(nullptr, nullptr, 1, 8, 1, nullptr, nullptr, nullptr, 0) == Null);
-    CHECK(sceUltQueueDataResourcePoolCreate(fixture.pool.bytes.data() + 1, nullptr, 1, 8, 1, nullptr, nullptr, nullptr, 0) == Alignment);
+    CHECK(sceUltQueueDataResourcePoolCreate(fixture.pool.bytes.data() + 1, nullptr, 1, 8, 1, nullptr, nullptr, nullptr,
+                                            0) == Alignment);
     CHECK(sceUltQueueDataResourcePoolCreate(&fixture.pool, nullptr, 0, 8, 1, nullptr, nullptr, nullptr, 0) == Range);
     CHECK(sceUltQueueDataResourcePoolCreate(&fixture.pool, nullptr, 1, 0, 1, nullptr, nullptr, nullptr, 0) == Range);
     CHECK(sceUltQueueDataResourcePoolCreate(&fixture.pool, nullptr, 1, 8, 0, nullptr, nullptr, nullptr, 0) == Range);
-    CHECK(sceUltQueueDataResourcePoolCreate(&fixture.pool, nullptr, 2, UINT64_MAX, 1, nullptr, nullptr, nullptr, 0) == Range);
+    CHECK(sceUltQueueDataResourcePoolCreate(&fixture.pool, nullptr, 2, UINT64_MAX, 1, nullptr, nullptr, nullptr, 0) ==
+          Range);
     CHECK(sceUltQueueDataResourcePoolCreate(&fixture.pool, nullptr, 1, 8, 1, &extra, nullptr, nullptr, 0) == Invalid);
     CHECK(sceUltQueueCreate(&fixture.first, nullptr, 8, nullptr, &fixture.pool, nullptr, 0) == Invalid);
     fixture.Create(2);
@@ -95,20 +102,32 @@ static void Validation() {
     CHECK(sceUltQueueDestroy(nullptr) == Null);
     CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(3, 9, 2) == 1072);
     bool overflow = false;
-    try { sceUltQueueDataResourcePoolGetWorkAreaSize(1, UINT64_MAX, 1); }
-    catch (const std::out_of_range&) { overflow = true; }
+    try {
+        sceUltQueueDataResourcePoolGetWorkAreaSize(1, UINT64_MAX, 1);
+    } catch (const std::out_of_range&) {
+        overflow = true;
+    }
     CHECK(overflow);
     bool rejected = false;
-    try { sceUltQueueCreate(&extra, nullptr, 8, nullptr, &fixture.pool, &extra, 0); }
-    catch (const std::runtime_error&) { rejected = true; }
+    try {
+        sceUltQueueCreate(&extra, nullptr, 8, nullptr, &fixture.pool, &extra, 0);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
     CHECK(rejected);
     rejected = false;
-    try { sceUltQueueDataResourcePoolCreate(&extra, nullptr, 1, 8, 1, nullptr, nullptr, &extra, 0); }
-    catch (const std::runtime_error&) { rejected = true; }
+    try {
+        sceUltQueueDataResourcePoolCreate(&extra, nullptr, 1, 8, 1, nullptr, nullptr, &extra, 0);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
     CHECK(rejected);
     overflow = false;
-    try { sceUltQueueDataResourcePoolGetWorkAreaSize(UINT32_MAX, UINT64_MAX / 2, 1); }
-    catch (const std::out_of_range&) { overflow = true; }
+    try {
+        sceUltQueueDataResourcePoolGetWorkAreaSize(UINT32_MAX, UINT64_MAX / 2, 1);
+    } catch (const std::out_of_range&) {
+        overflow = true;
+    }
     CHECK(overflow);
     fixture.Destroy();
     CHECK(sceUltQueueTryPush(&fixture.first, &value) == State);
@@ -123,10 +142,12 @@ static void Fifo() {
     fixture.Create(3, 1, 13);
     std::array<std::array<std::uint8_t, 13>, 4> items{};
     for (std::size_t index = 0; index < items.size(); ++index) {
-        for (std::size_t byte = 0; byte < items[index].size(); ++byte) items[index][byte] = index * 31 + byte;
+        for (std::size_t byte = 0; byte < items[index].size(); ++byte)
+            items[index][byte] = index * 31 + byte;
     }
     for (int round = 0; round < 100; ++round) {
-        for (int index = 0; index < 3; ++index) CHECK(sceUltQueueTryPush(&fixture.first, items[index].data()) == 0);
+        for (int index = 0; index < 3; ++index)
+            CHECK(sceUltQueueTryPush(&fixture.first, items[index].data()) == 0);
         CHECK(sceUltQueueTryPush(&fixture.first, items[3].data()) == Again);
         std::array<std::uint8_t, 15> output;
         for (int index = 0; index < 3; ++index) {
@@ -233,9 +254,12 @@ static void Stress() {
             }
         });
     }
-    for (auto& producer : producers) producer.join();
-    for (auto& consumer : consumers) consumer.join();
-    for (const auto& count : seen) CHECK(count == 1);
+    for (auto& producer : producers)
+        producer.join();
+    for (auto& consumer : consumers)
+        consumer.join();
+    for (const auto& count : seen)
+        CHECK(count == 1);
     std::uint64_t output = 0;
     CHECK(sceUltQueueTryPop(&fixture.first, &output) == Again);
     fixture.Destroy();
@@ -244,12 +268,19 @@ static void Stress() {
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     CHECK(sceUltInitialize() == 0);
-    if (std::strcmp(argv[1], "validation") == 0) Validation();
-    else if (std::strcmp(argv[1], "fifo") == 0) Fifo();
-    else if (std::strcmp(argv[1], "blocking") == 0) Blocking();
-    else if (std::strcmp(argv[1], "shared-pool") == 0) SharedPool();
-    else if (std::strcmp(argv[1], "finalize") == 0) Finalize();
-    else if (std::strcmp(argv[1], "stress") == 0) Stress();
-    else CHECK(false);
+    if (std::strcmp(argv[1], "validation") == 0)
+        Validation();
+    else if (std::strcmp(argv[1], "fifo") == 0)
+        Fifo();
+    else if (std::strcmp(argv[1], "blocking") == 0)
+        Blocking();
+    else if (std::strcmp(argv[1], "shared-pool") == 0)
+        SharedPool();
+    else if (std::strcmp(argv[1], "finalize") == 0)
+        Finalize();
+    else if (std::strcmp(argv[1], "stress") == 0)
+        Stress();
+    else
+        CHECK(false);
     CHECK(sceUltFinalize() == 0);
 }

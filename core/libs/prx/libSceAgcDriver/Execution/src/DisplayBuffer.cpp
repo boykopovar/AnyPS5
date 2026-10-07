@@ -15,7 +15,8 @@ namespace AgcDriver {
 namespace {
 
 void require(bool condition, const char* reason) {
-    if (!condition) throw std::runtime_error(reason);
+    if (!condition)
+        throw std::runtime_error(reason);
 }
 
 // Bit 56 selects the 10-bit (A2B10G10R10) variant of the format.
@@ -23,12 +24,12 @@ constexpr std::uint64_t PixelFormatUnormBit = 0x0100000000000000ull;
 constexpr std::uint64_t PixelFormatB8G8R8A8 = 0x8000000000000000ull;
 constexpr std::uint64_t PixelFormatR8G8B8A8 = 0x8000000022000000ull;
 
-std::uint64_t baseFormat(std::uint64_t pixelFormat) {
-    return pixelFormat & ~PixelFormatUnormBit;
-}
+std::uint64_t baseFormat(std::uint64_t pixelFormat) { return pixelFormat & ~PixelFormatUnormBit; }
 
 std::uint32_t tileOffset(std::uint32_t x, std::uint32_t y) {
-    return ((y << 4u) & 0x0070u) ^ ((y << 5u) & 0x0f00u) ^ ((y << 9u) & 0x1000u) ^ ((y << 8u) & 0x4000u) ^ ((x << 2u) & 0x000cu) ^ ((x << 5u) & 0x0380u) ^ ((x << 4u) & 0x0400u) ^ ((x << 6u) & 0x0800u) ^ ((x << 9u) & 0xa000u);
+    return ((y << 4u) & 0x0070u) ^ ((y << 5u) & 0x0f00u) ^ ((y << 9u) & 0x1000u) ^ ((y << 8u) & 0x4000u) ^
+           ((x << 2u) & 0x000cu) ^ ((x << 5u) & 0x0380u) ^ ((x << 4u) & 0x0400u) ^ ((x << 6u) & 0x0800u) ^
+           ((x << 9u) & 0xa000u);
 }
 
 void decodeTexel(const std::byte* texel, std::byte* pixel, bool rgba, bool tenBit) {
@@ -53,22 +54,30 @@ void decodeTexel(const std::byte* texel, std::byte* pixel, bool rgba, bool tenBi
 }
 
 std::size_t DisplayBufferSize(const DisplayBuffer& buffer) {
-    require(buffer.width != 0 && buffer.height != 0 && buffer.width <= 16384 && buffer.height <= 16384, "VideoOut: invalid display buffer dimensions");
-    if (baseFormat(buffer.pixelFormat) != PixelFormatB8G8R8A8 && baseFormat(buffer.pixelFormat) != PixelFormatR8G8B8A8) {
+    require(buffer.width != 0 && buffer.height != 0 && buffer.width <= 16384 && buffer.height <= 16384,
+            "VideoOut: invalid display buffer dimensions");
+    if (baseFormat(buffer.pixelFormat) != PixelFormatB8G8R8A8 &&
+        baseFormat(buffer.pixelFormat) != PixelFormatR8G8B8A8) {
         char message[96];
-        std::snprintf(message, sizeof(message), "VideoOut: unsupported display pixel format 0x%016llx", static_cast<unsigned long long>(buffer.pixelFormat));
+        std::snprintf(message, sizeof(message), "VideoOut: unsupported display pixel format 0x%016llx",
+                      static_cast<unsigned long long>(buffer.pixelFormat));
         throw std::runtime_error(message);
     }
-    require(buffer.address != 0 && (buffer.address & 65535u) == 0, "VideoOut: display buffer requires 64 KiB alignment");
+    require(buffer.address != 0 && (buffer.address & 65535u) == 0,
+            "VideoOut: display buffer requires 64 KiB alignment");
     require(buffer.tilingMode <= 1, "VideoOut: unsupported display tiling mode");
     require(buffer.tilingMode != 0 || buffer.pitchInPixel == 0, "VideoOut: tiled display pitch is unsupported");
-    require(buffer.dccAddress == 0 || buffer.tilingMode == 0, "VideoOut: a linear display buffer cannot carry DCC metadata");
+    require(buffer.dccAddress == 0 || buffer.tilingMode == 0,
+            "VideoOut: a linear display buffer cannot carry DCC metadata");
     require(buffer.dccAddress != 0 || buffer.dccClearColor == 0, "VideoOut: a DCC clear color needs DCC metadata");
     const auto pitch = buffer.pitchInPixel == 0 ? buffer.width : buffer.pitchInPixel;
     require(pitch >= buffer.width && pitch <= 16384, "VideoOut: invalid linear display pitch");
     const auto size = buffer.tilingMode == 1 ? static_cast<std::uint64_t>(pitch) * buffer.height * 4u
-        : static_cast<std::uint64_t>((buffer.width + 127u) / 128u) * ((buffer.height + 127u) / 128u) * 65536u;
-    require(size <= std::numeric_limits<std::size_t>::max() && size <= std::numeric_limits<std::uintptr_t>::max() - buffer.address, "VideoOut: display buffer range overflow");
+                                             : static_cast<std::uint64_t>((buffer.width + 127u) / 128u) *
+                                                   ((buffer.height + 127u) / 128u) * 65536u;
+    require(size <= std::numeric_limits<std::size_t>::max() &&
+                size <= std::numeric_limits<std::uintptr_t>::max() - buffer.address,
+            "VideoOut: display buffer range overflow");
     return static_cast<std::size_t>(size);
 }
 
@@ -85,8 +94,10 @@ std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::spa
     for (std::uint32_t y = 0; y < buffer.height; ++y) {
         for (std::uint32_t x = 0; x < buffer.width; ++x) {
             const auto pitch = buffer.pitchInPixel == 0 ? buffer.width : buffer.pitchInPixel;
-            const auto tiled = buffer.tilingMode == 1 ? (static_cast<std::size_t>(y) * pitch + x) * 4u
-                : (static_cast<std::size_t>(y / 128u) * blocksPerRow + x / 128u) * 65536u + tileOffset(x, y);
+            const auto tiled =
+                buffer.tilingMode == 1
+                    ? (static_cast<std::size_t>(y) * pitch + x) * 4u
+                    : (static_cast<std::size_t>(y / 128u) * blocksPerRow + x / 128u) * 65536u + tileOffset(x, y);
             const auto linear = (static_cast<std::size_t>(y) * buffer.width + x) * 4;
             decodeTexel(source.data() + tiled, pixels.data() + linear, rgba, tenBit);
         }
@@ -102,18 +113,28 @@ std::array<std::byte, 4> DisplayBufferClearPixel(const DisplayBuffer& buffer, Gr
     if (keys == Graphics::DccKeys::ClearRegister) {
         if ((buffer.dccClearColor >> 32u) != 0) {
             char message[160];
-            std::snprintf(message, sizeof(message), "VideoOut: DCC register clear color 0x%016llx of display buffer 0x%llx does not fit its 32-bit texel", static_cast<unsigned long long>(buffer.dccClearColor), static_cast<unsigned long long>(buffer.address));
+            std::snprintf(
+                message, sizeof(message),
+                "VideoOut: DCC register clear color 0x%016llx of display buffer 0x%llx does not fit its 32-bit texel",
+                static_cast<unsigned long long>(buffer.dccClearColor), static_cast<unsigned long long>(buffer.address));
             throw std::runtime_error(message);
         }
         const auto word = static_cast<std::uint32_t>(buffer.dccClearColor);
         std::memcpy(texel.data(), &word, texel.size());
-    } else if (!Graphics::IsDccClear(keys) || !Graphics::FillDccClear(DisplayTexelFormat(buffer.pixelFormat), keys, true, texel)) {
+    } else if (!Graphics::IsDccClear(keys) ||
+               !Graphics::FillDccClear(DisplayTexelFormat(buffer.pixelFormat), keys, true, texel)) {
         char message[256];
-        std::snprintf(message, sizeof(message), "VideoOut: display buffer 0x%llx (format 0x%016llx) reads %s DCC keys at 0x%llx: only uncompressed keys or a uniform clear code that the display format encodes can be presented", static_cast<unsigned long long>(buffer.address), static_cast<unsigned long long>(buffer.pixelFormat), Graphics::DccKeysName(keys), static_cast<unsigned long long>(buffer.dccAddress));
+        std::snprintf(message, sizeof(message),
+                      "VideoOut: display buffer 0x%llx (format 0x%016llx) reads %s DCC keys at 0x%llx: only "
+                      "uncompressed keys or a uniform clear code that the display format encodes can be presented",
+                      static_cast<unsigned long long>(buffer.address),
+                      static_cast<unsigned long long>(buffer.pixelFormat), Graphics::DccKeysName(keys),
+                      static_cast<unsigned long long>(buffer.dccAddress));
         throw std::runtime_error(message);
     }
     std::array<std::byte, 4> pixel{};
-    decodeTexel(texel.data(), pixel.data(), baseFormat(buffer.pixelFormat) == PixelFormatR8G8B8A8, (buffer.pixelFormat & PixelFormatUnormBit) != 0);
+    decodeTexel(texel.data(), pixel.data(), baseFormat(buffer.pixelFormat) == PixelFormatR8G8B8A8,
+                (buffer.pixelFormat & PixelFormatUnormBit) != 0);
     return pixel;
 }
 
@@ -122,7 +143,10 @@ std::vector<std::byte> ReadDisplayBuffer(const DisplayBuffer& buffer) {
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (traceGpu) {
         static const auto start = std::chrono::steady_clock::now();
-        std::fprintf(stderr, "[gpu] scanout display buffer 0x%llx %ux%u format 0x%016llx at %.1f s\n", static_cast<unsigned long long>(buffer.address), buffer.width, buffer.height, static_cast<unsigned long long>(buffer.pixelFormat), std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        std::fprintf(stderr, "[gpu] scanout display buffer 0x%llx %ux%u format 0x%016llx at %.1f s\n",
+                     static_cast<unsigned long long>(buffer.address), buffer.width, buffer.height,
+                     static_cast<unsigned long long>(buffer.pixelFormat),
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
     }
     GuestMemory::FlushGpuWrites(buffer.address, size);
     GuestMemory::CheckRange(reinterpret_cast<const void*>(buffer.address), size, 65536);

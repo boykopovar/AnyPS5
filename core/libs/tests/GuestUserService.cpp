@@ -12,7 +12,10 @@ int APS5_VABI sceUserServiceGetNpAccountId(int user_id, std::uint64_t* account_i
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 }
 

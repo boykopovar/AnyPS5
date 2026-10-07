@@ -11,9 +11,9 @@
 extern "C" {
 
 uint32_t APS5_VABI sceAgcDriverGetEqContextId(const KernelEvent* ev) {
- (void)ev;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)ev;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceAgcDriverGetEqEventType(const KernelEvent* ev) {
@@ -31,5 +31,4 @@ int APS5_VABI sceAgcDriverGetEqEventType(const KernelEvent* ev) {
     }
     return static_cast<int>(ev->data);
 }
-
 }

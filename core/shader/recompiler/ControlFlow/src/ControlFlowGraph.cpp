@@ -19,7 +19,8 @@ bool contains(const std::vector<std::uint32_t>& values, std::uint32_t value) {
     return std::find(values.begin(), values.end(), value) != values.end();
 }
 
-std::vector<std::uint32_t> intersectSorted(const std::vector<std::uint32_t>& first, const std::vector<std::uint32_t>& second) {
+std::vector<std::uint32_t> intersectSorted(const std::vector<std::uint32_t>& first,
+                                           const std::vector<std::uint32_t>& second) {
     std::vector<std::uint32_t> result;
     std::set_intersection(first.begin(), first.end(), second.begin(), second.end(), std::back_inserter(result));
     return result;
@@ -60,11 +61,13 @@ const BasicBlock& ControlFlowGraph::FindBlockByProgramCounter(std::uint32_t prog
             return block;
         }
     }
-    throw std::invalid_argument("control flow graph has no block starting at program counter " + toHexString(programCounter));
+    throw std::invalid_argument("control flow graph has no block starting at program counter " +
+                                toHexString(programCounter));
 }
 
 BasicBlock& ControlFlowGraph::FindBlockByProgramCounter(std::uint32_t programCounter) {
-    return const_cast<BasicBlock&>(static_cast<const ControlFlowGraph*>(this)->FindBlockByProgramCounter(programCounter));
+    return const_cast<BasicBlock&>(
+        static_cast<const ControlFlowGraph*>(this)->FindBlockByProgramCounter(programCounter));
 }
 
 bool ControlFlowGraph::Dominates(std::uint32_t dominator, std::uint32_t blockId) const {
@@ -75,7 +78,8 @@ bool ControlFlowGraph::PostDominates(std::uint32_t postDominator, std::uint32_t 
     return contains(FindBlock(blockId).postDominators, postDominator);
 }
 
-std::uint32_t ControlFlowGraph::FindNearestCommonPostDominator(std::uint32_t firstBlock, std::uint32_t secondBlock) const {
+std::uint32_t ControlFlowGraph::FindNearestCommonPostDominator(std::uint32_t firstBlock,
+                                                               std::uint32_t secondBlock) const {
     const auto& first = FindBlock(firstBlock);
     const auto& second = FindBlock(secondBlock);
     const auto common = intersectSorted(first.postDominators, second.postDominators);
@@ -94,36 +98,56 @@ std::uint32_t ControlFlowGraph::FindNearestCommonPostDominator(std::uint32_t fir
             return candidate;
         }
     }
-    throw std::logic_error("blocks " + std::to_string(firstBlock) + " and " + std::to_string(secondBlock) + " have no unique nearest common post-dominator");
+    throw std::logic_error("blocks " + std::to_string(firstBlock) + " and " + std::to_string(secondBlock) +
+                           " have no unique nearest common post-dominator");
 }
 
 std::string BranchConditionToString(BranchCondition condition) {
     switch (condition) {
-        case BranchCondition::Always: return "always";
-        case BranchCondition::SccZero: return "scc0";
-        case BranchCondition::SccNonZero: return "scc1";
-        case BranchCondition::VccZero: return "vccz";
-        case BranchCondition::VccNonZero: return "vccnz";
-        case BranchCondition::ExecZero: return "execz";
-        case BranchCondition::ExecNonZero: return "execnz";
-        case BranchCondition::ScalarInstruction: return "scalar_instruction";
-        case BranchCondition::IndirectTarget: return "indirect_target";
-        case BranchCondition::GotoVariable: return "goto_variable";
-        case BranchCondition::Unknown: return "unknown";
+    case BranchCondition::Always:
+        return "always";
+    case BranchCondition::SccZero:
+        return "scc0";
+    case BranchCondition::SccNonZero:
+        return "scc1";
+    case BranchCondition::VccZero:
+        return "vccz";
+    case BranchCondition::VccNonZero:
+        return "vccnz";
+    case BranchCondition::ExecZero:
+        return "execz";
+    case BranchCondition::ExecNonZero:
+        return "execnz";
+    case BranchCondition::ScalarInstruction:
+        return "scalar_instruction";
+    case BranchCondition::IndirectTarget:
+        return "indirect_target";
+    case BranchCondition::GotoVariable:
+        return "goto_variable";
+    case BranchCondition::Unknown:
+        return "unknown";
     }
     throw std::invalid_argument("unsupported branch condition for string conversion");
 }
 
 std::string FailureKindToString(FailureKind kind) {
     switch (kind) {
-        case FailureKind::None: return "None";
-        case FailureKind::InvalidInput: return "InvalidInput";
-        case FailureKind::UnsupportedInstruction: return "UnsupportedInstruction";
-        case FailureKind::InvalidBranchTarget: return "InvalidBranchTarget";
-        case FailureKind::MissingFallthrough: return "MissingFallthrough";
-        case FailureKind::InvalidLabel: return "InvalidLabel";
-        case FailureKind::IrreducibleControlFlow: return "IrreducibleControlFlow";
-        case FailureKind::StructuredControlFlow: return "StructuredControlFlow";
+    case FailureKind::None:
+        return "None";
+    case FailureKind::InvalidInput:
+        return "InvalidInput";
+    case FailureKind::UnsupportedInstruction:
+        return "UnsupportedInstruction";
+    case FailureKind::InvalidBranchTarget:
+        return "InvalidBranchTarget";
+    case FailureKind::MissingFallthrough:
+        return "MissingFallthrough";
+    case FailureKind::InvalidLabel:
+        return "InvalidLabel";
+    case FailureKind::IrreducibleControlFlow:
+        return "IrreducibleControlFlow";
+    case FailureKind::StructuredControlFlow:
+        return "StructuredControlFlow";
     }
     throw std::invalid_argument("unsupported failure kind for string conversion");
 }

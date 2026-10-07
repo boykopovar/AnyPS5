@@ -254,7 +254,7 @@ private:
         // the pool under an unsubmitted copy command.
         std::shared_ptr<Buffer> buffer;
         // Guest bytes as uploaded; write-back only stores bytes the GPU changed.
-        std::vector<std::byte> uploaded {};
+        std::vector<std::byte> uploaded{};
         // Registered allocation that is imported: its bytes are read from live guest memory, not a snapshot.
         bool hostBacked = false;
         // Set when the region is served by an imported allocation; nothing is copied or written back.
@@ -262,10 +262,10 @@ private:
         // Set when the region covers uncommitted pages: only the `backed` parts (possibly none) are guest
         // memory; the rest reads as zeros and is never stored.
         bool sparse = false;
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> backed {};
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> backed{};
         // Set when the region is served by an image mirror: nothing is copied; writable mirrors are
         // written back by comparing with the mirror's shadow. Kept alive here for recorded work.
-        std::shared_ptr<ImageMirror> mirror {};
+        std::shared_ptr<ImageMirror> mirror{};
         // The mirror is a descriptor sub-range one found by UploadPrepare (not a lease mirror), which
         // UploadFinish confirms still has its Range before the region binds it.
         bool subrangeMirror = false;

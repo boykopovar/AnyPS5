@@ -14,10 +14,10 @@ struct LocinfoStorage {
 struct Facet;
 
 struct FacetVtable {
-    void (APS5_VABI *destroy)(Facet* self);
-    void (APS5_VABI *deleteObject)(Facet* self);
-    void (APS5_VABI *retain)(Facet* self);
-    Facet* (APS5_VABI *release)(Facet* self);
+    void(APS5_VABI* destroy)(Facet* self);
+    void(APS5_VABI* deleteObject)(Facet* self);
+    void(APS5_VABI* retain)(Facet* self);
+    Facet*(APS5_VABI* release)(Facet* self);
 };
 
 struct Facet {
@@ -53,9 +53,10 @@ struct CollateFacet {
 
 struct CollateVtable {
     FacetVtable facet;
-    int (APS5_VABI *compare)(const CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2);
-    String* (APS5_VABI *transform)(String* result, const CollateFacet* self, const char* first, const char* last);
-    std::int64_t (APS5_VABI *hash)(const CollateFacet* self, const char* first, const char* last);
+    int(APS5_VABI* compare)(const CollateFacet* self, const char* first1, const char* last1, const char* first2,
+                            const char* last2);
+    String*(APS5_VABI* transform)(String* result, const CollateFacet* self, const char* first, const char* last);
+    std::int64_t(APS5_VABI* hash)(const CollateFacet* self, const char* first, const char* last);
 };
 
 struct IosBase {

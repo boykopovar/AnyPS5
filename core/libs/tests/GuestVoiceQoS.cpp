@@ -8,10 +8,12 @@ extern "C" {
 int APS5_VABI sceVoiceQoSInit(void*, std::uint32_t, std::int32_t);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
-template<typename TException, typename TFunction>
-static bool Throws(TFunction function) {
+template <typename TException, typename TFunction> static bool Throws(TFunction function) {
     try {
         function();
     } catch (const TException&) {

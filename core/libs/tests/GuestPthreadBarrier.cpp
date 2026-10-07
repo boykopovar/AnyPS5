@@ -8,7 +8,8 @@ struct GuestBarrier;
 struct GuestBarrierattr;
 
 extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
+int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg,
+                               const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI pthread_barrierattr_init_nid_postfix(GuestBarrierattr** attr);
 int APS5_VABI pthread_barrierattr_destroy_nid_postfix(GuestBarrierattr** attr);
@@ -25,7 +26,10 @@ static constexpr int PROCESS_SHARED = 1;
 static constexpr int BARRIER_SERIAL_THREAD = -1;
 static constexpr unsigned WAITERS = 4;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 struct Context {
     GuestBarrier* barrier = nullptr;
@@ -36,16 +40,21 @@ struct Context {
 static void* APS5_VABI Waiter(void* arg) {
     auto& context = *static_cast<Context*>(arg);
     const int result = pthread_barrier_wait_nid_postfix(&context.barrier);
-    if (result == BARRIER_SERIAL_THREAD) ++context.serial;
-    else if (result == 0) ++context.released;
-    else std::abort();
+    if (result == BARRIER_SERIAL_THREAD)
+        ++context.serial;
+    else if (result == 0)
+        ++context.released;
+    else
+        std::abort();
     return nullptr;
 }
 
 static void RunWaiters(Context& context) {
     std::array<Pthread, WAITERS> threads{};
-    for (auto& thread : threads) Require(scePthreadCreate(&thread, nullptr, Waiter, &context, nullptr) == 0);
-    for (auto& thread : threads) Require(scePthreadJoin(thread, nullptr) == 0);
+    for (auto& thread : threads)
+        Require(scePthreadCreate(&thread, nullptr, Waiter, &context, nullptr) == 0);
+    for (auto& thread : threads)
+        Require(scePthreadJoin(thread, nullptr) == 0);
     Require(context.serial == 1 && context.released == static_cast<int>(WAITERS) - 1);
 }
 
@@ -76,8 +85,11 @@ int main() {
     pshared = -1;
     Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
     bool rejected = false;
-    try { pthread_barrierattr_getpshared_nid_postfix(&attr, nullptr); }
-    catch (const std::invalid_argument&) { rejected = true; }
+    try {
+        pthread_barrierattr_getpshared_nid_postfix(&attr, nullptr);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
     Require(rejected);
 
     GuestBarrier* invalid = nullptr;

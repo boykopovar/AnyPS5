@@ -56,13 +56,20 @@ static int Collect(const char* buffer, int bytes, std::map<std::string, Entry>& 
 }
 
 int main() {
-    const auto root = std::filesystem::path("anyps5-directory-entries-test-" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::path(
+        "anyps5-directory-entries-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     const std::string longName = "a-much-longer-entry-name-0123456789";
-    { std::ofstream stream(root / "data.bin", std::ios::binary); stream << "0123456789"; }
-    { std::ofstream stream(root / "b"); }
-    { std::ofstream stream(root / longName); }
+    {
+        std::ofstream stream(root / "data.bin", std::ios::binary);
+        stream << "0123456789";
+    }
+    {
+        std::ofstream stream(root / "b");
+    }
+    {
+        std::ofstream stream(root / longName);
+    }
     Require(std::filesystem::create_directory(root / "sub"));
 
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
@@ -76,15 +83,18 @@ int main() {
         const int read = sceKernelGetdirentries(directory, small.data(), static_cast<int>(small.size()), &base);
         Require(read >= 0 && read <= static_cast<int>(small.size()));
         Require(base >= 0 && base != previousBase);
-        if (calls == 0) Require(base == 0);
+        if (calls == 0)
+            Require(base == 0);
         previousBase = base;
-        if (read == 0) break;
+        if (read == 0)
+            break;
         Require(Collect(small.data(), read, entries) > 0);
         ++calls;
     }
     Require(calls >= 3);
     Require(entries.size() == 6);
-    for (const char* name : {".", "..", "data.bin", "b", "sub"}) Require(entries.contains(name));
+    for (const char* name : {".", "..", "data.bin", "b", "sub"})
+        Require(entries.contains(name));
     Require(entries.contains(longName) && entries[longName].recordLength == 44);
     Require(entries["b"].recordLength == 12);
     Require(entries["sub"].type == 4 || entries["sub"].type == 0);

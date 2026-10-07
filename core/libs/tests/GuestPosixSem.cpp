@@ -38,18 +38,23 @@ int main(int argc, char** argv) {
         return 0;
     }
     Require(sem_init_nid_postfix(&sem, 0, maximum) == 0, "maximum count must initialize");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "maximum count must be readable");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum),
+            "maximum count must be readable");
     *__error_nid_postfix() = 0;
     const int result = sem_post_nid_postfix(&sem);
     std::fprintf(stderr, "sem_post(maximum): result=%d errno=%d\n", result, *__error_nid_postfix());
     Require(result == -1 && *__error_nid_postfix() == 84, "post at maximum must fail with guest EOVERFLOW");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "overflow changed count");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum),
+            "overflow changed count");
     Require(sem_trywait_nid_postfix(&sem) == 0, "wait at maximum must succeed");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum - 1), "wait must decrement");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum - 1),
+            "wait must decrement");
     Require(sem_post_nid_postfix(&sem) == 0, "post below maximum must succeed");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "post must reach maximum");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum),
+            "post must reach maximum");
     Require(sem_post_nid_postfix(&sem) == -1 && *__error_nid_postfix() == 84, "repeated overflow must fail");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "repeated overflow changed count");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum),
+            "repeated overflow changed count");
     Require(sem_destroy_nid_postfix(&sem) == 0, "destroy must succeed");
     Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "zero count must initialize");
     Require(sem_trywait_nid_postfix(&sem) == -1 && *__error_nid_postfix() == 35, "empty semaphore must report EAGAIN");

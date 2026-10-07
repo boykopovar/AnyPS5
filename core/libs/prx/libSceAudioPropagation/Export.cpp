@@ -15,7 +15,8 @@ using namespace AudioPropagation;
 constexpr std::uint64_t SystemMagic = [] {
     constexpr char text[] = "APSYSTEM";
     std::uint64_t value = 0;
-    for (int index = 7; index >= 0; --index) value = (value << 8u) | static_cast<unsigned char>(text[index]);
+    for (int index = 7; index >= 0; --index)
+        value = (value << 8u) | static_cast<unsigned char>(text[index]);
     return value;
 }();
 
@@ -45,10 +46,12 @@ Registry& registry() {
 }
 
 void require(bool condition, const char* function) {
-    if (!condition) throw std::invalid_argument(std::string(function) + ": invalid argument");
+    if (!condition)
+        throw std::invalid_argument(std::string(function) + ": invalid argument");
 }
 
-void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32_t id, std::size_t size, const char* function) {
+void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32_t id, std::size_t size,
+                       const char* function) {
     require(desc != nullptr && desc->id == id && desc->size == size, function);
 }
 
@@ -60,7 +63,8 @@ void requireAttributes(const Attribute* attributes, std::uint32_t count, const c
 }
 
 bool liveSystem(Registry& state, AudioPropagationHandle system) {
-    if (!state.systems.contains(system)) return false;
+    if (!state.systems.contains(system))
+        return false;
     return reinterpret_cast<const SystemState*>(system)->magic == SystemMagic;
 }
 
@@ -70,11 +74,13 @@ void requireSystem(Registry& state, AudioPropagationHandle system, const char* f
 
 const Object& requireObject(Registry& state, AudioPropagationHandle handle, Kind kind, const char* function) {
     const auto found = state.objects.find(handle);
-    require(found != state.objects.end() && found->second.kind == kind && liveSystem(state, found->second.system), function);
+    require(found != state.objects.end() && found->second.kind == kind && liveSystem(state, found->second.system),
+            function);
     return found->second;
 }
 
-AudioPropagationHandle createObjectLocked(Registry& state, AudioPropagationHandle system, Kind kind, AudioPropagationHandle* out, const char* function) {
+AudioPropagationHandle createObjectLocked(Registry& state, AudioPropagationHandle system, Kind kind,
+                                          AudioPropagationHandle* out, const char* function) {
     require(out != nullptr, function);
     requireSystem(state, system, function);
     const auto handle = state.next++;
@@ -83,7 +89,8 @@ AudioPropagationHandle createObjectLocked(Registry& state, AudioPropagationHandl
     return handle;
 }
 
-AudioPropagationHandle createObject(AudioPropagationHandle system, Kind kind, AudioPropagationHandle* out, const char* function) {
+AudioPropagationHandle createObject(AudioPropagationHandle system, Kind kind, AudioPropagationHandle* out,
+                                    const char* function) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     return createObjectLocked(state, system, kind, out, function);
@@ -107,14 +114,16 @@ void requireRaysOutput(std::uint32_t* count, const char* function) {
 }
 
 void requireNoPropagation(bool none, const char* function) {
-    if (!none) throw std::runtime_error(std::string(function) + ": rays or audio paths are outside the no-propagation model");
+    if (!none)
+        throw std::runtime_error(std::string(function) + ": rays or audio paths are outside the no-propagation model");
 }
 
 }
 
 extern "C" {
 
-std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const void* options, AudioPropagationSystemMemory* outMemory) {
+std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const void* options,
+                                                            AudioPropagationSystemMemory* outMemory) {
     require(options != nullptr, __func__);
     requireDescriptor(outMemory != nullptr ? &outMemory->desc : nullptr, SystemMemoryId, SystemMemorySize, __func__);
     outMemory->size_cpu_mem = sizeof(SystemState);
@@ -122,11 +131,14 @@ std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const void* options,
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const void* options, const AudioPropagationSystemMemory* memory, AudioPropagationHandle* outSystem) {
+std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const void* options, const AudioPropagationSystemMemory* memory,
+                                                       AudioPropagationHandle* outSystem) {
     require(options != nullptr && outSystem != nullptr, __func__);
     requireDescriptor(memory != nullptr ? &memory->desc : nullptr, SystemMemoryId, SystemMemorySize, __func__);
     const auto address = reinterpret_cast<std::uintptr_t>(memory->p_cpu_mem);
-    require(address != 0 && address % alignof(SystemState) == 0 && memory->size_cpu_mem >= sizeof(SystemState) && memory->size_gpu_mem == 0, __func__);
+    require(address != 0 && address % alignof(SystemState) == 0 && memory->size_cpu_mem >= sizeof(SystemState) &&
+                memory->size_gpu_mem == 0,
+            __func__);
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     require(!state.systems.contains(address), __func__);
@@ -141,7 +153,8 @@ std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle s
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
     std::erase_if(state.objects, [&](const auto& entry) {
-        if (entry.second.system != system) return false;
+        if (entry.second.system != system)
+            return false;
         state.orphans.insert(entry);
         return true;
     });
@@ -150,7 +163,8 @@ std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle s
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSystemSetAttributes(AudioPropagationHandle system, const Attribute* attributes, std::uint32_t count) {
+std::int32_t APS5_VABI sceAudioPropagationSystemSetAttributes(AudioPropagationHandle system,
+                                                              const Attribute* attributes, std::uint32_t count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
@@ -158,7 +172,9 @@ std::int32_t APS5_VABI sceAudioPropagationSystemSetAttributes(AudioPropagationHa
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSystemRegisterMaterial(AudioPropagationHandle system, const AudioPropagationStructDescriptor* material, AudioPropagationHandle* outMaterial) {
+std::int32_t APS5_VABI sceAudioPropagationSystemRegisterMaterial(AudioPropagationHandle system,
+                                                                 const AudioPropagationStructDescriptor* material,
+                                                                 AudioPropagationHandle* outMaterial) {
     requireDescriptor(material, MaterialId, MaterialSize, __func__);
     createObject(system, Kind::Material, outMaterial, __func__);
     return 0;
@@ -177,7 +193,8 @@ std::int32_t APS5_VABI sceAudioPropagationSystemUnregisterMaterial(AudioPropagat
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSystemGetRays(AudioPropagationHandle system, void* rays, std::uint32_t* count) {
+std::int32_t APS5_VABI sceAudioPropagationSystemGetRays(AudioPropagationHandle system, void* rays,
+                                                        std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
@@ -186,7 +203,8 @@ std::int32_t APS5_VABI sceAudioPropagationSystemGetRays(AudioPropagationHandle s
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSystemSetRays(AudioPropagationHandle system, const void* rays, std::uint32_t count) {
+std::int32_t APS5_VABI sceAudioPropagationSystemSetRays(AudioPropagationHandle system, const void* rays,
+                                                        std::uint32_t count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
@@ -205,11 +223,13 @@ std::int32_t APS5_VABI sceAudioPropagationRoomDestroy(AudioPropagationHandle sys
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationPortalCreate(AudioPropagationHandle system, const PortalParams* params, AudioPropagationHandle* outPortal) {
+std::int32_t APS5_VABI sceAudioPropagationPortalCreate(AudioPropagationHandle system, const PortalParams* params,
+                                                       AudioPropagationHandle* outPortal) {
     requireDescriptor(params != nullptr ? &params->desc : nullptr, PortalParamsId, PortalParamsSize, __func__);
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    for (const auto room : params->rooms) require(requireObject(state, room, Kind::Room, __func__).system == system, __func__);
+    for (const auto room : params->rooms)
+        require(requireObject(state, room, Kind::Room, __func__).system == system, __func__);
     createObjectLocked(state, system, Kind::Portal, outPortal, __func__);
     return 0;
 }
@@ -219,7 +239,8 @@ std::int32_t APS5_VABI sceAudioPropagationPortalDestroy(AudioPropagationHandle s
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationPortalSetAttributes(AudioPropagationHandle portal, const Attribute* attributes, std::uint32_t count) {
+std::int32_t APS5_VABI sceAudioPropagationPortalSetAttributes(AudioPropagationHandle portal,
+                                                              const Attribute* attributes, std::uint32_t count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, portal, Kind::Portal, __func__);
@@ -227,7 +248,8 @@ std::int32_t APS5_VABI sceAudioPropagationPortalSetAttributes(AudioPropagationHa
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle system, AudioPropagationHandle* outSource) {
+std::int32_t APS5_VABI sceAudioPropagationSourceCreate(AudioPropagationHandle system,
+                                                       AudioPropagationHandle* outSource) {
     createObject(system, Kind::Source, outSource, __func__);
     return 0;
 }
@@ -237,7 +259,8 @@ std::int32_t APS5_VABI sceAudioPropagationSourceDestroy(AudioPropagationHandle s
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHandle source, const Attribute* attributes, std::uint32_t count) {
+std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHandle source,
+                                                              const Attribute* attributes, std::uint32_t count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
@@ -254,15 +277,18 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagati
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHandle source, std::uint32_t index, AudioPropagationHandle* outPath) {
+std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHandle source, std::uint32_t index,
+                                                             AudioPropagationHandle* outPath) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
     static_cast<void>(outPath);
-    throw std::invalid_argument(std::string(__func__) + ": index " + std::to_string(index) + " out of range (0 audio paths)");
+    throw std::invalid_argument(std::string(__func__) + ": index " + std::to_string(index) +
+                                " out of range (0 audio paths)");
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle source, void* rays, std::uint32_t* count) {
+std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle source, void* rays,
+                                                        std::uint32_t* count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
@@ -271,7 +297,9 @@ std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle s
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropagationHandle source, const void* rays, std::uint32_t rayCount, std::uint32_t flags, void* paths, std::uint32_t pathCount) {
+std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropagationHandle source, const void* rays,
+                                                                    std::uint32_t rayCount, std::uint32_t flags,
+                                                                    void* paths, std::uint32_t pathCount) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
@@ -282,7 +310,8 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropaga
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHandle source, const void* entries, std::uint32_t count) {
+std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHandle source, const void* entries,
+                                                              std::uint32_t count) {
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
@@ -291,7 +320,8 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHa
     return 0;
 }
 
-std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle system, const RenderInfo* infos, std::uint32_t count) {
+std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle system, const RenderInfo* infos,
+                                                       std::uint32_t count) {
     require(infos != nullptr && count != 0, __func__);
     auto& state = registry();
     std::lock_guard lock(state.mutex);
@@ -301,10 +331,12 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
         requireDescriptor(&info.desc, RenderInfoId, RenderInfoSize, __func__);
         require(requireObject(state, info.source, Kind::Source, __func__).system == system, __func__);
         require(info.output != nullptr && info.outputSize != 0, __func__);
-        if (info.format != RenderFormat) throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) + " is unknown");
+        if (info.format != RenderFormat)
+            throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) +
+                                     " is unknown");
     }
-    for (std::uint32_t index = 0; index < count; ++index) std::memset(infos[index].output, 0, infos[index].outputSize);
+    for (std::uint32_t index = 0; index < count; ++index)
+        std::memset(infos[index].output, 0, infos[index].outputSize);
     return 0;
 }
-
 }

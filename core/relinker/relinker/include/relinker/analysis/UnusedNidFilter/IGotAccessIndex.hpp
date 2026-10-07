@@ -15,11 +15,8 @@ public:
     virtual bool IsGotSlotAccessed(VirtualAddress gotSlotVaddr) const = 0;
 };
 
-std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
-    const IControlFlowGraph& cfg,
-    const std::vector<std::uint8_t>& text,
-    VirtualAddress textVaddr
-);
+std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(const IControlFlowGraph& cfg,
+                                                     const std::vector<std::uint8_t>& text, VirtualAddress textVaddr);
 
 }
 

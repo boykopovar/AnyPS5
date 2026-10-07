@@ -15,7 +15,10 @@ static constexpr int SYSTEM_USER = 255;
 static constexpr int MAIN_BUS = 0;
 static constexpr int NEVER_OPENED_HANDLE = 2;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 static bool RejectsHandle(int handle) {
     try {

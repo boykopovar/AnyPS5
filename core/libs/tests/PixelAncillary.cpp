@@ -7,7 +7,10 @@
 #include <string>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("packed pixel ancillary regression"); }
+static void Require(bool value) {
+    if (!value)
+        throw std::runtime_error("packed pixel ancillary regression");
+}
 static IrValue& Build(IrProgram& program, IrOpcode opcode, std::uint32_t offset, std::uint32_t count) {
     program.Resources().stage = IrShaderStage::Pixel;
     program.Resources().resourceTrackingComplete = true;
@@ -16,9 +19,13 @@ static IrValue& Build(IrProgram& program, IrOpcode opcode, std::uint32_t offset,
     program.BlockOrder().push_back(&block);
     IrBuilder builder(program);
     builder.SetInsertionPoint(block);
-    auto& ancillary = builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::PackedAncillary)), &builder.Constant(0u)});
-    auto& user = opcode == IrOpcode::BitwiseOr32 ? builder.Emit(opcode, IrType::U32, {&ancillary, &builder.Constant(offset)})
-                                                 : builder.Emit(opcode, IrType::U32, {&ancillary, &builder.Constant(offset), &builder.Constant(count)});
+    auto& ancillary = builder.Emit(
+        IrOpcode::GetBuiltin, IrType::U32,
+        {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::PackedAncillary)), &builder.Constant(0u)});
+    auto& user =
+        opcode == IrOpcode::BitwiseOr32
+            ? builder.Emit(opcode, IrType::U32, {&ancillary, &builder.Constant(offset)})
+            : builder.Emit(opcode, IrType::U32, {&ancillary, &builder.Constant(offset), &builder.Constant(count)});
     static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&user}));
     static_cast<void>(builder.Emit(IrOpcode::Return, IrType::Void, {}));
     return user;
@@ -27,10 +34,11 @@ static void Lower(IrProgram& program) {
     ConstantFolder().Fold(program);
     DeadCodeEliminator().RemoveIdentities(program);
     DeadCodeEliminator().Eliminate(program);
-    const ShaderPixelInputInfo pixel {};
-    ShaderInfoCollector().Collect(program, ShaderStageInputInfo {nullptr, &pixel, nullptr});
+    const ShaderPixelInputInfo pixel{};
+    ShaderInfoCollector().Collect(program, ShaderStageInputInfo{nullptr, &pixel, nullptr});
 }
-static void Extract(IrOpcode opcode, std::uint32_t offset, std::uint32_t count, StageInputKind kind, std::uint32_t fieldOffset) {
+static void Extract(IrOpcode opcode, std::uint32_t offset, std::uint32_t count, StageInputKind kind,
+                    std::uint32_t fieldOffset) {
     IrProgram program;
     auto& user = Build(program, opcode, offset, count);
     Lower(program);

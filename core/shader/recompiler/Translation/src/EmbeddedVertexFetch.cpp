@@ -16,14 +16,7 @@ constexpr std::uint32_t kEmbeddedFetchRegisterShift = 8;
 constexpr std::uint32_t kVertexIndexVgpr = 5;
 constexpr std::uint32_t kInstanceIndexVgpr = 8;
 
-enum class SgprValueKind {
-    Unknown,
-    Constant,
-    AttributeTable,
-    Attribute,
-    BufferTable,
-    Buffer
-};
+enum class SgprValueKind { Unknown, Constant, AttributeTable, Attribute, BufferTable, Buffer };
 
 struct SgprValue {
     SgprValueKind kind = SgprValueKind::Unknown;
@@ -36,12 +29,11 @@ using ScalarBank = std::array<SgprValue, kScalarSlotCount>;
 using VectorLaneMap = std::map<std::uint64_t, SgprValue>;
 
 bool isScalarOperand(const RdnaOperand& operand) {
-    return operand.kind == RdnaOperandKind::ScalarRegister || operand.kind == RdnaOperandKind::VccLo || operand.kind == RdnaOperandKind::VccHi;
+    return operand.kind == RdnaOperandKind::ScalarRegister || operand.kind == RdnaOperandKind::VccLo ||
+           operand.kind == RdnaOperandKind::VccHi;
 }
 
-bool isVectorOperand(const RdnaOperand& operand) {
-    return operand.kind == RdnaOperandKind::VectorRegister;
-}
+bool isVectorOperand(const RdnaOperand& operand) { return operand.kind == RdnaOperandKind::VectorRegister; }
 
 std::uint32_t scalarSlot(const RdnaOperand& operand) {
     switch (operand.kind) {
@@ -58,9 +50,7 @@ std::uint64_t vectorLaneKey(std::uint32_t reg, std::uint32_t lane) {
     return (static_cast<std::uint64_t>(reg) << 32u) | lane;
 }
 
-std::uint32_t normalizeLane(std::uint32_t lane, std::uint32_t waveSize) {
-    return lane % waveSize;
-}
+std::uint32_t normalizeLane(std::uint32_t lane, std::uint32_t waveSize) { return lane % waveSize; }
 
 void clearVectorLanes(VectorLaneMap& lanes, std::uint32_t reg) {
     const auto first = lanes.lower_bound(vectorLaneKey(reg, 0u));
@@ -91,7 +81,8 @@ bool tryConstantOperand(const ScalarBank& sgprs, const RdnaOperand& operand, std
     default:
         break;
     }
-    if (isScalarOperand(operand) && scalarSlot(operand) < sgprs.size() && sgprs[scalarSlot(operand)].kind == SgprValueKind::Constant) {
+    if (isScalarOperand(operand) && scalarSlot(operand) < sgprs.size() &&
+        sgprs[scalarSlot(operand)].kind == SgprValueKind::Constant) {
         value = sgprs[scalarSlot(operand)].constant;
         return true;
     }
@@ -153,9 +144,7 @@ std::int32_t bufferAttributeFromOffset(std::uint32_t rawOffset, std::uint32_t dw
     return static_cast<std::int32_t>((rawOffset + dword * 4u) / 16u);
 }
 
-std::uint32_t decodedDstSize(const RdnaInstruction& inst) {
-    return std::max<std::uint32_t>(inst.dataDwordCount, 1u);
-}
+std::uint32_t decodedDstSize(const RdnaInstruction& inst) { return std::max<std::uint32_t>(inst.dataDwordCount, 1u); }
 
 std::uint32_t embeddedFetchDstSize(const RdnaInstruction& inst) {
     switch (inst.op) {
@@ -197,20 +186,26 @@ std::uint32_t scalarOperandWidth(const RdnaInstruction& inst, std::uint32_t oper
 bool touchesSgpr(const RdnaInstruction& inst, std::uint32_t sgpr) {
     const std::array<const RdnaOperand*, 4> sources{&inst.source0, &inst.source1, &inst.source2, &inst.source3};
     for (std::uint32_t i = 0u; i < sources.size(); i++) {
-        if (!isScalarOperand(*sources[i])) continue;
+        if (!isScalarOperand(*sources[i]))
+            continue;
         const auto first = scalarSlot(*sources[i]);
-        if (sgpr >= first && sgpr < first + scalarOperandWidth(inst, i)) return true;
+        if (sgpr >= first && sgpr < first + scalarOperandWidth(inst, i))
+            return true;
     }
     if (isScalarOperand(inst.destination)) {
         const auto first = scalarSlot(inst.destination);
-        if (sgpr >= first && sgpr < first + std::max(inst.is64Bit ? 2u : 1u, decodedDstSize(inst))) return true;
+        if (sgpr >= first && sgpr < first + std::max(inst.is64Bit ? 2u : 1u, decodedDstSize(inst)))
+            return true;
     }
     return false;
 }
 
 }
 
-EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& program, std::uint32_t attributeTableRegister, std::uint32_t bufferTableRegister, std::uint32_t userDataBaseRegister, std::uint32_t userDataCount, std::uint32_t waveSize) const {
+EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& program, std::uint32_t attributeTableRegister,
+                                                       std::uint32_t bufferTableRegister,
+                                                       std::uint32_t userDataBaseRegister, std::uint32_t userDataCount,
+                                                       std::uint32_t waveSize) const {
     if (waveSize != 32u && waveSize != 64u) {
         throw std::runtime_error("unsupported wave size for embedded vertex fetch analysis");
     }
@@ -224,9 +219,10 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     ScalarBank sgprs{};
     std::array<bool, kVectorSlotCount> vgprIsIndex{};
     VectorLaneMap vectorLanes;
-    const bool trackVectorLanes = std::none_of(program.instructions.begin(), program.instructions.end(), [](const RdnaInstruction& inst) {
-        return IsDirectBranchOpcode(inst.op) || inst.op == RdnaOpcode::SSetpcB64;
-    });
+    const bool trackVectorLanes =
+        std::none_of(program.instructions.begin(), program.instructions.end(), [](const RdnaInstruction& inst) {
+            return IsDirectBranchOpcode(inst.op) || inst.op == RdnaOpcode::SSetpcB64;
+        });
 
     sgprs[attribSlot].kind = SgprValueKind::AttributeTable;
     sgprs[attribSlot + 1u].kind = SgprValueKind::AttributeTable;
@@ -241,14 +237,22 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     std::vector<std::uint32_t> instanceAddPcs;
 
     for (const auto& inst : program.instructions) {
-        const bool vertexIndexAccumulator = isVectorOperand(inst.destination) && (inst.destination.reg == 0u || (userDataBaseRegister == 8u && inst.destination.reg == kVertexIndexVgpr));
-        const bool instanceIndexAccumulator = isVectorOperand(inst.destination) && (inst.destination.reg == (userDataBaseRegister == 8u ? kInstanceIndexVgpr : 3u));
+        const bool vertexIndexAccumulator =
+            isVectorOperand(inst.destination) &&
+            (inst.destination.reg == 0u || (userDataBaseRegister == 8u && inst.destination.reg == kVertexIndexVgpr));
+        const bool instanceIndexAccumulator =
+            isVectorOperand(inst.destination) &&
+            (inst.destination.reg == (userDataBaseRegister == 8u ? kInstanceIndexVgpr : 3u));
         std::uint32_t sadZero = 0u;
-        const bool indexOffsetAdd = (vertexIndexAccumulator || instanceIndexAccumulator) && isScalarOperand(inst.source0) &&
-            ((inst.op == RdnaOpcode::VAddI32 && isVectorOperand(inst.source1) && inst.source1.reg == inst.destination.reg) ||
-             (userDataBaseRegister == 8u && (inst.destination.reg == kVertexIndexVgpr || inst.destination.reg == kInstanceIndexVgpr) &&
-              inst.op == RdnaOpcode::VSadU32 && isVectorOperand(inst.source2) && inst.source2.reg == inst.destination.reg &&
-              tryConstantOperand(sgprs, inst.source1, sadZero) && sadZero == 0u));
+        const bool indexOffsetAdd =
+            (vertexIndexAccumulator || instanceIndexAccumulator) && isScalarOperand(inst.source0) &&
+            ((inst.op == RdnaOpcode::VAddI32 && isVectorOperand(inst.source1) &&
+              inst.source1.reg == inst.destination.reg) ||
+             (userDataBaseRegister == 8u &&
+              (inst.destination.reg == kVertexIndexVgpr || inst.destination.reg == kInstanceIndexVgpr) &&
+              inst.op == RdnaOpcode::VSadU32 && isVectorOperand(inst.source2) &&
+              inst.source2.reg == inst.destination.reg && tryConstantOperand(sgprs, inst.source1, sadZero) &&
+              sadZero == 0u));
         if (plan.loads.empty() && indexOffsetAdd) {
             const auto reg = scalarSlot(inst.source0);
             if (reg >= userDataBaseRegister && reg - userDataBaseRegister < userDataCount) {
@@ -268,8 +272,10 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
             if (isVectorOperand(inst.destination) && inst.destination.reg < vgprIsIndex.size()) {
                 vgprIsIndex[inst.destination.reg] = false;
             }
-            if (trackVectorLanes && isVectorOperand(inst.destination) && isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size() && tryConstantOperand(sgprs, inst.source1, lane)) {
-                vectorLanes[vectorLaneKey(inst.destination.reg, normalizeLane(lane, waveSize))] = sgprs[scalarSlot(inst.source0)];
+            if (trackVectorLanes && isVectorOperand(inst.destination) && isScalarOperand(inst.source0) &&
+                scalarSlot(inst.source0) < sgprs.size() && tryConstantOperand(sgprs, inst.source1, lane)) {
+                vectorLanes[vectorLaneKey(inst.destination.reg, normalizeLane(lane, waveSize))] =
+                    sgprs[scalarSlot(inst.source0)];
             } else if (isVectorOperand(inst.destination)) {
                 clearVectorLanes(vectorLanes, inst.destination.reg);
             }
@@ -277,7 +283,8 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
         }
         case RdnaOpcode::VReadlaneB32: {
             std::uint32_t lane = 0u;
-            if (trackVectorLanes && isScalarOperand(inst.destination) && scalarSlot(inst.destination) < sgprs.size() && isVectorOperand(inst.source0) && tryConstantOperand(sgprs, inst.source1, lane)) {
+            if (trackVectorLanes && isScalarOperand(inst.destination) && scalarSlot(inst.destination) < sgprs.size() &&
+                isVectorOperand(inst.source0) && tryConstantOperand(sgprs, inst.source1, lane)) {
                 const auto found = vectorLanes.find(vectorLaneKey(inst.source0.reg, normalizeLane(lane, waveSize)));
                 sgprs[scalarSlot(inst.destination)] = found != vectorLanes.end() ? found->second : SgprValue{};
             } else if (isScalarOperand(inst.destination)) {
@@ -286,7 +293,8 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
             break;
         }
         case RdnaOpcode::SMovB32:
-            if (isScalarOperand(inst.destination) && isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size()) {
+            if (isScalarOperand(inst.destination) && isScalarOperand(inst.source0) &&
+                scalarSlot(inst.source0) < sgprs.size()) {
                 sgprs[scalarSlot(inst.destination)] = sgprs[scalarSlot(inst.source0)];
             } else if (isScalarOperand(inst.destination)) {
                 std::uint32_t value = 0u;
@@ -327,7 +335,8 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
             break;
         default:
             if (isScalarLoad(inst.op)) {
-                if (isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size() && sgprs[scalarSlot(inst.source0)].kind == SgprValueKind::AttributeTable) {
+                if (isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size() &&
+                    sgprs[scalarSlot(inst.source0)].kind == SgprValueKind::AttributeTable) {
                     std::uint32_t rawOffset = 0u;
                     if (trySmemOffset(sgprs, inst, rawOffset)) {
                         const auto slot = scalarSlot(inst.destination);
@@ -342,7 +351,8 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                     } else {
                         clearScalarRange(sgprs, inst.destination, decodedDstSize(inst));
                     }
-                } else if (isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size() && sgprs[scalarSlot(inst.source0)].kind == SgprValueKind::BufferTable) {
+                } else if (isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size() &&
+                           sgprs[scalarSlot(inst.source0)].kind == SgprValueKind::BufferTable) {
                     const auto slot = scalarSlot(inst.destination);
                     std::uint32_t rawOffset = 0u;
                     if (trySmemOffset(sgprs, inst, rawOffset)) {
@@ -353,7 +363,9 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                             dst.attributeId = bufferAttributeFromOffset(rawOffset, i);
                             dst.loadPcs.push_back(inst.programCounter);
                         }
-                    } else if (isScalarOperand(inst.source1) && scalarSlot(inst.source1) < sgprs.size() && sgprs[scalarSlot(inst.source1)].kind == SgprValueKind::Attribute && (inst.memoryOffset & 0x3u) == 0u) {
+                    } else if (isScalarOperand(inst.source1) && scalarSlot(inst.source1) < sgprs.size() &&
+                               sgprs[scalarSlot(inst.source1)].kind == SgprValueKind::Attribute &&
+                               (inst.memoryOffset & 0x3u) == 0u) {
                         for (std::uint32_t i = 0u; i < decodedDstSize(inst) && slot + i < sgprs.size(); i++) {
                             auto& dst = sgprs[slot + i];
                             dst = SgprValue{};
@@ -372,16 +384,21 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                 if (isVectorOperand(inst.destination) && inst.destination.reg < vgprIsIndex.size()) {
                     clearVectorLanes(vectorLanes, inst.destination.reg);
                 }
-                if (isVectorOperand(inst.destination) && inst.destination.reg < vgprIsIndex.size() && isVectorOperand(inst.source0) && inst.source0.reg == kInstanceIndexVgpr && isVectorOperand(inst.source1) && inst.source1.reg == kVertexIndexVgpr) {
+                if (isVectorOperand(inst.destination) && inst.destination.reg < vgprIsIndex.size() &&
+                    isVectorOperand(inst.source0) && inst.source0.reg == kInstanceIndexVgpr &&
+                    isVectorOperand(inst.source1) && inst.source1.reg == kVertexIndexVgpr) {
                     vgprIsIndex[inst.destination.reg] = true;
                 }
             } else if (isAttributePropagationAlu(inst.op)) {
-                if (isScalarOperand(inst.destination) && isScalarOperand(inst.source0) && scalarSlot(inst.source0) < sgprs.size() && sgprs[scalarSlot(inst.source0)].kind == SgprValueKind::Attribute) {
+                if (isScalarOperand(inst.destination) && isScalarOperand(inst.source0) &&
+                    scalarSlot(inst.source0) < sgprs.size() &&
+                    sgprs[scalarSlot(inst.source0)].kind == SgprValueKind::Attribute) {
                     sgprs[scalarSlot(inst.destination)] = sgprs[scalarSlot(inst.source0)];
                 } else if (isScalarOperand(inst.destination)) {
                     std::uint32_t src0 = 0u;
                     std::uint32_t src1 = 0u;
-                    if (tryConstantOperand(sgprs, inst.source0, src0) && tryConstantOperand(sgprs, inst.source1, src1)) {
+                    if (tryConstantOperand(sgprs, inst.source0, src0) &&
+                        tryConstantOperand(sgprs, inst.source1, src1)) {
                         auto& dst = sgprs[scalarSlot(inst.destination)];
                         dst = SgprValue{};
                         dst.kind = SgprValueKind::Constant;
@@ -404,7 +421,10 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                     }
                 }
             } else if (isFormattedBufferLoad(inst.op)) {
-                if (isVectorOperand(inst.source0) && inst.source0.reg < vgprIsIndex.size() && vgprIsIndex[inst.source0.reg] && isScalarOperand(inst.source1) && scalarSlot(inst.source1) < sgprs.size() && sgprs[scalarSlot(inst.source1)].kind == SgprValueKind::Buffer) {
+                if (isVectorOperand(inst.source0) && inst.source0.reg < vgprIsIndex.size() &&
+                    vgprIsIndex[inst.source0.reg] && isScalarOperand(inst.source1) &&
+                    scalarSlot(inst.source1) < sgprs.size() &&
+                    sgprs[scalarSlot(inst.source1)].kind == SgprValueKind::Buffer) {
                     const auto& buffer = sgprs[scalarSlot(inst.source1)];
                     if (plan.loads.empty()) {
                         if (!vertexOffsetConflict) {
@@ -423,13 +443,15 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
             }
             break;
         }
-        if (inst.op == RdnaOpcode::VMovreldB32 || inst.op == RdnaOpcode::VMovrelsdB32 || inst.op == RdnaOpcode::VMovrelsd2B32 || inst.op == RdnaOpcode::VSwaprelB32) {
+        if (inst.op == RdnaOpcode::VMovreldB32 || inst.op == RdnaOpcode::VMovrelsdB32 ||
+            inst.op == RdnaOpcode::VMovrelsd2B32 || inst.op == RdnaOpcode::VSwaprelB32) {
             vectorLanes.clear();
         } else if (inst.op == RdnaOpcode::VSwapB32) {
             clearVectorLanes(vectorLanes, inst.destination.reg);
             clearVectorLanes(vectorLanes, inst.source0.reg);
         } else if (inst.op != RdnaOpcode::VWritelaneB32 && isVectorOperand(inst.destination)) {
-            for (std::uint32_t i = 0u; i < embeddedFetchDstSize(inst) && inst.destination.reg + i < vgprIsIndex.size(); i++) {
+            for (std::uint32_t i = 0u; i < embeddedFetchDstSize(inst) && inst.destination.reg + i < vgprIsIndex.size();
+                 i++) {
                 clearVectorLanes(vectorLanes, inst.destination.reg + i);
             }
         }
@@ -438,10 +460,13 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     plan.vertexOffsetConflict = vertexOffsetConflict;
     plan.instanceOffsetConflict = instanceOffsetConflict;
     const auto shared = [&](std::int32_t sgpr, const std::vector<std::uint32_t>& addPcs) {
-        if (sgpr < 0) return false;
+        if (sgpr < 0)
+            return false;
         for (const auto& inst : program.instructions) {
-            if (std::find(addPcs.begin(), addPcs.end(), inst.programCounter) != addPcs.end()) continue;
-            if (touchesSgpr(inst, static_cast<std::uint32_t>(sgpr))) return true;
+            if (std::find(addPcs.begin(), addPcs.end(), inst.programCounter) != addPcs.end())
+                continue;
+            if (touchesSgpr(inst, static_cast<std::uint32_t>(sgpr)))
+                return true;
         }
         return false;
     };

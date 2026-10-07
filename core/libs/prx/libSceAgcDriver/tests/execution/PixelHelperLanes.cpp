@@ -26,14 +26,15 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 21> PixelCode{
-    0x7e040f00, 0x7e060f01, 0xd5430006, 0x0409ff03, 0x000000c0, 0xd7650004, 0x0001007e, 0xd7660004,
-    0x0002087f, 0xbe88107e, 0x7e120506, 0x8f089708, 0x88080908, 0x34080890, 0x380a0808, 0xe0702000,
-    0x80010506, 0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
+    0x7e040f00, 0x7e060f01, 0xd5430006, 0x0409ff03, 0x000000c0, 0xd7650004, 0x0001007e,
+    0xd7660004, 0x0002087f, 0xbe88107e, 0x7e120506, 0x8f089708, 0x88080908, 0x34080890,
+    0x380a0808, 0xe0702000, 0x80010506, 0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address),
+            static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
 std::vector<std::array<float, 4>> Triangles() {
@@ -61,20 +62,22 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderR
     std::vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(triangles.data(), 16u, static_cast<std::uint32_t>(triangles.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
-    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{
+        {{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
     ShaderRecompiler::RecompileRequest vertex{
         {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(VertexCode.data()), VertexCode, 0, {}},
-        {waveSize, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
+        {waveSize, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{},
+         vertexMemory},
         target,
-        {0, 0, 0, 64}
-    };
+        {0, 0, 0, 64}};
     vertex.useCache = false;
     const auto vertexResult = ShaderRecompiler::Recompile(vertex);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     pixel.wave32 = waveSize == 32u;
-    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
+    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) |
+                      ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
     pixel.posX = true;
     pixel.posY = true;
     pixel.targetOutputMode[0] = 9;
@@ -82,23 +85,25 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderR
     std::vector<std::uint32_t> pixelUserData(8, 0u);
     const auto lanes = BufferDescriptor(Lanes.data(), 4u, static_cast<std::uint32_t>(Lanes.size()));
     std::copy(lanes.begin(), lanes.end(), pixelUserData.begin() + 4);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{
+        {{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
         {waveSize, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
-        {0, 0, vertexPush, 128 - vertexPush}
-    };
+        {0, 0, vertexPush, 128 - vertexPush}};
     fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
-    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
-        {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, &pixelResult, vertexPush}
-    }};
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{
+        {{ShaderStage::Vertex, &vertexResult, 0}, {ShaderStage::Fragment, &pixelResult, vertexPush}}};
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()),
+                   {Width, Height},
+                   VK_FORMAT_R8G8B8A8_UNORM,
+                   Pixels.size(),
+                   0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
@@ -122,7 +127,8 @@ void Check(std::uint32_t waveSize) {
     std::uint32_t covered = 0;
     for (std::uint32_t pixel = 0; pixel < Lanes.size(); ++pixel) {
         if (std::to_integer<std::uint8_t>(Pixels[pixel * 4u]) != 255u) {
-            Require(Lanes[pixel] == Sentinel, what + ": uncovered pixel " + std::to_string(pixel) + " stored " + std::to_string(Lanes[pixel]));
+            Require(Lanes[pixel] == Sentinel,
+                    what + ": uncovered pixel " + std::to_string(pixel) + " stored " + std::to_string(Lanes[pixel]));
             continue;
         }
         ++covered;
@@ -136,10 +142,17 @@ void Check(std::uint32_t waveSize) {
         std::sort(lanes.begin(), lanes.end());
         for (std::uint32_t lane = 0; lane < lanes.size(); ++lane) {
             const auto pixel = lanes[lane].second;
-            Require(lanes[lane].first == lane, what + ": the wave whose first lane is pixel " + std::to_string(first) + " has " + std::to_string(lanes.size()) + " covered pixels, but pixel " + std::to_string(pixel) + " is lane " + std::to_string(lanes[lane].first) + " of EXEC");
-            Require((Lanes[pixel] >> 23u) == lanes.size(), what + ": the wave whose first lane is pixel " + std::to_string(first) + " has " + std::to_string(lanes.size()) + " covered pixels, but EXEC holds " + std::to_string(Lanes[pixel] >> 23u) + " lanes");
+            Require(lanes[lane].first == lane, what + ": the wave whose first lane is pixel " + std::to_string(first) +
+                                                   " has " + std::to_string(lanes.size()) +
+                                                   " covered pixels, but pixel " + std::to_string(pixel) + " is lane " +
+                                                   std::to_string(lanes[lane].first) + " of EXEC");
+            Require((Lanes[pixel] >> 23u) == lanes.size(),
+                    what + ": the wave whose first lane is pixel " + std::to_string(first) + " has " +
+                        std::to_string(lanes.size()) + " covered pixels, but EXEC holds " +
+                        std::to_string(Lanes[pixel] >> 23u) + " lanes");
         }
-        Require(lanes.front().second == first, what + ": the first lane of EXEC, pixel " + std::to_string(first) + ", is not a covered pixel of its wave");
+        Require(lanes.front().second == first, what + ": the first lane of EXEC, pixel " + std::to_string(first) +
+                                                   ", is not a covered pixel of its wave");
     }
 }
 
@@ -148,7 +161,8 @@ void Check(std::uint32_t waveSize) {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         if (device->Target().subgroupSize < 32u) {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
             return VulkanTestSkipped;

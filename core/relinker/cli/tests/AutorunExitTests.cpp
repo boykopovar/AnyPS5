@@ -12,11 +12,14 @@ int main(int, char* argv[]) {
     const auto executable = std::filesystem::absolute(argv[0]);
     const auto name = executable.stem().string();
     if (name.starts_with("anyps5-autorun-child-")) {
-        if (name.find("signal") != std::string::npos) std::raise(SIGILL);
+        if (name.find("signal") != std::string::npos)
+            std::raise(SIGILL);
         return 42;
     }
-    auto child = std::filesystem::temp_directory_path() / ("anyps5-autorun-child-" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + " with spaces" + executable.extension().string());
+    auto child =
+        std::filesystem::temp_directory_path() /
+        ("anyps5-autorun-child-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         " with spaces" + executable.extension().string());
 #ifndef _WIN32
     const auto signaled = child.parent_path() / ("anyps5-autorun-child-signal-" + child.filename().string());
 #endif
@@ -27,24 +30,27 @@ int main(int, char* argv[]) {
         std::filesystem::copy_file(executable, child);
         std::vector<std::string> suffixes{""};
 #ifndef _WIN32
-        suffixes.insert(suffixes.end(), {" $HOME", " $(printf substituted)", " `printf substituted`",
-            " 'single'", " \"double\"", " \\backslash", " line\nbreak"});
+        suffixes.insert(suffixes.end(), {" $HOME", " $(printf substituted)", " `printf substituted`", " 'single'",
+                                         " \"double\"", " \\backslash", " line\nbreak"});
 #endif
         const auto originalChild = child;
         for (const auto& suffix : suffixes) {
             const auto renamed = std::filesystem::path(originalChild.string() + suffix);
-            if (renamed != child) std::filesystem::rename(child, renamed);
+            if (renamed != child)
+                std::filesystem::rename(child, renamed);
             child = renamed;
             for (const bool windows : {false, true}) {
                 const int code = Cli::Autorun(child.string(), windows);
-                if (code != 42) throw std::runtime_error("Autorun changed exit code 42 to " +
-                    std::to_string(code) + " for " + child.string());
+                if (code != 42)
+                    throw std::runtime_error("Autorun changed exit code 42 to " + std::to_string(code) + " for " +
+                                             child.string());
             }
         }
 #ifndef _WIN32
         std::filesystem::rename(child, signaled);
         const int code = Cli::Autorun(signaled.string(), false);
-        if (code != 128 + SIGILL) throw std::runtime_error("Autorun lost the child signal");
+        if (code != 128 + SIGILL)
+            throw std::runtime_error("Autorun lost the child signal");
 #endif
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

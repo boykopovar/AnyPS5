@@ -14,15 +14,15 @@ std::uint32_t* APS5_VABI sceAgcCbNop_nid_postfix(CommandBuffer* buf, std::uint32
     return Agc::Command::WriteNop(buf, sizeInDwords, __func__);
 }
 
-uint32_t APS5_VABI sceAgcCbNopGetSize(uint32_t size_in_dwords) {
-    return size_in_dwords * 4u;
-}
+uint32_t APS5_VABI sceAgcCbNopGetSize(uint32_t size_in_dwords) { return size_in_dwords * 4u; }
 
-std::uint32_t APS5_VABI sceAgcCbQueueEndOfPipeActionGetSize() {
-    return 32;
-}
+std::uint32_t APS5_VABI sceAgcCbQueueEndOfPipeActionGetSize() { return 32; }
 
-std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t action, std::uint16_t gcrControl, std::uint8_t dst, std::uint8_t cachePolicy, const volatile Label* address, std::uint8_t dataSelect, std::uint64_t data, std::uint16_t gdsOffset, std::uint16_t gdsSize, std::uint8_t interrupt, std::uint32_t interruptContextId) {
+std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t action, std::uint16_t gcrControl,
+                                            std::uint8_t dst, std::uint8_t cachePolicy, const volatile Label* address,
+                                            std::uint8_t dataSelect, std::uint64_t data, std::uint16_t gdsOffset,
+                                            std::uint16_t gdsSize, std::uint8_t interrupt,
+                                            std::uint32_t interruptContextId) {
     Agc::Command::CheckBits(action, 0x3fu, __func__);
     Agc::Command::CheckBits(gcrControl, 0xfffu, __func__);
     Agc::Command::CheckBits(dst, 1, __func__);
@@ -38,7 +38,8 @@ std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t act
         Agc::Command::Require(data == 0, __func__, "GDS release cannot use immediate data");
         value = gdsOffset | (static_cast<std::uint64_t>(gdsSize) << 16u);
     } else {
-        Agc::Command::Require(gdsOffset == 0 && gdsSize <= 1, __func__, "GDS parameters supplied for a non-GDS release");
+        Agc::Command::Require(gdsOffset == 0 && gdsSize <= 1, __func__,
+                              "GDS parameters supplied for a non-GDS release");
     }
     // A null label is accepted: games emit releases whose destination is never read.
     if (dataSelect != 0 && interrupt != 4 && guestAddress != 0) {
@@ -52,10 +53,23 @@ std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t act
         control |= 0x200u;
     }
     const auto eventIndex = action >= 0x2fu ? 6u : 5u;
-    auto* packet = Agc::Command::Emit(buf, 0x49u, {action | (eventIndex << 8u) | (control << 12u) | (static_cast<std::uint32_t>(cachePolicy) << 25u), (static_cast<std::uint32_t>(dst) << 16u) | (static_cast<std::uint32_t>(interrupt) << 24u) | (static_cast<std::uint32_t>(dataSelect) << 29u), static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u), static_cast<std::uint32_t>(value), static_cast<std::uint32_t>(value >> 32u), interruptContextId}, __func__);
-    static const std::uint64_t traced = [] { const char* value = std::getenv("APS5_TRACE_LABEL"); return value ? std::strtoull(value, nullptr, 16) : 0ull; }();
-    if (traced != 0 && guestAddress == traced) std::fprintf(stderr, "[agc] RELEASE_MEM for 0x%llx recorded at %p"  "\n", static_cast<unsigned long long>(guestAddress), static_cast<void*>(packet));
+    auto* packet = Agc::Command::Emit(
+        buf, 0x49u,
+        {action | (eventIndex << 8u) | (control << 12u) | (static_cast<std::uint32_t>(cachePolicy) << 25u),
+         (static_cast<std::uint32_t>(dst) << 16u) | (static_cast<std::uint32_t>(interrupt) << 24u) |
+             (static_cast<std::uint32_t>(dataSelect) << 29u),
+         static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u),
+         static_cast<std::uint32_t>(value), static_cast<std::uint32_t>(value >> 32u), interruptContextId},
+        __func__);
+    static const std::uint64_t traced = [] {
+        const char* value = std::getenv("APS5_TRACE_LABEL");
+        return value ? std::strtoull(value, nullptr, 16) : 0ull;
+    }();
+    if (traced != 0 && guestAddress == traced)
+        std::fprintf(stderr,
+                     "[agc] RELEASE_MEM for 0x%llx recorded at %p"
+                     "\n",
+                     static_cast<unsigned long long>(guestAddress), static_cast<void*>(packet));
     return packet;
 }
-
 }

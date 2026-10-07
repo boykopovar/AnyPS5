@@ -7,10 +7,7 @@ namespace Elfpatcher {
 
 class EntryStubBuilder : public IEntryStubBuilder {
 public:
-    std::vector<std::uint8_t> BuildEntryStub(
-        std::uint64_t stubVaddr,
-        std::uint64_t realEntryVaddr
-    ) const override;
+    std::vector<std::uint8_t> BuildEntryStub(std::uint64_t stubVaddr, std::uint64_t realEntryVaddr) const override;
 };
 
 }

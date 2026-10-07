@@ -6,8 +6,10 @@
 
 extern "C" {
 int APS5_VABI sceAgcDriverRegisterOwner(std::uint32_t*, const char*);
-int APS5_VABI sceAgcDriverRegisterResource(std::uint32_t*, std::uint32_t, const void*, std::size_t, const char*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverRegisterGdsResource(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, const char*, std::uint32_t, std::uint64_t);
+int APS5_VABI sceAgcDriverRegisterResource(std::uint32_t*, std::uint32_t, const void*, std::size_t, const char*,
+                                           std::uint32_t, std::uint64_t);
+int APS5_VABI sceAgcDriverRegisterGdsResource(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, const char*,
+                                              std::uint32_t, std::uint64_t);
 int APS5_VABI sceAgcDriverUnregisterAllResourcesForOwner(std::uint32_t);
 int APS5_VABI sceAgcDriverRegisterWorkloadStream(std::uint32_t, const void*);
 int APS5_VABI sceAgcDriverUnregisterWorkloadStream(std::uint32_t);
@@ -27,7 +29,10 @@ bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void);
 }
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 int main() {
     std::uint32_t owner = 7u;
@@ -50,7 +55,8 @@ int main() {
     Require(sceAgcDriverSetResourceUserData(resource, 5u) == Unavailable);
     void* base = nullptr;
     std::size_t size = 6u;
-    Require(sceAgcDriverGetResourceBaseAddressAndSizeInBytes(resource, &base, &size) == Unavailable && base == nullptr && size == 6u);
+    Require(sceAgcDriverGetResourceBaseAddressAndSizeInBytes(resource, &base, &size) == Unavailable &&
+            base == nullptr && size == 6u);
     std::uint8_t guid[16]{};
     Require(sceAgcDriverGetResourceShaderGuid(resource, guid) == Unavailable);
     Require(sceAgcDriverFindResourcesPublic(nullptr, nullptr) == Unavailable);

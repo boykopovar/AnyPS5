@@ -20,12 +20,13 @@ public:
         return enabled;
     }
 
-    template<typename... TArgs>
-    static void Log(const char* format, TArgs... args) {
-        if (!Enabled()) return;
+    template <typename... TArgs> static void Log(const char* format, TArgs... args) {
+        if (!Enabled())
+            return;
         std::array<char, 2048> line{};
         const auto size = std::snprintf(line.data(), line.size(), format, args...);
-        if (size < 0 || static_cast<std::size_t>(size) >= line.size()) throw std::runtime_error("Capture trace event exceeds 2047 bytes");
+        if (size < 0 || static_cast<std::size_t>(size) >= line.size())
+            throw std::runtime_error("Capture trace event exceeds 2047 bytes");
         static CaptureTrace& trace = instance();
         trace.append(std::string(line.data(), static_cast<std::size_t>(size)));
     }
@@ -52,12 +53,16 @@ private:
     }
 
     void append(std::string line) {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
         std::lock_guard lock(mutex);
-        if (pending.size() + line.size() + 64 > 16 * 1024 * 1024) throw std::runtime_error("Capture trace queue exceeded 16 MiB");
+        if (pending.size() + line.size() + 64 > 16 * 1024 * 1024)
+            throw std::runtime_error("Capture trace queue exceeded 16 MiB");
         pending += std::to_string(++sequence) + " " + std::to_string(elapsed) + "us " + line + "\n";
-        if (line.starts_with("blit ")) flushRequested = true;
-        if (pending.size() >= 65536 || flushRequested) changed.notify_one();
+        if (line.starts_with("blit "))
+            flushRequested = true;
+        if (pending.size() >= 65536 || flushRequested)
+            changed.notify_one();
     }
 
     void run() {
@@ -66,12 +71,15 @@ private:
                 std::string batch;
                 {
                     std::unique_lock lock(mutex);
-                    changed.wait_for(lock, std::chrono::milliseconds(100), [this] { return stopping || flushRequested || pending.size() >= 65536; });
-                    if (stopping && pending.empty()) return;
+                    changed.wait_for(lock, std::chrono::milliseconds(100),
+                                     [this] { return stopping || flushRequested || pending.size() >= 65536; });
+                    if (stopping && pending.empty())
+                        return;
                     batch.swap(pending);
                     flushRequested = false;
                 }
-                if (batch.empty()) continue;
+                if (batch.empty())
+                    continue;
                 output.write(batch.data(), static_cast<std::streamsize>(batch.size()));
                 output.flush();
             }

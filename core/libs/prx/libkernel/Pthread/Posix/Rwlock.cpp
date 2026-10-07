@@ -23,10 +23,12 @@ int toPosix(int result) {
 }
 
 void initializeStatic(PthreadRwlock* rwlock, const char* funcName) {
-    if (!rwlock) throw std::runtime_error(std::string(funcName) + ": null rwlock");
+    if (!rwlock)
+        throw std::runtime_error(std::string(funcName) + ": null rwlock");
     std::atomic_ref<PthreadRwlock> slot(*rwlock);
     PthreadRwlock current = slot.load(std::memory_order_acquire);
-    if (current != nullptr) return;
+    if (current != nullptr)
+        return;
     auto* created = new PthreadRwlockPrivate();
     if (!slot.compare_exchange_strong(current, created, std::memory_order_acq_rel, std::memory_order_acquire))
         delete created;
@@ -37,8 +39,10 @@ void initializeStatic(PthreadRwlock* rwlock, const char* funcName) {
 extern "C" {
 
 int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) {
-    if (!rwlock) throw std::runtime_error("pthread_rwlock_destroy: null rwlock");
-    if (*rwlock == nullptr) return 0;
+    if (!rwlock)
+        throw std::runtime_error("pthread_rwlock_destroy: null rwlock");
+    if (*rwlock == nullptr)
+        return 0;
     return toPosix(scePthreadRwlockDestroy(rwlock));
 }
 
@@ -52,20 +56,26 @@ int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock) {
 }
 
 int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
-    if (!abstime) throw std::runtime_error("pthread_rwlock_timedrdlock: null abstime");
+    if (!abstime)
+        throw std::runtime_error("pthread_rwlock_timedrdlock: null abstime");
     initializeStatic(rwlock, __func__);
-    if (scePthreadRwlockTryrdlock(rwlock) == 0) return 0;
+    if (scePthreadRwlockTryrdlock(rwlock) == 0)
+        return 0;
     KernelUseconds usec = 0;
-    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return PosixThread::GUEST_EINVAL;
+    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec))
+        return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadRwlockTimedrdlock(rwlock, usec));
 }
 
 int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime) {
-    if (!abstime) throw std::runtime_error("pthread_rwlock_timedwrlock: null abstime");
+    if (!abstime)
+        throw std::runtime_error("pthread_rwlock_timedwrlock: null abstime");
     initializeStatic(rwlock, __func__);
-    if (scePthreadRwlockTrywrlock(rwlock) == 0) return 0;
+    if (scePthreadRwlockTrywrlock(rwlock) == 0)
+        return 0;
     KernelUseconds usec = 0;
-    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return PosixThread::GUEST_EINVAL;
+    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec))
+        return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadRwlockTimedwrlock(rwlock, usec));
 }
 
@@ -88,5 +98,4 @@ int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock) {
     initializeStatic(rwlock, __func__);
     return toPosix(scePthreadRwlockWrlock(rwlock));
 }
-
 }

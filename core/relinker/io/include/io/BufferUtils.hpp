@@ -27,12 +27,12 @@ std::uint16_t ReadU16(const std::vector<std::uint8_t>& buf, std::size_t offset);
 std::uint32_t ReadU32(const std::vector<std::uint8_t>& buf, std::size_t offset);
 std::uint64_t ReadU64(const std::vector<std::uint8_t>& buf, std::size_t offset);
 
-template<typename T>
-constexpr T AlignUp(T value, T alignment) {
+template <typename T> constexpr T AlignUp(T value, T alignment) {
     if (value < 0 || alignment <= 0)
         throw std::invalid_argument("AlignUp requires a nonnegative value and a positive alignment");
     const T remainder = value % alignment;
-    if (remainder == 0) return value;
+    if (remainder == 0)
+        return value;
     const T padding = alignment - remainder;
     if (value > std::numeric_limits<T>::max() - padding)
         throw std::overflow_error("Aligned value exceeds integer range");

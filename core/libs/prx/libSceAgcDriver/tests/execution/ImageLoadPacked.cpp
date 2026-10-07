@@ -65,7 +65,8 @@ std::string Hex(std::uint32_t value) {
 }
 
 std::vector<AgcDriver::Graphics::TileMipLayout> Mips(const Format& format) {
-    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width, 1u, Levels);
+    return AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format.format, Width,
+                                                 1u, Levels);
 }
 
 std::uint8_t* Texel(const AgcDriver::Graphics::TileMipLayout& mip, const Format& format, std::uint32_t x) {
@@ -74,13 +75,15 @@ std::uint8_t* Texel(const AgcDriver::Graphics::TileMipLayout& mip, const Format&
 
 void FillTexture(const Format& format) {
     const auto mips = Mips(format);
-    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= Texels.size(), std::string("image load packed: the mip chain of ") + format.name + " does not fit the texel storage");
+    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= Texels.size(),
+            std::string("image load packed: the mip chain of ") + format.name + " does not fit the texel storage");
     Texels.fill(0xeeu);
     for (std::uint32_t level = 0; level < Levels; ++level) {
         for (std::uint32_t x = 0; x < mips[level].width; ++x) {
             auto* texel = Texel(mips[level], format, x);
             for (std::uint32_t byte = 0; byte < format.bytes; ++byte) {
-                texel[byte] = static_cast<std::uint8_t>(0x80u + 37u * (x * format.bytes + byte) + 7u * x + 101u * level);
+                texel[byte] =
+                    static_cast<std::uint8_t>(0x80u + 37u * (x * format.bytes + byte) + 7u * x + 101u * level);
             }
             if (format.floating) {
                 for (std::uint32_t word = 0; word < format.bytes / 4u; ++word) {
@@ -107,7 +110,8 @@ std::array<std::uint32_t, 4> RawTexel(const Format& format, std::uint32_t level,
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format, std::uint32_t swizzle) {
@@ -132,14 +136,14 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t sw
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(Code);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -154,29 +158,31 @@ void Check(const Format& format) {
         const auto mipPlain = RawTexel(format, level, tid & 7u, false);
         const auto mipSign = RawTexel(format, level, tid & 7u, true);
         const std::array<std::uint32_t, Results> expected{
-            plain[0], plain[1], plain[2], plain[3],
-            sign[0], sign[1], sign[2], sign[3],
-            plain[1], plain[3],
-            sign[2],
-            mipPlain[0], mipPlain[1], mipPlain[2], mipPlain[3],
-            mipSign[0], mipSign[1],
+            plain[0], plain[1], plain[2],    plain[3],    sign[0],     sign[1],     sign[2],    sign[3],    plain[1],
+            plain[3], sign[2],  mipPlain[0], mipPlain[1], mipPlain[2], mipPlain[3], mipSign[0], mipSign[1],
         };
         constexpr std::array<const char*, Results> names{
-            "image_load_pck dmask:0xf [0]", "image_load_pck dmask:0xf [1]", "image_load_pck dmask:0xf [2]", "image_load_pck dmask:0xf [3]",
-            "image_load_pck_sgn dmask:0xf [0]", "image_load_pck_sgn dmask:0xf [1]", "image_load_pck_sgn dmask:0xf [2]", "image_load_pck_sgn dmask:0xf [3]",
-            "image_load_pck dmask:0xa [0]", "image_load_pck dmask:0xa [1]",
-            "image_load_pck_sgn dmask:0x4",
-            "image_load_mip_pck dmask:0xf [0]", "image_load_mip_pck dmask:0xf [1]", "image_load_mip_pck dmask:0xf [2]", "image_load_mip_pck dmask:0xf [3]",
-            "image_load_mip_pck_sgn dmask:0x3 [0]", "image_load_mip_pck_sgn dmask:0x3 [1]",
+            "image_load_pck dmask:0xf [0]",         "image_load_pck dmask:0xf [1]",
+            "image_load_pck dmask:0xf [2]",         "image_load_pck dmask:0xf [3]",
+            "image_load_pck_sgn dmask:0xf [0]",     "image_load_pck_sgn dmask:0xf [1]",
+            "image_load_pck_sgn dmask:0xf [2]",     "image_load_pck_sgn dmask:0xf [3]",
+            "image_load_pck dmask:0xa [0]",         "image_load_pck dmask:0xa [1]",
+            "image_load_pck_sgn dmask:0x4",         "image_load_mip_pck dmask:0xf [0]",
+            "image_load_mip_pck dmask:0xf [1]",     "image_load_mip_pck dmask:0xf [2]",
+            "image_load_mip_pck dmask:0xf [3]",     "image_load_mip_pck_sgn dmask:0x3 [0]",
+            "image_load_mip_pck_sgn dmask:0x3 [1]",
         };
         for (std::uint32_t index = 0; index < Results; ++index) {
             const auto actual = Buffer[tid * Words + index];
-            Require(actual == expected[index], std::string(format.name) + " " + names[index] + ": thread " + std::to_string(tid) + " is " + Hex(actual) + ", expected " + Hex(expected[index]));
+            Require(actual == expected[index], std::string(format.name) + " " + names[index] + ": thread " +
+                                                   std::to_string(tid) + " is " + Hex(actual) + ", expected " +
+                                                   Hex(expected[index]));
         }
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t swizzle, const std::string& reason, const std::string& what) {
+void RequireRefused(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t swizzle,
+                    const std::string& reason, const std::string& what) {
     std::string refusal;
     try {
         Run(device, format, swizzle);
@@ -191,7 +197,8 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::uint32_t format, std::
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         for (const auto& format : Formats) {
             FillTexture(format);
             Run(*device, format.format, IdentitySwizzle);

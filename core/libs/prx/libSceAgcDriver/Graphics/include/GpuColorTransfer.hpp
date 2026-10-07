@@ -14,7 +14,8 @@ public:
     GpuColorTransfer& operator=(const GpuColorTransfer&) = delete;
     void Upload(std::uint64_t address, std::uint32_t width, std::uint32_t height, ColorTileMode mode);
     void Detile(VkCommandBuffer commands, bool swapRedBlue = false, bool tenBit = false);
-    void DetileImage(VkCommandBuffer commands, VkImage image, VkImageLayout layout, std::uint32_t width, std::uint32_t height, ColorTileMode mode, bool swapRedBlue, bool tenBit);
+    void DetileImage(VkCommandBuffer commands, VkImage image, VkImageLayout layout, std::uint32_t width,
+                     std::uint32_t height, ColorTileMode mode, bool swapRedBlue, bool tenBit);
     void Tile(VkCommandBuffer commands);
     void WriteBack(std::uint64_t address);
     VkBuffer LinearBuffer() const;

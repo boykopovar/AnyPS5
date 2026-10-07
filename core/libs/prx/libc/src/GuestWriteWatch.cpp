@@ -35,12 +35,11 @@ public:
         return watch;
     }
 
-    bool Available() const {
-        return _pagemap >= 0;
-    }
+    bool Available() const { return _pagemap >= 0; }
 
     void Register(std::uintptr_t begin, std::uintptr_t end) {
-        if (!Available() || end <= begin) return;
+        if (!Available() || end <= begin)
+            return;
         std::unique_lock lock(_lock);
         remove(_ranges, begin, end);
         remove(_fresh, begin, end);
@@ -52,7 +51,10 @@ public:
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                std::fprintf(stderr, "[memory] write watch: cannot register 0x%llx+0x%llx (%s); the range stays unwatched\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), std::strerror(errno));
+                std::fprintf(stderr,
+                             "[memory] write watch: cannot register 0x%llx+0x%llx (%s); the range stays unwatched\n",
+                             static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin),
+                             std::strerror(errno));
             }
             return;
         }
@@ -61,7 +63,8 @@ public:
     }
 
     bool Unregister(std::uintptr_t begin, std::uintptr_t end) {
-        if (!Available() || end <= begin) return false;
+        if (!Available() || end <= begin)
+            return false;
         std::unique_lock lock(_lock);
         const bool watched = remove(_ranges, begin, end);
         remove(_fresh, begin, end);
@@ -69,35 +72,45 @@ public:
     }
 
     bool Covers(std::uintptr_t begin, std::uintptr_t end) {
-        if (!Available()) return false;
+        if (!Available())
+            return false;
         std::shared_lock lock(_lock);
         return covers(begin, end);
     }
 
-    bool Collect(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
-        if (!Available()) return false;
+    bool Collect(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t),
+                 void* context) {
+        if (!Available())
+            return false;
         begin &= ~(PageBytes - 1);
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
-        if (end <= begin) return true;
+        if (end <= begin)
+            return true;
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> fresh;
         {
             std::unique_lock lock(_lock);
-            if (!covers(begin, end)) return false;
+            if (!covers(begin, end))
+                return false;
             auto it = _fresh.upper_bound(begin);
-            if (it != _fresh.begin()) --it;
+            if (it != _fresh.begin())
+                --it;
             for (; it != _fresh.end() && it->first < end; ++it) {
                 const auto from = std::max(it->first, begin);
                 const auto to = std::min(it->second, end);
-                if (from < to) fresh.emplace_back(from, to);
+                if (from < to)
+                    fresh.emplace_back(from, to);
             }
-            if (!fresh.empty()) remove(_fresh, begin, end);
+            if (!fresh.empty())
+                remove(_fresh, begin, end);
         }
         for (const auto& [from, to] : fresh) {
             written(context, from, to);
-            if (protect(from, to)) continue;
+            if (protect(from, to))
+                continue;
             std::unique_lock lock(_lock);
             for (const auto& [left, right] : fresh) {
-                if (!covers(left, right)) continue;
+                if (!covers(left, right))
+                    continue;
                 remove(_fresh, left, right);
                 insert(_fresh, left, right);
             }
@@ -121,8 +134,10 @@ public:
                 written(context, cursor, end);
                 return false;
             }
-            for (long i = 0; i < count; ++i) written(context, regions[i].start, regions[i].end);
-            if (scan.walk_end <= cursor || scan.walk_end >= end) break;
+            for (long i = 0; i < count; ++i)
+                written(context, regions[i].start, regions[i].end);
+            if (scan.walk_end <= cursor || scan.walk_end >= end)
+                break;
             cursor = scan.walk_end;
         }
         return true;
@@ -130,19 +145,25 @@ public:
 
 private:
     Watch() {
-        if (std::getenv("APS5_NO_WRITE_WATCH") == nullptr) open();
+        if (std::getenv("APS5_NO_WRITE_WATCH") == nullptr)
+            open();
     }
 
     void open() {
         _uffd = static_cast<int>(syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK));
-        if (_uffd < 0 && errno == EPERM) _uffd = static_cast<int>(syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY));
-        if (_uffd < 0) return unavailable("userfaultfd");
+        if (_uffd < 0 && errno == EPERM)
+            _uffd = static_cast<int>(syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY));
+        if (_uffd < 0)
+            return unavailable("userfaultfd");
         uffdio_api api{};
         api.api = UFFD_API;
         api.features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED;
-        if (ioctl(_uffd, UFFDIO_API, &api) != 0 || (api.features & UFFD_FEATURE_WP_ASYNC) == 0 || (api.features & UFFD_FEATURE_WP_UNPOPULATED) == 0) return unavailable("asynchronous userfaultfd write protection");
+        if (ioctl(_uffd, UFFDIO_API, &api) != 0 || (api.features & UFFD_FEATURE_WP_ASYNC) == 0 ||
+            (api.features & UFFD_FEATURE_WP_UNPOPULATED) == 0)
+            return unavailable("asynchronous userfaultfd write protection");
         const int pagemap = ::open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
-        if (pagemap < 0) return unavailable("/proc/self/pagemap");
+        if (pagemap < 0)
+            return unavailable("/proc/self/pagemap");
         if (!probe(pagemap)) {
             close(pagemap);
             return unavailable("PAGEMAP_SCAN");
@@ -152,9 +173,11 @@ private:
 
     void unavailable(const char* what) {
         const int error = errno;
-        if (_uffd >= 0) close(_uffd);
+        if (_uffd >= 0)
+            close(_uffd);
         _uffd = -1;
-        std::fprintf(stderr, "[memory] write watch unavailable: %s failed (%s); guest memory is compared instead\n", what, std::strerror(error));
+        std::fprintf(stderr, "[memory] write watch unavailable: %s failed (%s); guest memory is compared instead\n",
+                     what, std::strerror(error));
     }
 
     bool protect(std::uintptr_t begin, std::uintptr_t end) const {
@@ -168,7 +191,8 @@ private:
     bool probe(int pagemap) {
         constexpr std::uintptr_t probeBytes = 4 * PageBytes;
         void* pages = mmap(nullptr, probeBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (pages == MAP_FAILED) return false;
+        if (pages == MAP_FAILED)
+            return false;
         const auto address = reinterpret_cast<std::uintptr_t>(pages);
         auto* bytes = static_cast<volatile char*>(pages);
         bytes[0] = 1;
@@ -189,9 +213,11 @@ private:
             arguments.category_mask = PAGE_IS_WRITTEN;
             arguments.return_mask = PAGE_IS_WRITTEN;
             const auto count = ioctl(pagemap, PAGEMAP_SCAN, &arguments);
-            if (count < 0) return -1;
+            if (count < 0)
+                return -1;
             long pagesWritten = 0;
-            for (long i = 0; i < count; ++i) pagesWritten += static_cast<long>((regions[i].end - regions[i].start) / PageBytes);
+            for (long i = 0; i < count; ++i)
+                pagesWritten += static_cast<long>((regions[i].end - regions[i].start) / PageBytes);
             return pagesWritten;
         };
         working = working && scan() == 0;
@@ -206,7 +232,8 @@ private:
 
     bool covers(std::uintptr_t begin, std::uintptr_t end) const {
         auto next = _ranges.upper_bound(begin);
-        if (next == _ranges.begin()) return false;
+        if (next == _ranges.begin())
+            return false;
         return std::prev(next)->second >= end;
     }
 
@@ -226,7 +253,8 @@ private:
     static bool remove(std::map<std::uintptr_t, std::uintptr_t>& ranges, std::uintptr_t begin, std::uintptr_t end) {
         bool removed = false;
         auto it = ranges.upper_bound(begin);
-        if (it != ranges.begin()) --it;
+        if (it != ranges.begin())
+            --it;
         while (it != ranges.end() && it->first < end) {
             const auto rangeBegin = it->first;
             const auto rangeEnd = it->second;
@@ -236,8 +264,10 @@ private:
             }
             removed = true;
             it = ranges.erase(it);
-            if (rangeBegin < begin) ranges.emplace(rangeBegin, begin);
-            if (rangeEnd > end) ranges.emplace(end, rangeEnd);
+            if (rangeBegin < begin)
+                ranges.emplace(rangeBegin, begin);
+            if (rangeEnd > end)
+                ranges.emplace(end, rangeEnd);
         }
         return removed;
     }
@@ -293,9 +323,12 @@ bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes
 #endif
 }
 
-bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes,
+                                        void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end),
+                                        void* context) {
 #if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
-    if (bytes == 0 || address + bytes < address) return false;
+    if (bytes == 0 || address + bytes < address)
+        return false;
     return Watch::Get().Collect(address, address + bytes, written, context);
 #else
     static_cast<void>(address);

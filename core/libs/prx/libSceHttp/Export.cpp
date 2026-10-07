@@ -27,7 +27,8 @@ int APS5_VABI sceHttpAddRequestHeader(int id, const char* name, const char* valu
     return 0;
 }
 
-int APS5_VABI sceHttpCreateConnection(int tmpl_id, const char* server_name, const char* scheme, uint16_t port, int enable_keep_alive) {
+int APS5_VABI sceHttpCreateConnection(int tmpl_id, const char* server_name, const char* scheme, uint16_t port,
+                                      int enable_keep_alive) {
     (void)tmpl_id;
     (void)server_name;
     (void)scheme;
@@ -45,7 +46,8 @@ int APS5_VABI sceHttpCreateConnectionWithURL(int tmpl_id, const char* url, int e
 
 int APS5_VABI sceHttpCreateEpoll(int http_ctx_id, HttpEpollHandle* eh) {
     (void)http_ctx_id;
-    if (!eh) return ERROR_INVALID_VALUE;
+    if (!eh)
+        return ERROR_INVALID_VALUE;
     *eh = new HttpEpoll{};
     return 0;
 }
@@ -259,10 +261,10 @@ int APS5_VABI sceHttpSetChunkedTransferEnabled(int id, int enable) {
     return 0;
 }
 
-
 int APS5_VABI sceHttpSetInflateGZIPEnabled(int id, int enable) {
     (void)id;
-    if (static_cast<uint32_t>(enable) > 1) return ERROR_INVALID_VALUE;
+    if (static_cast<uint32_t>(enable) > 1)
+        return ERROR_INVALID_VALUE;
     return 0;
 }
 
@@ -272,15 +274,18 @@ int APS5_VABI sceHttpSetRequestStatusCallback(void) {
 }
 
 int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerLen, const char* fieldStr,
-                                       const char** fieldValue, std::size_t* valueLen) {
+                                         const char** fieldValue, std::size_t* valueLen) {
     constexpr int invalidResponse = static_cast<int>(0x80432060);
     constexpr int invalidValue = static_cast<int>(0x804321FE);
     constexpr int notFound = static_cast<int>(0x80432025);
-    if (!header) return invalidResponse;
-    if (!fieldStr || !fieldValue || !valueLen) return invalidValue;
+    if (!header)
+        return invalidResponse;
+    if (!fieldStr || !fieldValue || !valueLen)
+        return invalidValue;
 
     std::size_t fieldLen = 0;
-    while (fieldLen < 0xfff && fieldStr[fieldLen] != '\0') ++fieldLen;
+    while (fieldLen < 0xfff && fieldStr[fieldLen] != '\0')
+        ++fieldLen;
     const std::string_view input(header, headerLen);
     const auto isSpace = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
     const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; };
@@ -289,7 +294,8 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
     while (start < headerLen) {
         if (!isSpace(input[start]) && fieldLen < headerLen - start && input[start + fieldLen] == ':') {
             std::size_t i = 0;
-            while (i < fieldLen && lower(input[start + i]) == lower(fieldStr[i])) ++i;
+            while (i < fieldLen && lower(input[start + i]) == lower(fieldStr[i]))
+                ++i;
             if (i == fieldLen) {
                 start += fieldLen + 1;
                 found = true;
@@ -297,20 +303,24 @@ int APS5_VABI sceHttpParseResponseHeader(const char* header, std::size_t headerL
             }
         }
         const auto newline = input.find('\n', start);
-        if (newline == std::string_view::npos) break;
+        if (newline == std::string_view::npos)
+            break;
         start = newline + 1;
     }
-    if (!found) return notFound;
+    if (!found)
+        return notFound;
 
     while (start < headerLen && isSpace(input[start])) {
-        if (input[start++] == '\n') break;
+        if (input[start++] == '\n')
+            break;
     }
     std::size_t end = headerLen;
     std::size_t consumed = headerLen;
     std::size_t scan = start;
     while (scan < headerLen) {
         const auto newline = input.find('\n', scan);
-        if (newline == std::string_view::npos) break;
+        if (newline == std::string_view::npos)
+            break;
         const auto next = newline + 1;
         if (next < headerLen && (input[next] == ' ' || input[next] == '\t')) {
             scan = next;
@@ -389,5 +399,4 @@ int APS5_VABI sceHttpSetRedirectCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

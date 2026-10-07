@@ -12,11 +12,11 @@ extern "C" std::uint32_t APS5_VABI sceAgcGetPacketSize(std::uint32_t* packet);
 namespace {
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error& error) {
@@ -27,9 +27,13 @@ void expectFailure(TAction action) {
 }
 
 void testPacketSize() {
-    const std::array<std::pair<std::uint32_t, std::uint32_t>, 7> sizes{{
-        {0xc0047600u, 6}, {0xc0001000u, 2}, {0xfffe1000u, 0x4000}, {0xffff7600u, 0x4001},
-        {0xffff1000u, 1}, {0xffff1001u, 1}, {0xffff10fcu, 1}}};
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 7> sizes{{{0xc0047600u, 6},
+                                                                        {0xc0001000u, 2},
+                                                                        {0xfffe1000u, 0x4000},
+                                                                        {0xffff7600u, 0x4001},
+                                                                        {0xffff1000u, 1},
+                                                                        {0xffff1001u, 1},
+                                                                        {0xffff10fcu, 1}}};
     for (const auto& [header, size] : sizes) {
         std::array<std::uint32_t, 2> words{header, 0xffff1000u};
         check(sceAgcGetPacketSize(words.data()) == size, "packet size mismatch");
@@ -59,8 +63,11 @@ int main() {
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
+        try {
+            LibcRunShutdown_nid_postfix();
+        } catch (const std::exception& shutdown) {
+            std::fprintf(stderr, "shutdown: %s\n", shutdown.what());
+        }
         return 1;
     }
 }

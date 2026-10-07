@@ -3,13 +3,9 @@
 
 namespace ShaderRecompiler {
 
-IrValue& IrBuilder::BitCastF32(IrValue& value) {
-    return Emit(IrOpcode::BitCastF32U32, IrType::F32, {&value});
-}
+IrValue& IrBuilder::BitCastF32(IrValue& value) { return Emit(IrOpcode::BitCastF32U32, IrType::F32, {&value}); }
 
-IrValue& IrBuilder::BitCastU32(IrValue& value) {
-    return Emit(IrOpcode::BitCastU32F32, IrType::U32, {&value});
-}
+IrValue& IrBuilder::BitCastU32(IrValue& value) { return Emit(IrOpcode::BitCastU32F32, IrType::U32, {&value}); }
 
 IrValue& IrBuilder::BitCastF16(IrValue& value) {
     IrValue& half = Emit(IrOpcode::ConvertU16U32, IrType::U16, {&value});

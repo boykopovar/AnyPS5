@@ -18,7 +18,8 @@ std::uint64_t APS5_VABI sceKernelGetProcessTime();
 }
 
 static void Require(bool value, const char* message) {
-    if (value) return;
+    if (value)
+        return;
     std::fprintf(stderr, "%s\n", message);
     std::abort();
 }
@@ -47,9 +48,7 @@ std::uint64_t LastOutputTime(int handle) {
     return time;
 }
 
-void Pause() {
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-}
+void Pause() { std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
 
 std::uint64_t OutputAndCheck(int handle, const std::vector<std::int16_t>& block) {
     Pause();
@@ -109,7 +108,8 @@ void TestOutputs() {
     }
     Require(LastOutputTime(waiting) == 0, "outputs must not move the time of a port that received no data");
 
-    for (const int handle : {first, second, waiting}) Require(sceAudioOutClose(handle) == 0, "port must close");
+    for (const int handle : {first, second, waiting})
+        Require(sceAudioOutClose(handle) == 0, "port must close");
 }
 
 void TestReopenedPort() {
@@ -132,7 +132,8 @@ void TestErrors() {
     std::uint64_t destination = untouched;
     Require(sceAudioOutGetLastOutputTime(0, &destination) == invalidPort, "handle 0 must be rejected");
     Require(sceAudioOutGetLastOutputTime(-1, &destination) == invalidPort, "a negative handle must be rejected");
-    Require(sceAudioOutGetLastOutputTime(handle + 1, &destination) == invalidPort, "a port that is not open must be rejected");
+    Require(sceAudioOutGetLastOutputTime(handle + 1, &destination) == invalidPort,
+            "a port that is not open must be rejected");
     Require(sceAudioOutGetLastOutputTime(1000, &destination) == invalidPort, "an out of range handle must be rejected");
     Require(sceAudioOutClose(handle) == 0, "port must close");
     Require(sceAudioOutGetLastOutputTime(handle, &destination) == invalidPort, "a closed port must be rejected");

@@ -22,5 +22,4 @@ int APS5_VABI sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(std::uint32_t* 
     cmd[3] = static_cast<std::uint32_t>(address >> 32u);
     return 0;
 }
-
 }

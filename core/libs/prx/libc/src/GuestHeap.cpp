@@ -31,9 +31,7 @@ constexpr std::size_t MaximumSmallBytes = 64u * 1024u;
 // Large blocks are rounded up to this so that freed blocks are reused by later requests of similar size.
 constexpr std::size_t LargeGranuleBytes = 64u * 1024u;
 
-std::size_t alignUp(std::size_t value, std::size_t alignment) {
-    return (value + alignment - 1) & ~(alignment - 1);
-}
+std::size_t alignUp(std::size_t value, std::size_t alignment) { return (value + alignment - 1) & ~(alignment - 1); }
 
 class ArenaHeap {
 public:
@@ -45,7 +43,8 @@ public:
     void* Allocate(std::size_t total, std::size_t& blockBytes) {
         if (total > MaximumSmallBytes) {
             blockBytes = alignUp(total, LargeGranuleBytes);
-            if (void* cached = _large.Take(blockBytes)) return cached;
+            if (void* cached = _large.Take(blockBytes))
+                return cached;
             void* raw = GuestArena::GuestArenaAllocate_nid_postfix(blockBytes, PageBytes);
             commit(raw, blockBytes);
             return raw;
@@ -58,7 +57,8 @@ public:
             sizeClass.freeList = *static_cast<void**>(block);
             return block;
         }
-        if (sizeClass.bump == nullptr || sizeClass.bytes > static_cast<std::size_t>(sizeClass.bumpEnd - sizeClass.bump)) {
+        if (sizeClass.bump == nullptr ||
+            sizeClass.bytes > static_cast<std::size_t>(sizeClass.bumpEnd - sizeClass.bump)) {
             auto* span = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SpanBytes, PageBytes));
             commit(span, SpanBytes);
             sizeClass.bump = span;
@@ -101,7 +101,9 @@ private:
     }
 
     std::size_t classIndex(std::size_t bytes) const {
-        const auto found = std::lower_bound(_classes.begin(), _classes.end(), bytes, [](const SizeClass& sizeClass, std::size_t value) { return sizeClass.bytes < value; });
+        const auto found =
+            std::lower_bound(_classes.begin(), _classes.end(), bytes,
+                             [](const SizeClass& sizeClass, std::size_t value) { return sizeClass.bytes < value; });
         return static_cast<std::size_t>(found - _classes.begin());
     }
 
@@ -125,7 +127,8 @@ private:
         void* Take(std::size_t bytes) {
             std::lock_guard lock(_lock);
             const auto found = _bySize.find(bytes);
-            if (found == _bySize.end() || found->second.empty()) return nullptr;
+            if (found == _bySize.end() || found->second.empty())
+                return nullptr;
             const auto entry = found->second.back();
             found->second.pop_back();
             void* raw = entry->raw;
@@ -182,23 +185,29 @@ private:
 };
 
 void* rawAllocate(std::size_t total, std::size_t& blockBytes) {
-    if (GuestArena::GuestArenaAvailable_nid_postfix()) return ArenaHeap::Get().Allocate(total, blockBytes);
+    if (GuestArena::GuestArenaAvailable_nid_postfix())
+        return ArenaHeap::Get().Allocate(total, blockBytes);
     blockBytes = total;
     void* raw = std::malloc(total);
-    if (raw == nullptr) throw std::bad_alloc();
+    if (raw == nullptr)
+        throw std::bad_alloc();
     return raw;
 }
 
 void rawFree(void* raw, std::size_t blockBytes) {
-    if (GuestArena::GuestArenaAvailable_nid_postfix()) ArenaHeap::Get().Free(raw, blockBytes);
-    else std::free(raw);
+    if (GuestArena::GuestArenaAvailable_nid_postfix())
+        ArenaHeap::Get().Free(raw, blockBytes);
+    else
+        std::free(raw);
 }
 
 void* allocate(GuestAllocations::Mutation& mutation, std::size_t alignment, std::size_t bytes) {
-    if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest heap alignment");
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0)
+        throw std::invalid_argument("invalid guest heap alignment");
     alignment = std::max(alignment, MinimumAlignment);
     const std::size_t padding = alignment > MinimumAlignment ? alignment : 0;
-    if (bytes > std::numeric_limits<std::size_t>::max() - HeaderBytes - padding) throw std::length_error("guest heap allocation overflow");
+    if (bytes > std::numeric_limits<std::size_t>::max() - HeaderBytes - padding)
+        throw std::length_error("guest heap allocation overflow");
     std::size_t blockBytes = 0;
     void* raw = rawAllocate(bytes + HeaderBytes + padding, blockBytes);
     const auto address = alignUp(reinterpret_cast<std::uintptr_t>(raw) + HeaderBytes, alignment);
@@ -227,7 +236,8 @@ void* GuestHeapAllocate_nid_postfix(std::size_t bytes) {
 }
 
 void GuestHeapFree_nid_postfix(void* pointer) {
-    if (pointer == nullptr) return;
+    if (pointer == nullptr)
+        return;
     GuestAllocations::Mutation mutation;
     const auto range = mutation.Find(pointer);
     mutation.RequireUnpinned(pointer, range.bytes);
@@ -235,7 +245,8 @@ void GuestHeapFree_nid_postfix(void* pointer) {
 }
 
 void* GuestHeapReallocate_nid_postfix(void* pointer, std::size_t bytes) {
-    if (pointer == nullptr) return GuestHeapAllocate_nid_postfix(bytes);
+    if (pointer == nullptr)
+        return GuestHeapAllocate_nid_postfix(bytes);
     GuestAllocations::Mutation mutation;
     const auto range = mutation.Find(pointer);
     mutation.RequireUnpinned(pointer, range.bytes);
@@ -250,7 +261,8 @@ void* GuestHeapReallocate_nid_postfix(void* pointer, std::size_t bytes) {
 }
 
 void* GuestHeapRealign_nid_postfix(void* pointer, std::size_t bytes, std::size_t alignment) {
-    if (pointer == nullptr) return GuestHeapAlign_nid_postfix(alignment, bytes);
+    if (pointer == nullptr)
+        return GuestHeapAlign_nid_postfix(alignment, bytes);
     GuestAllocations::Mutation mutation;
     const auto range = mutation.Find(pointer);
     mutation.RequireUnpinned(pointer, range.bytes);

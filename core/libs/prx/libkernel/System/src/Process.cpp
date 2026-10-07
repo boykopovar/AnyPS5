@@ -38,7 +38,8 @@ namespace {
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
 
 std::atomic<std::uint32_t> gpoBits{0};
-constexpr std::array<std::uint8_t, 16> openPsId{'A', 'n', 'y', 'P', 'S', '5', 'O', 'p', 'e', 'n', 'P', 's', 'I', 'd', 0, 1};
+constexpr std::array<std::uint8_t, 16> openPsId{'A', 'n', 'y', 'P', 'S', '5', 'O', 'p',
+                                                'e', 'n', 'P', 's', 'I', 'd', 0,   1};
 
 class ProcessArguments {
 public:
@@ -105,7 +106,8 @@ void syncVolumes() {
             if (path.empty() || path.back() != L'\\')
                 throw std::runtime_error("Invalid volume path for sync");
             path.pop_back();
-            const auto native = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            const auto native = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                            OPEN_EXISTING, 0, nullptr);
             if (native == INVALID_HANDLE_VALUE)
                 throw std::system_error(GetLastError(), std::system_category(), "Opening volume for sync");
             const std::unique_ptr<void, decltype(&CloseHandle)> volume(native, &CloseHandle);
@@ -148,17 +150,11 @@ extern "C" {
 // unknown data
 const char* __progname_nid_postfix = "eboot.bin";
 
-int APS5_VABI getargc_nid_postfix(void) {
-    return getProcessArguments().GetCount();
-}
+int APS5_VABI getargc_nid_postfix(void) { return getProcessArguments().GetCount(); }
 
-const char** APS5_VABI getargv_nid_postfix(void) {
-    return getProcessArguments().GetValues();
-}
+const char** APS5_VABI getargv_nid_postfix(void) { return getProcessArguments().GetValues(); }
 
-int APS5_VABI getpagesize_nid_postfix(void) {
-    return PS5_PAGE_SIZE;
-}
+int APS5_VABI getpagesize_nid_postfix(void) { return PS5_PAGE_SIZE; }
 
 int APS5_VABI getpid_nid_postfix(void) {
 #ifdef _WIN32
@@ -171,13 +167,9 @@ int APS5_VABI getpid_nid_postfix(void) {
     return static_cast<int>(pid);
 }
 
-void APS5_VABI exit_nid_postfix(int code) {
-    LibcExit_nid_no_patch(code);
-}
+void APS5_VABI exit_nid_postfix(int code) { LibcExit_nid_no_patch(code); }
 
-[[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
-    std::_Exit(status);
-}
+[[noreturn]] void APS5_VABI _exit_nid_postfix(int status) { std::_Exit(status); }
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
 #ifdef _WIN32
@@ -199,13 +191,9 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
 #endif
 }
 
-std::uint64_t APS5_VABI sceKernelGetGPI(void) {
-    return gpoBits.load(std::memory_order_relaxed);
-}
+std::uint64_t APS5_VABI sceKernelGetGPI(void) { return gpoBits.load(std::memory_order_relaxed); }
 
-void APS5_VABI sceKernelSetGPO(std::uint32_t bits) {
-    gpoBits.store(bits, std::memory_order_relaxed);
-}
+void APS5_VABI sceKernelSetGPO(std::uint32_t bits) { gpoBits.store(bits, std::memory_order_relaxed); }
 
 int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
     if (!openPsIdOutput)
@@ -214,12 +202,11 @@ int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
     return 0;
 }
 
-void* APS5_VABI sceKernelGetProcParam(void) {
-    return const_cast<void*>(ApplicationProcessParameters_nid_no_patch());
-}
+void* APS5_VABI sceKernelGetProcParam(void) { return const_cast<void*>(ApplicationProcessParameters_nid_no_patch()); }
 
 int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
-    if (!uuid) return sceInvalidArgument;
+    if (!uuid)
+        return sceInvalidArgument;
     static thread_local std::random_device device;
     std::uniform_int_distribution<std::uint32_t> distribution;
     std::array<std::uint32_t, 4> value;
@@ -315,9 +302,7 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     return 0;
 }
 
-int APS5_VABI sceKernelIsTrinityMode(void) {
-    return 0;
-}
+int APS5_VABI sceKernelIsTrinityMode(void) { return 0; }
 
 int APS5_VABI sceKernelGetOperationMode(int* mode, int* submode) {
     if (!mode || !submode)
@@ -326,5 +311,4 @@ int APS5_VABI sceKernelGetOperationMode(int* mode, int* submode) {
     *submode = 0;
     return 0;
 }
-
 }

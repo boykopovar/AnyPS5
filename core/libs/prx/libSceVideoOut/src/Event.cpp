@@ -9,10 +9,14 @@
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 
 static std::vector<EventRegistration>* getEventList(VideoOutConfig& cfg, int16_t eventKind) {
-    if (eventKind == VIDEO_OUT_EVENT_FLIP) return &cfg.flipEvents;
-    if (eventKind == VIDEO_OUT_EVENT_VBLANK) return &cfg.vblankEvents;
-    if (eventKind == VIDEO_OUT_EVENT_PRE_VBLANK_START) return &cfg.preVblankEvents;
-    if (eventKind == VIDEO_OUT_EVENT_SET_MODE) return &cfg.outputModeEvents;
+    if (eventKind == VIDEO_OUT_EVENT_FLIP)
+        return &cfg.flipEvents;
+    if (eventKind == VIDEO_OUT_EVENT_VBLANK)
+        return &cfg.vblankEvents;
+    if (eventKind == VIDEO_OUT_EVENT_PRE_VBLANK_START)
+        return &cfg.preVblankEvents;
+    if (eventKind == VIDEO_OUT_EVENT_SET_MODE)
+        return &cfg.outputModeEvents;
     throw std::runtime_error("getEventList: unknown event kind");
 }
 
@@ -30,9 +34,11 @@ static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
     auto* registrations = getEventList(*cfg, eventKind);
-    const auto existing = std::find_if(registrations->begin(), registrations->end(), [eq](const auto& item) { return item.eq == eq; });
+    const auto existing =
+        std::find_if(registrations->begin(), registrations->end(), [eq](const auto& item) { return item.eq == eq; });
     const bool replace = existing != registrations->end();
-    if (!replace) registrations->reserve(registrations->size() + 1);
+    if (!replace)
+        registrations->reserve(registrations->size() + 1);
     KernelEqueueEvent event{};
     event.event.ident = static_cast<uintptr_t>(eventKind);
     event.event.filter = EVFILT_VIDEO_OUT;
@@ -49,11 +55,10 @@ static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
         if (counter != 0xfu) {
             counter++;
         }
-        const uint64_t tsc = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()
-            ).count()
-        ) & 0xfffu;
+        const uint64_t tsc = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                       std::chrono::steady_clock::now().time_since_epoch())
+                                                       .count()) &
+                             0xfffu;
         const uint64_t payload = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(data));
         const uint64_t newData = tsc | (counter << 12u) | ((payload & 0x0000ffffffffffffULL) << 16u);
         KernelEvent triggered = e->event;
@@ -75,12 +80,15 @@ static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
     if (result == SCE_KERNEL_ERROR_EBADF) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
     }
-    if (result != EQUEUE_OK) throw std::runtime_error("VideoOut: event registration failed");
+    if (result != EQUEUE_OK)
+        throw std::runtime_error("VideoOut: event registration failed");
     EventRegistration reg;
     reg.eq = eq;
     reg.generation = cfg->generation;
-    if (replace) *existing = reg;
-    else registrations->push_back(reg);
+    if (replace)
+        *existing = reg;
+    else
+        registrations->push_back(reg);
     return result;
 }
 
@@ -96,7 +104,9 @@ static int deleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
         std::unique_lock lock(cfg->mutex);
         cfg->Check();
         auto* events = getEventList(*cfg, eventKind);
-        events->erase(std::remove_if(events->begin(), events->end(), [eq](const EventRegistration& r) { return r.eq == eq; }), events->end());
+        events->erase(
+            std::remove_if(events->begin(), events->end(), [eq](const EventRegistration& r) { return r.eq == eq; }),
+            events->end());
     }
     const int result = EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(eventKind), EVFILT_VIDEO_OUT);
     if (result == SCE_KERNEL_ERROR_EBADF) {
@@ -160,7 +170,8 @@ int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
     }
     const int ident = static_cast<int>(ev->ident);
-    if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE) {
+    if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START &&
+        ident != VIDEO_OUT_EVENT_SET_MODE) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
     }
     return ident;
@@ -174,7 +185,8 @@ int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
     }
     uint64_t eventData = static_cast<uint64_t>(ev->data) >> 16u;
-    if (ev->ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) && (static_cast<uint64_t>(ev->data) & 0x8000000000000000ULL) != 0) {
+    if (ev->ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) &&
+        (static_cast<uint64_t>(ev->data) & 0x8000000000000000ULL) != 0) {
         eventData |= 0xffff000000000000ULL;
     }
     *data = static_cast<int64_t>(eventData);
@@ -190,5 +202,4 @@ int APS5_VABI sceVideoOutGetEventCount(const KernelEvent* ev) {
     }
     return static_cast<int>((static_cast<uint64_t>(ev->data) >> 12u) & 0xfu);
 }
-
 }

@@ -8,7 +8,9 @@
 #include <stdexcept>
 
 extern "C" {
-std::uint32_t* APS5_VABI sceAgcCbBranch(CommandBuffer*, std::uint8_t, std::uint8_t, const volatile std::uint64_t*, std::uint64_t, std::uint64_t, std::uint8_t, const volatile std::uint32_t*, std::uint32_t, std::uint8_t, const volatile std::uint32_t*, std::uint32_t);
+std::uint32_t* APS5_VABI sceAgcCbBranch(CommandBuffer*, std::uint8_t, std::uint8_t, const volatile std::uint64_t*,
+                                        std::uint64_t, std::uint64_t, std::uint8_t, const volatile std::uint32_t*,
+                                        std::uint32_t, std::uint8_t, const volatile std::uint32_t*, std::uint32_t);
 std::uint32_t APS5_VABI sceAgcCbBranchGetSize();
 int APS5_VABI sceAgcBranchPatchSetCompareAddress(std::uint32_t*, const volatile std::uint64_t*);
 int APS5_VABI sceAgcBranchPatchSetThenTarget(std::uint32_t*, const volatile std::uint32_t*, std::uint32_t);
@@ -18,11 +20,11 @@ int APS5_VABI sceAgcBranchPatchSetElseTarget(std::uint32_t*, const volatile std:
 namespace {
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error&) {
@@ -41,20 +43,28 @@ const volatile std::uint32_t* targetAt(std::uint64_t address) {
 
 struct Storage {
     std::array<std::uint32_t, 20> words{};
-    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    CommandBuffer buffer{
+        words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
     std::uint32_t* packet = nullptr;
 
     Storage() {
         words.fill(0xabcdef01u);
-        packet = sceAgcCbBranch(&buffer, 2, 3, compareAt(0x0000123456789ab8ull), 0x1122334455667788ull, 0x99aabbccddeeff00ull, 1, targetAt(0x0000002233445564ull), 0x123u, 2, targetAt(0x0000006677889900ull), 0x456u);
+        packet = sceAgcCbBranch(&buffer, 2, 3, compareAt(0x0000123456789ab8ull), 0x1122334455667788ull,
+                                0x99aabbccddeeff00ull, 1, targetAt(0x0000002233445564ull), 0x123u, 2,
+                                targetAt(0x0000006677889900ull), 0x456u);
     }
 };
 
 void testWriter() {
     Storage storage;
-    const std::array expected{0xc00c3f00u, 0x302u, 0x56789ab8u, 0x1234u, 0x55667788u, 0x11223344u, 0xddeeff00u, 0x99aabbccu, 0x33445564u, 0x22u, 0x10000123u, 0x77889900u, 0x66u, 0x20000456u};
-    check(storage.packet == storage.words.data() && std::equal(expected.begin(), expected.end(), storage.packet), "incorrect branch packet");
-    check(storage.buffer.cursor_up == storage.packet + expected.size() && sceAgcCbBranchGetSize() == expected.size() * sizeof(std::uint32_t), "branch size/cursor mismatch");
+    const std::array expected{0xc00c3f00u, 0x302u,      0x56789ab8u, 0x1234u,     0x55667788u,
+                              0x11223344u, 0xddeeff00u, 0x99aabbccu, 0x33445564u, 0x22u,
+                              0x10000123u, 0x77889900u, 0x66u,       0x20000456u};
+    check(storage.packet == storage.words.data() && std::equal(expected.begin(), expected.end(), storage.packet),
+          "incorrect branch packet");
+    check(storage.buffer.cursor_up == storage.packet + expected.size() &&
+              sceAgcCbBranchGetSize() == expected.size() * sizeof(std::uint32_t),
+          "branch size/cursor mismatch");
     check(storage.packet[expected.size()] == 0xabcdef01u, "branch command overwrote following word");
 }
 
@@ -63,7 +73,8 @@ void testCompareAddress() {
     auto expected = storage.words;
     expected[2] = 0xfedcba98u;
     expected[3] = 0x7654u;
-    check(sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x00007654fedcba98ull)) == 0, "compare address setter failed");
+    check(sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x00007654fedcba98ull)) == 0,
+          "compare address setter failed");
     check(storage.words == expected, "compare address setter wrote the wrong words");
     expectFailure([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, nullptr); });
     expectFailure([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x00007654fedcba9cull)); });

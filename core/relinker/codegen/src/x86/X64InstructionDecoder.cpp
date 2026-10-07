@@ -28,9 +28,8 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             repnePrefix = true;
         } else if (b == PrefixOperandSize) {
             operandSizeOverride = true;
-        } else if (b != PrefixLock && b != PrefixRep && b != PrefixAddressSize &&
-                   b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
-                   b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
+        } else if (b != PrefixLock && b != PrefixRep && b != PrefixAddressSize && b != PrefixSegCs &&
+                   b != PrefixSegSs && b != PrefixSegDs && b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
             break;
         }
 
@@ -106,7 +105,8 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     bool hasModRm = false;
     std::size_t immediateSize = ImmSizeNone;
 
-    const bool vectorImmediate = vexMap == 1 && ((opcode >= 0x70 && opcode <= 0x73) || opcode == 0xC2 || opcode == 0xC4 || opcode == 0xC5 || opcode == 0xC6);
+    const bool vectorImmediate = vexMap == 1 && ((opcode >= 0x70 && opcode <= 0x73) || opcode == 0xC2 ||
+                                                 opcode == 0xC4 || opcode == 0xC5 || opcode == 0xC6);
 
     if (vexPresent) {
         if (vexMap == 1 && opcode >= VexNoModRmMin && opcode <= VexNoModRmMax) {
@@ -135,45 +135,35 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             (opcode >= OneByteModRmRangeEMin && opcode <= OneByteModRmRangeEMax) ||
             (opcode >= OneByteModRmRangeFMin && opcode <= OneByteModRmRangeFMax) ||
             (opcode >= OneByteModRmRangeGMin && opcode <= OneByteModRmRangeGMax) ||
-            (opcode >= OneByteModRmRangeHMin && opcode <= OneByteModRmRangeHMax) ||
-            opcode == OneByteArpl || opcode == OneByteMovsxd ||
-            (opcode >= OneByteModRmRangeIMin && opcode <= OneByteModRmRangeIMax) ||
-            opcode == OneByteGrp2Rm8Imm8 || opcode == OneByteGrp2RmImm8 ||
-            opcode == OneByteMovImm8 || opcode == OneByteMovImm32 ||
-            opcode == OneByteImm32AluCmp || opcode == OneByteImm8Grp1 ||
-            opcode == OneByteImm8AluCmp ||
-            opcode == OneByteImulRm32Imm32 || opcode == OneByteImulRm32Imm8 ||
-            opcode == OneByteShiftRm8By1 || opcode == OneByteShiftRmBy1 ||
-            opcode == OneByteShiftRm8ByCl || opcode == OneByteShiftRmByCl ||
-            opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm ||
+            (opcode >= OneByteModRmRangeHMin && opcode <= OneByteModRmRangeHMax) || opcode == OneByteArpl ||
+            opcode == OneByteMovsxd || (opcode >= OneByteModRmRangeIMin && opcode <= OneByteModRmRangeIMax) ||
+            opcode == OneByteGrp2Rm8Imm8 || opcode == OneByteGrp2RmImm8 || opcode == OneByteMovImm8 ||
+            opcode == OneByteMovImm32 || opcode == OneByteImm32AluCmp || opcode == OneByteImm8Grp1 ||
+            opcode == OneByteImm8AluCmp || opcode == OneByteImulRm32Imm32 || opcode == OneByteImulRm32Imm8 ||
+            opcode == OneByteShiftRm8By1 || opcode == OneByteShiftRmBy1 || opcode == OneByteShiftRm8ByCl ||
+            opcode == OneByteShiftRmByCl || opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm ||
             opcode == OneByteIncDecRm8 || opcode == OneByteGrp5Rm ||
             (opcode >= OneByteModRmRangeJMin && opcode <= OneByteModRmRangeJMax) ||
             (opcode >= OneByteX87Min && opcode <= OneByteX87Max)) {
             hasModRm = true;
         }
 
-        if (opcode == OneByteImm8AluOrGrp3 || opcode == OneByteImm8AluCmp ||
-            opcode == OneByteImm8AddAl || opcode == OneByteImm8OrAl ||
-            opcode == OneByteImm8AdcAl || opcode == OneByteImm8SbbAl ||
-            opcode == OneByteImm8AndAl || opcode == OneByteImm8SubAl ||
-            opcode == OneByteImm8XorAl || opcode == OneByteImm8CmpAl ||
-            opcode == OneByteGrp2Rm8Imm8 || opcode == OneByteGrp2RmImm8 ||
-            (opcode >= OneByteMovImm8RegMin && opcode <= OneByteMovImm8RegMax) ||
-            opcode == OneBytePushImm8 ||
+        if (opcode == OneByteImm8AluOrGrp3 || opcode == OneByteImm8AluCmp || opcode == OneByteImm8AddAl ||
+            opcode == OneByteImm8OrAl || opcode == OneByteImm8AdcAl || opcode == OneByteImm8SbbAl ||
+            opcode == OneByteImm8AndAl || opcode == OneByteImm8SubAl || opcode == OneByteImm8XorAl ||
+            opcode == OneByteImm8CmpAl || opcode == OneByteGrp2Rm8Imm8 || opcode == OneByteGrp2RmImm8 ||
+            (opcode >= OneByteMovImm8RegMin && opcode <= OneByteMovImm8RegMax) || opcode == OneBytePushImm8 ||
             opcode == OneByteTestAlImm8) {
             immediateSize = ImmSize8;
-        } else if (opcode == OneByteImm32AluCmp || opcode == OneByteMovImm32 ||
-                   opcode == OneByteImulRm32Imm32 ||
-                   opcode == OneByteImm32AddEax || opcode == OneByteImm32OrEax ||
-                   opcode == OneByteImm32AdcEax || opcode == OneByteImm32SbbEax ||
-                   opcode == OneByteImm32AndEax || opcode == OneByteImm32SubEax ||
-                   opcode == OneByteImm32XorEax || opcode == OneByteImm32CmpEax ||
-                   opcode == OneBytePushImm32 ||
+        } else if (opcode == OneByteImm32AluCmp || opcode == OneByteMovImm32 || opcode == OneByteImulRm32Imm32 ||
+                   opcode == OneByteImm32AddEax || opcode == OneByteImm32OrEax || opcode == OneByteImm32AdcEax ||
+                   opcode == OneByteImm32SbbEax || opcode == OneByteImm32AndEax || opcode == OneByteImm32SubEax ||
+                   opcode == OneByteImm32XorEax || opcode == OneByteImm32CmpEax || opcode == OneBytePushImm32 ||
                    opcode == OneByteTestEaxImm32 ||
                    (opcode >= OneByteMovImm32RegMin && opcode <= OneByteMovImm32RegMax)) {
             if (opcode >= OneByteMovImm32RegMin && opcode <= OneByteMovImm32RegMax) {
-                immediateSize = (rexPresent && (rex & RexWBit) != 0) ? ImmSize64 :
-                    (operandSizeOverride ? ImmSize16 : ImmSize32);
+                immediateSize =
+                    (rexPresent && (rex & RexWBit) != 0) ? ImmSize64 : (operandSizeOverride ? ImmSize16 : ImmSize32);
             } else {
                 immediateSize = operandSizeOverride ? ImmSize16 : ImmSize32;
             }
@@ -189,10 +179,8 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             immediateSize = ImmSize32;
         }
 
-        if (opcode == OneByteJmpRel8 || opcode == OneByteJrcxz ||
-            (opcode >= OneByteLoop && opcode <= OneByteLoopMax) ||
-            (opcode >= OneByteInOutImm8Min && opcode <= OneByteInOutImm8Max) ||
-            opcode == OneByteInt) {
+        if (opcode == OneByteJmpRel8 || opcode == OneByteJrcxz || (opcode >= OneByteLoop && opcode <= OneByteLoopMax) ||
+            (opcode >= OneByteInOutImm8Min && opcode <= OneByteInOutImm8Max) || opcode == OneByteInt) {
             immediateSize = ImmSize8;
         }
 
@@ -223,15 +211,13 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         } else if (opcode >= TwoByteShiftImm8Min && opcode <= TwoByteShiftImm8Max) {
             hasModRm = true;
             immediateSize = ImmSize8;
-        } else if (opcode == TwoByteShldImm8 || opcode == TwoByteShrdImm8 ||
-                   opcode == TwoByteShufpsImm8 || opcode == TwoByteShufpdImm8 ||
-                   opcode == TwoBytePextrw || opcode == TwoBytePinsrw) {
+        } else if (opcode == TwoByteShldImm8 || opcode == TwoByteShrdImm8 || opcode == TwoByteShufpsImm8 ||
+                   opcode == TwoByteShufpdImm8 || opcode == TwoBytePextrw || opcode == TwoBytePinsrw) {
             hasModRm = true;
             immediateSize = ImmSize8;
-        } else if (opcode == TwoByteShldCl || opcode == TwoByteShrdCl ||
-                   opcode == TwoBytePopcnt || opcode == TwoByteUd1 || opcode == TwoByteBtc ||
-                   opcode == TwoBytePrefetchw || opcode == TwoByteXaddRm8 ||
-                   opcode == TwoByteMovnti || opcode == TwoByteGrp6 ||
+        } else if (opcode == TwoByteShldCl || opcode == TwoByteShrdCl || opcode == TwoBytePopcnt ||
+                   opcode == TwoByteUd1 || opcode == TwoByteBtc || opcode == TwoBytePrefetchw ||
+                   opcode == TwoByteXaddRm8 || opcode == TwoByteMovnti || opcode == TwoByteGrp6 ||
                    opcode == TwoByteLar || opcode == TwoByteLsl ||
                    (opcode >= TwoByteMovCrDrMin && opcode <= TwoByteMovCrDrMax)) {
             hasModRm = true;
@@ -245,12 +231,8 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
                    (opcode >= TwoByteModRmRangeHMin && opcode <= TwoByteModRmRangeHMax) ||
                    (opcode >= TwoByteModRmRangeIMin && opcode <= TwoByteModRmRangeIMax) ||
                    (opcode >= TwoBytePrefetchGrpMin && opcode <= TwoBytePrefetchGrpMax) ||
-                   (opcode >= TwoByteSetccMin && opcode <= TwoByteSetccMax) ||
-                   opcode == TwoByteImulRmModRm ||
-                   opcode == TwoByteGrp7 ||
-                   opcode == TwoByteGrp15 ||
-                   opcode == TwoByteXadd ||
-                   opcode == TwoByteGrp9 ||
+                   (opcode >= TwoByteSetccMin && opcode <= TwoByteSetccMax) || opcode == TwoByteImulRmModRm ||
+                   opcode == TwoByteGrp7 || opcode == TwoByteGrp15 || opcode == TwoByteXadd || opcode == TwoByteGrp9 ||
                    opcode == TwoByteNopModRm || opcode == TwoByteEndbr) {
             hasModRm = true;
         }
@@ -274,12 +256,9 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     const auto reg = static_cast<std::uint8_t>((modrm >> ModRmRegShift) & ModRmRegMask);
     const auto rm = static_cast<std::uint8_t>(modrm & ModRmRmMask);
 
-    if (!vexPresent && !twoByteOpcode &&
-        (opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm) &&
+    if (!vexPresent && !twoByteOpcode && (opcode == OneByteTestGrp3Rm8 || opcode == OneByteTestGrp3Rm) &&
         reg <= Grp3RegTestMax) {
-        immediateSize = (opcode == OneByteTestGrp3Rm8)
-            ? ImmSize8
-            : (operandSizeOverride ? ImmSize16 : ImmSize32);
+        immediateSize = (opcode == OneByteTestGrp3Rm8) ? ImmSize8 : (operandSizeOverride ? ImmSize16 : ImmSize32);
     }
 
     if (mod != ModRmModRegister && rm == ModRmRmSibPresent) {
@@ -316,10 +295,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
 
 namespace Codegen {
 
-DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
-    const std::uint8_t* data,
-    std::size_t available
-) const {
+DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(const std::uint8_t* data, std::size_t available) const {
     using namespace X64OpcodeConstants;
 
     DecodedInstructionInfo info{};
@@ -334,10 +310,9 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             ++pos;
             continue;
         }
-        if (b == PrefixLock || b == PrefixRepne || b == PrefixRep ||
-            b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs ||
-            b == PrefixSegEs || b == PrefixSegFs || b == PrefixSegGs ||
-            b == PrefixOperandSize || b == PrefixAddressSize) {
+        if (b == PrefixLock || b == PrefixRepne || b == PrefixRep || b == PrefixSegCs || b == PrefixSegSs ||
+            b == PrefixSegDs || b == PrefixSegEs || b == PrefixSegFs || b == PrefixSegGs || b == PrefixOperandSize ||
+            b == PrefixAddressSize) {
             if (b >= PrefixSegFs && b <= PrefixSegGs)
                 info.SegmentPrefix = b;
             info.RexPrefix = 0;
@@ -491,17 +466,12 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             (op >= OneByteModRmRangeGMin && op <= OneByteModRmRangeGMax) ||
             (op >= OneByteModRmRangeHMin && op <= OneByteModRmRangeHMax) ||
             (op >= OneByteModRmRangeIMin && op <= OneByteModRmRangeIMax) ||
-            (op >= OneByteModRmRangeJMin && op <= OneByteModRmRangeJMax) ||
-            op == OneByteArpl || op == OneByteMovsxd ||
-            op == OneByteGrp2Rm8Imm8 || op == OneByteGrp2RmImm8 ||
-            op == OneByteMovImm8 || op == OneByteMovImm32 ||
-            op == OneByteImm32AluCmp || op == OneByteImm8Grp1 ||
-            op == OneByteImm8AluCmp ||
-            op == OneByteImulRm32Imm32 || op == OneByteImulRm32Imm8 ||
-            op == OneByteShiftRm8By1 || op == OneByteShiftRmBy1 ||
-            op == OneByteShiftRm8ByCl || op == OneByteShiftRmByCl ||
-            op == OneByteTestGrp3Rm8 || op == OneByteTestGrp3Rm ||
-            op == OneByteIncDecRm8 || op == OneByteGrp5Rm ||
+            (op >= OneByteModRmRangeJMin && op <= OneByteModRmRangeJMax) || op == OneByteArpl || op == OneByteMovsxd ||
+            op == OneByteGrp2Rm8Imm8 || op == OneByteGrp2RmImm8 || op == OneByteMovImm8 || op == OneByteMovImm32 ||
+            op == OneByteImm32AluCmp || op == OneByteImm8Grp1 || op == OneByteImm8AluCmp ||
+            op == OneByteImulRm32Imm32 || op == OneByteImulRm32Imm8 || op == OneByteShiftRm8By1 ||
+            op == OneByteShiftRmBy1 || op == OneByteShiftRm8ByCl || op == OneByteShiftRmByCl ||
+            op == OneByteTestGrp3Rm8 || op == OneByteTestGrp3Rm || op == OneByteIncDecRm8 || op == OneByteGrp5Rm ||
             (op >= OneByteX87Min && op <= OneByteX87Max))
             hasModRm = true;
     } else {
@@ -515,21 +485,14 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             (op >= TwoByteModRmRangeHMin && op <= TwoByteModRmRangeHMax) ||
             (op >= TwoByteModRmRangeIMin && op <= TwoByteModRmRangeIMax) ||
             (op >= TwoBytePrefetchGrpMin && op <= TwoBytePrefetchGrpMax) ||
-            (op >= TwoByteSetccMin && op <= TwoByteSetccMax) ||
-            op == TwoByteImulRmModRm || op == TwoByteGrp7 ||
-            op == TwoByteGrp15 || op == TwoByteXadd ||
-            op == TwoByteGrp9 || op == TwoByteNopModRm ||
-            op == TwoByteEndbr || op == TwoByteMovImm8ModRm ||
-            op == ThreeByteEscape38 || op == ThreeByteEscape3A ||
-            (op >= TwoByteShiftImm8Min && op <= TwoByteShiftImm8Max) ||
-            op == TwoByteShldImm8 || op == TwoByteShrdImm8 ||
-            op == TwoByteShufpsImm8 || op == TwoByteShufpdImm8 ||
-            op == TwoBytePextrw || op == TwoBytePinsrw ||
-            op == TwoByteShldCl || op == TwoByteShrdCl ||
-            op == TwoBytePopcnt || op == TwoByteUd1 || op == TwoByteBtc ||
-            op == TwoBytePrefetchw || op == TwoByteXaddRm8 ||
-            op == TwoByteMovnti || op == TwoByteGrp6 ||
-            op == TwoByteLar || op == TwoByteLsl ||
+            (op >= TwoByteSetccMin && op <= TwoByteSetccMax) || op == TwoByteImulRmModRm || op == TwoByteGrp7 ||
+            op == TwoByteGrp15 || op == TwoByteXadd || op == TwoByteGrp9 || op == TwoByteNopModRm ||
+            op == TwoByteEndbr || op == TwoByteMovImm8ModRm || op == ThreeByteEscape38 || op == ThreeByteEscape3A ||
+            (op >= TwoByteShiftImm8Min && op <= TwoByteShiftImm8Max) || op == TwoByteShldImm8 ||
+            op == TwoByteShrdImm8 || op == TwoByteShufpsImm8 || op == TwoByteShufpdImm8 || op == TwoBytePextrw ||
+            op == TwoBytePinsrw || op == TwoByteShldCl || op == TwoByteShrdCl || op == TwoBytePopcnt ||
+            op == TwoByteUd1 || op == TwoByteBtc || op == TwoBytePrefetchw || op == TwoByteXaddRm8 ||
+            op == TwoByteMovnti || op == TwoByteGrp6 || op == TwoByteLar || op == TwoByteLsl ||
             (op >= TwoByteMovCrDrMin && op <= TwoByteMovCrDrMax))
             hasModRm = true;
     }

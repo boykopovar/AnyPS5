@@ -21,5 +21,4 @@ int APS5_VABI sceAgcInit(std::uint32_t version) {
     Agc::Command::GetRegisterDefaults(version, true, __func__);
     return 0;
 }
-
 }

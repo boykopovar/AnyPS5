@@ -46,8 +46,10 @@ std::optional<ReciprocalOperands> DecodeVexReciprocal(const std::uint8_t* data, 
     if (((modrm >> ModRmModShift) & ModRmModMask) != ModRmModRegister)
         return std::nullopt;
     ReciprocalOperands operands{};
-    operands.Operation = opcode == kOpcodeRsqrtps ? ReciprocalOperation::ReciprocalSquareRoot : ReciprocalOperation::Reciprocal;
-    operands.Destination = static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (registerExtension ? 8 : 0));
+    operands.Operation =
+        opcode == kOpcodeRsqrtps ? ReciprocalOperation::ReciprocalSquareRoot : ReciprocalOperation::Reciprocal;
+    operands.Destination =
+        static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (registerExtension ? 8 : 0));
     operands.Source = static_cast<std::uint8_t>((modrm & ModRmRmMask) | (rmExtension ? 8 : 0));
     return operands;
 }

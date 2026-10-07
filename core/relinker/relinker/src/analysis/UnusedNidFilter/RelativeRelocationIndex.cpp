@@ -43,14 +43,11 @@ std::uint64_t vaddrToFileOffset(const std::vector<LoadSegment>& loads, VirtualAd
 
 constexpr std::size_t RelaEntSize = 24;
 
-void collectRelativeEntries(
-    const std::vector<std::uint8_t>& elfBytes,
-    const std::vector<LoadSegment>& loads,
-    VirtualAddress tableVaddr,
-    std::uint64_t tableSize,
-    std::unordered_map<VirtualAddress, VirtualAddress>& out
-) {
-    if (tableVaddr == 0 || tableSize == 0) return;
+void collectRelativeEntries(const std::vector<std::uint8_t>& elfBytes, const std::vector<LoadSegment>& loads,
+                            VirtualAddress tableVaddr, std::uint64_t tableSize,
+                            std::unordered_map<VirtualAddress, VirtualAddress>& out) {
+    if (tableVaddr == 0 || tableSize == 0)
+        return;
     std::uint64_t tableFileOff = vaddrToFileOffset(loads, tableVaddr);
 
     for (std::uint64_t off = 0; off + RelaEntSize <= tableSize; off += RelaEntSize) {
@@ -63,7 +60,8 @@ void collectRelativeEntries(
         std::int64_t rAddend = static_cast<std::int64_t>(read64(elfBytes, pos + 16));
         std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
-        if (relType != R_X86_64_RELATIVE) continue;
+        if (relType != R_X86_64_RELATIVE)
+            continue;
 
         out[static_cast<VirtualAddress>(rOffset)] = static_cast<VirtualAddress>(rAddend);
     }
@@ -78,7 +76,8 @@ public:
 
     std::optional<VirtualAddress> TargetOfSlot(VirtualAddress slotVaddr) const override {
         auto it = _targets.find(slotVaddr);
-        if (it == _targets.end()) return std::nullopt;
+        if (it == _targets.end())
+            return std::nullopt;
         return it->second;
     }
 
@@ -86,28 +85,30 @@ private:
     std::unordered_map<VirtualAddress, VirtualAddress> _targets;
 };
 
-std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
-    const std::vector<std::uint8_t>& elfBytes
-) {
-    if (elfBytes.size() < 64) throw RelinkerException("ELF too small for header");
-    if (elfBytes[0] != 0x7f || elfBytes[1] != 'E' ||
-        elfBytes[2] != 'L' || elfBytes[3] != 'F') {
+std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(const std::vector<std::uint8_t>& elfBytes) {
+    if (elfBytes.size() < 64)
+        throw RelinkerException("ELF too small for header");
+    if (elfBytes[0] != 0x7f || elfBytes[1] != 'E' || elfBytes[2] != 'L' || elfBytes[3] != 'F') {
         throw RelinkerException("Not an ELF file");
     }
-    if (elfBytes[4] != 2) throw RelinkerException("Only ELF64 supported");
+    if (elfBytes[4] != 2)
+        throw RelinkerException("Only ELF64 supported");
 
     std::uint64_t phOff = read64(elfBytes, 32);
     std::uint16_t phEntSize = read16(elfBytes, 54);
     std::uint16_t phCount = read16(elfBytes, 56);
 
-    if (phEntSize < 56) throw RelinkerException("ELF program header entry too small");
+    if (phEntSize < 56)
+        throw RelinkerException("ELF program header entry too small");
 
     std::vector<LoadSegment> loads;
     for (std::uint16_t i = 0; i < phCount; ++i) {
         std::size_t phPos = static_cast<std::size_t>(phOff) + i * phEntSize;
-        if (phPos + 56 > elfBytes.size()) throw RelinkerException("Program header out of bounds");
+        if (phPos + 56 > elfBytes.size())
+            throw RelinkerException("Program header out of bounds");
         std::uint32_t type = read32(elfBytes, phPos);
-        if (type != PT_LOAD) continue;
+        if (type != PT_LOAD)
+            continue;
         LoadSegment seg;
         seg.fileOffset = read64(elfBytes, phPos + 8);
         seg.vaddr = read64(elfBytes, phPos + 16);
@@ -119,14 +120,17 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
 
     for (std::uint16_t i = 0; i < phCount; ++i) {
         std::size_t phPos = static_cast<std::size_t>(phOff) + i * phEntSize;
-        if (phPos + 56 > elfBytes.size()) throw RelinkerException("Program header out of bounds");
+        if (phPos + 56 > elfBytes.size())
+            throw RelinkerException("Program header out of bounds");
 
         std::uint32_t type = read32(elfBytes, phPos);
-        if (type != PT_DYNAMIC) continue;
+        if (type != PT_DYNAMIC)
+            continue;
 
         std::uint64_t segOff = read64(elfBytes, phPos + 8);
         std::uint64_t segSz = read64(elfBytes, phPos + 32);
-        if (segOff + segSz > elfBytes.size()) throw RelinkerException("PT_DYNAMIC segment out of bounds");
+        if (segOff + segSz > elfBytes.size())
+            throw RelinkerException("PT_DYNAMIC segment out of bounds");
 
         VirtualAddress relaVa = 0;
         std::uint64_t relaSz = 0;
@@ -138,11 +142,16 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
             std::int64_t tag = static_cast<std::int64_t>(read64(elfBytes, pos));
             std::uint64_t val = read64(elfBytes, pos + 8);
 
-            if (tag == DT_NULL) break;
-            if (tag == DT_RELA || tag == DT_OS_RELA) relaVa = val;
-            if (tag == DT_RELASZ || tag == DT_OS_RELASZ) relaSz = val;
-            if (tag == DT_JMPREL || tag == DT_OS_JMPREL) jmprelVa = val;
-            if (tag == DT_PLTRELSZ || tag == DT_OS_PLTRELSZ) pltrelsz = val;
+            if (tag == DT_NULL)
+                break;
+            if (tag == DT_RELA || tag == DT_OS_RELA)
+                relaVa = val;
+            if (tag == DT_RELASZ || tag == DT_OS_RELASZ)
+                relaSz = val;
+            if (tag == DT_JMPREL || tag == DT_OS_JMPREL)
+                jmprelVa = val;
+            if (tag == DT_PLTRELSZ || tag == DT_OS_PLTRELSZ)
+                pltrelsz = val;
         }
 
         collectRelativeEntries(elfBytes, loads, relaVa, relaSz, targets);

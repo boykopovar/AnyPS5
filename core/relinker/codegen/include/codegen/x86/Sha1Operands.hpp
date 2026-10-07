@@ -8,12 +8,7 @@
 
 namespace Codegen {
 
-enum class Sha1Operation : std::uint8_t {
-    Rnds4,
-    Nexte,
-    Msg1,
-    Msg2
-};
+enum class Sha1Operation : std::uint8_t { Rnds4, Nexte, Msg1, Msg2 };
 
 struct Sha1Operands {
     Sha1Operation Operation;

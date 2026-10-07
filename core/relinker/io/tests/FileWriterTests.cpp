@@ -7,8 +7,7 @@
 
 namespace {
 
-template<typename TValue>
-void requireWriteFailure(const TValue& data) {
+template <typename TValue> void requireWriteFailure(const TValue& data) {
     Io::FileWriter writer;
     writer.Write("/dev/null", data);
     try {
@@ -25,7 +24,8 @@ void requireWriteFailure(const TValue& data) {
 
 int main(int argc, char* argv[]) {
     try {
-        if (argc != 2) throw std::runtime_error("Expected binary or text");
+        if (argc != 2)
+            throw std::runtime_error("Expected binary or text");
         const std::string mode = argv[1];
         for (const std::size_t size : {std::size_t{3}, std::size_t{65536}}) {
             if (mode == "binary")

@@ -75,7 +75,8 @@ void UnlinkFontFromLibrary(FontLibNative* library, FontHandle handle);
 
 std::uint32_t* EntryLockWord(FontCtxEntry* entry, std::uint32_t modeLow);
 void** EntryObjectSlot(FontCtxEntry* entry, std::uint32_t modeLow);
-FontCtxEntry* AcquireFontCtxEntry(void* ctx, std::uint32_t index, std::uint32_t modeLow, FontObj** outObject, std::uint32_t* outLockWord);
+FontCtxEntry* AcquireFontCtxEntry(void* ctx, std::uint32_t index, std::uint32_t modeLow, FontObj** outObject,
+                                  std::uint32_t* outLockWord);
 void ReleaseFontCtxEntryLock(FontCtxEntry* entry, std::uint32_t modeLow, std::uint32_t lockWord);
 FontObj* FindSubFont(FontObj* head, std::uint32_t subFontIndex);
 void* FontContext(const FontLibNative* library, const FontHandleNative* font);
@@ -84,7 +85,8 @@ void ReleaseFontObjectsForHandle(FontHandleNative* font);
 FontState* TryGetState(FontHandle handle);
 FontState& ResetState(FontHandle handle);
 void RemoveState(FontHandle handle);
-void LoadStateFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes, std::uint32_t subFontIndex);
+void LoadStateFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes,
+                   std::uint32_t subFontIndex);
 
 bool IsSystemFontSet(std::uint32_t fontSetType);
 std::vector<SystemFontFile> SystemFontCandidates(std::uint32_t fontSetType);
@@ -106,7 +108,8 @@ int StyleStateSetDpi(StyleStateBlock* style, std::uint32_t hDpi, std::uint32_t v
 int StyleStateSetSlantRatio(StyleStateBlock* style, float slantRatio);
 int StyleStateGetSlantRatio(const StyleStateBlock* style, float* slantRatio);
 int StyleStateSetWeightScale(StyleStateBlock* style, float weightXScale, float weightYScale);
-int StyleStateGetWeightScale(const StyleStateBlock* style, float* weightXScale, float* weightYScale, std::uint32_t* mode);
+int StyleStateGetWeightScale(const StyleStateBlock* style, float* weightXScale, float* weightYScale,
+                             std::uint32_t* mode);
 bool ValidStyleFrame(const FontStyleFrame* frame);
 
 std::uint8_t CachedStyleCacheFlags(const CachedStyle& style);
@@ -119,7 +122,8 @@ void ClearRenderOutputs(FontGlyphMetrics* metrics, FontRenderOutput* result);
 int ComputeHorizontalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
 int ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
 int GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle);
-int RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
+int RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRenderSurface* surface, float x, float y,
+                             FontGlyphMetrics* metrics, FontRenderOutput* result);
 
 }
 

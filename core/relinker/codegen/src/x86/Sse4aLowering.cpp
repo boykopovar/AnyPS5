@@ -29,9 +29,7 @@ void _nopFill(std::vector<std::uint8_t>& out, std::size_t count) {
     }
 }
 
-void _zeroUpper(StubBodyBuilder& body, const std::uint8_t dst) {
-    body.Sse(kPrefixScalar, {0x0F, 0x7E}, dst, dst);
-}
+void _zeroUpper(StubBodyBuilder& body, const std::uint8_t dst) { body.Sse(kPrefixScalar, {0x0F, 0x7E}, dst, dst); }
 
 std::uint64_t _fieldMask(const std::uint8_t length) {
     return length >= kFieldBits ? ~std::uint64_t{0} : ((std::uint64_t{1} << length) - 1);
@@ -42,7 +40,8 @@ void _emitInsertqRegisterForm(StubBodyBuilder& body, const Sse4aOperands& operan
     const auto src = operands.Source;
     std::array<std::uint8_t, 3> scratch{};
     for (std::uint8_t reg = 0, found = 0; found < scratch.size(); ++reg)
-        if (reg != dst && reg != src) scratch[found++] = reg;
+        if (reg != dst && reg != src)
+            scratch[found++] = reg;
     const auto control = scratch[0];
     const auto index = scratch[1];
     const auto hole = scratch[2];
@@ -87,7 +86,8 @@ void _emitOutOfLine(StubBodyBuilder& body, const Sse4aOperands& operands) {
         const auto src = operands.Source;
         std::array<std::uint8_t, 2> scratch{};
         for (std::uint8_t reg = 0, found = 0; found < scratch.size(); ++reg)
-            if (reg != dst && reg != src) scratch[found++] = reg;
+            if (reg != dst && reg != src)
+                scratch[found++] = reg;
         Constant fieldMask{};
         fieldMask[0] = kFieldBits - 1;
         Constant one{};
@@ -163,7 +163,8 @@ void _emitOutOfLine(StubBodyBuilder& body, const Sse4aOperands& operands) {
 
 }
 
-std::optional<std::vector<std::uint8_t>> Sse4aLowering::LowerInPlace(const Sse4aOperands& operands, const std::size_t originalLength) const {
+std::optional<std::vector<std::uint8_t>> Sse4aLowering::LowerInPlace(const Sse4aOperands& operands,
+                                                                     const std::size_t originalLength) const {
     if (operands.RegisterForm)
         return std::nullopt;
     const auto length = operands.Length;
@@ -200,7 +201,8 @@ LoweredBody Sse4aLowering::LowerOutOfLine(const Sse4aOperands& operands, std::sp
     return LowerOutOfLine(std::span<const Sse4aOperands>(&operands, 1), trailing);
 }
 
-LoweredBody Sse4aLowering::LowerOutOfLine(std::span<const Sse4aOperands> sequence, std::span<const std::uint8_t> trailing) const {
+LoweredBody Sse4aLowering::LowerOutOfLine(std::span<const Sse4aOperands> sequence,
+                                          std::span<const std::uint8_t> trailing) const {
     StubBodyBuilder body;
     for (const auto& operands : sequence)
         _emitOutOfLine(body, operands);

@@ -9,24 +9,35 @@
 #include <string>
 #include <vector>
 
-struct Value { void* node; };
-struct String { void* text; };
-struct Array { void* items; };
-struct Object { void* items; };
-struct Iterator { void* position; };
+struct Value {
+    void* node;
+};
+struct String {
+    void* text;
+};
+struct Array {
+    void* items;
+};
+struct Object {
+    void* items;
+};
+struct Iterator {
+    void* position;
+};
 struct Pair {
     String key;
     std::uint64_t reserved;
     Value value;
 };
-using NullAccessCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
+using NullAccessCallback = const Value&(APS5_VABI*)(std::int32_t, const Value*, void*);
 
 extern "C" {
 int APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 int APS5_VABI _ZN3sce4Json11InitializerD1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const void*);
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
-int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void*, NullAccessCallback, void*);
+int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(
+    void*, NullAccessCallback, void*);
 void APS5_VABI _ZN3sce4Json6StringC1Ev(String*);
 void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
 void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
@@ -117,20 +128,18 @@ static std::string Serialize(Value& value) {
     return text;
 }
 
-static const Value& Member(const Value& value, const char* key) {
-    return *_ZNK3sce4Json5ValueixEPKc(&value, key);
-}
+static const Value& Member(const Value& value, const char* key) { return *_ZNK3sce4Json5ValueixEPKc(&value, key); }
 
 static void ParseAndRoundTrip() {
-    const std::string text =
-        "{ \"name\" : \"x\\u00e9\\n\", \"count\": 3, \"big\": 18446744073709551615, \"neg\": -5,"
-        " \"pi\": 1.5, \"ok\": true, \"none\": null, \"list\": [1, \"two\", [3]] }";
+    const std::string text = "{ \"name\" : \"x\\u00e9\\n\", \"count\": 3, \"big\": 18446744073709551615, \"neg\": -5,"
+                             " \"pi\": 1.5, \"ok\": true, \"none\": null, \"list\": [1, \"two\", [3]] }";
     Value root{};
     _ZN3sce4Json5ValueC1Ev(&root);
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, text.c_str(), text.size()) == 0);
     Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject);
     Require(_ZNK3sce4Json5Value5countEv(&root) == 8);
-    Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&Member(root, "name"))), "x\xc3\xa9\n") == 0);
+    Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&Member(root, "name"))),
+                        "x\xc3\xa9\n") == 0);
     Require(_ZNK3sce4Json5Value7getTypeEv(&Member(root, "count")) == TypeInteger);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "count")) == 3);
     Require(*_ZNK3sce4Json5Value11getUIntegerEv(&Member(root, "count")) == 3);
@@ -193,9 +202,11 @@ static void ParseAndRoundTrip() {
 
 static std::string Nested(std::size_t depth, bool objects) {
     std::string text;
-    for (std::size_t i = 0; i < depth; ++i) text += objects ? "{\"a\":" : "[";
+    for (std::size_t i = 0; i < depth; ++i)
+        text += objects ? "{\"a\":" : "[";
     text += "1";
-    for (std::size_t i = 0; i < depth; ++i) text += objects ? "}" : "]";
+    for (std::size_t i = 0; i < depth; ++i)
+        text += objects ? "}" : "]";
     return text;
 }
 
@@ -232,7 +243,8 @@ static void ObjectsAndArrays() {
     for (; _ZNK3sce4Json6Object8iteratorneERKS2_(&it, &end); _ZN3sce4Json6Object8iteratorppEv(&it)) {
         const Pair* pair = _ZNK3sce4Json6Object8iteratordeEv(&it);
         keys.emplace_back(_ZNK3sce4Json6String5c_strEv(&pair->key));
-        if (keys.size() == 1) Require(&pair->value == first);
+        if (keys.size() == 1)
+            Require(&pair->value == first);
     }
     _ZN3sce4Json6Object8iteratorD1Ev(&it);
     _ZN3sce4Json6Object8iteratorD1Ev(&end);
@@ -260,7 +272,8 @@ static void ObjectsAndArrays() {
     int visited = 0;
     _ZNK3sce4Json5Array5beginEv(&it, &array);
     _ZNK3sce4Json5Array3endEv(&end, &array);
-    for (; _ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end); _ZN3sce4Json5Array8iteratorppEv(&it)) ++visited;
+    for (; _ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end); _ZN3sce4Json5Array8iteratorppEv(&it))
+        ++visited;
     Require(visited == 2);
     _ZN3sce4Json5ArrayD1Ev(&array);
 }
@@ -271,7 +284,8 @@ static void NullAccess() {
     Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(initializer, parameter) == 0);
     int context = 0;
-    Require(_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(initializer, OnNullAccess, &context) == 0);
+    Require(_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(
+                initializer, OnNullAccess, &context) == 0);
     _ZN3sce4Json5ValueC1Ev(&fallback);
     Require(_ZN3sce4Json5Value3setEl(&fallback, 99) == 0);
 

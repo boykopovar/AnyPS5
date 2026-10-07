@@ -16,13 +16,10 @@ public:
     virtual bool IsReachable(VirtualAddress vaddr) const = 0;
 };
 
-std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
-    const std::vector<std::uint8_t>& text,
-    VirtualAddress textVaddr,
-    VirtualAddress entryVaddr,
-    const std::vector<VirtualAddress>& extraEntries,
-    const IRelativeRelocationIndex& relativeRelocations
-);
+std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(const std::vector<std::uint8_t>& text,
+                                                         VirtualAddress textVaddr, VirtualAddress entryVaddr,
+                                                         const std::vector<VirtualAddress>& extraEntries,
+                                                         const IRelativeRelocationIndex& relativeRelocations);
 
 }
 

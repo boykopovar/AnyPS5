@@ -13,11 +13,11 @@ extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateAnotherOp(CommandBuffer
 namespace {
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error& error) {
@@ -32,9 +32,10 @@ void testSizes() {
     for (std::uint32_t operation = 0; operation < sizes.size(); ++operation) {
         check(sceAgcDcbContextStateOpGetSize(operation) == sizes[operation], "context state size mismatch");
         std::array<std::uint32_t, 64> words{};
-        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(),
-                             nullptr, nullptr, 0};
-        check(sceAgcDcbContextStateAnotherOp(&buffer, operation) == words.data(), "context state op did not start at the cursor");
+        CommandBuffer buffer{
+            words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+        check(sceAgcDcbContextStateAnotherOp(&buffer, operation) == words.data(),
+              "context state op did not start at the cursor");
         const auto written = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * sizeof(std::uint32_t);
         check(written == sizes[operation], "context state size differs from the written packets");
     }
@@ -56,8 +57,11 @@ int main() {
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
+        try {
+            LibcRunShutdown_nid_postfix();
+        } catch (const std::exception& shutdown) {
+            std::fprintf(stderr, "shutdown: %s\n", shutdown.what());
+        }
         return 1;
     }
 }

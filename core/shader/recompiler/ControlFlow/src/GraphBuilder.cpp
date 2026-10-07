@@ -95,8 +95,10 @@ std::uint32_t estimatedSpirvWords(const RdnaInstruction& instruction) {
     return 60u;
 }
 
-bool isValidTarget(std::uint32_t target, const std::set<std::uint32_t>& instructionProgramCounters, std::uint32_t firstProgramCounter, std::uint32_t endProgramCounter) {
-    return target == endProgramCounter || (target >= firstProgramCounter && instructionProgramCounters.contains(target));
+bool isValidTarget(std::uint32_t target, const std::set<std::uint32_t>& instructionProgramCounters,
+                   std::uint32_t firstProgramCounter, std::uint32_t endProgramCounter) {
+    return target == endProgramCounter ||
+           (target >= firstProgramCounter && instructionProgramCounters.contains(target));
 }
 
 bool isRegister(const RdnaOperand& operand, RdnaOperandKind kind, std::uint32_t reg) {
@@ -104,7 +106,8 @@ bool isRegister(const RdnaOperand& operand, RdnaOperandKind kind, std::uint32_t 
 }
 
 bool isImmediate(const RdnaOperand& operand, std::uint32_t& value) {
-    if (operand.kind == RdnaOperandKind::IntegerInlineConstant || operand.kind == RdnaOperandKind::LiteralConstant || operand.kind == RdnaOperandKind::FloatInlineConstant) {
+    if (operand.kind == RdnaOperandKind::IntegerInlineConstant || operand.kind == RdnaOperandKind::LiteralConstant ||
+        operand.kind == RdnaOperandKind::FloatInlineConstant) {
         value = operand.value;
         return true;
     }
@@ -115,10 +118,14 @@ constexpr std::uint32_t NoScalarRegister = UINT32_MAX;
 
 std::uint32_t scalarIndex(const RdnaOperand& operand) {
     switch (operand.kind) {
-        case RdnaOperandKind::ScalarRegister: return operand.reg;
-        case RdnaOperandKind::VccLo: return 106u;
-        case RdnaOperandKind::VccHi: return 107u;
-        default: return NoScalarRegister;
+    case RdnaOperandKind::ScalarRegister:
+        return operand.reg;
+    case RdnaOperandKind::VccLo:
+        return 106u;
+    case RdnaOperandKind::VccHi:
+        return 107u;
+    default:
+        return NoScalarRegister;
     }
 }
 
@@ -128,16 +135,18 @@ bool isScalar(const RdnaOperand& operand, std::uint32_t index) {
 
 bool addsImmediateTo(const RdnaInstruction& instruction, std::uint32_t index, std::uint32_t& immediate) {
     return isScalar(instruction.destination, index) &&
-        ((isScalar(instruction.source0, index) && isImmediate(instruction.source1, immediate)) ||
-         (isScalar(instruction.source1, index) && isImmediate(instruction.source0, immediate)));
+           ((isScalar(instruction.source0, index) && isImmediate(instruction.source1, immediate)) ||
+            (isScalar(instruction.source1, index) && isImmediate(instruction.source0, immediate)));
 }
 
 bool subtractsImmediateFrom(const RdnaInstruction& instruction, std::uint32_t index, std::uint32_t& immediate) {
-    return isScalar(instruction.destination, index) && isScalar(instruction.source0, index) && isImmediate(instruction.source1, immediate);
+    return isScalar(instruction.destination, index) && isScalar(instruction.source0, index) &&
+           isImmediate(instruction.source1, immediate);
 }
 
 bool resolveLongSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex, std::uint32_t& target) {
-    if (setpcIndex < 3u) return false;
+    if (setpcIndex < 3u)
+        return false;
     const auto& setpc = program.instructions[setpcIndex];
     const auto& pc = program.instructions[setpcIndex - 3u];
     const auto& low = program.instructions[setpcIndex - 2u];
@@ -146,13 +155,18 @@ bool resolveLongSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex
     const bool adds = low.op == RdnaOpcode::SAddU32 && high.op == RdnaOpcode::SAddcU32;
     const bool subtracts = low.op == RdnaOpcode::SSubU32 && high.op == RdnaOpcode::SSubbU32;
     std::uint32_t lowImmediate = 0, highImmediate = 0;
-    if (setpc.op != RdnaOpcode::SSetpcB64 || pcRegister == NoScalarRegister || pcRegister % 2u != 0u || pc.op != RdnaOpcode::SGetpcB64 || !isScalar(pc.destination, pcRegister)) return false;
+    if (setpc.op != RdnaOpcode::SSetpcB64 || pcRegister == NoScalarRegister || pcRegister % 2u != 0u ||
+        pc.op != RdnaOpcode::SGetpcB64 || !isScalar(pc.destination, pcRegister))
+        return false;
     if (adds ? !addsImmediateTo(low, pcRegister, lowImmediate) || !addsImmediateTo(high, pcRegister + 1u, highImmediate)
-             : !subtracts || !subtractsImmediateFrom(low, pcRegister, lowImmediate) || !subtractsImmediateFrom(high, pcRegister + 1u, highImmediate)) return false;
+             : !subtracts || !subtractsImmediateFrom(low, pcRegister, lowImmediate) ||
+                   !subtractsImmediateFrom(high, pcRegister + 1u, highImmediate))
+        return false;
     const auto offset = (static_cast<std::uint64_t>(highImmediate) << 32u) | lowImmediate;
     const auto base = static_cast<std::uint64_t>(instructionEndProgramCounter(pc));
     const auto destination = adds ? base + offset : base - offset;
-    if (destination > UINT32_MAX || (destination & 3u) != 0u) return false;
+    if (destination > UINT32_MAX || (destination & 3u) != 0u)
+        return false;
     target = static_cast<std::uint32_t>(destination);
     return true;
 }
@@ -174,11 +188,19 @@ bool resolveSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex, st
     if (setpcIndex >= 2u) {
         const auto& arithmetic = program.instructions[setpcIndex - 1u];
         const auto& getProgramCounter = program.instructions[setpcIndex - 2u];
-        if (getProgramCounter.op == RdnaOpcode::SGetpcB64 && getProgramCounter.destination.kind == RdnaOperandKind::ScalarRegister && getProgramCounter.destination.reg == pcRegister && arithmetic.destination.kind == RdnaOperandKind::ScalarRegister && arithmetic.destination.reg == pcRegister) {
+        if (getProgramCounter.op == RdnaOpcode::SGetpcB64 &&
+            getProgramCounter.destination.kind == RdnaOperandKind::ScalarRegister &&
+            getProgramCounter.destination.reg == pcRegister &&
+            arithmetic.destination.kind == RdnaOperandKind::ScalarRegister &&
+            arithmetic.destination.reg == pcRegister) {
             std::uint32_t immediate = 0;
             const bool adds = arithmetic.op == RdnaOpcode::SAddU32 || arithmetic.op == RdnaOpcode::SAddI32;
-            const bool subtracts = (arithmetic.op == RdnaOpcode::SSubU32 || arithmetic.op == RdnaOpcode::SSubI32) && isRegister(arithmetic.source0, RdnaOperandKind::ScalarRegister, pcRegister);
-            if ((adds || subtracts) && (isRegister(arithmetic.source0, RdnaOperandKind::ScalarRegister, pcRegister) || isRegister(arithmetic.source1, RdnaOperandKind::ScalarRegister, pcRegister)) && (isImmediate(arithmetic.source0, immediate) || isImmediate(arithmetic.source1, immediate))) {
+            const bool subtracts = (arithmetic.op == RdnaOpcode::SSubU32 || arithmetic.op == RdnaOpcode::SSubI32) &&
+                                   isRegister(arithmetic.source0, RdnaOperandKind::ScalarRegister, pcRegister);
+            if ((adds || subtracts) &&
+                (isRegister(arithmetic.source0, RdnaOperandKind::ScalarRegister, pcRegister) ||
+                 isRegister(arithmetic.source1, RdnaOperandKind::ScalarRegister, pcRegister)) &&
+                (isImmediate(arithmetic.source0, immediate) || isImmediate(arithmetic.source1, immediate))) {
                 const auto base = instructionEndProgramCounter(getProgramCounter);
                 target = (adds ? base + immediate : base - immediate) & ~3u;
                 return true;
@@ -188,7 +210,9 @@ bool resolveSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex, st
 
     if (setpcIndex >= 1u) {
         const auto& getProgramCounter = program.instructions[setpcIndex - 1u];
-        if (getProgramCounter.op == RdnaOpcode::SGetpcB64 && getProgramCounter.destination.kind == RdnaOperandKind::ScalarRegister && getProgramCounter.destination.reg == pcRegister) {
+        if (getProgramCounter.op == RdnaOpcode::SGetpcB64 &&
+            getProgramCounter.destination.kind == RdnaOperandKind::ScalarRegister &&
+            getProgramCounter.destination.reg == pcRegister) {
             target = instructionEndProgramCounter(getProgramCounter);
             return true;
         }
@@ -205,46 +229,60 @@ struct BoundedJumpTable {
 
 bool sameRegister(const RdnaOperand& first, const RdnaOperand& second) {
     return first.kind == second.kind && first.reg == second.reg &&
-        (first.kind == RdnaOperandKind::ScalarRegister || first.kind == RdnaOperandKind::VccLo);
+           (first.kind == RdnaOperandKind::ScalarRegister || first.kind == RdnaOperandKind::VccLo);
 }
 
 bool addsRegister(const RdnaInstruction& instruction, std::uint32_t reg, const RdnaOperand& other) {
     return isRegister(instruction.destination, RdnaOperandKind::ScalarRegister, reg) &&
-        ((isRegister(instruction.source0, RdnaOperandKind::ScalarRegister, reg) && sameRegister(instruction.source1, other)) ||
-         (isRegister(instruction.source1, RdnaOperandKind::ScalarRegister, reg) && sameRegister(instruction.source0, other)));
+           ((isRegister(instruction.source0, RdnaOperandKind::ScalarRegister, reg) &&
+             sameRegister(instruction.source1, other)) ||
+            (isRegister(instruction.source1, RdnaOperandKind::ScalarRegister, reg) &&
+             sameRegister(instruction.source0, other)));
 }
 
 bool addsImmediate(const RdnaInstruction& instruction, std::uint32_t reg, std::uint32_t& immediate) {
     return isRegister(instruction.destination, RdnaOperandKind::ScalarRegister, reg) &&
-        ((isRegister(instruction.source0, RdnaOperandKind::ScalarRegister, reg) && isImmediate(instruction.source1, immediate)) ||
-         (isRegister(instruction.source1, RdnaOperandKind::ScalarRegister, reg) && isImmediate(instruction.source0, immediate)));
+           ((isRegister(instruction.source0, RdnaOperandKind::ScalarRegister, reg) &&
+             isImmediate(instruction.source1, immediate)) ||
+            (isRegister(instruction.source1, RdnaOperandKind::ScalarRegister, reg) &&
+             isImmediate(instruction.source0, immediate)));
 }
 
 bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result) {
-    if (index < 9u) return false;
+    if (index < 9u)
+        return false;
     const auto& branch = program.instructions[index];
-    if (branch.source0.kind != RdnaOperandKind::ScalarRegister) return false;
+    if (branch.source0.kind != RdnaOperandKind::ScalarRegister)
+        return false;
     const auto pcReg = branch.source0.reg;
     const auto& pc = program.instructions[index - 3u];
     const auto& low = program.instructions[index - 2u];
     const auto& high = program.instructions[index - 1u];
     if (pc.op != RdnaOpcode::SGetpcB64 || !isRegister(pc.destination, RdnaOperandKind::ScalarRegister, pcReg) ||
-        low.op != RdnaOpcode::SAddU32 || high.op != RdnaOpcode::SAddcU32) return false;
+        low.op != RdnaOpcode::SAddU32 || high.op != RdnaOpcode::SAddcU32)
+        return false;
     for (std::uint32_t loadIndex = index - 3u; loadIndex-- > 5u;) {
         const auto& load = program.instructions[loadIndex];
         if (load.op != RdnaOpcode::SLoadDwordx2) {
-            if (load.op == RdnaOpcode::SWaitcnt) continue;
+            if (load.op == RdnaOpcode::SWaitcnt)
+                continue;
             if (load.family == RdnaInstructionFamily::VOP1 || load.family == RdnaInstructionFamily::VOP2 ||
                 load.family == RdnaInstructionFamily::VOP3 || load.family == RdnaInstructionFamily::VOPC) {
-                if (load.destination.kind != RdnaOperandKind::ScalarRegister && load.destination2.kind != RdnaOperandKind::ScalarRegister) continue;
+                if (load.destination.kind != RdnaOperandKind::ScalarRegister &&
+                    load.destination2.kind != RdnaOperandKind::ScalarRegister)
+                    continue;
             }
             return false;
         }
-        if (load.destination.kind != RdnaOperandKind::ScalarRegister || load.source0.kind != RdnaOperandKind::ScalarRegister) return false;
+        if (load.destination.kind != RdnaOperandKind::ScalarRegister ||
+            load.source0.kind != RdnaOperandKind::ScalarRegister)
+            return false;
         auto loadedHigh = load.destination;
         ++loadedHigh.reg;
-        if (!addsRegister(low, pcReg, load.destination) || !addsRegister(high, pcReg + 1u, loadedHigh)) return false;
-        if (pcReg <= loadedHigh.reg && load.destination.reg <= pcReg + 1u) return false;
+        if (!addsRegister(low, pcReg, load.destination) || !addsRegister(high, pcReg + 1u, loadedHigh))
+            return false;
+        if (pcReg <= loadedHigh.reg && load.destination.reg <= pcReg + 1u)
+            return false;
         const auto& basePc = program.instructions[loadIndex - 3u];
         const auto& baseLow = program.instructions[loadIndex - 2u];
         const auto& baseHigh = program.instructions[loadIndex - 1u];
@@ -252,29 +290,41 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
         const auto& bound = program.instructions[loadIndex - 5u];
         const auto baseReg = load.source0.reg;
         std::uint32_t displacement = 0, carry = 0, shiftAmount = 0, maximum = 0;
-        if (basePc.op != RdnaOpcode::SGetpcB64 || !isRegister(basePc.destination, RdnaOperandKind::ScalarRegister, baseReg) ||
+        if (basePc.op != RdnaOpcode::SGetpcB64 ||
+            !isRegister(basePc.destination, RdnaOperandKind::ScalarRegister, baseReg) ||
             baseLow.op != RdnaOpcode::SAddU32 || !addsImmediate(baseLow, baseReg, displacement) ||
             baseHigh.op != RdnaOpcode::SAddcU32 || !addsImmediate(baseHigh, baseReg + 1u, carry) || carry != 0u ||
             shift.op != RdnaOpcode::SLshlB32 || !sameRegister(shift.destination, load.source1) ||
-            !sameRegister(shift.source0, load.source1) || !isImmediate(shift.source1, shiftAmount) || shiftAmount != 3u ||
-            bound.op != RdnaOpcode::SMinU32 || !sameRegister(bound.destination, load.source1) ||
-            !sameRegister(bound.source0, load.source1) || !isImmediate(bound.source1, maximum) || maximum > 255u) return false;
-        if (load.source1.kind == RdnaOperandKind::ScalarRegister && load.source1.reg >= baseReg && load.source1.reg <= baseReg + 1u) return false;
+            !sameRegister(shift.source0, load.source1) || !isImmediate(shift.source1, shiftAmount) ||
+            shiftAmount != 3u || bound.op != RdnaOpcode::SMinU32 || !sameRegister(bound.destination, load.source1) ||
+            !sameRegister(bound.source0, load.source1) || !isImmediate(bound.source1, maximum) || maximum > 255u)
+            return false;
+        if (load.source1.kind == RdnaOperandKind::ScalarRegister && load.source1.reg >= baseReg &&
+            load.source1.reg <= baseReg + 1u)
+            return false;
         for (const auto& instruction : program.instructions) {
-            if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > bound.programCounter && instruction.branchTarget <= branch.programCounter) return false;
+            if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > bound.programCounter &&
+                instruction.branchTarget <= branch.programCounter)
+                return false;
         }
-        const std::uint64_t table = static_cast<std::uint64_t>(instructionEndProgramCounter(basePc)) + displacement + load.memoryOffset;
+        const std::uint64_t table =
+            static_cast<std::uint64_t>(instructionEndProgramCounter(basePc)) + displacement + load.memoryOffset;
         const std::uint64_t byteCount = (static_cast<std::uint64_t>(maximum) + 1u) * 8u;
-        if ((table & 3u) != 0u || table > program.code.size_bytes() || byteCount > program.code.size_bytes() - table) return false;
+        if ((table & 3u) != 0u || table > program.code.size_bytes() || byteCount > program.code.size_bytes() - table)
+            return false;
         result.load.programCounter = load.programCounter;
         result.firstProgramCounter = bound.programCounter;
         for (std::uint32_t entry = 0; entry <= maximum; ++entry) {
             const auto word = static_cast<std::size_t>(table / 4u) + entry * 2u;
-            const std::uint64_t value = program.code[word] | (static_cast<std::uint64_t>(program.code[word + 1u]) << 32u);
+            const std::uint64_t value =
+                program.code[word] | (static_cast<std::uint64_t>(program.code[word + 1u]) << 32u);
             const auto offset = std::bit_cast<std::int64_t>(value);
-            if (offset < -static_cast<std::int64_t>(instructionEndProgramCounter(pc)) || offset > UINT32_MAX) return false;
-            const auto target = static_cast<std::uint64_t>(static_cast<std::int64_t>(instructionEndProgramCounter(pc)) + offset);
-            if (target < instructionEndProgramCounter(branch) || target > UINT32_MAX || (target & 3u) != 0u) return false;
+            if (offset < -static_cast<std::int64_t>(instructionEndProgramCounter(pc)) || offset > UINT32_MAX)
+                return false;
+            const auto target =
+                static_cast<std::uint64_t>(static_cast<std::int64_t>(instructionEndProgramCounter(pc)) + offset);
+            if (target < instructionEndProgramCounter(branch) || target > UINT32_MAX || (target & 3u) != 0u)
+                return false;
             result.load.values.push_back(value);
             result.targets.push_back(static_cast<std::uint32_t>(target));
         }
@@ -286,31 +336,36 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
 bool writesScalar(const RdnaInstruction& instruction, std::uint32_t index) {
     std::uint32_t count = instruction.dataDwordCount;
     switch (instruction.family) {
-        case RdnaInstructionFamily::SOP1:
-        case RdnaInstructionFamily::SOP2:
-        case RdnaInstructionFamily::SOPK:
-            if (instruction.op == RdnaOpcode::SMovreldB32 || instruction.op == RdnaOpcode::SMovreldB64 || instruction.op == RdnaOpcode::SMovrelsd2B32) return true;
-            break;
-        case RdnaInstructionFamily::SMEM:
-            if (instruction.op == RdnaOpcode::SMemtime || instruction.op == RdnaOpcode::SMemrealtime) count = 2u;
-            break;
-        case RdnaInstructionFamily::VOP1:
-        case RdnaInstructionFamily::VOP2:
-        case RdnaInstructionFamily::VOP3:
-        case RdnaInstructionFamily::VOP3P:
-        case RdnaInstructionFamily::VOPC:
+    case RdnaInstructionFamily::SOP1:
+    case RdnaInstructionFamily::SOP2:
+    case RdnaInstructionFamily::SOPK:
+        if (instruction.op == RdnaOpcode::SMovreldB32 || instruction.op == RdnaOpcode::SMovreldB64 ||
+            instruction.op == RdnaOpcode::SMovrelsd2B32)
+            return true;
+        break;
+    case RdnaInstructionFamily::SMEM:
+        if (instruction.op == RdnaOpcode::SMemtime || instruction.op == RdnaOpcode::SMemrealtime)
             count = 2u;
-            break;
-        case RdnaInstructionFamily::SOPC:
-        case RdnaInstructionFamily::SOPP:
-        case RdnaInstructionFamily::VINTRP:
-        case RdnaInstructionFamily::MUBUF:
-        case RdnaInstructionFamily::MTBUF:
-        case RdnaInstructionFamily::FLAT:
-        case RdnaInstructionFamily::DS:
-        case RdnaInstructionFamily::MIMG:
-        case RdnaInstructionFamily::EXP: return false;
-        case RdnaInstructionFamily::Unknown: return true;
+        break;
+    case RdnaInstructionFamily::VOP1:
+    case RdnaInstructionFamily::VOP2:
+    case RdnaInstructionFamily::VOP3:
+    case RdnaInstructionFamily::VOP3P:
+    case RdnaInstructionFamily::VOPC:
+        count = 2u;
+        break;
+    case RdnaInstructionFamily::SOPC:
+    case RdnaInstructionFamily::SOPP:
+    case RdnaInstructionFamily::VINTRP:
+    case RdnaInstructionFamily::MUBUF:
+    case RdnaInstructionFamily::MTBUF:
+    case RdnaInstructionFamily::FLAT:
+    case RdnaInstructionFamily::DS:
+    case RdnaInstructionFamily::MIMG:
+    case RdnaInstructionFamily::EXP:
+        return false;
+    case RdnaInstructionFamily::Unknown:
+        return true;
     }
     const auto covers = [&](const RdnaOperand& operand) {
         const auto first = scalarIndex(operand);
@@ -319,10 +374,13 @@ bool writesScalar(const RdnaInstruction& instruction, std::uint32_t index) {
     return covers(instruction.destination) || covers(instruction.destination2);
 }
 
-bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer) {
+bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initializer_list<std::uint32_t> indices,
+                    std::uint32_t& writer) {
     for (auto position = end; position-- > 0u;) {
         const auto& instruction = program.instructions[position];
-        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm) return false;
+        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SSetpcB64 ||
+            instruction.op == RdnaOpcode::SEndpgm)
+            return false;
         if (std::ranges::any_of(indices, [&](std::uint32_t index) { return writesScalar(instruction, index); })) {
             writer = position;
             return true;
@@ -332,53 +390,67 @@ bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initiali
 }
 
 bool resolveDwordJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result) {
-    if (index < 2u) return false;
+    if (index < 2u)
+        return false;
     const auto& branch = program.instructions[index];
     const auto& low = program.instructions[index - 2u];
     const auto& high = program.instructions[index - 1u];
-    if (branch.source0.kind != RdnaOperandKind::ScalarRegister || branch.source0.reg % 2u != 0u) return false;
+    if (branch.source0.kind != RdnaOperandKind::ScalarRegister || branch.source0.reg % 2u != 0u)
+        return false;
     const auto pcReg = branch.source0.reg;
     const auto entryReg = scalarIndex(low.source1);
     std::uint32_t borrow = 0;
     if (low.op != RdnaOpcode::SSubU32 || !isScalar(low.destination, pcReg) || !isScalar(low.source0, pcReg) ||
         entryReg == NoScalarRegister || entryReg == pcReg || entryReg == pcReg + 1u ||
-        high.op != RdnaOpcode::SSubbU32 || !subtractsImmediateFrom(high, pcReg + 1u, borrow) || borrow != 0u) return false;
+        high.op != RdnaOpcode::SSubbU32 || !subtractsImmediateFrom(high, pcReg + 1u, borrow) || borrow != 0u)
+        return false;
     std::uint32_t loadIndex = 0, shiftIndex = 0, boundIndex = 0, baseIndex = 0;
-    if (!findLastWriter(program, index - 2u, {entryReg, pcReg, pcReg + 1u}, loadIndex)) return false;
+    if (!findLastWriter(program, index - 2u, {entryReg, pcReg, pcReg + 1u}, loadIndex))
+        return false;
     const auto& load = program.instructions[loadIndex];
     const auto offsetReg = scalarIndex(load.source1);
-    if (load.op != RdnaOpcode::SLoadDword || !isScalar(load.destination, entryReg) || writesScalar(load, pcReg) || writesScalar(load, pcReg + 1u) ||
-        !isScalar(load.source0, pcReg) || offsetReg == NoScalarRegister || offsetReg == pcReg || offsetReg == pcReg + 1u) return false;
-    if (!findLastWriter(program, loadIndex, {offsetReg}, shiftIndex) || !findLastWriter(program, shiftIndex, {offsetReg}, boundIndex) ||
-        !findLastWriter(program, loadIndex, {pcReg, pcReg + 1u}, baseIndex) || baseIndex < 2u) return false;
+    if (load.op != RdnaOpcode::SLoadDword || !isScalar(load.destination, entryReg) || writesScalar(load, pcReg) ||
+        writesScalar(load, pcReg + 1u) || !isScalar(load.source0, pcReg) || offsetReg == NoScalarRegister ||
+        offsetReg == pcReg || offsetReg == pcReg + 1u)
+        return false;
+    if (!findLastWriter(program, loadIndex, {offsetReg}, shiftIndex) ||
+        !findLastWriter(program, shiftIndex, {offsetReg}, boundIndex) ||
+        !findLastWriter(program, loadIndex, {pcReg, pcReg + 1u}, baseIndex) || baseIndex < 2u)
+        return false;
     const auto& shift = program.instructions[shiftIndex];
     const auto& bound = program.instructions[boundIndex];
     const auto& basePc = program.instructions[baseIndex - 2u];
     const auto& baseLow = program.instructions[baseIndex - 1u];
     const auto& baseHigh = program.instructions[baseIndex];
     std::uint32_t shiftAmount = 0, maximum = 0, displacement = 0, carry = 0;
-    if (shift.op != RdnaOpcode::SLshlB32 || !isScalar(shift.destination, offsetReg) || !isScalar(shift.source0, offsetReg) ||
-        !isImmediate(shift.source1, shiftAmount) || shiftAmount != 2u ||
+    if (shift.op != RdnaOpcode::SLshlB32 || !isScalar(shift.destination, offsetReg) ||
+        !isScalar(shift.source0, offsetReg) || !isImmediate(shift.source1, shiftAmount) || shiftAmount != 2u ||
         bound.op != RdnaOpcode::SMinU32 || !isScalar(bound.destination, offsetReg) ||
         !(isImmediate(bound.source1, maximum) || isImmediate(bound.source0, maximum)) || maximum > 255u ||
         basePc.op != RdnaOpcode::SGetpcB64 || !isScalar(basePc.destination, pcReg) ||
         baseLow.op != RdnaOpcode::SAddU32 || !addsImmediateTo(baseLow, pcReg, displacement) ||
-        baseHigh.op != RdnaOpcode::SAddcU32 || !addsImmediateTo(baseHigh, pcReg + 1u, carry) || carry != 0u) return false;
+        baseHigh.op != RdnaOpcode::SAddcU32 || !addsImmediateTo(baseHigh, pcReg + 1u, carry) || carry != 0u)
+        return false;
     const auto& first = program.instructions[std::min(boundIndex, baseIndex - 2u)];
     for (const auto& instruction : program.instructions) {
-        if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > first.programCounter && instruction.branchTarget <= branch.programCounter) return false;
+        if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > first.programCounter &&
+            instruction.branchTarget <= branch.programCounter)
+            return false;
     }
     const auto base = static_cast<std::int64_t>(instructionEndProgramCounter(basePc)) + displacement;
     const auto table = base + static_cast<std::int32_t>(load.memoryOffset);
     const auto byteCount = (static_cast<std::int64_t>(maximum) + 1) * 4;
-    if (table < 0 || (table & 3) != 0 || table + byteCount > static_cast<std::int64_t>(program.code.size_bytes())) return false;
+    if (table < 0 || (table & 3) != 0 || table + byteCount > static_cast<std::int64_t>(program.code.size_bytes()))
+        return false;
     BoundedJumpTable resolved;
     resolved.load.programCounter = load.programCounter;
     resolved.firstProgramCounter = first.programCounter;
     for (std::uint32_t entry = 0; entry <= maximum; ++entry) {
         const auto value = program.code[static_cast<std::size_t>(table / 4) + entry];
         const auto target = base - static_cast<std::int64_t>(value);
-        if (target < static_cast<std::int64_t>(instructionEndProgramCounter(branch)) || target > UINT32_MAX || (target & 3) != 0) return false;
+        if (target < static_cast<std::int64_t>(instructionEndProgramCounter(branch)) || target > UINT32_MAX ||
+            (target & 3) != 0)
+            return false;
         resolved.load.values.push_back(value);
         resolved.targets.push_back(static_cast<std::uint32_t>(target));
     }
@@ -387,23 +459,33 @@ bool resolveDwordJumpTable(const RdnaProgram& program, std::uint32_t index, Boun
 }
 
 bool resolveBoundedJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result) {
-    if (resolveJumpTable(program, index, result)) return true;
+    if (resolveJumpTable(program, index, result))
+        return true;
     result = BoundedJumpTable{};
     return resolveDwordJumpTable(program, index, result);
 }
 
 BranchCondition conditionForOpcode(RdnaOpcode opcode) {
     switch (opcode) {
-        case RdnaOpcode::SBranch: return BranchCondition::Always;
-        case RdnaOpcode::SCbranchScc0: return BranchCondition::SccZero;
-        case RdnaOpcode::SCbranchScc1: return BranchCondition::SccNonZero;
-        case RdnaOpcode::SCbranchVccz: return BranchCondition::VccZero;
-        case RdnaOpcode::SCbranchVccnz: return BranchCondition::VccNonZero;
-        case RdnaOpcode::SCbranchExecz: return BranchCondition::ExecZero;
-        case RdnaOpcode::SCbranchExecnz: return BranchCondition::ExecNonZero;
-        case RdnaOpcode::SSubvectorLoopBegin:
-        case RdnaOpcode::SSubvectorLoopEnd: return BranchCondition::ScalarInstruction;
-        default: break;
+    case RdnaOpcode::SBranch:
+        return BranchCondition::Always;
+    case RdnaOpcode::SCbranchScc0:
+        return BranchCondition::SccZero;
+    case RdnaOpcode::SCbranchScc1:
+        return BranchCondition::SccNonZero;
+    case RdnaOpcode::SCbranchVccz:
+        return BranchCondition::VccZero;
+    case RdnaOpcode::SCbranchVccnz:
+        return BranchCondition::VccNonZero;
+    case RdnaOpcode::SCbranchExecz:
+        return BranchCondition::ExecZero;
+    case RdnaOpcode::SCbranchExecnz:
+        return BranchCondition::ExecNonZero;
+    case RdnaOpcode::SSubvectorLoopBegin:
+    case RdnaOpcode::SSubvectorLoopEnd:
+        return BranchCondition::ScalarInstruction;
+    default:
+        break;
     }
     throw std::logic_error("unreachable branch condition for opcode " + std::to_string(static_cast<int>(opcode)));
 }
@@ -494,8 +576,11 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
         const std::uint32_t nextProgramCounter = instructionEndProgramCounter(instruction);
 
         if (IsDirectBranchOpcode(instruction.op)) {
-            if (!isValidTarget(instruction.branchTarget, instructionProgramCounters, firstProgramCounter, endProgramCounter)) {
-                throw std::invalid_argument("branch at program counter " + toHexString(instruction.programCounter) + " targets invalid program counter " + toHexString(instruction.branchTarget));
+            if (!isValidTarget(instruction.branchTarget, instructionProgramCounters, firstProgramCounter,
+                               endProgramCounter)) {
+                throw std::invalid_argument("branch at program counter " + toHexString(instruction.programCounter) +
+                                            " targets invalid program counter " +
+                                            toHexString(instruction.branchTarget));
             }
             labels.insert(instruction.branchTarget);
             if (nextProgramCounter <= endProgramCounter) {
@@ -505,16 +590,22 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
             std::uint32_t target = 0;
             if (!resolveSetpcTarget(program, index, target)) {
                 BoundedJumpTable table;
-                if (!resolveBoundedJumpTable(program, index, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(instruction.programCounter));
+                if (!resolveBoundedJumpTable(program, index, table))
+                    throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " +
+                                                toHexString(instruction.programCounter));
                 for (const auto tableTarget : table.targets) {
-                    if (!instructionProgramCounters.contains(tableTarget)) throw std::invalid_argument("jump table targets invalid instruction boundary " + toHexString(tableTarget));
+                    if (!instructionProgramCounters.contains(tableTarget))
+                        throw std::invalid_argument("jump table targets invalid instruction boundary " +
+                                                    toHexString(tableTarget));
                     labels.insert(tableTarget);
                 }
                 labels.insert(nextProgramCounter);
                 continue;
             }
             if (!isValidTarget(target, instructionProgramCounters, firstProgramCounter, endProgramCounter)) {
-                throw std::invalid_argument("s_setpc_b64 at program counter " + toHexString(instruction.programCounter) + " targets invalid program counter " + toHexString(target));
+                throw std::invalid_argument("s_setpc_b64 at program counter " +
+                                            toHexString(instruction.programCounter) +
+                                            " targets invalid program counter " + toHexString(target));
             }
             labels.insert(target);
             if (nextProgramCounter <= endProgramCounter) {
@@ -535,15 +626,26 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
             continue;
         }
         if (start != endProgramCounter && !instructionProgramCounters.contains(start)) {
-            throw std::invalid_argument("control flow graph label does not start on an instruction boundary: " + toHexString(start));
+            throw std::invalid_argument("control flow graph label does not start on an instruction boundary: " +
+                                        toHexString(start));
         }
 
         BasicBlock block;
         block.id = static_cast<std::uint32_t>(blocks.size());
         block.startProgramCounter = start;
         block.endProgramCounter = i + 1u < sortedLabels.size() ? sortedLabels[i + 1u] : endProgramCounter;
-        block.instructionBegin = static_cast<std::uint32_t>(std::lower_bound(program.instructions.begin(), program.instructions.end(), block.startProgramCounter, [](const RdnaInstruction& instruction, std::uint32_t programCounter) { return instruction.programCounter < programCounter; }) - program.instructions.begin());
-        block.instructionEnd = static_cast<std::uint32_t>(std::lower_bound(program.instructions.begin(), program.instructions.end(), block.endProgramCounter, [](const RdnaInstruction& instruction, std::uint32_t programCounter) { return instruction.programCounter < programCounter; }) - program.instructions.begin());
+        block.instructionBegin = static_cast<std::uint32_t>(
+            std::lower_bound(program.instructions.begin(), program.instructions.end(), block.startProgramCounter,
+                             [](const RdnaInstruction& instruction, std::uint32_t programCounter) {
+                                 return instruction.programCounter < programCounter;
+                             }) -
+            program.instructions.begin());
+        block.instructionEnd = static_cast<std::uint32_t>(
+            std::lower_bound(program.instructions.begin(), program.instructions.end(), block.endProgramCounter,
+                             [](const RdnaInstruction& instruction, std::uint32_t programCounter) {
+                                 return instruction.programCounter < programCounter;
+                             }) -
+            program.instructions.begin());
         blocks.push_back(std::move(block));
     }
 
@@ -572,7 +674,9 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
             std::uint32_t target = 0;
             if (!resolveSetpcTarget(program, block.instructionEnd - 1u, target)) {
                 BoundedJumpTable table;
-                if (!resolveBoundedJumpTable(program, block.instructionEnd - 1u, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(last.programCounter));
+                if (!resolveBoundedJumpTable(program, block.instructionEnd - 1u, table))
+                    throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " +
+                                                toHexString(last.programCounter));
                 block.terminator.kind = TerminatorKind::IndirectBranch;
                 block.terminator.indirectPcSgpr = last.source0.reg;
                 sortUnique(table.targets);
@@ -583,7 +687,10 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
                 }
                 continue;
             }
-            if (block.instructionEnd - block.instructionBegin < 4u && resolveLongSetpcTarget(program, block.instructionEnd - 1u, target)) throw std::invalid_argument("long branch at program counter " + toHexString(last.programCounter) + " does not start in its block");
+            if (block.instructionEnd - block.instructionBegin < 4u &&
+                resolveLongSetpcTarget(program, block.instructionEnd - 1u, target))
+                throw std::invalid_argument("long branch at program counter " + toHexString(last.programCounter) +
+                                            " does not start in its block");
             block.terminator.kind = TerminatorKind::Branch;
             block.terminator.condition = BranchCondition::Always;
             block.terminator.trueBlock = programCounterToBlock.at(target);
@@ -597,7 +704,8 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
             block.terminator.trueBlock = programCounterToBlock.at(last.branchTarget);
             const auto fallthrough = programCounterToBlock.find(nextProgramCounter);
             if (fallthrough == programCounterToBlock.end()) {
-                throw std::invalid_argument("conditional branch at program counter " + toHexString(last.programCounter) + " has no fallthrough block");
+                throw std::invalid_argument("conditional branch at program counter " +
+                                            toHexString(last.programCounter) + " has no fallthrough block");
             }
             block.terminator.falseBlock = fallthrough->second;
         } else {
@@ -612,14 +720,17 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
         }
 
         switch (block.terminator.kind) {
-            case TerminatorKind::Branch: addUnique(block.successors, block.terminator.trueBlock); break;
-            case TerminatorKind::ConditionalBranch:
-                addUnique(block.successors, block.terminator.trueBlock);
-                addUnique(block.successors, block.terminator.falseBlock);
-                break;
-            case TerminatorKind::IndirectBranch:
-            case TerminatorKind::Return:
-            case TerminatorKind::Unsupported: break;
+        case TerminatorKind::Branch:
+            addUnique(block.successors, block.terminator.trueBlock);
+            break;
+        case TerminatorKind::ConditionalBranch:
+            addUnique(block.successors, block.terminator.trueBlock);
+            addUnique(block.successors, block.terminator.falseBlock);
+            break;
+        case TerminatorKind::IndirectBranch:
+        case TerminatorKind::Return:
+        case TerminatorKind::Unsupported:
+            break;
         }
     }
 
@@ -643,10 +754,13 @@ ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program) const {
     const auto originalSize = graph.blocks.size();
     for (std::uint32_t id = 0; id < originalSize; ++id) {
         const auto term = graph.blocks[id].terminator;
-        if (term.kind != TerminatorKind::IndirectBranch) continue;
+        if (term.kind != TerminatorKind::IndirectBranch)
+            continue;
         BoundedJumpTable table;
-        if (!resolveBoundedJumpTable(program, graph.blocks[id].instructionEnd - 1u, table)) throw std::logic_error("jump table resolution changed");
-        if (table.firstProgramCounter < graph.blocks[id].startProgramCounter) throw std::invalid_argument("jump table bound does not dominate its branch in the same block");
+        if (!resolveBoundedJumpTable(program, graph.blocks[id].instructionEnd - 1u, table))
+            throw std::logic_error("jump table resolution changed");
+        if (table.firstProgramCounter < graph.blocks[id].startProgramCounter)
+            throw std::invalid_argument("jump table bound does not dominate its branch in the same block");
         graph.codeTableLoadProgramCounters.push_back(table.load.programCounter);
         graph.codeTableLoads.push_back(std::move(table.load));
         auto current = id;

@@ -21,7 +21,10 @@ int APS5_VABI tolower_nid_postfix(int);
 const short* APS5_VABI _Getptolower_nid_postfix();
 const short* APS5_VABI _Getptoupper_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     for (int c = EOF; c <= 255; ++c) {

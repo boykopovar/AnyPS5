@@ -28,5 +28,4 @@ int APS5_VABI sceAgcRewindPatchSetRewindState(uint32_t* cmd, uint8_t state) {
 int APS5_VABI sceAgcAsyncRewindPatchSetRewindState(std::uint32_t* cmd, std::uint8_t state) {
     return SetRewindState(cmd, state, __func__);
 }
-
 }

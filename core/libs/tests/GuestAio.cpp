@@ -17,13 +17,18 @@ int APS5_VABI sceKernelClose(int d);
 int APS5_VABI sceKernelAioDeleteRequest(std::int32_t id, std::int32_t* ret);
 int APS5_VABI sceKernelAioInitializeImpl(void* param, std::int32_t size);
 void APS5_VABI sceKernelAioInitializeParam(void* param);
-int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
+int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio,
+                                             std::int32_t* id);
+int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio,
+                                              std::int32_t* id);
 int APS5_VABI sceKernelAioPollRequest(std::int32_t id, std::int32_t* state);
 int APS5_VABI sceKernelAioWaitRequest(std::int32_t id, std::int32_t* state, std::uint32_t* usec);
-int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioWaitRequests(std::int32_t* id, std::int32_t num, std::int32_t* state, std::uint32_t mode, std::uint32_t* usec);
+int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio,
+                                                     std::int32_t* id);
+int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio,
+                                                      std::int32_t* id);
+int APS5_VABI sceKernelAioWaitRequests(std::int32_t* id, std::int32_t num, std::int32_t* state, std::uint32_t mode,
+                                       std::uint32_t* usec);
 int APS5_VABI sceKernelAioCancelRequest(std::int32_t id, std::int32_t* state);
 int APS5_VABI sceKernelAioCancelRequests(std::int32_t* id, std::int32_t num, std::int32_t* state);
 int APS5_VABI sceKernelAioDeleteRequests(std::int32_t* id, std::int32_t num, std::int32_t* ret);
@@ -36,12 +41,15 @@ static void Require(bool value, int line) {
 }
 #define Check(value) Require((value), __LINE__)
 int main() {
-    const auto root = std::filesystem::path("anyps5-aio-test-" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root = std::filesystem::path(
+        "anyps5-aio-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Check(std::filesystem::create_directory(root));
     const auto file = root / "data.bin";
     const std::string seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    { std::ofstream stream(file, std::ios::binary); stream << seed; }
+    {
+        std::ofstream stream(file, std::ios::binary);
+        stream << seed;
+    }
     Check(sceKernelAioInitializeImpl(nullptr, 0) == 0);
     int initParam = 0;
     sceKernelAioInitializeParam(&initParam);
@@ -83,8 +91,12 @@ int main() {
     Check(sceKernelAioWaitRequest(writeId, &writeState, nullptr) == 0);
     Check(writeState == 3 && writeResult.state == 3 && writeResult.return_value == 5);
     Check(sceKernelClose(writeFd) == 0);
-    { std::ifstream stream(file, std::ios::binary); std::string contents; std::getline(stream, contents);
-      Check(contents.rfind("HELLO", 0) == 0); }
+    {
+        std::ifstream stream(file, std::ios::binary);
+        std::string contents;
+        std::getline(stream, contents);
+        Check(contents.rfind("HELLO", 0) == 0);
+    }
     Check(sceKernelAioSubmitReadCommands(nullptr, 1, 0, &id) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioSubmitReadCommands(requests, 0, 0, &id) == SCE_KERNEL_ERROR_EINVAL);
     Check(sceKernelAioSubmitReadCommands(requests, 1, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT);
@@ -162,13 +174,21 @@ int main() {
     Check(sceKernelAioWaitRequests(badIds, 2, untouched, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Check(untouched[0] == 7 && untouched[1] == 7);
     bool threw = false;
-    try { sceKernelAioWaitRequests(readIds, 2, readStates, 3, nullptr); } catch (const std::runtime_error&) { threw = true; }
+    try {
+        sceKernelAioWaitRequests(readIds, 2, readStates, 3, nullptr);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
     Check(threw);
     threw = false;
     std::array<std::int32_t, 129> manyIds{};
     std::array<std::int32_t, 129> manyStates{};
     manyIds.fill(readIds[0]);
-    try { sceKernelAioDeleteRequests(manyIds.data(), 129, manyStates.data()); } catch (const std::runtime_error&) { threw = true; }
+    try {
+        sceKernelAioDeleteRequests(manyIds.data(), 129, manyStates.data());
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
     Check(threw);
     Check(sceKernelAioCancelRequest(9999, &cancelled) == SCE_KERNEL_ERROR_EINVAL);
     Check(sceKernelAioCancelRequest(readIds[0], nullptr) == SCE_KERNEL_ERROR_EFAULT);

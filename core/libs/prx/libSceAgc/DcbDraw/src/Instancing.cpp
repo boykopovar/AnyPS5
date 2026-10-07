@@ -12,11 +12,10 @@ std::uint32_t* APS5_VABI sceAgcDcbSetNumInstances(CommandBuffer* buf, std::uint3
     return Agc::Command::Emit(buf, 0x2fu, {numInstances}, __func__);
 }
 
-std::uint32_t APS5_VABI sceAgcDcbSetNumInstancesGetSize() {
-    return 8;
-}
+std::uint32_t APS5_VABI sceAgcDcbSetNumInstancesGetSize() { return 8; }
 
-uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t shader_type, const volatile void* indirect_base_addr) {
+uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t shader_type,
+                                                 const volatile void* indirect_base_addr) {
     // SET_BASE with base index 1; header bit 1 selects the dispatch (compute) base over the draw base.
     Agc::Command::CheckBits(shader_type, 1, __func__);
     const auto address = reinterpret_cast<std::uintptr_t>(indirect_base_addr);
@@ -29,5 +28,4 @@ uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, uint32_t sh
     packet[3] = static_cast<std::uint32_t>(address >> 32u);
     return packet;
 }
-
 }

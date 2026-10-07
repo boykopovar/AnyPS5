@@ -23,15 +23,14 @@ int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::siz
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, std::mbstate_t* st);
 void APS5_VABI _Locksyslock_nid_postfix();
 void APS5_VABI _Unlocksyslock_nid_postfix();
-
 }
 
 static void Require(bool condition) {
-    if (!condition) throw std::runtime_error("Guest locale check failed");
+    if (!condition)
+        throw std::runtime_error("Guest locale check failed");
 }
 
-template<typename TAction>
-static void RequireException(TAction action) {
+template <typename TAction> static void RequireException(TAction action) {
     bool caught = false;
     try {
         action();
@@ -48,8 +47,8 @@ static void CheckGuestCalls() {
     Require(_ZNSt6locale5_InitEv_nid_postfix() == locale);
     const std::byte* table = nullptr;
     std::memcpy(&table, locale, sizeof(table));
-    void (APS5_VABI *retain)(GuestLocale::Facet*) = nullptr;
-    GuestLocale::Facet* (APS5_VABI *release)(GuestLocale::Facet*) = nullptr;
+    void(APS5_VABI * retain)(GuestLocale::Facet*) = nullptr;
+    GuestLocale::Facet*(APS5_VABI * release)(GuestLocale::Facet*) = nullptr;
     std::memcpy(&retain, table + 0x10, sizeof(retain));
     std::memcpy(&release, table + 0x18, sizeof(release));
     const auto initial = locale->base.references;
@@ -70,7 +69,8 @@ static void CheckGuestCalls() {
             }
         });
     }
-    for (auto& thread : threads) thread.join();
+    for (auto& thread : threads)
+        thread.join();
     Require(locale->base.references == initial);
     Require(locale->facetCount == 1 && locale->facets[0] == nullptr);
     Require(std::strcmp(locale->name, "C") == 0 && !locale->transparent);
@@ -81,7 +81,8 @@ static void CheckLocinfoAlignment() {
     bytes.fill(std::byte{0x5a});
     auto* storage = reinterpret_cast<GuestLocale::LocinfoStorage*>(bytes.data() + 8);
     _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "C");
-    for (std::size_t index = 0; index < bytes.size(); ++index) Require(bytes[index] == (index >= 8 && index < 72 ? std::byte{} : std::byte{0x5a}));
+    for (std::size_t index = 0; index < bytes.size(); ++index)
+        Require(bytes[index] == (index >= 8 && index < 72 ? std::byte{} : std::byte{0x5a}));
     _ZNSt8_LocinfoD1Ev_nid_postfix(storage);
     RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "unknown-locale"); });
     RequireException([] { _ZNSt8_LocinfoC1EPKc_nid_postfix(nullptr, "C"); });
@@ -99,7 +100,8 @@ static void CheckCharacterTables() {
     for (int value = 0; value < 256; ++value) {
         Require(lower[value] == (value >= 'A' && value <= 'Z' ? value + 32 : value));
         Require(upper[value] == (value >= 'a' && value <= 'z' ? value - 32 : value));
-        if (value >= 128) Require(classification[value] == 0);
+        if (value >= 128)
+            Require(classification[value] == 0);
     }
 }
 
@@ -115,7 +117,8 @@ static void CheckCharacterConversions() {
         std::mbstate_t decodeState{};
         Require(_Mbtowcx_nid_postfix(wide.data(), bytes.data(), 2, &decodeState) == (value == 0 ? 0 : 1));
         Require(wide[0] == value && wide[1] == 0x1234);
-        const bool alnum = (value >= '0' && value <= '9') || (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z');
+        const bool alnum =
+            (value >= '0' && value <= '9') || (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z');
         Require(((classification[static_cast<unsigned char>(bytes[0])] & 0x232) != 0) == alnum);
     }
     std::mbstate_t state{};

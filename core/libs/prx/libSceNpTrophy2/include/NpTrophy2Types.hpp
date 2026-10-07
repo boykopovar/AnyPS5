@@ -4,7 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 
-struct NpTrophy2Progress { std::uint32_t value; };
+struct NpTrophy2Progress {
+    std::uint32_t value;
+};
 
 struct NpTrophy2GameDetails {
     std::uint32_t num_groups;

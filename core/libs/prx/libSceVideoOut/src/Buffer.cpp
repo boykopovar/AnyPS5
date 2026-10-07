@@ -11,27 +11,56 @@
 
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group) {
     const auto& attribute = group.attribute;
-    if (attribute.reserved0 != 0 || attribute.pad0 != 0 || attribute.reserved1[0] != 0 || attribute.reserved1[1] != 0 || attribute.reserved1[2] != 0) throw std::runtime_error("VideoOut: reserved buffer attribute bits are set");
-    if (attribute.tiling_mode > 1 || (attribute.tiling_mode == 0 && attribute.pitch_in_pixel != 0) || attribute.aspect_ratio != 0 || (attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE && attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY)) throw std::runtime_error("VideoOut: unsupported tiling " + std::to_string(attribute.tiling_mode) + ", pitch " + std::to_string(attribute.pitch_in_pixel) + ", aspect ratio " + std::to_string(attribute.aspect_ratio) + " or buffer option " + std::to_string(attribute.option));
+    if (attribute.reserved0 != 0 || attribute.pad0 != 0 || attribute.reserved1[0] != 0 || attribute.reserved1[1] != 0 ||
+        attribute.reserved1[2] != 0)
+        throw std::runtime_error("VideoOut: reserved buffer attribute bits are set");
+    if (attribute.tiling_mode > 1 || (attribute.tiling_mode == 0 && attribute.pitch_in_pixel != 0) ||
+        attribute.aspect_ratio != 0 ||
+        (attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE &&
+         attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY))
+        throw std::runtime_error("VideoOut: unsupported tiling " + std::to_string(attribute.tiling_mode) + ", pitch " +
+                                 std::to_string(attribute.pitch_in_pixel) + ", aspect ratio " +
+                                 std::to_string(attribute.aspect_ratio) + " or buffer option " +
+                                 std::to_string(attribute.option));
     const auto hex = [](std::uint64_t value) {
         char text[24];
         std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(value));
         return std::string(text);
     };
     const bool compressed = group.category == VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED;
-    if (!compressed && group.category != VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED) throw std::runtime_error("VideoOut: unknown buffer category " + std::to_string(group.category));
-    if (!compressed && (buffer.metadataAddress != 0 || attribute.dcc_control != 0 || attribute.dcc_cb_register_clear_color != 0)) throw std::runtime_error("VideoOut: uncompressed buffer with DCC metadata " + hex(buffer.metadataAddress) + ", dcc_control " + hex(attribute.dcc_control) + " or DCC clear color " + hex(attribute.dcc_cb_register_clear_color));
-    if (compressed && buffer.metadataAddress == 0) throw std::runtime_error("VideoOut: DCC-compressed buffer " + hex(buffer.dataAddress) + " without DCC metadata");
-    if (compressed && attribute.tiling_mode != 0) throw std::runtime_error("VideoOut: DCC-compressed buffer " + hex(buffer.dataAddress) + " with linear tiling");
-    if (compressed && (attribute.dcc_control & ~VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT) != 0) throw std::runtime_error("VideoOut: unsupported DCC control " + hex(attribute.dcc_control) + " (only the block size and independence fields " + hex(VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT) + " are known)");
-    const AgcDriver::DisplayBuffer result{buffer.dataAddress, attribute.pixel_format, attribute.width, attribute.height, attribute.tiling_mode, attribute.pitch_in_pixel, compressed ? buffer.metadataAddress : 0, compressed ? attribute.dcc_cb_register_clear_color : 0};
+    if (!compressed && group.category != VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED)
+        throw std::runtime_error("VideoOut: unknown buffer category " + std::to_string(group.category));
+    if (!compressed &&
+        (buffer.metadataAddress != 0 || attribute.dcc_control != 0 || attribute.dcc_cb_register_clear_color != 0))
+        throw std::runtime_error("VideoOut: uncompressed buffer with DCC metadata " + hex(buffer.metadataAddress) +
+                                 ", dcc_control " + hex(attribute.dcc_control) + " or DCC clear color " +
+                                 hex(attribute.dcc_cb_register_clear_color));
+    if (compressed && buffer.metadataAddress == 0)
+        throw std::runtime_error("VideoOut: DCC-compressed buffer " + hex(buffer.dataAddress) +
+                                 " without DCC metadata");
+    if (compressed && attribute.tiling_mode != 0)
+        throw std::runtime_error("VideoOut: DCC-compressed buffer " + hex(buffer.dataAddress) + " with linear tiling");
+    if (compressed && (attribute.dcc_control & ~VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT) != 0)
+        throw std::runtime_error("VideoOut: unsupported DCC control " + hex(attribute.dcc_control) +
+                                 " (only the block size and independence fields " +
+                                 hex(VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT) + " are known)");
+    const AgcDriver::DisplayBuffer result{buffer.dataAddress,
+                                          attribute.pixel_format,
+                                          attribute.width,
+                                          attribute.height,
+                                          attribute.tiling_mode,
+                                          attribute.pitch_in_pixel,
+                                          compressed ? buffer.metadataAddress : 0,
+                                          compressed ? attribute.dcc_cb_register_clear_color : 0};
     static_cast<void>(AgcDriverDisplayBufferSize_nid_postfix(result));
     return result;
 }
 
 extern "C" {
 
-void APS5_VABI sceVideoOutSetBufferAttribute2(VideoOutBufferAttribute2* attribute, uint64_t pixelFormat, uint32_t tilingMode, uint32_t width, uint32_t height, uint64_t option, uint32_t dccControl, uint64_t dccCbRegisterClearColor) {
+void APS5_VABI sceVideoOutSetBufferAttribute2(VideoOutBufferAttribute2* attribute, uint64_t pixelFormat,
+                                              uint32_t tilingMode, uint32_t width, uint32_t height, uint64_t option,
+                                              uint32_t dccControl, uint64_t dccCbRegisterClearColor) {
     if (attribute == nullptr) {
         throw std::runtime_error("sceVideoOutSetBufferAttribute2: null attribute");
     }
@@ -47,7 +76,9 @@ void APS5_VABI sceVideoOutSetBufferAttribute2(VideoOutBufferAttribute2* attribut
     attribute->dcc_control = dccControl;
 }
 
-int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIndexStart, const VideoOutBuffers* buffers, int bufferNum, const VideoOutBufferAttribute2* attribute, int category, void* option) try {
+int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIndexStart,
+                                          const VideoOutBuffers* buffers, int bufferNum,
+                                          const VideoOutBufferAttribute2* attribute, int category, void* option) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
@@ -61,14 +92,18 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
     if (option != nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
     }
-    if (setIndex < 0 || setIndex >= VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX || bufferIndexStart < 0 || bufferIndexStart >= VIDEO_OUT_BUFFER_NUM_MAX || bufferNum < 1 || bufferNum > VIDEO_OUT_BUFFER_NUM_MAX || bufferIndexStart + bufferNum > VIDEO_OUT_BUFFER_NUM_MAX) {
+    if (setIndex < 0 || setIndex >= VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX || bufferIndexStart < 0 ||
+        bufferIndexStart >= VIDEO_OUT_BUFFER_NUM_MAX || bufferNum < 1 || bufferNum > VIDEO_OUT_BUFFER_NUM_MAX ||
+        bufferIndexStart + bufferNum > VIDEO_OUT_BUFFER_NUM_MAX) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
     }
-    if (category != VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED && category != VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED) {
+    if (category != VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED &&
+        category != VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_CATEGORY");
     }
     AgcDriverCheckGuestMemory_nid_postfix(attribute, sizeof(*attribute), alignof(VideoOutBufferAttribute2));
-    AgcDriverCheckGuestMemory_nid_postfix(buffers, static_cast<std::size_t>(bufferNum) * sizeof(*buffers), alignof(VideoOutBuffers));
+    AgcDriverCheckGuestMemory_nid_postfix(buffers, static_cast<std::size_t>(bufferNum) * sizeof(*buffers),
+                                          alignof(VideoOutBuffers));
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
     if (cfg->closing) {
@@ -88,8 +123,10 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
     group.occupied = true;
     std::array<VideoOutBuffer, VIDEO_OUT_BUFFER_NUM_MAX> registered{};
     for (int i = 0; i < bufferNum; ++i) {
-        if (buffers[i].reserved[0] != nullptr || buffers[i].reserved[1] != nullptr) throw std::runtime_error("VideoOut: reserved buffer pointers are set");
-        registered[i] = {setIndex, reinterpret_cast<uint64_t>(buffers[i].data), reinterpret_cast<uint64_t>(buffers[i].metadata)};
+        if (buffers[i].reserved[0] != nullptr || buffers[i].reserved[1] != nullptr)
+            throw std::runtime_error("VideoOut: reserved buffer pointers are set");
+        registered[i] = {setIndex, reinterpret_cast<uint64_t>(buffers[i].data),
+                         reinterpret_cast<uint64_t>(buffers[i].metadata)};
         const auto display = DescribeVideoOutBuffer(registered[i], group);
         AgcDriverCheckGuestMemory_nid_postfix(buffers[i].data, AgcDriverDisplayBufferSize_nid_postfix(display), 65536);
     }
@@ -104,7 +141,8 @@ int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIn
     LibcAwaitExit_nid_postfix();
 }
 
-int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, const VideoOutBufferAttribute2* attribute, void* option) try {
+int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex,
+                                                      const VideoOutBufferAttribute2* attribute, void* option) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
@@ -127,10 +165,13 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, 
     auto group = cfg->groups[setIndex];
     group.attribute = *attribute;
     for (int i = 0; i < VIDEO_OUT_BUFFER_NUM_MAX; ++i) {
-        if (cfg->buffers[i].groupIndex != setIndex) continue;
-        if (cfg->bufferPending[i] != 0) throw std::runtime_error("VideoOut: buffer attributes are in use by a pending flip");
+        if (cfg->buffers[i].groupIndex != setIndex)
+            continue;
+        if (cfg->bufferPending[i] != 0)
+            throw std::runtime_error("VideoOut: buffer attributes are in use by a pending flip");
         const auto display = DescribeVideoOutBuffer(cfg->buffers[i], group);
-        AgcDriverCheckGuestMemory_nid_postfix(reinterpret_cast<const void*>(display.address), AgcDriverDisplayBufferSize_nid_postfix(display), 65536);
+        AgcDriverCheckGuestMemory_nid_postfix(reinterpret_cast<const void*>(display.address),
+                                              AgcDriverDisplayBufferSize_nid_postfix(display), 65536);
     }
     cfg->groups[setIndex] = group;
     return 0;
@@ -155,7 +196,8 @@ int APS5_VABI sceVideoOutUnregisterBuffers(int handle, int setIndex) try {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
     }
     for (int i = 0; i < VIDEO_OUT_BUFFER_NUM_MAX; ++i) {
-        if (cfg->buffers[i].groupIndex == setIndex && cfg->bufferPending[i] != 0) throw std::runtime_error("VideoOut: cannot unregister a buffer with a pending flip");
+        if (cfg->buffers[i].groupIndex == setIndex && cfg->bufferPending[i] != 0)
+            throw std::runtime_error("VideoOut: cannot unregister a buffer with a pending flip");
     }
     cfg->groups[setIndex] = BufferAttributeGroup{};
     for (auto& buf : cfg->buffers) {
@@ -194,5 +236,4 @@ int APS5_VABI sceVideoOutSubmitFlip(int handle, int index, int flipMode, int64_t
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
-
 }

@@ -30,19 +30,22 @@ void TranslationContext::emitCompareConstant(const RdnaInstruction& inst, bool v
     emitCompareResult(inst, IrU1(ir.ConstantBool(value)), scalar, cmpx);
 }
 
-void TranslationContext::emitIntegerCompare(const RdnaInstruction& inst, IrOpcode opcode, IrType type, bool scalar, bool cmpx) {
+void TranslationContext::emitIntegerCompare(const RdnaInstruction& inst, IrOpcode opcode, IrType type, bool scalar,
+                                            bool cmpx) {
     IrValue* lhs = readOperand(sourceAt(inst, 0u), type);
     IrValue* rhs = readOperand(sourceAt(inst, 1u), type);
     emitCompareResult(inst, IrU1(ir.Emit(opcode, IrType::U1, {lhs, rhs})), scalar, cmpx);
 }
 
-void TranslationContext::emitInteger16Compare(const RdnaInstruction& inst, IrOpcode opcode, bool signedValue, bool cmpx) {
+void TranslationContext::emitInteger16Compare(const RdnaInstruction& inst, IrOpcode opcode, bool signedValue,
+                                              bool cmpx) {
     const IrU32 lhs = readU16AsU32(sourceAt(inst, 0u), signedValue);
     const IrU32 rhs = readU16AsU32(sourceAt(inst, 1u), signedValue);
     emitCompareResult(inst, IrU1(ir.Emit(opcode, IrType::U1, {&lhs.Value(), &rhs.Value()})), false, cmpx);
 }
 
-void TranslationContext::emitFloatCompare(const RdnaInstruction& inst, IrOpcode opcode, bool half, bool cmpx, bool swap) {
+void TranslationContext::emitFloatCompare(const RdnaInstruction& inst, IrOpcode opcode, bool half, bool cmpx,
+                                          bool swap) {
     IrValue* lhs = nullptr;
     IrValue* rhs = nullptr;
     if (half) {
@@ -52,11 +55,13 @@ void TranslationContext::emitFloatCompare(const RdnaInstruction& inst, IrOpcode 
         lhs = readOperand(sourceAt(inst, 0u), IrType::F32);
         rhs = readOperand(sourceAt(inst, 1u), IrType::F32);
     }
-    if (swap) std::swap(lhs, rhs);
+    if (swap)
+        std::swap(lhs, rhs);
     emitCompareResult(inst, IrU1(ir.Emit(opcode, IrType::U1, {lhs, rhs})), false, cmpx);
 }
 
-void TranslationContext::emitInteger64Order(const RdnaInstruction& inst, bool signedValue, bool swap, bool negate, bool cmpx) {
+void TranslationContext::emitInteger64Order(const RdnaInstruction& inst, bool signedValue, bool swap, bool negate,
+                                            bool cmpx) {
     IrValue* lhs = readOperand(sourceAt(inst, swap ? 1u : 0u), IrType::U64);
     IrValue* rhs = readOperand(sourceAt(inst, swap ? 0u : 1u), IrType::U64);
     IrValue& less = ir.Emit(signedValue ? IrOpcode::SLessThan64 : IrOpcode::ULessThan64, IrType::U1, {lhs, rhs});
@@ -93,7 +98,8 @@ IrU64 TranslationContext::float64OrderKey(const std::array<IrU32, 2>& bits) {
     return IrU64(ir.Emit(IrOpcode::ISub64, IrType::U64, {&magnitude, &doubled}));
 }
 
-void TranslationContext::emitFloat64Compare(const RdnaInstruction& inst, bool less, bool equal, bool greater, bool unordered, bool cmpx) {
+void TranslationContext::emitFloat64Compare(const RdnaInstruction& inst, bool less, bool equal, bool greater,
+                                            bool unordered, bool cmpx) {
     const std::array<IrU32, 2> lhs = readF64Bits(sourceAt(inst, 0u));
     const std::array<IrU32, 2> rhs = readF64Bits(sourceAt(inst, 1u));
     const IrU1 lhsNan = float64IsNan(lhs);
@@ -117,14 +123,16 @@ void TranslationContext::emitFloat64Compare(const RdnaInstruction& inst, bool le
     if (relation == nullptr) {
         relation = &ir.ConstantBool(false);
     }
-    IrValue& result = unordered ? ir.LogicalOr(isUnordered, *relation) : ir.LogicalAnd(ir.LogicalNot(isUnordered), *relation);
+    IrValue& result =
+        unordered ? ir.LogicalOr(isUnordered, *relation) : ir.LogicalAnd(ir.LogicalNot(isUnordered), *relation);
     emitCompareResult(inst, IrU1(result), false, cmpx);
 }
 
 void TranslationContext::emitFloat64ClassCompare(const RdnaInstruction& inst, bool cmpx) {
     const RdnaOperand& maskOperand = sourceAt(inst, 1u);
     if (maskOperand.absolute || maskOperand.negate) {
-        throw std::runtime_error("TranslationContext::emitFloat64ClassCompare class mask does not take source modifiers");
+        throw std::runtime_error(
+            "TranslationContext::emitFloat64ClassCompare class mask does not take source modifiers");
     }
     const std::array<IrU32, 2> bits = readF64Bits(sourceAt(inst, 0u));
     const IrU32 mask = readU32(maskOperand);

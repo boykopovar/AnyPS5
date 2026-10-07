@@ -31,11 +31,14 @@ HANDLE CreateHighResolutionTimer() {
 }
 
 bool TimerWait(HANDLE timer, std::uint64_t nanos) {
-    if (!timer) return false;
+    if (!timer)
+        return false;
     LARGE_INTEGER due{};
     due.QuadPart = -static_cast<LONGLONG>(nanos / 100ULL);
-    if (due.QuadPart == 0) due.QuadPart = -1;
-    if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) return false;
+    if (due.QuadPart == 0)
+        due.QuadPart = -1;
+    if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
+        return false;
     return WaitForSingleObject(timer, INFINITE) == WAIT_OBJECT_0;
 }
 
@@ -50,13 +53,14 @@ void SleepNanosCoarse(std::uint64_t nanos) {
         return;
     }
     thread_local HANDLE timer = CreateHighResolutionTimer();
-    if (TimerWait(timer, nanos)) return;
+    if (TimerWait(timer, nanos))
+        return;
     Sleep(static_cast<DWORD>((nanos + 999999ULL) / 1000000ULL));
 }
 
 #endif
 
-}  // namespace
+} // namespace
 
 #ifdef _WIN32
 
@@ -68,35 +72,35 @@ struct Waiter {
     bool queued = false;
 
     ~Waiter() {
-        if (event) CloseHandle(event);
-        if (timer) CloseHandle(timer);
+        if (event)
+            CloseHandle(event);
+        if (timer)
+            CloseHandle(timer);
     }
 };
 
 namespace {
 
-void WINAPI DestroyWaiter(void* value) {
-    delete static_cast<Waiter*>(value);
-}
+void WINAPI DestroyWaiter(void* value) { delete static_cast<Waiter*>(value); }
 
 Waiter* ThisThreadWaiter() {
     thread_local Waiter* waiter = nullptr;
     if (!waiter) {
         waiter = new Waiter();
         const DWORD slot = WaiterSlotIndex();
-        if (slot != FLS_OUT_OF_INDEXES) FlsSetValue(slot, waiter);
+        if (slot != FLS_OUT_OF_INDEXES)
+            FlsSetValue(slot, waiter);
     }
     return waiter;
 }
 
-bool EventSet(HANDLE event, DWORD milliseconds) {
-    return WaitForSingleObject(event, milliseconds) == WAIT_OBJECT_0;
-}
+bool EventSet(HANDLE event, DWORD milliseconds) { return WaitForSingleObject(event, milliseconds) == WAIT_OBJECT_0; }
 
 bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
     for (;;) {
         const std::uint64_t now = NowNanos();
-        if (now >= deadlineNanos) return EventSet(waiter->event, 0);
+        if (now >= deadlineNanos)
+            return EventSet(waiter->event, 0);
         const std::uint64_t remaining = deadlineNanos - now;
         if (remaining > LEAD_NANOS) {
             const std::uint64_t bulk = remaining - LEAD_NANOS;
@@ -104,18 +108,21 @@ bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
             due.QuadPart = -static_cast<LONGLONG>(bulk / 100ULL);
             if (waiter->timer && SetWaitableTimer(waiter->timer, &due, 0, nullptr, nullptr, FALSE)) {
                 HANDLE handles[2] = {waiter->event, waiter->timer};
-                if (WaitForMultipleObjects(2, handles, FALSE, INFINITE) == WAIT_OBJECT_0) return true;
+                if (WaitForMultipleObjects(2, handles, FALSE, INFINITE) == WAIT_OBJECT_0)
+                    return true;
                 continue;
             }
-            if (EventSet(waiter->event, WholeMilliseconds(bulk))) return true;
+            if (EventSet(waiter->event, WholeMilliseconds(bulk)))
+                return true;
             continue;
         }
-        if (EventSet(waiter->event, 0)) return true;
+        if (EventSet(waiter->event, 0))
+            return true;
         YieldProcessor();
     }
 }
 
-}  // namespace
+} // namespace
 
 Waiter* Condition::enqueue() {
     Waiter* waiter = ThisThreadWaiter();
@@ -123,28 +130,33 @@ Waiter* Condition::enqueue() {
     waiter->queued = true;
     waiter->next = nullptr;
     waiter->previous = tail;
-    if (tail) tail->next = waiter;
-    else head = waiter;
+    if (tail)
+        tail->next = waiter;
+    else
+        head = waiter;
     tail = waiter;
     return waiter;
 }
 
 void Condition::unlink(Waiter* waiter) {
-    if (waiter->previous) waiter->previous->next = waiter->next;
-    else head = waiter->next;
-    if (waiter->next) waiter->next->previous = waiter->previous;
-    else tail = waiter->previous;
+    if (waiter->previous)
+        waiter->previous->next = waiter->next;
+    else
+        head = waiter->next;
+    if (waiter->next)
+        waiter->next->previous = waiter->previous;
+    else
+        tail = waiter->previous;
     waiter->previous = nullptr;
     waiter->next = nullptr;
     waiter->queued = false;
 }
 
-void Condition::waitSignal(Waiter* waiter) {
-    WaitForSingleObject(waiter->event, INFINITE);
-}
+void Condition::waitSignal(Waiter* waiter) { WaitForSingleObject(waiter->event, INFINITE); }
 
 bool Condition::waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
-    if (WaitEventUntil(waiter, deadlineNanos)) return true;
+    if (WaitEventUntil(waiter, deadlineNanos))
+        return true;
     std::lock_guard lock(queueLock);
     if (waiter->queued) {
         unlink(waiter);
@@ -161,7 +173,8 @@ void Condition::NotifyOne() {
     }
     std::lock_guard lock(queueLock);
     Waiter* waiter = head;
-    if (!waiter) return;
+    if (!waiter)
+        return;
     unlink(waiter);
     SetEvent(waiter->event);
 }
@@ -180,13 +193,9 @@ void Condition::NotifyAll() {
 
 #else
 
-void Condition::NotifyOne() {
-    coarse.notify_one();
-}
+void Condition::NotifyOne() { coarse.notify_one(); }
 
-void Condition::NotifyAll() {
-    coarse.notify_all();
-}
+void Condition::NotifyAll() { coarse.notify_all(); }
 
 #endif
 
@@ -219,7 +228,8 @@ std::uint64_t NowNanos() {
 
 std::uint64_t DeadlineNanos(std::uint64_t microseconds) {
     const std::uint64_t now = NowNanos();
-    if (microseconds > (std::numeric_limits<std::uint64_t>::max() - now) / 1000ULL) return std::numeric_limits<std::uint64_t>::max();
+    if (microseconds > (std::numeric_limits<std::uint64_t>::max() - now) / 1000ULL)
+        return std::numeric_limits<std::uint64_t>::max();
     return now + microseconds * 1000ULL;
 }
 
@@ -233,7 +243,8 @@ void SleepUntil(std::uint64_t deadlineNanos) {
     std::uint64_t now = NowNanos();
     if (deadlineNanos > now + LEAD_NANOS) {
         thread_local HANDLE timer = CreateHighResolutionTimer();
-        if (!TimerWait(timer, deadlineNanos - now - LEAD_NANOS)) Sleep(WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
+        if (!TimerWait(timer, deadlineNanos - now - LEAD_NANOS))
+            Sleep(WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
         now = NowNanos();
     }
     while (now < deadlineNanos) {
@@ -242,23 +253,27 @@ void SleepUntil(std::uint64_t deadlineNanos) {
     }
 #else
     const std::uint64_t now = NowNanos();
-    if (deadlineNanos > now) SleepNanos(deadlineNanos - now);
+    if (deadlineNanos > now)
+        SleepNanos(deadlineNanos - now);
 #endif
 }
 
 void PollSleepUntil(std::uint64_t deadlineNanos) {
 #ifdef _WIN32
     const std::uint64_t now = NowNanos();
-    if (deadlineNanos <= now) return;
+    if (deadlineNanos <= now)
+        return;
     thread_local HANDLE timer = CreateHighResolutionTimer();
-    if (!TimerWait(timer, deadlineNanos - now)) Sleep(WholeMilliseconds(deadlineNanos - now));
+    if (!TimerWait(timer, deadlineNanos - now))
+        Sleep(WholeMilliseconds(deadlineNanos - now));
 #else
     SleepUntil(deadlineNanos);
 #endif
 }
 
 void SleepNanos(std::uint64_t nanos) {
-    if (nanos == 0) return;
+    if (nanos == 0)
+        return;
 #ifdef _WIN32
     if (Coarse()) {
         SleepNanosCoarse(nanos);
@@ -273,8 +288,9 @@ void SleepNanos(std::uint64_t nanos) {
     struct timespec req{};
     req.tv_sec = static_cast<time_t>(nanos / 1000000000ULL);
     req.tv_nsec = static_cast<long>(nanos % 1000000000ULL);
-    while (nanosleep(&req, &req) == -1 && errno == EINTR) {}
+    while (nanosleep(&req, &req) == -1 && errno == EINTR) {
+    }
 #endif
 }
 
-}  // namespace TimedWait
+} // namespace TimedWait

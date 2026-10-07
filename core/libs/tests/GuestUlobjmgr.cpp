@@ -11,7 +11,10 @@ namespace {
 
 constexpr int einval = 22;
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 }
 

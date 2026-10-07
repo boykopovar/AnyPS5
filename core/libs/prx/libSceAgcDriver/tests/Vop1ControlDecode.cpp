@@ -8,9 +8,8 @@ using namespace ShaderRecompiler;
 
 int main() {
     const std::vector<std::uint32_t> code{
-        0x7e000000u, 0x7e003600u, 0x7e008200u,
-        0xd5800000u, 0x00000000u, 0xd59b0000u, 0x00000000u, 0xd5c10000u, 0x00000000u,
-        0xbf810000u,
+        0x7e000000u, 0x7e003600u, 0x7e008200u, 0xd5800000u, 0x00000000u,
+        0xd59b0000u, 0x00000000u, 0xd5c10000u, 0x00000000u, 0xbf810000u,
     };
     constexpr std::array expected{
         RdnaOpcode::VNop, RdnaOpcode::VPipeflush, RdnaOpcode::VClrexcp,
@@ -19,7 +18,8 @@ int main() {
     try {
         const auto decoded = RdnaInstructionDecoder{}.Decode(code);
         if (decoded.instructions.size() != expected.size() + 1u) {
-            std::fprintf(stderr, "decoded %zu instructions, expected %zu\n", decoded.instructions.size(), expected.size() + 1u);
+            std::fprintf(stderr, "decoded %zu instructions, expected %zu\n", decoded.instructions.size(),
+                         expected.size() + 1u);
             return 1;
         }
         for (std::size_t index = 0; index < expected.size(); ++index) {

@@ -23,16 +23,17 @@ int APS5_VABI sceNpWebApi2AddHttpRequestHeader(int64_t request_id, const char* f
     return 0;
 }
 
-void APS5_VABI sceNpWebApi2CheckTimeout(void) {
-}
+void APS5_VABI sceNpWebApi2CheckTimeout(void) {}
 
-int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_group, const char* path, const char* method, const void* content_parameter, int64_t* request_id) {
+int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_group, const char* path,
+                                        const char* method, const void* content_parameter, int64_t* request_id) {
     (void)user_context_id;
     (void)api_group;
     (void)path;
     (void)method;
     (void)content_parameter;
-    if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (!request_id)
+        return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     *request_id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
@@ -53,7 +54,8 @@ int APS5_VABI sceNpWebApi2DeleteUserContext(int user_context_id) {
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2GetHttpResponseHeaderValue(int64_t request_id, const char* field_name, char* value, size_t value_size) {
+int APS5_VABI sceNpWebApi2GetHttpResponseHeaderValue(int64_t request_id, const char* field_name, char* value,
+                                                     size_t value_size) {
     (void)request_id;
     (void)field_name;
     (void)value;
@@ -61,7 +63,8 @@ int APS5_VABI sceNpWebApi2GetHttpResponseHeaderValue(int64_t request_id, const c
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
-int APS5_VABI sceNpWebApi2GetHttpResponseHeaderValueLength(int64_t request_id, const char* field_name, size_t* value_length) {
+int APS5_VABI sceNpWebApi2GetHttpResponseHeaderValueLength(int64_t request_id, const char* field_name,
+                                                           size_t* value_length) {
     (void)request_id;
     (void)field_name;
     (void)value_length;
@@ -74,7 +77,9 @@ int APS5_VABI sceNpWebApi2Initialize(int lib_http_ctx_id, size_t pool_size) {
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
-int APS5_VABI sceNpWebApi2PushEventCreateFilter(int lib_ctx_id, int handle_id, const char* np_service_name, uint32_t np_service_label, const void* filter_param, size_t filter_param_num) {
+int APS5_VABI sceNpWebApi2PushEventCreateFilter(int lib_ctx_id, int handle_id, const char* np_service_name,
+                                                uint32_t np_service_label, const void* filter_param,
+                                                size_t filter_param_num) {
     (void)lib_ctx_id;
     (void)handle_id;
     (void)np_service_name;
@@ -101,7 +106,8 @@ int APS5_VABI sceNpWebApi2PushEventDeletePushContext(int user_context_id, const 
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2PushEventRegisterCallback(int user_context_id, int filter_id, void* callback, void* user_arg) {
+int APS5_VABI sceNpWebApi2PushEventRegisterCallback(int user_context_id, int filter_id, void* callback,
+                                                    void* user_arg) {
     (void)user_context_id;
     (void)filter_id;
     (void)callback;
@@ -116,7 +122,8 @@ int APS5_VABI sceNpWebApi2ReadData(int64_t request_id, void* data, size_t size) 
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
-int APS5_VABI sceNpWebApi2SendRequest(int64_t request_id, const void* data, size_t data_size, NpWebApi2ResponseInformationOption* response_info_option) {
+int APS5_VABI sceNpWebApi2SendRequest(int64_t request_id, const void* data, size_t data_size,
+                                      NpWebApi2ResponseInformationOption* response_info_option) {
     (void)request_id;
     (void)data;
     (void)data_size;
@@ -129,33 +136,22 @@ int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2PushEventCreatePushContext() {
-    return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
-}
+int APS5_VABI sceNpWebApi2PushEventCreatePushContext() { return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE; }
 
-int APS5_VABI sceNpWebApi2PushEventDeleteFilter() {
-    return 0;
-}
+int APS5_VABI sceNpWebApi2PushEventDeleteFilter() { return 0; }
 
 int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback() {
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
-int APS5_VABI sceNpWebApi2PushEventStartPushContextCallback() {
-    return 0;
-}
+int APS5_VABI sceNpWebApi2PushEventStartPushContextCallback() { return 0; }
 
-int APS5_VABI sceNpWebApi2PushEventUnregisterCallback() {
-    return 0;
-}
+int APS5_VABI sceNpWebApi2PushEventUnregisterCallback() { return 0; }
 
-int APS5_VABI sceNpWebApi2PushEventUnregisterPushContextCallback() {
-    return 0;
-}
+int APS5_VABI sceNpWebApi2PushEventUnregisterPushContextCallback() { return 0; }
 
 int APS5_VABI sceNpWebApi2SetRequestTimeout() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

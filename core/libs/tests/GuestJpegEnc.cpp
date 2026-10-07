@@ -15,7 +15,10 @@ std::int32_t APS5_VABI sceJpegEncDelete(void*);
 std::int32_t APS5_VABI sceJpegEncEncode(void*, const JpegEncEncodeParam*, JpegEncOutputInfo*);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 alignas(4) static unsigned char image[16 * 16 * 4];
 static unsigned char jpeg[4096];
@@ -28,14 +31,17 @@ static std::pair<int, std::uint8_t> ReadFrame(const unsigned char* jpeg, std::ui
     std::size_t offset = 2;
     while (offset + 3 < size) {
         Require(jpeg[offset++] == 0xFF);
-        while (offset < size && jpeg[offset] == 0xFF) ++offset;
+        while (offset < size && jpeg[offset] == 0xFF)
+            ++offset;
         Require(offset < size);
         const std::uint8_t marker = jpeg[offset++];
-        if (marker == 0xDA || marker == 0xD9) break;
+        if (marker == 0xDA || marker == 0xD9)
+            break;
         Require(offset + 1 < size);
         const std::size_t length = (static_cast<std::size_t>(jpeg[offset]) << 8) | jpeg[offset + 1];
         Require(length >= 2 && offset + length <= size);
-        if (marker >= 0xC0 && marker <= 0xC3) return {jpeg[offset + 7], jpeg[offset + 9]};
+        if (marker >= 0xC0 && marker <= 0xC3)
+            return {jpeg[offset + 7], jpeg[offset + 9]};
         offset += length;
     }
     std::abort();
@@ -54,11 +60,13 @@ static std::pair<int, int> ReadRestart(const unsigned char* jpeg, std::uint32_t 
             interval = (jpeg[offset + 4] << 8) | jpeg[offset + 5];
         }
         offset += 2 + length;
-        if (marker == 0xDA) break;
+        if (marker == 0xDA)
+            break;
     }
     int markers = 0;
     for (; offset + 1 < size; ++offset) {
-        if (jpeg[offset] != 0xFF || jpeg[offset + 1] < 0xD0 || jpeg[offset + 1] > 0xD7) continue;
+        if (jpeg[offset] != 0xFF || jpeg[offset + 1] < 0xD0 || jpeg[offset + 1] > 0xD7)
+            continue;
         Require(jpeg[offset + 1] == 0xD0 + markers % 8);
         ++markers;
     }
@@ -67,7 +75,8 @@ static std::pair<int, int> ReadRestart(const unsigned char* jpeg, std::uint32_t 
 
 static int AverageError(const std::vector<std::uint8_t>& expected, const std::vector<std::uint8_t>& actual) {
     long total = 0;
-    for (std::size_t i = 0; i < expected.size(); ++i) total += expected[i] > actual[i] ? expected[i] - actual[i] : actual[i] - expected[i];
+    for (std::size_t i = 0; i < expected.size(); ++i)
+        total += expected[i] > actual[i] ? expected[i] - actual[i] : actual[i] - expected[i];
     return static_cast<int>(total / static_cast<long>(expected.size()));
 }
 
@@ -79,8 +88,7 @@ static std::vector<std::uint8_t> DecodeOutput(const JpegEncOutputInfo& info, std
     return decoded->pixels;
 }
 
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
+template <typename TFunction> static bool ThrowsRuntimeError(TFunction function) {
     try {
         function();
     } catch (const std::runtime_error&) {
@@ -173,7 +181,10 @@ int main() {
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_pitch = 0; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_pitch = 66; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_size = sizeof(image) - 1; }) == invalidParam);
-    Require(encodeWith([](JpegEncEncodeParam& p) { p.image_height = 0xFFFF; p.image_pitch = 0xFFFFFFC; }) == invalidParam);
+    Require(encodeWith([](JpegEncEncodeParam& p) {
+                p.image_height = 0xFFFF;
+                p.image_pitch = 0xFFFFFFC;
+            }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.encode_mode = 2; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.color_space = 0; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.sampling_type = 3; }) == invalidParam);
@@ -182,10 +193,25 @@ int main() {
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_width = 17; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.color_space = 2; }) == invalidParam);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.sampling_type = 0; }) == invalidParam);
-    Require(encodeWith([](JpegEncEncodeParam& p) { p.pixel_format = 10; p.image_width = 33; }) == invalidParam);
-    Require(encodeWith([](JpegEncEncodeParam& p) { p.pixel_format = 11; p.color_space = 2; p.sampling_type = 0; p.image_width = 65; }) == invalidParam);
-    Require(encodeWith([](JpegEncEncodeParam& p) { p.pixel_format = 11; p.color_space = 2; p.sampling_type = 2; }) == invalidParam);
-    Require(encodeWith([](JpegEncEncodeParam& p) { p.pixel_format = 11; p.sampling_type = 0; }) == invalidParam);
+    Require(encodeWith([](JpegEncEncodeParam& p) {
+                p.pixel_format = 10;
+                p.image_width = 33;
+            }) == invalidParam);
+    Require(encodeWith([](JpegEncEncodeParam& p) {
+                p.pixel_format = 11;
+                p.color_space = 2;
+                p.sampling_type = 0;
+                p.image_width = 65;
+            }) == invalidParam);
+    Require(encodeWith([](JpegEncEncodeParam& p) {
+                p.pixel_format = 11;
+                p.color_space = 2;
+                p.sampling_type = 2;
+            }) == invalidParam);
+    Require(encodeWith([](JpegEncEncodeParam& p) {
+                p.pixel_format = 11;
+                p.sampling_type = 0;
+            }) == invalidParam);
 
     constexpr std::uint32_t pitch = 16 * 4 + 16;
     alignas(4) static unsigned char padded[16 * pitch];
@@ -198,9 +224,11 @@ int main() {
             pixel[1] = color[1];
             pixel[2] = color[2];
             pixel[3] = 255;
-            for (int c = 0; c < 3; ++c) expected[(y * 16 + x) * 3 + c] = color[c];
+            for (int c = 0; c < 3; ++c)
+                expected[(y * 16 + x) * 3 + c] = color[c];
         }
-        for (std::uint32_t x = 16 * 4; x < pitch; ++x) padded[y * pitch + x] = 0xEE;
+        for (std::uint32_t x = 16 * 4; x < pitch; ++x)
+            padded[y * pitch + x] = 0xEE;
     }
 
     JpegEncEncodeParam rgba = ValidEncodeParam();
@@ -284,9 +312,11 @@ int main() {
     constexpr std::uint32_t wideWidth = 48;
     constexpr std::uint32_t wideHeight = 32;
     alignas(4) static unsigned char wide[wideWidth * wideHeight * 4];
-    for (std::size_t i = 0; i < sizeof(wide); ++i) wide[i] = static_cast<unsigned char>((i * 37) ^ (i / 192));
+    for (std::size_t i = 0; i < sizeof(wide); ++i)
+        wide[i] = static_cast<unsigned char>((i * 37) ^ (i / 192));
     static unsigned char wideGray[wideWidth * wideHeight];
-    for (std::size_t i = 0; i < sizeof(wideGray); ++i) wideGray[i] = static_cast<unsigned char>((i * 53) ^ (i / 48));
+    for (std::size_t i = 0; i < sizeof(wideGray); ++i)
+        wideGray[i] = static_cast<unsigned char>((i * 53) ^ (i / 48));
     static unsigned char restarted[8192];
     auto encodeWide = [&](std::uint8_t sampling, std::int32_t restart, bool grayscale) {
         JpegEncEncodeParam p = ValidEncodeParam();

@@ -10,18 +10,19 @@
 #include <stdexcept>
 
 extern "C" int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps);
-extern "C" int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps);
+extern "C" int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs,
+                                                               const Shader* ps);
 
 namespace {
 
 using Registers = std::array<ShaderRegister, 32>;
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::exception& error) {
@@ -62,8 +63,8 @@ void testIdentity() {
 }
 
 void testMapping() {
-    std::array<ShaderSemantic, 5> inputs{
-        semantic(1, 0, 2), semantic(2, 0, 2), semantic(5, 0, 2), semantic(3, 0, 0), semantic(4, 0, 3)};
+    std::array<ShaderSemantic, 5> inputs{semantic(1, 0, 2), semantic(2, 0, 2), semantic(5, 0, 2), semantic(3, 0, 0),
+                                         semantic(4, 0, 3)};
     inputs[0].is_flat_shaded = 1;
     inputs[0].default_value = 1;
     inputs[0].default_value_hi = 3;
@@ -94,7 +95,8 @@ void testMapping() {
 
     auto regular = filled();
     check(sceAgcCreateInterpolantMapping(regular.data(), &gs, &ps) == 0, "mapping failed");
-    check(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
+    check(regular[3].value == split[3].value && regular[4].value == split[4].value,
+          "mappings differ outside the high f16 half mode");
     checkIdentity(regular, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 }
 
@@ -127,8 +129,11 @@ int main() {
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
+        try {
+            LibcRunShutdown_nid_postfix();
+        } catch (const std::exception& shutdown) {
+            std::fprintf(stderr, "shutdown: %s\n", shutdown.what());
+        }
         return 1;
     }
 }

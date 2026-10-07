@@ -13,16 +13,12 @@ class IAmd64OnlyInstructionMatcher {
 public:
     virtual ~IAmd64OnlyInstructionMatcher() = default;
 
-    [[nodiscard]] virtual std::optional<Amd64OnlyMatch> Match(
-        const std::uint8_t* data,
-        std::size_t length,
-        std::span<const std::uint8_t> trailing = {}
-    ) const = 0;
+    [[nodiscard]] virtual std::optional<Amd64OnlyMatch> Match(const std::uint8_t* data, std::size_t length,
+                                                              std::span<const std::uint8_t> trailing = {}) const = 0;
 
-    [[nodiscard]] virtual std::optional<Amd64OnlyMatch> MatchSequence(
-        std::span<const std::span<const std::uint8_t>> instructions,
-        std::span<const std::uint8_t> trailing
-    ) const = 0;
+    [[nodiscard]] virtual std::optional<Amd64OnlyMatch>
+    MatchSequence(std::span<const std::span<const std::uint8_t>> instructions,
+                  std::span<const std::uint8_t> trailing) const = 0;
 };
 
 std::unique_ptr<IAmd64OnlyInstructionMatcher> MakeAmd64OnlyInstructionMatcher();

@@ -12,16 +12,15 @@ namespace {
 
 using namespace Font;
 
-std::uint32_t EffectiveEdition(std::uint64_t edition) {
-    return static_cast<std::uint32_t>(edition >> 32);
-}
+std::uint32_t EffectiveEdition(std::uint64_t edition) { return static_cast<std::uint32_t>(edition >> 32); }
 
 std::uint32_t* AcquireDeviceCache(FontLibNative* library) {
     auto* const busy = reinterpret_cast<std::uint32_t*>(std::numeric_limits<std::uintptr_t>::max());
     std::atomic_ref<std::uint32_t*> slot(library->device_cache_buf);
     for (;;) {
         std::uint32_t* current = slot.load(std::memory_order_acquire);
-        if (current != busy && slot.compare_exchange_weak(current, busy, std::memory_order_acq_rel)) return current;
+        if (current != busy && slot.compare_exchange_weak(current, busy, std::memory_order_acq_rel))
+            return current;
         Backoff();
     }
 }
@@ -35,14 +34,16 @@ void* AcquireRendererSelection(RendererNative* renderer) {
     std::atomic_ref<void*> slot(renderer->selection);
     for (;;) {
         void* current = slot.load(std::memory_order_acquire);
-        if (current != busy && slot.compare_exchange_weak(current, busy, std::memory_order_acq_rel)) return current;
+        if (current != busy && slot.compare_exchange_weak(current, busy, std::memory_order_acq_rel))
+            return current;
         Backoff();
     }
 }
 
 void* CreateFontContext(FontLibNative* library, std::uint32_t entries, std::uint32_t size) {
     void* ctx = library->iface->alloc(library->alloc_ctx, size);
-    if (!ctx) return nullptr;
+    if (!ctx)
+        return nullptr;
     std::memset(ctx, 0, size);
     auto* header = static_cast<FontCtxHeader*>(ctx);
     header->lock_word = 0;
@@ -51,18 +52,23 @@ void* CreateFontContext(FontLibNative* library, std::uint32_t entries, std::uint
     return ctx;
 }
 
-int SupportFonts(FontLibrary library, void* FontLibNative::*slot, std::uint32_t entries, std::uint32_t size, std::uint32_t formats) {
+int SupportFonts(FontLibrary library, void* FontLibNative::* slot, std::uint32_t entries, std::uint32_t size,
+                 std::uint32_t formats) {
     auto* lib = static_cast<FontLibNative*>(library);
-    if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!lib || lib->magic != LIBRARY_MAGIC)
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     std::uint32_t previous = 0;
-    if (!AcquireLibraryLock(lib, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!AcquireLibraryLock(lib, previous))
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     const auto finish = [&](int rc) {
         ReleaseLibraryLock(lib, previous);
         return rc;
     };
-    if (lib->*slot) return finish(SCE_FONT_ERROR_ALREADY_SPECIFIED);
+    if (lib->*slot)
+        return finish(SCE_FONT_ERROR_ALREADY_SPECIFIED);
     void* ctx = CreateFontContext(lib, entries, size);
-    if (!ctx) return finish(SCE_FONT_ERROR_ALLOCATION_FAILED);
+    if (!ctx)
+        return finish(SCE_FONT_ERROR_ALLOCATION_FAILED);
     if (!lib->sys_driver || !lib->sys_driver->support_formats) {
         lib->iface->dealloc(lib->alloc_ctx, ctx);
         return finish(SCE_FONT_ERROR_INVALID_LIBRARY);
@@ -82,11 +88,15 @@ int SupportFonts(FontLibrary library, void* FontLibNative::*slot, std::uint32_t 
 
 extern "C" {
 
-int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::uint32_t regionSize, const FontMemoryInterface* iface, void* mspaceObject, FontMemoryDestroyFunction destroyCallback, void* destroyObject) {
-    if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
+int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::uint32_t regionSize,
+                                const FontMemoryInterface* iface, void* mspaceObject,
+                                FontMemoryDestroyFunction destroyCallback, void* destroyObject) {
+    if (!memory)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!iface) {
         memory->mem_kind = 0;
-        if (!regionAddress || regionSize == 0) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (!regionAddress || regionSize == 0)
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     memory->mem_kind = MEMORY_MAGIC;
     memory->attr_bits = 0;
@@ -102,10 +112,13 @@ int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::ui
 }
 
 int APS5_VABI sceFontMemoryTerm(FontMemory* memory) {
-    if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (memory->mem_kind != MEMORY_MAGIC) return SCE_FONT_ERROR_INVALID_MEMORY;
+    if (!memory)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (memory->mem_kind != MEMORY_MAGIC)
+        return SCE_FONT_ERROR_INVALID_MEMORY;
     if (static_cast<std::int8_t>(memory->attr_bits & 0xFF) < 0) {
-        if (memory->iface && memory->iface->mspace_destroy) memory->iface->mspace_destroy(memory->some_ctx2, memory->mspace_handle);
+        if (memory->iface && memory->iface->mspace_destroy)
+            memory->iface->mspace_destroy(memory->some_ctx2, memory->mspace_handle);
         std::memset(memory, 0, sizeof(*memory));
         return SCE_FONT_OK;
     }
@@ -118,15 +131,21 @@ int APS5_VABI sceFontMemoryTerm(FontMemory* memory) {
     return SCE_FONT_OK;
 }
 
-int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const void* createParams, std::uint64_t edition, FontLibrary* pLibrary) {
-    if (pLibrary) *pLibrary = nullptr;
-    if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (memory->mem_kind != MEMORY_MAGIC || !memory->iface || !memory->iface->alloc || !memory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
-    if (!createParams || !pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
+int APS5_VABI sceFontCreateLibraryWithEdition(const FontMemory* memory, const void* createParams, std::uint64_t edition,
+                                              FontLibrary* pLibrary) {
+    if (pLibrary)
+        *pLibrary = nullptr;
+    if (!memory)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (memory->mem_kind != MEMORY_MAGIC || !memory->iface || !memory->iface->alloc || !memory->iface->dealloc)
+        return SCE_FONT_ERROR_INVALID_MEMORY;
+    if (!createParams || !pLibrary)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto allocFn = memory->iface->alloc;
     const auto freeFn = memory->iface->dealloc;
     auto* lib = static_cast<FontLibNative*>(allocFn(memory->mspace_handle, sizeof(FontLibNative)));
-    if (!lib) return SCE_FONT_ERROR_ALLOCATION_FAILED;
+    if (!lib)
+        return SCE_FONT_ERROR_ALLOCATION_FAILED;
     void* workspace = allocFn(memory->mspace_handle, 0x4000);
     if (!workspace) {
         freeFn(memory->mspace_handle, lib);
@@ -174,25 +193,34 @@ int APS5_VABI sceFontCreateLibrary(const FontMemory* memory, const void* createP
 }
 
 int APS5_VABI sceFontDestroyLibrary(FontLibrary* pLibrary) {
-    if (!pLibrary) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!pLibrary)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* lib = static_cast<FontLibNative*>(*pLibrary);
-    if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
-    if (lib->sys_driver && lib->sys_driver->term) lib->sys_driver->term(lib);
+    if (!lib || lib->magic != LIBRARY_MAGIC)
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (lib->sys_driver && lib->sys_driver->term)
+        lib->sys_driver->term(lib);
     const auto freeFn = lib->iface->dealloc;
     void* allocCtx = lib->alloc_ctx;
-    if ((lib->flags & 1u) != 0 && lib->device_cache_buf) freeFn(allocCtx, lib->device_cache_buf);
-    if (lib->external_fonts_ctx) freeFn(allocCtx, lib->external_fonts_ctx);
-    if (lib->sysfonts_ctx) freeFn(allocCtx, lib->sysfonts_ctx);
-    if (lib->workspace) freeFn(allocCtx, lib->workspace);
+    if ((lib->flags & 1u) != 0 && lib->device_cache_buf)
+        freeFn(allocCtx, lib->device_cache_buf);
+    if (lib->external_fonts_ctx)
+        freeFn(allocCtx, lib->external_fonts_ctx);
+    if (lib->sysfonts_ctx)
+        freeFn(allocCtx, lib->sysfonts_ctx);
+    if (lib->workspace)
+        freeFn(allocCtx, lib->workspace);
     lib->magic = 0;
     freeFn(allocCtx, lib);
     *pLibrary = nullptr;
     return SCE_FONT_OK;
 }
 
-int APS5_VABI sceFontCreateRendererWithEdition(const FontMemory* memory, const void* createParams, std::uint64_t edition, FontRenderer* pRenderer) {
+int APS5_VABI sceFontCreateRendererWithEdition(const FontMemory* memory, const void* createParams,
+                                               std::uint64_t edition, FontRenderer* pRenderer) {
     if (!memory) {
-        if (pRenderer) *pRenderer = nullptr;
+        if (pRenderer)
+            *pRenderer = nullptr;
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     int rc = SCE_FONT_ERROR_INVALID_MEMORY;
@@ -234,11 +262,14 @@ int APS5_VABI sceFontCreateRendererWithEdition(const FontMemory* memory, const v
                     return SCE_FONT_OK;
                 }
             }
-            if (workspace) freeFn(memory->mspace_handle, workspace);
-            if (rendererMemory) freeFn(memory->mspace_handle, rendererMemory);
+            if (workspace)
+                freeFn(memory->mspace_handle, workspace);
+            if (rendererMemory)
+                freeFn(memory->mspace_handle, rendererMemory);
         }
     }
-    if (pRenderer) *pRenderer = nullptr;
+    if (pRenderer)
+        *pRenderer = nullptr;
     return rc;
 }
 
@@ -247,50 +278,67 @@ int APS5_VABI sceFontCreateRenderer(const FontMemory* memory, const void* create
 }
 
 int APS5_VABI sceFontDestroyRenderer(FontRenderer* pRenderer) {
-    if (!pRenderer) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!pRenderer)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* renderer = static_cast<RendererNative*>(*pRenderer);
-    if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (!renderer || renderer->magic != RENDERER_MAGIC)
+        return SCE_FONT_ERROR_INVALID_RENDERER;
     const auto* selection = static_cast<const RendererSelection*>(AcquireRendererSelection(renderer));
     int rc = SCE_FONT_ERROR_FATAL;
-    if (selection && selection->destroy_fn) rc = selection->destroy_fn(renderer);
+    if (selection && selection->destroy_fn)
+        rc = selection->destroy_fn(renderer);
     renderer->selection = nullptr;
     const auto freeFn = renderer->free_fn;
     void* allocCtx = renderer->alloc_ctx;
-    if (renderer->workspace) freeFn(allocCtx, renderer->workspace);
+    if (renderer->workspace)
+        freeFn(allocCtx, renderer->workspace);
     freeFn(allocCtx, renderer);
     *pRenderer = nullptr;
     return rc;
 }
 
 int APS5_VABI sceFontRendererGetOutlineBufferSize(FontRenderer fontRenderer, std::uint32_t* size) {
-    if (!size) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!size)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     *size = 0;
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
-    if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (!renderer || renderer->magic != RENDERER_MAGIC)
+        return SCE_FONT_ERROR_INVALID_RENDERER;
     *size = static_cast<std::uint32_t>(renderer->workspace_size);
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontRendererResetOutlineBuffer(FontRenderer fontRenderer) {
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
-    if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
-    if (renderer->workspace && renderer->workspace_size) std::memset(renderer->workspace, 0, static_cast<std::size_t>(renderer->workspace_size));
+    if (!renderer || renderer->magic != RENDERER_MAGIC)
+        return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (renderer->workspace && renderer->workspace_size)
+        std::memset(renderer->workspace, 0, static_cast<std::size_t>(renderer->workspace_size));
     return SCE_FONT_OK;
 }
 
-int APS5_VABI sceFontRendererSetOutlineBufferPolicy(FontRenderer fontRenderer, std::uint64_t bufferPolicy, std::uint32_t basalSize, std::uint32_t limitSize) {
+int APS5_VABI sceFontRendererSetOutlineBufferPolicy(FontRenderer fontRenderer, std::uint64_t bufferPolicy,
+                                                    std::uint32_t basalSize, std::uint32_t limitSize) {
     (void)bufferPolicy;
     auto* renderer = static_cast<RendererNative*>(fontRenderer);
-    if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
-    if (limitSize != 0 && basalSize > limitSize) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!renderer->alloc_fn || !renderer->free_fn || !renderer->alloc_ctx) return SCE_FONT_ERROR_INVALID_MEMORY;
-    auto desiredSize = std::max(static_cast<std::uint64_t>(renderer->workspace_size), static_cast<std::uint64_t>(basalSize));
-    if (limitSize != 0) desiredSize = std::min(desiredSize, static_cast<std::uint64_t>(limitSize));
-    if (desiredSize == 0) desiredSize = 0x4000;
+    if (!renderer || renderer->magic != RENDERER_MAGIC)
+        return SCE_FONT_ERROR_INVALID_RENDERER;
+    if (limitSize != 0 && basalSize > limitSize)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!renderer->alloc_fn || !renderer->free_fn || !renderer->alloc_ctx)
+        return SCE_FONT_ERROR_INVALID_MEMORY;
+    auto desiredSize =
+        std::max(static_cast<std::uint64_t>(renderer->workspace_size), static_cast<std::uint64_t>(basalSize));
+    if (limitSize != 0)
+        desiredSize = std::min(desiredSize, static_cast<std::uint64_t>(limitSize));
+    if (desiredSize == 0)
+        desiredSize = 0x4000;
     if (!renderer->workspace || renderer->workspace_size != desiredSize) {
         void* workspace = renderer->alloc_fn(renderer->alloc_ctx, static_cast<std::uint32_t>(desiredSize));
-        if (!workspace) return SCE_FONT_ERROR_ALLOCATION_FAILED;
-        if (renderer->workspace) renderer->free_fn(renderer->alloc_ctx, renderer->workspace);
+        if (!workspace)
+            return SCE_FONT_ERROR_ALLOCATION_FAILED;
+        if (renderer->workspace)
+            renderer->free_fn(renderer->alloc_ctx, renderer->workspace);
         renderer->workspace = workspace;
         renderer->workspace_size = desiredSize;
     }
@@ -298,19 +346,23 @@ int APS5_VABI sceFontRendererSetOutlineBufferPolicy(FontRenderer fontRenderer, s
 }
 
 int APS5_VABI sceFontGetPixelResolution(FontLibrary library, std::uint32_t* subPixelCount) {
-    if (!subPixelCount) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!subPixelCount)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     *subPixelCount = 0;
     const auto* lib = static_cast<const FontLibNative*>(library);
-    if (!lib || lib->magic != LIBRARY_MAGIC || !lib->sys_driver || !lib->sys_driver->pixel_resolution) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!lib || lib->magic != LIBRARY_MAGIC || !lib->sys_driver || !lib->sys_driver->pixel_resolution)
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     *subPixelCount = lib->sys_driver->pixel_resolution();
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, std::uint32_t size) {
     auto* lib = static_cast<FontLibNative*>(library);
-    if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!lib || lib->magic != LIBRARY_MAGIC)
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     std::uint32_t previous = 0;
-    if (!AcquireLibraryLock(lib, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!AcquireLibraryLock(lib, previous))
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     std::uint32_t* current = AcquireDeviceCache(lib);
     std::uint32_t* stored = current;
     int rc;
@@ -340,7 +392,8 @@ int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, 
                 stored = header;
                 rc = SCE_FONT_OK;
             } else {
-                if (owned) lib->iface->dealloc(lib->alloc_ctx, header);
+                if (owned)
+                    lib->iface->dealloc(lib->alloc_ctx, header);
                 rc = SCE_FONT_ERROR_INVALID_PARAMETER;
             }
         }
@@ -352,9 +405,11 @@ int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary library, void* buffer, 
 
 int APS5_VABI sceFontClearDeviceCache(FontLibrary library) {
     auto* lib = static_cast<FontLibNative*>(library);
-    if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!lib || lib->magic != LIBRARY_MAGIC)
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     std::uint32_t previous = 0;
-    if (!AcquireLibraryLock(lib, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (!AcquireLibraryLock(lib, previous))
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
     std::uint32_t* current = AcquireDeviceCache(lib);
     int rc = SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER;
     if (current) {
@@ -377,11 +432,12 @@ int APS5_VABI sceFontSupportSystemFonts(FontLibrary library) {
 
 int APS5_VABI sceFontSetFontsOpenMode(FontLibrary library, std::uint32_t openMode) {
     auto* lib = static_cast<FontLibNative*>(library);
-    if (!lib || lib->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
-    if (openMode > 2) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!lib || lib->magic != LIBRARY_MAGIC)
+        return SCE_FONT_ERROR_INVALID_LIBRARY;
+    if (openMode > 2)
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
-
 }
 
 #pragma GCC visibility pop

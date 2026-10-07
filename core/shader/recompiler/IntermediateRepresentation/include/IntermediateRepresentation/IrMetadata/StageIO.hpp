@@ -7,14 +7,7 @@
 
 namespace ShaderRecompiler {
 
-enum class TessellationAttribute {
-    LocalOutput,
-    ControlInput,
-    ControlOutput,
-    EvaluationInput,
-    PatchOutput,
-    Factor
-};
+enum class TessellationAttribute { LocalOutput, ControlInput, ControlOutput, EvaluationInput, PatchOutput, Factor };
 
 enum class StageInputKind {
     VertexIndex,

@@ -55,7 +55,8 @@ public:
 
     // The layout for `key` (binding, type, count, stage flags per binding, as ShaderResources builds
     // it from `bindings`), created on first use.
-    VkDescriptorSetLayout Layout(std::span<const std::uint32_t> key, std::span<const VkDescriptorSetLayoutBinding> bindings);
+    VkDescriptorSetLayout Layout(std::span<const std::uint32_t> key,
+                                 std::span<const VkDescriptorSetLayoutBinding> bindings);
     struct SetAllocation {
         VkDescriptorSet set = VK_NULL_HANDLE;
         VkDescriptorPool pool = VK_NULL_HANDLE;
@@ -87,15 +88,21 @@ private:
 
 class ShaderResources {
 public:
-    ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
-    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {});
-    ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
+    ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex,
+                    const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target,
+                    std::uint64_t indexAddress, std::size_t indexBytes);
+    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target,
+                    std::uint64_t indexAddress, std::size_t indexBytes,
+                    std::span<const GuestMemorySnapshot> snapshots = {});
+    ShaderResources(const Context& context, const CompiledShader& compute,
+                    std::span<const GuestMemorySnapshot> snapshots = {});
     // Two-stage build for dispatches (see build): with `deferred` the constructor runs stage A only,
     // which needs no device lock, and Complete() runs stage B under GuestMemory::GpuMutex; until
     // then no other member may be used. `compute` and `snapshots` must outlive Complete(). An
     // address-based shader (BDA tables) builds entirely in Complete(): its lease acquisition
     // reconciles imports and refreshes mirrors, which needs the lock.
-    ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred);
+    ShaderResources(const Context& context, const CompiledShader& compute,
+                    std::span<const GuestMemorySnapshot> snapshots, bool deferred);
     void Complete();
     bool Completed() const { return completed; }
     ~ShaderResources();
@@ -122,8 +129,10 @@ public:
         std::size_t size;
         std::vector<std::uint32_t> words;
     };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const;
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder,
+                                                      std::span<const MovedBuffer> moved = {}) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders,
+                                                                 Recorder& recorder) const;
     void WriteBack();
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs
@@ -135,7 +144,9 @@ public:
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
-    bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
+    bool WritesOverlap(std::uint64_t address, std::size_t bytes) const {
+        return guestMemory.WritesOverlap(address, bytes);
+    }
     // Whether a region the recorded work reads in place through a host import overlaps the range.
     bool ReadsOverlap(std::uint64_t address, std::size_t bytes) const;
     // The recorder's hazard tracker inputs (Recorder::NoteAccess): the written elements' guest
@@ -164,7 +175,8 @@ public:
     // Without `dataWords` the ShaderData and FlattenedSrt descriptor words stay out of the key
     // (their count and size remain): a compute template then serves dispatches whose constants
     // differ, and the hit refreshes its data buffers with the dispatch's words (RefreshData).
-    static std::vector<std::uint32_t> ContentKey(const CompiledShader& shader, bool dataWords = true, bool movableBuffers = false);
+    static std::vector<std::uint32_t> ContentKey(const CompiledShader& shader, bool dataWords = true,
+                                                 bool movableBuffers = false);
     // Records the shader's ShaderData and FlattenedSrt words into this object's data buffers
     // (vkCmdUpdateBuffer, a transfer write the caller's pre-dispatch barrier makes visible; a
     // buffer already holding the words is left alone). Returns whether anything was recorded. With
@@ -185,31 +197,68 @@ public:
         ProofFailure failure = ProofFailure::None;
     };
     bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
-    bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report); }
+    bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) {
+        return Revalidate(std::span<const CompiledShader>(&shader, 1), report);
+    }
     // The proof a recipe hit runs on its template (design_cpu_final M4): Revalidate by that name.
-    bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) { return Revalidate(shaders, report); }
-    bool ProveCurrent(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(shader, report); }
+    bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) {
+        return Revalidate(shaders, report);
+    }
+    bool ProveCurrent(const CompiledShader& shader, ProofReport* report = nullptr) {
+        return Revalidate(shader, report);
+    }
     // FNV over the ShaderData/FlattenedSrt words, in binding order: of this object's data buffers
     // as the recorded work will find them (maintained by addDataBuffer and RefreshData), and of a
     // compiled shader's descriptors. A recipe hit refreshes the template iff the two differ.
     std::uint64_t DataWordsHash() const { return dataWordsHash; }
     static std::uint64_t DataWordsHash(const CompiledShader& shader);
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
-        for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
+        for (const auto& [position, adjustment] : pushPatches)
+            bytes[position] = static_cast<std::byte>(adjustment);
     }
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     // Why the fast proof of a Revalidate left the object to the full walk (the [rescache]
     // revalidate line's reasons); Count: it did not.
-    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Count };
+    enum class FastFail : std::size_t {
+        NoRecord,
+        Collect,
+        Pending,
+        Evicted,
+        Changed,
+        Keys,
+        ClearedView,
+        StorageKeys,
+        Count
+    };
     // Why a Pending failure was left to the full walk instead of the own-object refresh (T1, see
     // refreshOwnObjects); Count: it was not.
-    enum class OwnRefreshFallback : std::size_t { Disabled, Snapshot, Keys, ForeignView, SurfaceKey, NotImported, Uncached, Rerun, Count };
+    enum class OwnRefreshFallback : std::size_t {
+        Disabled,
+        Snapshot,
+        Keys,
+        ForeignView,
+        SurfaceKey,
+        NotImported,
+        Uncached,
+        Rerun,
+        Count
+    };
     // APS5_PROFILE_DRAW: the build's sub-phases ([resources] totals) and their times in
     // milliseconds (zero when not profiling), so the draw path can total them separately from
     // dispatches. bindingsMs covers the binding plan (stage A) and the image lookups (stage B);
     // prepareMs/completeMs are the two stages' totals.
-    enum class BuildPhase : std::size_t { Bindings, Precollect, Upload, Descriptors, StageA, Images, Bda, StageB, Count };
+    enum class BuildPhase : std::size_t {
+        Bindings,
+        Precollect,
+        Upload,
+        Descriptors,
+        StageA,
+        Images,
+        Bda,
+        StageB,
+        Count
+    };
     struct BuildTiming {
         double bindingsMs = 0;
         double uploadMs = 0;
@@ -280,15 +329,18 @@ private:
     // GuestMemory::GpuMutex): the texture and storage image lookups (they refresh, upload and flush
     // through the recorder), the rest of the upload, the BDA objects, the descriptor writes and the
     // reusability record. build runs both.
-    void build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes);
-    void buildPrepare(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes);
+    void build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint64_t indexAddress,
+               std::size_t indexBytes);
+    void buildPrepare(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint64_t indexAddress,
+                      std::size_t indexBytes);
     void buildComplete();
     // APS5_PROFILE_DRAW: closes the current sub-phase of the build into the [resources] totals.
     double phase(BuildPhase which);
     // `written` is the element's DescriptorBinding::bufferWritten: a read-only element binds the
     // same way but is left out of the write set (no write-back, no pending-write note). `atomic`
     // is its bufferAtomic (see GuestBufferMemory::AddWritable).
-    std::size_t addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic);
+    std::size_t addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target,
+                               std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic);
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
@@ -326,10 +378,12 @@ private:
     // Stage B: the record's texture when the fastRevalidate predicate proves it current under the
     // lock and the cache still holds it; null sends the element to cachedTexture.
     std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
-    void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
+    void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item,
+                             std::span<const std::shared_ptr<Sampler>> shaderSamplers);
     void forgetDeferredInputs();
     void release() noexcept;
-    void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
+    void prepareAddressBindings(std::span<const CompiledShader> shaders,
+                                std::span<const GuestMemorySnapshot> snapshots);
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
     void noteReusable();
     void reportDescriptorCaches() const;
@@ -373,7 +427,8 @@ private:
     // holds; `reason` receives why the proof failed (Count: it passed), `overlapping` the surfaces
     // of a Pending failure in element order (empty otherwise), `accepted` whether a foreign overlap
     // was accepted by either rule (the verify switch then runs the full walk beside the proof).
-    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted);
+    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason,
+                        std::vector<PendingOverlap>& overlapping, bool& accepted);
     // T1 (design_cpu_final M3): brings the overlapping surfaces' own objects up to date exactly as
     // the full walk's lookups would, in the walk's binding order, without the lookups: a storage
     // image's Refresh (which stores the foreign images over its surface first), a view's source's
@@ -383,7 +438,8 @@ private:
     // fast-clear keys, a foreign pending image the lookup would view, a surface key mapping to
     // another cached image, a surface outside the host imports, an object no longer cached), which
     // leaves the whole object to the full walk. Under GuestMemory::GpuMutex, as Revalidate is.
-    OwnRefreshFallback refreshOwnObjects(std::span<const CompiledShader> shaders, std::span<PendingOverlap> overlapping);
+    OwnRefreshFallback refreshOwnObjects(std::span<const CompiledShader> shaders,
+                                         std::span<PendingOverlap> overlapping);
     // Today's per-element walk (APS5_NO_EPOCH_REVALIDATE=1).
     bool fastRevalidateEach();
     Context context;
@@ -478,7 +534,8 @@ public:
     // `evicted`, when given, receives the objects the insert displaces (the entry replaced under the
     // key, the ones over the bound) instead of their being destroyed here: a caller under the GPU
     // mutex hands them to the recorder so the destruction runs off the lock (VulkanDevice::dispatch).
-    void Insert(const Key& key, std::shared_ptr<ShaderResources> resources, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
+    void Insert(const Key& key, std::shared_ptr<ShaderResources> resources,
+                std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     // With `object`, erases the entry only while it still holds that object (a replacement made
     // meanwhile by another worker stays).
     void Remove(const Key& key, const ShaderResources* object = nullptr);
@@ -497,7 +554,8 @@ private:
     struct KeyHash {
         std::size_t operator()(const Key& key) const noexcept {
             std::uint64_t hash = 14695981039346656037ull;
-            for (const auto word : key) hash = (hash ^ word) * 1099511628211ull;
+            for (const auto word : key)
+                hash = (hash ^ word) * 1099511628211ull;
             return static_cast<std::size_t>(hash);
         }
     };

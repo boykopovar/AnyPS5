@@ -11,7 +11,8 @@
 #include <limits>
 #include <stdexcept>
 
-extern "C" int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs, std::uint32_t budget, float factor);
+extern "C" int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs, std::uint32_t budget,
+                                                     float factor);
 
 namespace {
 
@@ -24,11 +25,11 @@ struct GsSetup {
 };
 
 void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template <typename TAction> void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::exception& error) {
@@ -44,7 +45,8 @@ Registers filled() {
     return regs;
 }
 
-void makeGs(GsSetup& setup, std::uint32_t onchip, std::uint32_t subgroup, std::uint32_t vsOut, std::uint32_t clOut, std::uint32_t maxOutput, bool wave32) {
+void makeGs(GsSetup& setup, std::uint32_t onchip, std::uint32_t subgroup, std::uint32_t vsOut, std::uint32_t clOut,
+            std::uint32_t maxOutput, bool wave32) {
     setup.cx = {{
         {ShaderRegs::VGT_GS_ONCHIP_CNTL, onchip},
         {ShaderRegs::GE_NGG_SUBGRP_CNTL, subgroup},
@@ -60,7 +62,8 @@ void makeGs(GsSetup& setup, std::uint32_t onchip, std::uint32_t subgroup, std::u
     setup.shader.specials = &setup.specials;
 }
 
-void expectRegs(const Shader* gs, std::uint32_t budget, float factor, std::uint32_t pcAlloc, std::uint32_t rsrc4, const char* message) {
+void expectRegs(const Shader* gs, std::uint32_t budget, float factor, std::uint32_t pcAlloc, std::uint32_t rsrc4,
+                const char* message) {
     auto regs = filled();
     check(sceAgcGetGsOversubscription(regs.data(), gs, budget, factor) == 0, message);
     check(regs[0].offset == ShaderRegs::GE_PC_ALLOC && regs[1].offset == ShaderRegs::SPI_SHADER_PGM_RSRC4_GS, message);
@@ -69,7 +72,8 @@ void expectRegs(const Shader* gs, std::uint32_t budget, float factor, std::uint3
 
 void testBudgetLimits() {
     expectRegs(nullptr, 0, 0.5f, 0, 0, "zero budget does not disable oversubscription");
-    expectRegs(nullptr, std::numeric_limits<std::uint32_t>::max(), 0.5f, 0x7ffu, 0x7f0000u, "unlimited budget does not allow full oversubscription");
+    expectRegs(nullptr, std::numeric_limits<std::uint32_t>::max(), 0.5f, 0x7ffu, 0x7f0000u,
+               "unlimited budget does not allow full oversubscription");
 }
 
 void testVertexBound() {
@@ -87,7 +91,8 @@ void testExportBound() {
     expectRegs(&setup.shader, 1u << 20u, 0.75f, 0x7ffu, 0x5f0000u, "export-bound oversubscription changed");
     expectRegs(&setup.shader, 1u << 20u, 4.0f, 0x7ffu, 0x7f0000u, "factor above one is not clamped");
     makeGs(setup, 1u << 11u, 1, 0x80u, 1u << 21u, 32, false);
-    expectRegs(&setup.shader, 1u << 20u, 0.25f, 0x7ffu, 0x1f0000u, "oversubscription without parameter cache exports changed");
+    expectRegs(&setup.shader, 1u << 20u, 0.25f, 0x7ffu, 0x1f0000u,
+               "oversubscription without parameter cache exports changed");
 }
 
 void testRegisterFields() {
@@ -137,8 +142,11 @@ int main() {
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
+        try {
+            LibcRunShutdown_nid_postfix();
+        } catch (const std::exception& shutdown) {
+            std::fprintf(stderr, "shutdown: %s\n", shutdown.what());
+        }
         return 1;
     }
 }

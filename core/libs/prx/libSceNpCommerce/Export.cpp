@@ -23,65 +23,64 @@ extern "C" {
 
 // The store dialog has nothing to show: every open finishes at once as cancelled by the user.
 int APS5_VABI sceNpCommerceDialogInitialize() {
- if (g_status != COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
- g_status = COMMON_DIALOG_STATUS_INITIALIZED;
- return 0;
+    if (g_status != COMMON_DIALOG_STATUS_NONE)
+        return COMMON_DIALOG_ERROR_ALREADY_INITIALIZED;
+    g_status = COMMON_DIALOG_STATUS_INITIALIZED;
+    return 0;
 }
 
 int APS5_VABI sceNpCommerceDialogOpen(const void* param) {
- if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- g_status = COMMON_DIALOG_STATUS_FINISHED;
- return 0;
+    if (g_status == COMMON_DIALOG_STATUS_NONE)
+        return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    if (param == nullptr)
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    return 0;
 }
 
-int APS5_VABI sceNpCommerceDialogUpdateStatus(void) {
- return g_status;
-}
+int APS5_VABI sceNpCommerceDialogUpdateStatus(void) { return g_status; }
 
-int APS5_VABI sceNpCommerceDialogGetStatus(void) {
- return g_status;
-}
+int APS5_VABI sceNpCommerceDialogGetStatus(void) { return g_status; }
 
 int APS5_VABI sceNpCommerceDialogGetResult(void* result) {
- if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (g_status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
- // SceNpCommerceDialogResult: int32 result, bool authorized, then reserved bytes.
- std::int32_t value = COMMON_DIALOG_RESULT_USER_CANCELED;
- std::memcpy(result, &value, sizeof(value));
- std::uint8_t authorized = 0;
- std::memcpy(static_cast<std::uint8_t*>(result) + sizeof(value), &authorized, sizeof(authorized));
- return 0;
+    if (result == nullptr)
+        return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (g_status != COMMON_DIALOG_STATUS_FINISHED)
+        return COMMON_DIALOG_ERROR_NOT_FINISHED;
+    // SceNpCommerceDialogResult: int32 result, bool authorized, then reserved bytes.
+    std::int32_t value = COMMON_DIALOG_RESULT_USER_CANCELED;
+    std::memcpy(result, &value, sizeof(value));
+    std::uint8_t authorized = 0;
+    std::memcpy(static_cast<std::uint8_t*>(result) + sizeof(value), &authorized, sizeof(authorized));
+    return 0;
 }
 
 int APS5_VABI sceNpCommerceDialogClose(void) {
- if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
- g_status = COMMON_DIALOG_STATUS_FINISHED;
- return 0;
+    if (g_status == COMMON_DIALOG_STATUS_NONE)
+        return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    return 0;
 }
 
 int APS5_VABI sceNpCommerceDialogTerminate() {
- g_status = COMMON_DIALOG_STATUS_NONE;
- return 0;
+    g_status = COMMON_DIALOG_STATUS_NONE;
+    return 0;
 }
 
-int APS5_VABI sceNpCommerceHidePsStoreIcon(void) {
- return 0;
-}
+int APS5_VABI sceNpCommerceHidePsStoreIcon(void) { return 0; }
 
 int APS5_VABI sceNpCommerceShowPsStoreIcon(int pos) {
- (void)pos;
- return 0;
+    (void)pos;
+    return 0;
 }
 
 int APS5_VABI sceNpCommerceSetPsStoreIconLayout(int layout) {
- (void)layout;
- return 0;
+    (void)layout;
+    return 0;
 }
 
 int APS5_VABI sceNpCommerceDialogOpen2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 }

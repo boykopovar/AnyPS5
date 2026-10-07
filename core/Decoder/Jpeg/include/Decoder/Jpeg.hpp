@@ -35,6 +35,6 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg);
 
 std::optional<Image> Decode(std::span<const std::uint8_t> jpeg);
 
-}  // namespace Decoder::Jpeg
+} // namespace Decoder::Jpeg
 
-#endif  // DECODER_JPEG_HPP
+#endif // DECODER_JPEG_HPP

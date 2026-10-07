@@ -8,18 +8,17 @@ namespace Relinker {
 
 class CfgBackedNidFilter : public IUnusedNidFilter {
 public:
-    std::vector<NidReference> Filter(
-        const std::vector<NidReference>& nidRefs,
-        const std::vector<std::uint8_t>& elfBytes,
-        const std::vector<std::uint8_t>& textSection,
-        VirtualAddress textVAddr
-    ) override {
-        if (textSection.empty()) throw RelinkerException("Cannot filter NIDs: text section is empty");
+    std::vector<NidReference> Filter(const std::vector<NidReference>& nidRefs,
+                                     const std::vector<std::uint8_t>& elfBytes,
+                                     const std::vector<std::uint8_t>& textSection, VirtualAddress textVAddr) override {
+        if (textSection.empty())
+            throw RelinkerException("Cannot filter NIDs: text section is empty");
 
         auto collector = UnusedNidFilter::MakeEntryPointCollector();
         auto entries = collector->Collect(elfBytes, textVAddr, textSection.size());
 
-        if (entries.empty()) throw RelinkerException("Cannot filter NIDs: no entry points found");
+        if (entries.empty())
+            throw RelinkerException("Cannot filter NIDs: no entry points found");
 
         VirtualAddress primary = entries[0];
         std::vector<VirtualAddress> extra(entries.begin() + 1, entries.end());
@@ -36,8 +35,6 @@ public:
     }
 };
 
-std::shared_ptr<IUnusedNidFilter> MakeUnusedNidFilter() {
-    return std::make_shared<CfgBackedNidFilter>();
-}
+std::shared_ptr<IUnusedNidFilter> MakeUnusedNidFilter() { return std::make_shared<CfgBackedNidFilter>(); }
 
 }

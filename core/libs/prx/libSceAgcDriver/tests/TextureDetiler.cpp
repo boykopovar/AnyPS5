@@ -35,7 +35,8 @@ Push decodePush(const std::vector<std::byte>& bytes) {
     return push;
 }
 
-TileMipLayout makeLayout(std::uint32_t width, std::uint32_t height, std::uint32_t pitchBytes, std::uint32_t blocksPerRow, std::uint64_t tiledSize, std::uint64_t linearSize) {
+TileMipLayout makeLayout(std::uint32_t width, std::uint32_t height, std::uint32_t pitchBytes,
+                         std::uint32_t blocksPerRow, std::uint64_t tiledSize, std::uint64_t linearSize) {
     TileMipLayout layout{};
     layout.width = width;
     layout.height = height;
@@ -49,12 +50,12 @@ TileMipLayout makeLayout(std::uint32_t width, std::uint32_t height, std::uint32_
     return layout;
 }
 
-template<typename TAction>
-void reject(TAction action, std::string_view reason) {
+template <typename TAction> void reject(TAction action, std::string_view reason) {
     try {
         action();
     } catch (const std::runtime_error& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected texture detiler test error: ") + error.what());
+        Require(std::string_view(error.what()).find(reason) != std::string_view::npos,
+                std::string("unexpected texture detiler test error: ") + error.what());
         return;
     }
     throw std::runtime_error(std::string("expected texture detiler rejection: ") + std::string(reason));
@@ -71,18 +72,25 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
     const auto layout = makeLayout(20, 12, 96, 5, 64, 48);
     detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, layout, 0);
     auto capture = access.lastDispatch();
-    Require(capture.groupsX == 3 && capture.groupsY == 2 && capture.groupsZ == 1, "dispatch group counts were computed incorrectly");
+    Require(capture.groupsX == 3 && capture.groupsY == 2 && capture.groupsZ == 1,
+            "dispatch group counts were computed incorrectly");
     auto push = decodePush(capture.pushConstants);
-    Require(push.srcBase == 4 && push.dstBase == 8, "push constant buffer bases must account for storage buffer offset alignment");
+    Require(push.srcBase == 4 && push.dstBase == 8,
+            "push constant buffer bases must account for storage buffer offset alignment");
     Require(push.width == 20 && push.height == 12, "push constant dimensions changed");
     Require(push.pitchBytes == 96 && push.blocksPerRow == 5, "push constant row layout changed");
-    Require(push.tail == 0 && push.tailX == 0 && push.tailY == 0, "push constant tail fields must reflect a non-tail mip");
+    Require(push.tail == 0 && push.tailX == 0 && push.tailY == 0,
+            "push constant tail fields must reflect a non-tail mip");
     Require(push.elementBytes == 4, "push constant element size changed");
-    Require(push.rangeBegin == 0 && push.rangeEnd == 0xffffffffu && push.tiledBase == 0 && push.linearBase == 0, "a whole-mip dispatch must move every element out of whole buffers");
+    Require(push.rangeBegin == 0 && push.rangeEnd == 0xffffffffu && push.tiledBase == 0 && push.linearBase == 0,
+            "a whole-mip dispatch must move every element out of whole buffers");
     Require(push.columnBegin == 0 && push.rowBegin == 0, "a whole-mip dispatch starts at the mip's origin");
-    Require(capture.sourceBuffer == source && capture.destinationBuffer == destination, "dispatch bound the wrong source or destination buffer");
-    Require(capture.sourceOffset == 16 && capture.sourceRange == 68, "source descriptor offset or range computed incorrectly");
-    Require(capture.destinationOffset == 32 && capture.destinationRange == 56, "destination descriptor offset or range computed incorrectly");
+    Require(capture.sourceBuffer == source && capture.destinationBuffer == destination,
+            "dispatch bound the wrong source or destination buffer");
+    Require(capture.sourceOffset == 16 && capture.sourceRange == 68,
+            "source descriptor offset or range computed incorrectly");
+    Require(capture.destinationOffset == 32 && capture.destinationRange == 56,
+            "destination descriptor offset or range computed incorrectly");
 
     const auto pipelinesAfterFirst = access.pipelineCount();
     Require(pipelinesAfterFirst == 1, "the first dispatch must create exactly one compute pipeline");
@@ -97,80 +105,155 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
         window.columnEnd = 16;
         window.rowBegin = 1;
         window.rowEnd = 2;
-        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, layout, false, 0, false, window);
+        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, layout, false, 0,
+                         false, window);
         capture = access.lastDispatch();
-        Require(capture.groupsX == 1 && capture.groupsY == 1 && capture.groupsZ == 1, "a windowed detile must dispatch only the window's workgroups");
+        Require(capture.groupsX == 1 && capture.groupsY == 1 && capture.groupsZ == 1,
+                "a windowed detile must dispatch only the window's workgroups");
         push = decodePush(capture.pushConstants);
-        Require(push.rangeBegin == 16 && push.rangeEnd == 48 && push.tiledBase == 16 && push.linearBase == 96, "windowed detile push constants must carry the window");
-        Require(push.columnBegin == 8 && push.rowBegin == 1, "windowed detile push constants must carry the grid origin");
+        Require(push.rangeBegin == 16 && push.rangeEnd == 48 && push.tiledBase == 16 && push.linearBase == 96,
+                "windowed detile push constants must carry the window");
+        Require(push.columnBegin == 8 && push.rowBegin == 1,
+                "windowed detile push constants must carry the grid origin");
         Require(push.width == 20 && push.height == 12, "a window must not change the mip's dimensions");
-        Require(capture.sourceOffset == 16 && capture.sourceRange == 4 + 32, "a windowed detile reads the window's tiled bytes only");
-        Require(capture.destinationOffset == 32 && capture.destinationRange == 8 + 96, "a windowed detile writes the window's linear rows only");
+        Require(capture.sourceOffset == 16 && capture.sourceRange == 4 + 32,
+                "a windowed detile reads the window's tiled bytes only");
+        Require(capture.destinationOffset == 32 && capture.destinationRange == 8 + 96,
+                "a windowed detile writes the window's linear rows only");
 
-        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, layout, true, 0, false, window);
+        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, layout, true, 0,
+                         false, window);
         capture = access.lastDispatch();
-        Require(capture.groupsX == 1 && capture.groupsY == 1 && capture.groupsZ == 1, "a windowed retile must dispatch only the window's workgroups");
+        Require(capture.groupsX == 1 && capture.groupsY == 1 && capture.groupsZ == 1,
+                "a windowed retile must dispatch only the window's workgroups");
         push = decodePush(capture.pushConstants);
-        Require(push.rangeBegin == 16 && push.rangeEnd == 48 && push.tiledBase == 16 && push.linearBase == 96, "windowed retile push constants must carry the window");
-        Require(push.columnBegin == 8 && push.rowBegin == 1, "windowed retile push constants must carry the grid origin");
-        Require(capture.sourceOffset == 16 && capture.sourceRange == 4 + 96, "a windowed retile reads the window's linear rows only");
-        Require(capture.destinationOffset == 32 && capture.destinationRange == 8 + 32, "a windowed retile writes the window's tiled bytes only");
-        Require(access.pipelineCount() == pipelinesAfterFirst + 1, "a retile pipeline is separate from the detile pipeline");
+        Require(push.rangeBegin == 16 && push.rangeEnd == 48 && push.tiledBase == 16 && push.linearBase == 96,
+                "windowed retile push constants must carry the window");
+        Require(push.columnBegin == 8 && push.rowBegin == 1,
+                "windowed retile push constants must carry the grid origin");
+        Require(capture.sourceOffset == 16 && capture.sourceRange == 4 + 96,
+                "a windowed retile reads the window's linear rows only");
+        Require(capture.destinationOffset == 32 && capture.destinationRange == 8 + 32,
+                "a windowed retile writes the window's tiled bytes only");
+        Require(access.pipelineCount() == pipelinesAfterFirst + 1,
+                "a retile pipeline is separate from the detile pipeline");
 
         // The unit-shadow form of the same window (StorageTexture::uploadWindows): the tiled bytes
         // come from a sub-buffer holding the window from its first byte (a slab at offset 1000),
         // so the tiled base is the range's begin and the descriptor covers the window's bytes
         // only; the push constants and the grid are the import form's.
-        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 1000, destination, 40, layout, false, 0, false, window);
+        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 1000, destination, 40, layout, false, 0,
+                         false, window);
         capture = access.lastDispatch();
-        Require(capture.groupsX == 1 && capture.groupsY == 1 && capture.groupsZ == 1, "a slab-sourced detile must dispatch only the window's workgroups");
+        Require(capture.groupsX == 1 && capture.groupsY == 1 && capture.groupsZ == 1,
+                "a slab-sourced detile must dispatch only the window's workgroups");
         push = decodePush(capture.pushConstants);
-        Require(push.rangeBegin == 16 && push.rangeEnd == 48 && push.tiledBase == 16 && push.linearBase == 96, "slab-sourced detile push constants must carry the window");
-        Require(push.columnBegin == 8 && push.rowBegin == 1, "slab-sourced detile push constants must carry the grid origin");
-        Require(push.srcBase == 8 && capture.sourceOffset == 992 && capture.sourceRange == 8 + 32, "a slab-sourced detile reads the window's tiled bytes at the slab offset");
-        Require(capture.destinationOffset == 32 && capture.destinationRange == 8 + 96, "a slab-sourced detile writes the same linear rows as the import form");
+        Require(push.rangeBegin == 16 && push.rangeEnd == 48 && push.tiledBase == 16 && push.linearBase == 96,
+                "slab-sourced detile push constants must carry the window");
+        Require(push.columnBegin == 8 && push.rowBegin == 1,
+                "slab-sourced detile push constants must carry the grid origin");
+        Require(push.srcBase == 8 && capture.sourceOffset == 992 && capture.sourceRange == 8 + 32,
+                "a slab-sourced detile reads the window's tiled bytes at the slab offset");
+        Require(capture.destinationOffset == 32 && capture.destinationRange == 8 + 96,
+                "a slab-sourced detile writes the same linear rows as the import form");
 
         // Whole block rows: the columns default to the mip's width, the rows to the window's.
         DetileWindow rows{0, 64, 0, 0, 48};
         rows.rowBegin = 8;
-        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, false, 0, false, rows);
+        detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, false, 0, false,
+                         rows);
         capture = access.lastDispatch();
-        Require(capture.groupsX == 3 && capture.groupsY == 1, "a row window must dispatch whole rows from its first row");
-        reject([&] {
-            DetileWindow outside{0, 64, 0, 0, 0};
-            outside.rowBegin = 12;
-            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, false, 0, false, outside);
-        }, "window lies outside the mip");
+        Require(capture.groupsX == 3 && capture.groupsY == 1,
+                "a row window must dispatch whole rows from its first row");
+        reject(
+            [&] {
+                DetileWindow outside{0, 64, 0, 0, 0};
+                outside.rowBegin = 12;
+                detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, false,
+                                 0, false, outside);
+            },
+            "window lies outside the mip");
     }
     const auto pipelinesAfterWindow = access.pipelineCount();
 
-    detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, makeLayout(8, 8, 32, 2, 32, 32), 0);
-    Require(access.pipelineCount() == pipelinesAfterWindow, "dispatching with the same tile mode and element size must reuse the cached pipeline");
+    detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0,
+                     makeLayout(8, 8, 32, 2, 32, 32), 0);
+    Require(access.pipelineCount() == pipelinesAfterWindow,
+            "dispatching with the same tile mode and element size must reuse the cached pipeline");
 
-    detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 8, source, 0, destination, 0, makeLayout(8, 8, 32, 2, 32, 32), 0);
-    Require(access.pipelineCount() == pipelinesAfterWindow + 1, "a different element size must create a new compute pipeline");
+    detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 8, source, 0, destination, 0,
+                     makeLayout(8, 8, 32, 2, 32, 32), 0);
+    Require(access.pipelineCount() == pipelinesAfterWindow + 1,
+            "a different element size must create a new compute pipeline");
 
-    detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, makeLayout(8, 8, 32, 2, 32, 32), 0);
-    Require(access.pipelineCount() == pipelinesAfterWindow + 2, "a different tile mode must create a new compute pipeline");
+    detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, makeLayout(8, 8, 32, 2, 32, 32),
+                     0);
+    Require(access.pipelineCount() == pipelinesAfterWindow + 2,
+            "a different tile mode must create a new compute pipeline");
 
-    detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, makeLayout(8, 8, 32, 2, 32, 32), 0);
-    Require(access.pipelineCount() == pipelinesAfterWindow + 2, "reusing an earlier tile mode and element size must not create another pipeline");
+    detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0,
+                     makeLayout(8, 8, 32, 2, 32, 32), 0);
+    Require(access.pipelineCount() == pipelinesAfterWindow + 2,
+            "reusing an earlier tile mode and element size must not create another pipeline");
 
     detiler.Dispatch(commands, TextureTileMode::RenderTarget64KB, 4, source, 0, destination, 0, layout, false, 13);
     capture = access.lastDispatch();
-    Require(decodePush(capture.pushConstants).slice == 13, "render target detiling must preserve the absolute array layer for XOR addressing");
+    Require(decodePush(capture.pushConstants).slice == 13,
+            "render target detiling must preserve the absolute array layer for XOR addressing");
     Require(access.pipelineCount() == pipelinesAfterWindow + 3, "render target detiling must use a separate pipeline");
     const auto specialization = access.lastSpecialization();
-    Require(specialization[0] == 4 && specialization[1] == 65536 && specialization[2] == 2, "render target detiling must select its own swizzle family");
+    Require(specialization[0] == 4 && specialization[1] == 65536 && specialization[2] == 2,
+            "render target detiling must select its own swizzle family");
 
-    reject([&] { detiler.Dispatch(VK_NULL_HANDLE, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, 0); }, "active command buffer");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, VK_NULL_HANDLE, 0, destination, 0, layout, 0); }, "source and destination buffers");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, VK_NULL_HANDLE, 0, layout, 0); }, "source and destination buffers");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, makeLayout(0, 12, 96, 5, 64, 48), 0); }, "non-empty mip layout");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, makeLayout(20, 0, 96, 5, 64, 48), 0); }, "non-empty mip layout");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, makeLayout(20, 12, 96, 5, 0, 48), 0); }, "non-empty mip layout");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, makeLayout(20, 12, 96, 5, 64, 0), 0); }, "non-empty mip layout");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 3, source, 0, destination, 0, layout, 0); }, "unsupported element size");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, makeLayout(20, 12, 96, 5, 1024, 48), 0); }, "buffer range exceeds device limits");
-    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, false, 0, false, DetileWindow{48, 48, 0, 0, 0}); }, "window is empty");
+    reject(
+        [&] {
+            detiler.Dispatch(VK_NULL_HANDLE, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, 0);
+        },
+        "active command buffer");
+    reject(
+        [&] {
+            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, VK_NULL_HANDLE, 0, destination, 0, layout, 0);
+        },
+        "source and destination buffers");
+    reject(
+        [&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, VK_NULL_HANDLE, 0, layout, 0); },
+        "source and destination buffers");
+    reject(
+        [&] {
+            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0,
+                             makeLayout(0, 12, 96, 5, 64, 48), 0);
+        },
+        "non-empty mip layout");
+    reject(
+        [&] {
+            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0,
+                             makeLayout(20, 0, 96, 5, 64, 48), 0);
+        },
+        "non-empty mip layout");
+    reject(
+        [&] {
+            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0,
+                             makeLayout(20, 12, 96, 5, 0, 48), 0);
+        },
+        "non-empty mip layout");
+    reject(
+        [&] {
+            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0,
+                             makeLayout(20, 12, 96, 5, 64, 0), 0);
+        },
+        "non-empty mip layout");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 3, source, 0, destination, 0, layout, 0); },
+           "unsupported element size");
+    reject(
+        [&] {
+            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40,
+                             makeLayout(20, 12, 96, 5, 1024, 48), 0);
+        },
+        "buffer range exceeds device limits");
+    reject(
+        [&] {
+            detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, false, 0,
+                             false, DetileWindow{48, 48, 0, 0, 0});
+        },
+        "window is empty");
 }

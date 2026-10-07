@@ -45,9 +45,7 @@ struct ShaderComputeStageInfo {
     std::uint32_t threadIdComponentCount;
     std::array<std::uint32_t, 3> partialThreads;
 
-    [[nodiscard]] bool PartialGroups() const {
-        return partialThreads != std::array<std::uint32_t, 3>{};
-    }
+    [[nodiscard]] bool PartialGroups() const { return partialThreads != std::array<std::uint32_t, 3>{}; }
 };
 
 enum class PixelInput : std::uint32_t {
@@ -70,9 +68,7 @@ enum class PixelInput : std::uint32_t {
     Count
 };
 
-constexpr std::uint32_t PixelInputBit(PixelInput input) {
-    return 1u << static_cast<std::uint32_t>(input);
-}
+constexpr std::uint32_t PixelInputBit(PixelInput input) { return 1u << static_cast<std::uint32_t>(input); }
 
 constexpr std::uint32_t PixelInputVgprCount(PixelInput input) {
     switch (input) {
@@ -93,16 +89,13 @@ constexpr std::uint32_t PixelInputVgprCount(PixelInput input) {
 constexpr std::uint32_t PixelInputVgpr(std::uint32_t inputAddr, PixelInput input) {
     std::uint32_t vgpr = 0;
     for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(input); ++i) {
-        if ((inputAddr & (1u << i)) != 0u) vgpr += PixelInputVgprCount(static_cast<PixelInput>(i));
+        if ((inputAddr & (1u << i)) != 0u)
+            vgpr += PixelInputVgprCount(static_cast<PixelInput>(i));
     }
     return vgpr;
 }
 
-enum class ConservativeZExport : std::uint8_t {
-    AnyZ,
-    LessThanZ,
-    GreaterThanZ
-};
+enum class ConservativeZExport : std::uint8_t { AnyZ, LessThanZ, GreaterThanZ };
 
 struct ShaderPixelStageInfo {
     std::uint32_t interpolatorCount;
@@ -207,14 +200,7 @@ struct BindingLayout {
     std::uint32_t pushConstantSizeBytes;
 };
 
-enum class ProgramRole {
-    Main,
-    GeometryBack,
-    Local,
-    Hull,
-    Domain,
-    Fragment
-};
+enum class ProgramRole { Main, GeometryBack, Local, Hull, Domain, Fragment };
 
 struct LinkedProgram {
     ProgramRole role;
@@ -286,13 +272,7 @@ enum class DescriptorKind {
     Sampler
 };
 
-enum class DescriptorImageShape {
-    Image1D,
-    Image2D,
-    Image2DArray,
-    ImageCube,
-    Image3D
-};
+enum class DescriptorImageShape { Image1D, Image2D, Image2DArray, ImageCube, Image3D };
 
 enum class DescriptorRole {
     GuestBuffers,
@@ -359,7 +339,8 @@ struct FragmentParameter {
 class SharedSpirv {
 public:
     SharedSpirv() = default;
-    SharedSpirv(std::vector<std::uint32_t> words) : words(std::make_shared<std::vector<std::uint32_t>>(std::move(words))) {}
+    SharedSpirv(std::vector<std::uint32_t> words)
+        : words(std::make_shared<std::vector<std::uint32_t>>(std::move(words))) {}
     SharedSpirv& operator=(std::vector<std::uint32_t> other) {
         words = std::make_shared<std::vector<std::uint32_t>>(std::move(other));
         return *this;
@@ -378,8 +359,13 @@ public:
     [[nodiscard]] std::vector<std::uint32_t>::iterator begin() { return Mutable().begin(); }
     [[nodiscard]] std::vector<std::uint32_t>::iterator end() { return Mutable().end(); }
     void resize(std::size_t count) { Mutable().resize(count); }
-    std::vector<std::uint32_t>::iterator insert(std::vector<std::uint32_t>::const_iterator where, std::initializer_list<std::uint32_t> values) { return Mutable().insert(where, values); }
-    friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) { return left.words == right.words || left.Words() == right.Words(); }
+    std::vector<std::uint32_t>::iterator insert(std::vector<std::uint32_t>::const_iterator where,
+                                                std::initializer_list<std::uint32_t> values) {
+        return Mutable().insert(where, values);
+    }
+    friend bool operator==(const SharedSpirv& left, const SharedSpirv& right) {
+        return left.words == right.words || left.Words() == right.Words();
+    }
 
 private:
     static const std::vector<std::uint32_t>& Empty() {
@@ -388,7 +374,8 @@ private:
     }
     // Copy on write: a holder whose words are shared gets its own copy before the first write.
     std::vector<std::uint32_t>& Mutable() {
-        if (words == nullptr || words.use_count() != 1) words = std::make_shared<std::vector<std::uint32_t>>(Words());
+        if (words == nullptr || words.use_count() != 1)
+            words = std::make_shared<std::vector<std::uint32_t>>(Words());
         return *words;
     }
 
@@ -428,7 +415,8 @@ struct RecompileResult {
 // materialized over before receives the same object (`memoHit`), so the descriptor population runs
 // once per distinct snapshot. APS5_NO_RESULT_MEMO=1 materializes every call.
 struct ResourceCapture;
-[[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
+[[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request,
+                                                               const ResourceCapture& capture, bool* memoHit = nullptr);
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile
@@ -443,7 +431,8 @@ struct RectListShaders {
     RecompileResult evaluation;
 };
 
-[[nodiscard]] RectListShaders BuildRectListShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target);
+[[nodiscard]] RectListShaders BuildRectListShaders(const RecompileResult& vertex, const RecompileResult& fragment,
+                                                   const SpirvTarget& target);
 
 }
 

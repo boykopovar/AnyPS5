@@ -24,15 +24,19 @@ constexpr const char* AppMetadataParamJsonGuestPath = "/app0/sce_sys/param.json"
 constexpr const char* AppMetadataIconGuestPath = "/app0/sce_sys/icon0.png";
 
 void copyToFixedBuffer(char* destination, std::size_t destinationSize, const std::string& source) {
-    if (source.empty()) throw std::runtime_error("source string is empty");
-    if (source.size() + 1 > destinationSize) throw std::length_error("source string does not fit into destination buffer");
+    if (source.empty())
+        throw std::runtime_error("source string is empty");
+    if (source.size() + 1 > destinationSize)
+        throw std::length_error("source string does not fit into destination buffer");
     std::memcpy(destination, source.c_str(), source.size() + 1);
 }
 
 void ensureTitleLoaded() {
-    if (g_titleLoaded) return;
+    if (g_titleLoaded)
+        return;
     const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataParamJsonGuestPath);
-    if (!std::filesystem::exists(resolvedPath)) throw std::runtime_error("param.json not found");
+    if (!std::filesystem::exists(resolvedPath))
+        throw std::runtime_error("param.json not found");
     const auto parsed = parseParamJson(resolvedPath);
     copyToFixedBuffer(g_title, sizeof(g_title), parsed.title);
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
@@ -41,20 +45,26 @@ void ensureTitleLoaded() {
 }
 
 void ensureIconLoaded() {
-    if (g_iconAttempted) return;
+    if (g_iconAttempted)
+        return;
     g_iconAttempted = true;
     const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataIconGuestPath);
-    if (!std::filesystem::exists(resolvedPath)) return;
+    if (!std::filesystem::exists(resolvedPath))
+        return;
     std::ifstream file(resolvedPath, std::ios::binary);
-    if (!file.is_open()) throw std::runtime_error("failed to open icon0.png");
+    if (!file.is_open())
+        throw std::runtime_error("failed to open icon0.png");
     file.seekg(0, std::ios::end);
     const auto fileSize = file.tellg();
     file.seekg(0, std::ios::beg);
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileSize));
-    if (!bytes.empty()) file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    if (bytes.empty()) throw std::runtime_error("icon0.png is empty");
+    if (!bytes.empty())
+        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (bytes.empty())
+        throw std::runtime_error("icon0.png is empty");
     constexpr std::uint8_t PngSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    if (bytes.size() < 8 || std::memcmp(bytes.data(), PngSignature, sizeof(PngSignature)) != 0) throw std::runtime_error("icon0.png is not a valid PNG file");
+    if (bytes.size() < 8 || std::memcmp(bytes.data(), PngSignature, sizeof(PngSignature)) != 0)
+        throw std::runtime_error("icon0.png is not a valid PNG file");
     g_iconBytes = std::move(bytes);
     g_iconLoaded = true;
 }
@@ -89,8 +99,8 @@ bool HasAppIcon_nid_postfix() {
 
 AppIconData GetAppIconData_nid_postfix() {
     ensureIconLoaded();
-    if (!g_iconLoaded) throw std::runtime_error("icon not available");
-    return AppIconData{ g_iconBytes.data(), g_iconBytes.size() };
+    if (!g_iconLoaded)
+        throw std::runtime_error("icon not available");
+    return AppIconData{g_iconBytes.data(), g_iconBytes.size()};
 }
-
 }

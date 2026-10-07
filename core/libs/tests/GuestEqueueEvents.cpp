@@ -22,10 +22,12 @@ static constexpr int SCE_OK = 0;
 static constexpr int EVFILT_USER = -11;
 static constexpr int EVFILT_HRTIMER = -15;
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
-template <typename TResult>
-static bool RejectsNull(TResult (APS5_VABI *accessor)(const KernelEvent*)) {
+template <typename TResult> static bool RejectsNull(TResult(APS5_VABI* accessor)(const KernelEvent*)) {
     try {
         accessor(nullptr);
     } catch (const std::runtime_error&) {

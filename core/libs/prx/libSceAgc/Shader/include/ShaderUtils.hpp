@@ -5,14 +5,11 @@
 #include "SceShaders.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 
-template <typename T>
-void ResolveRelativePtr(T*& field) {
+template <typename T> void ResolveRelativePtr(T*& field) {
     if (field == nullptr) {
         return;
     }
-    field = reinterpret_cast<T*>(
-        reinterpret_cast<std::uintptr_t>(field) + reinterpret_cast<std::uintptr_t>(&field)
-    );
+    field = reinterpret_cast<T*>(reinterpret_cast<std::uintptr_t>(field) + reinterpret_cast<std::uintptr_t>(&field));
 }
 
 bool GetProgramAddressRegisterOffset(std::uint8_t type, std::uint32_t& loOffset);

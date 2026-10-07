@@ -39,7 +39,8 @@ constexpr std::uint32_t TriangleId = 0x00abc123u;
 constexpr std::array<std::uint32_t, 4> Box32Children{0x1000u, 0x1001u, 0x1002u, 0x1003u};
 constexpr std::array<std::uint32_t, 4> Box16Children{0x2000u, 0x2001u, 0x2002u, 0x2003u};
 constexpr std::array<std::uint32_t, 4> PastEndChildren{0x3000u, 0x3001u, 0x3002u, 0x3003u};
-constexpr std::array<const char*, Forms> FormNames{"image_bvh64_intersect_ray", "image_bvh_intersect_ray", "image_bvh64_intersect_ray a16", "image_bvh_intersect_ray a16"};
+constexpr std::array<const char*, Forms> FormNames{"image_bvh64_intersect_ray", "image_bvh_intersect_ray",
+                                                   "image_bvh64_intersect_ray a16", "image_bvh_intersect_ray a16"};
 
 alignas(256) std::array<std::uint32_t, Threads * Record> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Record> Output{};
@@ -98,9 +99,7 @@ constexpr Ray Long{100.0f, {0.0f, 0.0f, 0.0f}, Diagonal, DiagonalInverse};
 constexpr Ray Short{2.0f, {0.0f, 0.0f, 0.0f}, Diagonal, DiagonalInverse};
 constexpr Ray Forward{100.0f, {0.25f, 0.25f, 0.0f}, {0.0f, 0.0f, 1.0f}, {Infinity, Infinity, 1.0f}};
 
-constexpr std::uint32_t Pointer(std::uint32_t node, std::uint32_t type) {
-    return (node << 3u) | type;
-}
+constexpr std::uint32_t Pointer(std::uint32_t node, std::uint32_t type) { return (node << 3u) | type; }
 
 constexpr std::array<Case, 8> Cases{{
     {Pointer(2, 5), Long, {Box32Children[2], Box32Children[0], Invalid, Invalid}},
@@ -120,20 +119,22 @@ constexpr std::array<std::array<float, 6>, 4> Boxes{{
     {-2.0f, -4.0f, -8.0f, -1.0f, -2.0f, -4.0f},
 }};
 
-constexpr std::array<float, 12> TriangleVertices{0.0f, 0.0f, 5.0f, 1.0f, 0.0f, 5.0f, 0.0f, 1.0f, 5.0f, 1.0f, 1.0f, 5.0f};
+constexpr std::array<float, 12> TriangleVertices{0.0f, 0.0f, 5.0f, 1.0f, 0.0f, 5.0f,
+                                                 0.0f, 1.0f, 5.0f, 1.0f, 1.0f, 5.0f};
 
-std::uint32_t Bits(float value) {
-    return std::bit_cast<std::uint32_t>(value);
-}
+std::uint32_t Bits(float value) { return std::bit_cast<std::uint32_t>(value); }
 
 std::uint32_t Half(float value) {
     const auto bits = Bits(value);
     const auto sign = (bits >> 16u) & 0x8000u;
     const auto exponent = (bits >> 23u) & 0xffu;
     const auto mantissa = bits & 0x7fffffu;
-    if (exponent == 0u && mantissa == 0u) return sign;
-    if (exponent == 0xffu && mantissa == 0u) return sign | 0x7c00u;
-    Require(exponent >= 113u && exponent <= 142u && (mantissa & 0x1fffu) == 0u, "bvh64 intersect ray: a test value is not a float16");
+    if (exponent == 0u && mantissa == 0u)
+        return sign;
+    if (exponent == 0xffu && mantissa == 0u)
+        return sign | 0x7c00u;
+    Require(exponent >= 113u && exponent <= 142u && (mantissa & 0x1fffu) == 0u,
+            "bvh64 intersect ray: a test value is not a float16");
     return sign | ((exponent - 112u) << 10u) | (mantissa >> 13u);
 }
 
@@ -143,11 +144,15 @@ public:
         constexpr std::uintptr_t hint = std::uintptr_t{1} << 40u;
 #ifdef _WIN32
         for (std::uintptr_t attempt = 0; block == nullptr && attempt < 16u; ++attempt) {
-            block = static_cast<std::uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(hint + (attempt << 32u)), BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            block = static_cast<std::uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(hint + (attempt << 32u)),
+                                                            BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         }
-        if (block == nullptr) block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        if (block == nullptr)
+            block =
+                static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        void* mapped = mmap(reinterpret_cast<void*>(hint), BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped =
+            mmap(reinterpret_cast<void*>(hint), BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         block = mapped == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(mapped);
 #endif
         Require(block != nullptr, "bvh64 intersect ray: cannot allocate the guest block");
@@ -180,7 +185,8 @@ private:
 void WriteBox32(GuestBlock& guest, std::uint32_t node, const std::array<std::uint32_t, 4>& children) {
     for (std::uint32_t child = 0; child < 4u; ++child) {
         guest.Write(node, child, children[child]);
-        for (std::uint32_t index = 0; index < 6u; ++index) guest.Write(node, 4u + child * 6u + index, Bits(Boxes[child][index]));
+        for (std::uint32_t index = 0; index < 6u; ++index)
+            guest.Write(node, 4u + child * 6u + index, Bits(Boxes[child][index]));
     }
 }
 
@@ -195,7 +201,8 @@ void WriteBox16(GuestBlock& guest, std::uint32_t node, const std::array<std::uin
 }
 
 void WriteTriangles(GuestBlock& guest, std::uint32_t node) {
-    for (std::uint32_t index = 0; index < TriangleVertices.size(); ++index) guest.Write(node, index, Bits(TriangleVertices[index]));
+    for (std::uint32_t index = 0; index < TriangleVertices.size(); ++index)
+        guest.Write(node, index, Bits(TriangleVertices[index]));
     guest.Write(node, 15u, TriangleId);
 }
 
@@ -230,11 +237,13 @@ void FillInput(std::uint64_t nodeBias) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes,
+            0x01016facu};
 }
 
 std::array<std::uint32_t, 4> BvhDescriptor(std::uint64_t base, std::uint64_t lastNode) {
-    return {static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | BoxSort, static_cast<std::uint32_t>(lastNode), static_cast<std::uint32_t>((lastNode >> 32u) & 0x3ffu)};
+    return {static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | BoxSort,
+            static_cast<std::uint32_t>(lastNode), static_cast<std::uint32_t>((lastNode >> 32u) & 0x3ffu)};
 }
 
 void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, bool addressInPointer) {
@@ -251,14 +260,14 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, bool addressI
     std::copy(narrow.begin(), narrow.end(), userData.begin() + 8);
     std::copy(wide.begin(), wide.end(), userData.begin() + 12);
     const std::span<const std::uint32_t> code(Code);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -272,7 +281,10 @@ void Check(bool addressInPointer) {
         for (std::uint32_t form = 0; form < Forms; ++form) {
             for (std::uint32_t dword = 0; dword < 4u; ++dword) {
                 const auto actual = Output[tid * Record + form * 4u + dword];
-                Require(actual == expected[dword], std::string(FormNames[form]) + ", " + mode + ": thread " + std::to_string(tid) + " dword " + std::to_string(dword) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[dword]));
+                Require(actual == expected[dword], std::string(FormNames[form]) + ", " + mode + ": thread " +
+                                                       std::to_string(tid) + " dword " + std::to_string(dword) +
+                                                       " is " + std::to_string(actual) + ", expected " +
+                                                       std::to_string(expected[dword]));
             }
         }
     }
@@ -287,9 +299,11 @@ int main() {
             return VulkanTestSkipped;
         }
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         GuestBlock guest;
-        Require((guest.Address() >> 35u) != 0u, "bvh64 intersect ray: the guest block is not above 32 GiB, the node pointer would fit 32 bits");
+        Require((guest.Address() >> 35u) != 0u,
+                "bvh64 intersect ray: the guest block is not above 32 GiB, the node pointer would fit 32 bits");
         FillNodes(guest);
         for (const bool addressInPointer : {true, false}) {
             Run(*device, guest, addressInPointer);

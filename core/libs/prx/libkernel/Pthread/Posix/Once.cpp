@@ -16,13 +16,15 @@ std::mutex onceMutex;
 std::condition_variable onceChanged;
 }
 
-extern "C" int APS5_VABI pthread_once_nid_postfix(
-    GuestOnce* control, void (APS5_VABI *initialize)()) {
-    if (!control || !initialize) return 22;
+extern "C" int APS5_VABI pthread_once_nid_postfix(GuestOnce* control, void(APS5_VABI* initialize)()) {
+    if (!control || !initialize)
+        return 22;
     std::unique_lock lock(onceMutex);
     onceChanged.wait(lock, [&] { return control->state != 2; });
-    if (control->state == 1) return 0;
-    if (control->state != 0) return 22;
+    if (control->state == 1)
+        return 0;
+    if (control->state != 0)
+        return 22;
     control->state = 2;
     lock.unlock();
     // Initializers may initialize other once controls. Never run guest code

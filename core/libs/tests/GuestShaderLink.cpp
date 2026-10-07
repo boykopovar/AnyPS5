@@ -5,10 +5,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister*, ShaderRegister*, const void*, const Shader*, const Shader*, std::uint32_t);
+extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister*, ShaderRegister*, const void*, const Shader*, const Shader*,
+                                           std::uint32_t);
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults();
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t);
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 int main() {
     using namespace ShaderRegs;
     auto* defaults = static_cast<unsigned char*>(sceAgcGetRegisterDefaults());
@@ -54,14 +58,18 @@ int main() {
     const auto savedContext = context;
     const auto savedPrimitive = primitive;
     pixel.num_input_semantics = 33;
-    Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == GRAPHICS5_ERROR_INVALID_SHADER_PROGRAM);
+    Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) ==
+            GRAPHICS5_ERROR_INVALID_SHADER_PROGRAM);
     Require(std::memcmp(context.data(), savedContext.data(), sizeof(context)) == 0);
     Require(std::memcmp(primitive.data(), savedPrimitive.data(), sizeof(primitive)) == 0);
     pixel.num_input_semantics = 0;
     special.ge_cntl.offset = 0;
     bool rejected = false;
-    try { sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4); }
-    catch (const std::runtime_error&) { rejected = true; }
+    try {
+        sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
     Require(rejected);
     Require(std::memcmp(context.data(), savedContext.data(), sizeof(context)) == 0);
     special.ge_cntl.offset = GE_CNTL;

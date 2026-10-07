@@ -17,7 +17,8 @@ void CheckRange(const void* pointer, std::size_t bytes, std::size_t alignment, b
 bool Accessible(const void* pointer, std::size_t bytes, bool writable = false);
 // The accessible parts [begin, end) of a range, in address order. GPU heaps are often bound whole while
 // the guest commits their pages on demand, so a binding can cover reserved but uncommitted pages.
-std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedRanges(std::uint64_t address, std::size_t bytes, bool writable = false);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedRanges(std::uint64_t address, std::size_t bytes,
+                                                                     bool writable = false);
 // Both facts from one walk of the page tables: the accessible parts of a range and whether they cover
 // all of it (`whole`, what Accessible answers). Reserved pages are queried each time, so asking twice
 // costs two VirtualQuery per run.
@@ -44,7 +45,8 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
 // `out` (Equal), or Unmapped as CompareMapped answers it (the dispatch-cache validation's masked
 // re-read of a differing run).
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
-void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
+void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current,
+                           std::span<const std::byte> original);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
 // Stores the parts of `current` that differ from `original` (the guest bytes the GPU started from), so
 // guest writes made meanwhile to untouched bytes survive. Compares in 256-byte blocks.
@@ -113,7 +115,8 @@ bool UnchangedSinceCollected(std::uint64_t address, std::size_t bytes, std::uint
 constexpr std::uint8_t BlockUnchanged = 0;
 constexpr std::uint8_t BlockWritten = 1;
 constexpr std::uint8_t BlockMaybeWritten = 2;
-bool ChangedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> generations, std::span<std::uint8_t> changed, std::span<std::uint8_t> cpu = {});
+bool ChangedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> generations,
+                   std::span<std::uint8_t> changed, std::span<std::uint8_t> cpu = {});
 
 // Serializes device work: draws, dispatches, presentation and the deferred write-backs below. The
 // mutex is recursive; it is wrapped so every acquisition (std::lock_guard at any site) measures how
@@ -164,7 +167,22 @@ std::uint32_t GpuLockThreadTag();
 // as acquisitions; the hold they start is timed under "try". Holds are timed per site as well (the
 // outermost acquisition of a thread until its unlock; APS5_NO_HOLD_PROFILE=1 turns that off), so
 // the line shows who holds the mutex, not only who waits for it.
-enum class GpuLockSite : std::uint8_t { Other = 0, Dispatch, Indirect, Draw, Hook, Wait, Label, Flush, Present, Fill, Copy, End, Try, Count };
+enum class GpuLockSite : std::uint8_t {
+    Other = 0,
+    Dispatch,
+    Indirect,
+    Draw,
+    Hook,
+    Wait,
+    Label,
+    Flush,
+    Present,
+    Fill,
+    Copy,
+    End,
+    Try,
+    Count
+};
 void TagGpuLockSite(GpuLockSite site);
 // A GPU wait (a fence or timeline wait that found its work unfinished) made while the calling
 // thread holds GpuMutex: counted on the thread's [lock] line as 'locked GPU waits' (APS5_PROFILE_DRAW).
@@ -210,7 +228,25 @@ PacketTag CurrentPacket();
 // DrawCache: a draw entry's per-stage value validation (Driver.cpp drawCache), where a draw
 // capture's hook waits reappear on a hit.
 // Every enumerator needs its name in ReadSiteName's table (GuestMemory.cpp).
-enum class ReadSite : std::uint8_t { Unknown = 0, Capture, DispatchCache, TextureCompare, TextureRead, BufferUpload, IndexBuffer, VertexBuffer, Registers, IndirectArguments, Wait, Label, Scanout, Store, MirrorRefresh, DrawCache, Count };
+enum class ReadSite : std::uint8_t {
+    Unknown = 0,
+    Capture,
+    DispatchCache,
+    TextureCompare,
+    TextureRead,
+    BufferUpload,
+    IndexBuffer,
+    VertexBuffer,
+    Registers,
+    IndirectArguments,
+    Wait,
+    Label,
+    Scanout,
+    Store,
+    MirrorRefresh,
+    DrawCache,
+    Count
+};
 const char* ReadSiteName(ReadSite site);
 // Sets the calling thread's read site and returns the previous one (nested scopes restore it).
 ReadSite SetReadSite(ReadSite site);
@@ -233,6 +269,7 @@ std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned 
 
 }
 
-extern "C" void AgcDriverCheckGuestMemory_nid_postfix(const void* pointer, std::size_t bytes, std::size_t alignment, bool writable = false);
+extern "C" void AgcDriverCheckGuestMemory_nid_postfix(const void* pointer, std::size_t bytes, std::size_t alignment,
+                                                      bool writable = false);
 
 #endif

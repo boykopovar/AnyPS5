@@ -11,9 +11,7 @@ Driver& Driver::Get() {
     return driver;
 }
 
-Driver::~Driver() {
-    stop();
-}
+Driver::~Driver() { stop(); }
 
 void Driver::Shutdown() {
     stop();
@@ -24,7 +22,8 @@ void Driver::Shutdown() {
 void Driver::stop() {
     require(!onWorkerThread(), "worker cannot stop itself");
     std::lock_guard shutdownLock(shutdownMutex);
-    if (stopped) return;
+    if (stopped)
+        return;
     LibcRequestShutdown_nid_postfix();
     {
         std::lock_guard lock(mutex);
@@ -37,7 +36,8 @@ void Driver::stop() {
     }
     changed.notify_all();
     for (auto& [queue, worker] : workers) {
-        if (worker.thread.joinable()) worker.thread.join();
+        if (worker.thread.joinable())
+            worker.thread.join();
     }
     StopWorkerSampler();
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
@@ -80,12 +80,15 @@ void Driver::ReportFailure(std::exception_ptr error) {
     require(error != nullptr, "null asynchronous failure");
     {
         std::lock_guard lock(mutex);
-        if (!failure) failure = error;
+        if (!failure)
+            failure = error;
         failed.store(true, std::memory_order_release);
-        for (const auto& [handle, output] : outputs) output->Fail(failure);
+        for (const auto& [handle, output] : outputs)
+            output->Fail(failure);
         for (auto& [queue, worker] : workers) {
             for (const auto& item : worker.pending) {
-                for (const auto& [offset, flip] : item.flips) flip->Fail(failure);
+                for (const auto& [offset, flip] : item.flips)
+                    flip->Fail(failure);
             }
             worker.pending.clear();
             worker.unfinishedWrites.clear();
@@ -102,7 +105,8 @@ void Driver::rethrowFailure() const {
 }
 
 void Driver::checkStopping() const {
-    if (stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested()) throw ProcessShutdown{};
+    if (stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested())
+        throw ProcessShutdown{};
 }
 
 bool& Driver::onWorkerThread() {

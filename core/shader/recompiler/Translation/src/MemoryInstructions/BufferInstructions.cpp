@@ -68,7 +68,10 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
-    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& loaded =
+        ir.Emit(opcode, IrOpcodeType(opcode),
+                {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec},
+                addMemoryInfo(memory, inst.programCounter));
     if (memory.dataBits != 32u) {
         writeOperand(inst.destination, &widenSubdword(&loaded, memory.dataBits, memory.dataSigned).Value());
     } else if (memory.dataDwords == 1u) {
@@ -85,7 +88,8 @@ bool TranslationContext::bufferLoadFormatD16(const RdnaInstruction& inst) {
     MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
     memory.coherent = inst.glc || inst.dlc;
     memory.d16 = true;
-    static constexpr std::array<IrOpcode, 4> opcodes{IrOpcode::LoadBufferU32, IrOpcode::LoadBufferU32x2, IrOpcode::LoadBufferU32x3, IrOpcode::LoadBufferU32x4};
+    static constexpr std::array<IrOpcode, 4> opcodes{IrOpcode::LoadBufferU32, IrOpcode::LoadBufferU32x2,
+                                                     IrOpcode::LoadBufferU32x3, IrOpcode::LoadBufferU32x4};
     const std::uint32_t count = memory.dataDwords;
     if (count == 0u || count > opcodes.size()) {
         return false;
@@ -94,7 +98,10 @@ bool TranslationContext::bufferLoadFormatD16(const RdnaInstruction& inst) {
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst);
     IrValue& exec = ir.GetExec();
-    IrValue& loaded = ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& loaded =
+        ir.Emit(opcode, IrOpcodeType(opcode),
+                {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &exec},
+                addMemoryInfo(memory, inst.programCounter));
     if (count == 1u) {
         writeRawU32(inst.destination, IrU32(loaded));
         return true;
@@ -109,7 +116,8 @@ bool TranslationContext::bufferLoadFormatD16(const RdnaInstruction& inst) {
             target.sdwaSel = 4u;
             writeRawU32(target, IrU32(*halves[component]));
         } else {
-            writeRawU32(target, IrU32(ir.BitwiseOr(*halves[component], ir.ShiftLeftLogical(*halves[component + 1u], ir.Constant(16u)))));
+            writeRawU32(target, IrU32(ir.BitwiseOr(*halves[component],
+                                                   ir.ShiftLeftLogical(*halves[component + 1u], ir.Constant(16u)))));
         }
     }
     return true;
@@ -119,7 +127,8 @@ bool TranslationContext::bufferStoreFormatD16(const RdnaInstruction& inst) {
     MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
     memory.coherent = inst.glc || inst.dlc;
     memory.d16 = true;
-    static constexpr std::array<IrOpcode, 4> opcodes{IrOpcode::StoreBufferU32, IrOpcode::StoreBufferU32x2, IrOpcode::StoreBufferU32x3, IrOpcode::StoreBufferU32x4};
+    static constexpr std::array<IrOpcode, 4> opcodes{IrOpcode::StoreBufferU32, IrOpcode::StoreBufferU32x2,
+                                                     IrOpcode::StoreBufferU32x3, IrOpcode::StoreBufferU32x4};
     const std::uint32_t count = memory.dataDwords;
     if (count == 0u || count > opcodes.size()) {
         return false;
@@ -131,7 +140,8 @@ bool TranslationContext::bufferStoreFormatD16(const RdnaInstruction& inst) {
     for (std::uint32_t component = 0u; component < count; ++component) {
         const IrU32 word = readRawU32(plainOperand(offsetOperand(inst.destination, component / 2u)));
         const bool upper = high || (component & 1u) != 0u;
-        halves[component] = upper ? &ir.ShiftRightLogical(word.Value(), ir.Constant(16u)) : &ir.BitwiseAnd(word.Value(), ir.Constant(0xffffu));
+        halves[component] = upper ? &ir.ShiftRightLogical(word.Value(), ir.Constant(16u))
+                                  : &ir.BitwiseAnd(word.Value(), ir.Constant(0xffffu));
     }
     IrValue* value = halves[0];
     if (count == 2u) {
@@ -139,10 +149,13 @@ bool TranslationContext::bufferStoreFormatD16(const RdnaInstruction& inst) {
     } else if (count == 3u) {
         value = &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {halves[0], halves[1], halves[2]});
     } else if (count == 4u) {
-        value = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {halves[0], halves[1], halves[2], halves[3]});
+        value =
+            &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {halves[0], halves[1], halves[2], halves[3]});
     }
     IrValue& exec = ir.GetExec();
-    (void)ir.Emit(opcodes[count - 1u], IrType::Void, {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), value, &exec}, addMemoryInfo(memory, inst.programCounter));
+    (void)ir.Emit(opcodes[count - 1u], IrType::Void,
+                  {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), value, &exec},
+                  addMemoryInfo(memory, inst.programCounter));
     return true;
 }
 
@@ -179,7 +192,8 @@ bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
             opcode = IrOpcode::StoreBufferU32x3;
             const IrU32 second = readU32(offsetOperand(inst.destination, 1u));
             const IrU32 third = readU32(offsetOperand(inst.destination, 2u));
-            value = &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {&data.Value(), &second.Value(), &third.Value()});
+            value = &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3,
+                             {&data.Value(), &second.Value(), &third.Value()});
             break;
         }
         case 4u: {
@@ -187,7 +201,8 @@ bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
             const IrU32 second = readU32(offsetOperand(inst.destination, 1u));
             const IrU32 third = readU32(offsetOperand(inst.destination, 2u));
             const IrU32 fourth = readU32(offsetOperand(inst.destination, 3u));
-            value = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&data.Value(), &second.Value(), &third.Value(), &fourth.Value()});
+            value = &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4,
+                             {&data.Value(), &second.Value(), &third.Value(), &fourth.Value()});
             break;
         }
         default:
@@ -198,7 +213,9 @@ bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
         return false;
     }
     IrValue& exec = ir.GetExec();
-    (void)ir.Emit(opcode, IrType::Void, {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), value, &exec}, addMemoryInfo(memory, inst.programCounter));
+    (void)ir.Emit(opcode, IrType::Void,
+                  {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), value, &exec},
+                  addMemoryInfo(memory, inst.programCounter));
     return true;
 }
 
@@ -212,17 +229,29 @@ bool TranslationContext::bufferAtomic(const RdnaInstruction& inst, IrOpcode opco
     if (opcode == IrOpcode::BufferAtomicCmpSwap32 || opcode == IrOpcode::BufferAtomicFCmpSwap32) {
         const IrU32 desired = readU32(inst.destination);
         const IrU32 comparator = readU32(offsetOperand(inst.destination, 1u));
-        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &desired.Value(), &comparator.Value(), &exec}, flags);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode),
+                          {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(),
+                           &desired.Value(), &comparator.Value(), &exec},
+                          flags);
     } else if (opcode == IrOpcode::BufferAtomicCmpSwap64 || opcode == IrOpcode::BufferAtomicFCmpSwap64) {
         const IrU64 desired = readU64(inst.destination);
         const IrU64 comparator = readU64(offsetOperand(inst.destination, 2u));
-        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &desired.Value(), &comparator.Value(), &exec}, flags);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode),
+                          {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(),
+                           &desired.Value(), &comparator.Value(), &exec},
+                          flags);
     } else if (IrOpcodeType(opcode) == IrType::U64) {
         const IrU64 value = readU64(inst.destination);
-        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &value.Value(), &exec}, flags);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode),
+                          {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(),
+                           &value.Value(), &exec},
+                          flags);
     } else {
         const IrU32 value = readU32(inst.destination);
-        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(), &value.Value(), &exec}, flags);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode),
+                          {resource, &address.index.Value(), &address.offset.Value(), &address.soffset.Value(),
+                           &value.Value(), &exec},
+                          flags);
     }
     if (inst.glc) {
         writeOperand(inst.destination, result);

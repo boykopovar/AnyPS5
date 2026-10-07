@@ -14,7 +14,10 @@ int APS5_VABI sceLoginDialogTerminate(void);
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value) {
+    if (!value)
+        std::abort();
+}
 
 constexpr int kStatusFinished = 3;
 constexpr int kErrNotInitialized = static_cast<int>(0x80B80003);

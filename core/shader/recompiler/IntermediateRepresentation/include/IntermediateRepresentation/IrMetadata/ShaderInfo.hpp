@@ -22,7 +22,7 @@ struct ShaderInfo {
     std::vector<SampledResourcePair> sampledPairs;
     std::vector<StageInput> inputs;
     std::vector<StageOutput> outputs;
-    std::array<std::uint8_t, 32> vertexFetchComponents {};
+    std::array<std::uint8_t, 32> vertexFetchComponents{};
     std::int32_t vertexOffsetSgpr = -1;
     std::int32_t instanceOffsetSgpr = -1;
     bool vertexOffsetShared = false;

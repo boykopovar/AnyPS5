@@ -6,19 +6,7 @@
 
 namespace ShaderRecompiler {
 
-enum class ResourceKind {
-    None,
-    ScalarBuffer,
-    ScalarAddress,
-    Buffer,
-    Flat,
-    Global,
-    Scratch,
-    Lds,
-    Gds,
-    Image,
-    Sampler
-};
+enum class ResourceKind { None, ScalarBuffer, ScalarAddress, Buffer, Flat, Global, Scratch, Lds, Gds, Image, Sampler };
 
 struct MemoryInfo {
     ResourceKind kind = ResourceKind::None;

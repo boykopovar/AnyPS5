@@ -28,11 +28,15 @@ static void Check(bool value, int line) {
 #define Require(value) Check((value), __LINE__)
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() /
+    const auto root =
+        std::filesystem::temp_directory_path() /
         ("anyps5-directory-buffer-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     const std::string name = "a-long-directory-entry-name.bin";
-    { std::ofstream file(root / name); Require(static_cast<bool>(file)); }
+    {
+        std::ofstream file(root / name);
+        Require(static_cast<bool>(file));
+    }
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     std::array<char, 256> buffer;

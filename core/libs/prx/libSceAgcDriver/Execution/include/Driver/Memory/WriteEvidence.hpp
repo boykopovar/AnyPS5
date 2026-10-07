@@ -47,7 +47,10 @@ private:
 };
 
 struct ValidateCounters {
-    std::uint64_t pending = 0, unsyncedMisses = 0, skipped = 0, syncedNoWriter = 0, syncedForeign = 0, syncedLargeRange = 0, syncedLabel = 0, syncedEvidence = 0, syncedWriterChanged = 0, syncedSample = 0, syncedImage = 0, syncedShadow = 0, syncedOff = 0, verified = 0, mismatches = 0, verifiedMissesHit = 0, knownValue = 0;
+    std::uint64_t pending = 0, unsyncedMisses = 0, skipped = 0, syncedNoWriter = 0, syncedForeign = 0,
+                  syncedLargeRange = 0, syncedLabel = 0, syncedEvidence = 0, syncedWriterChanged = 0, syncedSample = 0,
+                  syncedImage = 0, syncedShadow = 0, syncedOff = 0, verified = 0, mismatches = 0, verifiedMissesHit = 0,
+                  knownValue = 0;
     double syncedWaitMs = 0, verifiedWaitMs = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };

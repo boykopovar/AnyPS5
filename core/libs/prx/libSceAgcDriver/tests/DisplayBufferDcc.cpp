@@ -14,13 +14,13 @@ namespace {
 int failures = 0;
 
 void Expect(bool condition, const std::string& what) {
-    if (condition) return;
+    if (condition)
+        return;
     std::fprintf(stderr, "FAIL: %s\n", what.c_str());
     ++failures;
 }
 
-template<typename TAction>
-std::string Rejection(TAction action) {
+template <typename TAction> std::string Rejection(TAction action) {
     try {
         action();
     } catch (const std::exception& error) {
@@ -32,8 +32,11 @@ std::string Rejection(TAction action) {
 void ExpectPixels(const DisplayBuffer& buffer, DccKeys keys, std::array<unsigned, 4> expected, const char* what) {
     const auto pixel = AgcDriver::DisplayBufferClearPixel(buffer, keys);
     for (std::size_t i = 0; i < pixel.size(); ++i) {
-        if (std::to_integer<unsigned>(pixel[i]) == expected[i]) continue;
-        Expect(false, std::string(what) + ": byte " + std::to_string(i) + " is " + std::to_string(std::to_integer<unsigned>(pixel[i])) + ", expected " + std::to_string(expected[i]));
+        if (std::to_integer<unsigned>(pixel[i]) == expected[i])
+            continue;
+        Expect(false, std::string(what) + ": byte " + std::to_string(i) + " is " +
+                          std::to_string(std::to_integer<unsigned>(pixel[i])) + ", expected " +
+                          std::to_string(expected[i]));
         return;
     }
 }
@@ -62,22 +65,32 @@ int main() {
     ExpectPixels(buffer, DccKeys::ClearRegister, {255, 0, 0, 255}, "A2R10G10B10 register clear");
     for (const auto keys : {DccKeys::Uncompressed, DccKeys::Mixed, DccKeys::Unreadable}) {
         const auto message = Rejection([&] { AgcDriver::DisplayBufferClearPixel(buffer, keys); });
-        Expect(message.find(AgcDriver::Graphics::DccKeysName(keys)) != std::string::npos && message.find("0x7f0000") != std::string::npos, std::string("keys without a clear value were presented as one: ") + AgcDriver::Graphics::DccKeysName(keys));
+        Expect(message.find(AgcDriver::Graphics::DccKeysName(keys)) != std::string::npos &&
+                   message.find("0x7f0000") != std::string::npos,
+               std::string("keys without a clear value were presented as one: ") +
+                   AgcDriver::Graphics::DccKeysName(keys));
     }
     buffer.dccClearColor = 0x100000000ull;
-    Expect(Rejection([&] { AgcDriver::DisplayBufferClearPixel(buffer, DccKeys::ClearRegister); }).find("register clear color") != std::string::npos, "a register clear color wider than the texel was truncated");
+    Expect(Rejection([&] {
+               AgcDriver::DisplayBufferClearPixel(buffer, DccKeys::ClearRegister);
+           }).find("register clear color") != std::string::npos,
+           "a register clear color wider than the texel was truncated");
     buffer.dccClearColor = 0;
     buffer.dccAddress = 0;
-    Expect(!Rejection([&] { AgcDriver::DisplayBufferClearPixel(buffer, DccKeys::Clear0000); }).empty(), "a buffer without DCC metadata was presented as fast-cleared");
+    Expect(!Rejection([&] { AgcDriver::DisplayBufferClearPixel(buffer, DccKeys::Clear0000); }).empty(),
+           "a buffer without DCC metadata was presented as fast-cleared");
     buffer.dccClearColor = 1;
-    Expect(!Rejection([&] { AgcDriver::DisplayBufferSize(buffer); }).empty(), "a DCC clear color without metadata was accepted");
+    Expect(!Rejection([&] { AgcDriver::DisplayBufferSize(buffer); }).empty(),
+           "a DCC clear color without metadata was accepted");
     buffer.dccClearColor = 0;
     buffer.dccAddress = 0x7f0000;
     buffer.tilingMode = 1;
-    Expect(!Rejection([&] { AgcDriver::DisplayBufferSize(buffer); }).empty(), "a linear display buffer with DCC metadata was accepted");
+    Expect(!Rejection([&] { AgcDriver::DisplayBufferSize(buffer); }).empty(),
+           "a linear display buffer with DCC metadata was accepted");
     buffer.tilingMode = 0;
     Expect(AgcDriver::DisplayBufferSize(buffer) == 2 * 65536, "DCC metadata changed the display footprint");
-    if (failures != 0) return 1;
+    if (failures != 0)
+        return 1;
     std::puts("display buffer DCC tests passed");
     return 0;
 }

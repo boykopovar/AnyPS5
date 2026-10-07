@@ -7,10 +7,11 @@
 #include <thread>
 #include <xmmintrin.h>
 
-using Entry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
+using Entry = void(APS5_VABI*)(std::uint64_t, std::uint64_t);
 
 extern "C" {
-std::int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject*, const char*, Entry, std::uint64_t, void*, std::uint64_t, const void*, std::uint32_t);
+std::int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject*, const char*, Entry, std::uint64_t, void*,
+                                                           std::uint64_t, const void*, std::uint32_t);
 std::int32_t APS5_VABI sceFiberFinalize(FiberObject*);
 std::int32_t APS5_VABI sceFiberRun_nid_postfix(FiberObject*, std::uint64_t, std::uint64_t*);
 std::int32_t APS5_VABI sceFiberSwitch(FiberObject*, std::uint64_t, std::uint64_t*);
@@ -23,7 +24,10 @@ std::int32_t APS5_VABI sceFiberStopContextSizeCheck(void);
 }
 
 static void Require(bool value, const char* what) {
-    if (!value) { std::fprintf(stderr, "Fiber check failed: %s\n", what); std::abort(); }
+    if (!value) {
+        std::fprintf(stderr, "Fiber check failed: %s\n", what);
+        std::abort();
+    }
 }
 
 namespace {
@@ -53,7 +57,8 @@ void APS5_VABI FirstEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun)
     Require(sceFiberGetSelf(&self) == 0 && self == g_first, "first fiber self");
     std::uint64_t framePointer = 0;
     Require(sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull, "frame pointer null");
-    Require(sceFiberGetThreadFramePointerAddress(&framePointer) == 0 && framePointer == g_threadFramePointer, "thread frame pointer");
+    Require(sceFiberGetThreadFramePointerAddress(&framePointer) == 0 && framePointer == g_threadFramePointer,
+            "thread frame pointer");
     volatile double carried = 1.5;
     std::uint64_t received = 0;
     Require(sceFiberSwitch(g_second, 200, &received) == 0, "switch to second fiber");
@@ -76,9 +81,11 @@ void APS5_VABI SecondEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun
 
 void APS5_VABI CheckedEntry(std::uint64_t, std::uint64_t) {
     volatile unsigned char used[4096];
-    for (auto& byte : used) byte = 1;
+    for (auto& byte : used)
+        byte = 1;
     std::uint64_t received = 0;
-    for (;;) sceFiberReturnToThread(0, &received);
+    for (;;)
+        sceFiberReturnToThread(0, &received);
 }
 
 [[gnu::noinline]] std::int32_t RunFirst(std::uint64_t* returned) {
@@ -93,16 +100,22 @@ void APS5_VABI CheckedEntry(std::uint64_t, std::uint64_t) {
 int main() {
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
-    Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");
-    Require(_sceFiberInitializeImpl_nid_postfix(g_second, "second", SecondEntry, 22, g_secondContext.data(), g_secondContext.size(), nullptr, 0) == 0, "initialize second");
+    Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(),
+                                                g_firstContext.size(), nullptr, 0) == 0,
+            "initialize first");
+    Require(_sceFiberInitializeImpl_nid_postfix(g_second, "second", SecondEntry, 22, g_secondContext.data(),
+                                                g_secondContext.size(), nullptr, 0) == 0,
+            "initialize second");
     const auto threadCsr = _mm_getcsr();
     std::uint64_t returned = 0;
     std::uint64_t framePointer = 0;
-    Require(sceFiberGetThreadFramePointerAddress(&framePointer) == FiberErrorPermission, "frame pointer outside a fiber");
+    Require(sceFiberGetThreadFramePointerAddress(&framePointer) == FiberErrorPermission,
+            "frame pointer outside a fiber");
     Require(RunFirst(&returned) == 0 && returned == 250, "run first until second returns");
     Require(_mm_getcsr() == threadCsr, "thread MXCSR restored after the fibers");
     std::thread([&] {
-        Require(sceFiberRun_nid_postfix(g_second, 260, &returned) == 0 && returned == 301, "resume second on another thread");
+        Require(sceFiberRun_nid_postfix(g_second, 260, &returned) == 0 && returned == 301,
+                "resume second on another thread");
     }).join();
     Require(sceFiberFinalize(g_first) == 0, "finalize first");
     Require(sceFiberFinalize(g_second) == 0, "finalize second");
@@ -112,16 +125,22 @@ int main() {
     info.size = sizeof(info);
     Require(sceFiberStopContextSizeCheck() == FiberErrorState, "stop before start");
     Require(sceFiberStartContextSizeCheck(1) == FiberErrorInvalid, "start with flags");
-    Require(_sceFiberInitializeImpl_nid_postfix(checked, "unchecked", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0) == 0, "initialize unchecked");
+    Require(_sceFiberInitializeImpl_nid_postfix(checked, "unchecked", CheckedEntry, 0, g_checkedContext.data(),
+                                                g_checkedContext.size(), nullptr, 0) == 0,
+            "initialize unchecked");
     Require(sceFiberGetInfo(checked, &info) == 0 && info.size_context_margin == ~0ull, "no margin without size check");
     Require(sceFiberFinalize(checked) == 0, "finalize unchecked");
     Require(sceFiberStartContextSizeCheck(0) == 0, "start size check");
     Require(sceFiberStartContextSizeCheck(0) == FiberErrorState, "start twice");
-    Require(_sceFiberInitializeImpl_nid_postfix(checked, "checked", CheckedEntry, 0, g_checkedContext.data(), g_checkedContext.size(), nullptr, 0) == 0, "initialize checked");
-    Require(sceFiberGetInfo(checked, &info) == 0 && info.size_context_margin == g_checkedContext.size(), "untouched context is all margin");
+    Require(_sceFiberInitializeImpl_nid_postfix(checked, "checked", CheckedEntry, 0, g_checkedContext.data(),
+                                                g_checkedContext.size(), nullptr, 0) == 0,
+            "initialize checked");
+    Require(sceFiberGetInfo(checked, &info) == 0 && info.size_context_margin == g_checkedContext.size(),
+            "untouched context is all margin");
     Require(sceFiberRun_nid_postfix(checked, 0, nullptr) == 0, "run checked");
     Require(sceFiberGetInfo(checked, &info) == 0, "checked info");
-    Require(info.size_context_margin > 0 && info.size_context_margin < g_checkedContext.size() - 4096, "margin below the used stack");
+    Require(info.size_context_margin > 0 && info.size_context_margin < g_checkedContext.size() - 4096,
+            "margin below the used stack");
     Require(info.size_context_margin % 8 == 0, "margin in whole words");
     Require(sceFiberStopContextSizeCheck() == 0, "stop size check");
 }

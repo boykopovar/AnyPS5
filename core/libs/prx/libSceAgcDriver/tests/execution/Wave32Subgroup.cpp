@@ -28,7 +28,8 @@ alignas(256) constexpr std::array<std::uint32_t, 24> WaveCode{
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
+            count, 0x01016facu};
 }
 
 void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
@@ -37,14 +38,14 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& t
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(WaveCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{
+        {{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {WaveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         target,
-        {0, 0, 0, 128}
-    };
+        {0, 0, 0, 128}};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -52,13 +53,16 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& t
 }
 
 void Check() {
-    constexpr std::array<const char*, Results> names{"v_mbcnt_lo_u32_b32", "s_bcnt1 of a VCC compare", "v_readlane_b32 lane 3", "v_cmpx EXEC"};
+    constexpr std::array<const char*, Results> names{"v_mbcnt_lo_u32_b32", "s_bcnt1 of a VCC compare",
+                                                     "v_readlane_b32 lane 3", "v_cmpx EXEC"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t lane = tid % WaveSize;
         const std::array<std::uint32_t, Results> expected{lane, 8u, tid - lane + 3u, lane < 8u ? 1u : 0u};
         for (std::uint32_t j = 0; j < Results; ++j) {
             const auto actual = Output[tid * Results + j];
-            Require(actual == expected[j], std::string("wave32 subgroup: thread ") + std::to_string(tid) + " " + names[j] + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[j]));
+            Require(actual == expected[j], std::string("wave32 subgroup: thread ") + std::to_string(tid) + " " +
+                                               names[j] + " is " + std::to_string(actual) + ", expected " +
+                                               std::to_string(expected[j]));
         }
     }
 }
@@ -68,7 +72,8 @@ void Check() {
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device)
+            return VulkanTestSkipped;
         const auto target = device->ComputeTarget(WaveSize);
         if (target.subgroupSize < WaveSize) {
             std::printf("skipped, the device runs wave32 programs on %u-wide subgroups\n", target.subgroupSize);
