@@ -9,11 +9,13 @@
 #endif
 #include <windows.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,22 @@ alignas(256) constexpr std::array<std::uint32_t, 45> FlatStoreCode{
     0x0000080e, 0xdc748400, 0x0000080e, 0xdc7c8800, 0x0000090e, 0xdc308000, 0x0f000001, 0xdc708500,
     0x00000f01, 0x7da80090, 0xdc708300, 0x00000a01, 0xbf810000,
 };
+
+template<std::size_t TFirst, std::size_t TLast, std::size_t TExtraFirst = 0, std::size_t TExtraLast = 0>
+constexpr auto StoreProgram() {
+    constexpr std::size_t SetupWords = 19;
+    std::array<std::uint32_t, SetupWords + TLast - TFirst + TExtraLast - TExtraFirst + 1> code{};
+    std::copy_n(FlatStoreCode.begin(), SetupWords, code.begin());
+    const auto next = std::copy(FlatStoreCode.begin() + TFirst, FlatStoreCode.begin() + TLast, code.begin() + SetupWords);
+    std::copy(FlatStoreCode.begin() + TExtraFirst, FlatStoreCode.begin() + TExtraLast, next);
+    code.back() = FlatStoreCode.back();
+    return code;
+}
+
+alignas(256) constexpr auto ScalarStoreCode = StoreProgram<21, 31>();
+alignas(256) constexpr auto WideStoreCode = StoreProgram<31, 37>();
+alignas(256) constexpr auto RoundTripStoreCode = StoreProgram<19, 21, 37, 44>();
+constexpr std::array<std::span<const std::uint32_t>, 3> StorePrograms{ScalarStoreCode, WideStoreCode, RoundTripStoreCode};
 
 class GuestBlock {
 public:
@@ -86,12 +104,11 @@ std::vector<std::uint8_t> Expected() {
     return image;
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std::uint8_t* base) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std::uint8_t* base, std::span<const std::uint32_t> code) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
     std::vector<std::uint32_t> userData(8, 0u);
     userData[0] = static_cast<std::uint32_t>(address);
     userData[1] = static_cast<std::uint32_t>(address >> 32u);
-    const std::span<const std::uint32_t> code(FlatStoreCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -108,7 +125,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std
 
 void RunStores(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize) {
     guest.Clear();
-    Dispatch(device, waveSize, guest.Data());
+    for (const auto code : StorePrograms) Dispatch(device, waveSize, guest.Data(), code);
     const auto expected = Expected();
     for (std::uint32_t offset = 0; offset < CheckedBytes; ++offset) {
         const auto actual = guest.Data()[offset];
@@ -117,7 +134,7 @@ void RunStores(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t
 }
 
 void RunReadOnly(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
-    Dispatch(device, 32, guest.Data());
+    for (const auto code : StorePrograms) Dispatch(device, 32, guest.Data(), code);
     for (std::uint32_t offset = 0; offset < CheckedBytes; ++offset) {
         Require(guest.Data()[offset] == Fill, "flat store: a store into a read-only range changed byte " + std::to_string(offset));
     }
