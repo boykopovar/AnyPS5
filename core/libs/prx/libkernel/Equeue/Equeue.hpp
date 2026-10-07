@@ -14,6 +14,8 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
+static constexpr int16_t EVFILT_READ = -1;
+static constexpr int16_t EVFILT_WRITE = -2;
 static constexpr int16_t EVFILT_TIMER = -7;
 static constexpr int16_t EVFILT_USER = -11;
 static constexpr int16_t EVFILT_VIDEO_OUT = -13;
@@ -24,6 +26,7 @@ static constexpr uint16_t EV_ADD = 0x0001;
 static constexpr uint16_t EV_ONESHOT = 0x0010;
 static constexpr uint16_t EV_CLEAR = 0x0020;
 static constexpr uint16_t EV_ERROR = 0x4000;
+static constexpr uint16_t EV_EOF = 0x8000;
 
 static constexpr int EQUEUE_OK = 0;
 
@@ -32,6 +35,7 @@ struct KernelEqueueEvent;
 using EqueueTriggerFunc = void (*)(KernelEqueueEvent* event, void* triggerData);
 using EqueueResetFunc = void (*)(KernelEqueueEvent* event);
 using EqueueDeleteFunc = void (*)(KernelEqueue eq, KernelEqueueEvent* event);
+using EqueuePollFunc = bool (*)(KernelEqueueEvent* event);
 
 struct KernelFilter {
     void* data = nullptr;
@@ -39,6 +43,7 @@ struct KernelFilter {
     EqueueTriggerFunc triggerFunc = nullptr;
     EqueueResetFunc resetFunc = nullptr;
     EqueueDeleteFunc deleteEventFunc = nullptr;
+    EqueuePollFunc pollFunc = nullptr;
 };
 
 struct KernelEqueueEvent {
@@ -72,6 +77,7 @@ public:
 private:
     void TriggerExpiredTimers(uint64_t nowNs);
     bool NextTimerWaitMicros(uint64_t nowNs, uint32_t* out) const;
+    bool PollEvents();
 
     std::list<KernelEqueueEvent> m_events;
     std::mutex m_mutex;
