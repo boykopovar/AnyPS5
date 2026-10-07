@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/PackageMount.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
@@ -37,6 +38,7 @@ constexpr int GUEST_EINVAL = 22;
 struct AprFile {
     std::filesystem::path path;
     std::uint64_t size;
+    std::string packagePath;
 };
 
 std::mutex g_filesLock;
@@ -104,15 +106,23 @@ int _fail(int guestErrno) {
 
 bool _resolve(const char* guestPath, std::uint32_t* id, std::uint64_t* size) {
     if (!guestPath) return false;
-    auto hostPath = ResolvePath_nid_no_patch(guestPath);
+    PackageMount::EntryInfo packaged;
+    std::string packagePath;
+    std::filesystem::path hostPath;
     std::uint64_t bytes = 0;
-    if (!_fileSize(hostPath, bytes)) return false;
+    if (PackageLookup_nid_no_patch(guestPath, &packaged)) {
+        if (packaged.Directory || !GuestPath_nid_no_patch(guestPath, &packagePath)) return false;
+        bytes = packaged.Size;
+    } else {
+        hostPath = ResolvePath_nid_no_patch(guestPath);
+        if (!_fileSize(hostPath, bytes)) return false;
+    }
     std::lock_guard lock(g_filesLock);
-    const auto key = hostPath.string();
+    const auto key = packagePath.empty() ? hostPath.string() : "package:" + packagePath;
     auto found = g_idsByPath.find(key);
     if (found == g_idsByPath.end()) {
         found = g_idsByPath.emplace(key, static_cast<std::uint32_t>(g_files.size())).first;
-        g_files.push_back({std::move(hostPath), bytes});
+        g_files.push_back({std::move(hostPath), bytes, std::move(packagePath)});
     }
     if (id) *id = found->second;
     if (size) *size = bytes;
@@ -145,7 +155,14 @@ int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint
 void _readFile(const Apr::ReadFileCommand& command) {
     const auto file = _file(command.fileId);
     static const bool trace = std::getenv("APS5_TRACE_APR") != nullptr;
-    if (trace) std::fprintf(stderr, "[apr] read %s offset=0x%llx size=0x%llx -> 0x%llx\n", file.path.string().c_str(), static_cast<unsigned long long>(command.offset), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.destination));
+    if (trace) std::fprintf(stderr, "[apr] read %s offset=0x%llx size=0x%llx -> 0x%llx\n", file.packagePath.empty() ? file.path.string().c_str() : file.packagePath.c_str(), static_cast<unsigned long long>(command.offset), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.destination));
+    if (!file.packagePath.empty()) {
+        const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
+        if (!destination.Open()) throw std::runtime_error("APR: the read destination of " + file.packagePath + " is not writable guest memory");
+        const auto read = PackageReadPath_nid_no_patch(file.packagePath.c_str(), command.offset, reinterpret_cast<void*>(command.destination), command.size);
+        if (read != command.size) throw std::runtime_error("APR: read of " + file.packagePath + " at offset " + std::to_string(command.offset) + " returned " + std::to_string(read) + " of " + std::to_string(command.size) + " bytes");
+        return;
+    }
     std::ifstream stream(file.path, std::ios::binary);
     if (!stream) throw std::runtime_error("APR: cannot open " + file.path.string());
     stream.seekg(static_cast<std::streamoff>(command.offset));

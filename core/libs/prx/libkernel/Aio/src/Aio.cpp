@@ -10,6 +10,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/PackageMount.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 
 #ifdef _WIN32
@@ -60,6 +61,11 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
         errno = EFAULT;
         return -1;
     }
+    if (PackageMount::IsDescriptor(fd)) {
+        const auto read = PackagePread_nid_no_patch(fd, buf, nbyte, offset);
+        if (read < 0) errno = static_cast<int>(read & 0xffff);
+        return read < 0 ? -1 : read;
+    }
 #ifdef _WIN32
     if (nbyte > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
         throw std::runtime_error("sceKernelAioSubmitReadCommands: nbytes exceeds platform limit");
@@ -83,6 +89,10 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
 }
 
 std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, std::int64_t offset) {
+    if (PackageMount::IsDescriptor(fd)) {
+        errno = EBADF;
+        return -1;
+    }
 #ifdef _WIN32
     if (nbyte > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
         throw std::runtime_error("sceKernelAioSubmitWriteCommands: nbytes exceeds platform limit");

@@ -56,18 +56,22 @@ struct WorkingDirectory {
     std::filesystem::path current = root;
 };
 WorkingDirectory& Directories() { static WorkingDirectory state; return state; }
-std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
+std::optional<std::filesystem::path> GuestOf(WorkingDirectory& state, const char* path) {
     std::string text(path);
     for (auto& character : text) if (character == '\\') character = '/';
     std::filesystem::path input(text);
 #ifdef _WIN32
-    // Preserve the existing ability to pass explicit native drive paths.
-    if (input.has_root_name()) return input;
+    if (input.has_root_name()) return std::nullopt;
 #endif
     auto guest = (std::filesystem::path("/") / state.current.lexically_relative(state.root));
-    guest = (input.is_absolute() ? input : guest / input).lexically_normal();
-    if (auto aliased = ResolveAlias(guest.relative_path().generic_string())) return *aliased;
-    return (state.root / guest.relative_path()).make_preferred();
+    return (input.is_absolute() ? input : guest / input).lexically_normal();
+}
+std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
+    const auto guest = GuestOf(state, path);
+    // Preserve the existing ability to pass explicit native drive paths.
+    if (!guest) return std::filesystem::path(path);
+    if (auto aliased = ResolveAlias(guest->relative_path().generic_string())) return *aliased;
+    return (state.root / guest->relative_path()).make_preferred();
 }
 int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::permission_denied) return 13;
@@ -110,6 +114,16 @@ extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
     return Resolve(state, path);
+}
+
+extern "C" bool GuestPath_nid_no_patch(const char* path, std::string* guest) {
+    if (!path || !guest) { APS5_INVALID_ARG_EX; }
+    auto& state = Directories();
+    std::lock_guard lock(state.mutex);
+    const auto resolved = GuestOf(state, path);
+    if (!resolved) return false;
+    *guest = resolved->generic_string();
+    return true;
 }
 
 extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {

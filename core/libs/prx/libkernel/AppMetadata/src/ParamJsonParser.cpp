@@ -237,7 +237,10 @@ const std::string& asString(const JsonValue& value, const char* context) {
 }
 
 ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
-    const std::string text = readFileToString(paramJsonPath);
+    return parseParamJsonText(readFileToString(paramJsonPath));
+}
+
+ParsedParamJson parseParamJsonText(const std::string& text) {
     const JsonValue root = parseJsonDocument(text);
     if (root.type != JsonType::Object) throw std::runtime_error("param.json root is not an object");
     const JsonValue* titleIdValue = findObjectMember(root, "titleId");

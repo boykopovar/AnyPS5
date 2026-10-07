@@ -1,6 +1,7 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PackageMount.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -31,9 +32,11 @@ void copyToFixedBuffer(char* destination, std::size_t destinationSize, const std
 
 void ensureTitleLoaded() {
     if (g_titleLoaded) return;
+    std::vector<std::uint8_t> packaged;
+    const bool fromPackage = PackageReadAll_nid_no_patch(AppMetadataParamJsonGuestPath, &packaged);
     const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataParamJsonGuestPath);
-    if (!std::filesystem::exists(resolvedPath)) throw std::runtime_error("param.json not found");
-    const auto parsed = parseParamJson(resolvedPath);
+    if (!fromPackage && !std::filesystem::exists(resolvedPath)) throw std::runtime_error("param.json not found");
+    const auto parsed = fromPackage ? parseParamJsonText(std::string(packaged.begin(), packaged.end())) : parseParamJson(resolvedPath);
     copyToFixedBuffer(g_title, sizeof(g_title), parsed.title);
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
     g_downloadDataSizeMiB = parsed.downloadDataSizeMiB;
@@ -43,15 +46,18 @@ void ensureTitleLoaded() {
 void ensureIconLoaded() {
     if (g_iconAttempted) return;
     g_iconAttempted = true;
-    const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataIconGuestPath);
-    if (!std::filesystem::exists(resolvedPath)) return;
-    std::ifstream file(resolvedPath, std::ios::binary);
-    if (!file.is_open()) throw std::runtime_error("failed to open icon0.png");
-    file.seekg(0, std::ios::end);
-    const auto fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileSize));
-    if (!bytes.empty()) file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    std::vector<std::uint8_t> bytes;
+    if (!PackageReadAll_nid_no_patch(AppMetadataIconGuestPath, &bytes)) {
+        const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataIconGuestPath);
+        if (!std::filesystem::exists(resolvedPath)) return;
+        std::ifstream file(resolvedPath, std::ios::binary);
+        if (!file.is_open()) throw std::runtime_error("failed to open icon0.png");
+        file.seekg(0, std::ios::end);
+        const auto fileSize = file.tellg();
+        file.seekg(0, std::ios::beg);
+        bytes.resize(static_cast<std::size_t>(fileSize));
+        if (!bytes.empty()) file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
     if (bytes.empty()) throw std::runtime_error("icon0.png is empty");
     constexpr std::uint8_t PngSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
     if (bytes.size() < 8 || std::memcmp(bytes.data(), PngSignature, sizeof(PngSignature)) != 0) throw std::runtime_error("icon0.png is not a valid PNG file");

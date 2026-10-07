@@ -12,6 +12,7 @@ extern "C" void NotImplemented_nid_no_patch(const char* funcName);
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
+extern "C" bool GuestPath_nid_no_patch(const char* path, std::string* guest);
 // Guest path aliases: a guest prefix such as "/savedata0" (a save-data mount point) resolves to a host
 // directory instead of the run directory; the prefix matches whole path components only.
 extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* hostPath);

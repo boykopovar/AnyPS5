@@ -2,11 +2,13 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PackageMount.hpp"
 #include <fstream>
 #include <iterator>
 #include <regex>
 #include <set>
 #include <string>
+#include <vector>
 
 // The game is fully installed on the host, so every chunk is local and nothing is pending.
 static constexpr int SCE_PLAYGO_ERROR_BAD_POINTER = static_cast<int>(0x80B2000A);
@@ -30,9 +32,15 @@ static constexpr int SCE_PLAYGO_ERROR_BAD_LOCUS = static_cast<int>(0x80B20010);
 static const std::set<uint16_t>& ValidChunks() {
     static const std::set<uint16_t> chunks = [] {
         std::set<uint16_t> result{0};
-        std::ifstream file(ResolvePath_nid_no_patch("/app0/playgo-chunkdefs.xml"));
-        if (!file) return result;
-        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::vector<std::uint8_t> packaged;
+        std::string text;
+        if (PackageReadAll_nid_no_patch("/app0/playgo-chunkdefs.xml", &packaged)) {
+            text.assign(packaged.begin(), packaged.end());
+        } else {
+            std::ifstream file(ResolvePath_nid_no_patch("/app0/playgo-chunkdefs.xml"));
+            if (!file) return result;
+            text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
         static const std::regex chunk(R"re(<chunk\s+id="(\d+)")re");
         for (auto it = std::sregex_iterator(text.begin(), text.end(), chunk); it != std::sregex_iterator(); ++it)
             result.insert(static_cast<uint16_t>(std::stoul((*it)[1].str())));

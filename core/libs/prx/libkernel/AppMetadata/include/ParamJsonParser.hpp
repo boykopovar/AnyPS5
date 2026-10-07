@@ -12,5 +12,6 @@ struct ParsedParamJson {
 };
 
 ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath);
+ParsedParamJson parseParamJsonText(const std::string& text);
 
 #endif
