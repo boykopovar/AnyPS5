@@ -13,6 +13,7 @@ class RecompileCacheKey {
 public:
     static void Build(const RecompileRequest& request, std::vector<std::uint64_t>& key) {
         key.clear();
+        key.reserve(128);
         append(key, request.shader.stage);
         // The code enters as a hash rather than word by word: the key is built, hashed and compared
         // on every dispatch and draw. The cache verifies a match against the code it stored.
@@ -44,6 +45,7 @@ public:
         struct ContextKeyStorage {};
         auto& key = HostThreadLocal<std::vector<std::uint64_t>, ContextKeyStorage>();
         key.clear();
+        key.reserve(128);
         append(key, request.shader.stage);
         append(key, request.context.waveSize);
         append(key, request.context.userDataBaseRegister);
@@ -106,7 +108,18 @@ private:
 
     static void append(std::vector<std::uint64_t>& key, std::string_view value) {
         append(key, value.size());
-        for (const unsigned char byte : value) append(key, byte);
+        std::uint64_t packed = 0;
+        unsigned shift = 0;
+        for (const unsigned char byte : value) {
+            packed |= static_cast<std::uint64_t>(byte) << shift;
+            shift += 8;
+            if (shift == 64) {
+                key.push_back(packed);
+                packed = 0;
+                shift = 0;
+            }
+        }
+        if (shift != 0) key.push_back(packed);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderComputeStageInfo& value) {
