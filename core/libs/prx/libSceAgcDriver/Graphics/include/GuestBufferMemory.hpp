@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,6 +47,7 @@ struct ImportProbe {
 
 ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
+bool DmaBufImportUsable(VkPhysicalDevice physical, PFN_vkGetPhysicalDeviceProperties2 query, std::span<const VkExtensionProperties> extensions);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
 

@@ -1253,6 +1253,24 @@ ImportProbe ProbeDmaBufImportWriteProtection(const Context& context) {
 #endif
 }
 
+bool DmaBufImportUsable(VkPhysicalDevice physical, PFN_vkGetPhysicalDeviceProperties2 query, std::span<const VkExtensionProperties> extensions) {
+#ifdef _WIN32
+    static_cast<void>(physical);
+    static_cast<void>(query);
+    static_cast<void>(extensions);
+    return false;
+#else
+    const auto hasExtension = [&](const char* name) { return std::any_of(extensions.begin(), extensions.end(), [&](const auto& extension) { return std::strcmp(extension.extensionName, name) == 0; }); };
+    if (!hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) || !hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) return false;
+    if (!hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) return true;
+    Require(query != nullptr, "missing Vulkan property query");
+    VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+    query(physical, &properties);
+    return driver.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+#endif
+}
+
 ImportWatch PrepareImportWatch(const Context& context) {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);

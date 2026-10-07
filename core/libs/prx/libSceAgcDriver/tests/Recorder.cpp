@@ -134,7 +134,7 @@ public:
                 function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &properties);
                 context.hostImportAlignment = hostProperties.minImportedHostPointerAlignment;
             }
-            if (hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) {
+            if (DmaBufImportUsable(context.physical, function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2"), available)) {
                 extensionsEnabled.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
                 extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
                 context.dmaBufImport = true;
