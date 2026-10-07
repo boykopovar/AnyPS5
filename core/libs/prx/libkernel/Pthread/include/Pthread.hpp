@@ -128,7 +128,10 @@ struct PthreadPrivate {
     bool _detached;
     bool _adopted;
     std::mutex _join_mtx;
-    std::condition_variable _join_cv;
+    TimedWait::Condition _join_cv;
+    std::atomic<bool> cancelPending{false};
+    std::mutex cancelLock;
+    TimedWait::Condition* cancelWait = nullptr;
 
     PthreadPrivate();
     ~PthreadPrivate();

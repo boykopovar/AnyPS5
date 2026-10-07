@@ -1,5 +1,6 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -236,9 +237,15 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
     for (auto& [name, s] : sites) s = Site{};
 }
 
+static void CancellableSleep(std::uint64_t nanos) {
+    ThreadCancel::Check();
+    TimedWait::SleepNanos(nanos);
+    ThreadCancel::Check();
+}
+
 int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
     TraceSleep(__builtin_return_address(0), microseconds);
-    TimedWait::SleepNanos(static_cast<std::uint64_t>(microseconds) * 1000ULL);
+    CancellableSleep(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
 }
 
@@ -248,8 +255,8 @@ static int SleepForRequest(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
     if (rqtp == nullptr) return guestFault;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
     if (rqtp->tv_sec >= 0) {
-        TimedWait::SleepNanos(static_cast<std::uint64_t>(rqtp->tv_sec) * 1000000000ULL +
-                              static_cast<std::uint64_t>(rqtp->tv_nsec));
+        CancellableSleep(static_cast<std::uint64_t>(rqtp->tv_sec) * 1000000000ULL +
+                         static_cast<std::uint64_t>(rqtp->tv_nsec));
     }
     if (rmtp != nullptr) {
         rmtp->tv_sec = 0;
@@ -275,7 +282,7 @@ int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec*
 }
 
 int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
-    TimedWait::SleepNanos(static_cast<std::uint64_t>(microseconds) * 1000ULL);
+    CancellableSleep(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
 }
 
@@ -609,7 +616,7 @@ uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
 }
 
 unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
-    TimedWait::SleepNanos(static_cast<std::uint64_t>(seconds) * 1000000000ULL);
+    CancellableSleep(static_cast<std::uint64_t>(seconds) * 1000000000ULL);
     return 0;
 }
 

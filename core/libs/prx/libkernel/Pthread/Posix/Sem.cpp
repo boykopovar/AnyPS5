@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Common.hpp"
+#include "../include/Cancel.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <cerrno>
 #include <chrono>
@@ -34,12 +35,13 @@ static PosixSemaphore* Get(void* sem) {
 }
 
 static int WaitFor(PosixSemaphore* semaphore, const KernelUseconds* usec) {
+    ThreadCancel::Check();
     std::unique_lock lock(semaphore->lock);
     const auto ready = [&] { return semaphore->count > 0; };
     if (usec) {
-        if (!semaphore->available.WaitUntil(lock, TimedWait::DeadlineNanos(*usec), ready)) return Fail(PosixThread::GUEST_ETIMEDOUT);
+        if (!ThreadCancel::WaitUntil(semaphore->available, lock, TimedWait::DeadlineNanos(*usec), ready)) return Fail(PosixThread::GUEST_ETIMEDOUT);
     } else {
-        semaphore->available.Wait(lock, ready);
+        ThreadCancel::WaitUntil(semaphore->available, lock, std::nullopt, ready);
     }
     --semaphore->count;
     return 0;

@@ -1,4 +1,5 @@
 #include "../include/Pthread.hpp"
+#include "../include/Cancel.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <cstdint>
@@ -65,8 +66,9 @@ int APS5_VABI scePthreadSemPost(PthreadSem* sem) {
 
 int APS5_VABI scePthreadSemWait(PthreadSem* sem) {
     auto* current = resolveSem(sem);
+    ThreadCancel::Check();
     std::unique_lock lock(current->_mutex);
-    current->_cv.Wait(lock, [&] { return current->_count > 0; });
+    ThreadCancel::WaitUntil(current->_cv, lock, std::nullopt, [&] { return current->_count > 0; });
     --current->_count;
     return 0;
 }
@@ -82,8 +84,9 @@ int APS5_VABI scePthreadSemTrywait(PthreadSem* sem) {
 
 int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
     auto* current = resolveSem(sem);
+    ThreadCancel::Check();
     std::unique_lock lock(current->_mutex);
-    const auto acquired = current->_cv.WaitUntil(lock, TimedWait::DeadlineNanos(usec), [&] { return current->_count > 0; });
+    const auto acquired = ThreadCancel::WaitUntil(current->_cv, lock, TimedWait::DeadlineNanos(usec), [&] { return current->_count > 0; });
     if (!acquired)
         return sceTimedOut;
     --current->_count;
