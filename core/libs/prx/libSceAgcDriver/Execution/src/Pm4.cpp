@@ -591,6 +591,14 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
     }
 }
 
+std::uint32_t DmaSource(std::span<const std::uint32_t> packet) {
+    return dmaSource(packet);
+}
+
+std::uint32_t DmaDestination(std::span<const std::uint32_t> packet) {
+    return dmaDestination(packet);
+}
+
 std::optional<MemoryCopy> DecodeMemoryCopy(std::span<const std::uint32_t> packet) {
     if (packet.size() != 7 || ((packet[0] >> 8u) & 0xffu) != 0x50) return std::nullopt;
     if (!memorySelector(dmaSource(packet)) || !memorySelector(dmaDestination(packet))) return std::nullopt;
