@@ -43,6 +43,7 @@ struct ImportProbe {
     std::uint32_t writtenAtImport = 0;
     std::uint32_t writtenAfterSubmit = 0;
     std::uint32_t writtenByCpu = 0;
+    std::uint32_t writtenAfterFill = 0;
 };
 
 ImportProbe ProbeImportWriteProtection(const Context& context);
