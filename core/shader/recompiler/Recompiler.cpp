@@ -505,6 +505,8 @@ void reportResultMemo() {
     std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions));
 }
 
+}
+
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
 // flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
 // attributes are resolved from.
@@ -548,6 +550,8 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     }
     return hash;
 }
+
+namespace {
 
 // The memo'd result of `source`'s variant for the snapshot (design13 R5): a hit returns the shared
 // object, a miss materializes outside the source mutex and inserts (a concurrent miss's object is

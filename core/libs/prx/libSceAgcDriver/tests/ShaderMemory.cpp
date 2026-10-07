@@ -1525,6 +1525,44 @@ void verifyFunctionLdsBound() {
     require(unsized == FunctionLdsDwordLimit, "function LDS: an access without a known width must keep the full array");
 }
 
+void verifySnapshotHash() {
+    using namespace ShaderRecompiler;
+    const RecompileRequest request{};
+    const auto base = [] {
+        ResourceSnapshot snapshot{};
+        DescriptorValue value{};
+        value.dwordCount = 8;
+        value.dwords = {0x12345678u, 0x00000010u, 0x0000abcdu, 0x00000004u, 0, 0, 0, 0};
+        snapshot.buffers.push_back(value);
+        snapshot.flattenedSrt.assign(value.dwords.begin(), value.dwords.end());
+        snapshot.userData = snapshot.flattenedSrt;
+        return snapshot;
+    }();
+    const auto baseHash = snapshotHash(request, base);
+    for (const auto oddDword : {std::size_t{1}, std::size_t{3}}) {
+        auto buffers = base;
+        buffers.buffers.front().dwords.at(oddDword) ^= 0x80000000u;
+        const auto buffersHash = snapshotHash(request, buffers);
+        require(buffersHash != baseHash, "a top bit of an odd buffer dword did not change the memo key");
+        require((buffersHash & 0xffffffffull) != (baseHash & 0xffffffffull), "a top bit of an odd buffer dword left the memo key's low half unchanged");
+        auto srt = base;
+        srt.flattenedSrt.at(oddDword) ^= 0x80000000u;
+        const auto srtHash = snapshotHash(request, srt);
+        require(srtHash != baseHash, "a top bit of an odd SRT dword did not change the memo key");
+        require((srtHash & 0xffffffffull) != (baseHash & 0xffffffffull), "a top bit of an odd SRT dword left the memo key's low half unchanged");
+        auto userData = base;
+        userData.userData.at(oddDword) ^= 0x80000000u;
+        const auto userDataHash = snapshotHash(request, userData);
+        require(userDataHash != baseHash, "a top bit of an odd user-data dword did not change the memo key");
+        require((userDataHash & 0xffffffffull) != (baseHash & 0xffffffffull), "a top bit of an odd user-data dword left the memo key's low half unchanged");
+    }
+    auto first = base;
+    auto second = base;
+    first.userData = {0x3f800000u, 0x3f800000u, 0x3f800000u, 0x3f800000u};
+    second.userData = {0x3f800000u, 0xbf800000u, 0x7f800000u, 0x3f800000u};
+    require(snapshotHash(request, first) != snapshotHash(request, second), "paired top-bit flips in adjacent user-data dwords cancelled in the memo key");
+}
+
 int main() {
     try {
         using namespace ShaderRecompiler;
@@ -1548,6 +1586,7 @@ int main() {
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();
         verifyFunctionLdsBound();
+        verifySnapshotHash();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{
             0x07230203u, 0x00010000u, 0u, 5u, 0u,
