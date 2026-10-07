@@ -173,6 +173,9 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
 }
 
 void* GuestLoadStartModule_nid_no_patch(const char* path, int flags, std::size_t args, const void* argp, int* result) {
+#ifndef _WIN32
+    if (args != 0 || argp != nullptr) NotImplemented_nid_no_patch("sceKernelLoadStartModule with start arguments");
+#endif
     return OpenModule(path, flags, args, argp, result);
 }
 
