@@ -755,6 +755,10 @@ GuestTextureResource StorageSurface(const Context& context, const GuestTextureRe
 std::shared_ptr<StorageTexture> lookupStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& viewed, std::uint32_t mip, std::uint64_t guestBytes);
 
 std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& viewed, std::uint32_t mip, std::uint64_t guestBytes) {
+    // A storage image over a depth surface is seeded from its depth plane and taken back into it; the
+    // stencil plane has neither (and no Vulkan storage view of a stencil format), so a store there
+    // would land in an image the depth surface never sees.
+    Require(!DepthStencilPlaneAt(viewed.baseAddress), "storage access to a depth surface's stencil plane is not implemented");
     auto texture = lookupStorageTexture(context, words, viewed, mip, guestBytes);
     if (DepthSurfaceAt(viewed.baseAddress)) SeedStorageFromDepth(context, texture);
     return texture;
