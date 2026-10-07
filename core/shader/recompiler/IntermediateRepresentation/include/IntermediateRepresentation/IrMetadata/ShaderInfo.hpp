@@ -12,7 +12,6 @@ namespace ShaderRecompiler {
 struct ShaderInfo {
     std::uint32_t scratchDwords = 0;
     std::uint32_t sharedMemoryBytes = 0;
-    static constexpr std::uint32_t MaxBuffers = 32;
     static constexpr std::uint32_t MaxImages = 64;
     static constexpr std::uint32_t MaxSamplers = 32;
     static constexpr std::uint32_t MaxSampledPairs = 64;

@@ -13,6 +13,7 @@
 #include <set>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -738,6 +739,41 @@ void testConditionalSubmission() {
     check(results[13] == 0, "a rejected conditional submission executed a guarded packet");
 }
 
+std::vector<std::uint32_t> branch(std::uint32_t mode, std::uint32_t function, const std::vector<std::uint32_t>* first, const std::vector<std::uint32_t>* second) {
+    const auto address = [](const std::vector<std::uint32_t>* target) { return target ? reinterpret_cast<std::uintptr_t>(target->data()) : std::uintptr_t{0}; };
+    const auto size = [](const std::vector<std::uint32_t>* target) { return target ? static_cast<std::uint32_t>(target->size()) : 0u; };
+    return makePacket(0x3f, {mode | (function << 8u), 0, 0, 0, 0, 0, 0, static_cast<std::uint32_t>(address(first)), static_cast<std::uint32_t>(address(first) >> 32u), size(first), static_cast<std::uint32_t>(address(second)), static_cast<std::uint32_t>(address(second) >> 32u), size(second)});
+}
+
+void testBranchSubmission() {
+    static std::array<std::uint32_t, 4> results{};
+    static std::vector<std::uint32_t> first, second;
+    results.fill(0);
+    first = joinPackets({writeWord(results[0], 71)});
+    second = joinPackets({writeWord(results[1], 72)});
+    auto words = joinPackets({branch(1, 0, &first, nullptr), writeWord(results[2], 73)});
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(results[0] == 71 && results[1] == 0 && results[2] == 73, "an always-taken if-then COND_INDIRECT_BUFFER did not run its buffer");
+    results.fill(0);
+    words = joinPackets({branch(2, 0, &first, &second), writeWord(results[2], 74)});
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(results[0] == 71 && results[1] == 0 && results[2] == 74, "an always-taken if-then-else COND_INDIRECT_BUFFER ran the wrong buffer");
+    results.fill(0);
+    words = joinPackets({branch(1, 0, nullptr, nullptr), writeWord(results[2], 75)});
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(results[2] == 75, "an empty COND_INDIRECT_BUFFER skipped the next packet");
+    for (const auto& [mode, function, text] : {std::tuple{1u, 3u, "with a comparison"}, std::tuple{0u, 0u, "invalid COND_INDIRECT_BUFFER mode"}}) {
+        results.fill(0);
+        words = joinPackets({writeWord(results[3], 1), branch(mode, function, &first, nullptr)});
+        expectFailure([&] { submitWords(words); }, text);
+        AgcDriverWaitIdle_nid_postfix();
+        check(results[0] == 0 && results[3] == 0, "a rejected COND_INDIRECT_BUFFER submission executed a packet");
+    }
+}
+
 void testPredicatedSubmission() {
     alignas(16) std::uint64_t flag[2] = {0, 0};
     alignas(16) std::array<std::uint32_t, 4> written{};
@@ -906,6 +942,7 @@ int main(int argc, char** argv) {
         testDriverSubmission();
         testPredicatedSubmission();
         testConditionalSubmission();
+        testBranchSubmission();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
         return 0;

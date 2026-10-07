@@ -18,7 +18,16 @@ void FailEmit(const std::string& reason) {
     throw std::runtime_error("SPIR-V module emission failed: " + reason);
 }
 
-namespace {
+IrShaderStage StageOf(const SpirvEmitterState& state) {
+    return state.program.Resources().stage;
+}
+
+const ShaderVertexInputInfo& VertexInfo(const SpirvEmitterState& state) {
+    if (state.inputInfo.vertex == nullptr) {
+        FailEmit("vertex input info is missing");
+    }
+    return *state.inputInfo.vertex;
+}
 
 const ShaderPixelInputInfo& PixelInfo(const SpirvEmitterState& state) {
     if (state.inputInfo.pixel == nullptr) {
@@ -26,6 +35,25 @@ const ShaderPixelInputInfo& PixelInfo(const SpirvEmitterState& state) {
     }
     return *state.inputInfo.pixel;
 }
+
+const ShaderWorkgroupInputInfo* ShaderWorkgroupInput(const SpirvEmitterState& state) {
+    switch (state.program.Resources().stage) {
+    case IrShaderStage::Compute:
+        if (state.inputInfo.compute == nullptr) {
+            FailEmit("compute input info is missing");
+        }
+        return state.inputInfo.compute;
+    case IrShaderStage::Mesh:
+        if (state.inputInfo.vertex == nullptr) {
+            FailEmit("vertex input info is missing");
+        }
+        return &state.inputInfo.vertex->mesh;
+    default:
+        return nullptr;
+    }
+}
+
+namespace {
 
 constexpr std::uint32_t NoBuiltIn = std::numeric_limits<std::uint32_t>::max();
 

@@ -158,8 +158,10 @@ static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
 
 void DefineGetBdaPointer(SpirvEmitterState& state) {
     if (!state.program.Info().usesDma) return;
+    DefineBdaFaultFunction(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
     if (!BdaByteReadsForced()) state.bdaProbeFunction = DefineBdaLookup(state, "probe_bda_pointer", false);
+    DefineBdaDwordReadFunctions(state);
     if (state.program.Info().bdaWrites) {
         state.bdaWritePointerFunction = DefineBdaLookup(state, "get_bda_write_pointer", true, BdaAbi::Write);
         state.bdaAtomicPointerFunction = DefineBdaLookup(state, "get_bda_atomic_pointer", true, BdaAbi::Read | BdaAbi::Write);

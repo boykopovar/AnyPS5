@@ -26,6 +26,12 @@ ctest --test-dir build --output-on-failure
 
 Python 3 is optional; without it some relinker tests are not registered.
 
+The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [TechnicalDebt](docs/dev/TechnicalDebt.md), and only UTF-8 text files. Run it locally before pushing:
+
+```
+python3 tools/check_conventions.py --base origin/main
+```
+
 ## Branches and pull requests
 
 The [pull request template](.github/pull_request_template.md) is the checklist for these rules.

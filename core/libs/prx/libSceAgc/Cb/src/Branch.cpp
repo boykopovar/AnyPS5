@@ -18,9 +18,9 @@ std::uint32_t* APS5_VABI sceAgcCbBranch(CommandBuffer* buf, std::uint8_t mode, s
     const auto address = reinterpret_cast<std::uintptr_t>(compareAddress);
     const auto first = reinterpret_cast<std::uintptr_t>(buffer1);
     const auto second = reinterpret_cast<std::uintptr_t>(buffer2);
-    Agc::Command::CheckAddress(address, 8, __func__);
-    Agc::Command::CheckAddress(first, 4, __func__);
-    Agc::Command::CheckAddress(second, 4, __func__);
+    if (compareFunction != 0) Agc::Command::CheckAddress(address, 8, __func__);
+    if (first != 0 || sizeInDwords1 != 0) Agc::Command::CheckAddress(first, 4, __func__);
+    if (second != 0 || sizeInDwords2 != 0) Agc::Command::CheckAddress(second, 4, __func__);
     return Agc::Command::Emit(buf, 0x3fu, {mode | (static_cast<std::uint32_t>(compareFunction) << 8u), static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), static_cast<std::uint32_t>(mask), static_cast<std::uint32_t>(mask >> 32u), static_cast<std::uint32_t>(reference), static_cast<std::uint32_t>(reference >> 32u), static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(first >> 32u), sizeInDwords1 | (static_cast<std::uint32_t>(cachePolicy1) << 28u), static_cast<std::uint32_t>(second), static_cast<std::uint32_t>(second >> 32u), sizeInDwords2 | (static_cast<std::uint32_t>(cachePolicy2) << 28u)}, __func__);
 }
 

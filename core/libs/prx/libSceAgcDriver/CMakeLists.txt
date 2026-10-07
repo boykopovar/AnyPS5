@@ -274,6 +274,11 @@ target_link_libraries(agc_structurizer_tests PRIVATE shader_recompiler_agc_drive
 set_target_properties(agc_structurizer_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_structurizer_tests)
 
+add_test_executable(agc_spirv_module_tests EXCLUDE_FROM_ALL tests/SpirvModule.cpp)
+target_link_libraries(agc_spirv_module_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_spirv_module_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_spirv_module_tests)
+
 add_test_executable(agc_dpp_write_tests EXCLUDE_FROM_ALL tests/DppWrite.cpp)
 target_link_libraries(agc_dpp_write_tests PRIVATE shader_recompiler_agc_driver libc)
 set_target_properties(agc_dpp_write_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -533,12 +538,7 @@ target_include_directories(agc_driver_prepared_shaders_tests PRIVATE
 )
 
 if(BUILD_TESTING)
-    add_test(NAME agc_shader_bindless COMMAND agc_shader_memory_tests --bindless)
-    set_tests_properties(agc_shader_bindless PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    if(WIN32)
-        set_tests_properties(agc_shader_bindless PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-    foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_dpp_write_tests agc_masked_select_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests ${agcExecutionTests})
+    foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests ${agcExecutionTests})
         string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
         set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
         add_test(NAME ${agcTestName} COMMAND ${agcTest})

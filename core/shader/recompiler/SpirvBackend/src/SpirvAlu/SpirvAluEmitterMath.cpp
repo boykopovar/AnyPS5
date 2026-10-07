@@ -4,6 +4,7 @@
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <initializer_list>
+#include <string>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -214,6 +215,15 @@ std::uint32_t EmitDsMaskedLaneRead(SpirvEmitterState& state, std::uint32_t sourc
     state.module.AddFunction(spv::OpGroupNonUniformShuffle, TypeBool(state), sourceExec, ConstantU32(state, spv::ScopeSubgroup), exec, physicalLane);
     const auto sourceActive = Binary(state, spv::OpLogicalAnd, TypeBool(state), sourceExec, EmitSubgroupLaneActiveBool(state, lane));
     return Select(state, TypeU32(state), sourceActive, shuffled, ConstantU32(state, 0u));
+}
+
+bool HostSubgroupNarrowerThanWave(const SpirvEmitterState& state) {
+    return state.program.Resources().stage != IrShaderStage::Compute && state.laneCount == 1u && state.hostSubgroupSize < state.program.WaveSize();
+}
+
+[[noreturn]] void FailOutsideHostSubgroup(const SpirvValueEmitContext& ctx, const IrValue& inst, const std::string& access) {
+    const auto& state = ctx.state;
+    ctx.Fail(inst, (access + " is outside the " + std::to_string(state.hostSubgroupSize) + "-lane host subgroup that runs this wave" + std::to_string(state.program.WaveSize()) + " program at one lane per invocation").c_str());
 }
 
 }
@@ -547,6 +557,11 @@ std::uint32_t EmitReadFirstLane(SpirvValueEmitContext& ctx, const IrValue& inst)
 
 std::uint32_t EmitReadLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
+    const IrValue* selector = inst.Argument(1)->Resolve();
+    if (selector != nullptr && selector->HasImmediate() && HostSubgroupNarrowerThanWave(state)) {
+        const auto index = selector->ImmediateU32() & (state.program.WaveSize() - 1u);
+        if (index >= state.hostSubgroupSize) FailOutsideHostSubgroup(ctx, inst, "v_readlane_b32 of lane " + std::to_string(index));
+    }
     const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), ctx.Arg(inst, 1), ConstantU32(state, state.program.WaveSize() - 1u));
     return ctx.Shuffle(inst, 0, lane);
 }
@@ -562,6 +577,7 @@ std::uint32_t EmitWriteLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
 std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto flags = inst.Flags<PermlaneFlags>();
+    if (flags.x16 && state.hostSubgroupSize <= 16u && HostSubgroupNarrowerThanWave(state)) FailOutsideHostSubgroup(ctx, inst, "v_permlanex16_b32 from lanes 16-31");
     const auto subid = EmitSubgroupLocalInvocationId(state);
     const auto row = state.module.AllocateId();
     const auto rowValue = state.module.AllocateId();
@@ -591,9 +607,9 @@ std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst)
     if (flags.fetchInactive) {
         return shuffled;
     }
-    const auto sourceExec = ctx.Shuffle(inst, 3, target);
+    const auto sourceActive = EmitBallotLaneActiveBool(state, ctx.Ballot(inst.Argument(3)), target);
     const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpSelect, TypeU32(state), result, sourceExec, shuffled, flags.boundControl ? ConstantU32(state, 0u) : ctx.Arg(inst, 4));
+    state.module.AddFunction(spv::OpSelect, TypeU32(state), result, sourceActive, shuffled, flags.boundControl ? ConstantU32(state, 0u) : ctx.Arg(inst, 4));
     return result;
 }
 

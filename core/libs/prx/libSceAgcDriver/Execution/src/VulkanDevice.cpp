@@ -32,6 +32,7 @@
 #include <charconv>
 #include <condition_variable>
 #include <fstream>
+#include <cctype>
 #include <cstdlib>
 #include <mutex>
 #include <SDL_loadso.h>
@@ -46,6 +47,7 @@
 #include <list>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -628,6 +630,20 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     VkPhysicalDevice selected = VK_NULL_HANDLE;
     std::uint32_t family = 0;
     int selectedRank = -1;
+    const char* requestedName = std::getenv("ANYPS5_GPU");
+    if (requestedName != nullptr && *requestedName == '\0') requestedName = nullptr;
+    const auto matchesRequest = [&](const char* deviceName) {
+        const std::string_view name(deviceName);
+        const std::string_view request(requestedName);
+        if (request.size() > name.size()) return false;
+        for (std::size_t start = 0; start + request.size() <= name.size(); ++start) {
+            std::size_t index = 0;
+            while (index < request.size() && std::tolower(static_cast<unsigned char>(name[start + index])) == std::tolower(static_cast<unsigned char>(request[index]))) ++index;
+            if (index == request.size()) return true;
+        }
+        return false;
+    };
+    std::string candidateNames;
     const auto rankDeviceType = [](VkPhysicalDeviceType type) {
         switch (type) {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
@@ -641,10 +657,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         VkPhysicalDeviceProperties properties{};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(physical, &properties);
         APS5_LOG_OUT("Physical device candidate=%p name=%s api=0x%x type=%d", reinterpret_cast<void*>(physical), properties.deviceName, properties.apiVersion, static_cast<int>(properties.deviceType));
+        if (!candidateNames.empty()) candidateNames += ", ";
+        candidateNames += properties.deviceName;
         if (properties.apiVersion < VK_API_VERSION_1_1) {
             continue;
         }
-        const int rank = rankDeviceType(properties.deviceType);
+        if (requestedName != nullptr && !matchesRequest(properties.deviceName)) continue;
+        const int rank = requestedName != nullptr ? 4 : rankDeviceType(properties.deviceType);
         if (rank <= selectedRank) {
             continue;
         }
@@ -677,6 +696,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
                 break;
             }
         }
+    }
+    if (selected == VK_NULL_HANDLE && requestedName != nullptr) {
+        throw std::runtime_error(std::string("Vulkan: no usable device whose name contains ANYPS5_GPU=\"") + requestedName + "\"; devices: " + candidateNames);
     }
     if (selected == VK_NULL_HANDLE) {
         throw std::runtime_error(window ? "Vulkan: no Vulkan 1.1 device with graphics, compute and swapchain presentation" : "Vulkan: no Vulkan 1.1 graphics and compute queue");
@@ -2376,6 +2398,10 @@ ShaderRecompiler::SpirvTarget VulkanDevice::ComputeTarget(std::uint32_t waveSize
     auto target = Target();
     if (waveSize == 32u && state->computeWave32) target.subgroupSize = 32u;
     return target;
+}
+
+std::string VulkanDevice::DeviceName() const {
+    return state->properties.deviceName;
 }
 
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {

@@ -595,6 +595,59 @@ void verifyProgramCounterRelativeData() {
     require(moved.cacheHit, "program counter data: relocating the shader recompiled it");
     require(dataBase(moved) == codeAddress + 0x1000u + 56u, "program counter data: the relocated shader bound the old address");
 }
+
+void verifyLanesOutsideHostSubgroup() {
+    using namespace ShaderRecompiler;
+    const auto pixel = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize) {
+        ShaderPixelStageInfo info{};
+        info.inputAddr = PixelInputBit(PixelInput::PerspectiveCenter);
+        info.hasPerspectiveCenterVgpr = true;
+        info.targetOutputMode[0] = 9u;
+        info.targetExportMapping.fill(0xe4u);
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.pixel = info;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return !Recompile(request).spirv.empty();
+    };
+    const auto compute = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize) {
+        static constexpr std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return !Recompile(request).spirv.empty();
+    };
+    static constexpr std::array<std::uint32_t, 6> lane63{0xd7600006u, 0x00017f00u, 0x7e020206u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 6> lane31{0xd7600006u, 0x00013f00u, 0x7e020206u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 11> waterfall{0xbe80047eu, 0xbe821400u, 0xd7600003u, 0x00000500u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 6> computeLane63{0xd7600006u, 0x00017f00u, 0x7e020206u, 0xe0700000u, 0x80000100u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 5> permlanex16{0xd7780001u, 0x02010100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 5> permlane16{0xd7770001u, 0x02010100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    expectFailure([&] { static_cast<void>(pixel(lane63, 32u)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup that runs this wave64 program at one lane per invocation", "host lanes: a wave64 pixel program read lane 63 of a 32-lane subgroup");
+    expectFailure([&] { static_cast<void>(pixel(lane63, 8u)); }, "v_readlane_b32 of lane 63 is outside the 8-lane host subgroup", "host lanes: a wave64 pixel program read lane 63 of an 8-lane subgroup");
+    require(pixel(lane31, 32u), "host lanes: a wave64 pixel program did not build reading lane 31 of a 32-lane subgroup");
+    expectFailure([&] { static_cast<void>(pixel(lane31, 8u)); }, "v_readlane_b32 of lane 31 is outside the 8-lane host subgroup", "host lanes: a wave64 pixel program read lane 31 of an 8-lane subgroup");
+    require(pixel(lane63, 64u), "host lanes: a wave64 pixel program did not build reading lane 63 of a 64-lane subgroup");
+    require(compute(computeLane63, 32u), "host lanes: a wave64 compute program did not build reading lane 63 at two lanes per invocation");
+    require(compute(computeLane63, 8u), "host lanes: a wave64 compute program did not build reading lane 63 of an 8-lane subgroup");
+    require(pixel(waterfall, 32u) && pixel(waterfall, 8u), "host lanes: an s_ff1_i32_b64 waterfall reading a lane in a register did not build");
+    expectFailure([&] { static_cast<void>(pixel(permlanex16, 8u)); }, "v_permlanex16_b32 from lanes 16-31 is outside the 8-lane host subgroup", "host lanes: v_permlanex16_b32 read lanes 16-31 of an 8-lane subgroup");
+    require(pixel(permlanex16, 32u) && pixel(permlane16, 8u), "host lanes: a v_permlane16_b32 row that the host subgroup may hold did not build");
+}
+
 void verifyMeshConfiguration() {
     using namespace ShaderRecompiler;
     ShaderMeshInputInfo list;
@@ -1303,6 +1356,78 @@ void verifyTwoLaneUniformValues() {
     }
 }
 
+void verifyBdaReadFallbackFunctions() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    alignas(256) static std::array<std::uint32_t, 32> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 0u, 0u, static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 128u, 0x01016facu};
+    const auto compile = [&](std::uint32_t loads, bool barrier, bool coherent) {
+        std::vector<std::uint32_t> code{0x7e020200u, 0x7e040201u};
+        for (std::uint32_t load = 0; load < loads; ++load) {
+            code.push_back(0xdc308000u | (coherent ? 0x10000u : 0u) | (4u * load + 4u));
+            code.push_back(((3u + load) << 24u) | 0x007d0001u);
+        }
+        code.push_back(0xbf8c3f70u);
+        for (std::uint32_t load = 1; load < loads; ++load) code.push_back(0x4a060103u | ((3u + load) << 9u));
+        if (barrier) code.push_back(0xbf8a0000u);
+        code.insert(code.end(), {0xe0700000u, 0x80010300u, 0xbf810000u});
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x50000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv;
+    };
+    for (const bool barrier : {false, true}) {
+        for (const bool coherent : {false, true}) {
+            const auto one = compile(1u, barrier, coherent);
+            const auto five = compile(5u, barrier, coherent);
+            std::map<std::uint32_t, std::string> names;
+            std::map<std::string, std::uint32_t> definitions;
+            const auto reader = std::string("read_bda_dword_bytes") + (barrier ? "" : "_stop") + (coherent ? "_coherent" : "");
+            std::string function;
+            std::size_t compareExchanges = 0;
+            std::size_t mainLookups = 0;
+            std::array<std::size_t, 2> readerLoads{};
+            for (std::size_t cursor = 5; cursor < five.size();) {
+                const auto length = five[cursor] >> 16u;
+                require(length != 0 && length <= five.size() - cursor, "BDA read functions: truncated SPIR-V instruction");
+                const auto op = five[cursor] & 0xffffu;
+                if (op == spv::OpName) names[five[cursor + 1]] = reinterpret_cast<const char*>(&five[cursor + 2]);
+                if (op == spv::OpFunction) {
+                    function = names[five[cursor + 2]];
+                    if (function == "record_bda_fault" || function.starts_with("read_bda_dword_bytes")) {
+                        require((five[cursor + 3] & spv::FunctionControlDontInlineMask) != 0u, "BDA read functions: a fault or byte read function may be inlined");
+                        ++definitions[function];
+                    }
+                }
+                if (op == spv::OpAtomicCompareExchange) ++compareExchanges;
+                if (op == spv::OpFunctionCall && function == "main" && names[five[cursor + 3]] == "get_bda_pointer") ++mainLookups;
+                if (op == spv::OpLoad && function == reader) ++readerLoads[length > 4u && (five[cursor + 4] & spv::MemoryAccessVolatileMask) != 0u];
+                cursor += length;
+            }
+            require(definitions["record_bda_fault"] == 1u && definitions[reader] == 1u, "BDA read functions: the fault and byte read functions are not defined");
+            for (const auto& [name, count] : definitions) require(count == 1u, "BDA read functions: a function is defined twice");
+            require(compareExchanges == 1u, "BDA read functions: a fault is recorded outside record_bda_fault");
+            require(mainLookups == 0u, "BDA read functions: a read site looks up its bytes inline");
+            require(readerLoads[coherent] == 4u && readerLoads[!coherent] == 0u, "BDA read functions: the byte loads do not keep the access's coherence");
+            require(five.size() - one.size() < 4u * 300u, "BDA read functions: a read site takes 300 SPIR-V words or more");
+        }
+    }
+}
+
 void verifyFunctionLdsBound() {
     using namespace ShaderRecompiler;
     const auto build = [](const auto& body) {
@@ -1458,6 +1583,7 @@ int main(int argc, char** argv) {
         verifyBindlessTable();
         verifyDescriptorPhis();
         verifyProgramCounterRelativeData();
+        verifyLanesOutsideHostSubgroup();
         verifyMeshConfiguration();
         verifyPixelInputs();
         verifyPixelRequestSerialization();
@@ -1469,6 +1595,7 @@ int main(int argc, char** argv) {
         verifyUnusedUnnormalizedSampler();
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();
+        verifyBdaReadFallbackFunctions();
         verifyFunctionLdsBound();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{

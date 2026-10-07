@@ -125,6 +125,23 @@ static void CheckNamedAndHintedMappings() {
     Require(sceKernelMunmap(first, length) == 0);
 }
 
+static void CheckAudioCoprocessorProtection() {
+    constexpr std::size_t length = 0x4000;
+    void* writable = nullptr;
+    Require(sceKernelMapFlexibleMemory(&writable, length, 0x200, 0) == 0);
+    static_cast<volatile unsigned char*>(writable)[length - 1] = 7;
+    Require(static_cast<volatile unsigned char*>(writable)[length - 1] == 7);
+    Require(sceKernelMprotect(writable, length, 0x100) == 0);
+    Require(static_cast<volatile unsigned char*>(writable)[length - 1] == 7);
+    Require(sceKernelMprotect(writable, length, 0x3f2) == 0);
+    static_cast<volatile unsigned char*>(writable)[0] = 9;
+    Require(sceKernelMunmap(writable, length) == 0);
+    bool rejected = false;
+    void* undefined = nullptr;
+    try { sceKernelMapFlexibleMemory(&undefined, length, 0x400, 0); } catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected && undefined == nullptr);
+}
+
 static void CheckInternalNamedFlexibleMapping() {
     constexpr std::size_t length = 0x10000;
     std::size_t before = 0;
@@ -338,6 +355,18 @@ static void CheckMtypeprotect() {
     Require(sceKernelGetDirectMemoryType(phys + static_cast<std::int64_t>(page * 2), &type, &start, &end) == 0 && type == 2);
     Require(sceKernelMunmap(mapped, page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
+}
+
+static void CheckDirectMemoryGpuProtBits() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, page, 0x3f2, 0, phys, 0) == 0);
+    static_cast<unsigned char*>(mapping)[0] = 11;
+    Require(static_cast<unsigned char*>(mapping)[0] == 11);
+    Require(sceKernelMunmap(mapping, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
 }
 
 static void CheckFixedVirtualReservation() {
@@ -921,8 +950,10 @@ int main() {
     CheckInternalNamedFlexibleMapping();
     CheckBatchMapStopsAtInvalidEntry();
     CheckCheckedReleaseDirectMemory();
+    CheckAudioCoprocessorProtection();
     CheckDirectMemoryFollowsPhysicalPages();
     CheckReleaseDirectMemoryClearsMappings();
+    CheckDirectMemoryGpuProtBits();
     CheckFixedVirtualReservation();
     CheckReservedRangeIsNotCommitted();
     CheckNoOverwriteRefusesLiveMapping();

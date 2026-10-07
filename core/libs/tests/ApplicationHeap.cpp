@@ -12,7 +12,8 @@
 extern "C" {
 int APS5_VABI posix_memalign_nid_postfix(void**, std::size_t, std::size_t);
 void* APS5_VABI _Znwm_nid_postfix(std::size_t);
-void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*);
+void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
+void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
 void APS5_VABI _ZdlPv_nid_postfix(void*);
 void APS5_VABI _ZdaPv_nid_postfix(void*);
 void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void*, std::size_t);
@@ -201,6 +202,8 @@ int main(int argc, char** argv) {
     _ZdlPvSt11align_val_t_nid_postfix(nullptr, 64);
     require(frees == 5);
     fail = true;
+    require(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);
+    require(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);
     reject([] { _Znwm_nid_postfix(8); });
     reject([] { ApplicationHeapAlign_nid_no_patch(4, 64); });
     reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
@@ -233,6 +236,9 @@ int main(int argc, char** argv) {
     require(posix_memalign_nid_postfix(nullptr, 64, 32) == 22 && posixCalls == beforeInvalid);
     require(posix_memalign_nid_postfix(&unchanged, 64, 31) == 0 && unchanged == storage.data());
     require(lastSize == 31 && lastAlignment == 64 && *__error_nid_postfix() == 77);
+    require(_ZnwmRKSt9nothrow_t_nid_postfix(16, nullptr) == storage.data() && lastSize == 16);
+    require(_ZnwmRKSt9nothrow_t_nid_postfix(0, nullptr) == storage.data() && lastSize == 1);
+    require(_ZnamRKSt9nothrow_t_nid_postfix(0, nullptr) == storage.data() && lastSize == 1);
     recurse = true;
     reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
     recurse = false;

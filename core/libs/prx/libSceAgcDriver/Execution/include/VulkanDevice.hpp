@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace AgcDriver {
 
@@ -32,6 +33,7 @@ public:
     ~VulkanDevice();
     VulkanDevice(const VulkanDevice&) = delete;
     VulkanDevice& operator=(const VulkanDevice&) = delete;
+    std::string DeviceName() const;
     ShaderRecompiler::SpirvTarget Target() const;
     ShaderRecompiler::SpirvTarget ComputeTarget(std::uint32_t waveSize) const;
     // Distinguishes this device from every earlier one in the process (a memo keyed by the device

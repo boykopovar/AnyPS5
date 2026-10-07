@@ -1,0 +1,22 @@
+name: Conventions
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conventions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: python3 tools/check_conventions.py --base ${{ github.event.pull_request.base.sha }} --head ${{ github.event.pull_request.head.sha }}

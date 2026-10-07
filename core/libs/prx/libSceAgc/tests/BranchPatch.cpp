@@ -58,6 +58,21 @@ void testWriter() {
     check(storage.packet[expected.size()] == 0xabcdef01u, "branch command overwrote following word");
 }
 
+void testUnusedFields() {
+    std::array<std::uint32_t, 64> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    auto* packet = sceAgcCbBranch(&buffer, 1, 0, compareAt(0x0000001234567894ull), 0, 0, 0, targetAt(0x0000002233445564ull), 0x123u, 0, nullptr, 0);
+    const std::array expected{0xc00c3f00u, 0x1u, 0x34567894u, 0x12u, 0u, 0u, 0u, 0u, 0x33445564u, 0x22u, 0x123u, 0u, 0u, 0u};
+    check(std::equal(expected.begin(), expected.end(), packet), "an always-taken branch without an else target was not written");
+    packet = sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 0, 0, nullptr, 0);
+    check(packet[1] == 1u && packet[2] == 0u && packet[8] == 0u && packet[10] == 0u, "an empty always-taken branch was not written");
+    const auto cursor = buffer.cursor_up;
+    expectFailure([&] { sceAgcCbBranch(&buffer, 1, 3, compareAt(0x0000001234567894ull), 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 0); });
+    expectFailure([&] { sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 1, 0, nullptr, 0); });
+    expectFailure([&] { sceAgcCbBranch(&buffer, 2, 0, nullptr, 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 1); });
+    check(buffer.cursor_up == cursor, "a rejected branch advanced the command buffer");
+}
+
 void testCompareAddress() {
     Storage storage;
     auto expected = storage.words;
@@ -109,6 +124,7 @@ void testMalformedPackets() {
 int main() {
     try {
         testWriter();
+        testUnusedFields();
         testCompareAddress();
         testTarget(sceAgcBranchPatchSetThenTarget, 8, 0x10000000u, "then target setter wrote the wrong words");
         testTarget(sceAgcBranchPatchSetElseTarget, 11, 0x20000000u, "else target setter wrote the wrong words");

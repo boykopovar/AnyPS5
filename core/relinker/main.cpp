@@ -135,7 +135,7 @@ int main(const int argc, char* argv[]) {
                   << std::filesystem::path(absPath).filename().string() << "\n"
                   << "libs/\n    *.prx\napp0/\n    <game resources>\n";
         for (const auto& artifact : guestArtifacts)
-            std::cout << "    " << artifact.Path.parent_path().filename().string() << "/" << artifact.Path.filename().string() << '\n';
+            std::cout << "    " << artifact.Path.lexically_relative(std::filesystem::path(absPath).parent_path() / "app0").generic_string() << '\n';
         std::cout << "Game resources and system libraries must be placed in this layout separately.\n";
         if (args.runPath != "$ORIGIN/libs") std::cout << "Custom library search path (--rpath): " << args.runPath << '\n';
 

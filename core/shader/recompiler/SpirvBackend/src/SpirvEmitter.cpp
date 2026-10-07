@@ -248,6 +248,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.supportedCapabilities = target.supportedCapabilities;
     state.supportedExtensions = target.supportedExtensions;
     state.nonConstantImageOffsets = target.nonConstantImageOffsets;
+    state.hostSubgroupSize = target.subgroupSize;
     state.splitSubgroup = program.WaveSize() == 32u && target.subgroupSize > 32u;
     if (state.splitSubgroup && (state.requirements.subgroupBallot || state.requirements.subgroupShuffle)) state.requirements.subgroupLocalInvocationId = true;
     const auto* workgroup = ShaderWorkgroupInputFor(state);

@@ -84,6 +84,9 @@ void RunTextureFormatTests() {
     Require(ResolveTextureFormat(56) == VK_FORMAT_R8G8B8A8_UNORM, "format 56 must resolve to R8G8B8A8_UNORM");
     Require(BytesPerElement(56) == 4u, "format 56 must be four bytes wide");
 
+    Require(ResolveTextureFormat(6) == VK_FORMAT_R8_SINT, "format 6 must resolve to R8_SINT");
+    Require(BytesPerElement(6) == 1u, "format 6 must be one byte wide");
+
     Require(ResolveTextureFormat(22) == VK_FORMAT_R32_SFLOAT, "format 22 must resolve to R32_SFLOAT");
     Require(BytesPerElement(22) == 4u, "format 22 must be four bytes wide");
 

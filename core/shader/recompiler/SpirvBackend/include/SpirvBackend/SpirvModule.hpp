@@ -1,6 +1,8 @@
 #ifndef CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVMODULE_HPP
 #define CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVMODULE_HPP
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -25,6 +27,15 @@ struct SpirvDeferredPhi {
 };
 
 class SpirvModule {
+private:
+    template<typename TOperand>
+    static constexpr bool wordSized = (std::is_integral_v<TOperand> || std::is_enum_v<TOperand>) && sizeof(TOperand) <= sizeof(std::uint32_t);
+
+    template<typename TOperand>
+    static std::uint32_t narrowWord(TOperand operand) {
+        return static_cast<std::uint32_t>(operand);
+    }
+
 public:
     explicit SpirvModule(std::uint32_t version = 0x00010300u);
     [[nodiscard]] std::uint32_t AllocateId();
@@ -52,6 +63,28 @@ public:
         return declareType(opcode, makeTypeKey(opcode, operands...));
     }
 
+    std::uint32_t Type(std::uint32_t opcode) {
+        const std::uint32_t key[2] = {opcode, 0u};
+        return interned(key, 2u, [this, opcode]() { return declareType(opcode, makeTypeKey(opcode)); });
+    }
+
+    template<typename TWord>
+    requires wordSized<TWord>
+    std::uint32_t Type(std::uint32_t opcode, TWord width) {
+        const auto narrowed = narrowWord(width);
+        const std::uint32_t key[3] = {opcode, 1u, narrowed};
+        return interned(key, 3u, [this, opcode, width]() { return declareType(opcode, makeTypeKey(opcode, width)); });
+    }
+
+    template<typename TWord, typename TSign>
+    requires (wordSized<TWord> && wordSized<TSign>)
+    std::uint32_t Type(std::uint32_t opcode, TWord width, TSign signness) {
+        const auto narrowedWidth = narrowWord(width);
+        const auto narrowedSignness = narrowWord(signness);
+        const std::uint32_t key[4] = {opcode, 2u, narrowedWidth, narrowedSignness};
+        return interned(key, 4u, [this, opcode, width, signness]() { return declareType(opcode, makeTypeKey(opcode, width, signness)); });
+    }
+
     template<typename... TOperands>
     std::uint32_t DecoratedType(std::uint32_t opcode, std::initializer_list<SpirvTypeAnnotation> annotations, const TOperands&... operands) {
         return declareDecoratedType(opcode, makeTypeKey(opcode, operands...), annotations);
@@ -63,6 +96,29 @@ public:
         key.reserve(2u + (0u + ... + operandWordCount(operands)));
         appendOperands(key, opcode, type, operands...);
         return declareConstant(opcode, std::move(key));
+    }
+
+    std::uint32_t Constant(std::uint32_t opcode, std::uint32_t type) {
+        const std::uint32_t key[2] = {opcode, type};
+        return interned(key, 2u, [this, opcode, type]() {
+            std::vector<std::uint32_t> keyWords;
+            keyWords.reserve(2u);
+            appendOperands(keyWords, opcode, type);
+            return declareConstant(opcode, std::move(keyWords));
+        });
+    }
+
+    template<typename TValue>
+    requires wordSized<TValue>
+    std::uint32_t Constant(std::uint32_t opcode, std::uint32_t type, TValue value) {
+        const auto narrowed = narrowWord(value);
+        const std::uint32_t key[3] = {opcode, type, narrowed};
+        return interned(key, 3u, [this, opcode, type, value]() {
+            std::vector<std::uint32_t> keyWords;
+            keyWords.reserve(3u);
+            appendOperands(keyWords, opcode, type, value);
+            return declareConstant(opcode, std::move(keyWords));
+        });
     }
 
     template<typename... TOperands>
@@ -81,6 +137,48 @@ public:
     }
 
 private:
+    static constexpr std::size_t DeclarationCacheSize = 512;
+    static constexpr std::size_t MaxCachedDeclarationWords = 4;
+
+    struct DeclarationSlot {
+        std::array<std::uint32_t, MaxCachedDeclarationWords> words = {};
+        std::uint32_t length = 0;
+        std::uint32_t id = 0;
+    };
+
+    static std::size_t declarationCacheSlot(const std::uint32_t* words, std::uint32_t length) {
+        std::uint64_t hash = 14695981039346656037ull;
+        for (std::uint32_t index = 0; index < length; index++) {
+            hash ^= words[index];
+            hash *= 1099511628211ull;
+        }
+        return static_cast<std::size_t>(hash) & (DeclarationCacheSize - 1u);
+    }
+
+    template<typename TDeclare>
+    std::uint32_t interned(const std::uint32_t* words, std::uint32_t length, TDeclare&& declare) {
+        const auto start = declarationCacheSlot(words, length);
+        std::size_t target = start;
+        for (std::size_t probe = 0; probe < DeclarationCacheSize; ++probe) {
+            target = (start + probe) & (DeclarationCacheSize - 1u);
+            auto& slot = declarationCache[target];
+            if (slot.id == 0) {
+                break;
+            }
+            if (slot.length == length && std::equal(words, words + length, slot.words.begin())) {
+                return slot.id;
+            }
+        }
+        const auto id = declare();
+        auto& slot = declarationCache[target];
+        std::copy(words, words + length, slot.words.begin());
+        slot.length = length;
+        slot.id = id;
+        return id;
+    }
+
+    std::array<DeclarationSlot, DeclarationCacheSize> declarationCache;
+
     std::map<std::uint32_t, std::uint32_t> specializationIds;
     static void appendOperand(std::vector<std::uint32_t>& words, std::uint32_t value) {
         words.push_back(value);
@@ -149,6 +247,7 @@ private:
     std::set<std::string> requiredExtensions;
     std::map<std::string, std::uint32_t> importIds;
     std::map<std::vector<std::uint32_t>, std::uint32_t> declarationIds;
+    std::array<DeclarationSlot, DeclarationCacheSize> declarationCache = {};
     std::size_t unpatchedPhiIncomings = 0;
     std::vector<std::uint32_t> capabilities;
     std::vector<std::uint32_t> extensions;

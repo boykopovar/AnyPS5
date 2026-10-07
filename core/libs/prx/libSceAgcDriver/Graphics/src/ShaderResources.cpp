@@ -953,7 +953,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             Require(shader.program != nullptr, "missing compiled shader");
             ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
             const VkShaderStageFlags flags = VulkanStage(shader.stage);
-            std::uint64_t stageDescriptors = 0;
+            std::uint64_t stageStorageBuffers = 0;
+            std::uint64_t stageResources = 0;
             std::vector<std::size_t> offsetsInData;
             std::int64_t shaderData = -1;
             const auto firstSampler = samplers.size();
@@ -965,6 +966,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 const bool bufferRole = addressRole || binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt;
                 const bool imageRole = binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers;
                 if (imageRole) {
+                    if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage || binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) stageResources += binding.count;
+                    Require(stageResources <= context.limits.maxPerStageResources, "shader descriptors exceed per-stage limits");
                     addImageBinding(binding, flags);
                     continue;
                 }
@@ -972,9 +975,10 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 if (binding.kind != ShaderRecompiler::DescriptorKind::StorageBuffer) Require(false, std::string("unsupported descriptor kind ") + kindName(binding.kind) + " for role " + roleName(binding.role) + ": only StorageBuffer is supported");
                 Require(!binding.readOnly, "read-only descriptors are unsupported because the recompiler emits no NonWritable decoration");
                 Require(binding.count != 0, "empty descriptor binding");
-                stageDescriptors += binding.count;
+                stageStorageBuffers += binding.count;
+                stageResources += binding.count;
                 storageBuffers += binding.count;
-                Require(stageDescriptors <= context.limits.maxPerStageDescriptorStorageBuffers && stageDescriptors <= context.limits.maxPerStageResources, "shader descriptors exceed per-stage limits");
+                Require(stageStorageBuffers <= context.limits.maxPerStageDescriptorStorageBuffers && stageResources <= context.limits.maxPerStageResources, "shader descriptors exceed per-stage limits");
                 Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, binding.count, flags, nullptr}, {}};
                 if (binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
                     Require(binding.guestDescriptor.size() == static_cast<std::uint64_t>(binding.count) * 4, "guest buffer descriptor must contain four DWORDs per array element");

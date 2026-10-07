@@ -27,6 +27,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (hasPrx) directories.push_back(prx);
     std::vector<std::filesystem::path> paths;
     std::set<std::string> unmatchedExclusions = excludedModules;
+    const auto isElf = [](const std::filesystem::path& path) {
+        std::ifstream stream(path, std::ios::binary);
+        if (!stream) throw Domain::RelinkerException("Cannot read guest candidate: " + path.string());
+        char magic[4]{};
+        stream.read(magic, 4);
+        if (stream.bad()) throw Domain::RelinkerException("Cannot read guest candidate magic: " + path.string());
+        return stream.gcount() == 4 && static_cast<unsigned char>(magic[0]) == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+    };
     for (const auto& directory : directories) {
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + directory.string());
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
@@ -36,13 +44,34 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 continue;
             }
             if (!entry.is_regular_file()) continue;
-            std::ifstream stream(entry.path(), std::ios::binary);
-            if (!stream) throw Domain::RelinkerException("Cannot read guest candidate: " + entry.path().string());
-            char magic[4]{};
-            stream.read(magic, 4);
-            if (stream.bad()) throw Domain::RelinkerException("Cannot read guest candidate magic: " + entry.path().string());
-            if (stream.gcount() == 4 && static_cast<unsigned char>(magic[0]) == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') paths.push_back(entry.path());
+            if (isElf(entry.path())) paths.push_back(entry.path());
         }
+    }
+    if (dynamic.DynamicSegmentData.size() % 16 != 0) throw Domain::RelinkerException("Invalid executable dependency table");
+    std::set<std::string> missingNeeded;
+    for (std::size_t offset = 0; offset < dynamic.DynamicSegmentData.size(); offset += 16) {
+        if (Io::ReadU64(dynamic.DynamicSegmentData, offset) != 1) continue;
+        const auto nameOffset = Io::ReadU64(dynamic.DynamicSegmentData, offset + 8);
+        if (nameOffset >= dynamic.DynStrData.size()) throw Domain::RelinkerException("Invalid dependency string offset");
+        const auto start = dynamic.DynStrData.begin() + static_cast<std::ptrdiff_t>(nameOffset);
+        const auto end = std::find(start, dynamic.DynStrData.end(), 0);
+        if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated dependency string");
+        const std::string name(start, end);
+        if (excludedModules.contains(name)) continue;
+        if (std::none_of(paths.begin(), paths.end(), [&](const auto& path) { return path.filename().string() == name; })) missingNeeded.insert(name);
+    }
+    if (!missingNeeded.empty()) {
+        std::map<std::string, std::filesystem::path> found;
+        for (auto it = std::filesystem::recursive_directory_iterator(root); it != std::filesystem::recursive_directory_iterator(); ++it) {
+            if (it->is_directory() && std::find(directories.begin(), directories.end(), it->path()) != directories.end()) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            const auto name = it->path().filename().string();
+            if (!it->is_regular_file() || !missingNeeded.contains(name) || !isElf(it->path())) continue;
+            if (!found.emplace(name, it->path()).second) throw Domain::RelinkerException("Ambiguous needed module: " + found.at(name).string() + " and " + it->path().string());
+        }
+        for (const auto& [name, path] : found) paths.push_back(path);
     }
     if (!unmatchedExclusions.empty()) throw Domain::RelinkerException("Excluded guest module file not found: " + *unmatchedExclusions.begin());
     std::sort(paths.begin(), paths.end());
@@ -193,7 +222,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::AppendU64(dynamic.DynamicSegmentData, dynamic.DynStrData.size());
         Io::AppendString(dynamic.DynStrData, name);
     };
-    for (const auto index : order) if (!windows) addNeeded("$ORIGIN/app0/" + images[index].SourcePath.parent_path().filename().generic_string() + "/" + images[index].OutputName);
+    for (const auto index : order) if (!windows) addNeeded("$ORIGIN/app0/" + images[index].SourcePath.parent_path().lexically_relative(root).generic_string() + "/" + images[index].OutputName);
     for (const auto& name : hostLibraries) addNeeded(name);
     std::string guestRunPath = runPath;
     if (!windows) {
@@ -204,7 +233,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<GuestArtifact> artifacts;
     for (const auto index : order) {
         const auto& image = images[index];
-        const auto relativeDirectory = "app0/" + image.SourcePath.parent_path().filename().generic_string();
+        const auto relativeDirectory = "app0/" + image.SourcePath.parent_path().lexically_relative(root).generic_string();
         const auto destination = std::filesystem::absolute(outputPath).parent_path() / relativeDirectory;
         const auto target = destination / image.OutputName;
         if (target.lexically_normal() == std::filesystem::absolute(outputPath).lexically_normal()) throw Domain::RelinkerException("Guest output collides with the executable output");

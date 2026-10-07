@@ -644,18 +644,20 @@ void Driver::RegisterShader(const Shader* shader) {
     PerformanceTimer timing("Shader.Register");
     ShaderPreparationTransaction transaction;
     CheckFailure();
-    GuestMemory::CheckRange(shader, sizeof(Shader), alignof(Shader));
-    require(shader->file_header == 0x34333231u && shader->version == 0x18u, "invalid shader header");
-    require(shader->header_size >= sizeof(Shader), "shader header is smaller than its fixed fields");
-    require(shader->shader_size != 0 && (shader->shader_size & 3u) == 0, "invalid shader size");
-    GuestMemory::CheckRange(shader, shader->header_size, alignof(Shader));
-    const auto* code = const_cast<const void*>(shader->code);
-    GuestMemory::CheckRange(code, shader->shader_size, 256);
-    ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(shader), shader->type, {}, {}};
-    snapshot.code.resize(shader->shader_size / sizeof(std::uint32_t));
-    std::memcpy(snapshot.code.data(), code, shader->shader_size);
-    snapshot.header.resize(shader->header_size);
-    std::memcpy(snapshot.header.data(), shader, shader->header_size);
+    GuestMemory::CheckRange(shader, sizeof(Shader), 1);
+    Shader fields;
+    std::memcpy(&fields, static_cast<const void*>(shader), sizeof(Shader));
+    require(fields.file_header == 0x34333231u && fields.version == 0x18u, "invalid shader header");
+    require(fields.header_size >= sizeof(Shader), "shader header is smaller than its fixed fields");
+    require(fields.shader_size != 0 && (fields.shader_size & 3u) == 0, "invalid shader size");
+    GuestMemory::CheckRange(shader, fields.header_size, 1);
+    const auto* code = const_cast<const void*>(fields.code);
+    GuestMemory::CheckRange(code, fields.shader_size, 256);
+    ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(shader), fields.type, {}, {}};
+    snapshot.code.resize(fields.shader_size / sizeof(std::uint32_t));
+    std::memcpy(snapshot.code.data(), code, fields.shader_size);
+    snapshot.header.resize(fields.header_size);
+    std::memcpy(snapshot.header.data(), static_cast<const void*>(shader), fields.header_size);
 
     {
         std::lock_guard lock(mutex);
@@ -691,10 +693,17 @@ void Driver::RegisterShader(const Shader* shader) {
     }
     static const char* traceRegs = std::getenv("APS5_TRACE_SHADER_REGS");
     if (traceRegs != nullptr && (std::string(traceRegs) == "all" || std::strtoull(traceRegs, nullptr, 16) == snapshot.codeAddress)) {
-        std::fprintf(stderr, "[shader] 0x%llx type %u cx", static_cast<unsigned long long>(snapshot.codeAddress), shader->type);
-        for (std::uint32_t i = 0; i < shader->num_cx_registers && shader->cx_registers != nullptr; ++i) std::fprintf(stderr, " %x=%08x", shader->cx_registers[i].offset, shader->cx_registers[i].value);
+        const auto print = [](const ShaderRegister* registers, std::uint32_t count) {
+            for (std::uint32_t i = 0; i < count && registers != nullptr; ++i) {
+                ShaderRegister value;
+                std::memcpy(&value, static_cast<const void*>(registers + i), sizeof(value));
+                std::fprintf(stderr, " %x=%08x", value.offset, value.value);
+            }
+        };
+        std::fprintf(stderr, "[shader] 0x%llx type %u cx", static_cast<unsigned long long>(snapshot.codeAddress), fields.type);
+        print(fields.cx_registers, fields.num_cx_registers);
         std::fprintf(stderr, " sh");
-        for (std::uint32_t i = 0; i < shader->num_sh_registers && shader->sh_registers != nullptr; ++i) std::fprintf(stderr, " %x=%08x", shader->sh_registers[i].offset, shader->sh_registers[i].value);
+        print(fields.sh_registers, fields.num_sh_registers);
         std::fprintf(stderr, "\n");
     }
     std::lock_guard lock(mutex);

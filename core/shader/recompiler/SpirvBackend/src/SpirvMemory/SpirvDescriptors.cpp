@@ -13,10 +13,6 @@ namespace ShaderRecompiler
 {
 namespace {
 
-IrShaderStage StageOf(const SpirvEmitterState& state) {
-    return state.program.Resources().stage;
-}
-
 constexpr RdnaImageDimensionInfo ImageDimensions[] = {
     {RdnaImageDimension::Dim1D, spv::Dim1D, 1, 1, 0, 0},
     {RdnaImageDimension::Dim2D, spv::Dim2D, 2, 2, 0, 0},

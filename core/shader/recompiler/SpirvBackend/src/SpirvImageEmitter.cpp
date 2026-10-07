@@ -1310,6 +1310,10 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
         ctx.Fail(inst, "has no image address");
     }
     const ImageEmitAccess access{inst, mem, image, *address, TableSlot(ctx, inst, mem, image)};
+    if (imageInfo.access == ImageAccess::Atomic) {
+        EmitAtomicOp(ctx, access);
+        return;
+    }
     switch (irOpcode) {
         case IrOpcode::ImageQueryDimensions:
             EmitQueryDimensionsOp(ctx, access);
@@ -1326,35 +1330,6 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
         case IrOpcode::ImageSampleRaw:
         case IrOpcode::ImageGatherRaw:
             EmitSamplingOp(ctx, access);
-            return;
-        case IrOpcode::ImageAtomicSwap32:
-        case IrOpcode::ImageAtomicIAdd32:
-        case IrOpcode::ImageAtomicUMin32:
-        case IrOpcode::ImageAtomicUMax32:
-        case IrOpcode::ImageAtomicAnd32:
-        case IrOpcode::ImageAtomicOr32:
-        case IrOpcode::ImageAtomicXor32:
-        case IrOpcode::ImageAtomicCmpSwap32:
-        case IrOpcode::ImageAtomicISub32:
-        case IrOpcode::ImageAtomicSMin32:
-        case IrOpcode::ImageAtomicSMax32:
-        case IrOpcode::ImageAtomicInc32:
-        case IrOpcode::ImageAtomicDec32:
-        case IrOpcode::ImageAtomicFCmpSwap32:
-        case IrOpcode::ImageAtomicFMin32:
-        case IrOpcode::ImageAtomicFMax32:
-        case IrOpcode::ImageAtomicSwap64:
-        case IrOpcode::ImageAtomicIAdd64:
-        case IrOpcode::ImageAtomicISub64:
-        case IrOpcode::ImageAtomicUMin64:
-        case IrOpcode::ImageAtomicUMax64:
-        case IrOpcode::ImageAtomicSMin64:
-        case IrOpcode::ImageAtomicSMax64:
-        case IrOpcode::ImageAtomicAnd64:
-        case IrOpcode::ImageAtomicOr64:
-        case IrOpcode::ImageAtomicXor64:
-        case IrOpcode::ImageAtomicCmpSwap64:
-            EmitAtomicOp(ctx, access);
             return;
         default:
             ctx.Fail(inst, "has no image SPIR-V emitter");

@@ -369,6 +369,31 @@ int APS5_VABI sceRtcSetWin32FileTime(RtcDateTime* time, uint64_t win32_time) {
     return 0;
 }
 
+int APS5_VABI sceRtcGetDosTime(const RtcDateTime* time, uint32_t* dos_time) {
+    if (!dos_time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (const int result = validate(time); result != 0) return result;
+    if (time->year < 1980 || time->year > 2107) {
+        NotImplemented_nid_no_patch(__func__);
+        return SCE_RTC_ERROR_INVALID_YEAR;
+    }
+    *dos_time = static_cast<uint32_t>(time->year - 1980) << 25 | static_cast<uint32_t>(time->month) << 21
+        | static_cast<uint32_t>(time->day) << 16 | static_cast<uint32_t>(time->hour) << 11
+        | static_cast<uint32_t>(time->minute) << 5 | static_cast<uint32_t>(time->second / 2);
+    return 0;
+}
+
+int APS5_VABI sceRtcSetDosTime(RtcDateTime* time, uint32_t dos_time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    time->year = static_cast<std::uint16_t>(1980 + (dos_time >> 25));
+    time->month = static_cast<std::uint16_t>(dos_time >> 21 & 0x0f);
+    time->day = static_cast<std::uint16_t>(dos_time >> 16 & 0x1f);
+    time->hour = static_cast<std::uint16_t>(dos_time >> 11 & 0x1f);
+    time->minute = static_cast<std::uint16_t>(dos_time >> 5 & 0x3f);
+    time->second = static_cast<std::uint16_t>((dos_time & 0x1f) * 2);
+    time->microsecond = 0;
+    return 0;
+}
+
 int APS5_VABI sceRtcFormatRFC3339(char* date_time, const RtcTick* utc, int time_zone_minutes) {
     if (!date_time || !utc) return SCE_RTC_ERROR_INVALID_POINTER;
     if (time_zone_minutes < -1439 || time_zone_minutes > 1439) return SCE_RTC_ERROR_INVALID_VALUE;

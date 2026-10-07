@@ -1319,6 +1319,27 @@ void resourceTests() {
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
+        vertex.bindings.push_back(makeBinding(Role::GuestImages, 1, 1, std::vector<std::uint32_t>(8, 0)));
+        const auto expectStageResources = [&](Role role, Kind kind, std::uint32_t words, std::uint32_t limit, std::string_view reason) {
+            vertex.bindings.back().role = role;
+            vertex.bindings.back().kind = kind;
+            vertex.bindings.back().guestDescriptor.assign(words, 0);
+            mock = MockVulkan{};
+            auto limited = mockContext();
+            limited.limits.maxPerStageResources = limit;
+            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(limited, vertex, fragment, state.color, 0, 0); }, reason);
+            Require(mock.live == 0, "failed shader resources leaked Vulkan objects");
+        };
+        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 2, "shader descriptors exceed per-stage limits");
+        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 2, "shader descriptors exceed per-stage limits");
+        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 3, "missing an image shape");
+        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 3, "detiler is unavailable");
+        expectStageResources(Role::GuestSamplers, Kind::Sampler, 4, 2, "shader sampler descriptors exceed per-stage limits");
+    }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
         vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestFirst.data(), 16)));
         fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestSecond.data(), 32)));
         expectResourceFailure(vertex, fragment, "duplicate shader binding");

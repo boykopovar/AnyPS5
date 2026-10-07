@@ -44,6 +44,23 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
         }
         reach(cursor, cursor + count);
         const auto opcode = (header >> 8u) & 0xffu;
+        if (opcode == 0x3fu && count == 14) {
+            const auto mode = guest[cursor + 1] & 3u;
+            require(mode == 1u || mode == 2u, "invalid COND_INDIRECT_BUFFER mode");
+            require(((guest[cursor + 1] >> 8u) & 7u) == 0u, "a COND_INDIRECT_BUFFER with a comparison is not implemented");
+            require(!Pm4::Predicated(header), "a predicated COND_INDIRECT_BUFFER is not implemented");
+            const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(guest[cursor + 8] & ~3u) | (static_cast<std::uintptr_t>(guest[cursor + 9] & 0xffffu) << 32u));
+            const std::size_t targetWords = guest[cursor + 10] & 0xfffffu;
+            if (targetWords != 0) {
+                GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
+                if (copySegment(submission, target, targetWords, budget)) {
+                    require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
+                    return true;
+                }
+            }
+            cursor += count;
+            continue;
+        }
         if (opcode == 0x3fu) {
             require(count == 4, "invalid INDIRECT_BUFFER size");
             const auto* target = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(guest[cursor + 1] & ~3u) | (static_cast<std::uintptr_t>(guest[cursor + 2] & 0xffffu) << 32u));

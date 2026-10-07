@@ -832,9 +832,6 @@ private:
                 return i;
             }
         }
-        if (m_info.buffers.size() >= ShaderInfo::MaxBuffers) {
-            return std::numeric_limits<std::uint32_t>::max();
-        }
         BufferResource resource;
         resource.source = source;
         resource.firstUsePc = pc;
@@ -993,7 +990,13 @@ private:
         std::uint32_t resource = 0;
 
         if (buffer != BufferAccess::None) {
-            if (!TakeGpuDescriptor(inst, flags.index)) fail("buffer operation requires a four-dword runtime V#");
+            if (TakeGpuDescriptor(inst, flags.index)) {
+                return;
+            }
+            GetHandle(inst.Argument(0), IrOpcode::GetBufferResource, 4, handle, source);
+            resource = AddBuffer(source, memory, op, flags.pc);
+            AddHandlePatch(handle, resource);
+            AddMemoryPatch(flags.index, resource, 0, false);
             return;
         }
         if (addressInfo.access != AddressAccess::None) {

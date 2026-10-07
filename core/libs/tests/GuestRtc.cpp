@@ -23,6 +23,8 @@ int APS5_VABI sceRtcGetTime_t(const RtcDateTime*, std::int64_t*);
 int APS5_VABI sceRtcSetTime_t(RtcDateTime*, std::int64_t);
 int APS5_VABI sceRtcGetWin32FileTime(const RtcDateTime*, std::uint64_t*);
 int APS5_VABI sceRtcSetWin32FileTime(RtcDateTime*, std::uint64_t);
+int APS5_VABI sceRtcGetDosTime(const RtcDateTime*, std::uint32_t*);
+int APS5_VABI sceRtcSetDosTime(RtcDateTime*, std::uint32_t);
 int APS5_VABI sceRtcFormatRFC3339(char*, const RtcTick*, int);
 int APS5_VABI sceRtcParseRFC3339(RtcTick*, const char*);
 int APS5_VABI sceRtcParseDateTime(RtcTick*, const char*);
@@ -106,6 +108,28 @@ int main() {
     std::uint64_t fileTime = 0;
     Require(sceRtcGetWin32FileTime(&epoch, &fileTime) == 0 && fileTime == 116444736000000000ull);
     Require(sceRtcSetWin32FileTime(&converted, 116444736000000000ull) == 0 && Equal(converted, epoch));
+    std::uint32_t dosTime = 0xffffffffu;
+    const RtcDateTime dosDate{2024, 2, 29, 12, 34, 57, 789000};
+    Require(sceRtcGetDosTime(&dosDate, &dosTime) == 0 && dosTime == 0x585d645cu);
+    const RtcDateTime dosFirst{1980, 1, 1, 0, 0, 0, 0};
+    Require(sceRtcGetDosTime(&dosFirst, &dosTime) == 0 && dosTime == 0x00210000u);
+    const RtcDateTime dosLast{2107, 12, 31, 23, 59, 59, 0};
+    Require(sceRtcGetDosTime(&dosLast, &dosTime) == 0 && dosTime == 0xff9fbf7du);
+    Require(sceRtcGetDosTime(&dosDate, nullptr) == invalidPointer);
+    Require(sceRtcGetDosTime(nullptr, &dosTime) == invalidPointer);
+    const RtcDateTime dosBadMonth{2024, 13, 1, 0, 0, 0, 0};
+    Require(sceRtcGetDosTime(&dosBadMonth, &dosTime) == invalidMonth);
+    const RtcDateTime dosEarly{1979, 12, 31, 0, 0, 0, 0};
+    bool dosEarlyThrew = false;
+    try { sceRtcGetDosTime(&dosEarly, &dosTime); } catch (const std::exception&) { dosEarlyThrew = true; }
+    Require(dosEarlyThrew);
+    converted = RtcDateTime{1, 1, 1, 1, 1, 1, 1};
+    Require(sceRtcSetDosTime(&converted, 0x585d645cu) == 0 && Equal(converted, RtcDateTime{2024, 2, 29, 12, 34, 56, 0}));
+    Require(sceRtcSetDosTime(&converted, 0x7f9fbf7du) == 0 && Equal(converted, RtcDateTime{2043, 12, 31, 23, 59, 58, 0}));
+    Require(sceRtcSetDosTime(&converted, 0) == 0 && Equal(converted, RtcDateTime{1980, 0, 0, 0, 0, 0, 0}));
+    Require(sceRtcSetDosTime(nullptr, 0) == invalidPointer);
+    Require(sceRtcSetDosTime(&converted, 0xff9fbf7du) == 0 && Equal(converted, RtcDateTime{2107, 12, 31, 23, 59, 58, 0}));
+    Require(sceRtcSetDosTime(&converted, 0x80210000u) == 0 && Equal(converted, RtcDateTime{2044, 1, 1, 0, 0, 0, 0}));
 
     char text[32];
     tick.tick = leapDayTick;
