@@ -266,6 +266,23 @@ struct NetMsghdr {
     std::uint32_t control_length;
     int flags;
 };
+
+struct NetResolverAddr {
+    std::uint8_t addr[16];
+    std::uint32_t af;
+    std::uint32_t pad[3];
+};
+
+struct NetResolverInfo {
+    NetResolverAddr addrs[10];
+    std::uint32_t records;
+    std::uint32_t recordsv4;
+    std::uint32_t pad[14];
+};
+
+static_assert(sizeof(NetResolverAddr) == 32);
+static_assert(sizeof(NetResolverInfo) == 384);
+
 static_assert(sizeof(NetMsghdr) == 48 && offsetof(NetMsghdr, iov) == 16 && offsetof(NetMsghdr, control) == 32 &&
     offsetof(NetMsghdr, flags) == 44);
 
@@ -1053,8 +1070,42 @@ int APS5_VABI sceNetResolverAbort(void) {
     return 0;
 }
 
-int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int rid, const char* hostname, NetResolverInfo* info, int timeout,
+    int retry, int flags) {
+    (void)timeout;
+    (void)retry;
+    (void)flags;
+    if (!hostname || !info) return fail(NET_EINVAL);
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
+    }
+    if (!initialize_sockets()) return fail(5);
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    addrinfo* results = nullptr;
+    const int result = ::getaddrinfo(hostname, nullptr, &hints, &results);
+    if (result != 0) {
+        *errno_slot() = result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT;
+        log_soft(__func__, "host DNS lookup failed");
+        set_resolver_error(rid, NET_ERROR_RESOLVER_ENODNS);
+        return NET_ERROR_RESOLVER_ENODNS;
+    }
+    std::memset(info, 0, sizeof(*info));
+    for (const addrinfo* entry = results; entry != nullptr && info->records < 10; entry = entry->ai_next) {
+        const auto& address = reinterpret_cast<const sockaddr_in*>(entry->ai_addr)->sin_addr;
+        bool seen = false;
+        for (std::uint32_t i = 0; i < info->records; ++i) {
+            seen = seen || std::memcmp(info->addrs[i].addr, &address, sizeof(address)) == 0;
+        }
+        if (seen) continue;
+        std::memcpy(info->addrs[info->records].addr, &address, sizeof(address));
+        info->addrs[info->records].af = NET_AF_INET;
+        ++info->records;
+    }
+    info->recordsv4 = info->records;
+    ::freeaddrinfo(results);
+    set_resolver_error(rid, 0);
     return 0;
 }
 
