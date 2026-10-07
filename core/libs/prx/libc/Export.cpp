@@ -53,12 +53,6 @@ int APS5_VABI libcCyberUnknown19(void) {
 }
 
 
-APS5_EXPORT("Ye20uNnlglA", libcCyberUnknown02);
-std::uint64_t APS5_VABI libcCyberUnknown02(void) {
-    NotImplemented_nid_no_patch("Ye20uNnlglA");
-    return 0;
-}
-
 APS5_EXPORT("5Lf51jvohTQ", libcCyberUnknown03);
 std::uint64_t APS5_VABI libcCyberUnknown03(void) {
     NotImplemented_nid_no_patch("5Lf51jvohTQ");

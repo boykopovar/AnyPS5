@@ -33,6 +33,7 @@ double APS5_VABI frexp_nid_postfix(double, int*);
 float APS5_VABI frexpf_nid_postfix(float, int*);
 std::int64_t APS5_VABI lround_nid_postfix(double);
 std::div_t APS5_VABI div_nid_postfix(int, int);
+int APS5_VABI abs_nid_postfix(int);
 std::int64_t APS5_VABI lroundf_nid_postfix(float);
 std::int64_t APS5_VABI llround_nid_postfix(double);
 int APS5_VABI __isfinitef_nid_postfix(float);
@@ -213,4 +214,8 @@ int main() {
     Require(negativeDenominator.quot == -3 && negativeDenominator.rem == 1);
     const auto minimum = div_nid_postfix(std::numeric_limits<int>::min(), 10);
     Require(minimum.quot == -214748364 && minimum.rem == -8);
+    Require(abs_nid_postfix(0) == 0);
+    Require(abs_nid_postfix(42) == 42);
+    Require(abs_nid_postfix(-42) == 42);
+    Require(abs_nid_postfix(std::numeric_limits<int>::max()) == std::numeric_limits<int>::max());
 }
