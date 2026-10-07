@@ -161,6 +161,21 @@ std::optional<Image> Decode(std::span<const std::uint8_t> png) {
     return image;
 }
 
+std::optional<Image16> Decode16(std::span<const std::uint8_t> png) {
+    if (png.empty() || png.size() > INT_MAX) return std::nullopt;
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_us* decoded = stbi_load_16_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, &channels, 4);
+    if (!decoded) return std::nullopt;
+
+    Image16 image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), {}};
+    image.pixels.assign(decoded, decoded + static_cast<std::size_t>(image.width) * image.height * 4);
+    stbi_image_free(decoded);
+    return image;
+}
+
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
                                  std::uint32_t channels, EncodeOptions options) {
     if (channels < 1 || channels > 4) throw std::invalid_argument("Png::Encode: channels must be 1-4");

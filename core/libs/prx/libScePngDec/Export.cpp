@@ -43,6 +43,7 @@ constexpr std::uint32_t IMAGE_FLAG_ADAM7_INTERLACE = 1;
 constexpr std::uint32_t IMAGE_FLAG_TRNS_CHUNK_EXIST = 2;
 
 constexpr std::uint32_t BYTES_PER_PIXEL = 4;
+constexpr std::uint32_t BYTES_PER_PIXEL_16 = 8;
 constexpr std::uint32_t MAX_PACKED_DIMENSION = 32767;
 
 struct Context {
@@ -100,6 +101,29 @@ std::span<const std::uint8_t> toBytes(const void* data, std::uint32_t size) {
     return {static_cast<const std::uint8_t*>(data), size};
 }
 
+void storeLittleEndian16(std::uint8_t* destination, std::uint16_t value) {
+    destination[0] = static_cast<std::uint8_t>(value & 0xFF);
+    destination[1] = static_cast<std::uint8_t>(value >> 8);
+}
+
+void write16BitPixels(const Decoder::Png::Image16& image, const PngDecDecodeParam* param, bool fillAlpha, std::uint64_t pitch) {
+    const bool swapRedBlue = param->pixel_format == PIXEL_FORMAT_B8G8R8A8;
+    const auto alpha = static_cast<std::uint16_t>(static_cast<std::uint8_t>(param->alpha_value) * 257);
+    auto* output = static_cast<std::uint8_t*>(param->image_mem_addr);
+    for (std::uint32_t y = 0; y < image.height; ++y) {
+        const std::uint16_t* in = image.pixels.data() + static_cast<std::size_t>(y) * image.width * 4;
+        std::uint8_t* out = output + y * pitch;
+        for (std::uint32_t x = 0; x < image.width; ++x) {
+            std::uint8_t* pixel = out + static_cast<std::size_t>(x) * BYTES_PER_PIXEL_16;
+            storeLittleEndian16(pixel, swapRedBlue ? in[2] : in[0]);
+            storeLittleEndian16(pixel + 2, in[1]);
+            storeLittleEndian16(pixel + 4, swapRedBlue ? in[0] : in[2]);
+            storeLittleEndian16(pixel + 6, fillAlpha ? alpha : in[3]);
+            in += 4;
+        }
+    }
+}
+
 }  // namespace
 
 extern "C" {
@@ -130,30 +154,35 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     const std::span<const std::uint8_t> png = toBytes(param->png_mem_addr, param->png_mem_size);
     const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(png);
     if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
-    if (header->bitDepth == 16 && context->attribute == ATTRIBUTE_BIT_DEPTH_16) {
-        throw std::runtime_error("scePngDecDecode: 16-bit output is not implemented");
-    }
+    const bool output16 = header->bitDepth == 16 && context->attribute == ATTRIBUTE_BIT_DEPTH_16;
+    const std::uint32_t bytesPerPixel = output16 ? BYTES_PER_PIXEL_16 : BYTES_PER_PIXEL;
 
-    const std::uint64_t rowSize = static_cast<std::uint64_t>(header->width) * BYTES_PER_PIXEL;
+    const std::uint64_t rowSize = static_cast<std::uint64_t>(header->width) * bytesPerPixel;
     const std::uint64_t pitch = param->image_pitch == 0 ? rowSize : param->image_pitch;
     if (pitch < rowSize) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     if ((header->height - 1) * pitch + rowSize > param->image_mem_size) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
 
-    const std::optional<Decoder::Png::Image> image = Decoder::Png::Decode(png);
-    if (!image || image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
-
-    const bool swapRedBlue = param->pixel_format == PIXEL_FORMAT_B8G8R8A8;
     const bool fillAlpha = !hasAlpha(*header);
-    const auto alpha = static_cast<std::uint8_t>(param->alpha_value);
-    auto* output = static_cast<std::uint8_t*>(param->image_mem_addr);
-    for (std::uint32_t y = 0; y < image->height; ++y) {
-        const std::uint8_t* in = image->pixels.data() + y * rowSize;
-        std::uint8_t* out = output + y * pitch;
-        std::memcpy(out, in, rowSize);
-        for (std::uint32_t x = 0; x < image->width; ++x) {
-            std::uint8_t* pixel = out + x * BYTES_PER_PIXEL;
-            if (swapRedBlue) std::swap(pixel[0], pixel[2]);
-            if (fillAlpha) pixel[3] = alpha;
+    if (output16) {
+        const std::optional<Decoder::Png::Image16> image = Decoder::Png::Decode16(png);
+        if (!image || image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+        write16BitPixels(*image, param, fillAlpha, pitch);
+    } else {
+        const std::optional<Decoder::Png::Image> image = Decoder::Png::Decode(png);
+        if (!image || image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
+
+        const bool swapRedBlue = param->pixel_format == PIXEL_FORMAT_B8G8R8A8;
+        const auto alpha = static_cast<std::uint8_t>(param->alpha_value);
+        auto* output = static_cast<std::uint8_t*>(param->image_mem_addr);
+        for (std::uint32_t y = 0; y < image->height; ++y) {
+            const std::uint8_t* in = image->pixels.data() + y * rowSize;
+            std::uint8_t* out = output + y * pitch;
+            std::memcpy(out, in, rowSize);
+            for (std::uint32_t x = 0; x < image->width; ++x) {
+                std::uint8_t* pixel = out + x * BYTES_PER_PIXEL;
+                if (swapRedBlue) std::swap(pixel[0], pixel[2]);
+                if (fillAlpha) pixel[3] = alpha;
+            }
         }
     }
 

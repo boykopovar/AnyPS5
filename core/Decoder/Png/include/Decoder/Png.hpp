@@ -31,9 +31,17 @@ struct Image {
     std::vector<std::uint8_t> pixels;
 };
 
+struct Image16 {
+    std::uint32_t width;
+    std::uint32_t height;
+    std::vector<std::uint16_t> pixels;
+};
+
 std::optional<Header> ParseHeader(std::span<const std::uint8_t> png);
 
 std::optional<Image> Decode(std::span<const std::uint8_t> png);
+
+std::optional<Image16> Decode16(std::span<const std::uint8_t> png);
 
 inline constexpr std::uint8_t FILTER_NONE = 1 << 0;
 inline constexpr std::uint8_t FILTER_SUB = 1 << 1;
