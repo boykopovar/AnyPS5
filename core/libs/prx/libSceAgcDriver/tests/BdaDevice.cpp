@@ -7,6 +7,8 @@
 #include <SDL_loadso.h>
 #include <array>
 #include <iostream>
+#include <stdexcept>
+#include <string_view>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -19,6 +21,11 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 
+class TestUnavailable : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class Device {
 public:
     Device() {
@@ -27,10 +34,10 @@ public:
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
-        Require(library != nullptr, "cannot load Vulkan");
+        if (library == nullptr) throw TestUnavailable("Vulkan loader is unavailable");
         try {
             instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr"));
-            Require(instanceProc != nullptr, "missing Vulkan instance resolver");
+            if (instanceProc == nullptr) throw TestUnavailable("missing Vulkan instance resolver");
             VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -39,7 +46,7 @@ public:
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
             Check(enumerate(instance, &count, nullptr), "vkEnumeratePhysicalDevices");
-            Require(count != 0, "no Vulkan device");
+            if (count == 0) throw TestUnavailable("no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             context.physical = devices.front();
@@ -47,15 +54,21 @@ public:
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
             Check(extensions(context.physical, nullptr, &count, available.data()), "vkEnumerateDeviceExtensionProperties");
-            auto bytes = AgcDriver::QueryBdaByteFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
-            auto address = AgcDriver::QueryBdaFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
+            VkPhysicalDevice8BitStorageFeatures bytes{};
+            VkPhysicalDeviceBufferDeviceAddressFeatures address{};
+            try {
+                bytes = AgcDriver::QueryBdaByteFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
+                address = AgcDriver::QueryBdaFeatures(context.physical, function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), available);
+            } catch (const std::exception& error) {
+                throw TestUnavailable(error.what());
+            }
             const auto queues = function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
             queues(context.physical, &count, nullptr);
             std::vector<VkQueueFamilyProperties> families(count);
             queues(context.physical, &count, families.data());
             std::uint32_t family = 0;
             while (family < count && (families[family].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0) ++family;
-            Require(family < count, "no Vulkan compute queue");
+            if (family == count) throw TestUnavailable("no Vulkan compute queue");
             const float priority = 1;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
@@ -118,7 +131,8 @@ private:
 int main(int argc, char** argv) {
     try {
         RunBdaContractTests();
-        if (argc == 2) {
+        const bool crossRangeOnly = argc == 2 && std::string_view(argv[1]) == "--cross-range-only";
+        if (argc == 2 && !crossRangeOnly) {
             const auto shader = MakeBdaTestShader(0x7fff12340000ULL, 32);
             std::ofstream file(argv[1], std::ios::binary);
             file.write(reinterpret_cast<const char*>(shader.data()), static_cast<std::streamsize>(shader.size() * sizeof(std::uint32_t)));
@@ -130,10 +144,13 @@ int main(int argc, char** argv) {
         Require(buffer.DeviceAddress() != 0 && buffer.Bytes().size() == 256, "invalid real BDA buffer");
         buffer.Bytes()[255] = std::byte{0x5a};
         Require(buffer.Bytes()[255] == std::byte{0x5a}, "real BDA buffer mapping failed");
-        RunBdaExecutionTests(device.GetContext());
-        RunColorTransferTests(device.GetContext());
+        RunBdaExecutionTests(device.GetContext(), crossRangeOnly);
+        if (!crossRangeOnly) RunColorTransferTests(device.GetContext());
         std::cout << "Vulkan BDA allocation and execution tests passed\n";
         return 0;
+    } catch (const TestUnavailable& error) {
+        std::cerr << error.what() << '\n';
+        return 77;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
