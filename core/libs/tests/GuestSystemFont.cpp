@@ -196,7 +196,12 @@ int main() {
     FontHandle missing = nullptr;
     Require(sceFontOpenFontSet(library, ChineseGb, 1, nullptr, &missing) == SCE_FONT_ERROR_FONT_OPEN_FAILED && missing == nullptr);
 
+#ifdef _WIN32
+    std::filesystem::copy_file(fonts / "NotoSans-Bold.ttf", empty / "NotoSans-Bold.ttf");
+    SetFontDirectory(empty);
+#else
     std::filesystem::remove(fonts / "SST-Bold.otf");
+#endif
     FontHandle substitute = nullptr;
     Require(sceFontOpenFontSet(library, EuropeanBold, 3, nullptr, &substitute) == SCE_FONT_OK);
     Require(sceFontSetScalePixel(substitute, 100.0f, 100.0f) == SCE_FONT_OK);
