@@ -13,8 +13,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -397,10 +400,97 @@ struct PageSpan {
     }
 };
 
+#ifndef _WIN32
+// Linux guest memory is ordinary host memory: the guest heap is std::malloc and guest mappings come
+// from mmap, so there is no single contiguous arena to cache in a flat page table the way Windows
+// caches its reserved guest arena. A page's protection comes from /proc/self/maps, and re-reading and
+// re-parsing that file for every GPU memory verification is far too slow (the driver verifies tens of
+// thousands of ranges per second). The parsed regions are cached here keyed by address; the guest
+// allocation registry invalidates the affected ranges through ForgetPages whenever a mapping or
+// protection changes, and a lookup that misses any cached region refreshes the whole cache once, so a
+// change made outside the registry is seen the next time its pages are queried.
+struct LinuxPageCache {
+    struct Region {
+        std::uintptr_t begin = 0;
+        std::uintptr_t end = 0;
+        bool readable = false;
+        bool writable = false;
+    };
+
+    // Copies the region containing `address`; returns false when no cached region covers it.
+    bool find(std::uintptr_t address, Region& out) const {
+        std::shared_lock lock(mutex);
+        const auto it = regions.upper_bound(address);
+        if (it == regions.begin()) return false;
+        const auto* region = &std::prev(it)->second;
+        if (address >= region->end) return false;
+        out = *region;
+        return true;
+    }
+
+    // Start of the first cached region at or after `address`, to bound an unmapped gap.
+    bool next(std::uintptr_t address, std::uintptr_t& out) const {
+        std::shared_lock lock(mutex);
+        const auto it = regions.lower_bound(address);
+        if (it == regions.end()) return false;
+        out = it->first;
+        return true;
+    }
+
+    // Re-reads and re-parses /proc/self/maps, replacing the cache. Returns false when the file
+    // cannot be opened (the caller then reports an unqueryable address space, as before).
+    bool refresh() {
+        std::ifstream maps("/proc/self/maps");
+        if (!maps.is_open()) return false;
+        std::map<std::uintptr_t, Region> parsed;
+        std::string line;
+        while (std::getline(maps, line)) {
+            unsigned long long begin = 0;
+            unsigned long long end = 0;
+            char permissions[8] = {};
+            if (std::sscanf(line.c_str(), "%llx-%llx %7s", &begin, &end, permissions) < 3) continue;
+            if (begin >= end || permissions[0] == '\0') continue;
+            const bool readable = permissions[0] == 'r';
+            const bool writable = readable && permissions[1] == 'w';
+            const auto first = static_cast<std::uintptr_t>(begin);
+            const auto last = static_cast<std::uintptr_t>(end);
+            parsed.emplace(first, Region{first, last, readable, writable});
+        }
+        std::unique_lock lock(mutex);
+        regions.swap(parsed);
+        return true;
+    }
+
+    void forget(std::uintptr_t address, std::size_t bytes) {
+        if (bytes == 0 || address + bytes <= address) return;
+        const auto end = address + bytes;
+        std::unique_lock lock(mutex);
+        auto it = regions.upper_bound(address);
+        if (it != regions.begin()) --it;
+        while (it != regions.end() && it->first < end) {
+            const Region region = it->second;
+            if (region.end <= address) {
+                ++it;
+                continue;
+            }
+            it = regions.erase(it);
+            if (region.begin < address) regions.emplace(region.begin, Region{region.begin, address, region.readable, region.writable});
+            if (region.end > end) regions.emplace(end, Region{end, region.end, region.readable, region.writable});
+        }
+    }
+
+    mutable std::shared_mutex mutex;
+    std::map<std::uintptr_t, Region> regions;
+};
+#endif
+
 struct PageStates {
     std::once_flag once;
     PageSpan arena;
     PageSpan image;
+#ifndef _WIN32
+    LinuxPageCache linuxPages;
+#endif
 
     void initialize();
 
@@ -413,6 +503,9 @@ struct PageStates {
     void forget(std::uintptr_t address, std::size_t bytes) {
         arena.forget(address, bytes);
         image.forget(address, bytes);
+#ifndef _WIN32
+        linuxPages.forget(address, bytes);
+#endif
     }
 };
 
@@ -467,7 +560,15 @@ void PageStates::initialize() {
             imageCached = image.allocate();
         }
 #endif
+#ifdef _WIN32
         if (arenaCached || imageCached) GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
+#else
+        static_cast<void>(arenaCached);
+        static_cast<void>(imageCached);
+        // Linux caches the /proc/self/maps regions (LinuxPageCache); a mapping or protection change
+        // must invalidate the affected ranges, so the invalidator is always registered there.
+        GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
+#endif
     });
 }
 
@@ -535,35 +636,23 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         if (!emit(PageRun{cursor, next, readable, writable})) return true;
         cursor = next;
 #else
-        std::ifstream maps("/proc/self/maps");
-        if (!maps.is_open()) return false;
-        std::string line;
-        bool found = false;
-        while (std::getline(maps, line)) {
-            std::istringstream fields(line);
-            std::uintptr_t first = 0;
-            std::uintptr_t last = 0;
-            char separator = 0;
-            std::string permissions;
-            if (!(fields >> std::hex >> first >> separator >> last >> permissions) || separator != '-' || first >= last || permissions.size() < 2) return false;
-            if (last <= cursor) continue;
-            if (first > cursor) {
-                const auto gapEnd = std::min(end, first);
+        // Linux has no VirtualQuery; the regions and their access flags come from /proc/self/maps
+        // (see LinuxPageCache). A cached region answers the query; a miss re-reads and re-parses the
+        // file once, and an address no region covers is reported as an unmapped gap.
+        LinuxPageCache::Region region;
+        if (!pages.linuxPages.find(cursor, region)) {
+            if (!pages.linuxPages.refresh()) return false;
+            if (!pages.linuxPages.find(cursor, region)) {
+                std::uintptr_t nextStart = 0;
+                const auto gapEnd = pages.linuxPages.next(cursor, nextStart) ? std::min(end, nextStart) : end;
                 if (!emit(PageRun{cursor, gapEnd, false, false})) return true;
                 cursor = gapEnd;
-                found = true;
-                break;
+                continue;
             }
-            const auto next = std::min(end, last);
-            if (!emit(PageRun{cursor, next, permissions[0] == 'r', permissions[0] == 'r' && permissions[1] == 'w'})) return true;
-            cursor = next;
-            found = true;
-            break;
         }
-        if (!found) {
-            static_cast<void>(emit(PageRun{cursor, end, false, false}));
-            return true;
-        }
+        const auto next = std::min(end, region.end);
+        if (!emit(PageRun{cursor, next, region.readable, region.writable})) return true;
+        cursor = next;
 #endif
     }
     return true;
