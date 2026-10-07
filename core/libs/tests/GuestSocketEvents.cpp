@@ -1,8 +1,10 @@
 #include "SceTypes.hpp"
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <thread>
 
 extern "C" {
 int APS5_VABI socket_nid_postfix(int, int, int);
@@ -93,7 +95,41 @@ int main() {
 
     Require(close_nid_postfix(client) == 0);
     Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
-    Require(count == 1 && events[0].data == 0);
+    Require(count == 1 && events[0].data == 0 && (events[0].flags & EV_EOF) != 0);
+
+    KernelEqueue blocking = 0;
+    Require(sceKernelCreateEqueue(&blocking, "blocking") == SCE_OK);
+    const int writer = socket_nid_postfix(2, 1, 0);
+    Require(writer >= 0 && connect_nid_postfix(writer, address.data(), address.size()) == 0);
+    const int reader = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(reader >= 0);
+    Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);
+    std::thread sender([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(send_nid_postfix(writer, message, sizeof(message), 0) == sizeof(message));
+    });
+    const auto start = std::chrono::steady_clock::now();
+    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, nullptr) == SCE_OK);
+    sender.join();
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40));
+    Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(reader) && events[0].data == sizeof(message));
+    Require(recv_nid_postfix(reader, received, sizeof(received), 0) == sizeof(received));
+
+    std::thread waiter([&] {
+        std::array<KernelEvent, 4> woken{};
+        int wokenCount = 0;
+        Require(sceKernelWaitEqueue(blocking, woken.data(), woken.size(), &wokenCount, nullptr) == SCE_OK);
+        Require(wokenCount == 1 && woken[0].filter == EVFILT_WRITE && woken[0].ident == static_cast<std::uintptr_t>(writer));
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(sceKernelAddWriteEvent(blocking, writer, 0, nullptr) == SCE_OK);
+    waiter.join();
+    Require(sceKernelDeleteWriteEvent(blocking, writer) == SCE_OK);
+
+    Require(close_nid_postfix(reader) == 0);
+    Require(sceKernelDeleteReadEvent(blocking, reader) == SCE_KERNEL_ERROR_ENOENT);
+    Require(close_nid_postfix(writer) == 0);
+    Require(sceKernelDeleteEqueue(blocking) == SCE_OK);
 
     Require(sceKernelAddReadEvent(eq, client, 1, nullptr) == SCE_KERNEL_ERROR_EBADF);
     Require(Rejects(sceKernelAddReadEvent, eq, 0, 1));

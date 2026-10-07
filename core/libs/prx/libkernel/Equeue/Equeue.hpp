@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -71,6 +72,7 @@ public:
     int DeleteEvent(uintptr_t ident, int16_t filter);
     int GetTriggeredEvents(KernelEvent* ev, int num);
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
+    void RemoveDescriptorEvents(uintptr_t ident);
     void Close();
     static uint64_t MonotonicNs();
 
@@ -78,8 +80,11 @@ private:
     void TriggerExpiredTimers(uint64_t nowNs);
     bool NextTimerWaitMicros(uint64_t nowNs, uint32_t* out) const;
     bool PollEvents();
+    void WakePollers();
+    void WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos);
 
     std::list<KernelEqueueEvent> m_events;
+    std::vector<std::uintptr_t> m_pollers;
     std::mutex m_mutex;
     TimedWait::Condition m_cond;
     std::string m_name;
@@ -88,6 +93,7 @@ private:
 };
 
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
+void EqueueDescriptorClosed(int descriptor);
 extern "C" {
 
 KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq);
