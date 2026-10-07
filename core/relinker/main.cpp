@@ -18,12 +18,15 @@
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <relinker/guest/GuestImage.hpp>
+#include <relinker/guest/PackageInput.hpp>
+#include <pkg/PackageFile.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <map>
 #include <codegen/CodegenException.hpp>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,6 +39,12 @@ int main(const int argc, char* argv[]) {
         return 1;
     }
 
+    const bool packageInput = Pkg::IsFinalizedPackage(args.inputPath);
+    if (!args.oodlePath.empty() && !packageInput) {
+        std::cerr << "FAIL: --oodle requires a PS5 .pkg input\n";
+        return 1;
+    }
+
     try {
         auto extension = std::filesystem::path(args.outputPath).extension().string();
         for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
@@ -43,7 +52,12 @@ int main(const int argc, char* argv[]) {
         Io::FileReader fileReader;
         Io::FileWriter fileWriter;
 
-        auto sourceBytes = fileReader.Read(args.inputPath);
+        std::optional<Relinker::PackageInput> package;
+        if (packageInput) {
+            package = Relinker::ReadPackageInput(args.inputPath, args.oodlePath, !args.skipSceModule, args.excludedSceModules);
+            std::cout << "Package: " << package->ContentId << "; eboot.bin and " << package->Modules.size() << " guest modules read from the package\n";
+        }
+        auto sourceBytes = package ? std::move(package->Executable) : fileReader.Read(args.inputPath);
         const std::string absPath = std::filesystem::absolute(args.outputPath).string();
 
         std::vector<Codegen::TrampolineSite> trampolines;
@@ -91,7 +105,9 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
+            const Relinker::GuestModuleBuilder builder;
+            auto sources = package ? std::move(package->Modules) : builder.Collect(args.inputPath, args.excludedSceModules);
+            guestArtifacts = builder.Build(std::move(sources), args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath);
         }
 
         if (args.writeRegistry) {
@@ -103,8 +119,10 @@ int main(const int argc, char* argv[]) {
         auto byteWriter = std::make_shared<Io::ByteWriter>();
 
         std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
-        if (args.toWindows) {
-            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui, std::filesystem::path(args.inputPath).parent_path() / "sce_sys" / "icon0.png");
+        if (args.toWindows && package && package->Icon) {
+            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui, std::move(*package->Icon), std::filesystem::path(args.inputPath) / "sce_sys" / "icon0.png");
+        } else if (args.toWindows) {
+            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui, package ? std::filesystem::path{} : std::filesystem::path(args.inputPath).parent_path() / "sce_sys" / "icon0.png");
         } else {
             patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
                 std::make_shared<Elfpatcher::EntryStubBuilder>(),
@@ -130,13 +148,21 @@ int main(const int argc, char* argv[]) {
             std::cout << "Guest module: " << artifact.Path.string() << '\n';
         }
         fileWriter.Write(absPath, executableBytes);
+        const auto sidecarPath = std::filesystem::path(absPath).parent_path() / Relinker::PackageSidecarName;
+        if (package) {
+            fileWriter.Write(sidecarPath.string(), Relinker::FormatPackageSidecar(args.inputPath, *package, args.oodlePath));
+            std::cout << "Package mount: " << sidecarPath.string() << '\n';
+        } else if (std::filesystem::exists(sidecarPath)) {
+            std::filesystem::remove(sidecarPath);
+            std::cout << "Removed stale package mount: " << sidecarPath.string() << '\n';
+        }
         std::cout << "External prx references: " << result.RegistryEntries.size() << "\nOutput file: " << absPath << '\n';
         std::cout << "Expected runtime layout (relative to the output executable):\n"
                   << std::filesystem::path(absPath).filename().string() << "\n"
-                  << "libs/\n    *.prx\napp0/\n    <game resources>\n";
+                  << "libs/\n    *.prx\napp0/\n    " << (package ? "<served from the package>" : "<game resources>") << '\n';
         for (const auto& artifact : guestArtifacts)
             std::cout << "    " << artifact.Path.parent_path().filename().string() << "/" << artifact.Path.filename().string() << '\n';
-        std::cout << "Game resources and system libraries must be placed in this layout separately.\n";
+        std::cout << (package ? "System libraries must be placed in this layout separately.\n" : "Game resources and system libraries must be placed in this layout separately.\n");
         if (args.runPath != "$ORIGIN/libs") std::cout << "Custom library search path (--rpath): " << args.runPath << '\n';
 
         if (args.autorun) return Cli::Autorun(absPath, args.toWindows);

@@ -29,6 +29,16 @@ relinker --windows source/input.elf app.exe
 
 Add `--to-intel` for Intel hosts. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
 
+### PS5 package input
+
+A plaintext debug package (`\x7FFIH` finalized image whose outer PFS carries the `PPRPLAIN-NOAUTH!` marker) can be passed instead of an ELF. Nothing is extracted: `eboot.bin` and the modules in `sce_module/`, `sce_modules/` and `prx/` are read from the package in memory, fake-signed SELF containers are unwrapped to ELF, and `sce_sys/icon0.png` from the package metadata becomes the Windows icon. Only the output executable, the converted `*.guest.prx` modules and `anyps5-package.ini` are written. The sidecar records the absolute package path, its size and content ID, and the Oodle library path, so the runtime can serve `app0/` from the package.
+
+```sh
+relinker --windows --oodle <path to oo2core library> game.pkg app.exe
+```
+
+Packages store most blocks Kraken-compressed. Decoding them needs a user-supplied Oodle runtime (`oo2core_*.dll` or `liboo2core*.so`) passed with `--oodle`; it is loaded only when a compressed block is read. Encrypted packages, SELF containers with encrypted or compressed segments, NAPS layouts other than native spans, deduplicated blocks and shuffle patterns are rejected with an error.
+
 ## Options
 
 All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.
@@ -44,6 +54,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                     |
 | `--registry`                  | Write `<output-stem>.registry.json` beside the output executable.                                                                                                                                                                                                                                                       |
 | `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. Linux guest modules require an absolute path or a path beginning with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory. |
+| `--oodle <library>`           | Oodle runtime used to decode Kraken-compressed package blocks. Requires a `.pkg` input; the path is also written to `anyps5-package.ini`.                                                                                                                                                                               |
 | `--autorun`                   | Run the output after conversion, print its exit code, and wait for Enter. Adds executable permissions for Linux output. Requires the target OS and prepared runtime layout.                                                                                                                                             |
 | `--skip-sce-module`           | Deprecated. Skip all bundled module processing.                                                                                                                                                                                                                                                                         |
 | `--exclude-sce-module <file>` | Deprecated. Exclude a bundled module by exact filename, not path. Repeat for multiple files; a missing filename is an error. Conflicts with `--skip-sce-module`.                                                                                                                                                        |

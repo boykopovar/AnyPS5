@@ -52,9 +52,16 @@ struct GuestArtifact {
     std::vector<std::uint8_t> Bytes;
 };
 
+struct GuestModuleSource {
+    std::filesystem::path Path;
+    std::vector<std::uint8_t> Bytes;
+    bool OnDisk = true;
+};
+
 class GuestModuleBuilder {
 public:
-    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool toIntel, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const;
+    std::vector<GuestModuleSource> Collect(const std::filesystem::path& inputPath, const std::set<std::string>& excludedModules) const;
+    std::vector<GuestArtifact> Build(std::vector<GuestModuleSource> sources, const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool toIntel, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath) const;
 };
 
 }

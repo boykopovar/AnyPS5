@@ -33,6 +33,10 @@ Args ParseArgs(int argc, char* argv[]) {
             if (i + 1 >= argc)
                 throw std::runtime_error("--rpath requires a value");
             args.runPath = argv[++i];
+        } else if (arg == "--oodle") {
+            if (i + 1 >= argc || std::string(argv[i + 1]).empty())
+                throw std::runtime_error("--oodle requires a library path");
+            args.oodlePath = argv[++i];
         } else if (arg == "--windows") {
             args.toWindows = true;
         } else if (arg == "--lazy-binding") {
@@ -65,7 +69,7 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
-            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--oodle <library>] [--lazy-binding] [--autorun] <input.elf|input.pkg> <output.elf>\n"
             "Example: relinker input.elf output.elf"
         );
 

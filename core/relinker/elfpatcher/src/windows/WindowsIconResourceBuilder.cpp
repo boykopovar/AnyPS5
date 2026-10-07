@@ -67,6 +67,11 @@ PeDirectory WindowsIconResourceBuilder::Build(const std::filesystem::path& iconP
     std::vector<std::uint8_t> png(static_cast<std::size_t>(size));
     stream.seekg(0);
     if (!stream.read(reinterpret_cast<char*>(png.data()), size)) throw Domain::RelinkerException("Cannot read Windows icon '" + iconPath.string() + "'");
+    return Build(png, iconPath, sections, nextRva);
+}
+
+PeDirectory WindowsIconResourceBuilder::Build(const std::vector<std::uint8_t>& png, const std::filesystem::path& iconPath, std::vector<PeSection>& sections, const std::uint32_t nextRva) const {
+    if (png.size() > 0x7fffffffu - 184) throw Domain::RelinkerException("Invalid Windows icon file size: " + iconPath.string());
     validatePng(png, iconPath);
     std::vector<std::uint8_t> data(184 + png.size());
     CheckedRva(static_cast<std::uint64_t>(nextRva) + data.size());
