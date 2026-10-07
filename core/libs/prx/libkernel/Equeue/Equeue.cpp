@@ -151,7 +151,17 @@ int KernelEqueuePrivate::WaitForEvents(KernelEvent* ev, int num, uint32_t micros
             return SCE_KERNEL_ERROR_EBADF;
         }
         if (micros == 0) {
-            m_cond.Wait(lock);
+            // A pending high-resolution timer must be able to wake a blocking wait
+            // (kqueue semantics): the dispatcher parks here with no timeout and must
+            // still see its one-shot HRTIMER expire.
+            uint32_t timerWait = 0;
+            if (NextTimerWaitMicros(MonotonicNs(), &timerWait)) {
+                const std::uint64_t timerDeadline =
+                    TimedWait::NowNanos() + static_cast<std::uint64_t>(timerWait) * 1000ULL;
+                m_cond.WaitUntil(lock, timerDeadline);
+            } else {
+                m_cond.Wait(lock);
+            }
         } else {
             uint32_t timerWait = 0;
             const bool hasTimer = NextTimerWaitMicros(MonotonicNs(), &timerWait);
