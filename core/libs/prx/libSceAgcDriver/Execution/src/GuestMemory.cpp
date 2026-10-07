@@ -26,9 +26,43 @@
 #endif
 #include <windows.h>
 #else
+#include <cerrno>
+#include <cstdint>
+#include <fcntl.h>
 #include <fstream>
 #include <pthread.h>
 #include <sstream>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#if __has_include(<linux/fs.h>)
+#include <linux/fs.h>
+#endif
+#if !defined(PROCMAP_QUERY)
+struct procmap_query {
+    std::uint64_t size;
+    std::uint64_t query_flags;
+    std::uint64_t query_addr;
+    std::uint64_t vma_start;
+    std::uint64_t vma_end;
+    std::uint64_t vma_flags;
+    std::uint64_t vma_page_size;
+    std::uint64_t vma_offset;
+    std::uint64_t inode;
+    std::uint32_t dev_major;
+    std::uint32_t dev_minor;
+    std::uint32_t vma_name_size;
+    std::uint32_t build_id_size;
+    std::uint64_t vma_name_addr;
+    std::uint64_t build_id_addr;
+};
+static_assert(sizeof(procmap_query) == 104);
+enum : std::uint64_t {
+    PROCMAP_QUERY_VMA_READABLE = 0x01,
+    PROCMAP_QUERY_VMA_WRITABLE = 0x02,
+    PROCMAP_QUERY_COVERING_OR_NEXT_VMA = 0x10,
+};
+#define PROCMAP_QUERY _IOWR('f', 17, struct procmap_query)
+#endif
 #endif
 
 namespace AgcDriver::GuestMemory {
@@ -478,6 +512,65 @@ struct PageRun {
     bool writable;
 };
 
+#if !defined(_WIN32)
+class RegisteredPageRuns {
+public:
+    const PageRun* Find(std::uintptr_t address, std::uint64_t currentGeneration) {
+        if (generation != currentGeneration) {
+            generation = currentGeneration;
+            count = next = last = 0;
+        }
+        if (count == 0) return nullptr;
+        if (contains(runs[last], address)) return &runs[last];
+        for (std::size_t i = 0; i < count; ++i) {
+            if (contains(runs[i], address)) {
+                last = i;
+                return &runs[i];
+            }
+        }
+        return nullptr;
+    }
+
+    void Remember(std::uintptr_t address, PageRun run, std::uint64_t observedGeneration) {
+        if (!run.readable) return;
+        const auto allocation = GuestAllocations::GuestAllocationsTryDescribeRange_nid_no_patch(address);
+        if (allocation.bytes == 0 || generation != observedGeneration || GuestAllocations::GuestAllocationsGeneration_nid_postfix() != observedGeneration) return;
+        run.begin = std::max<std::uintptr_t>(run.begin, allocation.address);
+        run.end = std::min<std::uintptr_t>(run.end, allocation.address + allocation.bytes);
+        runs[next] = run;
+        last = next;
+        next = (next + 1) % runs.size();
+        count = std::min(count + 1, runs.size());
+    }
+
+private:
+    static bool contains(const PageRun& run, std::uintptr_t address) {
+        return address >= run.begin && address < run.end;
+    }
+
+    std::array<PageRun, 64> runs{};
+    std::uint64_t generation = 0;
+    std::size_t count = 0;
+    std::size_t next = 0;
+    std::size_t last = 0;
+};
+
+int ProcMapsQueryFd() {
+    static const int fd = [] {
+        if (std::getenv("APS5_NO_PROCMAP_QUERY") != nullptr) return -1;
+        const int opened = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+        if (opened < 0) return -1;
+        procmap_query probe{};
+        probe.size = sizeof(probe);
+        probe.query_flags = PROCMAP_QUERY_COVERING_OR_NEXT_VMA;
+        if (ioctl(opened, PROCMAP_QUERY, &probe) == 0 || errno == ENOENT) return opened;
+        close(opened);
+        return -1;
+    }();
+    return fd;
+}
+#endif
+
 // Calls `emit` with consecutive runs of uniform accessibility covering [address, address + bytes) in
 // order, stopping early when it returns false. Returns false when the address space cannot be queried.
 template <class Emit>
@@ -535,6 +628,44 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         if (!emit(PageRun{cursor, next, readable, writable})) return true;
         cursor = next;
 #else
+        static const bool cacheMappings = std::getenv("APS5_NO_MAPPING_CACHE") == nullptr;
+        thread_local RegisteredPageRuns mappings;
+        const auto generation = cacheMappings ? GuestAllocations::GuestAllocationsGeneration_nid_postfix() : 0;
+        if (cacheMappings) {
+            if (const auto* run = mappings.Find(cursor, generation)) {
+                const auto next = std::min(end, run->end);
+                if (!emit(PageRun{cursor, next, run->readable, run->writable})) return true;
+                cursor = next;
+                continue;
+            }
+        }
+        const TimedAccess timed(CounterQuery, 0);
+        if (const int fd = ProcMapsQueryFd(); fd >= 0) {
+            procmap_query query{};
+            query.size = sizeof(query);
+            query.query_flags = PROCMAP_QUERY_COVERING_OR_NEXT_VMA;
+            query.query_addr = cursor;
+            if (ioctl(fd, PROCMAP_QUERY, &query) == 0) {
+                if (query.vma_end <= cursor || query.vma_start >= query.vma_end) return false;
+                if (query.vma_start > cursor) {
+                    const auto gapEnd = std::min<std::uintptr_t>(end, query.vma_start);
+                    if (!emit(PageRun{cursor, gapEnd, false, false})) return true;
+                    cursor = gapEnd;
+                    continue;
+                }
+                const bool readable = (query.vma_flags & PROCMAP_QUERY_VMA_READABLE) != 0;
+                const bool writable = readable && (query.vma_flags & PROCMAP_QUERY_VMA_WRITABLE) != 0;
+                if (cacheMappings) mappings.Remember(cursor, PageRun{query.vma_start, query.vma_end, readable, writable}, generation);
+                const auto next = std::min<std::uintptr_t>(end, query.vma_end);
+                if (!emit(PageRun{cursor, next, readable, writable})) return true;
+                cursor = next;
+                continue;
+            }
+            if (errno == ENOENT) {
+                static_cast<void>(emit(PageRun{cursor, end, false, false}));
+                return true;
+            }
+        }
         std::ifstream maps("/proc/self/maps");
         if (!maps.is_open()) return false;
         std::string line;
@@ -554,6 +685,7 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
                 found = true;
                 break;
             }
+            if (cacheMappings) mappings.Remember(cursor, PageRun{first, last, permissions[0] == 'r', permissions[0] == 'r' && permissions[1] == 'w'}, generation);
             const auto next = std::min(end, last);
             if (!emit(PageRun{cursor, next, permissions[0] == 'r', permissions[0] == 'r' && permissions[1] == 'w'})) return true;
             cursor = next;
@@ -648,20 +780,27 @@ Commitment DescribeCommitted(std::uint64_t address, std::size_t bytes, bool writ
     require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "address range overflow");
     const TimedAccess timed(CounterVerify, bytes);
     Commitment result;
+    result.whole = true;
+    std::pair<std::uint64_t, std::uint64_t> pending{};
     const bool queried = describePages(static_cast<std::uintptr_t>(address), bytes, [&](const PageRun& run) {
         if (run.readable && (!writable || run.writable)) {
-            if (!result.ranges.empty() && result.ranges.back().second == run.begin) result.ranges.back().second = run.end;
-            else result.ranges.emplace_back(run.begin, run.end);
-        }
+            if (pending.second == run.begin) pending.second = run.end;
+            else {
+                if (pending.first != pending.second) result.partialRanges.push_back(pending);
+                pending = {run.begin, run.end};
+            }
+        } else result.whole = false;
         return true;
     });
     require(queried, "cannot query guest memory");
-    result.whole = bytes == 0 || (result.ranges.size() == 1 && result.ranges.front().first == address && result.ranges.front().second == address + bytes);
+    if (!result.whole && pending.first != pending.second) result.partialRanges.push_back(pending);
     return result;
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedRanges(std::uint64_t address, std::size_t bytes, bool writable) {
-    return DescribeCommitted(address, bytes, writable).ranges;
+    auto committed = DescribeCommitted(address, bytes, writable);
+    if (committed.whole && bytes != 0) return {{address, address + bytes}};
+    return std::move(committed.partialRanges);
 }
 
 namespace {

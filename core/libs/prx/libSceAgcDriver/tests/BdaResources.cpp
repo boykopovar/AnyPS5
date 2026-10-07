@@ -226,6 +226,40 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
 }
 
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
+    {
+        std::array<std::byte, 160> bytes{};
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>(i);
+        constexpr std::uint64_t base = 0x7fff12340000ULL;
+        const std::array<std::pair<std::size_t, std::size_t>, 6> pieces{{{96, 112}, {0, 32}, {16, 48}, {40, 64}, {128, 144}, {104, 120}}};
+        const std::array<std::pair<std::size_t, std::size_t>, 3> expected{{{0, 64}, {96, 120}, {128, 144}}};
+        for (std::size_t order = 0; order < 2 * pieces.size(); ++order) {
+            GuestBufferMemory merged(context);
+            for (std::size_t i = 0; i < pieces.size(); ++i) {
+                const auto index = (order + (order < pieces.size() ? i : pieces.size() - i)) % pieces.size();
+                const auto [begin, end] = pieces[index];
+                merged.AddSnapshot({base + begin, std::span<const std::byte>(bytes).subspan(begin, end - begin)});
+            }
+            merged.Upload(true);
+            const auto ranges = merged.AddressRanges();
+            Require(ranges.size() == expected.size(), "overlapping snapshots lost a disjoint range");
+            for (std::size_t i = 0; i < expected.size(); ++i) {
+                const auto [begin, end] = expected[i];
+                Require(ranges[i].begin == base + begin && ranges[i].end == base + end, "overlapping snapshots have incorrect bounds");
+                Require(std::memcmp(access.addressBytes(ranges[i].deviceAddress).data(), bytes.data() + begin, end - begin) == 0, "overlapping snapshots lost their contents");
+            }
+            for (const auto [begin, end] : pieces) {
+                std::uint32_t adjustment = 0;
+                const auto view = merged.Descriptor(base + begin, end - begin, adjustment);
+                Require(std::memcmp(access.bytes(view.buffer).data() + view.offset + adjustment, bytes.data() + begin, end - begin) == 0, "merged snapshot subview has incorrect contents");
+            }
+            merged.WriteBack();
+        }
+        GuestBufferMemory inconsistent(context);
+        inconsistent.AddSnapshot({base, std::span<const std::byte>(bytes).first(32)});
+        bytes[16] = std::byte{255};
+        inconsistent.AddSnapshot({base + 16, std::span<const std::byte>(bytes).subspan(16, 32)});
+        reject([&] { inconsistent.Upload(true); }, "inconsistent overlapping guest snapshots");
+    }
     alignas(64) std::array<std::uint32_t, 16> guest{};
     guest[0] = 123;
     const auto address = reinterpret_cast<std::uintptr_t>(guest.data());

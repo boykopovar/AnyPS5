@@ -18,11 +18,8 @@ bool Accessible(const void* pointer, std::size_t bytes, bool writable = false);
 // The accessible parts [begin, end) of a range, in address order. GPU heaps are often bound whole while
 // the guest commits their pages on demand, so a binding can cover reserved but uncommitted pages.
 std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedRanges(std::uint64_t address, std::size_t bytes, bool writable = false);
-// Both facts from one walk of the page tables: the accessible parts of a range and whether they cover
-// all of it (`whole`, what Accessible answers). Reserved pages are queried each time, so asking twice
-// costs two VirtualQuery per run.
 struct Commitment {
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> partialRanges;
     bool whole = false;
 };
 Commitment DescribeCommitted(std::uint64_t address, std::size_t bytes, bool writable = false);
