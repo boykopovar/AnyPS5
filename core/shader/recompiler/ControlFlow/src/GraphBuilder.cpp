@@ -113,6 +113,14 @@ bool isImmediate(const RdnaOperand& operand, std::uint32_t& value) {
 
 constexpr std::uint32_t NoScalarRegister = UINT32_MAX;
 
+bool isSetpcLike(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::SSetpcB64 || opcode == RdnaOpcode::SRfeB64;
+}
+
+const char* setpcLikeName(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::SRfeB64 ? "s_rfe_b64" : "s_setpc_b64";
+}
+
 std::uint32_t scalarIndex(const RdnaOperand& operand) {
     switch (operand.kind) {
         case RdnaOperandKind::ScalarRegister: return operand.reg;
@@ -146,7 +154,7 @@ bool resolveLongSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex
     const bool adds = low.op == RdnaOpcode::SAddU32 && high.op == RdnaOpcode::SAddcU32;
     const bool subtracts = low.op == RdnaOpcode::SSubU32 && high.op == RdnaOpcode::SSubbU32;
     std::uint32_t lowImmediate = 0, highImmediate = 0;
-    if (setpc.op != RdnaOpcode::SSetpcB64 || pcRegister == NoScalarRegister || pcRegister % 2u != 0u || pc.op != RdnaOpcode::SGetpcB64 || !isScalar(pc.destination, pcRegister)) return false;
+    if (!isSetpcLike(setpc.op) || pcRegister == NoScalarRegister || pcRegister % 2u != 0u || pc.op != RdnaOpcode::SGetpcB64 || !isScalar(pc.destination, pcRegister)) return false;
     if (adds ? !addsImmediateTo(low, pcRegister, lowImmediate) || !addsImmediateTo(high, pcRegister + 1u, highImmediate)
              : !subtracts || !subtractsImmediateFrom(low, pcRegister, lowImmediate) || !subtractsImmediateFrom(high, pcRegister + 1u, highImmediate)) return false;
     const auto offset = (static_cast<std::uint64_t>(highImmediate) << 32u) | lowImmediate;
@@ -166,7 +174,7 @@ bool resolveSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex, st
     }
 
     const auto& setpc = program.instructions[setpcIndex];
-    if (setpc.op != RdnaOpcode::SSetpcB64 || setpc.source0.kind != RdnaOperandKind::ScalarRegister) {
+    if (!isSetpcLike(setpc.op) || setpc.source0.kind != RdnaOperandKind::ScalarRegister) {
         return false;
     }
 
@@ -322,7 +330,7 @@ bool writesScalar(const RdnaInstruction& instruction, std::uint32_t index) {
 bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initializer_list<std::uint32_t> indices, std::uint32_t& writer) {
     for (auto position = end; position-- > 0u;) {
         const auto& instruction = program.instructions[position];
-        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SEndpgm) return false;
+        if (IsDirectBranchOpcode(instruction.op) || isSetpcLike(instruction.op) || instruction.op == RdnaOpcode::SEndpgm) return false;
         if (std::ranges::any_of(indices, [&](std::uint32_t index) { return writesScalar(instruction, index); })) {
             writer = position;
             return true;
@@ -501,11 +509,11 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
             if (nextProgramCounter <= endProgramCounter) {
                 labels.insert(nextProgramCounter);
             }
-        } else if (instruction.op == RdnaOpcode::SSetpcB64) {
+        } else if (isSetpcLike(instruction.op)) {
             std::uint32_t target = 0;
             if (!resolveSetpcTarget(program, index, target)) {
                 BoundedJumpTable table;
-                if (!resolveBoundedJumpTable(program, index, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(instruction.programCounter));
+                if (!resolveBoundedJumpTable(program, index, table)) throw std::invalid_argument(std::string("unsupported dynamic ") + setpcLikeName(instruction.op) + " at program counter " + toHexString(instruction.programCounter));
                 for (const auto tableTarget : table.targets) {
                     if (!instructionProgramCounters.contains(tableTarget)) throw std::invalid_argument("jump table targets invalid instruction boundary " + toHexString(tableTarget));
                     labels.insert(tableTarget);
@@ -514,7 +522,7 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
                 continue;
             }
             if (!isValidTarget(target, instructionProgramCounters, firstProgramCounter, endProgramCounter)) {
-                throw std::invalid_argument("s_setpc_b64 at program counter " + toHexString(instruction.programCounter) + " targets invalid program counter " + toHexString(target));
+                throw std::invalid_argument(std::string(setpcLikeName(instruction.op)) + " at program counter " + toHexString(instruction.programCounter) + " targets invalid program counter " + toHexString(target));
             }
             labels.insert(target);
             if (nextProgramCounter <= endProgramCounter) {
@@ -568,11 +576,11 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
 
         if (last.op == RdnaOpcode::SEndpgm) {
             block.terminator.kind = TerminatorKind::Return;
-        } else if (last.op == RdnaOpcode::SSetpcB64) {
+        } else if (isSetpcLike(last.op)) {
             std::uint32_t target = 0;
             if (!resolveSetpcTarget(program, block.instructionEnd - 1u, target)) {
                 BoundedJumpTable table;
-                if (!resolveBoundedJumpTable(program, block.instructionEnd - 1u, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(last.programCounter));
+                if (!resolveBoundedJumpTable(program, block.instructionEnd - 1u, table)) throw std::invalid_argument(std::string("unsupported dynamic ") + setpcLikeName(last.op) + " at program counter " + toHexString(last.programCounter));
                 block.terminator.kind = TerminatorKind::IndirectBranch;
                 block.terminator.indirectPcSgpr = last.source0.reg;
                 sortUnique(table.targets);

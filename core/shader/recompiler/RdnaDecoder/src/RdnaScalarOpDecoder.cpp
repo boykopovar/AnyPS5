@@ -39,6 +39,7 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
         case 0x1eu: return RdnaOpcode::SBitset1B64;
         case 0x1fu: return RdnaOpcode::SGetpcB64;
         case 0x20u: return RdnaOpcode::SSetpcB64;
+        case 0x22u: return RdnaOpcode::SRfeB64;
         case 0x24u: return RdnaOpcode::SAndSaveexecB64;
         case 0x25u: return RdnaOpcode::SOrSaveexecB64;
         case 0x26u: return RdnaOpcode::SXorSaveexecB64;
@@ -204,9 +205,11 @@ RdnaOpcode decodeSoppOpcode(std::uint32_t opcode) {
         case 0x0au: return RdnaOpcode::SBarrier;
         case 0x0bu: return RdnaOpcode::SEndpgm;
         case 0x0cu: return RdnaOpcode::SWaitcnt;
+        case 0x0du: return RdnaOpcode::SSethalt;
         case 0x0eu: return RdnaOpcode::SSleep;
         case 0x0fu: return RdnaOpcode::SSetprio;
         case 0x10u: return RdnaOpcode::SSendmsg;
+        case 0x11u: return RdnaOpcode::SSendmsghalt;
         case 0x12u: return RdnaOpcode::STrap;
         case 0x13u: return RdnaOpcode::SIcacheInv;
         case 0x14u: return RdnaOpcode::SIncperflevel;
@@ -218,6 +221,7 @@ RdnaOpcode decodeSoppOpcode(std::uint32_t opcode) {
         case 0x1au: return RdnaOpcode::SCbranchCdbg;
         case 0x1bu:
         case 0x1eu: return RdnaOpcode::SEndpgm;
+        case 0x1fu: return RdnaOpcode::SCodeEnd;
         case 0x20u: return RdnaOpcode::SInstPrefetch;
         case 0x21u: return RdnaOpcode::SClause;
         case 0x22u: return RdnaOpcode::SWaitIdle;
@@ -341,6 +345,13 @@ RdnaInstruction DecodeRdnaSop1(std::uint32_t programCounter, std::span<const std
         return instruction;
     }
     if (instruction.op == RdnaOpcode::SSetpcB64) {
+        instruction.sourceCount = 1;
+        instruction.destination.kind = RdnaOperandKind::Null;
+        instruction.source0 = DecodeRdnaScalarSource(scalarSource0, programCounter);
+        ReadRdnaLiteralOperands(code, wordIndex, instruction);
+        return instruction;
+    }
+    if (instruction.op == RdnaOpcode::SRfeB64) {
         instruction.sourceCount = 1;
         instruction.destination.kind = RdnaOperandKind::Null;
         instruction.source0 = DecodeRdnaScalarSource(scalarSource0, programCounter);

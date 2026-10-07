@@ -29,6 +29,17 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return true;
     case RdnaOpcode::SSetpcB64:
         return true;
+    case RdnaOpcode::SRfeB64:
+        return true;
+    case RdnaOpcode::SSethalt: {
+        const std::uint32_t value = inst.source0.value;
+        if (value == 0u || value == 2u || value == 4u) return true;
+        throw std::runtime_error("s_sethalt at pc " + std::to_string(inst.programCounter) + " with immediate " + std::to_string(value) + " is not implemented");
+    }
+    case RdnaOpcode::SSendmsghalt:
+        throw std::runtime_error("s_sendmsghalt at pc " + std::to_string(inst.programCounter) + " is not implemented");
+    case RdnaOpcode::SCodeEnd:
+        throw std::runtime_error("s_code_end at pc " + std::to_string(inst.programCounter) + " is not implemented");
     case RdnaOpcode::SSubvectorLoopBegin:
         sSubvectorLoop(inst, true);
         return true;

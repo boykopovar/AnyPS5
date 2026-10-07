@@ -225,7 +225,7 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     std::array<bool, kVectorSlotCount> vgprIsIndex{};
     VectorLaneMap vectorLanes;
     const bool trackVectorLanes = std::none_of(program.instructions.begin(), program.instructions.end(), [](const RdnaInstruction& inst) {
-        return IsDirectBranchOpcode(inst.op) || inst.op == RdnaOpcode::SSetpcB64;
+        return IsDirectBranchOpcode(inst.op) || inst.op == RdnaOpcode::SSetpcB64 || inst.op == RdnaOpcode::SRfeB64;
     });
 
     sgprs[attribSlot].kind = SgprValueKind::AttributeTable;
