@@ -581,16 +581,18 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
     {
         std::lock_guard lock(source.mutex);
         const auto found = source.memoIndex.find(index);
+        bool hit = false;
         if (found != source.memoIndex.end()) {
             if (found->second->variantId == variant->result.variantId && found->second->hash == hash) {
                 source.memo.splice(source.memo.begin(), source.memo, found->second);
                 shared = found->second->result;
+                hit = true;
             } else {
                 source.memo.erase(found->second);
                 source.memoIndex.erase(found);
             }
         }
-        if (source.memoIndex.find(index) == source.memoIndex.end()) {
+        if (!hit) {
             source.memo.push_front({variant->result.variantId, hash, shared});
             source.memoIndex.emplace(index, source.memo.begin());
             while (source.memo.size() > ResultMemoEntries) {
