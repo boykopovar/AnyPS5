@@ -95,9 +95,8 @@ def overlaps(prs, a, b):
     if b in pa["depends"] or a in pb["depends"]:
         return None
     found = {"added": pa["added"] & pb["added"]}
-    if pa["author"] != pb["author"]:
-        found["conflicts"] = conflicts(pa, pb)
-        found["exports"] = pa["exports"] & pb["exports"]
+    found["conflicts"] = conflicts(pa, pb)
+    found["exports"] = pa["exports"] & pb["exports"]
     return found if any(found.values()) else None
 
 
