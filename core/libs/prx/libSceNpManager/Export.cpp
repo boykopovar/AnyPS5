@@ -25,11 +25,10 @@ int APS5_VABI sceNpCheckCallback(void) {
 }
 
 int APS5_VABI sceNpCheckNpAvailability(int req_id, const char* user, void* result) {
- (void)req_id;
- (void)user;
- (void)result;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)req_id;
+    (void)result;
+    if (!user) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpCheckNpReachability(int req_id, int user_id) {
