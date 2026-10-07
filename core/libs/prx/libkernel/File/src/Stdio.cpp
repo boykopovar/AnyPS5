@@ -177,11 +177,31 @@ static const struct iovec* NativeIovecs(const KernelIovec* iov) {
 static constexpr int GUEST_ENOENT = 2;
 static constexpr int GUEST_EIO = 5;
 static constexpr int GUEST_EBADF = 9;
+static constexpr int GUEST_EDEADLK = 11;
+static constexpr int GUEST_EACCES = 13;
 static constexpr int GUEST_EFAULT = 14;
+static constexpr int GUEST_ENODEV = 19;
+static constexpr int GUEST_ENOTDIR = 20;
+static constexpr int GUEST_EISDIR = 21;
 static constexpr int GUEST_EEXIST = 17;
 static constexpr int GUEST_EINVAL = 22;
+static constexpr int GUEST_ENFILE = 23;
+static constexpr int GUEST_EMFILE = 24;
+static constexpr int GUEST_ENOTTY = 25;
+static constexpr int GUEST_ETXTBSY = 26;
+static constexpr int GUEST_EFBIG = 27;
+static constexpr int GUEST_ENOSPC = 28;
+static constexpr int GUEST_ESPIPE = 29;
+static constexpr int GUEST_EROFS = 30;
+static constexpr int GUEST_EPIPE = 32;
+static constexpr int GUEST_EINTR = 4;
+static constexpr int GUEST_ENOMEM = 12;
+static constexpr int GUEST_EAGAIN = 35;
+#ifdef EDQUOT
+static constexpr int GUEST_EDQUOT = 69;
+#endif
+static constexpr int GUEST_EOVERFLOW = 84;
 static constexpr int GUEST_ENAMETOOLONG = 63;
-static constexpr int GUEST_ENOTDIR = 20;
 static constexpr int GUEST_ENOTEMPTY = 66;
 
 static int SceErrorFromErrno(int error) {
@@ -197,6 +217,95 @@ static int PosixFailure(int error) {
 
 static int PosixResult(int result) {
     return result < 0 ? PosixFailure(result & 0xffff) : result;
+}
+
+static std::optional<int> GuestScalarIoErrno(int error) {
+    if (error == EACCES) return GUEST_EACCES;
+    if (error == EAGAIN) return GUEST_EAGAIN;
+#ifdef EWOULDBLOCK
+    if (error == EWOULDBLOCK) return GUEST_EAGAIN;
+#endif
+    if (error == EBADF) return GUEST_EBADF;
+#ifdef EDEADLK
+    if (error == EDEADLK) return GUEST_EDEADLK;
+#endif
+#ifdef EDQUOT
+    if (error == EDQUOT) return GUEST_EDQUOT;
+#endif
+#ifdef EFBIG
+    if (error == EFBIG) return GUEST_EFBIG;
+#endif
+    if (error == EFAULT) return GUEST_EFAULT;
+#ifdef EINTR
+    if (error == EINTR) return GUEST_EINTR;
+#endif
+    if (error == EINVAL) return GUEST_EINVAL;
+    if (error == EIO) return GUEST_EIO;
+#ifdef EISDIR
+    if (error == EISDIR) return GUEST_EISDIR;
+#endif
+#ifdef EMFILE
+    if (error == EMFILE) return GUEST_EMFILE;
+#endif
+#ifdef ENFILE
+    if (error == ENFILE) return GUEST_ENFILE;
+#endif
+#ifdef ENODEV
+    if (error == ENODEV) return GUEST_ENODEV;
+#endif
+#ifdef ENOMEM
+    if (error == ENOMEM) return GUEST_ENOMEM;
+#endif
+#ifdef ENOSPC
+    if (error == ENOSPC) return GUEST_ENOSPC;
+#endif
+#ifdef ENOTDIR
+    if (error == ENOTDIR) return GUEST_ENOTDIR;
+#endif
+#ifdef ENOTTY
+    if (error == ENOTTY) return GUEST_ENOTTY;
+#endif
+#ifdef EOVERFLOW
+    if (error == EOVERFLOW) return GUEST_EOVERFLOW;
+#endif
+#ifdef EPIPE
+    if (error == EPIPE) return GUEST_EPIPE;
+#endif
+#ifdef EROFS
+    if (error == EROFS) return GUEST_EROFS;
+#endif
+#ifdef ESPIPE
+    if (error == ESPIPE) return GUEST_ESPIPE;
+#endif
+#ifdef ETXTBSY
+    if (error == ETXTBSY) return GUEST_ETXTBSY;
+#endif
+    return std::nullopt;
+}
+
+template <typename Operation>
+static std::int64_t PosixScalarResult(Operation operation, const char* failurePrefix) {
+    const int savedErrno = errno;
+    constexpr int UnchangedErrno = std::numeric_limits<int>::min();
+    errno = UnchangedErrno;
+    try {
+        const std::int64_t result = operation();
+        errno = savedErrno;
+        return result;
+    } catch (const std::runtime_error& error) {
+        const int nativeError = errno;
+        errno = savedErrno;
+        if (nativeError == UnchangedErrno ||
+            std::strncmp(error.what(), failurePrefix, std::strlen(failurePrefix)) != 0) {
+            throw;
+        }
+        const auto guestError = GuestScalarIoErrno(nativeError);
+        if (!guestError) throw;
+        return PosixFailure(*guestError);
+    } catch (...) {
+        errno = savedErrno;
+        throw;
+    }
 }
 
 extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
@@ -287,7 +396,8 @@ int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
 }
 
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
-    return static_cast<int64_t>(sceKernelLseek(d, offset, whence));
+    if (whence < 0 || whence > 2) return PosixFailure(GUEST_EINVAL);
+    return PosixScalarResult([&] { return sceKernelLseek(d, offset, whence); }, "sceKernelLseek: lseek failed, fd=");
 }
 
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
@@ -355,22 +465,34 @@ int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_
 }
 
 int64_t APS5_VABI read_nid_postfix(int d, void* buf, uint64_t nbytes) {
-    return sceKernelRead(d, buf, static_cast<size_t>(nbytes));
+    if (buf == nullptr && nbytes != 0) return PosixFailure(GUEST_EFAULT);
+    char emptyBuffer = 0;
+    void* buffer = buf == nullptr ? &emptyBuffer : buf;
+    return PosixScalarResult([&] { return sceKernelRead(d, buffer, static_cast<size_t>(nbytes)); }, "sceKernelRead: read failed, fd=");
 }
 
 std::int64_t APS5_VABI _read_nid_postfix(int descriptor, void* buffer, std::size_t count) {
-    return sceKernelRead(descriptor, buffer, count);
+    if (buffer == nullptr && count != 0) return PosixFailure(GUEST_EFAULT);
+    char emptyBuffer = 0;
+    void* guestBuffer = buffer == nullptr ? &emptyBuffer : buffer;
+    return PosixScalarResult([&] { return sceKernelRead(descriptor, guestBuffer, count); }, "sceKernelRead: read failed, fd=");
 }
 
 int64_t APS5_VABI write_nid_postfix(int d, const char* str, int64_t size) {
     if (size < 0) {
         APS5_INVALID_ARG_EX;
     }
-    return sceKernelWrite(d, str, static_cast<size_t>(size));
+    if (str == nullptr && size != 0) return PosixFailure(GUEST_EFAULT);
+    const char emptyBuffer = 0;
+    const char* buffer = str == nullptr ? &emptyBuffer : str;
+    return PosixScalarResult([&] { return sceKernelWrite(d, buffer, static_cast<size_t>(size)); }, "sceKernelWrite: write failed, fd=");
 }
 
 std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, std::size_t count) {
-    return sceKernelWrite(descriptor, buffer, count);
+    if (buffer == nullptr && count != 0) return PosixFailure(GUEST_EFAULT);
+    const char emptyBuffer = 0;
+    const void* guestBuffer = buffer == nullptr ? &emptyBuffer : buffer;
+    return PosixScalarResult([&] { return sceKernelWrite(descriptor, guestBuffer, count); }, "sceKernelWrite: write failed, fd=");
 }
 
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
