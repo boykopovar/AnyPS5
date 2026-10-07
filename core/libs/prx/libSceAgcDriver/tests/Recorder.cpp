@@ -2966,9 +2966,21 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+std::unique_ptr<Device> openDevice() {
+    try {
+        return std::make_unique<Device>();
+    } catch (const std::exception& error) {
+        if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+        std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
+        return nullptr;
+    }
+}
+
 int main(int argc, char** argv) {
     try {
-        Device device;
+        const auto opened = openDevice();
+        if (opened == nullptr) return 77;
+        auto& device = *opened;
         std::lock_guard gpu(GpuMutex());
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
