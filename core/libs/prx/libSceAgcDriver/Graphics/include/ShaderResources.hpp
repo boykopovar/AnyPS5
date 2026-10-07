@@ -201,7 +201,7 @@ public:
     bool DataWordsDiffer(const CompiledShader& shader) const;
     // Why the fast proof of a Revalidate left the object to the full walk (the [rescache]
     // revalidate line's reasons); Count: it did not.
-    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Count };
+    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, DepthSurface, Count };
     // Why a Pending failure was left to the full walk instead of the own-object refresh (T1, see
     // refreshOwnObjects); Count: it was not.
     enum class OwnRefreshFallback : std::size_t { Disabled, Snapshot, Keys, ForeignView, SurfaceKey, NotImported, Uncached, Rerun, Count };
@@ -351,6 +351,7 @@ private:
         // Storage-sourced textures: the image the view follows (kept alive by the texture).
         const StorageTexture* source = nullptr;
         bool valid = false;
+        bool depth = false;
     };
     void captureValidation();
     // A surface of this object the fast proof found a foreign image pending over: the element

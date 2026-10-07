@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "CacheKey.hpp"
 #include <spirv/unified1/spirv.hpp>
@@ -2050,6 +2052,16 @@ void vertexCopyTests() {
     }
 }
 
+void depthSurfaceTests() {
+    const auto context = mockContext();
+    AgcDriver::Graphics::ClearDepthSurfaces(context.device);
+    Require(!AgcDriver::Graphics::DepthSurfaceAt(0x10000000ull), "cleared depth surface list must report no surface at address");
+    Require(!AgcDriver::Graphics::DepthSurfaceHolds(context, 0x10000000ull, nullptr), "cleared depth surface list must hold no texture");
+    Require(!AgcDriver::Graphics::DepthSurfaceHolds(context, 0, nullptr), "null texture address must not be held");
+    Require(static_cast<std::size_t>(AgcDriver::Graphics::ShaderResources::FastFail::DepthSurface) == 8, "FastFail::DepthSurface enum value mismatch");
+    Require(static_cast<std::size_t>(AgcDriver::Graphics::ShaderResources::FastFail::Count) == 9, "FastFail::Count must account for FastFail::DepthSurface");
+}
+
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
@@ -2102,6 +2114,7 @@ int main() {
         InitialContextTests();
         pushConstantTests();
         resourceTests();
+        depthSurfaceTests();
         misalignedShaderDataTests();
         debugBranchTests();
         meshArgumentTests();

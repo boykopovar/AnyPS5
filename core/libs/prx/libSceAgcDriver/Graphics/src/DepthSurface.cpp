@@ -111,6 +111,10 @@ public:
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
 
+    bool Holds(const Texture* texture) const {
+        return std::any_of(textures.begin(), textures.end(), [&](const auto& pair) { return pair.second.get() == texture; });
+    }
+
 private:
     std::map<std::array<std::uint32_t, 12>, std::shared_ptr<Texture>> textures;
 
@@ -170,6 +174,15 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         return surface->context.device == context.device && (surface->target.address == resource.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == resource.baseAddress));
     });
     return found == list.rend() ? nullptr : (*found)->Sampled(words, resource, components);
+}
+
+bool DepthSurfaceHolds(const Context& context, std::uint64_t address, const Texture* texture) {
+    std::lock_guard lock(surfacesMutex());
+    const auto& list = surfaces();
+    const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
+        return surface->context.device == context.device && (surface->target.address == address || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == address));
+    });
+    return found != list.rend() && (*found)->Holds(texture);
 }
 
 bool DepthSurfaceAt(std::uint64_t address) {
