@@ -29,7 +29,7 @@ constexpr VkBufferUsageFlags deviceUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 BufferPool::BufferPool(const Context& context) : device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), maxSlots(std::max<std::size_t>(1, std::min<std::size_t>(MaxSlots(), context.limits.maxMemoryAllocationCount / 6u))) {
     smallTier.budget = smallBudget;
     largeTier.budget = budget;
-    deviceTier.budget = DeviceBudget();
+    deviceTier.budget = DeviceTierEnabled() ? DeviceBudget(context.memory) : 0;
 }
 
 BufferPool::~BufferPool() {
@@ -40,12 +40,22 @@ BufferPool::~BufferPool() {
     }
 }
 
-VkDeviceSize BufferPool::DeviceBudget() {
-    static const VkDeviceSize deviceBudget = [] {
+bool BufferPool::DeviceTierEnabled() {
+    static const bool enabled = [] {
         const char* value = std::getenv("APS5_STAGING_POOL_MIB");
-        return (value != nullptr ? std::strtoull(value, nullptr, 10) : 512ull) << 20u;
+        return value == nullptr || std::strtoull(value, nullptr, 10) != 0;
     }();
-    return deviceBudget;
+    return enabled;
+}
+
+VkDeviceSize BufferPool::DeviceBudget(const VkPhysicalDeviceMemoryProperties& memory) {
+    static const char* value = std::getenv("APS5_STAGING_POOL_MIB");
+    if (value != nullptr) return static_cast<VkDeviceSize>(std::strtoull(value, nullptr, 10)) << 20u;
+    VkDeviceSize largest = 0;
+    for (std::uint32_t heap = 0; heap < memory.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        if ((memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) largest = std::max(largest, memory.memoryHeaps[heap].size);
+    }
+    return std::max<VkDeviceSize>(VkDeviceSize{512} << 20u, largest / 8u);
 }
 
 void BufferPool::destroy(const BufferAllocation& allocation) noexcept {
@@ -56,7 +66,7 @@ void BufferPool::destroy(const BufferAllocation& allocation) noexcept {
 }
 
 bool BufferPool::DeviceTiered(VkMemoryPropertyFlags properties) {
-    return (properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 && DeviceBudget() != 0;
+    return (properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 && DeviceTierEnabled();
 }
 
 std::size_t BufferPool::Capacity(std::size_t bytes, VkMemoryPropertyFlags properties) {
