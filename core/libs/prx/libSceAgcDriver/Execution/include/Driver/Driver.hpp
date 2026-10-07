@@ -178,6 +178,7 @@ private:
     template<typename TVisit>
     static void forEachWrittenBuffer(const ShaderRecompiler::RecompileResult& compiled, TVisit&& visit);
     void noteWrittenBuffers(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled);
+    static void appendWrittenRanges(const ShaderRecompiler::RecompileResult& compiled, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
     void noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue);
     void noteDrawWriters(std::span<const Graphics::CompiledShader> stages, std::uint32_t queue);
     std::optional<WrittenBuffer> newestWriterLocked(std::uint64_t begin, std::uint64_t end) const;
@@ -206,6 +207,33 @@ private:
     static bool landWaitsEnabled();
     static void notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received);
     void landPendingWaits(std::uint32_t queue);
+    struct ResolvedDispatch {
+        std::uint64_t address = 0, key = 0, indirectArguments = 0;
+        std::array<std::uint32_t, 5> packet{};
+        std::shared_ptr<const ShaderSnapshot> registeredShader;
+        std::shared_ptr<const ShaderRecompiler::RecompileResult> compiledResult;
+        std::shared_ptr<DispatchVariant> keepVariant, attachVariant;
+        std::shared_ptr<ShaderMemory> shaderMemory;
+        std::vector<ShaderRecompiler::MemoryRegion> captured;
+        std::vector<std::uint32_t> liveWords;
+        std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
+        bool dataHit = false, cached = false, validated = false;
+        std::chrono::steady_clock::time_point resolvedAt{};
+    };
+    struct GroupCaptureStats {
+        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, deviceRejects = 0;
+        double resolveMs = 0, resolveMaxMs = 0, ageMs = 0, ageMaxMs = 0;
+        std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
+    };
+    static bool groupCaptureEnabled();
+    static std::map<std::size_t, ResolvedDispatch>& resolvedAhead();
+    static GroupCaptureStats& groupCaptureStats();
+    static std::size_t& currentPacketOffset();
+    static bool& resolvingAhead();
+    static bool& gateOpened();
+    void resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from);
+    static void clearResolvedAhead();
+    static void reportGroupCapture(std::uint32_t queue);
     static PollStats& pollStats();
     static WaitOutcomes& waitOutcomes();
     static Graphics::Recorder::LateStatistics& lateCountsSeen();

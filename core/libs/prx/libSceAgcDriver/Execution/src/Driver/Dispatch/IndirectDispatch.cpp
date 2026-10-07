@@ -32,6 +32,14 @@ void Driver::dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> 
     else if ((initiator & 0x20u) != 0) path = IndirectThreadDimensions;
     else if (arguments % 4 != 0) path = IndirectMisaligned;
     if (path != IndirectGpu) {
+        if (!resolvingAhead() && groupCaptureEnabled()) {
+            const auto& resolved = resolvedAhead();
+            if (const auto found = resolved.find(currentPacketOffset()); found != resolved.end() && found->second.indirectArguments == 0 && found->second.packet[0] == 0xc0031500u) {
+                const auto direct = found->second.packet;
+                dispatch(queue, direct, submission);
+                return;
+            }
+        }
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
         const auto direct = Pm4::ReadDispatchArguments(arguments, initiator);
