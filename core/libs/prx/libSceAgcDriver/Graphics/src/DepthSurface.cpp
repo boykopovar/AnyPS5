@@ -120,6 +120,10 @@ public:
         return texture;
     }
 
+    bool Holds(const Texture* texture) const {
+        return std::any_of(textures.begin(), textures.end(), [&](const auto& entry) { return entry.second.get() == texture; });
+    }
+
     const Context context;
     const DepthTarget target;
     VkImage image = VK_NULL_HANDLE;
@@ -215,6 +219,15 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         if (ResolveTextureFormat(resource.format) != (d16 ? VK_FORMAT_R16_UNORM : VK_FORMAT_R32_SFLOAT) && !depthBits) return nullptr;
     }
     return (*found)->Sampled(words, resource, components);
+}
+
+bool DepthSurfaceHolds(const Context& context, std::uint64_t address, const Texture* texture) {
+    std::lock_guard lock(surfacesMutex());
+    const auto& list = surfaces();
+    const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
+        return surface->context.device == context.device && (surface->target.address == address || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == address));
+    });
+    return found != list.rend() && (*found)->Holds(texture);
 }
 
 bool DepthSurfaceAt(std::uint64_t address) {
