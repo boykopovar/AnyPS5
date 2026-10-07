@@ -120,14 +120,12 @@ int APS5_VABI sceSystemServiceInitializePlayerDialogParam(void* param) {
  return SYSTEM_SERVICE_OK;
 }
 
-int APS5_VABI sceSystemServiceDisableMediaPlay() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceSystemServiceDisableMediaPlay(void) {
+ return SYSTEM_SERVICE_OK;
 }
 
-int APS5_VABI sceSystemServiceReenableMediaPlay() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceSystemServiceReenableMediaPlay(void) {
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
