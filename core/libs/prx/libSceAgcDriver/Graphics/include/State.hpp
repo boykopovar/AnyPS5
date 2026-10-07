@@ -172,11 +172,7 @@ inline constexpr std::array<DrawKeyRange, 48> DrawKeyRegisters{{
     // CB_BLEND0..7_CONTROL, GE_MAX_OUTPUT_PER_SUBGROUP.
     {RegisterBank::Context, 0x191, 32}, {RegisterBank::Context, 0x1b3, 2}, {RegisterBank::Context, 0x1b6, 1}, {RegisterBank::Context, 0x1c3, 3}, {RegisterBank::Context, 0x1e0, 8}, {RegisterBank::Context, 0x1ff, 1},
     // DB_DEPTH_CONTROL .. PA_CL_VS_OUT_CNTL, PA_SC_MODE_CNTL_0/1, VGT_GS_MODE, VGT_GS_VERT_ITEMSIZE,
-    // PA_SU_VTX_CNTL, PA_SU_POLY_OFFSET_*, PA_SC_AA_CONFIG, the sample locations, the sample masks,
-    // PA_SC_CONSERVATIVE_RASTERIZATION_CNTL.
     {RegisterBank::Context, 0x200, 8}, {RegisterBank::Context, 0x292, 2}, {RegisterBank::Context, 0x29b, 1}, {RegisterBank::Context, 0x2ab, 1}, {RegisterBank::Context, 0x2ce, 1}, {RegisterBank::Context, 0x2d5, 2}, {RegisterBank::Context, 0x2db, 2}, {RegisterBank::Context, 0x2de, 6}, {RegisterBank::Context, 0x2f8, 2}, {RegisterBank::Context, 0x2fe, 16}, {RegisterBank::Context, 0x30e, 2}, {RegisterBank::Context, 0x313, 1},
-    // CB_COLOR0..7_BASE .. DCC_BASE (15 words a slot), CB_COLOR0..7_BASE_EXT, CMASK_BASE_EXT, DCC_BASE_EXT,
-    // ATTRIB2, ATTRIB3.
     {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 8}, {RegisterBank::Context, 0x3a8, 0x18},
     // The pixel program address, RSRC2 and user words; the geometry-back user pointer and program
     // address; the vertex/geometry-front RSRC1/RSRC2 and user words; the vertex program address;
