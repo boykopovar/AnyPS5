@@ -199,6 +199,23 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                                     const void* value, std::uint32_t length) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (level == 0xffff && option == 0x80) {
+        if (!value || length != 2 * sizeof(int)) return Fail(22);
+        int guest[2];
+        std::memcpy(guest, value, sizeof(guest));
+        if (guest[1] < 0 || guest[1] > 0xffff) return Fail(22);
+        linger native{};
+        native.l_onoff = static_cast<decltype(native.l_onoff)>(guest[0] != 0);
+        native.l_linger = static_cast<decltype(native.l_linger)>(guest[1]);
+        return ::setsockopt(socket->value, SOL_SOCKET, SO_LINGER,
+            reinterpret_cast<const char*>(&native), sizeof(native)) ? Fail(NativeError()) : 0;
+    }
+    if (level == 41 && option == 27) {
+        if (socket->family != 28) return Fail(22);
+        if (!value || length != sizeof(int)) return Fail(22);
+        return ::setsockopt(socket->value, IPPROTO_IPV6, IPV6_V6ONLY,
+            static_cast<const char*>(value), sizeof(int)) ? Fail(NativeError()) : 0;
+    }
     const int nativeOption = Option(option);
     if (level != 0xffff || nativeOption == -1) return Fail(42);
     if (!value || length != sizeof(int)) return Fail(22);

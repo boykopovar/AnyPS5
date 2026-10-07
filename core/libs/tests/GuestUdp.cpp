@@ -54,6 +54,18 @@ int main() {
     Require(getsockopt_nid_postfix(sender, 0xffff, 0x20, &option, &optionSize) == 0 && option != 0);
     Require(setsockopt_nid_postfix(sender, 0xffff, 12345, &enabled, sizeof(enabled)) == -1);
     Require(*__error_nid_postfix() == 42);
+    const int lingerValue[2] = {1, 3};
+    Require(setsockopt_nid_postfix(sender, 0xffff, 0x80, lingerValue, sizeof(lingerValue)) == 0);
+    Require(setsockopt_nid_postfix(sender, 0xffff, 0x80, &enabled, sizeof(enabled)) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(setsockopt_nid_postfix(sender, 41, 27, &enabled, sizeof(enabled)) == -1);
+    Require(*__error_nid_postfix() == 22);
+    Require(setsockopt_nid_postfix(sender, 0, 2, &enabled, sizeof(enabled)) == -1);
+    Require(*__error_nid_postfix() == 42);
+    const int v6 = socket_nid_postfix(28, 2, 0);
+    Require(v6 >= 0);
+    Require(setsockopt_nid_postfix(v6, 41, 27, &enabled, sizeof(enabled)) == 0);
+    Require(close_nid_postfix(v6) == 0);
     Require(ioctl_nid_postfix(receiver, 0x8004667e, &enabled) == 0);
     Require(fcntl_nid_postfix(receiver, 3) == 6);
     Require(fcntl_nid_postfix(receiver, 4, 2) == 0);
