@@ -118,6 +118,7 @@ void Driver::execute(const Submission& submission) {
         GuestMemory::SetCurrentPacket(header == FlipPacketHeader ? 0xffffu : opcode, submission.queue);
         CaptureTrace::Log("packet submission=%llu queue=%x offset=%zu header=%08x words=%zu", static_cast<unsigned long long>(submission.serial), submission.queue, cursor, header, packet.size());
         if (Pm4::Predicated(header) && queue.predication.operation != 0) {
+            landPendingWaits(submission.queue);
             recordQueuedLabelsBeforeRead(submission.queue);
             if (!Pm4::PredicationPasses(queue)) {
                 cursor = opcode == 0x3f ? submission.conditionalEnds.at(cursor) : nextCursor;
@@ -214,10 +215,12 @@ void Driver::execute(const Submission& submission) {
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15) {
+            landPendingWaits(submission.queue);
             timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
             Graphics::Recorder::CountRecordedWork();
             finishDispatchPacket(false);
         } else if (opcode == 0x16) {
+            landPendingWaits(submission.queue);
             timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
             Graphics::Recorder::CountRecordedWork();
             finishDispatchPacket(true);
@@ -238,6 +241,7 @@ void Driver::execute(const Submission& submission) {
                 }
             }
         } else if (drawPacket) {
+            landPendingWaits(submission.queue);
             bool drawn = false;
             timed(&WorkerProfile::drawMs, [&] {
                 static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
@@ -269,6 +273,7 @@ void Driver::execute(const Submission& submission) {
             });
             finishDrawPacket(drawn);
         } else if (opcode == 0x22) {
+            landPendingWaits(submission.queue);
             recordQueuedLabelsBeforeRead(submission.queue);
             const auto condition = Pm4::ReadCondition(packet);
             if (condition == 0) nextCursor = submission.conditionalEnds.at(cursor);
@@ -280,7 +285,7 @@ void Driver::execute(const Submission& submission) {
                 if (Pm4::IndirectRegisterOpcode(opcode)) Pm4::ExecuteIndirectRegisters(packet, submission.registerLists.at(cursor), queue);
                 else Pm4::Execute(packet, queue);
                 if (opcode == 0x49 || opcode == 0x37) {
-                    if (const auto label = Pm4::DecodeLabelWrite(packet)) noteLabelStore(label->address, label->Bytes(), ++eventSerial);
+                    if (const auto label = Pm4::DecodeLabelWrite(packet)) noteLabelStore(label->address, label->Bytes(), ++eventSerial, submission.queue);
                 }
             }
             if (endOfPipeInterrupt && !interruptDeferred) AgcDriverDeliverEopInterrupt(submission.queue);

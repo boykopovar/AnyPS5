@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
@@ -11,6 +12,9 @@
 #include <windows.h>
 #endif
 #include <immintrin.h>
+#include <algorithm>
+#include <tuple>
+#include <vector>
 
 namespace AgcDriver::DriverDetail {
 
@@ -49,7 +53,62 @@ bool Driver::traceLateLabels() {
     return trace;
 }
 
-void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit) {
+std::vector<Driver::PendingWait>& Driver::pendingWaits() {
+    static thread_local std::vector<PendingWait> waits;
+    return waits;
+}
+
+bool Driver::landWaitsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_LAND_WAITS") == nullptr;
+    return enabled;
+}
+
+void Driver::notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received) {
+    if (!landWaitsEnabled() || packet.size() > std::tuple_size_v<decltype(PendingWait::words)>) return;
+    static const bool allQueues = std::getenv("APS5_LAND_WAITS_ALL_QUEUES") != nullptr;
+    if (!allQueues && queue == 0) return;
+    if (Pm4::WaitSatisfiedUnchecked(packet)) return;
+    auto& waits = pendingWaits();
+    for (const auto& wait : waits) {
+        if (wait.count == packet.size() && std::equal(packet.begin(), packet.end(), wait.words.begin())) return;
+    }
+    PendingWait wait{};
+    std::copy(packet.begin(), packet.end(), wait.words.begin());
+    wait.count = packet.size();
+    wait.received = received;
+    waits.push_back(wait);
+}
+
+void Driver::landPendingWaits(std::uint32_t queue) {
+    auto& waits = pendingWaits();
+    if (waits.empty()) return;
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    struct LandStats {
+        std::uint64_t lands = 0, waited = 0;
+        double waitedMs = 0, maxMs = 0;
+        std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
+    };
+    static thread_local LandStats stats;
+    const PacketHistory none{};
+    for (const auto& wait : waits) {
+        const auto packet = std::span<const std::uint32_t>(wait.words).first(wait.count);
+        ++stats.lands;
+        if (Pm4::WaitSatisfiedUnchecked(packet)) continue;
+        const auto started = std::chrono::steady_clock::now();
+        waitMemory(packet, queue, none, wait.received, false, true);
+        const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        ++stats.waited;
+        stats.waitedMs += ms;
+        stats.maxMs = std::max(stats.maxMs, ms);
+    }
+    waits.clear();
+    if (profile && std::chrono::steady_clock::now() - stats.reported > std::chrono::seconds(10)) {
+        AgcDriver::ProfilePrint_nid_no_patch("[landwait] queue 0x%x (10 s): %llu waits landed before a guest read, %llu had to wait for the GPU: %.1f ms in total, max %.2f ms\n", queue, static_cast<unsigned long long>(stats.lands), static_cast<unsigned long long>(stats.waited), stats.waitedMs, stats.maxMs);
+        stats = LandStats{};
+    }
+}
+
+void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory) {
 
     auto start = std::chrono::steady_clock::now();
     auto lastDone = packetsDone.load();
@@ -82,9 +141,14 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         ++outcomes.atEntry;
         return;
     }
-    if (heldAtSubmit || storedSince(packet, awaited, awaitedBytes, received)) return;
+    if (heldAtSubmit) return;
+    if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, &writer)) {
+        if (writer != queue) notePendingWait(packet, queue, received);
+        return;
+    }
 
     static const bool labelShortcut = std::getenv("APS5_NO_LABEL_SHORTCUT") == nullptr;
+    const bool labelTable = labelShortcut && !requireMemory;
     static const bool overlapSubmit = std::getenv("APS5_NO_WAIT_OVERLAP_SUBMIT") == nullptr;
 
     static const bool waitLock = std::getenv("APS5_WAIT_LOCK") != nullptr;
@@ -121,6 +185,8 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         if (hit->queue == queue) {
             ++outcomes.fromRecorderSameQueue;
             if (!hit->late) epochPoint.bump = false;
+        } else {
+            notePendingWait(packet, queue, received);
         }
         return true;
     };
@@ -129,7 +195,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
 
     const bool unlocked = !waitLock && overlapSubmit;
     if (unlocked) {
-        if (labelShortcut) {
+        if (labelTable) {
             Graphics::Recorder::LabelRefusal refusal{};
             if (takeLabel(Graphics::Recorder::LookupLabel(awaited, awaitedBytes, received, &refusal), refusal, false, true)) return;
         }
@@ -152,7 +218,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
         if (const auto localDevice = gpuLock.owns_lock() ? device.Load() : std::shared_ptr<VulkanDevice>{}) {
 
-            if (labelShortcut) {
+            if (labelTable) {
                 Graphics::Recorder::LabelRefusal refusal{};
                 if (takeLabel(localDevice->PendingLabel(awaited, awaitedBytes, received, &refusal), refusal, false, false)) return;
             }
@@ -182,7 +248,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             if (now - lastTry < PollTryInterval) return false;
             lastTry = now;
         }
-        if (changed && unlocked && labelShortcut) {
+        if (changed && unlocked && labelTable) {
 
             Graphics::Recorder::LabelRefusal refusal{};
             if (takeLabel(Graphics::Recorder::LookupLabel(awaited, awaitedBytes, received, &refusal), refusal, true, true)) {
@@ -220,7 +286,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         if (changed) {
             seenGeneration = generation;
             recheck = false;
-            if (labelShortcut) {
+            if (labelTable) {
                 Graphics::Recorder::LabelRefusal refusal{};
                 if (takeLabel(localDevice->PendingLabel(awaited, awaitedBytes, received, &refusal), refusal, true, false)) {
                     if (pollProfile) ++poll.tableHits;
@@ -268,7 +334,10 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     bool spinning = pauseSpin;
     std::uint32_t polls = 0;
     while (!Pm4::WaitSatisfiedUnchecked(packet)) {
-        if (storedSince(packet, awaited, awaitedBytes, received)) return;
+        if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, &writer)) {
+            if (writer != queue) notePendingWait(packet, queue, received);
+            return;
+        }
         ++polls;
         if (spinning) {
             _mm_pause();
@@ -281,7 +350,13 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
         CheckFailure();
         if (pollService(!spinning)) return;
-        if (const auto done = packetsDone.load(); done != lastDone || packetsInFlight.load() != 0) {
+        if (requireMemory && (polls & 15u) == 0) {
+            std::unique_lock settleLock(GuestMemory::GpuMutex(), std::try_to_lock);
+            if (settleLock.owns_lock()) {
+                if (const auto localDevice = device.Load(); localDevice != nullptr && localDevice->RecordedWritesSettled(awaited, awaitedBytes)) return;
+            }
+        }
+        if (const auto done = packetsDone.load(); done != lastDone || (!requireMemory && packetsInFlight.load() != 0)) {
             lastDone = done;
             start = std::chrono::steady_clock::now();
         }
@@ -301,7 +376,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
             const std::uint64_t mask = wide ? packet[6] | (static_cast<std::uint64_t>(packet[7]) << 32u) : packet[5];
             const std::uint64_t current = wide ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
-            std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "",
+            std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", requireMemory ? " (landing)" : "",
                          static_cast<unsigned long long>(awaited), waitTimeoutMs(), packet[1] & 7u, static_cast<unsigned long long>(reference), static_cast<unsigned long long>(mask), static_cast<unsigned long long>(current));
             const auto address = packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u);
             for (const auto& record : writeHistory()) {

@@ -121,7 +121,7 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
             if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(label.address, bytes, 4);
         }
-        noteLabelStore(label.address, bytes, stamp);
+        noteLabelStore(label.address, bytes, stamp, queue);
     }
     ++labelGroups;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
