@@ -1836,6 +1836,7 @@ struct ModuleShape {
     bool layer = false;
     bool fragDepth = false;
     std::uint32_t sampleMaskLength = 0;
+    std::uint32_t floatControlsWidth = 0;
 };
 
 void emit(std::vector<std::uint32_t>& out, spv::Op op, std::initializer_list<std::uint32_t> operands) {
@@ -2022,6 +2023,9 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     if (shape.fragmentMode) emit(words, spv::OpExecutionMode, {main, *shape.fragmentMode});
     if (shape.fragment) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeOriginUpperLeft});
     if (shape.fragDepth) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeDepthReplacing});
+    if (shape.floatControlsWidth != 0) {
+        for (const auto mode : {spv::ExecutionModeRoundingModeRTE, spv::ExecutionModeDenormPreserve, spv::ExecutionModeSignedZeroInfNanPreserve}) emit(words, spv::OpExecutionMode, {main, mode, shape.floatControlsWidth});
+    }
     words.insert(words.end(), annotations.begin(), annotations.end());
     words.insert(words.end(), declarations.begin(), declarations.end());
     words.insert(words.end(), function.begin(), function.end());
@@ -2407,6 +2411,23 @@ void ConservativeRasterizationTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_SC_CONSERVATIVE_RASTERIZATION_CNTL=0x");
         Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_SC_CONSERVATIVE_RASTERIZATION_CNTL=0x") != std::string::npos, "the precheck accepted PA_SC_CONSERVATIVE_RASTERIZATION_CNTL " + std::to_string(control));
     }
+}
+
+void floatControlsModeTests() {
+    AgcDriver::Graphics::State state{};
+    state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
+    ShaderRecompiler::RecompileResult vertex;
+    ShaderRecompiler::RecompileResult pixel;
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}}};
+    const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    for (const auto width : {16u, 32u, 64u}) {
+        vertex.spirv = makeModule({.floatControlsWidth = width});
+        pixel.spirv = makeModule({.fragment = true, .floatControlsWidth = width});
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false);
+    }
+    vertex.spirv = makeModule({.floatControlsWidth = 8u});
+    pixel.spirv = makeModule({.fragment = true});
+    expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "float controls execution modes");
 }
 
 void pixelParameterSlotTests() {
@@ -2842,6 +2863,7 @@ int main() {
         vertexCopyTests();
         pixelParameterSlotTests();
         rectListTests();
+        floatControlsModeTests();
         mock = MockVulkan{};
         auto bdaContext = mockContext();
         bdaContext.bufferDeviceAddress = true;

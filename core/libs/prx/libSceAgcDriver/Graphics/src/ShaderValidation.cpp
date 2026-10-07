@@ -229,6 +229,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilityInt64 ||
                     capability == spv::CapabilityInt16 ||
                     capability == spv::CapabilityFloat16 ||
+                    capability == spv::CapabilityRoundingModeRTE ||
+                    capability == spv::CapabilityDenormPreserve ||
                     capability == spv::CapabilityFloat64 ||
                     capability == spv::CapabilityStorageBuffer8BitAccess ||
                     capability == spv::CapabilityPhysicalStorageBufferAddresses ||
@@ -302,8 +304,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 for (std::size_t i = 5; i < count; ++i) Require(module.interface.insert(instruction[i]).second, "duplicate SPIR-V interface ID");
                 break;
             case spv::OpExecutionMode:
-                if (count == 4 && instruction[2] == spv::ExecutionModeSignedZeroInfNanPreserve) {
-                    Require(instruction[3] == 32u || instruction[3] == 64u, "SignedZeroInfNanPreserve requires Float32 or Float64");
+                if (count == 4 && (instruction[2] == spv::ExecutionModeSignedZeroInfNanPreserve || instruction[2] == spv::ExecutionModeRoundingModeRTE || instruction[2] == spv::ExecutionModeDenormPreserve)) {
+                    Require(instruction[3] == 16u || instruction[3] == 32u || instruction[3] == 64u, "float controls execution modes require Float16, Float32 or Float64");
                     executionModeTargets.insert(instruction[1]);
                     break;
                 }

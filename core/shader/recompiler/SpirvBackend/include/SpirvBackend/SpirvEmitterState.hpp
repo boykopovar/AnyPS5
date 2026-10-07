@@ -112,6 +112,7 @@ struct SpirvEmitterState {
     std::uint32_t bdaAtomicPointerFunction = 0;
     std::uint32_t bdaNoteWriteFunction = 0;
     std::uint32_t bdaFaultFunction = 0;
+    bool nativeF16ModesEmitted = false;
     std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};
     std::uint32_t bdaStopValue = 0;
     // False for programs with workgroup barriers: faulting BDA accesses then continue (see BdaInvocationsMayStop).
