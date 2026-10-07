@@ -21,6 +21,10 @@ static bool OwnsWrite(const PthreadRwlockPrivate* lock) {
     return lock->_writer.load(std::memory_order_acquire) == std::this_thread::get_id();
 }
 
+static bool HasWriter(const PthreadRwlockPrivate* lock) {
+    return lock->_writer.load(std::memory_order_acquire) != std::thread::id{};
+}
+
 extern "C" {
 
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock) {
@@ -48,7 +52,7 @@ int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock) {
 
 int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) {
     auto* lock = RequireRwlock(rwlock, __func__);
-    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EBUSY;
+    if (HasWriter(lock)) return SCE_KERNEL_ERROR_EBUSY;
     return lock->_lock.try_lock_shared() ? SCE_OK : SCE_KERNEL_ERROR_EBUSY;
 }
 
