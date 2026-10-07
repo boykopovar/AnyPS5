@@ -2,6 +2,7 @@
 #include <pkg/ByteOrder.hpp>
 #include <pkg/PackageError.hpp>
 #include <algorithm>
+#include <functional>
 #include <set>
 
 namespace Pkg {
