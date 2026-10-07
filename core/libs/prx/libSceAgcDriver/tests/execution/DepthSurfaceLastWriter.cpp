@@ -134,8 +134,8 @@ void* AllocateWatched(std::size_t bytes) {
     return block;
 }
 
-DepthTarget Depth(std::uint64_t address = DepthAddress) {
-    return {address, 0, Extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+DepthTarget Depth(std::uint64_t address = DepthAddress, VkExtent2D extent = Extent) {
+    return {address, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
 }
 
 GuestTextureResource View(std::uint32_t width, std::uint32_t height, std::uint64_t address = DepthAddress) {
@@ -186,6 +186,19 @@ void Run(const Context& context) {
     DepthSurfaceView(context, Depth());
     Require(DepthSurfaceAt(DepthAddress), "binding the depth target again did not bring the depth surface back");
     Require(Refused(context, wide), "depth, color target, depth again, then a view of another extent: the live depth surface did not refuse it");
+
+    const auto shared = DepthAddress + 0x1000000;
+    const VkExtent2D wideExtent{2 * Extent.width, Extent.height};
+    const auto sharedWide = View(wideExtent.width, wideExtent.height, shared);
+    const auto sharedExact = View(Extent.width, Extent.height, shared);
+    DepthSurfaceView(context, Depth(shared, wideExtent));
+    DepthSurfaceView(context, Depth(shared));
+    DepthSurfaceView(context, Depth(shared, wideExtent));
+    Require(Sample(context, sharedWide) != nullptr, "two depth surfaces at one address, the older one bound last, then its own view: it did not serve it");
+    Require(Refused(context, sharedExact), "two depth surfaces at one address, the older one bound last, then the other's view: the live depth surface did not refuse it");
+    DepthSurfaceView(context, Depth(shared));
+    Require(Sample(context, sharedExact) != nullptr, "two depth surfaces at one address, the newer one bound last, then its own view: it did not serve it");
+    Require(Refused(context, sharedWide), "two depth surfaces at one address, the newer one bound last, then the other's view: the live depth surface did not refuse it");
 
     if (!AgcDriver::GuestMemory::WriteWatched()) {
         Require(Refused(context, wide), "without write watching, a view of another extent was not refused");
