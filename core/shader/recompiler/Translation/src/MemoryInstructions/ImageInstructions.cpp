@@ -34,8 +34,8 @@ MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
     memory.imageSampleFlags = inst.imageSampleFlags;
     memory.imageDimension = inst.imageDimension;
     memory.imageAddressComponents = inst.imageAddressComponents;
-    memory.imageHasMip = inst.op == RdnaOpcode::ImageLoadMip || inst.op == RdnaOpcode::ImageStoreMip || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStoreMipPck;
-    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck;
+    memory.imageHasMip = inst.op == RdnaOpcode::ImageLoadMip || inst.op == RdnaOpcode::ImageStoreMip || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStoreMipPck || inst.op == RdnaOpcode::ImageLoadMipPck2 || inst.op == RdnaOpcode::ImageLoadMipPck4 || inst.op == RdnaOpcode::ImageStoreMipPck2 || inst.op == RdnaOpcode::ImageStoreMipPck4;
+    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck || inst.op == RdnaOpcode::ImageLoadPck2 || inst.op == RdnaOpcode::ImageLoadPck4 || inst.op == RdnaOpcode::ImageLoadMipPck2 || inst.op == RdnaOpcode::ImageLoadMipPck4 || inst.op == RdnaOpcode::ImageStorePck2 || inst.op == RdnaOpcode::ImageStorePck4 || inst.op == RdnaOpcode::ImageStoreMipPck2 || inst.op == RdnaOpcode::ImageStoreMipPck4;
     memory.dataSigned = inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPckSgn;
     memory.imageR128 = inst.imageR128;
     return memory;

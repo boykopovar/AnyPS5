@@ -863,4 +863,12 @@ if(BUILD_TESTING)
         set_tests_properties(image_msaa_load PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(image_pck_variants_tests ${LIBS_INCLUDE_DIR}/tests/ImagePckVariants.cpp)
+    target_link_libraries(image_pck_variants_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(image_pck_variants_tests)
+    add_test(NAME image_pck_variants COMMAND image_pck_variants_tests)
+    if(WIN32)
+        set_tests_properties(image_pck_variants PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
