@@ -73,6 +73,21 @@ void writeBounds(const TWrite& write, const std::string& name) {
     invalidRanges<TValue>(bytes, [&](Bytes& buffer, std::size_t offset) { write(buffer, offset, value); }, name);
 }
 
+template<typename TValue, typename TAppend>
+void appendBytes(const TAppend& append, TValue value, const Bytes& encoded, const std::string& name) {
+    for (const std::size_t prefixSize : {std::size_t{0}, std::size_t{1}, std::size_t{3}}) {
+        Bytes bytes{0xA5, 0x5A, 0xCC};
+        bytes.resize(prefixSize);
+        auto expected = bytes;
+        for (std::size_t count = 1; count <= 2; ++count) {
+            append(bytes, value);
+            expected.insert(expected.end(), encoded.begin(), encoded.end());
+            require(bytes.size() == prefixSize + count * sizeof(TValue), name + " grew the buffer by the wrong size");
+            require(bytes == expected, name + " changed the prefix or appended incorrect bytes");
+        }
+    }
+}
+
 template<typename TError, typename TOperation>
 void requireThrows(const TOperation& operation, const std::string& message) {
     try {
@@ -125,6 +140,14 @@ int main() {
         writeBounds<std::uint16_t>([&](Bytes& bytes, std::size_t offset, std::uint16_t value) { writer.WriteU16(bytes, offset, value); }, "ByteWriter::WriteU16");
         writeBounds<std::uint32_t>([&](Bytes& bytes, std::size_t offset, std::uint32_t value) { writer.WriteU32(bytes, offset, value); }, "ByteWriter::WriteU32");
         writeBounds<std::uint64_t>([&](Bytes& bytes, std::size_t offset, std::uint64_t value) { writer.WriteU64(bytes, offset, value); }, "ByteWriter::WriteU64");
+        appendBytes<std::uint8_t>([&](Bytes& bytes, std::uint8_t value) { writer.AppendU8(bytes, value); }, 0x11, {0x11}, "ByteWriter::AppendU8");
+        appendBytes<std::uint16_t>([&](Bytes& bytes, std::uint16_t value) { writer.AppendU16(bytes, value); }, 0x2211, {0x11, 0x22}, "ByteWriter::AppendU16");
+        appendBytes<std::uint32_t>([&](Bytes& bytes, std::uint32_t value) { writer.AppendU32(bytes, value); }, 0x44332211, {0x11, 0x22, 0x33, 0x44}, "ByteWriter::AppendU32");
+        appendBytes<std::uint64_t>([&](Bytes& bytes, std::uint64_t value) { writer.AppendU64(bytes, value); }, 0x8877665544332211ull, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}, "ByteWriter::AppendU64");
+        const auto appendSigned = [&](Bytes& bytes, std::int64_t value) { writer.AppendI64(bytes, value); };
+        appendBytes<std::int64_t>(appendSigned, 0x7766554433221100ll, {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77}, "ByteWriter::AppendI64");
+        appendBytes<std::int64_t>(appendSigned, -1, {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, "ByteWriter::AppendI64");
+        appendBytes<std::int64_t>(appendSigned, std::numeric_limits<std::int64_t>::min(), {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80}, "ByteWriter::AppendI64");
         readBounds<std::uint16_t>(Io::ReadU16, "ReadU16");
         readBounds<std::uint32_t>(Io::ReadU32, "ReadU32");
         readBounds<std::uint64_t>(Io::ReadU64, "ReadU64");
