@@ -2,12 +2,6 @@ add_library(libScePlayerInvitationDialog SHARED EXCLUDE_FROM_ALL libScePlayerInv
 target_include_directories(libScePlayerInvitationDialog PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libScePlayerInvitationDialog)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(player_invitation_dialog_tests ${LIBS_INCLUDE_DIR}/tests/PlayerInvitationDialog.cpp)
     target_include_directories(player_invitation_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})

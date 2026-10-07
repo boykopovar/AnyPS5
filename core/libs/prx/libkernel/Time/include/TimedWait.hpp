@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBKERNEL_TIME_INCLUDE_TIMEDWAIT_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_TIME_INCLUDE_TIMEDWAIT_HPP
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -9,6 +10,7 @@
 namespace TimedWait {
 
 bool Coarse();
+void BindThreadWaitState(std::atomic<int>* state);
 std::uint64_t NowNanos();
 std::uint64_t DeadlineNanos(std::uint64_t microseconds);
 std::uint64_t RemainingMicros(std::uint64_t deadlineNanos);

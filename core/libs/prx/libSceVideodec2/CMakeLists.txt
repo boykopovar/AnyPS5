@@ -7,12 +7,6 @@ configure_windows_unwind(libSceVideodec2)
 
 target_link_libraries(libSceVideodec2 PRIVATE ffmpeg)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_videodec2_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideodec2.cpp)
     target_include_directories(guest_videodec2_tests PRIVATE ${LIBS_INCLUDE_DIR})

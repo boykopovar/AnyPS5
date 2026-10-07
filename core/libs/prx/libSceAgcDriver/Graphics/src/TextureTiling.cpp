@@ -383,7 +383,7 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
         return geometry;
     }
     geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount);
-    const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::kCube;
+    const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
     geometry.layers = layered ? descriptor.depthOrLastArray + 1u : 1u;
     geometry.imageLayers = geometry.layers;
     geometry.guestBytes = ComputeSurfaceSize(geometry.mips, geometry.layers);

@@ -8,12 +8,6 @@ set_target_properties(libSceJpegEnc PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceJpegEnc)
 target_link_libraries(libSceJpegEnc PRIVATE decoder_jpeg)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_jpeg_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegEnc.cpp)
     target_include_directories(guest_jpeg_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})

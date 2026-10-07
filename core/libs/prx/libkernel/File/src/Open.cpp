@@ -34,7 +34,14 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
     }
     return ::_write(fd, buf, static_cast<unsigned int>(n));
 }
-static int NativeClose(int fd) { return ::_close(fd); }
+extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
+static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
+static int NativeClose(int fd) {
+    const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
+    const int result = ::_close(fd);
+    _set_thread_local_invalid_parameter_handler(previous);
+    return result;
+}
 static int NativeUnlink(const std::filesystem::path& p) {
     return ::_wunlink(p.wstring().c_str());
 }
@@ -117,6 +124,7 @@ int APS5_VABI sceKernelClose(int d) {
     File::ForgetDirectoryDescriptor(d);
 #endif
     if (NativeClose(d) != 0) {
+        if (errno == EBADF) return SCE_KERNEL_ERROR_EBADF;
         throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
     }
     return 0;

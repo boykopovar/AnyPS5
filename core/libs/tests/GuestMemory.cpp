@@ -701,6 +701,49 @@ static void CheckSharedWriteTracking() {
 #endif
 }
 
+static void CheckPinnedSharedPages() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 3, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 3, 3, 0, phys, 0) == 0);
+    auto* bytes = static_cast<volatile unsigned char*>(mapped);
+    const auto collect = [&] {
+        std::array<void*, 32> pages{};
+        std::size_t count = pages.size();
+        Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), page * 3, pages.data(), &count, true));
+        return count;
+    };
+    const auto protection = [&](std::size_t offset) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(const_cast<unsigned char*>(bytes + offset), &info, sizeof(info)) == sizeof(info));
+        return info.Protect;
+    };
+    collect();
+    Require(collect() == 0);
+    Require(protection(0) == PAGE_READONLY && protection(page) == PAGE_READONLY);
+    GuestArena::GuestArenaPinWritable_nid_postfix(const_cast<unsigned char*>(bytes + page), page);
+    Require(protection(page) == PAGE_READWRITE && protection(0) == PAGE_READONLY && protection(page * 2) == PAGE_READONLY);
+    Require(collect() == 4);
+    Require(collect() == 4);
+    Require(protection(page) == PAGE_READWRITE);
+    bytes[page + 8] = 7;
+    bytes[0] = 9;
+    Require(collect() == 8);
+    Require(collect() == 4);
+    Require(protection(0) == PAGE_READONLY && protection(page) == PAGE_READWRITE);
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(const_cast<unsigned char*>(bytes + page), page);
+    collect();
+    Require(collect() == 0);
+    Require(protection(page) == PAGE_READONLY);
+    bytes[page + 8] = 11;
+    Require(collect() == 4);
+    Require(sceKernelMunmap(mapped, page * 3) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
+#endif
+}
+
 static void CheckReadsIntoSharedWriteTracking() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -968,6 +1011,7 @@ int main() {
 #endif
     CheckSharedWriteTracking();
     CheckReadsIntoSharedWriteTracking();
+    CheckPinnedSharedPages();
 #if defined(__linux__)
     CheckWriteWatch();
     CheckDirectMemoryWriteWatch();

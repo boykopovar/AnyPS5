@@ -77,7 +77,10 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     if (!available_space_kb) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (!mount_point || std::strncmp(mount_point->data, DOWNLOAD_MOUNT_POINT, sizeof(mount_point->data)) != 0) APS5_INVALID_ARG_EX;
     const std::uint64_t quotaKb = GetAppDownloadDataSizeMiB_nid_postfix() * 1024u;
-    if (quotaKb == 0) throw std::logic_error(std::string(__func__) + ": the title declares no download data");
+    if (quotaKb == 0) {
+        *available_space_kb = 0;
+        return 0;
+    }
     const auto directory = ResolvePath_nid_no_patch(DOWNLOAD_MOUNT_POINT);
     std::filesystem::create_directories(directory);
     std::uint64_t usedKb = 0;

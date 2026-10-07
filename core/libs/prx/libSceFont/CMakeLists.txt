@@ -1,12 +1,6 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/FontLibrary.cmake)
 add_sce_font_library(libSceFont)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestFont.cpp)
     target_include_directories(guest_font_tests PRIVATE ${LIBS_INCLUDE_DIR})

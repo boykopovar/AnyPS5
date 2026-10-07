@@ -10,7 +10,9 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>

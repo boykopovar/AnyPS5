@@ -2,12 +2,6 @@ add_library(libSceSysmodule SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceSysmodule PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceSysmodule)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_sysmodule_tests ${LIBS_INCLUDE_DIR}/tests/GuestSysmodule.cpp)
     target_include_directories(guest_sysmodule_tests PRIVATE ${LIBS_INCLUDE_DIR})

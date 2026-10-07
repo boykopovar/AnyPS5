@@ -79,10 +79,7 @@ DescriptorImageShape ImageShapeForResource(const ImageResource& image) {
         fail("DescriptorBindingBuilder::Populate multisampled image resources have no descriptor image shape");
     }
     if (info.spirvDimension == spv::Dim1D) {
-        if (info.arrayed != 0u) {
-            fail("DescriptorBindingBuilder::Populate 1D array image resources have no descriptor image shape");
-        }
-        return DescriptorImageShape::Image1D;
+        return info.arrayed != 0u ? DescriptorImageShape::Image1DArray : DescriptorImageShape::Image1D;
     }
     if (info.spirvDimension == spv::Dim3D) {
         return DescriptorImageShape::Image3D;

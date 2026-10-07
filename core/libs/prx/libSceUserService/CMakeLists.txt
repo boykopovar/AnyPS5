@@ -2,12 +2,6 @@ add_library(libSceUserService SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceUserService PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceUserService)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_user_service_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserService.cpp)
     target_include_directories(guest_user_service_tests PRIVATE ${LIBS_INCLUDE_DIR})

@@ -30,6 +30,7 @@ int APS5_VABI stat_nid_postfix(const char*, FileStat*);
 int APS5_VABI unlink_nid_postfix(const char*);
 int APS5_VABI rmdir_nid_postfix(const char*);
 int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
+int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelStat(const char*, FileStat*);
 int APS5_VABI sceKernelUnlink(const char*);
 int APS5_VABI sceKernelRmdir(const char*);
@@ -189,6 +190,10 @@ int main() {
     Require(sceKernelUnlink(missingName.c_str()) == static_cast<int>(0x80020002u));
     Require(unlink_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
     Require(unlink_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    const int closable = sceKernelOpen(presentName.c_str(), 0, 0);
+    Require(closable >= 0 && sceKernelClose(closable) == 0);
+    Require(sceKernelClose(closable) == static_cast<int>(0x80020009u));
+    Require(sceKernelClose(-1) == static_cast<int>(0x80020009u));
     Require(unlink_nid_postfix(presentName.c_str()) == 0 && !std::filesystem::exists(present));
     const auto empty = root / "empty";
     Require(std::filesystem::create_directory(empty));

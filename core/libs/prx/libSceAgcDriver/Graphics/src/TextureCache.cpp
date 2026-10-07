@@ -39,7 +39,7 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
         break;
     }
     const auto mips = ComputeMipLayout(resource.tileMode, resource.format, resource.width, resource.height, resource.mipCount);
-    const auto layers = resource.dimension == TextureDimension::k2DArray || resource.dimension == TextureDimension::kCube ? resource.depthOrLastArray + 1u : 1u;
+    const auto layers = resource.dimension == TextureDimension::k2DArray || resource.dimension == TextureDimension::k1DArray || resource.dimension == TextureDimension::kCube ? resource.depthOrLastArray + 1u : 1u;
     const auto bytes = ComputeSurfaceSize(mips, layers);
     Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "texture cache surface size overflow");
     std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));

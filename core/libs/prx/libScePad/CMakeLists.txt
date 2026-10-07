@@ -6,12 +6,6 @@ target_include_directories(libScePad PRIVATE ${LIBS_INCLUDE_DIR})
 set_target_properties(libScePad PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libScePad)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_pad_tests ${LIBS_INCLUDE_DIR}/tests/GuestPad.cpp)
     target_include_directories(guest_pad_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)

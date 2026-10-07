@@ -4,12 +4,6 @@ set_target_properties(libScePngEnc PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libScePngEnc)
 target_link_libraries(libScePngEnc PRIVATE decoder_png)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_png_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestPngEnc.cpp)
     target_include_directories(guest_png_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})

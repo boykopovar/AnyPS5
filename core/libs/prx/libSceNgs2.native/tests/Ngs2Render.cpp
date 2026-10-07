@@ -437,7 +437,15 @@ static void TestAllocator() {
     Require(sceNgs2RackDestroy(master, nullptr) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
 }
 
+static uintptr_t exitSystem = 0;
+
+static void RenderAfterStaticTeardown() {
+    RenderI16(exitSystem);
+    Require(sceNgs2SystemDestroy(exitSystem, nullptr) == SCE_NGS2_OK);
+}
+
 int main() {
+    Require(std::atexit(RenderAfterStaticTeardown) == 0);
     TestErrorsAndInfo();
     TestPcmBlockEnd();
     TestPitchAndRepeat();
@@ -448,5 +456,6 @@ int main() {
     TestStereoIntoSurround();
     TestLock();
     TestAllocator();
+    exitSystem = CreateSystem();
     return 0;
 }

@@ -2,6 +2,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -12,6 +14,7 @@
 #endif
 
 extern "C" void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors);
+extern "C" int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
 
 namespace {
 
@@ -41,19 +44,51 @@ bool IsInLoadedImage(const void* address) {
 #endif
 }
 
+void CallThreadDestructor(const ThreadDestructor& destructor) {
+    const auto* function = reinterpret_cast<const void*>(destructor.function);
+    if (!IsInLoadedImage(function)) {
+        std::ostringstream message;
+        message << "thread_local destructor " << function << " of dso " << destructor.dsoSymbol << " is not in a loaded image";
+        throw std::runtime_error(message.str());
+    }
+    destructor.function(destructor.object);
+}
+
 void APS5_VABI RunThreadDestructors_nid_no_patch() {
     auto& destructors = ThreadDestructors();
     while (!destructors.empty()) {
         const ThreadDestructor destructor = destructors.back();
         destructors.pop_back();
-        const auto* function = reinterpret_cast<const void*>(destructor.function);
-        if (!IsInLoadedImage(function)) {
-            std::ostringstream message;
-            message << "thread_local destructor " << function << " of dso " << destructor.dsoSymbol << " is not in a loaded image";
-            throw std::runtime_error(message.str());
-        }
-        destructor.function(destructor.object);
+        CallThreadDestructor(destructor);
     }
+}
+
+bool FindDsoModule(const void* dsoSymbol, KernelModule& handle) {
+    ModuleInfoEx info{};
+    info.st_size = sizeof(ModuleInfoEx);
+    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(dsoSymbol), 2, &info) != 0) {
+        handle = 0;
+        return false;
+    }
+    handle = info.id;
+    return true;
+}
+
+bool ForceThreadDestructorPass(KernelModule handle) {
+    auto& destructors = ThreadDestructors();
+    bool found = false;
+    for (std::size_t index = destructors.size(); index-- > 0;) {
+        const ThreadDestructor destructor = destructors[index];
+        KernelModule module = 0;
+        const bool loaded = FindDsoModule(destructor.dsoSymbol, module);
+        if (module != handle)
+            continue;
+        found = true;
+        destructors.erase(destructors.begin() + static_cast<std::ptrdiff_t>(index));
+        if (loaded && *static_cast<void* const*>(destructor.dsoSymbol) == destructor.dsoSymbol)
+            CallThreadDestructor(destructor);
+    }
+    return found;
 }
 
 void RegisterThreadExitHook() {
@@ -88,8 +123,10 @@ void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix() {
 }
 
 int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle) {
-    (void)handle;
-    NotImplemented_nid_no_patch(__func__);
+    for (int pass = 0; pass < 4; ++pass) {
+        if (!ForceThreadDestructorPass(handle))
+            break;
+    }
     return 0;
 }
 

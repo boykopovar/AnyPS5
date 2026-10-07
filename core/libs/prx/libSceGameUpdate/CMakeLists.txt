@@ -2,12 +2,6 @@ add_library(libSceGameUpdate SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceGameUpdate PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceGameUpdate)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_gameupdate_tests ${LIBS_INCLUDE_DIR}/tests/GuestGameUpdate.cpp)
     target_include_directories(guest_gameupdate_tests PRIVATE ${LIBS_INCLUDE_DIR})

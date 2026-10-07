@@ -37,7 +37,8 @@ enum class TextureDimension {
     k2D,
     k2DArray,
     kCube,
-    k3D
+    k3D,
+    k1DArray
 };
 
 struct GuestTextureResource {

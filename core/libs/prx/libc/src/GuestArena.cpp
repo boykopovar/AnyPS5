@@ -188,6 +188,16 @@ bool GuestArenaHandleWrite_nid_postfix(std::uintptr_t address) {
     return WindowsMappings::Get().HandleWrite(address);
 }
 
+void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) return;
+    WindowsMappings::Get().Pin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+}
+
+void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) return;
+    WindowsMappings::Get().Unpin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+}
+
 bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection) {
     return WindowsMappings::Get().Protection(address, protection);
 }

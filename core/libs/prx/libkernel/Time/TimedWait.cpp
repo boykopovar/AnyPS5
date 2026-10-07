@@ -17,7 +17,36 @@ namespace {
 constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
 constexpr std::uint64_t LEAD_NANOS = 500000ULL;
 
+thread_local std::atomic<int> ownWaitState{0};
+thread_local std::atomic<int>* waitState = &ownWaitState;
+
 #ifdef _WIN32
+
+using NtTestAlertFunction = LONG(NTAPI*)();
+
+void DrainApcs() {
+    static const auto testAlert = reinterpret_cast<NtTestAlertFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtTestAlert")));
+    if (testAlert) testAlert();
+    else SleepEx(0, TRUE);
+}
+
+DWORD AlertableWait(DWORD count, const HANDLE* handles, DWORD milliseconds) {
+    waitState->fetch_add(1, std::memory_order_seq_cst);
+    DWORD result;
+    do {
+        result = WaitForMultipleObjectsEx(count, handles, FALSE, milliseconds, TRUE);
+    } while (result == WAIT_IO_COMPLETION);
+    waitState->fetch_sub(1, std::memory_order_seq_cst);
+    DrainApcs();
+    return result;
+}
+
+void AlertableSleep(DWORD milliseconds) {
+    waitState->fetch_add(1, std::memory_order_seq_cst);
+    SleepEx(milliseconds, TRUE);
+    waitState->fetch_sub(1, std::memory_order_seq_cst);
+    DrainApcs();
+}
 
 void WINAPI DestroyWaiter(void* value);
 
@@ -36,7 +65,7 @@ bool TimerWait(HANDLE timer, std::uint64_t nanos) {
     due.QuadPart = -static_cast<LONGLONG>(nanos / 100ULL);
     if (due.QuadPart == 0) due.QuadPart = -1;
     if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) return false;
-    return WaitForSingleObject(timer, INFINITE) == WAIT_OBJECT_0;
+    return AlertableWait(1, &timer, INFINITE) == WAIT_OBJECT_0;
 }
 
 DWORD WholeMilliseconds(std::uint64_t nanos) {
@@ -51,7 +80,7 @@ void SleepNanosCoarse(std::uint64_t nanos) {
     }
     thread_local HANDLE timer = CreateHighResolutionTimer();
     if (TimerWait(timer, nanos)) return;
-    Sleep(static_cast<DWORD>((nanos + 999999ULL) / 1000000ULL));
+    AlertableSleep(static_cast<DWORD>((nanos + 999999ULL) / 1000000ULL));
 }
 
 #endif
@@ -90,7 +119,7 @@ Waiter* ThisThreadWaiter() {
 }
 
 bool EventSet(HANDLE event, DWORD milliseconds) {
-    return WaitForSingleObject(event, milliseconds) == WAIT_OBJECT_0;
+    return AlertableWait(1, &event, milliseconds) == WAIT_OBJECT_0;
 }
 
 bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
@@ -104,7 +133,7 @@ bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
             due.QuadPart = -static_cast<LONGLONG>(bulk / 100ULL);
             if (waiter->timer && SetWaitableTimer(waiter->timer, &due, 0, nullptr, nullptr, FALSE)) {
                 HANDLE handles[2] = {waiter->event, waiter->timer};
-                if (WaitForMultipleObjects(2, handles, FALSE, INFINITE) == WAIT_OBJECT_0) return true;
+                if (AlertableWait(2, handles, INFINITE) == WAIT_OBJECT_0) return true;
                 continue;
             }
             if (EventSet(waiter->event, WholeMilliseconds(bulk))) return true;
@@ -140,7 +169,7 @@ void Condition::unlink(Waiter* waiter) {
 }
 
 void Condition::waitSignal(Waiter* waiter) {
-    WaitForSingleObject(waiter->event, INFINITE);
+    AlertableWait(1, &waiter->event, INFINITE);
 }
 
 bool Condition::waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
@@ -150,7 +179,7 @@ bool Condition::waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
         unlink(waiter);
         return false;
     }
-    EventSet(waiter->event, 0);
+    WaitForSingleObject(waiter->event, 0);
     return true;
 }
 
@@ -189,6 +218,10 @@ void Condition::NotifyAll() {
 }
 
 #endif
+
+void BindThreadWaitState(std::atomic<int>* state) {
+    waitState = state != nullptr ? state : &ownWaitState;
+}
 
 bool Coarse() {
 #ifdef _WIN32
@@ -233,7 +266,7 @@ void SleepUntil(std::uint64_t deadlineNanos) {
     std::uint64_t now = NowNanos();
     if (deadlineNanos > now + LEAD_NANOS) {
         thread_local HANDLE timer = CreateHighResolutionTimer();
-        if (!TimerWait(timer, deadlineNanos - now - LEAD_NANOS)) Sleep(WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
+        if (!TimerWait(timer, deadlineNanos - now - LEAD_NANOS)) AlertableSleep(WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
         now = NowNanos();
     }
     while (now < deadlineNanos) {
@@ -251,7 +284,7 @@ void PollSleepUntil(std::uint64_t deadlineNanos) {
     const std::uint64_t now = NowNanos();
     if (deadlineNanos <= now) return;
     thread_local HANDLE timer = CreateHighResolutionTimer();
-    if (!TimerWait(timer, deadlineNanos - now)) Sleep(WholeMilliseconds(deadlineNanos - now));
+    if (!TimerWait(timer, deadlineNanos - now)) AlertableSleep(WholeMilliseconds(deadlineNanos - now));
 #else
     SleepUntil(deadlineNanos);
 #endif

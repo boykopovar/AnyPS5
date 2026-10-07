@@ -2,12 +2,6 @@ add_library(libSceNet SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNet PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNet)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_sce_net_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceNet.cpp)
     target_include_directories(guest_sce_net_tests PRIVATE ${LIBS_INCLUDE_DIR})

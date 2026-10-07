@@ -174,6 +174,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     const auto entry = args->entry;
     void* arg = args->arg;
     PthreadPrivate* self = args->self;
+    TimedWait::BindThreadWaitState(&self->waitCount);
     if (!self->stackAddress) SetStackFromHost(self);
     currentThread = self;
     RegisterStack(self);
@@ -407,6 +408,7 @@ Pthread APS5_VABI scePthreadSelf() {
         adopted->threadId = std::this_thread::get_id();
         adopted->_detached = true;
         adopted->references.store(1, std::memory_order_relaxed);
+        TimedWait::BindThreadWaitState(&adopted->waitCount);
         SetStackFromHost(adopted.get());
         currentThread = adopted.release();
     }

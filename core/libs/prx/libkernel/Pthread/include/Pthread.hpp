@@ -85,6 +85,7 @@ struct PthreadPrivate {
     std::atomic<unsigned> references{2};
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;
+    std::atomic<int> waitCount{0};
     std::atomic<KernelCpumask> affinity{DEFAULT_THREAD_AFFINITY};
     std::atomic<int> priority{DEFAULT_THREAD_PRIORITY};
     std::mutex nameLock;

@@ -146,6 +146,30 @@ void RunGuestTextureResourceTests() {
     array.baseArray = 5;
     rejectFields(array, "base array past its last array slice");
 
+    Fields oneDArray = base;
+    oneDArray.typeRaw = 12;
+    oneDArray.height = 1;
+    oneDArray.depth = 3;
+    oneDArray.baseArray = 2;
+    result = DecodeTextureResource(pack(oneDArray));
+    Require(result.dimension == TextureDimension::k1DArray && result.height == 1 && result.depthOrLastArray == 3 && result.baseArray == 2, "1D array descriptor decoded incorrectly");
+    Require(DescribeSurface(result).layers == 4, "1D array surface does not hold every array slice");
+    oneDArray.baseArray = 4;
+    rejectFields(oneDArray, "1D array texture descriptor has a base array past its last array slice");
+    oneDArray.baseArray = 0;
+    oneDArray.height = 2;
+    rejectFields(oneDArray, "1D array texture descriptor has a nonzero height");
+    oneDArray.height = 1;
+    oneDArray.base40 = 0x120000ull;
+    oneDArray.tileModeRaw = 0x18;
+    Require(DecodeTextureResource(pack(oneDArray)).tileMode == TextureTileMode::kZ64KBX, "1D array in SW_64KB_Z_X decoded incorrectly");
+    oneDArray.tileModeRaw = 0x1b;
+    Require(DecodeTextureResource(pack(oneDArray)).tileMode == TextureTileMode::kR64KBX, "1D array in SW_64KB_R_X decoded incorrectly");
+    oneDArray.tileModeRaw = 0x05;
+    rejectFields(oneDArray, "tile mode other than linear, Z or R");
+    oneDArray.tileModeRaw = 0x19;
+    rejectFields(oneDArray, "tile mode other than linear, Z or R");
+
     Fields cube = base;
     cube.typeRaw = 11;
     cube.width = 32;

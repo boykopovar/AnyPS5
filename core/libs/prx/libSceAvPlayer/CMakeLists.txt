@@ -1,12 +1,6 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/AvPlayerLibrary.cmake)
 add_sce_avplayer_library(libSceAvPlayer)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_avplayer_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvPlayer.cpp)
     target_include_directories(guest_avplayer_tests PRIVATE ${LIBS_INCLUDE_DIR})
