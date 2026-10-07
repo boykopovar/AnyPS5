@@ -143,58 +143,6 @@ void DefineBdaDwordReadFunctions(SpirvEmitterState& state) {
     state.bdaStopValue = 0;
 }
 
-void DefineBdaByteWriteFunctions(SpirvEmitterState& state) {
-    const auto u32 = TypeU32(state);
-    const auto u64 = TypeScalarU64(state);
-    const auto voidType = state.module.Type(spv::OpTypeVoid);
-    const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
-    const auto bytePointer = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType);
-    const auto type = state.module.Type(spv::OpTypeFunction, voidType, u64, u32, u32, u32);
-    const auto& memory = state.program.Resources().memoryInfo;
-    const bool coherentAccesses = std::any_of(memory.begin(), memory.end(), [](const MemoryInfo& info) { return info.coherent; });
-    for (const bool coherent : {false, true}) {
-        if (coherent && !coherentAccesses) continue;
-        const auto function = state.module.AllocateId();
-        state.module.AddName(function, std::string("write_bda_bytes") + (coherent ? "_coherent" : ""));
-        state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, type);
-        const auto address = state.module.AllocateId();
-        const auto value = state.module.AllocateId();
-        const auto bytes = state.module.AllocateId();
-        const auto instruction = state.module.AllocateId();
-        state.module.AddFunction(spv::OpFunctionParameter, u64, address);
-        state.module.AddFunction(spv::OpFunctionParameter, u32, value);
-        state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
-        state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
-        EmitLabel(state, state.module.AllocateId());
-        const auto counter = state.module.AllocateId();
-        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), counter, spv::StorageClassFunction);
-        state.module.AddFunction(spv::OpStore, counter, ConstantU32(state, 0u));
-        const auto header = state.module.AllocateId();
-        const auto body = state.module.AllocateId();
-        const auto continuation = state.module.AllocateId();
-        const auto merge = state.module.AllocateId();
-        state.module.AddFunction(spv::OpBranch, header);
-        EmitLabel(state, header);
-        const auto byte = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, u32, byte, counter);
-        const auto pending = Binary(state, spv::OpULessThan, TypeBool(state), byte, bytes);
-        state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
-        state.module.AddFunction(spv::OpBranchConditional, pending, body, merge);
-        EmitLabel(state, body);
-        const auto guest = Binary(state, spv::OpIAdd, u64, address, Unary(state, spv::OpUConvert, u64, byte));
-        const auto shifted = Binary(state, spv::OpShiftRightLogical, u32, value, Binary(state, spv::OpShiftLeftLogical, u32, byte, ConstantU32(state, 3u)));
-        EmitBdaStoreAt(state, guest, 1u, bytePointer, Unary(state, spv::OpUConvert, byteType, shifted), instruction, BdaAccessMask(coherent));
-        state.module.AddFunction(spv::OpBranch, continuation);
-        EmitLabel(state, continuation);
-        state.module.AddFunction(spv::OpStore, counter, Binary(state, spv::OpIAdd, u32, byte, ConstantU32(state, 1u)));
-        state.module.AddFunction(spv::OpBranch, header);
-        EmitLabel(state, merge);
-        state.module.AddFunction(spv::OpReturn);
-        state.module.AddFunction(spv::OpFunctionEnd);
-        state.bdaByteWriteFunctions[coherent] = function;
-    }
-}
-
 // APS5_BDA_BYTE_READS=1 restores one lookup and one byte load per byte for every read.
 bool BdaByteReadsForced() {
     static const bool forced = std::getenv("APS5_BDA_BYTE_READS") != nullptr;
@@ -276,6 +224,58 @@ void EmitBdaWrite(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
     EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), [&] {
         EmitBdaStoreAt(state, address, 4u, TypePhysicalU32Pointer(state), value, instruction, BdaAccessMask(state, inst));
     });
+}
+
+void DefineBdaByteWriteFunctions(SpirvEmitterState& state) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto voidType = state.module.Type(spv::OpTypeVoid);
+    const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
+    const auto bytePointer = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType);
+    const auto type = state.module.Type(spv::OpTypeFunction, voidType, u64, u32, u32, u32);
+    const auto& memory = state.program.Resources().memoryInfo;
+    const bool coherentAccesses = std::any_of(memory.begin(), memory.end(), [](const MemoryInfo& info) { return info.coherent; });
+    for (const bool coherent : {false, true}) {
+        if (coherent && !coherentAccesses) continue;
+        const auto function = state.module.AllocateId();
+        state.module.AddName(function, std::string("write_bda_bytes") + (coherent ? "_coherent" : ""));
+        state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, type);
+        const auto address = state.module.AllocateId();
+        const auto value = state.module.AllocateId();
+        const auto bytes = state.module.AllocateId();
+        const auto instruction = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+        state.module.AddFunction(spv::OpFunctionParameter, u32, value);
+        state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
+        state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
+        EmitLabel(state, state.module.AllocateId());
+        const auto counter = state.module.AllocateId();
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), counter, spv::StorageClassFunction);
+        state.module.AddFunction(spv::OpStore, counter, ConstantU32(state, 0u));
+        const auto header = state.module.AllocateId();
+        const auto body = state.module.AllocateId();
+        const auto continuation = state.module.AllocateId();
+        const auto merge = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, header);
+        const auto byte = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, u32, byte, counter);
+        const auto pending = Binary(state, spv::OpULessThan, TypeBool(state), byte, bytes);
+        state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, pending, body, merge);
+        EmitLabel(state, body);
+        const auto guest = Binary(state, spv::OpIAdd, u64, address, Unary(state, spv::OpUConvert, u64, byte));
+        const auto shifted = Binary(state, spv::OpShiftRightLogical, u32, value, Binary(state, spv::OpShiftLeftLogical, u32, byte, ConstantU32(state, 3u)));
+        EmitBdaStoreAt(state, guest, 1u, bytePointer, Unary(state, spv::OpUConvert, byteType, shifted), instruction, BdaAccessMask(coherent));
+        state.module.AddFunction(spv::OpBranch, continuation);
+        EmitLabel(state, continuation);
+        state.module.AddFunction(spv::OpStore, counter, Binary(state, spv::OpIAdd, u32, byte, ConstantU32(state, 1u)));
+        state.module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, merge);
+        state.module.AddFunction(spv::OpReturn);
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.bdaByteWriteFunctions[coherent] = function;
+    }
 }
 
 void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
