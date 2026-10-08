@@ -206,7 +206,7 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             continue;
         }
         const auto& sampler = info.samplers[r];
-        const std::uint32_t unsupported = sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod);
+        const std::uint32_t unsupported = sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient);
         if (unsupported != 0u) {
             failUnnormalized(UnnormalizedUseReason(unsupported));
         }

@@ -40,6 +40,7 @@ struct ResourceSpecialization {
 
     std::vector<Buffer> buffers;
     std::vector<Image> images;
+    std::vector<std::uint32_t> unnormalizedSamplers;
 
     bool operator==(const ResourceSpecialization& other) const;
 

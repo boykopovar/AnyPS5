@@ -651,6 +651,11 @@ void buildResourceSpecialization(const IrResourcePlan& plan, ResourceSnapshot& s
         }
     }
 
+    result.unnormalizedSamplers.assign(snapshot.samplers.size(), 0u);
+    for (std::uint32_t index = 0; index < snapshot.samplers.size(); index++) {
+        const auto& sampler = snapshot.samplers[index];
+        if (sampler.dwordCount == 4u && ((sampler.dwords[0] >> 15u) & 1u) != 0u) result.unnormalizedSamplers[index] = 1u;
+    }
     result.boundDescriptors.clear();
     result.boundDescriptors.reserve(result.buffers.size() + result.images.size());
     for (std::uint32_t index = 0; index < result.buffers.size(); index++) {
@@ -746,6 +751,9 @@ void ResourceMaterializer::Apply(IrProgram& program, const ResourceSpecializatio
         }
     }
     auto samplers = resources.info.samplers;
+    for (std::uint32_t index = 0; index < samplers.size() && index < specialization.unnormalizedSamplers.size(); index++) {
+        samplers[index].unnormalized = specialization.unnormalizedSamplers[index] != 0u;
+    }
     auto sampledPairs = resources.info.sampledPairs;
     samplers.reserve(samplerCount);
     for (std::uint32_t index = 0; index < resources.info.samplers.size(); index++) {
@@ -1043,7 +1051,7 @@ bool ResourceSpecialization::Image::operator==(const Image& other) const {
 }
 
 bool ResourceSpecialization::operator==(const ResourceSpecialization& other) const {
-    return buffers == other.buffers && images == other.images;
+    return buffers == other.buffers && images == other.images && unnormalizedSamplers == other.unnormalizedSamplers;
 }
 
 }

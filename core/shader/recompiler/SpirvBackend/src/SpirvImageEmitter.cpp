@@ -1183,7 +1183,9 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         EmitEmulatedCompareSample(ctx, access, setup);
         return;
     }
-    const bool explicitLod = ImageSampleExplicitLod(mem.imageSampleFlags, state.program.Resources().stage);
+    const auto& samplerResources = state.program.Resources().info.samplers;
+    const bool unnormalized = !setup.dref && mem.sampler < samplerResources.size() && samplerResources[mem.sampler].unnormalized;
+    const bool explicitLod = unnormalized || ImageSampleExplicitLod(mem.imageSampleFlags, state.program.Resources().stage);
     std::uint32_t opcode = spv::OpImageSampleImplicitLod;
     if (explicitLod) {
         opcode = setup.dref ? spv::OpImageSampleDrefExplicitLod : spv::OpImageSampleExplicitLod;
@@ -1198,18 +1200,18 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     }
     std::uint32_t operandMask = 0;
     std::vector<std::uint32_t> operands;
-    if (HasFlag(mem, RdnaImageSampleFlagDerivative)) {
+    if (!unnormalized && HasFlag(mem, RdnaImageSampleFlagDerivative)) {
         operandMask |= spv::ImageOperandsGradMask;
         operands.push_back(CoordF32(ctx, access, setup.layout.gradX, setup.dimensionInfo.spatialComponents, AddressDimension(access).spatialComponents));
         operands.push_back(CoordF32(ctx, access, setup.layout.gradY, setup.dimensionInfo.spatialComponents, AddressDimension(access).spatialComponents));
     } else if (explicitLod) {
         operandMask |= spv::ImageOperandsLodMask;
-        operands.push_back(HasFlag(mem, RdnaImageSampleFlagLod) ? AddressF32(ctx, access, setup.layout.lod) : ZeroF32(state));
+        operands.push_back(!unnormalized && HasFlag(mem, RdnaImageSampleFlagLod) ? AddressF32(ctx, access, setup.layout.lod) : ZeroF32(state));
     } else if (setup.layout.bias != NoImageComponent) {
         operandMask |= spv::ImageOperandsBiasMask;
         operands.push_back(AddressF32(ctx, access, setup.layout.bias));
     }
-    if (setup.layout.clamp != NoImageComponent) {
+    if (!unnormalized && setup.layout.clamp != NoImageComponent) {
         const auto& capabilities = state.supportedCapabilities;
         if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityMinLod)) == capabilities.end()) ctx.Fail(access.inst, "clamps its LOD, which needs the device's shaderResourceMinLod");
         const auto clamp = AddressF32(ctx, access, setup.layout.clamp);
