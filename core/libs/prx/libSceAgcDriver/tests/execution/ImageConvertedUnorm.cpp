@@ -34,6 +34,8 @@ constexpr std::uint32_t LoadGroups = LoadWidth / Threads;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t UnormFormat = 30;
 constexpr std::uint32_t UintFormat = 34;
+constexpr std::uint32_t FloatFormat = 43;
+constexpr std::size_t FloatOffset = 40960;
 constexpr std::uint32_t SwizzleXYZ1 = 0x3acu;
 constexpr std::uint32_t SwizzleXZY1 = 0x374u;
 constexpr std::uint32_t SwizzleZYX1 = 0x32eu;
@@ -249,14 +251,60 @@ void CheckStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint8_t* texels, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& extra, const std::string& reason, const std::string& what) {
+constexpr std::array<float, 11> FloatValues{0.0f, 1.0f, 0.5f, 2.0f, 0.25f, 3.0f, 1.5f, 10.0f, 0.75f, 6.5f, 0.125f};
+
+std::uint32_t SmallFloat(float value, std::uint32_t mantissaBits) {
+    if (value == 0.0f) return 0u;
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+    const auto exponent = ((bits >> 23u) & 0xffu) - 127u + 15u;
+    return (exponent << mantissaBits) | ((bits & 0x7fffffu) >> (23u - mantissaBits));
+}
+
+std::uint32_t FloatTexel(std::uint32_t index) {
+    return SmallFloat(FloatValues[index % 11u], 5u) | (SmallFloat(FloatValues[(index + 4u) % 11u], 6u) << 10u) | (SmallFloat(FloatValues[(index + 8u) % 11u], 6u) << 21u);
+}
+
+void CheckFloatLoad(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const auto texel = FloatTexel(index);
+        std::memcpy(texels + index * 4u, &texel, 4u);
+    }
+    Run(device, LoadXyzw, TextureDescriptor(texels, FloatFormat, SwizzleXYZ1, LoadWidth), {}, LoadGroups);
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const std::array<float, 4> expected{FloatValues[index % 11u], FloatValues[(index + 4u) % 11u], FloatValues[(index + 8u) % 11u], 1.0f};
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            const auto actual = Output[index * 4u + component];
+            Require(actual == std::bit_cast<std::uint32_t>(expected[component]), "image_load of R10_G11_B11_FLOAT: texel " + std::to_string(index) + " component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(std::bit_cast<std::uint32_t>(expected[component])));
+        }
+    }
+}
+
+void CheckFloatStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+    std::fill(texels, texels + Threads * 4u, static_cast<std::uint8_t>(0xa5u));
+    Input.fill(0u);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Input[tid * 4u + 0u] = std::bit_cast<std::uint32_t>(FloatValues[tid % 11u]);
+        Input[tid * 4u + 1u] = std::bit_cast<std::uint32_t>(FloatValues[(tid + 4u) % 11u]);
+        Input[tid * 4u + 2u] = std::bit_cast<std::uint32_t>(FloatValues[(tid + 8u) % 11u]);
+    }
+    Run(device, StoreXyz, TextureDescriptor(texels, FloatFormat, SwizzleXYZ1, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), Threads * 4u, nullptr, "test");
+    device.WaitIdle();
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        std::uint32_t actual = 0;
+        std::memcpy(&actual, texels + tid * 4u, 4u);
+        Require(actual == FloatTexel(tid), "image_store of R10_G11_B11_FLOAT: texel " + std::to_string(tid) + " is " + Hex(actual) + ", expected " + Hex(FloatTexel(tid)));
+    }
+}
+
+void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint8_t* texels, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& extra, const std::string& reason, const std::string& what, std::uint32_t format = UnormFormat) {
     std::string refusal;
     try {
-        Run(device, code, TextureDescriptor(texels, UnormFormat, swizzle, LoadWidth), extra, 1);
+        Run(device, code, TextureDescriptor(texels, format, swizzle, LoadWidth), extra, 1);
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find(reason) != std::string::npos, what + " of a 10_11_11_UNORM image was not refused: " + refusal);
+    Require(refusal.find(reason) != std::string::npos, what + " of a converted image was not refused: " + refusal);
 }
 
 }
@@ -279,6 +327,9 @@ int main() {
         CheckRoundTrip(*device, texels);
         CheckStore(*device, texels + StoreOffset, StoreXyz, 0x7u, "image_store dmask:0x7");
         CheckStore(*device, texels + StoreOffset, StoreXz, 0x5u, "image_store dmask:0x5");
+        CheckFloatStore(*device, texels + FloatOffset);
+        CheckFloatLoad(*device, texels + FloatOffset);
+        RequireRefused(*device, SampleLz, texels + FloatOffset, SwizzleXYZ1, PointSampler, "samples or gathers a converted float image", "image_sample_lz of R10_G11_B11_FLOAT", FloatFormat);
         RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, PointSampler, "samples or gathers a converted unorm image", "image_sample_lz");
         RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "samples or gathers a converted unorm image", "image_gather4_lz");
         RequireRefused(*device, GetLod, texels, SwizzleXYZ1, PointSampler, "queries the level of detail of a converted unorm image", "image_get_lod");
