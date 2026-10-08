@@ -172,7 +172,7 @@ CompiledVariant sampleVariant() {
     image.indirectSearchIterations = 3;
     image.indirectResources = {1, 2, 3};
     info.info.images = {image};
-    info.info.samplers = {{7, 0x10, true, false, SamplerUseExplicitLod | SamplerUseGather}};
+    info.info.samplers = {{7, 0x10, true, false, true, SamplerUseExplicitLod | SamplerUseGather}};
     info.info.sampledPairs = {{0, 0, 0x10}};
     StageInput input{};
     input.kind = StageInputKind::GlobalInvocationId;
