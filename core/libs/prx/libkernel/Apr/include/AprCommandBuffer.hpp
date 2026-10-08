@@ -59,6 +59,7 @@ enum class Opcode : std::uint32_t {
     AmmAllocatePaForPrt = 26,
     AmmRemapIntoPrt = 27,
     AmmUnmapToPrt = 28,
+    CompactReadFileGather = 29,
 };
 
 struct CommandHeader {
@@ -74,6 +75,13 @@ struct ReadFileCommand {
     std::uint64_t size;
     std::uint64_t offset;
 };
+
+struct CompactReadFileGatherCommand {
+    std::uint32_t opcodeAndOffsetHigh;
+    std::uint32_t sizeMinusOne;
+    std::uint32_t offsetLow;
+};
+static_assert(sizeof(CompactReadFileGatherCommand) == 12);
 
 struct ResetGatherScatterStateCommand {
     CommandHeader header;
