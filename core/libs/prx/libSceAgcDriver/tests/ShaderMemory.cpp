@@ -1616,6 +1616,7 @@ int main() {
         require(!first.spirv.empty(), "empty compiled shader");
         require(!first.cacheHit, "first shader compilation unexpectedly hit the cache");
         const auto plan = GetResourcePlan(request);
+        require(plan->executionPlan != nullptr, "translated scalar-address descriptor plan fell back to generic evaluation");
         require(plan == GetResourcePlan(request), "resource plan was rebuilt");
         const auto cached = Recompile(request);
         require(cached.cacheHit, "unchanged shader did not hit the cache");

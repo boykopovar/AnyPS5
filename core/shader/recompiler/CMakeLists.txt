@@ -108,6 +108,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtDescriptorEvaluation.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtDiagnostics.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtEvaluator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtExecutionPlan.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtFlatSlotClasses.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtInstructionPredicates.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtPlanBuilder.cpp

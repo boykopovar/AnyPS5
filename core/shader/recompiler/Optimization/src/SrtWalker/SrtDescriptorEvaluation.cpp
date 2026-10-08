@@ -1,9 +1,11 @@
 #include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
+#include "Optimization/SrtWalker/SrtExecutionPlan.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <algorithm>
 #include <string>
 
@@ -44,7 +46,7 @@ const DescriptorSource* Source(const IrResourcePlan& program, std::uint32_t sour
 
 }
 
-bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources) {
+static bool EvaluateRuntimeSourcesGeneric(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources) {
     failureReason().clear();
     static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
     if (debug) {
@@ -144,6 +146,72 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
         flat = std::move(flattened);
     }
     return true;
+}
+
+namespace {
+
+struct RecordedReads {
+    const SrtRuntime& runtime;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> words;
+    std::size_t cursor = 0;
+    bool replay = false;
+
+    static bool Read(void* context, std::uint64_t address, std::uint32_t* value) {
+        auto& state = *static_cast<RecordedReads*>(context);
+        if (state.replay) {
+            if (state.cursor >= state.words.size() || state.words[state.cursor].first != address) return false;
+            *value = state.words[state.cursor++].second;
+            return true;
+        }
+        if (state.runtime.readMemory != nullptr) {
+            if (!state.runtime.readMemory(state.runtime.userContext, address, value)) return false;
+        } else std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+        state.words.emplace_back(address, *value);
+        return true;
+    }
+};
+
+bool verifyExecution(const IrResourcePlan& program, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, std::vector<std::uint8_t>& activeSources) {
+    RecordedReads reads{runtime};
+    auto captured = runtime;
+    captured.userContext = &reads;
+    captured.readMemory = RecordedReads::Read;
+    SrtReadTrace actualTrace, expectedTrace;
+    captured.readTrace = &actualTrace;
+    const bool evaluated = program.executionPlan->Evaluate(captured, results, flat, activeSources);
+    if (runtime.readTrace != nullptr) {
+        runtime.readTrace->leaves.insert(runtime.readTrace->leaves.end(), actualTrace.leaves.begin(), actualTrace.leaves.end());
+        runtime.readTrace->otherReads.insert(runtime.readTrace->otherReads.end(), actualTrace.otherReads.begin(), actualTrace.otherReads.end());
+    }
+    if (!evaluated) return Fail("compiled SRT inputs could not be read");
+    reads.replay = true;
+    captured.readTrace = &expectedTrace;
+    std::vector<DescriptorValue> expected;
+    std::vector<std::uint32_t> expectedFlat;
+    std::vector<std::uint8_t> expectedActive;
+    const bool matches = EvaluateRuntimeSourcesGeneric(program, program.materializationSources, captured, expected, expectedFlat, true, {}, expectedActive)
+        && reads.cursor == reads.words.size() && expected == results && expectedFlat == flat && expectedActive == activeSources
+        && expectedTrace.leaves == actualTrace.leaves && expectedTrace.otherReads == actualTrace.otherReads;
+    if (!matches) return Fail("APS5_VERIFY_COMPILED_SRT: compiled evaluation differs from the generic walk");
+    return true;
+}
+
+}
+
+bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources) {
+    static const bool disablePlan = std::getenv("APS5_NO_COMPILED_SRT") != nullptr || std::getenv("APS5_SRT_DEBUG") != nullptr;
+    static const bool verify = std::getenv("APS5_VERIFY_COMPILED_SRT") != nullptr;
+    const bool compiled = !disablePlan && evaluateFlat && program.executionPlan != nullptr && sources.data() == program.materializationSources.data() && sources.size() == program.materializationSources.size() && std::ranges::none_of(cleanFlatSlots, [](auto clean) { return clean != 0; });
+    if (verify) {
+        struct Counts { std::uint64_t total = 0, compiled = 0; };
+        auto& counts = HostThreadLocal<Counts, Counts>();
+        counts.compiled += compiled;
+        if ((++counts.total & 0x3fffu) == 0) std::fprintf(stderr, "[srt-plan] %llu/%llu evaluations use compiled plans with generic verification\n", static_cast<unsigned long long>(counts.compiled), static_cast<unsigned long long>(counts.total));
+    }
+    if (!compiled) return EvaluateRuntimeSourcesGeneric(program, sources, runtime, results, flat, evaluateFlat, cleanFlatSlots, activeSources);
+    failureReason().clear();
+    if (verify) return verifyExecution(program, runtime, results, flat, activeSources);
+    return program.executionPlan->Evaluate(runtime, results, flat, activeSources) || Fail("compiled SRT inputs could not be read");
 }
 
 const std::string& RuntimeSourceFailureReason() {
