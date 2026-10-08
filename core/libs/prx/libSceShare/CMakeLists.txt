@@ -1,6 +1,5 @@
-add_library(libSceShare SHARED EXCLUDE_FROM_ALL Export.cpp)
-target_include_directories(libSceShare PRIVATE ${LIBS_INCLUDE_DIR})
-configure_windows_unwind(libSceShare)
+include(${CMAKE_CURRENT_SOURCE_DIR}/ShareLibrary.cmake)
+add_sce_share_library(libSceShare)
 
 if(BUILD_TESTING)
     add_test_executable(guest_share_tests ${LIBS_INCLUDE_DIR}/tests/GuestShare.cpp)
