@@ -1517,6 +1517,38 @@ struct AppContentBootParam {
 
 struct AppContentMountPoint { char data[16]; };
 
+struct NpServiceEntitlementLabel {
+    char data[7];
+    char padding[13];
+};
+
+struct NpEntitlementAccessRequestEntitlementInfoListParam {
+    std::size_t size;
+    std::uint32_t entitlementType;
+    std::int32_t offset;
+    std::int32_t limit;
+    std::uint32_t sort;
+    std::uint32_t direction;
+    std::uint32_t packageType;
+};
+
+struct NpEntitlementAccessServiceEntitlementInfo {
+    NpServiceEntitlementLabel entitlementLabel;
+    std::uint64_t activeDate;
+    std::uint64_t inactiveDate;
+    std::uint32_t entitlementType;
+    std::int32_t useCount;
+    std::int32_t useLimit;
+    std::int32_t reserved1;
+    bool activeFlag;
+    bool isConsumable;
+    std::int8_t reserved2[2];
+};
+
+static_assert(sizeof(NpServiceEntitlementLabel) == 20);
+static_assert(sizeof(NpEntitlementAccessRequestEntitlementInfoListParam) == 32);
+static_assert(sizeof(NpEntitlementAccessServiceEntitlementInfo) == 64);
+
 struct ContentExportInitParam2 {
     void* malloc_func;
     void* free_func;

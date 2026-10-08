@@ -7,6 +7,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -20,6 +23,24 @@ static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr uint32_t SKU_FLAG_FULL = 3;
 
 namespace {
+
+constexpr int ErrorNotInitialized = static_cast<int>(0x817D0001);
+constexpr int ErrorParameter = static_cast<int>(0x817D0002);
+constexpr int ErrorOutOfMemory = static_cast<int>(0x817D0010);
+constexpr int ErrorSignedOut = static_cast<int>(0x817D0014);
+constexpr int ErrorRequestNotFound = static_cast<int>(0x817D0015);
+
+struct ServiceRequests {
+    std::mutex mutex;
+    bool initialized = false;
+    std::int64_t nextId = 1;
+    std::set<std::int64_t> completed;
+};
+
+ServiceRequests& Requests() {
+    static ServiceRequests state;
+    return state;
+}
 
 std::filesystem::path EntitlementsPath() {
     if (const char* configured = std::getenv("ANYPS5_ENTITLEMENTS"); configured != nullptr && configured[0] != '\0') return configured;
@@ -94,15 +115,60 @@ int APS5_VABI sceNpEntitlementAccessGetSkuFlag(uint32_t* sku_flag) {
 int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitParam* init_param, NpEntitlementAccessBootParam* boot_param) {
     (void)init_param;
     (void)boot_param;
+    auto& state = Requests();
+    std::lock_guard lock(state.mutex);
+    state.initialized = true;
     return 0;
 }
 
-int APS5_VABI sceNpEntitlementAccessAbortRequest(void) {
- return 0;
+int APS5_VABI sceNpEntitlementAccessAbortRequest(std::int64_t requestId) {
+    auto& state = Requests();
+    std::lock_guard lock(state.mutex);
+    if (!state.initialized) return ErrorNotInitialized;
+    return state.completed.contains(requestId) ? 0 : ErrorRequestNotFound;
 }
 
-int APS5_VABI sceNpEntitlementAccessDeleteRequest(void) {
- return 0;
+int APS5_VABI sceNpEntitlementAccessDeleteRequest(std::int64_t requestId) {
+    auto& state = Requests();
+    std::lock_guard lock(state.mutex);
+    if (!state.initialized) return ErrorNotInitialized;
+    return state.completed.erase(requestId) != 0 ? 0 : ErrorRequestNotFound;
+}
+
+int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfoList(
+    std::int32_t userId, std::uint32_t serviceLabel, const NpServiceEntitlementLabel* list, std::uint32_t listNum,
+    const NpEntitlementAccessRequestEntitlementInfoListParam* param, std::int64_t* requestId) {
+    (void)userId;
+    (void)serviceLabel;
+    auto& state = Requests();
+    std::lock_guard lock(state.mutex);
+    if (!state.initialized) return ErrorNotInitialized;
+    if (!requestId || !param || (!list && listNum != 0)) return ErrorParameter;
+    if (param->size != sizeof(*param) || param->entitlementType != 1 || param->offset < 0 ||
+        param->limit < 1 || param->limit > 100 || param->sort > 1 || param->direction > 2 || param->packageType != 0)
+        return ErrorParameter;
+    if (state.nextId == std::numeric_limits<std::int64_t>::max()) return ErrorOutOfMemory;
+    const auto id = state.nextId;
+    try {
+        state.completed.insert(id);
+    } catch (const std::bad_alloc&) {
+        return ErrorOutOfMemory;
+    }
+    ++state.nextId;
+    *requestId = id;
+    return 0;
+}
+
+int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfoList(
+    std::int64_t requestId, std::int32_t* result, NpEntitlementAccessServiceEntitlementInfo* list,
+    std::uint32_t listNum, std::uint32_t* hitNum, std::int32_t* nextOffset, std::int32_t* previousOffset) {
+    auto& state = Requests();
+    std::lock_guard lock(state.mutex);
+    if (!state.initialized) return ErrorNotInitialized;
+    if (!result || !hitNum || !nextOffset || !previousOffset || (!list && listNum != 0)) return ErrorParameter;
+    if (!state.completed.contains(requestId)) return ErrorRequestNotFound;
+    *result = ErrorSignedOut;
+    return 0;
 }
 
 int APS5_VABI sceNpEntitlementAccessGenerateTransactionId(void* transaction_id) {
@@ -149,17 +215,7 @@ int APS5_VABI sceNpEntitlementAccessGetPftFlag(void) {
     return 0;
 }
 
-int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfoList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfoList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfoList() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
