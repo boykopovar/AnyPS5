@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <xmmintrin.h>
 
@@ -20,6 +21,8 @@ std::int32_t APS5_VABI sceFiberGetInfo(FiberObject*, FiberInfo*);
 std::int32_t APS5_VABI sceFiberGetThreadFramePointerAddress(std::uint64_t*);
 std::int32_t APS5_VABI sceFiberStartContextSizeCheck(std::uint32_t);
 std::int32_t APS5_VABI sceFiberStopContextSizeCheck(void);
+std::int32_t APS5_VABI sceFiberRename(FiberObject*, const char*);
+std::int32_t APS5_VABI sceFiberOptParamInitialize(FiberOptParam*);
 }
 
 static void Require(bool value, const char* what) {
@@ -124,4 +127,20 @@ int main() {
     Require(info.size_context_margin > 0 && info.size_context_margin < g_checkedContext.size() - 4096, "margin below the used stack");
     Require(info.size_context_margin % 8 == 0, "margin in whole words");
     Require(sceFiberStopContextSizeCheck() == 0, "stop size check");
+
+    Require(sceFiberRename(checked, "renamed") == 0, "rename");
+    Require(sceFiberGetInfo(checked, &info) == 0 && std::strcmp(info.name, "renamed") == 0, "renamed info");
+    Require(sceFiberRename(checked, "0123456789abcdef0123456789abcdefXYZ") == 0, "rename long");
+    Require(sceFiberGetInfo(checked, &info) == 0 && std::strcmp(info.name, "0123456789abcdef0123456789abcde") == 0, "long name truncated");
+    Require(sceFiberRename(nullptr, "name") == FiberErrorNull, "rename null fiber");
+    Require(sceFiberRename(checked, nullptr) == FiberErrorNull, "rename null name");
+    FiberStorage notFiber{};
+    Require(sceFiberRename(reinterpret_cast<FiberObject*>(&notFiber), "name") == FiberErrorInvalid, "rename non-fiber");
+
+    std::array<unsigned char, 0x90> optParam{};
+    optParam.fill(0xAA);
+    Require(sceFiberOptParamInitialize(nullptr) == FiberErrorNull, "opt param null");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(optParam.data())) == 0, "opt param initialize");
+    for (std::size_t i = 0; i < 0x80; ++i) Require(optParam[i] == 0, "opt param cleared");
+    for (std::size_t i = 0x80; i < optParam.size(); ++i) Require(optParam[i] == 0xAA, "opt param stops at 0x80 bytes");
 }
