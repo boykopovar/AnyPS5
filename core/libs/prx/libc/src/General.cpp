@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -7,6 +8,7 @@
 #include <optional>
 #include <cerrno>
 #include <cstring>
+#include <cctype>
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
@@ -56,6 +58,49 @@ struct WorkingDirectory {
     std::filesystem::path current = root;
 };
 WorkingDirectory& Directories() { static WorkingDirectory state; return state; }
+
+std::filesystem::path ResolveCaseInsensitive(std::filesystem::path path) {
+#ifndef _WIN32
+    std::error_code pathError;
+    if (std::filesystem::exists(path, pathError) || pathError) return path;
+    const auto requested = path;
+    std::filesystem::path resolved = requested.root_path();
+    for (const auto& component : requested.relative_path()) {
+        const auto exact = resolved / component;
+        std::error_code error;
+        if (std::filesystem::exists(exact, error) || error) {
+            resolved = exact;
+            continue;
+        }
+
+        std::string wanted = component.string();
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        std::filesystem::path match;
+        bool ambiguous = false;
+        std::filesystem::directory_iterator entry(resolved, error);
+        const std::filesystem::directory_iterator end;
+        for (; !error && entry != end; entry.increment(error)) {
+            std::string name = entry->path().filename().string();
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+            if (name != wanted) continue;
+            if (!match.empty()) {
+                ambiguous = true;
+                break;
+            }
+            match = entry->path().filename();
+        }
+        resolved /= ambiguous || error || match.empty() ? component : match;
+    }
+    return resolved;
+#else
+    return path;
+#endif
+}
+
 std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
     std::string text(path);
     for (auto& character : text) if (character == '\\') character = '/';
@@ -66,8 +111,8 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
 #endif
     auto guest = (std::filesystem::path("/") / state.current.lexically_relative(state.root));
     guest = (input.is_absolute() ? input : guest / input).lexically_normal();
-    if (auto aliased = ResolveAlias(guest.relative_path().generic_string())) return *aliased;
-    return (state.root / guest.relative_path()).make_preferred();
+    if (auto aliased = ResolveAlias(guest.relative_path().generic_string())) return ResolveCaseInsensitive(*aliased);
+    return ResolveCaseInsensitive((state.root / guest.relative_path()).make_preferred());
 }
 int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::permission_denied) return 13;
