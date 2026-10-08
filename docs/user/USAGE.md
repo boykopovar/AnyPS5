@@ -1,109 +1,153 @@
-# AnyPS5 Usage Guide
+# Relinker usage
 
-This guide covers how to use AnyPS5, from basic setup to advanced configuration.
+## Input and conversion
 
-## Quick Start
+Use a clean ELF executable. Place its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable. `prx/` can coexist with either `sce_module/` or `sce_modules/`. Both `sce_module/` and `sce_modules/` present, or all three absent, is an error.
 
-1. Download the latest release or build from source
-2. Place your PS5 game ISO files in a folder
-3. Run AnyPS5 and load your first game!
-
-## Loading Games
-
-AnyPS5 supports loading games from:
-- **ISO files**: Standard PS5 disc image format
-- **FS0 directories**: Extracted game data folders
-
-To load a game, use the command line or the built-in file browser (when available).
-
-## Configuration
-
-AnyPS5 uses JSON configuration files for settings. The main config file is `anyps5.json` in your working directory.
-
-### Key Settings
-- **GPU backend**: Choose between Vulkan and other backends
-- **Resolution scaling**: Adjust internal rendering resolution
-- **Audio device**: Select output audio device
-- **Controller mapping**: Configure input devices
-
-## System Fonts
-
-Many PS5 games use the console's system fonts for text display. Without proper font files, games may show missing or incorrect text.
-
-### Why Fonts Matter
-
-PS5 games expect specific system fonts to be available. AnyPS5 needs these fonts to render text correctly in menus, subtitles, and in-game UI elements.
-
-### Setting Up Fonts (Step-by-Step)
-
-**Option 1: Use Console-Dumped Fonts (Best Quality)**
-
-If you have access to a PS5 console, you can dump the system fonts:
-
-1. Create a folder named `anyps5-fonts/` next to your AnyPS5 executable
-2. Copy the following font files from your PS5 into this folder:
-   - `SST-Roman.otf` (standard text)
-   - `SST-Bold.otf` (bold text)
-   - `SSTJpPro-Regular.otf` (Japanese characters)
-   - Any other SST fonts you find on your console
-
-**Option 2: Use Open-Source Substitutes (Easier)**
-
-If you don't have a PS5 to dump fonts from, you can use freely available alternatives:
-
-1. Create a folder named `anyps5-fonts/` next to your AnyPS5 executable
-2. Download and place these font files in the folder:
-   - **Latin/Vietnamese**: Noto Sans family (Light, Regular, Medium, Bold weights)
-     - Files: `NotoSans-Light.ttf`, `NotoSans-Regular.ttf`, `NotoSans-Medium.ttf`, `NotoSans-Bold.ttf`
-     - Also include italic variants if available
-   - **Monospace**: Noto Sans Mono family (Light, Regular, Medium, Bold)
-     - Files: `NotoSansMono-Light.ttf`, etc.
-   - **Thai**: Noto Sans Thai family
-   - **Japanese/Chinese**: Noto Sans CJK family
-
-You can download these fonts from [Google Fonts](https://fonts.google.com/) or your Linux distribution's package manager.
-
-### Custom Font Directory
-
-To use a different location for font files, set the environment variable:
-```bash
-export ANYPS5_SYSTEM_FONTS=/path/to/your/fonts
+```text
+source/
+    input.elf
+    sce_module/
+        <bundled ELF modules>
 ```
 
-### Troubleshooting Font Issues
+```text
+relinker [options] <input.elf> <output>
+```
 
-**Problem**: Games show no text or blank boxes
-- **Solution**: Verify that your `anyps5-fonts/` folder exists and contains font files
-- Check the AnyPS5 log for font loading errors
+Linux output:
 
-**Problem**: Japanese/Chinese characters display incorrectly
-- **Solution**: Ensure you have Noto Sans CJK fonts installed in your fonts directory
+```sh
+relinker source/input.elf app.elf
+```
 
-**Problem**: Text looks different from PS5
-- **Solution**: Console-dumped SST fonts will match exactly; substitute fonts may have slightly different metrics
+Windows output:
 
-## Troubleshooting
+```sh
+relinker --windows source/input.elf app.exe
+```
 
-### Game won't start
-- Verify the ISO file is not corrupted
-- Check that you have sufficient disk space for shader cache
-- Try updating to the latest AnyPS5 version
+Add `--to-intel` for Intel hosts. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
 
-### Poor performance
-- Lower resolution scaling settings
-- Disable unnecessary features like motion blur
-- Ensure your GPU drivers are up to date
+## Options
 
-## Advanced Topics
+All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.
 
-### Shader Cache
-AnyPS5 compiles shaders on first use and caches them. This can cause initial stuttering but improves over time. The cache is stored in `anyps5-shader-cache/`.
+| Option                        | Effect                                                                                                                                                                                                                                                                                                                  |
+|-------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--windows`                   | Produce a Windows PE executable.                                                                                                                                                                                                                                                                                        |
+| `--windows-diagnostics`       | Include startup dependency diagnostics. Requires `--windows`.                                                                                                                                                                                                                                                           |
+| `--windows-gui`               | Select the Windows GUI subsystem instead of the console subsystem. Requires `--windows`.                                                                                                                                                                                                                                 |
+| `--to-intel`                  | Convert supported AMD-only instructions in the executable and bundled modules. Unsupported instructions or unreachable conversion stubs cause an error.                                                                                                                                                                 |
+| `unused-filter=0`             | Keep all imported NID references.                                                                                                                                                                                                                                                                                       |
+| `unused-filter=1`             | Filter unused non-PLT imports using control-flow and GOT access analysis; preserve PLT imports.                                                                                                                                                                                                                         |
+| `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                     |
+| `--registry`                  | Write `<output-stem>.registry.json` beside the output executable.                                                                                                                                                                                                                                                       |
+| `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. Linux guest modules require an absolute path or a path beginning with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory. |
+| `--autorun`                   | Run the output after conversion, print its exit code, and wait for Enter. Adds executable permissions for Linux output. Requires the target OS and prepared runtime layout.                                                                                                                                             |
+| `--skip-sce-module`           | Deprecated. Skip all bundled module processing.                                                                                                                                                                                                                                                                         |
+| `--exclude-sce-module <file>` | Deprecated. Exclude a bundled module by exact filename, not path. Repeat for multiple files; a missing filename is an error. Conflicts with `--skip-sce-module`.                                                                                                                                                        |
+| `--skip-syscall-check`        | Deprecated. Disable syscall scanning in the executable and bundled modules.                                                                                                                                                                                                                                             |
+| `--lazy-binding`              | Deprecated. Enable lazy symbol binding instead of eager binding. Incompatible with bundled ELF modules.                                                                                                                                                                                                                 |
 
-### Debug Logging
-Enable verbose logging by adding `--log-level=debug` to your command line arguments. Logs are written to `anyps5.log`.
+Specify `unused-filter=0|1|2` without `--`, at most once. Unknown options and extra positional arguments are errors. There is no `--help` flag; invoking `relinker` without arguments prints the usage syntax and exits with an error.
 
-## System Requirements
-- **OS**: Windows 10+, Linux, or macOS
-- **CPU**: Modern multi-core processor (AVX2 recommended)
-- **GPU**: Vulkan-compatible graphics card
-- **RAM**: 8GB minimum, 16GB recommended
+The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, and `--lazy-binding` flags are deprecated. If the application runs with these flags enabled, it will be extremely unstable and unsuitable for general use. These flags are only for debugging.
+
+## Runtime layout
+
+Paths are relative to the output executable:
+
+```text
+app.elf (Linux) or app.exe (Windows)
+libs/
+    *.prx
+app0/
+    <app resources>
+    sce_module/
+        <converted modules>
+```
+
+Use `sce_modules/` or `prx/` instead of `sce_module/` if that is the input directory name. Relinker preserves each module's directory under `app0/` and prints its exact path. Place app resources in `app0/` separately. Copy the built system libraries from `build/core/libs/libs/*.prx` into `libs/`; use libraries built for the target OS. A custom `--rpath` changes the system library location.
+
+Use the generated files printed as `Guest module:` for bundled title modules. `libs/` is for AnyPS5 system libraries, not the original PS5 `.prx` files. Placing an original PS5 module in `libs/` on Windows makes Windows try to load it as a DLL and can fail with error 193 (not a valid Win32 application).
+
+On Windows, direct memory (`sceKernelAllocateDirectMemory`, up to 13824 MiB per title) is committed in full when the title allocates it, not when its pages are first used. The system commit limit (installed memory plus page file size, the second value of Committed in Task Manager) must cover it together with all other committed memory. Otherwise the allocation throws `create direct memory backing of 0x<n> bytes (<m> MiB)` with the Windows error; enlarge the page file or close other applications.
+
+Linux:
+
+```sh
+chmod +x app.elf
+./app.elf
+```
+
+Windows PowerShell:
+
+```powershell
+.\app.exe
+```
+
+### System fonts
+
+Games that open the console's system font sets (`sceFontOpenFontSet`) draw their menus, subtitles, and in-game text from those fonts. If the font files are missing, opening a system font set fails and the game shows no text in the affected fonts.
+
+AnyPS5 looks for the fonts in an `anyps5-fonts/` directory beside the output executable. Set `ANYPS5_SYSTEM_FONTS` to a directory to use a different location.
+
+Provide console-dumped fonts if you have them; otherwise AnyPS5 falls back to the openly licensed substitutes below when they are present.
+
+**Console-dumped fonts (best fidelity).** Copy the font files from a PS5 console into `anyps5-fonts/`. They are used under their own names, for example `SST-Roman.otf`, `SST-Bold.otf`, and `SSTJpPro-Regular.otf`.
+
+**Openly licensed substitutes (fallback).** Drop these into `anyps5-fonts/`; they are available from [Google Fonts](https://fonts.google.com/) or your Linux distribution's package manager.
+
+| Script / style | Files |
+|---|---|
+| Latin and Vietnamese | `NotoSans-{Light,Regular,Medium,Bold}.ttf` and `NotoSans-{LightItalic,Italic,MediumItalic,BoldItalic}.ttf` |
+| Typewriter (monospace) | `NotoSansMono-{Light,Regular,Medium,Bold}.ttf` |
+| Thai | `NotoSansThai-{Light,Regular,Medium,Bold}.ttf` |
+| Japanese and Chinese | `NotoSansCJK-{Light,Regular,Medium,Bold}.ttc` |
+
+Substitute fonts have slightly different metrics, so text may not match the console exactly; the console-dumped SST fonts match best.
+
+**Troubleshooting.**
+- *No text or blank boxes:* confirm `anyps5-fonts/` exists beside the executable (or that `ANYPS5_SYSTEM_FONTS` points to it) and contains font files, and check the log for font-loading errors.
+- *Japanese or Chinese render incorrectly:* include the `NotoSansCJK-*` files, or the console's Japanese fonts.
+
+### GPU selection
+
+The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.
+
+## Exit codes
+
+`0`: conversion succeeded. `1`: invalid arguments. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.
+
+## Import audit
+
+[`tools/import_audit.py`](../../tools/import_audit.py) lists the system functions a converted game imports and whether the built libraries provide them, before the game is launched. It needs Python 3 and nothing else.
+
+```sh
+relinker --registry source/input.elf app.elf
+python3 tools/import_audit.py app.registry.json --libs build/core/libs/libs --modules source/sce_module
+```
+
+`--registry` writes `app.registry.json` beside the output. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
+
+| Class | Meaning |
+|-------|---------|
+| `implemented` | A built library exports the NID and its function is not a throwing stub. |
+| `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
+| `absent` | No built library exports the NID: the loader fails. |
+| `module` | The import names a file found in `--modules` (the title's own library); its exports are not checked. |
+
+The report also lists needed libraries that have no file in `--libs` or `--modules`, and imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+
+| Option | Effect |
+|--------|--------|
+| `--libs <dir>` | Built `.prx` directory. Required; repeat for several. |
+| `--modules <dir>` | Directory of the title's own modules; repeat for several. |
+| `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
+| `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
+| `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
+
+Exit codes: `0` nothing blocks loading, `1` there are `absent` imports or needed libraries without a file, `2` an input could not be read; the message names the file and the value.
+
+The registry lists the imports of the executable, not of its bundled modules.
