@@ -782,14 +782,25 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         int status = 0;
         while ((status = avcodec_receive_frame(instance.mp3, decoded.get())) == 0) {
             const auto format = static_cast<AVSampleFormat>(decoded->format);
-            if (format != AV_SAMPLE_FMT_FLTP && format != AV_SAMPLE_FMT_S16P) throw std::runtime_error("AJM MP3: FFmpeg sample format " + std::to_string(decoded->format) + " is not converted");
+            if (format != AV_SAMPLE_FMT_FLTP && format != AV_SAMPLE_FMT_S16P && 
+    format != AV_SAMPLE_FMT_FLT && format != AV_SAMPLE_FMT_S16) {
+    throw std::runtime_error("AJM MP3: FFmpeg sample format " + std::to_string(decoded->format) + " is not converted");
+}
             const auto channels = static_cast<std::size_t>(decoded->ch_layout.nb_channels);
             const auto samples = static_cast<std::size_t>(decoded->nb_samples);
             pcm.resize(samples * channels * sampleBytes);
             for (std::size_t sample = 0; sample < samples; ++sample) {
                 for (std::size_t channel = 0; channel < channels; ++channel) {
-                    const float value = format == AV_SAMPLE_FMT_FLTP ? reinterpret_cast<const float*>(decoded->extended_data[channel])[sample]
-                                                                     : reinterpret_cast<const std::int16_t*>(decoded->extended_data[channel])[sample] / 32768.0f;
+                    float value = 0.0f;
+if (format == AV_SAMPLE_FMT_FLTP) {
+    value = reinterpret_cast<const float*>(decoded->extended_data[channel])[sample];
+} else if (format == AV_SAMPLE_FMT_S16P) {
+    value = reinterpret_cast<const std::int16_t*>(decoded->extended_data[channel])[sample] / 32768.0f;
+} else if (format == AV_SAMPLE_FMT_FLT) {
+    value = reinterpret_cast<const float*>(decoded->extended_data[0])[sample * channels + channel];
+} else if (format == AV_SAMPLE_FMT_S16) {
+    value = reinterpret_cast<const std::int16_t*>(decoded->extended_data[0])[sample * channels + channel] / 32768.0f;
+}
                     auto* out = pcm.data() + (sample * channels + channel) * sampleBytes;
                     if (encoding == 0) {
                         const auto converted = static_cast<std::int16_t>(std::clamp(std::lrint(value * 32768.0), -32768L, 32767L));
