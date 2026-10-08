@@ -25,6 +25,9 @@ int APS5_VABI memset_s_nid_postfix(void*, std::size_t, int, std::size_t);
 char* APS5_VABI strnstr_nid_postfix(const char*, const char*, std::size_t);
 int APS5_VABI snprintf_s_nid_postfix(char*, std::size_t, const char*, ...);
 int APS5_VABI sscanf_s_nid_postfix(const char*, const char*, ...);
+std::size_t APS5_VABI strlcpy_nid_postfix(char*, const char*, std::size_t);
+int APS5_VABI strcasecmp_nid_postfix(const char*, const char*);
+int APS5_VABI strncasecmp_nid_postfix(const char*, const char*, std::size_t);
 }
 
 static void Require(bool condition) {
@@ -105,6 +108,45 @@ static void CheckSscanfS() {
 #endif
 }
 
+static void CheckStrlcpy() {
+    char copy[8];
+    std::memset(copy, 'z', sizeof(copy));
+    Require(strlcpy_nid_postfix(copy, "abc", sizeof(copy)) == 3 && std::strcmp(copy, "abc") == 0 && copy[4] == 'z');
+    std::memset(copy, 'z', sizeof(copy));
+    Require(strlcpy_nid_postfix(copy, "abcdefghij", 4) == 10 && std::strcmp(copy, "abc") == 0 && copy[4] == 'z');
+    std::memset(copy, 'z', sizeof(copy));
+    Require(strlcpy_nid_postfix(copy, "abcdefg", sizeof(copy)) == 7 && std::strcmp(copy, "abcdefg") == 0);
+    Require(strlcpy_nid_postfix(copy, "abcdefgh", sizeof(copy)) == 8 && std::strcmp(copy, "abcdefg") == 0);
+    std::memset(copy, 'z', sizeof(copy));
+    Require(strlcpy_nid_postfix(copy, "abc", 1) == 3 && copy[0] == '\0' && copy[1] == 'z');
+    std::memset(copy, 'z', sizeof(copy));
+    Require(strlcpy_nid_postfix(copy, "abc", 0) == 3 && copy[0] == 'z');
+    Require(strlcpy_nid_postfix(copy, "", sizeof(copy)) == 0 && copy[0] == '\0' && copy[1] == 'z');
+}
+
+static void CheckCaseInsensitiveComparisons() {
+    Require(strcasecmp_nid_postfix("", "") == 0);
+    Require(strcasecmp_nid_postfix("Hello", "hELLO") == 0);
+    Require(strcasecmp_nid_postfix("abc", "ABD") < 0);
+    Require(strcasecmp_nid_postfix("b", "A") > 0);
+    Require(strcasecmp_nid_postfix("ab", "AbC") < 0);
+    Require(strcasecmp_nid_postfix("AbC", "ab") > 0);
+    Require(strcasecmp_nid_postfix("A", "[") > 0);
+    Require(strcasecmp_nid_postfix("[", "a") < 0);
+    Require(strcasecmp_nid_postfix("\xff", "a") > 0);
+    Require(strcasecmp_nid_postfix("a", "\xe1") < 0);
+    Require(strncasecmp_nid_postfix("abc", "xyz", 0) == 0);
+    Require(strncasecmp_nid_postfix("abcX", "ABCy", 3) == 0);
+    Require(strncasecmp_nid_postfix("abcX", "ABCy", 4) < 0);
+    Require(strncasecmp_nid_postfix("abcY", "ABCx", 4) > 0);
+    Require(strncasecmp_nid_postfix("ab", "ABC", 2) == 0);
+    Require(strncasecmp_nid_postfix("ab", "ABC", 5) < 0);
+    Require(strncasecmp_nid_postfix("ABC", "ab", 5) > 0);
+    Require(strncasecmp_nid_postfix("same", "SAME", 100) == 0);
+    Require(strncasecmp_nid_postfix("A", "[", 1) > 0);
+    Require(strncasecmp_nid_postfix("\xff", "a", 1) > 0);
+}
+
 int main() {
     CheckBoundsCheckedFunctions();
     CheckSscanfS();
@@ -163,5 +205,7 @@ int main() {
     Require(strcasestr_nid_postfix("", "a") == nullptr);
     const char highBytes[] = {static_cast<char>(0xff), 'A', 0};
     Require(strcasestr_nid_postfix(highBytes, "a") == highBytes + 1);
+    CheckStrlcpy();
+    CheckCaseInsensitiveComparisons();
     return CheckMemcpyOverlap() ? 0 : 1;
 }
