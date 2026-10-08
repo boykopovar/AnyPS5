@@ -25,7 +25,7 @@ std::unordered_map<void*, std::unique_ptr<Decoder>> decoders;
 
 namespace OpusCeltDec {
 
-int Initialize_nid_no_patch(std::uint32_t* context) {
+int APS5_VABI Initialize_nid_no_patch(std::uint32_t* context) {
     if (!context) throw std::invalid_argument("Opus: null context");
     std::lock_guard lock(mutex);
     if (nextContext == 0) throw std::runtime_error("Opus: context identifiers exhausted");
@@ -35,7 +35,7 @@ int Initialize_nid_no_patch(std::uint32_t* context) {
     return 0;
 }
 
-int Terminate_nid_no_patch(std::uint32_t* context) {
+int APS5_VABI Terminate_nid_no_patch(std::uint32_t* context) {
     if (!context) throw std::invalid_argument("Opus: null context");
     std::lock_guard lock(mutex);
     if (!contexts.contains(*context)) throw std::invalid_argument("Opus: unknown context");
@@ -47,12 +47,12 @@ int Terminate_nid_no_patch(std::uint32_t* context) {
     return 0;
 }
 
-int GetSize_nid_no_patch(int channels) {
+int APS5_VABI GetSize_nid_no_patch(int channels) {
     if (channels != 1 && channels != 2) NotImplemented_nid_no_patch("Opus: channels other than mono or stereo");
     return opus_decoder_get_size(channels);
 }
 
-int Create_nid_no_patch(std::uint32_t* context, void* state, int sampleRate, int channels) {
+int APS5_VABI Create_nid_no_patch(std::uint32_t* context, void* state, int sampleRate, int channels) {
     if (!context || !state) throw std::invalid_argument("Opus: null context or decoder state");
     GetSize_nid_no_patch(channels);
     if (sampleRate != 48000) NotImplemented_nid_no_patch("Opus: sample rates other than 48000");
@@ -69,7 +69,7 @@ int Create_nid_no_patch(std::uint32_t* context, void* state, int sampleRate, int
     return 0;
 }
 
-int Decode_nid_no_patch(void* state, const std::uint8_t* input, int packetBytes, std::int16_t* pcm, int capacityBytes) {
+int APS5_VABI Decode_nid_no_patch(void* state, const std::uint8_t* input, int packetBytes, std::int16_t* pcm, int capacityBytes) {
     if (!state || !input || !pcm || packetBytes <= 0 || capacityBytes <= 0)
         throw std::invalid_argument("Opus: invalid decode arguments");
     if (input[0] < 128) NotImplemented_nid_no_patch("Opus CELT: SILK or hybrid packet");
@@ -89,7 +89,7 @@ int Decode_nid_no_patch(void* state, const std::uint8_t* input, int packetBytes,
     return outputBytes;
 }
 
-int Destroy_nid_no_patch(void* state) {
+int APS5_VABI Destroy_nid_no_patch(void* state) {
     std::lock_guard lock(mutex);
     if (decoders.erase(state) == 0) throw std::invalid_argument("Opus: unknown decoder state");
     return 0;
