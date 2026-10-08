@@ -824,6 +824,8 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     list(APPEND agcExecutionTests ${agcExecutionTest})
 endforeach()
 
+target_include_directories(agc_driver_dual_source_blend_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
 target_include_directories(agc_driver_packed_unorm_color_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 foreach(stage IN ITEMS vert frag)

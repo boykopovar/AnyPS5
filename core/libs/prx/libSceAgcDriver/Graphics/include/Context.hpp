@@ -125,6 +125,7 @@ struct Context {
     bool occlusionQueryPrecise = false;
     bool depthBounds = false;
     bool depthBiasClamp = false;
+    bool dualSrcBlend = false;
     bool samplerFilterMinmax = false;
     bool nonSeamlessCubeMap = false;
     bool conservativeRasterization = false;

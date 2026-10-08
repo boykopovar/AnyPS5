@@ -139,6 +139,7 @@ struct ShaderPixelStageInfo {
     std::array<std::uint8_t, 8> targetOutputMode;
     std::array<std::uint8_t, 8> targetExportMapping;
     std::array<ColorExportPacking, 8> targetExportPacking;
+    bool dualSourceBlend;
 };
 
 struct ShaderVertexBufferResource {

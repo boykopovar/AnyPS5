@@ -16,12 +16,17 @@ namespace ShaderRecompiler {
 
 inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uint32_t> words, std::span<const PipelineSpecializationConstant> constants, const std::set<std::uint32_t>& specializedIds) {
     std::set<std::uint32_t> packed;
+    bool dualSource = false;
     for (const auto& constant : constants) {
+        if (constant.id == PipelineSpecialization::DualSourceBlend) {
+            if (constant.value > 1u) throw std::runtime_error("invalid prepared dual-source blend flag");
+            dualSource = constant.value != 0u;
+        }
         if (constant.id < PipelineSpecialization::ExportPackingBase || constant.id >= PipelineSpecialization::ExportPackingBase + 8u) continue;
         if (constant.value > static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11)) throw std::runtime_error("invalid prepared fragment export packing");
         if (constant.value != static_cast<std::uint32_t>(ColorExportPacking::None)) packed.insert(constant.id - PipelineSpecialization::ExportPackingBase);
     }
-    if (packed.empty()) return words;
+    if (packed.empty() && !dualSource) return words;
     if (words.size() < 5u || words[0] != spv::MagicNumber) throw std::runtime_error("invalid fragment output specialization module");
     std::map<std::uint32_t, std::uint32_t> locations;
     std::set<std::uint32_t> indexed;
@@ -53,8 +58,7 @@ inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uin
         const auto vector = key(outer[2]);
         return vector.size() == 3u && vector[0] == spv::OpTypeVector && vector[2] == 4u && key(vector[1]) == std::vector<std::uint32_t>{spv::OpTypeFloat, 32u};
     };
-    std::set<std::uint32_t> retyped;
-    for (const auto location : packed) {
+    const auto output = [&](std::uint32_t location) {
         std::uint32_t variable = 0;
         for (const auto& [id, pointer] : outputs) {
             const auto found = locations.find(id);
@@ -62,12 +66,19 @@ inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uin
             if (variable != 0u) throw std::runtime_error("fragment outputs share location " + std::to_string(location));
             variable = id;
         }
+        return variable;
+    };
+    std::set<std::uint32_t> retyped;
+    for (const auto location : packed) {
+        const auto variable = output(location);
         if (variable == 0u) continue;
         if (!specializedIds.contains(PipelineSpecialization::ExportPackingBase + location)) throw std::runtime_error("fragment output " + std::to_string(location) + " has no 10_11_11 unorm packing path");
         if (!floatVectorPointer(outputs.at(variable))) throw std::runtime_error("packed fragment output " + std::to_string(location) + " is not a float4");
         retyped.insert(variable);
     }
-    if (retyped.empty()) return words;
+    const auto secondSource = dualSource ? output(1u) : 0u;
+    if (retyped.contains(secondSource)) throw std::runtime_error("the second dual-source blend color cannot be packed");
+    if (retyped.empty() && secondSource == 0u) return words;
     auto bound = words[3];
     std::vector<std::vector<std::uint32_t>> declarations;
     const auto declare = [&](std::vector<std::uint32_t> declaration) {
@@ -81,9 +92,9 @@ inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uin
         declarations.push_back(std::move(instruction));
         return id;
     };
-    const auto wordType = declare({spv::OpTypeInt, 32u, 0u});
-    const auto vectorType = declare({spv::OpTypeVector, wordType, 4u});
-    const auto pointerType = declare({spv::OpTypePointer, spv::StorageClassOutput, vectorType});
+    const auto wordType = retyped.empty() ? 0u : declare({spv::OpTypeInt, 32u, 0u});
+    const auto vectorType = retyped.empty() ? 0u : declare({spv::OpTypeVector, wordType, 4u});
+    const auto pointerType = retyped.empty() ? 0u : declare({spv::OpTypePointer, spv::StorageClassOutput, vectorType});
     std::vector<std::uint32_t> result(words.begin(), words.begin() + 5);
     std::vector<std::vector<std::uint32_t>> variables;
     bool inserted = false;
@@ -96,6 +107,11 @@ inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uin
             std::vector<std::uint32_t> variable(words.begin() + cursor, words.begin() + cursor + count);
             variable[1] = pointerType;
             variables.push_back(std::move(variable));
+            cursor += count;
+            continue;
+        }
+        if (op == spv::OpDecorate && count == 4u && secondSource != 0u && operand(1u) == secondSource && operand(2u) == spv::DecorationLocation) {
+            result.insert(result.end(), {(4u << 16u) | spv::OpDecorate, secondSource, spv::DecorationLocation, 0u, (4u << 16u) | spv::OpDecorate, secondSource, spv::DecorationIndex, 1u});
             cursor += count;
             continue;
         }

@@ -93,6 +93,7 @@ struct State {
     std::vector<VkPipelineColorBlendAttachmentState> blends;
     bool hasColorTarget;
     bool rectList = false;
+    bool dualSourceBlend = false;
     VkExtent2D renderExtent;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;

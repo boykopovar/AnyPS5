@@ -159,6 +159,7 @@ public:
     void* Window() const;
     void Resize(std::uint32_t width, std::uint32_t height);
     bool Presentable() const;
+    bool DualSrcBlend() const;
     bool PrimitiveListRestart() const;
     bool SamplerFilterMinmax() const;
     bool ConservativeRasterization() const;

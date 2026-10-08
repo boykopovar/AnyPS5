@@ -19,6 +19,7 @@ struct Decoration {
     std::optional<std::uint32_t> set;
     std::optional<std::uint32_t> binding;
     std::optional<std::uint32_t> stride;
+    std::optional<std::uint32_t> index;
     bool block = false;
     bool patch = false;
     bool perPrimitive = false;
@@ -40,6 +41,7 @@ struct Module {
     std::set<std::uint32_t> interface;
     std::map<std::uint32_t, std::string> inputs;
     std::map<std::uint32_t, std::string> outputs;
+    std::optional<std::string> secondSource;
     bool position = false;
     bool primitiveIndices = false;
     bool fragmentBarycentric = false;
@@ -331,13 +333,13 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 Require(count >= 3, "malformed SPIR-V decoration");
                 auto& decoration = module.decorations[instruction[1]];
                 const auto kind = static_cast<spv::Decoration>(instruction[2]);
-                if (kind == spv::DecorationLocation || kind == spv::DecorationBuiltIn || kind == spv::DecorationDescriptorSet || kind == spv::DecorationBinding || kind == spv::DecorationArrayStride) {
+                if (kind == spv::DecorationLocation || kind == spv::DecorationBuiltIn || kind == spv::DecorationDescriptorSet || kind == spv::DecorationBinding || kind == spv::DecorationArrayStride || kind == spv::DecorationIndex) {
                     Require(count == 4, "malformed SPIR-V literal decoration");
-                    auto* field = kind == spv::DecorationLocation ? &decoration.location : kind == spv::DecorationBuiltIn ? &decoration.builtin : kind == spv::DecorationDescriptorSet ? &decoration.set : kind == spv::DecorationBinding ? &decoration.binding : &decoration.stride;
+                    auto* field = kind == spv::DecorationLocation ? &decoration.location : kind == spv::DecorationBuiltIn ? &decoration.builtin : kind == spv::DecorationDescriptorSet ? &decoration.set : kind == spv::DecorationBinding ? &decoration.binding : kind == spv::DecorationIndex ? &decoration.index : &decoration.stride;
                     Require(!field->has_value(), "duplicate SPIR-V decoration");
                     *field = instruction[3];
                 }
-                Require(kind != spv::DecorationComponent && kind != spv::DecorationIndex && kind != spv::DecorationStream && kind != spv::DecorationXfbBuffer && kind != spv::DecorationXfbStride, "unsupported shader interface packing or transform feedback");
+                Require(kind != spv::DecorationComponent && kind != spv::DecorationStream && kind != spv::DecorationXfbBuffer && kind != spv::DecorationXfbStride, "unsupported shader interface packing or transform feedback");
                 if (kind == spv::DecorationPatch) decoration.patch = true;
                 if (kind == spv::DecorationPerPrimitiveEXT) decoration.perPrimitive = true;
                 if (kind == spv::DecorationPerVertexKHR) {
@@ -449,9 +451,13 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             typeId = outer[2];
         }
         const auto& type = module.Type(typeId);
+        Require(!decoration.index || (fragment && output && state.dualSourceBlend && decoration.location == 0u && *decoration.index == 1u), "only the second dual-source blend color may use the Index decoration, at location 0 index 1");
         if (variable.storage == spv::StorageClassInput || variable.storage == spv::StorageClassOutput) {
             Require(module.interface.contains(id), "SPIR-V input or output is absent from the entry point interface");
-            if (decoration.location) {
+            if (decoration.index) {
+                Require(!module.secondSource, "duplicate second dual-source blend color");
+                module.secondSource = module.Signature(typeId);
+            } else if (decoration.location) {
                 Require(!vertexArray || (outer[0] & 0xffffu) == spv::OpTypeArray, "per-vertex interface lacks a control-point or mesh-output dimension");
                 Require(!decoration.perPrimitive, "per-primitive user outputs are unsupported");
                 Require(!decoration.builtin, "shader input cannot have both location and built-in decorations");
@@ -586,6 +592,7 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         Require(signature == (uintExport || packed ? "vertex:u32x4" : "vertex:f32x4"), packed ? "fragment shader must export uint4 words to its packed 10_11_11 unorm attachments" : uintExport ? "fragment shader must export uint4 colors to its unsigned integer attachments" : "fragment shader must export float4 colors to its attachments");
         locations.insert(location);
     }
+    Require(!state.dualSourceBlend || previous.secondSource == "f32x4", "dual-source blending needs a float4 second color at location 0 index 1");
     return locations;
 }
 
