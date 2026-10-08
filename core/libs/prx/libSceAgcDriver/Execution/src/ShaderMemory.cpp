@@ -1,16 +1,19 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -81,6 +84,14 @@ double WaitedMs() {
     return provider != nullptr ? provider() : 0.0;
 }
 
+template<typename TPage>
+std::vector<std::unique_ptr<TPage>>& pagePool() {
+    struct PagePoolStorage {};
+    return HostThreadLocal<std::vector<std::unique_ptr<TPage>>, PagePoolStorage>();
+}
+
+constexpr std::size_t PagePoolLimit = 64;
+
 }
 
 void ShaderMemory::SetWaitedMsProvider(WaitedMsProvider provider) {
@@ -94,10 +105,64 @@ ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regio
     }
 }
 
+ShaderMemory::~ShaderMemory() {
+    auto& pool = pagePool<Page>();
+    for (const auto& [base, page] : pages) {
+        if (pool.size() < PagePoolLimit) pool.emplace_back(page);
+        else delete page;
+    }
+}
+
+bool ShaderMemory::WordMask::None() const {
+    return std::all_of(bits.begin(), bits.end(), [](std::uint64_t word) { return word == 0u; });
+}
+
+template<typename TRun>
+void ShaderMemory::WordMask::ForEachRun(TRun&& run) const {
+    constexpr std::size_t words = PageWords / 64u;
+    std::size_t index = 0;
+    while (index < PageWords) {
+        auto word = index / 64u;
+        auto set = bits[word] & (~std::uint64_t{0} << (index % 64u));
+        while (set == 0u) {
+            if (++word == words) return;
+            set = bits[word];
+        }
+        const auto first = word * 64u + static_cast<std::size_t>(std::countr_zero(set));
+        auto clear = ~bits[word] & (~std::uint64_t{0} << (first % 64u));
+        while (clear == 0u && ++word < words) clear = ~bits[word];
+        const auto end = word == words ? PageWords : word * 64u + static_cast<std::size_t>(std::countr_zero(clear));
+        run(first, end);
+        index = end;
+    }
+}
+
 ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
-    const auto found = pages.find(base);
-    if (found != pages.end()) return found->second;
-    auto& page = pages[base];
+    if (base == lastBase) return *lastPage;
+    auto position = pages.begin();
+    while (position != pages.end() && position->first < base) ++position;
+    if (position != pages.end() && position->first == base) {
+        lastBase = base;
+        lastPage = position->second;
+        return *lastPage;
+    }
+    auto& pool = pagePool<Page>();
+    std::unique_ptr<Page> owned;
+    if (pool.empty()) {
+        owned = std::make_unique<Page>();
+    } else {
+        owned = std::move(pool.back());
+        pool.pop_back();
+    }
+    owned->valid.Reset();
+    owned->read.Reset();
+    owned->recent.Reset();
+    owned->wordwise = false;
+    owned->lazy = false;
+    auto& page = *owned;
+    pages.insert(position, {base, owned.release()});
+    lastBase = base;
+    lastPage = &page;
     ++CaptureTotals().pages;
     // A page is either mapped whole or read word by word where the guest mapped less than a page,
     // or where recorded GPU work writes into it (a whole-page read would wait for that work).
@@ -108,9 +173,9 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
             return page;
         }
         const auto started = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        GuestMemory::Read(base, std::as_writable_bytes(std::span(page.words)), sizeof(std::uint32_t));
+        GuestMemory::FlushGpuWrites(base, PageBytes);
         if (CaptureProfiled()) CaptureTotals().pageReadNanoseconds += NanosecondsSince(started);
-        page.valid.set();
+        page.lazy = true;
     }
     return page;
 }
@@ -136,7 +201,12 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     }
     auto& page = self.page(address & ~static_cast<std::uint64_t>(PageBytes - 1));
     const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(*value));
-    if (!page.valid.test(index)) {
+    if (!page.valid.Test(index) && page.lazy) {
+        const auto first = index / BlockWords * BlockWords;
+        std::memcpy(&page.words[first], reinterpret_cast<const void*>((address & ~static_cast<std::uint64_t>(PageBytes - 1)) + first * sizeof(std::uint32_t)), BlockWords * sizeof(std::uint32_t));
+        page.valid.SetBlock(index);
+    }
+    if (!page.valid.Test(index)) {
         std::uint32_t word = 0;
         auto policy = PendingWrite::Sync;
         if (page.wordwise) {
@@ -193,10 +263,10 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
         }
         if (CaptureProfiled()) CaptureTotals().wordReadNanoseconds += NanosecondsSince(fetchStarted);
         page.words[index] = word;
-        page.valid.set(index);
+        page.valid.Set(index);
     }
-    page.read.set(index);
-    page.recent.set(index);
+    page.read.Set(index);
+    page.recent.Set(index);
     *value = page.words[index];
     return true;
 }
@@ -232,7 +302,11 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(c
         totals.hookWaitNanoseconds += static_cast<std::uint64_t>((WaitedMs() - waitedBefore) * 1e6);
         std::uint64_t initialBytes = 0;
         for (const auto& [address, bytes] : initial) initialBytes += bytes.size();
-        if (++totals.captures % 500 == 0) {
+        ++totals.captures;
+        static std::atomic<std::chrono::steady_clock::rep> nextReport{0};
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        auto due = nextReport.load(std::memory_order_relaxed);
+        if (now >= due && nextReport.compare_exchange_strong(due, now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(10)).count(), std::memory_order_relaxed)) {
             const auto captures = static_cast<double>(totals.captures.load());
             const auto captureNs = totals.captureNanoseconds.load();
             const auto resolveNs = totals.resolveNanoseconds.load();
@@ -240,8 +314,10 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(c
             const auto wordNs = totals.wordReadNanoseconds.load();
             const auto specializationNs = ShaderRecompiler::ResourceMaterializer::SpecializationNanoseconds();
             const auto hookNs = totals.hookWaitNanoseconds.load();
+            const auto materializeNs = ShaderRecompiler::ResourceMaterializer::MaterializeNanoseconds();
+            const auto evaluateNs = ShaderRecompiler::ResourceMaterializer::EvaluateNanoseconds();
             const auto walkNs = captureNs > resolveNs + pageNs + wordNs + specializationNs ? captureNs - resolveNs - pageNs - wordNs - specializationNs : 0;
-            AgcDriver::ProfilePrint_nid_no_patch( "[capture] %llu captures: %llu word reads, %llu pages fetched (%llu read word by word over pending GPU writes: %llu words waited %.2f s, %llu read raw on evidence, %llu verified with %llu mismatches, %llu served from known values, %llu hook reads not observed: no GPU wait), capture (plan lookup + materialize) %.1f s, %llu KiB registered code this capture; sub-phases (s, us per capture): source resolve %.2f/%.1f, walk %.2f/%.1f, specialization (every materialize) %.2f/%.1f, page reads %.2f/%.1f, word reads %.2f/%.1f, hook GPU waits inside %.2f/%.1f; source handle memo %llu hits, %llu resolves\n", static_cast<unsigned long long>(totals.captures.load()), static_cast<unsigned long long>(totals.reads.load()), static_cast<unsigned long long>(totals.pages.load()), static_cast<unsigned long long>(totals.pagesWordwise.load()), static_cast<unsigned long long>(totals.wordWaits.load()), totals.wordWaitNanoseconds.load() / 1e9, static_cast<unsigned long long>(totals.wordsRaw.load()), static_cast<unsigned long long>(totals.wordsVerified.load()), static_cast<unsigned long long>(totals.wordMismatches.load()), static_cast<unsigned long long>(totals.wordsKnown.load()), static_cast<unsigned long long>(totals.observationsSkipped.load()), captureNs / 1e9, static_cast<unsigned long long>(initialBytes / 1024), resolveNs / 1e9, resolveNs / captures / 1e3, walkNs / 1e9, walkNs / captures / 1e3, specializationNs / 1e9, specializationNs / captures / 1e3, pageNs / 1e9, pageNs / captures / 1e3, wordNs / 1e9, wordNs / captures / 1e3, hookNs / 1e9, hookNs / captures / 1e3, static_cast<unsigned long long>(totals.handleHits.load()), static_cast<unsigned long long>(totals.handleMisses.load()));
+            AgcDriver::ProfilePrint_nid_no_patch( "[capture] %llu captures: %llu word reads, %llu pages fetched (%llu read word by word over pending GPU writes: %llu words waited %.2f s, %llu read raw on evidence, %llu verified with %llu mismatches, %llu served from known values, %llu hook reads not observed: no GPU wait), capture (plan lookup + materialize) %.1f s, %llu KiB registered code this capture; sub-phases (s, us per capture): source resolve %.2f/%.1f, walk %.2f/%.1f, specialization (every materialize) %.2f/%.1f, page reads %.2f/%.1f, word reads %.2f/%.1f, hook GPU waits inside %.2f/%.1f, materialize %.2f/%.1f (SRT evaluate %.2f/%.1f); source handle memo %llu hits, %llu resolves\n", static_cast<unsigned long long>(totals.captures.load()), static_cast<unsigned long long>(totals.reads.load()), static_cast<unsigned long long>(totals.pages.load()), static_cast<unsigned long long>(totals.pagesWordwise.load()), static_cast<unsigned long long>(totals.wordWaits.load()), totals.wordWaitNanoseconds.load() / 1e9, static_cast<unsigned long long>(totals.wordsRaw.load()), static_cast<unsigned long long>(totals.wordsVerified.load()), static_cast<unsigned long long>(totals.wordMismatches.load()), static_cast<unsigned long long>(totals.wordsKnown.load()), static_cast<unsigned long long>(totals.observationsSkipped.load()), captureNs / 1e9, static_cast<unsigned long long>(initialBytes / 1024), resolveNs / 1e9, resolveNs / captures / 1e3, walkNs / 1e9, walkNs / captures / 1e3, specializationNs / 1e9, specializationNs / captures / 1e3, pageNs / 1e9, pageNs / captures / 1e3, wordNs / 1e9, wordNs / captures / 1e3, hookNs / 1e9, hookNs / captures / 1e3, materializeNs / 1e9, materializeNs / captures / 1e3, evaluateNs / 1e9, evaluateNs / captures / 1e3, static_cast<unsigned long long>(totals.handleHits.load()), static_cast<unsigned long long>(totals.handleMisses.load()));
         }
     }
     return capture;
@@ -252,20 +328,13 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
     result.reserve(initial.size() + pages.size());
     auto next = initial.begin();
     // Both maps are ordered by address and never overlap, so a merge keeps the result sorted.
-    for (const auto& [base, page] : pages) {
+    for (const auto& [base, pagePointer] : pages) {
+        const auto& page = *pagePointer;
         while (next != initial.end() && next->first < base) {
             result.push_back({next->first, next->second});
             ++next;
         }
-        for (std::size_t index = 0; index < PageWords;) {
-            if (!page.read.test(index)) {
-                ++index;
-                continue;
-            }
-            const auto first = index;
-            while (index < PageWords && page.read.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, index - first))});
-        }
+        page.read.ForEachRun([&](std::size_t first, std::size_t end) { result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, end - first))}); });
     }
     for (; next != initial.end(); ++next) result.push_back({next->first, next->second});
     return result;
@@ -273,18 +342,11 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
 
 std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::TakeRecentRegions() {
     std::vector<ShaderRecompiler::MemoryRegion> result;
-    for (auto& [base, page] : pages) {
-        if (page.recent.none()) continue;
-        for (std::size_t index = 0; index < PageWords;) {
-            if (!page.recent.test(index)) {
-                ++index;
-                continue;
-            }
-            const auto first = index;
-            while (index < PageWords && page.recent.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, index - first))});
-        }
-        page.recent.reset();
+    for (auto& [base, pagePointer] : pages) {
+        auto& page = *pagePointer;
+        if (page.recent.None()) continue;
+        page.recent.ForEachRun([&](std::size_t first, std::size_t end) { result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, end - first))}); });
+        page.recent.Reset();
     }
     return result;
 }
