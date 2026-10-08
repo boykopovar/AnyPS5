@@ -1786,6 +1786,9 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
     if (!reusable || shaders.empty()) return false;
+    for (const auto& range : describedRanges) {
+        if (DepthSurfaceAt(range.address)) return false;
+    }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
@@ -2636,6 +2639,7 @@ bool ShaderResources::precollectImages() {
 
 std::shared_ptr<Texture> ShaderResources::fastTexture(const ImageRecord& record) {
     if (record.texture == nullptr) return nullptr;
+    if (DepthSurfaceAt(record.resource.baseAddress)) return nullptr;
     struct Outcome {
         bool profile;
         std::chrono::steady_clock::time_point start;

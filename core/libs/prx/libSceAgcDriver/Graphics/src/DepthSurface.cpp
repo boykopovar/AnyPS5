@@ -12,6 +12,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <vector>
+#include <utility>
 
 namespace AgcDriver::Graphics {
 namespace {
@@ -108,22 +109,25 @@ public:
     }
 
     std::shared_ptr<StorageTexture> Storage(const GuestTextureResource& resource, std::uint32_t mip) {
-        if (resource.baseAddress != target.stencilAddress || target.stencilAddress == 0) {
+        const bool stencil = resource.baseAddress == target.stencilAddress && target.stencilAddress != 0;
+        const bool depth = !stencil && target.format == VK_FORMAT_D16_UNORM;
+        if (!stencil && !depth) {
             char text[512];
             std::snprintf(text, sizeof(text), "AGC graphics: storage image access to the depth plane is not implemented (target format %d, %ux%u; descriptor format %u, %ux%u, dimension %d, levels %u-%u of %u, mip %u, slices %u-%u, tile %d, DCC 0x%llx)",
                           static_cast<int>(target.format), target.extent.width, target.extent.height, resource.format, resource.width, resource.height, static_cast<int>(resource.dimension), resource.baseLevel, resource.lastLevel, resource.mipCount, mip, resource.baseArray, resource.depthOrLastArray, static_cast<int>(resource.tileMode), static_cast<unsigned long long>(resource.dccAddress));
             throw std::runtime_error(text);
         }
-        Require(stencilUncompressed, "storage image access to HTILE stencil is not implemented (DB_STENCIL_INFO TILE_STENCIL_DISABLE must be set)");
-        if (!(target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && ResolveTextureFormat(resource.format) == VK_FORMAT_R8_UINT && resource.width == target.extent.width && resource.height == target.extent.height && (resource.dimension == TextureDimension::k2D || resource.dimension == TextureDimension::k2DArray) && resource.depthOrLastArray == 0 && resource.baseArray == 0 && resource.baseLevel == 0 && resource.lastLevel == 0 && resource.mipCount == 1 && mip == 0 && resource.dccAddress == 0 && resource.tileMode == TextureTileMode::kZ64KBX)) {
+        if (stencil) Require(stencilUncompressed, "storage image access to HTILE stencil is not implemented (DB_STENCIL_INFO TILE_STENCIL_DISABLE must be set)");
+        const auto format = ResolveTextureFormat(resource.format);
+        if (!(((stencil && target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && format == VK_FORMAT_R8_UINT) || (depth && (format == VK_FORMAT_R16_UNORM || format == VK_FORMAT_R16_UINT))) && resource.width == target.extent.width && resource.height == target.extent.height && (resource.dimension == TextureDimension::k2D || resource.dimension == TextureDimension::k2DArray) && resource.depthOrLastArray == 0 && resource.baseArray == 0 && resource.baseLevel == 0 && resource.lastLevel == 0 && resource.mipCount == 1 && mip == 0 && resource.dccAddress == 0 && resource.tileMode == TextureTileMode::kZ64KBX)) {
             char text[512];
-            std::snprintf(text, sizeof(text), "AGC graphics: stencil storage requires a matching D32S8 single-level single-layer 2D or 2D-array R8_UINT SW_64KB_Z_X descriptor without metadata (target format %d, %ux%u; descriptor format %u, %ux%u, dimension %d, levels %u-%u of %u, mip %u, slices %u-%u, tile %d, DCC 0x%llx)",
-                          static_cast<int>(target.format), target.extent.width, target.extent.height, resource.format, resource.width, resource.height, static_cast<int>(resource.dimension), resource.baseLevel, resource.lastLevel, resource.mipCount, mip, resource.baseArray, resource.depthOrLastArray, static_cast<int>(resource.tileMode), static_cast<unsigned long long>(resource.dccAddress));
+            std::snprintf(text, sizeof(text), "AGC graphics: %s storage requires a matching %s single-level single-layer 2D or 2D-array %s SW_64KB_Z_X descriptor without metadata (target format %d, %ux%u; descriptor format %u, %ux%u, dimension %d, levels %u-%u of %u, mip %u, slices %u-%u, tile %d, DCC 0x%llx)",
+                          stencil ? "stencil" : "depth", stencil ? "D32S8" : "D16", stencil ? "R8_UINT" : "R16_UNORM or R16_UINT", static_cast<int>(target.format), target.extent.width, target.extent.height, resource.format, resource.width, resource.height, static_cast<int>(resource.dimension), resource.baseLevel, resource.lastLevel, resource.mipCount, mip, resource.baseArray, resource.depthOrLastArray, static_cast<int>(resource.tileMode), static_cast<unsigned long long>(resource.dccAddress));
             throw std::runtime_error(text);
         }
-        auto texture = storage[resource.dimension].lock();
+        auto texture = storage[std::pair{resource.dimension, format}].lock();
         if (texture == nullptr) {
-            if (transfer == nullptr) transfer = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(target.extent.width) * target.extent.height, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            if (transfer == nullptr) transfer = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(target.extent.width) * target.extent.height * (stencil ? 1u : 2u), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             texture = std::make_shared<StorageTexture>(context, resource, [owner = shared_from_this(), seen = ~0ull](bool store, VkImage storageImage) mutable {
                 if (!store && seen == owner->revision) return false;
                 owner->Transfer(store, storageImage);
@@ -131,7 +135,7 @@ public:
                 seen = owner->revision;
                 return true;
             });
-            storage[resource.dimension] = texture;
+            storage[std::pair{resource.dimension, format}] = texture;
         }
         texture->Refresh();
         return texture;
@@ -144,14 +148,14 @@ public:
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
         if (recorder != nullptr) recorder->Keep(shared_from_this());
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        VkBufferImageCopy stencilCopy{};
-        stencilCopy.imageSubresource = {VK_IMAGE_ASPECT_STENCIL_BIT, 0, 0, 1};
-        stencilCopy.imageExtent = {target.extent.width, target.extent.height, 1};
-        auto storageCopy = stencilCopy;
+        VkBufferImageCopy planeCopy{};
+        planeCopy.imageSubresource = {target.format == VK_FORMAT_D16_UNORM ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_STENCIL_BIT, 0, 0, 1};
+        planeCopy.imageExtent = {target.extent.width, target.extent.height, 1};
+        auto storageCopy = planeCopy;
         storageCopy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        context.Resolved(&DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, store ? storageImage : image, VK_IMAGE_LAYOUT_GENERAL, transfer->Handle(), 1, store ? &storageCopy : &stencilCopy);
+        context.Resolved(&DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, store ? storageImage : image, VK_IMAGE_LAYOUT_GENERAL, transfer->Handle(), 1, store ? &storageCopy : &planeCopy);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-        context.Resolved(&DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, transfer->Handle(), store ? image : storageImage, VK_IMAGE_LAYOUT_GENERAL, 1, store ? &stencilCopy : &storageCopy);
+        context.Resolved(&DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, transfer->Handle(), store ? image : storageImage, VK_IMAGE_LAYOUT_GENERAL, 1, store ? &planeCopy : &storageCopy);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
         if (batch) batch->SubmitAndWait();
         else Recorder::CountBarriers(store ? Recorder::CommandClass::StorageWriteBack : Recorder::CommandClass::StorageUpload, 3);
@@ -167,7 +171,7 @@ public:
 
 private:
     std::map<std::array<std::uint32_t, 12>, std::weak_ptr<Texture>> textures;
-    std::map<TextureDimension, std::weak_ptr<StorageTexture>> storage;
+    std::map<std::pair<TextureDimension, VkFormat>, std::weak_ptr<StorageTexture>> storage;
     std::unique_ptr<DeviceBuffer> transfer;
 
     void release() noexcept {

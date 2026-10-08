@@ -669,7 +669,67 @@ target_link_libraries(agc_driver_depth_stencil_storage_tests PRIVATE libSceAgcDr
 set_target_properties(agc_driver_depth_stencil_storage_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_depth_stencil_storage_tests)
 
-set(agcExecutionTests agc_driver_depth_stencil_storage_tests)
+
+set(agcDepthStorageHeaders)
+foreach(mode IN ITEMS Typed Formatless Array ArrayFormatless Transition ArrayTransition UnormTyped UnormFormatless UnormArray UnormArrayFormatless UnormTransition UnormArrayTransition)
+    set(shaderSource ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/DepthStorage.comp)
+    set(shaderSpv ${agcTestShaderGeneratedRoot}/DepthStorage${mode}.spv)
+    set(shaderHeader ${agcTestShaderGeneratedRoot}/DepthStorage${mode}_spv.h)
+    set(shaderDefines)
+    if(mode MATCHES "Array")
+        list(APPEND shaderDefines -DANYPS5_ARRAY=1)
+    endif()
+    if(mode MATCHES "Formatless")
+        list(APPEND shaderDefines -DANYPS5_FORMATLESS=1)
+    endif()
+    if(mode MATCHES "Transition")
+        list(APPEND shaderDefines -DANYPS5_FORMATLESS=1 -DANYPS5_TRANSITION=1)
+    endif()
+    if(mode MATCHES "Unorm")
+        list(APPEND shaderDefines -DANYPS5_UNORM=1)
+    endif()
+    string(TOUPPER "DEPTH_STORAGE_${mode}_SPV" shaderSymbol)
+    add_custom_command(
+            OUTPUT "${shaderHeader}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 ${shaderDefines} -o "${shaderSpv}" "${shaderSource}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${shaderSpv} -DOUTPUT=${shaderHeader}
+            -DSYMBOL=${shaderSymbol} -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${shaderSource}" glslang-standalone
+            VERBATIM
+    )
+    list(APPEND agcDepthStorageHeaders ${shaderHeader})
+endforeach()
+foreach(stage IN ITEMS vert frag)
+    set(shaderSource ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/DepthAttachment.${stage})
+    set(shaderSpv ${agcTestShaderGeneratedRoot}/DepthAttachment_${stage}.spv)
+    set(shaderHeader ${agcTestShaderGeneratedRoot}/DepthAttachment_${stage}_spv.h)
+    add_custom_command(
+            OUTPUT "${shaderHeader}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${shaderSpv}" "${shaderSource}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${shaderSpv} -DOUTPUT=${shaderHeader}
+            -DSYMBOL=DEPTH_ATTACHMENT_${stage}_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${shaderSource}" glslang-standalone
+            VERBATIM
+    )
+    list(APPEND agcDepthStorageHeaders ${shaderHeader})
+endforeach()
+add_test_executable(agc_driver_depth_storage_tests EXCLUDE_FROM_ALL
+        tests/DepthStorage.cpp
+        ${agcDepthStorageHeaders}
+)
+target_include_directories(agc_driver_depth_storage_tests PRIVATE
+        ${LIBS_INCLUDE_DIR}
+        ${agcTestShaderGeneratedRoot}
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+)
+target_link_libraries(agc_driver_depth_storage_tests PRIVATE libSceAgcDriver SDL2-static libc shader_recompiler_agc_driver)
+set_target_properties(agc_driver_depth_storage_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_driver_depth_storage_tests)
+
+set(agcExecutionTests agc_driver_depth_stencil_storage_tests agc_driver_depth_storage_tests)
 foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     get_filename_component(agcExecutionTestName ${agcExecutionTestSource} NAME_WE)
     string(REGEX REPLACE "([a-z0-9])([A-Z])" "\\1_\\2" agcExecutionTestName "${agcExecutionTestName}")
