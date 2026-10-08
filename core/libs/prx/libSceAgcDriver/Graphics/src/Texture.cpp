@@ -433,6 +433,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView");
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
+        prepareBaseLevelView(descriptor, viewInfo);
         if (profile) {
             auto& totals = Profile();
             totals.view += timer.lap();
@@ -479,6 +480,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView storage view");
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
+        prepareBaseLevelView(descriptor, viewInfo);
         if (profile) {
             auto& totals = Profile();
             totals.view += timer.lap();
@@ -516,12 +518,31 @@ void Texture::createFirstLayerView(const GuestTextureResource& descriptor, VkIma
     firstLayerRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
 }
 
+void Texture::prepareBaseLevelView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo) {
+    if (viewInfo.subresourceRange.levelCount == 1u) return;
+    if (descriptor.dimension != TextureDimension::k1D && descriptor.dimension != TextureDimension::k2D && descriptor.dimension != TextureDimension::k2DArray) return;
+    viewInfo.pNext = nullptr;
+    viewInfo.viewType = descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
+    baseLevelInfo = viewInfo;
+}
+
+VkImageView Texture::BaseLevelView() const {
+    Require(baseLevelInfo.has_value(), "a base-level view needs a mipmapped 1D, 2D or 2D array texture");
+    std::lock_guard lock(baseLevelMutex);
+    if (!baseLevelView) Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &*baseLevelInfo, nullptr, &baseLevelView), "vkCreateImageView base level");
+    return baseLevelView;
+}
+
 void Texture::release() noexcept {
     upload.reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     view = VK_NULL_HANDLE;
     if (firstLayerView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, firstLayerView, nullptr);
     firstLayerView = VK_NULL_HANDLE;
+    if (baseLevelView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, baseLevelView, nullptr);
+    baseLevelView = VK_NULL_HANDLE;
     // The image and its memory go with the last holder: this texture, or the batch still uploading it.
     owned.reset();
     image = VK_NULL_HANDLE;

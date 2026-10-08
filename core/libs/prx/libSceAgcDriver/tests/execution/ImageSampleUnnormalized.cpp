@@ -64,28 +64,39 @@ struct Coordinate {
     float v;
 };
 
-std::vector<Coordinate> Coordinates() {
+std::int32_t LevelWidth(std::uint32_t level) {
+    return std::max(Width >> level, 1);
+}
+
+std::int32_t LevelHeight(std::uint32_t level) {
+    return std::max(Height >> level, 1);
+}
+
+std::vector<Coordinate> Coordinates(std::uint32_t level) {
+    const auto width = LevelWidth(level);
+    const auto height = LevelHeight(level);
     std::vector<float> us;
-    for (std::int32_t k = 0; k < Width; ++k) {
+    for (std::int32_t k = 0; k < width; ++k) {
         for (const float fraction : {0.5f, 0.0f, 0.25f, 0.75f}) us.push_back(static_cast<float>(k) + fraction);
     }
-    for (const float edge : {-1.0f, -0.5f, 13.0f, 14.0f, 12.75f}) us.push_back(edge);
+    for (const float edge : {-1.0f, -0.5f, static_cast<float>(width), static_cast<float>(width + 1), static_cast<float>(width) - 0.25f}) us.push_back(edge);
     constexpr std::array<float, 3> fractions{0.5f, 0.0f, 0.75f};
     std::vector<Coordinate> result;
     for (std::size_t index = 0; index < us.size(); ++index) {
         for (std::size_t fraction = 0; fraction < fractions.size(); ++fraction) {
-            result.push_back({us[index], static_cast<float>((index * fractions.size() + fraction) % Height) + fractions[fraction]});
+            result.push_back({us[index], static_cast<float>((index * fractions.size() + fraction) % height) + fractions[fraction]});
         }
     }
-    for (std::int32_t x = 0; x < Width; ++x) {
-        const float v = static_cast<float>(x % Height) + 0.5f;
+    for (std::int32_t x = 0; x < width; ++x) {
+        const float v = static_cast<float>(x % height) + 0.5f;
         result.push_back({static_cast<float>(x) - 1.0f, v});
         result.push_back({static_cast<float>(x) + 2.0f, v});
     }
     return result;
 }
 
-std::array<double, 4> TexelOf(std::int32_t x, std::int32_t y) {
+std::array<double, 4> TexelOf(std::uint32_t level, std::int32_t x, std::int32_t y) {
+    if (level == 1u) return {240.0 * ((x + y + 1) & 1), 32.0 * y + 48.0, 16.0 * x + 40.0, 200.0};
     return {240.0 * ((x + y) & 1), 16.0 * x + 16.0, 32.0 * y + 32.0, 240.0};
 }
 
@@ -98,9 +109,9 @@ void FillTexture(std::span<std::uint8_t> texels, std::uint32_t levels) {
         for (std::uint32_t y = 0; y < mip.height; ++y) {
             for (std::uint32_t x = 0; x < mip.width; ++x) {
                 auto* texel = &texels[mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u];
-                const auto value = TexelOf(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
+                const auto value = TexelOf(level, static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
                 for (std::uint32_t component = 0; component < 4u; ++component) {
-                    texel[component] = level == 0u ? static_cast<std::uint8_t>(value[component]) : OtherLevelTexel;
+                    texel[component] = level <= 1u ? static_cast<std::uint8_t>(value[component]) : OtherLevelTexel;
                 }
             }
         }
@@ -164,13 +175,15 @@ Samples Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>&
     return samples;
 }
 
-std::array<double, 4> Fetch(const SamplerCase& sampler, std::int32_t x, std::int32_t y) {
-    if (sampler.border && (x < 0 || x >= Width || y < 0 || y >= Height)) return {0.0, 0.0, 0.0, 0.0};
-    return TexelOf(std::clamp(x, 0, Width - 1), std::clamp(y, 0, Height - 1));
+std::array<double, 4> Fetch(const SamplerCase& sampler, std::uint32_t level, std::int32_t x, std::int32_t y) {
+    const auto width = LevelWidth(level);
+    const auto height = LevelHeight(level);
+    if (sampler.border && (x < 0 || x >= width || y < 0 || y >= height)) return {0.0, 0.0, 0.0, 0.0};
+    return TexelOf(level, std::clamp(x, 0, width - 1), std::clamp(y, 0, height - 1));
 }
 
-std::array<double, 4> Reference(const SamplerCase& sampler, const Coordinate& coordinate) {
-    if (!sampler.linear) return Fetch(sampler, static_cast<std::int32_t>(std::floor(coordinate.u)), static_cast<std::int32_t>(std::floor(coordinate.v)));
+std::array<double, 4> Reference(const SamplerCase& sampler, std::uint32_t level, const Coordinate& coordinate) {
+    if (!sampler.linear) return Fetch(sampler, level, static_cast<std::int32_t>(std::floor(coordinate.u)), static_cast<std::int32_t>(std::floor(coordinate.v)));
     const double u = static_cast<double>(coordinate.u) - 0.5;
     const double v = static_cast<double>(coordinate.v) - 0.5;
     const auto i = static_cast<std::int32_t>(std::floor(u));
@@ -179,17 +192,17 @@ std::array<double, 4> Reference(const SamplerCase& sampler, const Coordinate& co
     const double beta = v - j;
     std::array<double, 4> result{};
     for (std::uint32_t component = 0; component < 4u; ++component) {
-        result[component] = (1.0 - alpha) * (1.0 - beta) * Fetch(sampler, i, j)[component] + alpha * (1.0 - beta) * Fetch(sampler, i + 1, j)[component]
-            + (1.0 - alpha) * beta * Fetch(sampler, i, j + 1)[component] + alpha * beta * Fetch(sampler, i + 1, j + 1)[component];
+        result[component] = (1.0 - alpha) * (1.0 - beta) * Fetch(sampler, level, i, j)[component] + alpha * (1.0 - beta) * Fetch(sampler, level, i + 1, j)[component]
+            + (1.0 - alpha) * beta * Fetch(sampler, level, i, j + 1)[component] + alpha * beta * Fetch(sampler, level, i + 1, j + 1)[component];
     }
     return result;
 }
 
-void Check(const SamplerCase& sampler, const char* image, const std::vector<Coordinate>& coordinates, const Samples& samples) {
+void Check(const SamplerCase& sampler, std::uint32_t level, const char* image, const std::vector<Coordinate>& coordinates, const Samples& samples) {
     Require(samples.size() == coordinates.size(), "image sample unnormalized: a dispatch lost samples");
     const double tolerance = sampler.linear ? 0.5 : 0.25;
     for (std::size_t index = 0; index < coordinates.size(); ++index) {
-        const auto expected = Reference(sampler, coordinates[index]);
+        const auto expected = Reference(sampler, level, coordinates[index]);
         for (std::uint32_t instruction = 0; instruction < Instructions.size(); ++instruction) {
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 const double value = static_cast<double>(std::bit_cast<float>(samples[index][instruction * 4u + component])) * 255.0;
@@ -218,17 +231,24 @@ int main() {
         if (!device) return VulkanTestSkipped;
         FillTexture(SingleLevel, 1);
         FillTexture(MultiLevel, StorageLevels);
-        const auto coordinates = Coordinates();
+        const auto coordinates = Coordinates(0u);
+        const auto levelOneCoordinates = Coordinates(1u);
         const auto single = TextureDescriptor(SingleLevel.data(), 0u, 0u);
         const auto multi = TextureDescriptor(MultiLevel.data(), 0u, StorageLevels - 1u);
+        const auto chain = TextureDescriptor(MultiLevel.data(), StorageLevels - 1u, StorageLevels - 1u);
+        auto fromLevelOne = chain;
+        fromLevelOne[3] |= 1u << 12u;
         for (const auto& sampler : Samplers) {
             const auto singleSamples = Run(*device, single, sampler.words, coordinates);
-            Check(sampler, "1-level image", coordinates, singleSamples);
+            Check(sampler, 0u, "1-level image", coordinates, singleSamples);
             const auto multiSamples = Run(*device, multi, sampler.words, coordinates);
-            Check(sampler, "first level of a 4-level image", coordinates, multiSamples);
+            Check(sampler, 0u, "first level of a 4-level image", coordinates, multiSamples);
             Require(multiSamples == singleSamples, std::string(sampler.name) + ": the first level of a 4-level image does not sample like a 1-level image");
+            const auto chainSamples = Run(*device, chain, sampler.words, coordinates);
+            Check(sampler, 0u, "4-level view", coordinates, chainSamples);
+            Require(chainSamples == singleSamples, std::string(sampler.name) + ": a 4-level view does not sample its base level like a 1-level image");
+            Check(sampler, 1u, "3-level view starting at mip 1", levelOneCoordinates, Run(*device, fromLevelOne, sampler.words, levelOneCoordinates));
         }
-        ExpectFailure(*device, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view");
         ExpectFailure(*device, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, "different minification", "unequal minification and magnification filters");
         ExpectFailure(*device, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, "clamp mode 0", "wrap on X");
         std::puts("image sample unnormalized tests passed");
