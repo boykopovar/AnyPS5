@@ -278,6 +278,18 @@ target_link_libraries(agc_spirv_module_tests PRIVATE shader_recompiler_agc_drive
 set_target_properties(agc_spirv_module_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_spirv_module_tests)
 
+add_test_executable(agc_spirv_narrow_constant_store_tests EXCLUDE_FROM_ALL tests/SpirvNarrowConstantStore.cpp)
+target_link_libraries(agc_spirv_narrow_constant_store_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_spirv_narrow_constant_store_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_spirv_narrow_constant_store_tests)
+if(ANYPS5_ENABLE_SPIRV_TOOLS)
+    target_link_libraries(agc_spirv_narrow_constant_store_tests PRIVATE SPIRV-Tools-static)
+    add_test_executable(agc_spirv_optimizer_tests EXCLUDE_FROM_ALL tests/SpirvOptimizer.cpp)
+    target_link_libraries(agc_spirv_optimizer_tests PRIVATE shader_recompiler_agc_driver libc SPIRV-Tools-static)
+    set_target_properties(agc_spirv_optimizer_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(agc_spirv_optimizer_tests)
+endif()
+
 add_test_executable(agc_dpp_write_tests EXCLUDE_FROM_ALL tests/DppWrite.cpp)
 target_link_libraries(agc_dpp_write_tests PRIVATE shader_recompiler_agc_driver libc)
 set_target_properties(agc_dpp_write_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -384,10 +396,24 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcSampleArrayShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/SampleArray.comp)
+set(agcSampleArrayShaderSpv ${agcTestShaderGeneratedRoot}/SampleArray.spv)
+set(agcSampleArrayShaderHeader ${agcTestShaderGeneratedRoot}/SampleArray_spv.h)
+add_custom_command(
+        OUTPUT "${agcSampleArrayShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcSampleArrayShaderSpv}" "${agcSampleArrayShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSampleArrayShaderSpv} -DOUTPUT=${agcSampleArrayShaderHeader}
+        -DSYMBOL=SAMPLE_ARRAY_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcSampleArrayShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 add_test_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
         tests/ResidentPresent.cpp
         ${agcSampleLodShaderHeader}
+        ${agcSampleArrayShaderHeader}
 )
 
 target_include_directories(agc_driver_recorder_tests PRIVATE
@@ -552,6 +578,9 @@ endforeach()
 
 if(BUILD_TESTING)
     foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests ${agcExecutionTests})
+        if(agcTest STREQUAL "agc_driver_constant_store_tests")
+            continue()
+        endif()
         string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
         set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
         add_test(NAME ${agcTestName} COMMAND ${agcTest})
@@ -567,6 +596,34 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_pm4_failure PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
+    foreach(agcTest IN ITEMS agc_spirv_narrow_constant_store_tests agc_spirv_optimizer_tests agc_driver_constant_store_tests)
+        if(NOT TARGET ${agcTest})
+            continue()
+        endif()
+        set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
+        string(REGEX REPLACE "_tests$" "" agcTestBaseName "${agcTest}")
+        foreach(agcSpirvMode IN ITEMS default full none)
+            if(agcSpirvMode STREQUAL "default")
+                set(agcTestName "${agcTestBaseName}")
+                set(agcSpirvEnvironment "--unset=APS5_SPIRV_OPT")
+            else()
+                set(agcTestName "${agcTestBaseName}_${agcSpirvMode}")
+                set(agcSpirvEnvironment "APS5_SPIRV_OPT=${agcSpirvMode}")
+            endif()
+            add_test(NAME ${agcTestName} COMMAND ${CMAKE_COMMAND} -E env
+                    ${agcSpirvEnvironment} "$<TARGET_FILE:${agcTest}>")
+            set_tests_properties(${agcTestName} PROPERTIES
+                    ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 60 SKIP_RETURN_CODE 77)
+            if(agcTest STREQUAL "agc_driver_constant_store_tests")
+                set_tests_properties(${agcTestName} PROPERTIES RUN_SERIAL TRUE)
+            endif()
+            if(WIN32)
+                set_tests_properties(${agcTestName} PROPERTIES ENVIRONMENT_MODIFICATION
+                        "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endif()
+        endforeach()
+    endforeach()
 endif()
 
 option(AGC_BUILD_VISUAL_TEST "Enable the standalone AGC SPIR-V visual test" OFF)

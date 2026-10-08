@@ -188,14 +188,18 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
     if (voice.rendered) return;
     if (voice.rendering) throw std::invalid_argument("NGS2: the voice patches form a cycle");
     voice.rendering = true;
+    struct RenderingScope {
+        bool& active;
+        ~RenderingScope() { active = false; }
+    } renderingScope{voice.rendering};
     voice.samples.assign(static_cast<std::size_t>(grain) * voice.channels, 0.0f);
     voice.hasSamples = false;
     if (voice.state == Ngs2PlayState::Playing && voice.channels != 0) {
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_SAMPLER) RenderSampler(voice, grain, systemRate);
         else MixInputs(voice, voices, grain, systemRate);
+        Ngs2ProcessLegacyUserFx(voice, grain, systemRate);
         if (voice.hasSamples) Ngs2ProcessUserFx(voice, grain, systemRate);
     }
-    voice.rendering = false;
     voice.rendered = true;
 }
 

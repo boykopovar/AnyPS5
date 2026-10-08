@@ -72,7 +72,7 @@ int main() {
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0, nullptr, nullptr) == -1);
     Require(*__error_nid_postfix() == 35);
     const char message[] = "guest UDP loopback";
-    Require(sendto_nid_postfix(sender, message, sizeof(message), 0, destination.data(), destination.size()) == sizeof(message));
+    Require(sendto_nid_postfix(sender, message, sizeof(message), 0x20000, destination.data(), destination.size()) == sizeof(message));
     int queued = 0;
     for (int i = 0; i < 100 && queued == 0; ++i) {
         Require(ioctl_nid_postfix(receiver, 0x4004667f, &queued) == 0);

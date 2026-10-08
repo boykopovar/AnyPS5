@@ -427,7 +427,7 @@ private:
     std::vector<std::byte> original;
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
-    DccKeys filledKeys = DccKeys::Uncompressed;
+    mutable DccKeys filledKeys = DccKeys::Uncompressed;
     mutable DccKeyProof keyProof;
     struct ForeignKeyProof {
         std::uint64_t dccAddress = 0;

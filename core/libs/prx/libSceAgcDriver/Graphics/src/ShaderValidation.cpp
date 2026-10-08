@@ -181,6 +181,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     case spv::CapabilityGroupNonUniform: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT; break;
                     case spv::CapabilityGroupNonUniformBallot: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT; break;
                     case spv::CapabilityGroupNonUniformShuffle: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT; break;
+                    case spv::CapabilityGroupNonUniformArithmetic: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT; break;
                     default: break;
                 }
                 const bool isSubgroupCapability = subgroupOperations != 0;
@@ -528,7 +529,12 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         if (i != 0) {
             for (const auto& [location, signature] : current.inputs) {
                 const auto output = previous.outputs.find(location);
-                Require(output != previous.outputs.end() && output->second == signature, "graphics interfaces disagree at location " + std::to_string(location));
+                if (output == previous.outputs.end() || output->second != signature) {
+                    Require(false, "graphics interfaces disagree at location " + std::to_string(location) +
+                        " (stage " + std::to_string(i - 1) + " output " +
+                        (output == previous.outputs.end() ? "missing" : output->second) +
+                        ", stage " + std::to_string(i) + " input " + signature + ")");
+                }
             }
         }
         previous = current;

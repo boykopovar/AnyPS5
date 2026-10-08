@@ -38,12 +38,6 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
     return it->second;
 }
 
-std::uint32_t readOr(const Registers& registers, std::uint32_t offset, RegisterBank bank, std::uint32_t fallback) {
-    NoteRegisterRead(bank, offset);
-    const auto it = registers.find(offset);
-    return it == registers.end() ? fallback : it->second;
-}
-
 template <typename T> T _readHeaderPod(std::span<const std::byte> header, std::uint64_t headerAddress, const void* pointer) {
     if (pointer == nullptr) throw std::runtime_error("AGC graphics: null AGC header pointer");
     const auto address = reinterpret_cast<std::uint64_t>(pointer);
@@ -99,13 +93,13 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
 }
 
 ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram) {
-    const auto inControl = read(context, spiPsInControl, RegisterBank::Context);
+    const auto inControl = nullProgram ? 0u : read(context, spiPsInControl, RegisterBank::Context);
     const auto inputNum = inControl & 0x3Fu;
     if (inputNum > 32u) {
         throw std::runtime_error("AGC graphics: SPI_PS_IN_CONTROL input count exceeds 32");
     }
-    const auto ena = nullProgram ? readOr(context, spiPsInputEna, RegisterBank::Context, defaultPixelInputs) : read(context, spiPsInputEna, RegisterBank::Context);
-    const auto addr = nullProgram ? readOr(context, spiPsInputAddr, RegisterBank::Context, defaultPixelInputs) : read(context, spiPsInputAddr, RegisterBank::Context);
+    const auto ena = nullProgram ? defaultPixelInputs : read(context, spiPsInputEna, RegisterBank::Context);
+    const auto addr = nullProgram ? defaultPixelInputs : read(context, spiPsInputAddr, RegisterBank::Context);
     const auto activeInputs = ena & addr;
     using ShaderRecompiler::PixelInput;
     using ShaderRecompiler::PixelInputBit;
@@ -122,14 +116,14 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     for (std::uint32_t i = 0; i < inputNum; ++i) {
         interpolatorSettings[i] = read(context, spiPsInputCntl0 + i, RegisterBank::Context);
     }
-    const auto shaderControl = read(context, dbShaderControl, RegisterBank::Context);
+    const auto shaderControl = nullProgram ? 0u : read(context, dbShaderControl, RegisterBank::Context);
     // Bits 9 and 11 are EXEC_ON_HIER_FAIL and ALPHA_TO_MASK_DISABLE on GFX10; neither changes what the
     // recompiled pixel shader computes.
     const auto conservativeZExport = (shaderControl >> 13u) & 0x3u;
     if (conservativeZExport == 3u) {
         throw std::runtime_error("AGC graphics: DB_SHADER_CONTROL.CONSERVATIVE_Z_EXPORT uses the reserved value 3");
     }
-    const auto colFormat = nullProgram ? readOr(context, spiShaderColFormat, RegisterBank::Context, 0u) : read(context, spiShaderColFormat, RegisterBank::Context);
+    const auto colFormat = nullProgram ? 0u : read(context, spiShaderColFormat, RegisterBank::Context);
     std::array<std::uint8_t, 8> targetOutputMode{};
     for (std::uint32_t i = 0; i < 8u; ++i) {
         targetOutputMode[i] = static_cast<std::uint8_t>((colFormat >> (4u * i)) & 0xFu);

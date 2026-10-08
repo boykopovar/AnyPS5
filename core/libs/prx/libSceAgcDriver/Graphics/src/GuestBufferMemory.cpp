@@ -1628,7 +1628,9 @@ const GuestBufferMemory::Region* GuestBufferMemory::owner(std::uint64_t address)
 
 void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t bytes, bool atomic) {
     validate(address, bytes);
-    switch (baseOverlap(address, address + bytes, nullptr)) {
+    const auto begin = address & ~std::uint64_t{3};
+    const auto end = begin == address ? address + bytes : (address + bytes + 3) & ~std::uint64_t{3};
+    switch (baseOverlap(begin, end, nullptr)) {
         case BaseOverlap::Inside:
             return;
         case BaseOverlap::Partial:
@@ -1640,9 +1642,9 @@ void GuestBufferMemory::addDescriptorRegion(std::uint64_t address, std::size_t b
     }
     // `writable` here means the bytes come from live guest memory (not a snapshot), whether or not
     // the shader stores to them; what is written back is decided by Writes() alone.
-    Region region{address, address + bytes, true, {}, nullptr};
+    Region region{begin, end, true, {}, nullptr};
     region.atomic = atomic;
-    auto committed = GuestMemory::DescribeCommitted(address, bytes);
+    auto committed = GuestMemory::DescribeCommitted(begin, static_cast<std::size_t>(end - begin));
     if (!committed.whole) {
         // A GPU heap bound whole while the guest commits its pages on demand, or a descriptor left
         region.sparse = true;
@@ -2484,11 +2486,18 @@ VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std:
     const auto base = region.direct != nullptr ? region.direct->base : region.mirror != nullptr ? region.mirror->base : region.begin;
     const auto offset = address - base;
     Require(context.limits.minStorageBufferOffsetAlignment != 0, "no storage buffer offset alignment");
-    adjustment = static_cast<std::uint32_t>(offset % context.limits.minStorageBufferOffsetAlignment);
-    Require(adjustment % 4 == 0, "guest buffer view off the storage buffer offset alignment is not DWORD aligned");
-    Require(bytes + adjustment <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
+    Require(base % 4 == 0, "a guest buffer view in a GPU owner that does not start at a DWORD boundary is not implemented");
+    adjustment = static_cast<std::uint32_t>(offset % std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4));
+    const auto range = ViewBytes(bytes, adjustment);
+    const auto end = region.direct != nullptr ? region.direct->base + region.direct->bytes : region.end;
+    Require(address - adjustment + range <= end, "guest buffer view exceeds its GPU owner");
+    Require(range <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? region.mirror->buffer->Handle() : region.buffer->Handle();
-    return {handle, offset - adjustment, bytes + adjustment};
+    return {handle, offset - adjustment, range};
+}
+
+std::uint64_t GuestBufferMemory::ViewBytes(std::uint64_t bytes, std::uint32_t adjustment) {
+    return adjustment % 4 == 0 ? bytes + adjustment : 4 * (adjustment / 4 + bytes / 4 + 1);
 }
 
 ShaderRecompiler::BdaAbi::Range GuestBufferMemory::addressRange(const Region& region) {

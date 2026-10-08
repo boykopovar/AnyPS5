@@ -325,6 +325,20 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         const auto view = unaligned.Descriptor(address + 4, 4, adjustment);
         Require(adjustment == 4 && view.offset == 0 && view.range == 8, "a view off the offset alignment binds from below it");
         reject([&] { unaligned.Descriptor(address + sizeof(guest), 4, adjustment); }, "exceeds its GPU owner");
+        const auto odd = unaligned.Descriptor(address + 2, 6, adjustment);
+        Require(adjustment == 2 && odd.offset == 0 && odd.range == 8, "a view off a DWORD boundary does not bind the DWORDs around it");
+        const auto late = unaligned.Descriptor(address + 0x13, 8, adjustment);
+        Require(adjustment == 3 && late.offset == 16 && late.range == 12, "a view off a DWORD boundary does not bind from the offset alignment below it");
+        GuestBufferMemory lone(aligned);
+        lone.AddReadable(address + 6, 5);
+        lone.Upload(true);
+        const auto copied = lone.Descriptor(address + 6, 5, adjustment);
+        Require(adjustment == 2 && copied.offset == 0 && copied.range == 8, "a lone view off a DWORD boundary is not copied from the DWORD below it");
+        Require(std::memcmp(access.bytes(copied.buffer).data(), reinterpret_cast<const void*>(address + 4), 8) == 0, "a lone view off a DWORD boundary copied other bytes");
+        GuestBufferMemory tail(aligned);
+        tail.AddWritable(address, 62);
+        tail.Upload(true);
+        reject([&] { tail.Descriptor(address + 58, 4, adjustment); }, "exceeds its GPU owner");
     }
     {
         // The cached address space: a second build in an unchanged registry takes the first one's

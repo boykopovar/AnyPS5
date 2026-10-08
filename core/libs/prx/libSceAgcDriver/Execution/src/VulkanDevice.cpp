@@ -214,6 +214,7 @@ struct VulkanDevice::State {
     bool textureCompressionBC = false;
     bool samplerFilterMinmax = false;
     bool fragmentShaderPixelInterlock = false;
+    bool conservativeRasterization = false;
     // VK_KHR_timeline_semaphore enabled: the recorder's unlocked waits are available.
     bool timelineSemaphores = false;
     bool computeWave32 = false;
@@ -716,6 +717,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->capabilities.push_back(spv::CapabilityGroupNonUniform);
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformBallot);
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformShuffle);
+        if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformArithmetic);
     }
     APS5_LOG_OUT("Selected GPU name=%s vendor=0x%x device=0x%x subgroup=%u", state->properties.deviceName, state->properties.vendorID, state->properties.deviceID, state->subgroup.subgroupSize);
     state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(selected, &state->memoryProperties);
@@ -829,6 +831,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
         state->samplerFilterMinmax = minmaxProperties.filterMinmaxSingleComponentFormats == VK_TRUE && minmaxProperties.filterMinmaxImageComponentMapping == VK_TRUE;
         if (state->samplerFilterMinmax) deviceExtensions.push_back(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME);
+    }
+    if (hasExtension(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME)) {
+        VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &conservativeProperties};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
+        state->conservativeRasterization = conservativeProperties.primitiveOverestimationSize <= 1.0f / 256.0f && conservativeProperties.degenerateTrianglesRasterized == VK_TRUE;
+        if (state->conservativeRasterization) deviceExtensions.push_back(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME);
     }
     // Indirect draws with a GPU-side count (DRAW_INDIRECT_MULTI with count_indirect); a device
     // without it resolves such draws on the CPU.
@@ -2437,6 +2446,10 @@ bool VulkanDevice::SamplerFilterMinmax() const {
     return state->samplerFilterMinmax;
 }
 
+bool VulkanDevice::ConservativeRasterization() const {
+    return state->conservativeRasterization;
+}
+
 Graphics::Context VulkanDevice::graphicsContext() const {
     static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
     if (state->contextReady && !noCache) return state->context;
@@ -2481,6 +2494,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.depthBounds = state->depthBounds;
     context.depthBiasClamp = state->depthBiasClamp;
     context.samplerFilterMinmax = state->samplerFilterMinmax;
+    context.conservativeRasterization = state->conservativeRasterization;
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
     context.emptyBuffer = state->emptyBuffer ? state->emptyBuffer->Handle() : VK_NULL_HANDLE;

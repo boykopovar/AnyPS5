@@ -1435,13 +1435,12 @@ bool StorageTexture::Refresh() {
 }
 
 DccKeys StorageTexture::ProvedKeys() const {
-    if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) {
-        if (const auto keys = WaitForKeyWriters(descriptor, guestBytes)) {
-            keyProof = {};
-            return *keys;
-        }
-    }
-    return ProvedClearKeys(descriptor, guestBytes, keyProof);
+    std::optional<DccKeys> keys;
+    if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) keys = WaitForKeyWriters(descriptor, guestBytes);
+    if (keys.has_value()) keyProof = {};
+    else keys = ProvedClearKeys(descriptor, guestBytes, keyProof);
+    if (IsDccClear(filledKeys) && *keys != filledKeys && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
+    return *keys;
 }
 
 bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {

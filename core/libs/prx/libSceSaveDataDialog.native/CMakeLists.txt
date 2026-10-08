@@ -1,0 +1,15 @@
+add_library(libSceSaveDataDialog.native SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSaveDataDialog.native PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSaveDataDialog.native)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_savedata_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataDialog.cpp)
+    target_include_directories(guest_savedata_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_dialog_tests PRIVATE libSceSaveDataDialog.native)
+    configure_windows_unwind(guest_savedata_dialog_tests)
+    add_test(NAME guest_savedata_dialog COMMAND guest_savedata_dialog_tests)
+    if(WIN32)
+        set_tests_properties(guest_savedata_dialog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveDataDialog.native>")
+    endif()
+endif()

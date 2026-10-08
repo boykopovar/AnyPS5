@@ -63,7 +63,6 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::map<std::uint64_t, std::uint64_t> tags;
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> moduleImports;
-    std::vector<std::uint64_t> moduleExports;
     bool terminated = false;
     for (std::uint64_t offset = dynamic->Offset; offset < dynamic->Offset + dynamic->FileSize; offset += 16) {
         const auto tag = Io::ReadU64(bytes, offset);
@@ -71,7 +70,6 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag == 0) { terminated = true; break; }
         if (tag == 1) needed.push_back(value);
         else if (tag == 0x61000045) moduleImports.push_back(value);
-        else if (tag == 0x6100000d || tag == 0x61000043) moduleExports.push_back(value);
         else if (tag < 0x60000000 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
             if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
         }
@@ -160,13 +158,6 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     if (tags.contains(14)) {
         image.Soname = string(tags.at(14));
         if (image.Soname.empty() || image.Soname.find_first_of("\\:$\r\n") != std::string::npos) fail("Invalid guest SONAME: " + image.Soname);
-    }
-    std::set<std::uint64_t> moduleIds;
-    for (const auto value : moduleExports) {
-        const auto name = string(value & 0xffffffffu);
-        if (name.empty() || name.find_first_of("/\\:$\r\n") != std::string::npos) fail("Invalid guest module name: " + name);
-        if (!moduleIds.insert(value >> 48).second) fail("Duplicate export module ID");
-        image.ModuleNames.push_back(name);
     }
     std::set<std::string> dependencies;
     for (const auto offset : needed) {

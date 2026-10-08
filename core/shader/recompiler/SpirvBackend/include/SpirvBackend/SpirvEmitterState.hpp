@@ -68,6 +68,7 @@ struct MemoryResourceAccess {
     std::uint32_t byteOffset = 0;
     bool addIndexOffset = false;
     std::uint32_t memoryAccess = 0;
+    std::uint32_t misalignment = 0;
 };
 
 struct SpirvEmitterState {

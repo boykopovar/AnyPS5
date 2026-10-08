@@ -161,6 +161,7 @@ public:
     bool Presentable() const;
     bool PrimitiveListRestart() const;
     bool SamplerFilterMinmax() const;
+    bool ConservativeRasterization() const;
     // A presentation is a few steps so the presenter holds GuestMemory::GpuMutex only while it
     // touches the queue. Presentations are slots (FlipInFlight() + 1, each with its own command
     // buffer, fence, kept resident image and dump buffer): RetirePresents(keep) (no mutex) retires

@@ -2762,7 +2762,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                 if (written || empty || item.written || size > context.limits.maxStorageBufferRange) return std::nullopt;
                 const auto begin = address - item.adjustment;
-                const auto bytes = static_cast<std::size_t>(size) + item.adjustment;
+                const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
                 if (guestMemory.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
                 moved.push_back({index, address, static_cast<std::size_t>(size)});
@@ -2801,7 +2801,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             if (!direct || recorder.PendingWriteOverlaps(item.address, item.size)) continue;
         }
         const auto begin = address - item.adjustment;
-        const auto bytes = size + item.adjustment;
+        const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
         const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         const auto generation = GuestMemory::CollectWrites(begin, bytes);
         auto buffer = recorder.ReusableDrawSnapshot(begin, bytes);

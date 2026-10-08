@@ -38,6 +38,15 @@ using NativeSocket = int;
 constexpr auto Invalid = -1;
 #endif
 int Fail(int error) { *__error_nid_postfix() = error; return -1; }
+constexpr int GuestNoSignal = 0x20000;
+int NativeSendFlags(int flags) {
+#ifdef _WIN32
+    static_cast<void>(flags);
+    return 0;
+#else
+    return flags & GuestNoSignal ? MSG_NOSIGNAL : 0;
+#endif
+}
 int NativeError() {
 #ifdef _WIN32
     switch (WSAGetLastError()) {
@@ -77,6 +86,7 @@ int NativeError() {
         case ETIMEDOUT: return 60;
         case EINTR: return 4;
         case EINVAL: return 22;
+        case EPIPE: return 32;
         default: return 5;
     }
 #endif
@@ -317,10 +327,10 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
 std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std::uint64_t length, int flags) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (flags != 0) return Fail(45);
+    if ((flags & ~GuestNoSignal) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (!buffer && length) return Fail(14);
-    const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), 0);
+    const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), NativeSendFlags(flags));
     return result < 0 ? Fail(NativeError()) : result;
 }
 std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags) {
@@ -391,19 +401,19 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     int flags, const void* address, std::uint32_t addressLength) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (flags != 0) return Fail(45);
+    if ((flags & ~GuestNoSignal) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (!buffer && length) return Fail(14);
     int result;
     if (!address) {
         if (addressLength != 0) return Fail(22);
-        result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), 0);
+        result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), NativeSendFlags(flags));
     } else {
         sockaddr_storage native{};
         socklen_t size;
         if (!Address(address, addressLength, native, size)) return -1;
         if (native.ss_family != (socket->family == 2 ? AF_INET : AF_INET6)) return Fail(47);
-        result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), 0,
+        result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), NativeSendFlags(flags),
             reinterpret_cast<sockaddr*>(&native), size));
     }
     return result < 0 ? Fail(NativeError()) : result;

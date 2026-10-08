@@ -267,9 +267,10 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
         if (std::chrono::steady_clock::now() >= deadline) PinnedFailure(address, bytes, ("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS)").c_str());
         const auto waiter = pinWaiter.load(std::memory_order_acquire);
         bool progressed = false;
-        if (waiter != nullptr && state != nullptr && state->lock.owns_lock()) {
+        if (state != nullptr && state->lock.owns_lock()) {
             state->lock.unlock();
-            progressed = waiter();
+            if (waiter != nullptr) progressed = waiter();
+            else std::this_thread::yield();
             state->lock.lock();
         } else {
             std::this_thread::yield();

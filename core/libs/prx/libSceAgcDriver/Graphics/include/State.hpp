@@ -91,6 +91,7 @@ struct State {
     VkViewport viewport;
     bool negativeOneToOne;
     bool depthClamp = false;
+    VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkFrontFace frontFace;
@@ -103,6 +104,7 @@ State DecodeState(const QueueState& queue);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
+std::uint32_t ColorWriteMask(const Registers& context);
 
 struct ColorMetadataPass {
     enum class Mode { EliminateFastClear, DccDecompress };

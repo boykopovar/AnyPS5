@@ -71,7 +71,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     const auto bcSwizzle = (words[3] >> 25u) & 0x7u;
     const auto typeRaw = (words[3] >> 28u) & 0xfu;
 
-    const auto depth = (words[4] >> 0u) & 0x1fffu;
+    auto depth = (words[4] >> 0u) & 0x1fffu;
     const auto baseArray = (words[4] >> 16u) & 0x1fffu;
 
     const auto arrayPitch = (words[5] >> 0u) & 0xfu;
@@ -166,7 +166,11 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
         case TextureDimension::kCube:
             Require(width == height, "guest cube texture descriptor is not square");
             Require(baseArray <= depth, "guest cube texture descriptor has a base array past its last array slice");
-            Require((depth - baseArray + 1u) % 6u == 0, "guest cube texture descriptor does not contain a multiple of 6 array slices");
+            if (baseArray == depth) depth += 5u;
+            if ((depth - baseArray + 1u) % 6u != 0) {
+                Require(false, "guest cube texture descriptor does not contain a multiple of 6 array slices" +
+                    describe() + " (base array " + std::to_string(baseArray) + ")");
+            }
             break;
     }
 

@@ -31,6 +31,7 @@ namespace {
 struct PathAliases {
     std::mutex mutex;
     std::vector<std::pair<std::string, std::string>> entries;
+    std::vector<std::string> blocked;
 };
 
 PathAliases& Aliases() {
@@ -55,6 +56,10 @@ std::optional<std::filesystem::path> ResolveAlias(const std::string& guestPath) 
     const auto relative = TrimSlashes(guestPath.c_str());
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
+    for (const auto& prefix : aliases.blocked) {
+        if (relative == prefix || (relative.size() > prefix.size() && relative.compare(0, prefix.size(), prefix) == 0 && relative[prefix.size()] == '/'))
+            throw std::filesystem::filesystem_error("Guest mount is unavailable", guestPath, std::make_error_code(std::errc::no_such_file_or_directory));
+    }
     for (const auto& [prefix, host] : aliases.entries) {
         if (relative.size() < prefix.size() || relative.compare(0, prefix.size(), prefix) != 0) continue;
         if (relative.size() == prefix.size()) return std::filesystem::path(host).make_preferred();
@@ -136,6 +141,7 @@ extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* h
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
     const auto prefix = TrimSlashes(guestPrefix);
+    std::erase(aliases.blocked, prefix);
     for (auto& entry : aliases.entries) {
         if (entry.first == prefix) {
             entry.second = hostPath;
@@ -209,6 +215,17 @@ extern "C" void SyncWrittenPaths_nid_no_patch() {
     std::lock_guard lock(registry.mutex);
     registry.dirty.clear();
 #endif
+}
+
+extern "C" void BlockPathAlias_nid_no_patch(const char* guestPrefix) {
+    if (guestPrefix == nullptr) { APS5_INVALID_ARG_EX; }
+    const auto prefix = TrimSlashes(guestPrefix);
+    if (prefix.empty()) { APS5_INVALID_ARG_EX; }
+    auto& aliases = Aliases();
+    std::lock_guard lock(aliases.mutex);
+    std::erase_if(aliases.entries, [&](const auto& entry) { return entry.first == prefix; });
+    std::erase(aliases.blocked, prefix);
+    aliases.blocked.push_back(prefix);
 }
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {

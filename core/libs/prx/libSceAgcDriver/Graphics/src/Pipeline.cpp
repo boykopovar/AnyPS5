@@ -101,6 +101,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     Require(!depthBounds || context.depthBounds, "device does not support the depth bounds test");
     Require(!depthBias || state.depthBiasClamp == 0.0f || context.depthBiasClamp, "device does not support depth bias clamping");
     Require(!state.negativeOneToOne || context.depthClipControl, "negative-one-to-one depth clipping requires VK_EXT_depth_clip_control with depthClipControl enabled");
+    Require(state.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT || context.conservativeRasterization, "conservative rasterization requires VK_EXT_conservative_rasterization with at most 1/256 pixel of overestimation and degenerate triangles rasterized");
     if (state.rectList) Require(context.tessellationShader && context.limits.maxTessellationPatchSize >= 4, "rect-list requires tessellation with four output control points");
     if (state.stages.tessellation) {
         Require(context.tessellationShader, "device does not support tessellation shaders");
@@ -208,6 +209,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         raster.frontFace = state.frontFace;
         raster.depthBiasEnable = depthBias;
         raster.lineWidth = 1;
+        VkPipelineRasterizationConservativeStateCreateInfoEXT conservative{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT};
+        conservative.conservativeRasterizationMode = state.conservativeRasterization;
+        if (state.conservativeRasterization != VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT) raster.pNext = &conservative;
         VkPipelineMultisampleStateCreateInfo samples{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         samples.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -397,6 +401,7 @@ std::vector<std::byte> pipelineKey(const Context& context, const State& state, c
     append(key, state.frontFace);
     append(key, state.negativeOneToOne);
     append(key, state.depthClamp && context.depthClamp);
+    append(key, state.conservativeRasterization);
     append(key, state.blends.size());
     for (const auto& blend : state.blends) append(key, blend);
     for (const auto value : state.blendConstants) append(key, value);

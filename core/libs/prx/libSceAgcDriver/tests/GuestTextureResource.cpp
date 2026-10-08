@@ -192,6 +192,15 @@ void RunGuestTextureResourceTests() {
     cube.baseArray = 0;
     result = DecodeTextureResource(pack(cube));
     Require(result.dimension == TextureDimension::kCube, "cube descriptor did not decode to cube dimension");
+    for (const auto first : {0u, 5u, 6u}) {
+        auto singleCube = cube;
+        singleCube.baseArray = first;
+        singleCube.depth = first;
+        result = DecodeTextureResource(pack(singleCube));
+        Require(result.baseArray == first && result.depthOrLastArray == first + 5u, "a single cube descriptor did not expose six faces");
+        const auto geometry = DescribeSurface(result);
+        Require(geometry.imageLayers == first + 6u, "a single cube allocation omitted faces");
+    }
     Fields cubeNotSquare = cube;
     cubeNotSquare.height = 16;
     rejectFields(cubeNotSquare, "not square");

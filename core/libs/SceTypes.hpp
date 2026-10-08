@@ -1385,7 +1385,7 @@ struct SaveDataMountInfo {
 };
 
 struct SceSaveDataTitleId { char data[10]; char pad[2]; };
-struct SceSaveDataDirName { char data[33]; char pad[3]; };
+struct SceSaveDataDirName { char data[32]; };
 struct SaveDataSearchInfo { std::uint8_t opaque[128]; };
 struct SaveDataMemoryData { void* buf; std::size_t buf_size; std::size_t offset; };
 

@@ -99,8 +99,9 @@ MemoryResourceAccess PrepareStorageBufferResourceAccess(SpirvEmitterState& state
     access.memoryAccess = mem.coherent ? spv::MemoryAccessVolatileMask : 0u;
     access.length = state.module.AllocateId();
     state.module.AddFunction(spv::OpArrayLength, TypeU32(state), access.length, access.objectPointer, 0u);
-    if (mem.resource < state.program.Info().buffers.size() && state.program.Info().buffers[mem.resource].empty) {
-        access.length = ConstantU32(state, 0u);
+    if (mem.resource < state.program.Info().buffers.size()) {
+        if (state.program.Info().buffers[mem.resource].empty) access.length = ConstantU32(state, 0u);
+        access.misalignment = state.program.Info().buffers[mem.resource].baseMisalignment;
     }
     return access;
 }
@@ -151,8 +152,9 @@ std::uint32_t EmitMemoryElementIndex(SpirvEmitterState& state, const MemoryResou
 }
 
 std::uint32_t EmitMemoryElementInBounds(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t index) {
+    const auto last = access.misalignment != 0u ? EmitAddU32(state, index, ConstantU32(state, 1u)) : index;
     const auto inBounds = state.module.AllocateId();
-    state.module.AddFunction(spv::OpULessThan, TypeBool(state), inBounds, index, access.length);
+    state.module.AddFunction(spv::OpULessThan, TypeBool(state), inBounds, last, access.length);
     return inBounds;
 }
 

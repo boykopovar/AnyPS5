@@ -25,6 +25,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
                 state = Ngs2PlayState::Playing;
                 stateFlags |= SCE_NGS2_VOICE_STATE_FLAG_INUSE;
+                if (userFxHandler) userFxFlags = 1;
             }
             break;
         case SCE_NGS2_VOICE_EVENT_STOP:
@@ -62,6 +63,9 @@ void Ngs2Voice::ResetSetup() {
     decodedSamples = 0;
     decodedBytes = 0;
     waveformEnd = nullptr;
+    userFxHandler = nullptr;
+    userFxData = {};
+    userFxFlags = 0;
 }
 
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block) {
@@ -289,6 +293,13 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     switch (rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: ApplySamplerParam(voice, param); return;
         case SCE_NGS2_RACK_ID_SUBMIXER:
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
+                const auto& fx = ParamAs<Ngs2SubmixerVoiceUserFxParam>(param);
+                voice.userFxHandler = fx.handler;
+                voice.userFxData = {fx.user_data0, fx.user_data1, fx.user_data2};
+                voice.userFxFlags = fx.handler ? 1 : 0;
+                return;
+            }
             if (param.id != SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) break;
             if (ParamAs<Ngs2SubmixerVoiceSetupParam>(param).flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
             SetupMixer(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);

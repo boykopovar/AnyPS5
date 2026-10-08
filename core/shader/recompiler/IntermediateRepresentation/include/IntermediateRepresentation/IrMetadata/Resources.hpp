@@ -27,6 +27,7 @@ struct BufferResource {
     bool formatted = false;
     bool scalar = false;
     bool empty = false;
+    std::uint8_t baseMisalignment = 0;
 
     bool operator==(const BufferResource& other) const = default;
 };

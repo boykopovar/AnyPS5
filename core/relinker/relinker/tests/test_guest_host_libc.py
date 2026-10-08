@@ -52,7 +52,7 @@ def main():
                           "libkernel.prx", "libSceLibcInternal.prx", "libc.prx"], needed
 
         needed = convert(relinker, work / "without-internal", ("libkernel.prx", "libc.prx"), ["libc.prx"])
-        assert needed == ["$ORIGIN/app0/sce_module/libc.prx.guest.prx", "libkernel.prx", "libc.prx"], needed
+        assert needed == ["$ORIGIN/app0/sce_module/libc.prx.guest.prx", "libkernel.prx"], needed
 
         needed = convert(relinker, work / "not-bundled", imports, ["other.prx"])
         assert needed == ["$ORIGIN/app0/sce_module/other.prx.guest.prx", *imports], needed

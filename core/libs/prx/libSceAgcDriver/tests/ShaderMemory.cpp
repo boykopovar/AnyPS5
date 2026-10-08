@@ -608,6 +608,125 @@ void verifyLanesOutsideHostSubgroup() {
     require(pixel(permlanex16, 32u) && pixel(permlane16, 8u), "host lanes: a v_permlane16_b32 row that the host subgroup may hold did not build");
 }
 
+void verifyHalfWaveReduction() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 4> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
+    const auto pixel = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool arithmetic) {
+        ShaderPixelStageInfo info{};
+        info.inputAddr = PixelInputBit(PixelInput::PositionX);
+        info.posX = true;
+        info.targetOutputMode[0] = 9u;
+        info.targetExportMapping.fill(0xe4u);
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.pixel = info;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        if (arithmetic) request.target.supportedCapabilities = capabilities;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv;
+    };
+    const auto reductions = [](const std::vector<std::uint32_t>& spirv, spv::Op opcode) {
+        std::uint32_t count = 0;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            if ((spirv[cursor] & 0xffffu) == static_cast<std::uint32_t>(opcode) && (spirv[cursor] >> 16u) == 6u && spirv[cursor + 4u] == spv::GroupOperationReduce) ++count;
+        }
+        return count;
+    };
+    const auto halves = [](const std::vector<std::uint32_t>& spirv, spv::Op opcode, std::uint32_t identity) {
+        std::map<std::uint32_t, std::size_t> definitions;
+        std::vector<std::size_t> reduces;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpConstant || op == spv::OpSelect || op == spv::OpUGreaterThanEqual) definitions[spirv[cursor + 2u]] = cursor;
+            if (op == static_cast<std::uint32_t>(opcode) && (spirv[cursor] >> 16u) == 6u && spirv[cursor + 4u] == spv::GroupOperationReduce) reduces.push_back(cursor);
+        }
+        const auto defined = [&](std::uint32_t id, spv::Op op) -> std::size_t {
+            const auto found = definitions.find(id);
+            return found != definitions.end() && (spirv[found->second] & 0xffffu) == static_cast<std::uint32_t>(op) ? found->second : 0u;
+        };
+        const auto constant = [&](std::uint32_t id, std::uint32_t value) {
+            const auto at = defined(id, spv::OpConstant);
+            return at != 0u && spirv[at + 3u] == value;
+        };
+        std::uint32_t lower = 0;
+        std::uint32_t upper = 0;
+        std::vector<std::uint32_t> keys;
+        for (const auto reduce : reduces) {
+            const auto select = defined(spirv[reduce + 5u], spv::OpSelect);
+            const auto compare = select != 0u ? defined(spirv[select + 3u], spv::OpUGreaterThanEqual) : 0u;
+            if (compare == 0u || !constant(spirv[compare + 4u], 32u)) continue;
+            if (constant(spirv[select + 4u], identity)) {
+                ++lower;
+                keys.push_back(spirv[select + 5u]);
+            } else if (constant(spirv[select + 5u], identity)) {
+                ++upper;
+                keys.push_back(spirv[select + 4u]);
+            }
+        }
+        return reduces.size() == 2u && lower == 1u && upper == 1u && keys[0] == keys[1];
+    };
+    const auto scan = [](std::uint32_t identity, std::uint32_t vector, std::uint32_t scalar) {
+        std::vector<std::uint32_t> code{0xbe98047eu, 0x7e160f00u, 0x8786187eu, 0xbeea287eu, 0xd501000du};
+        if (identity == 0u || identity == 0xffffffffu) code.push_back(identity == 0u ? 0x001a1680u : 0x001a16c1u);
+        else code.insert(code.end(), {0x001a16ffu, identity});
+        for (const auto control : {0xff01110du, 0xff01120du, 0xff01140du, 0xff01180du}) code.insert(code.end(), {vector | 0x001a1afau, control});
+        code.insert(code.end(), {0xd778100cu, 0x0305830du, vector | 0x001a190du, 0xbefe046au, 0xd7600006u, 0x00013f0du, 0xd7600007u, 0x00017f0du, scalar | 0x00080706u, 0x7e020208u, 0xf800180fu, 0x01010101u, 0xbf810000u});
+        return code;
+    };
+    struct Reduction {
+        std::uint32_t identity;
+        std::uint32_t vector;
+        std::uint32_t scalar;
+        spv::Op reduce;
+        const char* message;
+    };
+    static constexpr std::array<Reduction, 7> scans{{
+        {0xffffffffu, 0x26000000u, 0x83800000u, spv::OpGroupNonUniformUMin, "half-wave reduction: the wave64 UMin scan did not read lane 31 as a subgroup UMin on 32 lanes"},
+        {0u, 0x28000000u, 0x84800000u, spv::OpGroupNonUniformUMax, "half-wave reduction: the wave64 UMax scan did not read lane 31 as a subgroup UMax on 32 lanes"},
+        {0x7fffffffu, 0x22000000u, 0x83000000u, spv::OpGroupNonUniformSMin, "half-wave reduction: the wave64 SMin scan did not read lane 31 as a subgroup SMin on 32 lanes"},
+        {0x80000000u, 0x24000000u, 0x84000000u, spv::OpGroupNonUniformSMax, "half-wave reduction: the wave64 SMax scan did not read lane 31 as a subgroup SMax on 32 lanes"},
+        {0u, 0x4a000000u, 0x80000000u, spv::OpGroupNonUniformIAdd, "half-wave reduction: the wave64 IAdd scan did not read lane 31 as a subgroup IAdd on 32 lanes"},
+        {0xffffffffu, 0x36000000u, 0x87000000u, spv::OpGroupNonUniformBitwiseAnd, "half-wave reduction: the wave64 AND scan did not read lane 31 as a subgroup AND on 32 lanes"},
+        {0u, 0x38000000u, 0x88000000u, spv::OpGroupNonUniformBitwiseOr, "half-wave reduction: the wave64 OR scan did not read lane 31 as a subgroup OR on 32 lanes"},
+    }};
+    for (const auto& reduction : scans) require(reductions(pixel(scan(reduction.identity, reduction.vector, reduction.scalar), 32u, true), reduction.reduce) == 1u, reduction.message);
+    for (const auto& reduction : scans) {
+        const auto wide = "half-wave reduction: a wave64 scan reduced by SPIR-V opcode " + std::to_string(reduction.reduce) + " did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes";
+        require(halves(pixel(scan(reduction.identity, reduction.vector, reduction.scalar), 64u, true), reduction.reduce, reduction.identity), wide.c_str());
+    }
+    const auto umin = scan(0xffffffffu, 0x26000000u, 0x83800000u);
+    const auto patched = [&umin](std::initializer_list<std::pair<std::size_t, std::uint32_t>> words) {
+        auto code = umin;
+        for (const auto& [index, word] : words) code[index] = word;
+        return code;
+    };
+    require(reductions(pixel(patched({{3, 0xbeea25c1u}}), 32u, true), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: the scan under s_or_saveexec_b64 -1 did not read lane 31 as a subgroup UMin");
+    const char* lane63 = "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup";
+    const char* arithmetic = "v_readlane_b32 of lane 31 of a wave64 half-wave reduction scan needs subgroup arithmetic";
+    expectFailure([&] { static_cast<void>(pixel(umin, 32u, false)); }, arithmetic, "half-wave reduction: a device without subgroup arithmetic read lane 31 on 32 lanes");
+    expectFailure([&] { static_cast<void>(pixel(umin, 64u, false)); }, arithmetic, "half-wave reduction: a device without subgroup arithmetic read lane 31 on 64 lanes");
+    expectFailure([&] { static_cast<void>(pixel(umin, 128u, true)); }, "half-wave reduction scan on a 128-lane host subgroup, which is wider than the wave", "half-wave reduction: the scan built on a 128-lane subgroup");
+    require(reductions(pixel(patched({{3, 0xbeea047eu}}), 64u, true), spv::OpGroupNonUniformUMin) == 0u, "half-wave reduction: a scan under the entry EXEC became a subgroup UMin on 64 lanes");
+    expectFailure([&] { static_cast<void>(pixel(patched({{3, 0xbeea047eu}}), 32u, true)); }, lane63, "half-wave reduction: a scan under the entry EXEC read lane 63");
+    expectFailure([&] { static_cast<void>(pixel(patched({{5, 0x001a1680u}}), 32u, true)); }, lane63, "half-wave reduction: a UMin scan of 0 outside the live lanes read lane 63");
+    expectFailure([&] { static_cast<void>(pixel(patched({{0, 0xbe980a7eu}, {2, 0xbe860418u}}), 32u, true)); }, lane63, "half-wave reduction: a scan of keys under an s_wqm_b64 mask read lane 63");
+    expectFailure([&] { static_cast<void>(pixel(patched({{7, 0xff09110du}}), 32u, true)); }, lane63, "half-wave reduction: a bound_ctrl row_shr:1 step read lane 63");
+    expectFailure([&] { static_cast<void>(pixel(patched({{15, 0x0305010du}}), 32u, true)); }, lane63, "half-wave reduction: a v_permlanex16_b32 of lane 0 read lane 63");
+    expectFailure([&] { static_cast<void>(pixel(patched({{16, 0x281a190du}}), 32u, true)); }, lane63, "half-wave reduction: a UMin row scan joined by v_max_u32 read lane 63");
+    auto threeSteps = umin;
+    threeSteps.erase(threeSteps.begin() + 12, threeSteps.begin() + 14);
+    expectFailure([&] { static_cast<void>(pixel(threeSteps, 32u, true)); }, lane63, "half-wave reduction: a scan without row_shr:8 read lane 63");
+    auto compared = umin;
+    compared.erase(compared.begin() + 2);
+    compared.insert(compared.begin() + 3, {0xd4c50006u, 0x00021680u});
+    expectFailure([&] { static_cast<void>(pixel(compared, 32u, true)); }, lane63, "half-wave reduction: a scan selected by a compare under the all-lanes EXEC read lane 63");
+    expectFailure([&] { static_cast<void>(pixel(umin, 8u, true)); }, "v_permlanex16_b32 from lanes 16-31 is outside the 8-lane host subgroup", "half-wave reduction: the scan built on an 8-lane subgroup");
+}
+
 void verifyMeshConfiguration() {
     using namespace ShaderRecompiler;
     ShaderMeshInputInfo list;
@@ -1547,6 +1666,7 @@ int main() {
         verifyDescriptorPhis();
         verifyProgramCounterRelativeData();
         verifyLanesOutsideHostSubgroup();
+        verifyHalfWaveReduction();
         verifyMeshConfiguration();
         verifyPixelInputs();
         verifyPixelRequestSerialization();

@@ -86,6 +86,14 @@ void stateTests() {
     initial.context[0xdead] = 1;
     initial.ClearContext();
     Require(initial.context.at(0x200) == 0 && !initial.context.contains(0xdead), "context reset did not restore defaults");
+    for (std::uint32_t slot = 0; slot < 8; ++slot) {
+        const auto info = 0x31cu + 0xfu * slot;
+        Require(initial.context.at(info) == 0, "reset color target was not disabled");
+        initial.context[info] = 10u << 2u;
+    }
+    initial.ClearContext();
+    initial.context[0x8e] = initial.context[0x8f] = 0xffffffffu;
+    Require(AgcDriver::Graphics::ColorWriteMask(initial.context) == 0, "context clear kept old color targets enabled");
     Require(initial.userConfig.at(0x24b) == 0, "primitive restart must be disabled in initial queue state");
     initial.userConfig[0x24b] = 1;
     initial.ClearContext();
@@ -240,6 +248,13 @@ void stateTests() {
     queue.context[0x1c4] = 0;
     queue.context[0x8e] = 0xf;
     Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "a pixel program writing color was skipped");
+    queue.context[0x1b3] = queue.context[0x1b4] = queue.context[0x1b6] = 0xffffffffu;
+    queue.context[0x1c5] = queue.context[0x203] = 0xffffffffu;
+    const auto disabled = AgcDriver::Graphics::DecodePixelStageInfo(queue.context, AgcDriver::Graphics::ExportMappings(state), true);
+    Require(disabled.interpolatorCount == 0 && disabled.inputAddr == ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCenter), "the null pixel program inherited stale input state");
+    Require(!disabled.pixelKillEnable && !disabled.depthExportEnable && !disabled.sampleMaskExportEnable, "the null pixel program inherited stale exports");
+    for (const auto mode : disabled.targetOutputMode) Require(mode == 0, "the null pixel program inherited stale color exports");
+    expectFailure([&] { AgcDriver::Graphics::DecodePixelStageInfo(queue.context, AgcDriver::Graphics::ExportMappings(state), false); }, "input count exceeds 32");
 }
 
 VkFormatFeatureFlags srgb8Features = 0;
@@ -571,6 +586,27 @@ void DisabledColorTests() {
     Require(partial.hasColorTarget && partial.blend.colorWriteMask == 3, "partial color write mask changed");
     queue.context.erase(0x31c);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
+    queue = makeState();
+    queue.context[0x31c] = 0;
+    for (const auto offset : {0x31bu, 0x31du, 0x3b0u, 0x3b8u, 0x390u, 0x318u, 0x1e0u}) queue.context.erase(offset);
+    const auto disabled = AgcDriver::Graphics::DecodeState(queue);
+    Require(!disabled.hasColorTarget && disabled.colors.empty() && disabled.blends.empty(), "COLOR_INVALID retained an attachment despite the disabled buffer");
+    Require(disabled.renderExtent.width == 64 && disabled.renderExtent.height == 4, "COLOR_INVALID lost the attachment-free render extent");
+    queue.shader[0x008] = 0;
+    queue.shader[0x009] = 0;
+    Require(AgcDriver::Graphics::NullPixelProgramRejection(queue).empty(), "COLOR_INVALID rejected a draw without a pixel shader");
+    queue.context[0x200] = 0x36;
+    queue.context[0x000] = 0;
+    queue.context[0x002] = 0;
+    queue.context[0x010] = 0x80000181;
+    queue.context[0x011] = 0x20000180;
+    queue.context[0x012] = 0x100;
+    queue.context[0x014] = 0x100;
+    queue.context[0x007] = 0x003f003f;
+    queue.context[0x00a] = 0;
+    queue.context[0x00b] = std::bit_cast<std::uint32_t>(1.0f);
+    const auto depthOnly = AgcDriver::Graphics::DecodeState(queue);
+    Require(!depthOnly.hasColorTarget && depthOnly.depth && depthOnly.depthTest && depthOnly.depthWrite && depthOnly.renderExtent.height == 64, "COLOR_INVALID discarded a depth-only draw");
 }
 
 void CompactedExportTests() {
@@ -592,6 +628,10 @@ void CompactedExportTests() {
     Require(state.colors[1].slot == 4 && state.colors[1].exportIndex == 1 && state.colors[1].address == slotFour, "export 1 did not reach MRT slot 4, the second slot CB_SHADER_MASK enables");
     Require(!state.blends[0].blendEnable && state.blends[1].blendEnable && state.blends[1].colorWriteMask == (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT), "export 1 did not take MRT slot 4's blend control and target mask");
     Require(AgcDriver::Graphics::ExportMappings(state)[1] == state.colors[1].componentMapping, "export 1 did not take MRT slot 4's component mapping");
+    auto disabledFirst = queue;
+    disabledFirst.context[0x31c] = 0;
+    const auto withHole = AgcDriver::Graphics::DecodeState(disabledFirst);
+    Require(withHole.colors.size() == 1 && withHole.colors[0].slot == 4 && withHole.colors[0].exportIndex == 1 && withHole.blends.size() == 2 && withHole.blends[0].colorWriteMask == 0, "COLOR_INVALID shifted a later MRT export");
     queue.context[0x1c5] = 0x90009u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 0");
     queue.context[0x8e] = 0xf000fu;
@@ -2117,6 +2157,67 @@ void orderedPixelShaderTests() {
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(orderedPixelRequest(0x30600u, plain))); }, "fragmentShaderPixelInterlock");
 }
 
+void ConservativeRasterizationTests() {
+    auto queue = makeState();
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    Require(AgcDriver::Graphics::DecodeState(queue).conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT, "PA_SC_CONSERVATIVE_RASTERIZATION_CNTL 0x6000 enabled conservative rasterization");
+    queue.context[0x313] = 0x6001;
+    for (const auto primitive : {4u, 5u, 6u}) {
+        queue.userConfig[0x242] = primitive;
+        Require(AgcDriver::Graphics::DecodeState(queue).conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT, "OVER_RAST_ENABLE did not decode to overestimation for primitive type " + std::to_string(primitive));
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected OVER_RAST_ENABLE");
+    }
+    for (const auto& [primitive, rejected] : std::array<std::pair<std::uint32_t, std::string_view>, 3>{{{1u, "conservative rasterization of points is unsupported (VGT_PRIMITIVE_TYPE=0x1)"}, {2u, "conservative rasterization of lines is unsupported (VGT_PRIMITIVE_TYPE=0x2)"}, {17u, "conservative rasterization of rectangles is unsupported (VGT_PRIMITIVE_TYPE=0x11)"}}}) {
+        queue.userConfig[0x242] = primitive;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, rejected);
+    }
+    queue.userConfig[0x242] = 4;
+    auto geometry = queue;
+    geometry.context[0x2d5] = 0x2020;
+    geometry.userConfig[0x25b] = (64u << 9u) | 21u;
+    geometry.context[0x1ff] = 64;
+    geometry.context[0x2ce] = 3;
+    geometry.context[0x29b] = 2;
+    geometry.context[0x2ab] = 4;
+    geometry.shader[0x8a] = 3u << 29u;
+    geometry.shader[0x8b] = 3u << 16u;
+    for (const auto input : {1u, 2u, 4u}) {
+        geometry.userConfig[0x242] = input;
+        const auto state = AgcDriver::Graphics::DecodeState(geometry);
+        Require(state.stages.path == AgcDriver::Graphics::ShaderPath::Geometry && state.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT, "OVER_RAST_ENABLE did not overestimate the triangle strips of a geometry shader with input primitive type " + std::to_string(input));
+    }
+    for (const auto& [output, rejected] : std::array<std::pair<std::uint32_t, std::string_view>, 3>{{{0u, "conservative rasterization of points is unsupported (VGT_GS_OUT_PRIM_TYPE=0x0)"}, {1u, "conservative rasterization of lines is unsupported (VGT_GS_OUT_PRIM_TYPE=0x1)"}, {0x80000002u, "conservative rasterization of per-stream primitive types is unsupported (VGT_GS_OUT_PRIM_TYPE=0x80000002)"}}}) {
+        geometry.context[0x29b] = output;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(geometry); }, rejected);
+    }
+    auto tessellation = queue;
+    tessellation.context[0x2d5] = 0x200d;
+    tessellation.userConfig[0x242] = 9;
+    tessellation.context[0x2d6] = (3u << 8u) | (3u << 14u);
+    tessellation.context[0x2db] = 1u | (2u << 2u) | (2u << 5u);
+    const auto tessellated = AgcDriver::Graphics::DecodeState(tessellation);
+    Require(tessellated.stages.path == AgcDriver::Graphics::ShaderPath::Tessellation && tessellated.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT, "OVER_RAST_ENABLE did not overestimate clockwise tessellated triangles");
+    for (const auto& [parameters, rejected] : std::array<std::pair<std::uint32_t, std::string_view>, 3>{{{1u | (2u << 2u), "conservative rasterization of points is unsupported (VGT_TF_PARAM=0x9)"}, {1u | (2u << 2u) | (1u << 5u), "conservative rasterization of lines is unsupported (VGT_TF_PARAM=0x29)"}, {(2u << 2u) | (1u << 5u), "conservative rasterization of lines is unsupported (VGT_TF_PARAM=0x28)"}}}) {
+        tessellation.context[0x2db] = parameters;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(tessellation); }, rejected);
+    }
+    tessellation.context[0x2d5] = 0x202d;
+    tessellation.context[0x2db] = 1u | (2u << 2u) | (2u << 5u);
+    tessellation.context[0x29b] = 1;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(tessellation); }, "conservative rasterization of lines is unsupported (VGT_GS_OUT_PRIM_TYPE=0x1)");
+    for (const auto inputs : {0x6u, 0x42u}) {
+        queue.context[0x1b3] = inputs;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "conservative rasterization with centroid interpolation");
+    }
+    queue.context[0x1b3] = 2;
+    for (const auto control : {0x6003u, 0x6020u, 0x6401u, 0xe06001u, 0x1u}) {
+        queue.context[0x313] = control;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_SC_CONSERVATIVE_RASTERIZATION_CNTL=0x");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_SC_CONSERVATIVE_RASTERIZATION_CNTL=0x") != std::string::npos, "the precheck accepted PA_SC_CONSERVATIVE_RASTERIZATION_CNTL " + std::to_string(control));
+    }
+}
+
 void pixelParameterSlotTests() {
     using AgcDriver::Graphics::CompiledShader;
     const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
@@ -2279,6 +2380,21 @@ void validationTests() {
         subgroup.supportedStages = VK_SHADER_STAGE_VERTEX_BIT;
         subgroup.supportedOperations = capability == spv::CapabilityGroupNonUniform ? 0u : VK_SUBGROUP_FEATURE_BASIC_BIT;
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "device lacks operations");
+    }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        vertex.spirv = makeModule({});
+        vertex.spirv.insert(vertex.spirv.begin() + 5, {(2u << 16u) | spv::OpCapability, static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformArithmetic)});
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        subgroup.supportedStages = VK_SHADER_STAGE_FRAGMENT_BIT;
+        subgroup.supportedOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT;
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported for shader stage");
+        subgroup.supportedStages = VK_SHADER_STAGE_VERTEX_BIT;
+        subgroup.supportedOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT;
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "device lacks operations");
+        subgroup.supportedOperations |= VK_SUBGROUP_FEATURE_ARITHMETIC_BIT;
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false);
     }
     const std::vector<std::uint32_t> words(8, 0);
     const auto validate = [&](const ShaderRecompiler::RecompileResult& vertex, std::uint32_t fragmentOffset) {
@@ -2499,6 +2615,7 @@ int main() {
             unrestricted.depthRangeUnrestricted = true;
             AgcDriver::Graphics::ValidateDepthBounds(unrestricted, bounded);
         }
+        RunGuestLeaseWaitTests();
         stateTests();
         hardwareScreenOffsetTests();
         srgb8TargetTests();
@@ -2508,6 +2625,7 @@ int main() {
         DepthBoundsBiasTests();
         conservativeZExportTests();
         orderedPixelShaderTests();
+        ConservativeRasterizationTests();
         DisabledColorTests();
         CompactedExportTests();
         metadataPassTests();
