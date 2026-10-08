@@ -8,6 +8,7 @@ extern "C" {
 int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param);
 int APS5_VABI sceVideoOutClose(int handle);
 int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* status);
+int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatus* status);
 int APS5_VABI sceVideoOutAllowOutputResolutionWqhdDetection(int handle);
 }
 
@@ -45,6 +46,25 @@ int main() {
     Require(RejectsHandle(0));
     Require(RejectsHandle(-1));
     Require(RejectsHandle(NEVER_OPENED_HANDLE));
+
+    VideoOutResolutionStatus resolution{};
+    Require(sceVideoOutGetResolutionStatus(handle, &resolution) == 0);
+    Require(resolution.fullWidth == 1920 && resolution.fullHeight == 1080);
+    Require(resolution.paneWidth == 1920 && resolution.paneHeight == 1080);
+    bool rejected = false;
+    try {
+        sceVideoOutGetResolutionStatus(NEVER_OPENED_HANDLE, &resolution);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+    rejected = false;
+    try {
+        sceVideoOutGetResolutionStatus(handle, nullptr);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
 
     Require(sceVideoOutClose(handle) == 0);
     Require(RejectsHandle(handle));

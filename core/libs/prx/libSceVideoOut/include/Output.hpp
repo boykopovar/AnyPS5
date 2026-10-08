@@ -17,6 +17,7 @@ int APS5_VABI sceVideoOutSetFlipRate(int handle, int rate);
 int APS5_VABI sceVideoOutSetWindowModeMargins(int handle, int top, int bottom);
 int APS5_VABI sceVideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status);
 int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* status);
+int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatus* status);
 int APS5_VABI sceVideoOutGetVblankStatus(int handle, VideoOutVblankStatus* status);
 int APS5_VABI sceVideoOutIsFlipPending(int handle);
 int APS5_VABI sceVideoOutWaitVblank(int handle);

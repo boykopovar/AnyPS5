@@ -1826,6 +1826,13 @@ struct VideoOutOutputStatus {
     std::uint64_t reserved[3] = {};
 };
 
+struct VideoOutResolutionStatus {
+    std::uint32_t fullWidth = 0;
+    std::uint32_t fullHeight = 0;
+    std::uint32_t paneWidth = 0;
+    std::uint32_t paneHeight = 0;
+};
+
 struct VideoOutOutputOptions { std::uint32_t internalData[16] = {}; };
 
 struct VideoOutColorSettings {

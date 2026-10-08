@@ -156,6 +156,25 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatus* status) try {
+    if (status == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    if (cfg == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+    }
+    std::unique_lock lock(cfg->mutex);
+    cfg->Check();
+    status->fullWidth = cfg->width;
+    status->fullHeight = cfg->height;
+    status->paneWidth = cfg->width;
+    status->paneHeight = cfg->height;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 int APS5_VABI sceVideoOutIsFlipPending(int handle) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {

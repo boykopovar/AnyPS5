@@ -2,8 +2,12 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/WindowsFormatting.hpp"
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -128,6 +132,27 @@ int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle
             break;
     }
     return 0;
+}
+
+void APS5_VABI syslog_nid_postfix(int priority, const char* message, ...) {
+    static_cast<void>(priority);
+    if (message == nullptr) throw std::runtime_error("syslog: null message");
+    static std::mutex outputMutex;
+    const std::lock_guard lock(outputMutex);
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, message);
+    std::string buffer;
+    LibcDetail::FormatWindows(nullptr, 0, message, args, &buffer);
+    __builtin_sysv_va_end(args);
+    std::fwrite(buffer.data(), 1, buffer.size(), stderr);
+#else
+    std::va_list args;
+    va_start(args, message);
+    std::vfprintf(stderr, message, args);
+    va_end(args);
+#endif
+    std::fflush(stderr);
 }
 
 }

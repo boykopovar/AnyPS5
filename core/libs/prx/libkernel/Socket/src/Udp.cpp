@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <afunix.h>
 #else
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -13,9 +14,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <map>
@@ -168,6 +171,193 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
     std::memcpy(output, bytes, std::min<std::uint32_t>(*length, bytes[0]));
     *length = bytes[0];
 }
+void CloseNative(NativeSocket value) {
+    if (value == Invalid) return;
+#ifdef _WIN32
+    closesocket(value);
+#else
+    ::close(value);
+#endif
+}
+bool NativeGetsockname(NativeSocket value, sockaddr_storage& address, socklen_t& length) {
+    length = sizeof(address);
+    return ::getsockname(value, reinterpret_cast<sockaddr*>(&address), &length) == 0;
+}
+bool LoopbackAddress(int nativeFamily, sockaddr_storage& address, socklen_t& length) {
+    std::memset(&address, 0, sizeof(address));
+    if (nativeFamily == AF_INET) {
+        auto& v4 = reinterpret_cast<sockaddr_in&>(address);
+        v4.sin_family = AF_INET;
+        v4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        length = sizeof(v4);
+        return true;
+    }
+    if (nativeFamily == AF_INET6) {
+        auto& v6 = reinterpret_cast<sockaddr_in6&>(address);
+        v6.sin6_family = AF_INET6;
+        v6.sin6_addr = in6addr_loopback;
+        length = sizeof(v6);
+        return true;
+    }
+    return false;
+}
+bool MakeStreamPair(int nativeFamily, NativeSocket pair[2]) {
+    sockaddr_storage loopback{};
+    socklen_t loopbackLength = 0;
+    if (!LoopbackAddress(nativeFamily, loopback, loopbackLength)) return false;
+    const NativeSocket listener = ::socket(nativeFamily, SOCK_STREAM, 0);
+    if (listener == Invalid) return false;
+    bool ok = false;
+    if (::bind(listener, reinterpret_cast<const sockaddr*>(&loopback), loopbackLength) == 0 &&
+        ::listen(listener, 1) == 0) {
+        sockaddr_storage bound{};
+        socklen_t boundLength = 0;
+        if (NativeGetsockname(listener, bound, boundLength)) {
+            const NativeSocket connector = ::socket(nativeFamily, SOCK_STREAM, 0);
+            if (connector != Invalid) {
+                if (::connect(connector, reinterpret_cast<const sockaddr*>(&bound), boundLength) == 0) {
+                    const NativeSocket acceptor = ::accept(listener, nullptr, nullptr);
+                    if (acceptor != Invalid) {
+                        pair[0] = connector;
+                        pair[1] = acceptor;
+                        ok = true;
+                    } else {
+                        CloseNative(connector);
+                    }
+                } else {
+                    CloseNative(connector);
+                }
+            }
+        }
+    }
+    CloseNative(listener);
+    return ok;
+}
+bool MakeDatagramPair(int nativeFamily, NativeSocket pair[2]) {
+    sockaddr_storage loopback{};
+    socklen_t loopbackLength = 0;
+    if (!LoopbackAddress(nativeFamily, loopback, loopbackLength)) return false;
+    const NativeSocket first = ::socket(nativeFamily, SOCK_DGRAM, 0);
+    if (first == Invalid) return false;
+    bool ok = false;
+    if (::bind(first, reinterpret_cast<const sockaddr*>(&loopback), loopbackLength) == 0) {
+        sockaddr_storage firstBound{};
+        socklen_t firstLength = 0;
+        if (NativeGetsockname(first, firstBound, firstLength)) {
+            const NativeSocket second = ::socket(nativeFamily, SOCK_DGRAM, 0);
+            if (second != Invalid) {
+                if (::bind(second, reinterpret_cast<const sockaddr*>(&loopback), loopbackLength) == 0) {
+                    sockaddr_storage secondBound{};
+                    socklen_t secondLength = 0;
+                    if (NativeGetsockname(second, secondBound, secondLength) &&
+                        ::connect(first, reinterpret_cast<const sockaddr*>(&secondBound), secondLength) == 0 &&
+                        ::connect(second, reinterpret_cast<const sockaddr*>(&firstBound), firstLength) == 0) {
+                        pair[0] = first;
+                        pair[1] = second;
+                        ok = true;
+                    }
+                }
+                if (!ok) CloseNative(second);
+            }
+        }
+    }
+    if (!ok) CloseNative(first);
+    return ok;
+}
+#ifdef _WIN32
+bool UnixSocketAddress(const char* path, sockaddr_storage& address, socklen_t& length) {
+    const std::size_t pathLength = std::strlen(path);
+    if (pathLength >= sizeof(sockaddr_un{}.sun_path)) return false;
+    std::memset(&address, 0, sizeof(address));
+    auto& unix = reinterpret_cast<sockaddr_un&>(address);
+    unix.sun_family = AF_UNIX;
+    std::memcpy(unix.sun_path, path, pathLength + 1);
+    length = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + pathLength + 1);
+    return true;
+}
+bool MakeUnixPair(int nativeType, NativeSocket pair[2]) {
+    char directory[MAX_PATH];
+    const DWORD directoryLength = GetTempPathA(sizeof(directory), directory);
+    if (directoryLength == 0 || directoryLength > sizeof(directory) - 1) return false;
+    static std::atomic<unsigned long> sequence{0};
+    const unsigned long tag = sequence.fetch_add(1);
+    const unsigned long process = static_cast<unsigned long>(GetCurrentProcessId());
+    char firstPath[MAX_PATH];
+    char secondPath[MAX_PATH];
+    const int firstLength = std::snprintf(firstPath, sizeof(firstPath), "%sanyps5-sp-%lu-%lu-a", directory, process, tag);
+    const int secondLength = std::snprintf(secondPath, sizeof(secondPath), "%sanyps5-sp-%lu-%lu-b", directory, process, tag);
+    if (firstLength <= 0 || secondLength <= 0 ||
+        static_cast<std::size_t>(firstLength) >= sizeof(firstPath) ||
+        static_cast<std::size_t>(secondLength) >= sizeof(secondPath))
+        return false;
+    DeleteFileA(firstPath);
+    DeleteFileA(secondPath);
+    if (nativeType == SOCK_STREAM) {
+        sockaddr_storage address{};
+        socklen_t addressLength = 0;
+        if (!UnixSocketAddress(firstPath, address, addressLength)) return false;
+        const NativeSocket listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (listener == Invalid) return false;
+        bool ok = false;
+        if (::bind(listener, reinterpret_cast<const sockaddr*>(&address), addressLength) == 0 &&
+            ::listen(listener, 1) == 0) {
+            const NativeSocket connector = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            if (connector != Invalid) {
+                if (::connect(connector, reinterpret_cast<const sockaddr*>(&address), addressLength) == 0) {
+                    const NativeSocket acceptor = ::accept(listener, nullptr, nullptr);
+                    if (acceptor != Invalid) {
+                        pair[0] = connector;
+                        pair[1] = acceptor;
+                        ok = true;
+                    } else {
+                        CloseNative(connector);
+                    }
+                } else {
+                    CloseNative(connector);
+                }
+            }
+        }
+        CloseNative(listener);
+        DeleteFileA(firstPath);
+        return ok;
+    }
+    const NativeSocket first = ::socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (first == Invalid) return false;
+    bool ok = false;
+    sockaddr_storage firstAddress{};
+    socklen_t firstAddressLength = 0;
+    sockaddr_storage secondAddress{};
+    socklen_t secondAddressLength = 0;
+    if (UnixSocketAddress(firstPath, firstAddress, firstAddressLength) &&
+        UnixSocketAddress(secondPath, secondAddress, secondAddressLength) &&
+        ::bind(first, reinterpret_cast<const sockaddr*>(&firstAddress), firstAddressLength) == 0) {
+        const NativeSocket second = ::socket(AF_UNIX, SOCK_DGRAM, 0);
+        if (second != Invalid) {
+            if (::bind(second, reinterpret_cast<const sockaddr*>(&secondAddress), secondAddressLength) == 0 &&
+                ::connect(first, reinterpret_cast<const sockaddr*>(&secondAddress), secondAddressLength) == 0 &&
+                ::connect(second, reinterpret_cast<const sockaddr*>(&firstAddress), firstAddressLength) == 0) {
+                pair[0] = first;
+                pair[1] = second;
+                ok = true;
+            }
+            if (!ok) CloseNative(second);
+        }
+    }
+    if (!ok) CloseNative(first);
+    DeleteFileA(firstPath);
+    DeleteFileA(secondPath);
+    return ok;
+}
+#endif
+bool MakeConnectedPair(int nativeFamily, int nativeType, NativeSocket pair[2]) {
+#ifndef _WIN32
+    if (nativeFamily == AF_UNIX) return ::socketpair(AF_UNIX, nativeType, 0, pair) == 0;
+#else
+    if (nativeFamily == AF_UNIX) return MakeUnixPair(nativeType, pair);
+#endif
+    if (nativeType == SOCK_STREAM) return MakeStreamPair(nativeFamily, pair);
+    return MakeDatagramPair(nativeFamily, pair);
+}
 }
 
 int GuestSockets::Close(int descriptor) {
@@ -282,6 +472,47 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
         const int descriptor = nextDescriptor++;
         sockets.emplace(descriptor, std::move(socket));
         return descriptor;
+    } catch (const std::bad_alloc&) {
+        return Fail(12);
+    }
+}
+int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* pair) {
+    if (pair == nullptr) return Fail(14);
+    if (protocol != 0) return Fail(43);
+    const int nativeType = type == 1 ? SOCK_STREAM : type == 2 ? SOCK_DGRAM : -1;
+    if (nativeType == -1) return Fail(43);
+    int nativeFamily;
+    if (family == 1) nativeFamily = AF_UNIX;
+    else if (family == 2) nativeFamily = AF_INET;
+    else if (family == 28) nativeFamily = AF_INET6;
+    else return Fail(47);
+#ifdef _WIN32
+    static const int startup = [] { WSADATA data{}; return WSAStartup(MAKEWORD(2, 2), &data); }();
+    if (startup) return Fail(5);
+#endif
+    NativeSocket native[2] = {Invalid, Invalid};
+    if (!MakeConnectedPair(nativeFamily, nativeType, native)) return Fail(NativeError());
+    Socket firstGuard(native[0], family, type);
+    Socket secondGuard(native[1], family, type);
+    try {
+        auto first = std::make_shared<Socket>(native[0], family, type);
+        auto second = std::make_shared<Socket>(native[1], family, type);
+        firstGuard.value = Invalid;
+        secondGuard.value = Invalid;
+        std::lock_guard lock(socketsMutex);
+        if (nextDescriptor >= INT_MAX - 1) return Fail(24);
+        const int firstDescriptor = nextDescriptor++;
+        const int secondDescriptor = nextDescriptor++;
+        sockets.emplace(firstDescriptor, std::move(first));
+        try {
+            sockets.emplace(secondDescriptor, std::move(second));
+        } catch (const std::bad_alloc&) {
+            sockets.erase(firstDescriptor);
+            return Fail(12);
+        }
+        pair[0] = firstDescriptor;
+        pair[1] = secondDescriptor;
+        return 0;
     } catch (const std::bad_alloc&) {
         return Fail(12);
     }
