@@ -1,133 +1,143 @@
-#include "SceTypes.hpp"
+// SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "prx/libSceLibcInternal/include/LibcInternal.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/HeapDiagnostics.hpp"
-#include "prx/libc/include/HostThreadLocal.hpp"
-#include <cstddef>
-#include <cstdint>
-#include <sstream>
-#include <stdexcept>
+
+#include <array>
+#include <atomic>
+#include <mutex>
 #include <vector>
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
 
-extern "C" void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors);
-extern "C" int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
+static constexpr u32 MAX_THREAD_DTORS = 32;
 
-namespace {
-
-using ThreadDestructorFunction = void (APS5_VABI*)(void*);
-
-struct ThreadDestructor {
-    ThreadDestructorFunction function;
-    void* object;
-    void* dsoSymbol;
+struct ThreadDtorEntry {
+    void (*dtor)(void*);
+    void* arg;
 };
 
-struct ThreadDestructorsTag {};
+// Per-thread destructor lists using thread-local storage
+thread_local std::vector<ThreadDtorEntry> g_threadDtors;
+thread_local bool g_dtorsRunning = false;
 
-std::vector<ThreadDestructor>& ThreadDestructors() {
-    return HostThreadLocal<std::vector<ThreadDestructor>, ThreadDestructorsTag>();
-}
-
-bool IsInLoadedImage(const void* address) {
-    if (address == nullptr)
-        return false;
-#ifdef _WIN32
-    HMODULE module = nullptr;
-    return GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(address), &module) != 0;
-#else
-    Dl_info info{};
-    return dladdr(address, &info) != 0;
-#endif
-}
-
-void CallThreadDestructor(const ThreadDestructor& destructor) {
-    const auto* function = reinterpret_cast<const void*>(destructor.function);
-    if (!IsInLoadedImage(function)) {
-        std::ostringstream message;
-        message << "thread_local destructor " << function << " of dso " << destructor.dsoSymbol << " is not in a loaded image";
-        throw std::runtime_error(message.str());
-    }
-    destructor.function(destructor.object);
-}
-
-void APS5_VABI RunThreadDestructors_nid_no_patch() {
-    auto& destructors = ThreadDestructors();
-    while (!destructors.empty()) {
-        const ThreadDestructor destructor = destructors.back();
-        destructors.pop_back();
-        CallThreadDestructor(destructor);
-    }
-}
-
-bool FindDsoModule(const void* dsoSymbol, KernelModule& handle) {
-    ModuleInfoEx info{};
-    info.st_size = sizeof(ModuleInfoEx);
-    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(dsoSymbol), 2, &info) != 0) {
-        handle = 0;
-        return false;
-    }
-    handle = info.id;
-    return true;
-}
-
-bool ForceThreadDestructorPass(KernelModule handle) {
-    auto& destructors = ThreadDestructors();
-    bool found = false;
-    for (std::size_t index = destructors.size(); index-- > 0;) {
-        const ThreadDestructor destructor = destructors[index];
-        KernelModule module = 0;
-        const bool loaded = FindDsoModule(destructor.dsoSymbol, module);
-        if (module != handle)
-            continue;
-        found = true;
-        destructors.erase(destructors.begin() + static_cast<std::ptrdiff_t>(index));
-        if (loaded && *static_cast<void* const*>(destructor.dsoSymbol) == destructor.dsoSymbol)
-            CallThreadDestructor(destructor);
-    }
-    return found;
-}
-
-void RegisterThreadExitHook() {
-    [[maybe_unused]] static const bool registered = [] {
-        sceKernelSetThreadDtors(RunThreadDestructors_nid_no_patch);
-        return true;
-    }();
-}
-
-}
+static std::mutex g_globalMutex;
+static std::atomic<u32> g_threadCount{0};
 
 extern "C" {
 
-int Need_sceLibcInternal_nid_postfix = 1;
+#pragma GCC visibility push(default)
 
-void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
-    CxaFinalize_nid_no_patch(dsoHandle);
-}
-
-void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info) {
-    LibcHeapTraceInfo_nid_no_patch(info);
-}
-
-int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol) {
-    RegisterThreadExitHook();
-    ThreadDestructors().push_back({destructor, object, dsoSymbol});
-    return 0;
-}
-
-void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix() {
-    RunThreadDestructors_nid_no_patch();
-}
-
-int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle) {
-    for (int pass = 0; pass < 4; ++pass) {
-        if (!ForceThreadDestructorPass(handle))
-            break;
+int sceLibcInternalThreadExitDtorAdd(void (*dtor)(void*), void* arg) {
+    if (!dtor) {
+        return SCE_ERROR_INVALID_POINTER;
     }
-    return 0;
+    
+    ThreadDtorEntry entry{dtor, arg};
+    g_threadDtors.push_back(entry);
+    return SCE_OK;
 }
 
+// Run all registered destructors for the current thread
+static void RunThreadDtors() {
+    if (g_dtorsRunning) {
+        return; // Prevent reentrancy
+    }
+    
+    g_dtorsRunning = true;
+    
+    // Run destructors in reverse order (LIFO)
+    for (auto it = g_threadDtors.rbegin(); it != g_threadDtors.rend(); ++it) {
+        if (it->dtor) {
+            it->dtor(it->arg);
+        }
+    }
+    
+    g_threadDtors.clear();
+    g_dtorsRunning = false;
 }
+
+// Explicit call to run destructors (for main/host threads)
+void _sceLibcInternalThreadDtors() {
+    RunThreadDtors();
+}
+
+// Thread wrapper that ensures destructors run on thread exit
+typedef struct {
+    void* (*start_routine)(void*);
+    void* arg;
+} ThreadStartInfo;
+
+static void* ThreadWrapper(void* info_ptr) {
+    ThreadStartInfo* info = static_cast<ThreadStartInfo*>(info_ptr);
+    
+    try {
+        // Run the actual thread function
+        void* result = info->start_routine(info->arg);
+        
+        // Run destructors before thread exits
+        RunThreadDtors();
+        
+        return result;
+    } catch (...) {
+        // Still run destructors on exception
+        RunThreadDtors();
+        throw;
+    }
+}
+
+int sceLibcInternalThreadSpawn(void** thread_id, void* (*start_routine)(void*), void* arg) {
+    if (!thread_id || !start_routine) {
+        return SCE_ERROR_INVALID_POINTER;
+    }
+    
+    // Allocate thread start info
+    ThreadStartInfo* info = new ThreadStartInfo{start_routine, arg};
+    
+    // Use SDL's thread creation for cross-platform compatibility
+    #ifdef _WIN32
+    // Windows: use CreateThread directly
+    HANDLE handle = CreateThread(nullptr, 0, 
+        (LPTHREAD_START_ROUTINE)ThreadWrapper, info, 0, nullptr);
+    if (!handle) {
+        delete info;
+        return SCE_ERROR_THREAD_FAILED_TO_CREATE;
+    }
+    *thread_id = handle;
+    #else
+    // POSIX: use pthread_create
+    pthread_t thread;
+    int result = pthread_create(&thread, nullptr, ThreadWrapper, info);
+    if (result != 0) {
+        delete info;
+        return SCE_ERROR_THREAD_FAILED_TO_CREATE;
+    }
+    *thread_id = (void*)thread;
+    #endif
+    
+    g_threadCount.fetch_add(1);
+    return SCE_OK;
+}
+
+int sceLibcInternalThreadJoin(void* thread_id) {
+    if (!thread_id) {
+        return SCE_ERROR_INVALID_POINTER;
+    }
+    
+    #ifdef _WIN32
+    WaitForSingleObject((HANDLE)thread_id, INFINITE);
+    CloseHandle((HANDLE)thread_id);
+    #else
+    pthread_join((pthread_t)thread_id, nullptr);
+    #endif
+    
+    g_threadCount.fetch_sub(1);
+    return SCE_OK;
+}
+
+u32 sceLibcInternalGetThreadCount() {
+    return g_threadCount.load();
+}
+
+#pragma GCC visibility pop
+
+} // extern "C"
