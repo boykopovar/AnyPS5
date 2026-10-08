@@ -27,6 +27,62 @@ AnyPS5 uses JSON configuration files for settings. The main config file is `anyp
 - **Audio device**: Select output audio device
 - **Controller mapping**: Configure input devices
 
+## System Fonts
+
+Many PS5 games use the console's system fonts for text display. Without proper font files, games may show missing or incorrect text.
+
+### Why Fonts Matter
+
+PS5 games expect specific system fonts to be available. AnyPS5 needs these fonts to render text correctly in menus, subtitles, and in-game UI elements.
+
+### Setting Up Fonts (Step-by-Step)
+
+**Option 1: Use Console-Dumped Fonts (Best Quality)**
+
+If you have access to a PS5 console, you can dump the system fonts:
+
+1. Create a folder named `anyps5-fonts/` next to your AnyPS5 executable
+2. Copy the following font files from your PS5 into this folder:
+   - `SST-Roman.otf` (standard text)
+   - `SST-Bold.otf` (bold text)
+   - `SSTJpPro-Regular.otf` (Japanese characters)
+   - Any other SST fonts you find on your console
+
+**Option 2: Use Open-Source Substitutes (Easier)**
+
+If you don't have a PS5 to dump fonts from, you can use freely available alternatives:
+
+1. Create a folder named `anyps5-fonts/` next to your AnyPS5 executable
+2. Download and place these font files in the folder:
+   - **Latin/Vietnamese**: Noto Sans family (Light, Regular, Medium, Bold weights)
+     - Files: `NotoSans-Light.ttf`, `NotoSans-Regular.ttf`, `NotoSans-Medium.ttf`, `NotoSans-Bold.ttf`
+     - Also include italic variants if available
+   - **Monospace**: Noto Sans Mono family (Light, Regular, Medium, Bold)
+     - Files: `NotoSansMono-Light.ttf`, etc.
+   - **Thai**: Noto Sans Thai family
+   - **Japanese/Chinese**: Noto Sans CJK family
+
+You can download these fonts from [Google Fonts](https://fonts.google.com/) or your Linux distribution's package manager.
+
+### Custom Font Directory
+
+To use a different location for font files, set the environment variable:
+```bash
+export ANYPS5_SYSTEM_FONTS=/path/to/your/fonts
+```
+
+### Troubleshooting Font Issues
+
+**Problem**: Games show no text or blank boxes
+- **Solution**: Verify that your `anyps5-fonts/` folder exists and contains font files
+- Check the AnyPS5 log for font loading errors
+
+**Problem**: Japanese/Chinese characters display incorrectly
+- **Solution**: Ensure you have Noto Sans CJK fonts installed in your fonts directory
+
+**Problem**: Text looks different from PS5
+- **Solution**: Console-dumped SST fonts will match exactly; substitute fonts may have slightly different metrics
+
 ## Troubleshooting
 
 ### Game won't start
