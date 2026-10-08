@@ -38,17 +38,6 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
  return 0;
 }
 
-int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t instance, float ratio_start, float ratio_change_per_sample, uint32_t flags, void* result) {
- (void)info;
- (void)instance;
- (void)ratio_start;
- (void)ratio_change_per_sample;
- (void)flags;
- (void)result;
- AjmStub(__func__);
- return 0;
-}
-
 const char* APS5_VABI sceAjmStrError(int error) {
  (void)error;
  AjmStub(__func__);
