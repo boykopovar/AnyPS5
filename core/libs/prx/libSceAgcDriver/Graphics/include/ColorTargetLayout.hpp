@@ -13,11 +13,21 @@ enum class ColorTileMode : std::uint32_t {
     Linear = 0,
     Standard4KB = 5,
     Standard64KB = 9,
+    S4KBX = 0x15,
+    D4KBX = 0x16,
     RenderTarget = 0x1b
 };
 
+constexpr bool ColorTileModeIsXor(ColorTileMode mode) {
+    return mode == ColorTileMode::S4KBX || mode == ColorTileMode::D4KBX || mode == ColorTileMode::RenderTarget;
+}
+
+constexpr std::uint32_t ColorTileModeBlockBytes(ColorTileMode mode) {
+    return mode == ColorTileMode::Linear ? 256u : mode == ColorTileMode::Standard4KB || mode == ColorTileMode::S4KBX || mode == ColorTileMode::D4KBX ? 4096u : 65536u;
+}
+
 constexpr TextureTileMode ColorTextureTileMode(ColorTileMode mode) {
-    return mode == ColorTileMode::Linear ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : mode == ColorTileMode::Standard64KB ? TextureTileMode::kStandard64KB : TextureTileMode::kR64KBX;
+    return mode == ColorTileMode::Linear ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : mode == ColorTileMode::Standard64KB ? TextureTileMode::kStandard64KB : mode == ColorTileMode::S4KBX ? TextureTileMode::kS4KBX : mode == ColorTileMode::D4KBX ? TextureTileMode::kD4KBX : TextureTileMode::kR64KBX;
 }
 
 ColorTileMode DecodeColorTileMode(std::uint32_t attrib3);
@@ -27,7 +37,7 @@ public:
     ColorTargetLayout(std::uint32_t width, std::uint32_t height, ColorTileMode mode, std::uint32_t bytesPerElement = 4, std::uint32_t pipeBankXor = 0);
     std::size_t Bytes() const { return bytes; }
     std::size_t LinearBytes() const { return static_cast<std::size_t>(width) * height * elementBytes; }
-    std::size_t Alignment() const { return mode == ColorTileMode::Linear ? 256u : mode == ColorTileMode::Standard4KB ? 4096u : 65536u; }
+    std::size_t Alignment() const { return ColorTileModeBlockBytes(mode); }
     std::uint32_t BlocksPerRow() const { return pitch / blockWidth; }
     std::size_t Offset(std::uint32_t x, std::uint32_t y) const;
     void Detile(std::span<const std::byte> source, std::span<std::byte> destination) const;
