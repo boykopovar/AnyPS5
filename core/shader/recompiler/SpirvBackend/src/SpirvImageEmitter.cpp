@@ -1030,7 +1030,6 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
 }
 
 // The bound slot of a bindless table for the runtime key: a binary search over the (key, slot)
-// pairs the materializer appended to the flattened SRT. A key the mapping lacks (past the table,
 // or a null or unusable entry) selects slot 0 and reports unmapped: its result is zeroed, as a
 // null T# samples on hardware.
 TableSelection EmitIndirectImageSelector(SpirvValueEmitContext& ctx, const ImageResource& image, std::uint32_t key) {
@@ -1043,6 +1042,14 @@ TableSelection EmitIndirectImageSelector(SpirvValueEmitContext& ctx, const Image
         return value;
     };
     const auto mapping = ConstantU32(state, image.indirectMappingOffset);
+    if (image.indirectSearchIterations == 0u) {
+        const auto inRange = Binary(state, spv::OpULessThan, TypeBool(state), key, ConstantU32(state, image.indirectSlots));
+        const auto slot = Select(state, TypeU32(state), inRange, key, ConstantU32(state, 0u));
+        const auto bits = loadMapping(Binary(state, spv::OpIAdd, TypeU32(state), mapping, Binary(state, spv::OpShiftRightLogical, TypeU32(state), slot, ConstantU32(state, 5u))));
+        const auto bit = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), bits, Binary(state, spv::OpBitwiseAnd, TypeU32(state), slot, ConstantU32(state, 31u))), ConstantU32(state, 1u));
+        const auto mapped = Binary(state, spv::OpLogicalAnd, TypeBool(state), inRange, Binary(state, spv::OpINotEqual, TypeBool(state), bit, ConstantU32(state, 0u)));
+        return {Select(state, TypeU32(state), mapped, slot, ConstantU32(state, 0u)), mapped};
+    }
     auto low = ConstantU32(state, 0u);
     auto high = loadMapping(mapping);
     auto selected = ConstantU32(state, 0u);
@@ -1288,7 +1295,7 @@ TableSelection TableSlot(SpirvValueEmitContext& ctx, const IrValue& inst, const 
     if (handle == nullptr || image.source >= sources.size() || !sources[image.source].indirectImage.has_value() || sources[image.source].indirectImage->keyArg >= handle->ArgumentCount()) {
         ctx.Fail(inst, "has invalid bindless image table key provenance");
     }
-    if (state.flattenedSrtVariable == 0 || image.indirectSearchIterations == 0u) {
+    if (state.flattenedSrtVariable == 0 || image.indirectSlots == 0u) {
         ctx.Fail(inst, "has no bindless image table runtime mapping");
     }
     const auto key = ctx.Def(handle->Argument(sources[image.source].indirectImage->keyArg));

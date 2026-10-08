@@ -78,6 +78,8 @@ public:
     VkFormat ViewFormat() const { return viewFormat; }
     // Whether this texture is a view of a storage image (no snapshot of its own).
     bool ViewsStorageImage() const { return storageSource != nullptr; }
+    void MarkNull() { null = true; }
+    bool Null() const { return null; }
     const StorageTexture* StorageSource() const { return storageSource.get(); }
     const std::shared_ptr<StorageTexture>& SharedStorageSource() const { return storageSource; }
     // The last key scan of the sampled surface (ProvedClearKeys), for surfaces whose keys are not
@@ -102,6 +104,7 @@ private:
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
     VkFormat viewFormat = VK_FORMAT_UNDEFINED;
+    bool null = false;
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<StorageTexture> storageSource;
     std::unique_ptr<CommandBatch> upload;

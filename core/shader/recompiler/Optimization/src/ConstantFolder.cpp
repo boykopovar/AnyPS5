@@ -522,6 +522,16 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
             }
             return false;
         }
+        case IrOpcode::BitReverse32: {
+            auto& operand = resolveArg(value, 0);
+            if (!isImmediate(operand, IrType::U32)) {
+                return false;
+            }
+            std::uint32_t reversed = 0;
+            for (std::uint32_t bit = 0; bit < 32u; bit++) reversed |= ((operand.ImmediateU32() >> bit) & 1u) << (31u - bit);
+            replaceWith(value, builder.Constant(reversed));
+            return true;
+        }
         case IrOpcode::BitCount32: {
             auto& operand = resolveArg(value, 0);
             if (!isImmediate(operand, IrType::U32)) {

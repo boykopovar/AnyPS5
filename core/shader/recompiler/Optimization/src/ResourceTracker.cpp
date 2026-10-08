@@ -329,8 +329,21 @@ private:
     }
 
     // The table entry offset `key * 32` (a shift or a multiply), optionally plus an immediate.
-    static bool MatchTableOffset(IrValue* value, IrValue*& key, std::uint32_t& entryOffset) {
+    static IrValue* StripKeyMask(IrValue* value) {
         value = value->Resolve();
+        if (value->Opcode() != IrOpcode::BitwiseAnd32 || value->ArgumentCount() != 2u) return value;
+        std::uint32_t mask = 0;
+        IrValue* masked = nullptr;
+        if (immediateU32(value->Argument(1), mask)) masked = value->Argument(0);
+        else if (immediateU32(value->Argument(0), mask)) masked = value->Argument(1);
+        if (masked == nullptr) return value;
+        const std::uint64_t span = (static_cast<std::uint64_t>(mask) | 31u) + 1u;
+        if ((span & (span - 1u)) != 0u || (mask >> 5u) < 0xffffu || (mask & 0xffffffe0u) != ((span - 1u) & 0xffffffe0u)) return value;
+        return masked->Resolve();
+    }
+
+    static bool MatchTableOffset(IrValue* value, IrValue*& key, std::uint32_t& entryOffset) {
+        value = StripKeyMask(value);
         entryOffset = 0;
         if (value->Opcode() == IrOpcode::IAdd32 && value->ArgumentCount() == 2u) {
             std::uint32_t immediate = 0;
@@ -342,6 +355,7 @@ private:
                 return false;
             }
             entryOffset = immediate;
+            value = StripKeyMask(value);
         }
         if (value->ArgumentCount() != 2u) {
             return false;
@@ -407,14 +421,32 @@ private:
 
         IrValue* key = nullptr;
         std::uint32_t entryOffset = 0;
+        static const bool traceMatch = std::getenv("APS5_TRACE_TABLE_MATCH") != nullptr;
         if (!MatchTableOffset(heapOffset, key, entryOffset) || key->Type() != IrType::U32) {
+            if (traceMatch) {
+                std::uint32_t mask = 0;
+                const IrValue* resolved = heapOffset->Resolve();
+                if (resolved->Opcode() == IrOpcode::BitwiseAnd32) immediateU32(resolved->Argument(1), mask);
+                std::fprintf(stderr, "[table-match] heap offset is not key * 32 (+ immediate), mask 0x%x: %s\n", mask, describeValueChain(heapOffset, 4u).c_str());
+            }
             return false;
         }
         entryOffset += immediateOffset;
 
-        const std::array<const IrValue*, 1> imageUsers {&handle};
+        std::vector<const IrValue*> imageUsers {&handle};
+        for (const IrValue* user : heapReads[0]->Uses()) {
+            if (user == &handle || user->Opcode() != IrOpcode::GetImageResource || user->ArgumentCount() != 8u) continue;
+            bool same = true;
+            for (std::uint32_t dword = 0; dword < 8u && same; dword++) same = user->Argument(dword)->Resolve() == heapReads[dword];
+            if (same) imageUsers.push_back(user);
+        }
         for (const auto* read : heapReads) {
-            if (!usesOnly(*read, imageUsers)) {
+            if (!usesOnly(*read, std::span<const IrValue* const>(imageUsers))) {
+                if (traceMatch) {
+                    std::string users;
+                    for (const IrValue* user : read->Uses()) users += std::string(" ") + std::string(IrOpcodeName(user->Opcode())) + (user == &handle ? "(this)" : "");
+                    std::fprintf(stderr, "[table-match] a T# dword has users besides its image handle:%s\n", users.c_str());
+                }
                 return false;
             }
         }
@@ -422,6 +454,7 @@ private:
         DescriptorSource heapSource;
         std::uint32_t heapSourceIndex = 0;
         if (!MakeRuntimeBufferSource(*heapHandle, heapSourceIndex, heapSource)) {
+            if (traceMatch) std::fprintf(stderr, "[table-match] the heap V# is no runtime buffer source\n");
             return false;
         }
 

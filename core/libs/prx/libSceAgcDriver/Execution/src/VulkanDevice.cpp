@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "BdaAbi.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -217,6 +218,7 @@ struct VulkanDevice::State {
     bool samplerFilterMinmax = false;
     bool fragmentShaderPixelInterlock = false;
     bool conservativeRasterization = false;
+    bool nullDescriptor = false;
     // VK_KHR_timeline_semaphore enabled: the recorder's unlocked waits are available.
     bool timelineSemaphores = false;
     bool computeWave32 = false;
@@ -994,6 +996,17 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->capabilities.push_back(spv::CapabilityStorageImageArrayNonUniformIndexing);
         state->spirvExtensions.push_back("SPV_EXT_descriptor_indexing");
     }
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness2Features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
+    if (hasExtension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME) && std::getenv("APS5_NO_NULL_DESCRIPTOR") == nullptr) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &robustness2Features};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        state->nullDescriptor = robustness2Features.nullDescriptor == VK_TRUE;
+    }
+    robustness2Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
+    if (state->nullDescriptor) {
+        robustness2Features.nullDescriptor = VK_TRUE;
+        deviceExtensions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+    }
     state->samplerAnisotropy = true;
     state->textureCompressionBC = true;
     deviceInfo.pEnabledFeatures = &enabled;
@@ -1048,6 +1061,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     if (state->descriptorIndexing) {
         descriptorIndexingFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &descriptorIndexingFeatures;
+    }
+    if (state->nullDescriptor) {
+        robustness2Features.pNext = byteFeatures.pNext;
+        byteFeatures.pNext = &robustness2Features;
     }
     // Timeline semaphores let a queue worker wait for recorded batches without holding the GPU mutex
     // (see Recorder::WaitSerial). The instance is 1.1, so the KHR extension is used even on 1.2+
@@ -2435,6 +2452,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.nonConstantImageOffsets = state->maintenance8;
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.srgbDecodeFormats = state->srgbDecodeFormats;
+    ShaderRecompiler::ResourceMaterializer::SetBindlessTableLimit(std::min(limits.maxPerStageDescriptorSampledImages, limits.maxDescriptorSetSampledImages));
     if (state->meshShader) {
         const auto& mesh = state->meshLimits;
         target.mesh = ShaderRecompiler::MeshTargetLimits{{mesh.maxMeshWorkGroupSize[0], mesh.maxMeshWorkGroupSize[1], mesh.maxMeshWorkGroupSize[2]}, mesh.maxMeshWorkGroupInvocations, std::min(mesh.maxMeshSharedMemorySize, mesh.maxMeshPayloadAndSharedMemorySize), mesh.maxMeshOutputVertices, mesh.maxMeshOutputPrimitives, mesh.maxMeshOutputComponents, std::min(mesh.maxMeshOutputMemorySize, mesh.maxMeshPayloadAndOutputMemorySize), mesh.meshOutputPerVertexGranularity, mesh.meshOutputPerPrimitiveGranularity};
@@ -2453,6 +2471,10 @@ bool VulkanDevice::SamplerFilterMinmax() const {
 
 bool VulkanDevice::ConservativeRasterization() const {
     return state->conservativeRasterization;
+}
+
+bool VulkanDevice::NullDescriptor() const {
+    return state->nullDescriptor;
 }
 
 Graphics::Context VulkanDevice::graphicsContext() const {
@@ -2500,6 +2522,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.depthBiasClamp = state->depthBiasClamp;
     context.samplerFilterMinmax = state->samplerFilterMinmax;
     context.conservativeRasterization = state->conservativeRasterization;
+    context.nullDescriptor = state->nullDescriptor;
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
     context.emptyBuffer = state->emptyBuffer ? state->emptyBuffer->Handle() : VK_NULL_HANDLE;

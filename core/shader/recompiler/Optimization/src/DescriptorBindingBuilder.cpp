@@ -128,26 +128,45 @@ std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_
     return result;
 }
 
-std::vector<std::uint32_t> GuestImagesDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
+std::vector<std::uint32_t> GuestImagesDescriptor(const std::vector<std::uint32_t>& resources, const std::vector<ImageResource>& images, const ResourceSnapshot& snapshot) {
+    std::size_t tableSlots = 0;
+    for (const auto& image : images) {
+        if (image.indirectSlots != 0u) tableSlots += image.indirectSlots - 1u;
+    }
+    if (tableSlots > snapshot.images.size()) {
+        fail("DescriptorBindingBuilder::Populate bindless table slots are missing from the snapshot");
+    }
+    std::vector<std::size_t> tableBase(images.size(), 0u);
+    std::size_t nextBase = snapshot.images.size() - tableSlots;
+    for (std::size_t i = 0; i < images.size(); i++) {
+        if (images[i].indirectSlots == 0u) continue;
+        tableBase[i] = nextBase;
+        nextBase += images[i].indirectSlots - 1u;
+    }
     std::vector<std::uint32_t> result;
     std::uint32_t dwordCount = 0;
+    std::uint32_t occurrence = 0;
     for (std::size_t i = 0; i < resources.size(); i++) {
         const std::uint32_t r = resources[i];
-        if (r >= snapshot.images.size()) {
+        if (r >= snapshot.images.size() || r >= images.size()) {
             fail("DescriptorBindingBuilder::Populate guest image index is out of range");
         }
-        const DescriptorValue& value = snapshot.images[r];
+        occurrence = i != 0u && resources[i - 1u] == r ? occurrence + 1u : 0u;
+        const bool slot = images[r].indirectSlots != 0u && occurrence != 0u;
+        if (slot && occurrence >= images[r].indirectSlots) {
+            fail("DescriptorBindingBuilder::Populate bindless table binds more elements than its slots");
+        }
+        const DescriptorValue& value = slot ? snapshot.images[tableBase[r] + occurrence - 1u] : snapshot.images[r];
         if (value.dwordCount == 0u) {
             fail("DescriptorBindingBuilder::Populate guest image descriptor is empty");
         }
         if (i == 0u) {
             dwordCount = value.dwordCount;
+            result.reserve(resources.size() * dwordCount);
         } else if (value.dwordCount != dwordCount) {
             fail("DescriptorBindingBuilder::Populate guest image descriptors have inconsistent widths");
         }
-        for (std::uint32_t dword = 0; dword < value.dwordCount; dword++) {
-            result.push_back(value.dwords[dword]);
-        }
+        result.insert(result.end(), value.dwords.begin(), value.dwords.begin() + value.dwordCount);
     }
     return result;
 }
@@ -333,7 +352,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             }
             break;
         case DescriptorRole::GuestImages:
-            physical.guestDescriptor = GuestImagesDescriptor(logical.resources, snapshot);
+            physical.guestDescriptor = GuestImagesDescriptor(logical.resources, info.images, snapshot);
             physical.imageShape = ImageShapeFor(info.images, logical.resources);
             for (const std::uint32_t resource : logical.resources) {
                 const auto& image = info.images.at(resource);

@@ -118,30 +118,24 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
         std::vector<std::uint32_t>& resources = imageGroups[group];
         const bool dynamic = info.images[i].mipMode == ImageMipMode::DynamicStorage;
-        const std::uint32_t count = dynamic ? info.images[i].mipCount : 1u;
+        const bool table = info.images[i].indirectRoot == i;
+        if (table && (dynamic || info.images[i].indirectSlots == 0u)) {
+            fail("shader binding layout failed: image " + std::to_string(i) + " is a bindless table root with " + std::to_string(info.images[i].indirectSlots) + " slots");
+        }
+        const std::uint32_t count = table ? info.images[i].indirectSlots : dynamic ? info.images[i].mipCount : 1u;
         if (count == 0u || (!dynamic && info.images[i].mipCount != 1u)) {
             fail("shader binding layout failed: image " + std::to_string(i) + " has an invalid specialized mip count " +
                  std::to_string(info.images[i].mipCount));
         }
         resources.insert(resources.end(), count, i);
     };
-    // A bindless table's slots follow their root as consecutive elements: the SPIR-V indexes the
     // binding with element(root) + slot.
     for (std::uint32_t i = 0; i < info.images.size(); i++) {
         const auto root = info.images[i].indirectRoot;
         if (root != ImageResource::NoIndirectImage && root != i) {
-            continue;
+            fail("shader binding layout failed: image " + std::to_string(i) + " names another image's table root " + std::to_string(root));
         }
         place(i);
-        if (root != i) {
-            continue;
-        }
-        for (const auto slot : info.images[i].indirectResources) {
-            if (slot >= info.images.size() || info.images[slot].indirectRoot != i) {
-                fail("shader binding layout failed: image " + std::to_string(i) + " has an inconsistent table slot");
-            }
-            if (slot != i) place(slot);
-        }
     }
     for (std::uint32_t i = 0; i < imageGroups.size(); i++) {
         if (!imageGroups[i].empty()) {
@@ -166,7 +160,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
 
     const bool usesFlattenedRuntime = !program.Resources().srtReads.empty() ||
         std::ranges::any_of(info.images, [](const ImageResource& image) {
-            return image.indirectSearchIterations != 0u;
+            return image.indirectSlots != 0u;
         });
     if (usesFlattenedRuntime) {
         addBinding(next, DescriptorBindingKind::FlattenedSrt);

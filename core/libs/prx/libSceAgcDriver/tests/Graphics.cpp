@@ -1670,6 +1670,30 @@ void resourceTests() {
         fragment.bindings.front().binding = 1;
         fragment.bindings.front().guestDescriptor = vsharp(guestFirst.data(), 16);
     }
+    {
+        // A comparison T# that no comparison reads (a 3D view of format 56) binds the null texture,
+        // which needs nullDescriptor: the refusal names it and carries the raw descriptor dwords. The
+        // detiler and texture cache only have to be present, since the refusal comes before either is used.
+        alignas(64) static std::array<std::uint64_t, 64> placeholder{};
+        const std::vector<std::uint32_t> view3d{0x1000u, 0x03800000u, 0u, 0xa0000facu, 0u, 0u, 0u, 0u};
+        auto unreadable = makeBinding(Role::GuestImages, 0, 1, view3d);
+        unreadable.kind = Kind::SampledImage;
+        unreadable.imageShape = ShaderRecompiler::DescriptorImageShape::Image3D;
+        unreadable.imageDepthCompare = {true};
+        unreadable.imageSamplers = {0u};
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(unreadable);
+        mock = MockVulkan{};
+        auto withPlaceholders = mockContext();
+        withPlaceholders.limits.maxPerStageDescriptorSampledImages = 16;
+        withPlaceholders.limits.maxDescriptorSetSampledImages = 16;
+        withPlaceholders.detiler = reinterpret_cast<AgcDriver::Graphics::TextureDetiler*>(placeholder.data());
+        withPlaceholders.textureCache = reinterpret_cast<AgcDriver::Graphics::TextureCache*>(placeholder.data());
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(withPlaceholders, vertex, fragment, color, 0, 0); }, "nullDescriptor, which this device lacks (descriptor dwords 00001000 03800000 00000000 a0000fac 00000000 00000000 00000000 00000000)");
+        Require(mock.live == 0, "a refused comparison image leaked Vulkan objects");
+    }
 }
 
 void descriptorCacheTests() {

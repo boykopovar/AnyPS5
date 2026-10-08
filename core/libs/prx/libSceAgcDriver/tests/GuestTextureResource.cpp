@@ -396,6 +396,15 @@ void RunGuestTextureResourceTests() {
     std::array<std::uint32_t, 4> shortWords{};
     reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");
 
+    std::array<std::uint32_t, 8> nullWords{};
+    Require(IsNullTextureDescriptor(nullWords), "an all-zero T# is the null descriptor");
+    Require(!IsNullTextureDescriptor(shortWords), "a T# shorter than 8 dwords is not the null descriptor");
+    for (std::size_t word = 1; word < nullWords.size(); ++word) {
+        auto baseZero = nullWords;
+        baseZero[word] = word == 3 ? 0x00000facu : 0x1u;
+        Require(!IsNullTextureDescriptor(baseZero), "a T# with base 0 and any other field set is not the null descriptor");
+    }
+
     Require(MatchesGuestDimension(Shape::Image1D, TextureDimension::k1D), "1D shape must match 1D dimension");
     Require(!MatchesGuestDimension(Shape::Image1D, TextureDimension::k2D), "1D shape must not match 2D dimension");
     Require(MatchesGuestDimension(Shape::Image2D, TextureDimension::k2D), "2D shape must match 2D dimension");

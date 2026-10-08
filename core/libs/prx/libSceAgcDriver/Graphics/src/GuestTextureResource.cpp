@@ -49,6 +49,10 @@ TextureDimension resolveDimension(std::uint32_t raw) {
 
 }
 
+bool IsNullTextureDescriptor(std::span<const std::uint32_t> words) {
+    return words.size() == 8 && std::all_of(words.begin(), words.end(), [](std::uint32_t word) { return word == 0; });
+}
+
 GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words) {
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
 

@@ -222,8 +222,8 @@ void verifyBindlessTable() {
         const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
         return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), records, 0xfacu};
     };
-    const auto fillSrt = [&](std::uint32_t heapRecords) {
-        const auto heapV = bufferDescriptor(heap.data(), 32u, heapRecords);
+    const auto fillSrt = [&](std::uint32_t heapRecords, const void* heapBase) {
+        const auto heapV = bufferDescriptor(heapBase, 32u, heapRecords);
         const auto materialV = bufferDescriptor(materials.data(), 16u, 3u);
         const auto outputV = bufferDescriptor(output.data(), 0u, 16u);
         std::copy(heapV.begin(), heapV.end(), srt.begin());
@@ -231,7 +231,7 @@ void verifyBindlessTable() {
         std::copy(materialV.begin(), materialV.end(), srt.begin() + 8);
         std::copy(outputV.begin(), outputV.end(), srt.begin() + 12);
     };
-    fillSrt(4u);
+    fillSrt(4u, heap.data());
 
     // s_load_dwordx4 x4 (heap V#, S#, material V#, output V#); v_readfirstlane_b32 s16, v0;
     // s_mul_i32 s16, s16, 16; s_buffer_load_dword s16, s[12:15], s16 offset:4; s_lshl_b32 s16, s16, 5;
@@ -273,15 +273,15 @@ void verifyBindlessTable() {
         require(snapshot.flattenedSrt.size() >= 1u + 2u * slots, "bindless: the mapping block is missing from the flattened SRT");
         return std::vector<std::uint32_t>(snapshot.flattenedSrt.end() - static_cast<std::ptrdiff_t>(1u + 2u * slots), snapshot.flattenedSrt.end());
     };
-    const auto tableRoot = [&](const ResourceCapture& capture, std::uint32_t direct) {
-        require(capture.specialization.images.size() == direct + slots - 1u, "bindless: the specialization does not hold the table slots");
-        require(capture.snapshot.images.size() == direct + slots - 1u, "bindless: the snapshot does not hold the table slots");
+    const auto tableRoot = [&](const ResourceCapture& capture, std::uint32_t direct, std::uint32_t tableSlots) {
+        require(capture.specialization.images.size() == direct, "bindless: the specialization holds images besides the plan's");
+        require(capture.snapshot.images.size() == direct + tableSlots - 1u, "bindless: the snapshot does not hold the table slots");
         std::uint32_t root = ImageResource::NoIndirectImage;
         for (std::uint32_t i = 0; i < direct; i++) {
             if (capture.specialization.images[i].indirectRoot == i) root = i;
         }
         require(root != ImageResource::NoIndirectImage, "bindless: no table root");
-        for (std::uint32_t i = direct; i < capture.specialization.images.size(); i++) require(capture.specialization.images[i].indirectRoot == root, "bindless: an extra image is not the root's slot");
+        require(capture.specialization.images[root].indirectSlots == tableSlots, "bindless: the root does not carry the table's slot count");
         return root;
     };
 
@@ -300,7 +300,7 @@ void verifyBindlessTable() {
 
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
-    const auto root = tableRoot(*capture, direct);
+    const auto root = tableRoot(*capture, direct, slots);
     require(capture->snapshot.images[root].dwords == heap[0] && capture->snapshot.images[direct].dwords == heap[1] && capture->snapshot.images[direct + 1u].dwords == heap[3], "bindless: the slots do not hold the keyed entries");
     for (std::uint32_t i = direct + 2u; i < capture->snapshot.images.size(); i++) require(capture->snapshot.images[i].dwords == heap[0], "bindless: a pad slot is not a copy of slot 0");
     const auto mapping = mappingOf(capture->snapshot);
@@ -384,8 +384,6 @@ void verifyBindlessTable() {
     require(nullCapture->snapshot.images[direct + 1u].dwords == heap[0], "bindless: a null entry's slot is not the pad");
     materials[2][1] = 3u;
 
-    // Mode T: every entry keeps its slot; the null entry's slot holds the pad and its key is
-    // left out of the mapping.
     auto whole = makeRequest(wholeCode);
     const auto wholePlan = GetResourcePlan(whole);
     for (const auto& source : wholePlan->descriptorSources) {
@@ -394,18 +392,47 @@ void verifyBindlessTable() {
     AgcDriver::ShaderMemory wholeMemory({});
     const auto wholeCapture = wholeMemory.Capture(whole);
     const auto wholeDirect = static_cast<std::uint32_t>(wholePlan->info.images.size());
-    const auto wholeRoot = tableRoot(*wholeCapture, wholeDirect);
-    const auto wholeMapping = mappingOf(wholeCapture->snapshot);
-    require(std::vector<std::uint32_t>(wholeMapping.begin(), wholeMapping.begin() + 7) == std::vector<std::uint32_t>{3u, 0u, 0u, 1u, 1u, 3u, 3u}, "bindless: mode T is not the identity mapping");
+    const auto wholeRoot = tableRoot(*wholeCapture, wholeDirect, slots);
+    const auto& wholeImage = wholeCapture->specialization.images[wholeRoot];
+    require(wholeImage.indirectSearchIterations == 0u && wholeImage.indirectMappingOffset + (slots + 31u) / 32u == wholeCapture->snapshot.flattenedSrt.size(), "bindless: mode T does not name its slot mask");
+    require(wholeCapture->snapshot.flattenedSrt[wholeImage.indirectMappingOffset] == 0b1011u, "bindless: mode T maps the wrong slots");
     require(wholeCapture->snapshot.images[wholeRoot].dwords == heap[0] && wholeCapture->snapshot.images[wholeDirect].dwords == heap[1] && wholeCapture->snapshot.images[wholeDirect + 1u].dwords == heap[0] && wholeCapture->snapshot.images[wholeDirect + 2u].dwords == heap[3], "bindless: mode T slots are wrong");
     whole.context.memory = wholeMemory.Regions();
     require(!Recompile(whole, *wholeCapture)->spirv.empty(), "bindless: mode T did not compile");
 
-    // A table wider than the slots without a material pattern is rejected.
-    fillSrt(100u);
+    static std::array<std::array<std::uint32_t, 8>, 1000> large{};
+    for (std::uint32_t entry = 0; entry < large.size(); entry++) large[entry] = entry % 2u == 0u ? heap[entry % 4u == 0u ? 0u : 1u] : std::array<std::uint32_t, 8>{};
+    large[0][3] = (large[0][3] & 0x0fffffffu) | (10u << 28u);
+    fillSrt(static_cast<std::uint32_t>(large.size()), large.data());
+    AgcDriver::ShaderMemory largeMemory({});
+    const auto largeCapture = largeMemory.Capture(whole);
+    const auto largeRoot = tableRoot(*largeCapture, wholeDirect, 1024u);
+    const auto& largeImage = largeCapture->specialization.images[largeRoot];
+    require(largeImage.indirectSearchIterations == 0u && largeImage.indirectMappingOffset + 32u == largeCapture->snapshot.flattenedSrt.size(), "bindless: the large table does not name a 32-word slot mask");
+    for (std::uint32_t word = 0; word < 32u; word++) require(largeCapture->snapshot.flattenedSrt[largeImage.indirectMappingOffset + word] == (word == 0u ? 0x55555554u : word < 31u ? 0x55555555u : 0x00000055u), "bindless: the large table maps the wrong slots");
+    require(largeImage.dimension == RdnaImageDimension::Dim2D && largeCapture->snapshot.images[largeRoot].dwords == large[2], "bindless: a 3D first entry decided the shape of a 2D access's table");
+    for (const auto key : {2u, 4u, 998u}) require(largeCapture->snapshot.images[wholeDirect + key - 1u].dwords == large[key], "bindless: a large-table slot does not hold its key's entry");
+    require(largeCapture->snapshot.images[wholeDirect + 998u].dwords == large[2] && largeCapture->snapshot.images[wholeDirect + 1022u].dwords == large[2], "bindless: a null or past-the-table slot is not the pad");
+    whole.context.memory = largeMemory.Regions();
+    const auto largeCompiled = Recompile(whole, *largeCapture);
+    std::size_t largeBindings = 0;
+    for (const auto& binding : largeCompiled->bindings) {
+        if (binding.kind != DescriptorKind::SampledImage) continue;
+        ++largeBindings;
+        require(binding.count == wholeDirect + 1023u && binding.guestDescriptor.size() == 8u * binding.count, "bindless: the large table is not one array of its slots");
+        const auto element = [&](std::uint32_t index) { return std::vector<std::uint32_t>(binding.guestDescriptor.begin() + 8u * index, binding.guestDescriptor.begin() + 8u * (index + 1u)); };
+        for (const auto key : {2u, 4u, 998u}) require(element(largeRoot + key) == std::vector<std::uint32_t>(large[key].begin(), large[key].end()), "bindless: a large-table element is not its key's entry");
+    }
+    require(largeBindings == 1u && scan(largeCompiled->spirv).dynamicIndexing, "bindless: the large table is not indexed dynamically");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(largeCompiled->spirv, whole.target.vulkanVersion, whole.target.spirvVersion));
+#endif
+
+    ResourceMaterializer::SetBindlessTableLimit(512u);
     AgcDriver::ShaderMemory wideMemory({});
-    expectFailure([&] { static_cast<void>(wideMemory.Capture(whole)); }, "bindless image table has 100 entries", "bindless: a wide table was bound");
-    fillSrt(4u);
+    expectFailure([&] { static_cast<void>(wideMemory.Capture(whole)); }, "bindless image table has 1000 entries (0 materials), device limit 512", "bindless: a table past the device limit was bound");
+    ResourceMaterializer::SetBindlessTableLimit(16384u);
+    fillSrt(4u, heap.data());
 }
 
 

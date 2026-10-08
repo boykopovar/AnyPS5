@@ -28,6 +28,7 @@ struct ResourceSpecialization {
         std::uint32_t indirectRoot = ImageResource::NoIndirectImage;
         std::uint32_t indirectMappingOffset = 0;
         std::uint32_t indirectSearchIterations = 0;
+        std::uint32_t indirectSlots = 0;
         bool cube = false;
         bool fmask = false;
         bool depthBits = false;
@@ -58,8 +59,9 @@ public:
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot, ResourceSpecialization& specialization) const;
     // APS5_PROFILE_DRAW: the time Materialize spent building specializations, over every call.
     static std::uint64_t SpecializationNanoseconds();
-    // The slots every bindless image table binds (APS5_BINDLESS_SLOTS, default 16, 1..48).
     static std::uint32_t BindlessSlots();
+    static std::uint32_t BindlessTableLimit();
+    static void SetBindlessTableLimit(std::uint32_t limit);
     static void CountBindlessRejection(BindlessRejection reason);
 };
 

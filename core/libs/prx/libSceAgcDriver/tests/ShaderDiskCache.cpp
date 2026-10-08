@@ -170,7 +170,7 @@ CompiledVariant sampleVariant() {
     image.indirectRoot = 0;
     image.indirectMappingOffset = 12;
     image.indirectSearchIterations = 3;
-    image.indirectResources = {1, 2, 3};
+    image.indirectSlots = 4;
     info.info.images = {image};
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather}};
     info.info.sampledPairs = {{0, 0, 0x10}};
@@ -354,6 +354,7 @@ void verifyKeySensitivity() {
     changes("an image indirect root", [](SampleRequest& sample) { sample.specialization.images[0].indirectRoot = 0; });
     changes("an image mapping offset", [](SampleRequest& sample) { sample.specialization.images[0].indirectMappingOffset = 4; });
     changes("an image search depth", [](SampleRequest& sample) { sample.specialization.images[0].indirectSearchIterations = 2; });
+    changes("an image table slot count", [](SampleRequest& sample) { sample.specialization.images[0].indirectSlots = 1024; });
     changes("an image cube flag", [](SampleRequest& sample) { sample.specialization.images[0].cube = true; });
     changes("an image FMASK flag", [](SampleRequest& sample) { sample.specialization.images[0].fmask = true; });
     changes("an image sRGB decode", [](SampleRequest& sample) { sample.specialization.images[0].srgbDecode = true; });
