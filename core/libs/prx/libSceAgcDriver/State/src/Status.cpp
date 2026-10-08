@@ -5,6 +5,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+static constexpr int SCE_AGC_ERROR_DEBUG_UNAVAILABLE = static_cast<int>(0x8A6C1000);
+static constexpr int SHADER_DEBUGGING_STATUS = 1;
+
 extern "C" {
 
 bool APS5_VABI sceAgcDriverIsCaptureInProgress(void) {
@@ -19,20 +22,45 @@ bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void) {
     return false;
 }
 
-int APS5_VABI sceAgcDriverRequestCaptureStart(const char* path) {
-    (void)path;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAgcDriverGetShaderDebuggingStatus(void) {
+    return SHADER_DEBUGGING_STATUS;
 }
 
-int APS5_VABI sceAgcDriverRequestCaptureStop() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAgcDriverRequestCaptureStart(void) {
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
 }
 
-int APS5_VABI sceAgcDriverTriggerCapture() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAgcDriverRequestCaptureStop(void) {
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverTriggerCapture(void) {
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSetSubmitValidationMode(std::uint32_t mode) {
+    (void)mode;
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverGetSubmitValidationMode(std::uint32_t* mode) {
+    (void)mode;
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void* config) {
+    (void)config;
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverGetSubmitValidationConfig(void* config) {
+    (void)config;
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSetValidationErrorOutputFrequency(std::uint32_t frequency) {
+    (void)frequency;
+    return SCE_AGC_ERROR_DEBUG_UNAVAILABLE;
 }
 
 }
