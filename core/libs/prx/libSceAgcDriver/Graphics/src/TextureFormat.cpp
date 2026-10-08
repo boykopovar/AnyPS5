@@ -96,7 +96,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 30 || guestFormat == 34 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 43 ? 20 : guestFormat;
 }
 
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {

@@ -54,6 +54,34 @@ inline constexpr std::uint32_t ReferenceSnorm = 2u;
 [[nodiscard]] inline std::uint32_t Reference(std::uint32_t state) { return (state >> ReferenceShift) & 0x3u; }
 }
 
+namespace EmulatedFilter {
+inline constexpr std::uint32_t Enabled = 1u << 0u;
+inline constexpr std::uint32_t Linear = 1u << 1u;
+inline constexpr std::uint32_t ClampXShift = 2u;
+inline constexpr std::uint32_t ClampYShift = 5u;
+inline constexpr std::uint32_t SingleLevel = 1u << 8u;
+inline constexpr std::uint32_t MipShift = 9u;
+inline constexpr std::uint32_t BorderShift = 11u;
+inline constexpr std::uint32_t Unnormalized = 1u << 13u;
+inline constexpr std::uint32_t ClampZShift = 14u;
+inline constexpr std::uint32_t AddressWrap = 0u;
+inline constexpr std::uint32_t AddressEdge = 1u;
+inline constexpr std::uint32_t AddressMirror = 2u;
+inline constexpr std::uint32_t AddressBorder = 3u;
+inline constexpr std::uint32_t AddressHalfBorder = 4u;
+inline constexpr std::uint32_t MipBase = 0u;
+inline constexpr std::uint32_t MipPoint = 1u;
+inline constexpr std::uint32_t MipLinear = 2u;
+inline constexpr std::uint32_t BorderTransparentBlack = 0u;
+inline constexpr std::uint32_t BorderOpaqueBlack = 1u;
+inline constexpr std::uint32_t BorderOpaqueWhite = 2u;
+[[nodiscard]] inline std::uint32_t Mip(std::uint32_t state) { return (state >> MipShift) & 0x3u; }
+[[nodiscard]] inline std::uint32_t AddressX(std::uint32_t state) { return (state >> ClampXShift) & 0x7u; }
+[[nodiscard]] inline std::uint32_t AddressY(std::uint32_t state) { return (state >> ClampYShift) & 0x7u; }
+[[nodiscard]] inline std::uint32_t AddressZ(std::uint32_t state) { return (state >> ClampZShift) & 0x7u; }
+[[nodiscard]] inline std::uint32_t Border(std::uint32_t state) { return (state >> BorderShift) & 0x3u; }
+}
+
 struct ImageResource {
     static constexpr std::uint32_t NoIndirectImage = std::numeric_limits<std::uint32_t>::max();
 
@@ -79,6 +107,7 @@ struct ImageResource {
     bool packed = false;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     std::uint32_t emulatedCompare = 0;
+    std::uint32_t emulatedFilter = 0;
     std::uint32_t indirectRoot = NoIndirectImage;
     std::uint32_t indirectMappingOffset = 0;
     std::uint32_t indirectSearchIterations = 0;

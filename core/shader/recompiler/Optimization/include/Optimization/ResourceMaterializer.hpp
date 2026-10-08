@@ -33,6 +33,7 @@ struct ResourceSpecialization {
         bool depthUnorm16 = false;
         IrBufferFormat packedFormat = IrBufferFormat::Invalid;
         std::uint32_t emulatedCompare = 0;
+        std::uint32_t emulatedFilter = 0;
         bool srgbDecode = false;
 
         bool operator==(const Image& other) const;
