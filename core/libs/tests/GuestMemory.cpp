@@ -1359,4 +1359,17 @@ int main() {
         }
         Require(munmap_nid_postfix(mapped, 1) == 0);
     }
+
+    reject(page, 3, 0x2001002, -1, 0, 45);
+    constexpr std::size_t superpage = std::size_t{1} << 21;
+    auto* aligned = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, superpage + page, 3, 0x1001002, -1, 0));
+    Require(aligned != failed && (reinterpret_cast<std::uintptr_t>(aligned) & (superpage - 1)) == 0);
+    aligned[0] = 1;
+    aligned[superpage + page - 1] = 2;
+    {
+        GuestAllocations::Mutation mutation;
+        const auto range = mutation.Find(aligned);
+        Require(range.bytes == superpage + page && range.readable && range.writable);
+    }
+    Require(munmap_nid_postfix(aligned, superpage + page) == 0);
 }

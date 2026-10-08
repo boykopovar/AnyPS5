@@ -752,7 +752,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     return 0;
 }
 
-int DoMapAnon(void** addr, size_t len, int prot, int flags) {
+int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
@@ -763,7 +763,7 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags) {
         return 0;
     }
     ReplaceFixedOverlap(mutation, *addr, len, flags);
-    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, PS5_PAGE_SIZE);
+    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
     try {
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0);
     } catch (...) {
