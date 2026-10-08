@@ -14,6 +14,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include "ResidentPresent.hpp"
 #include "SampleLod_spv.h"
 #include <SDL_loadso.h>
@@ -38,6 +39,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+extern "C" {
+int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
+int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
+int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
+int APS5_VABI sceKernelMunmap(void*, std::size_t);
+}
 
 namespace {
 
@@ -188,6 +196,7 @@ public:
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {
@@ -209,6 +218,7 @@ private:
     }
 
     void release() noexcept {
+        ClearHostImports(context.device);
         if (context.pool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.pool, nullptr);
         context.bufferPool.reset();
         if (context.device != VK_NULL_HANDLE) {
@@ -226,6 +236,270 @@ private:
 };
 
 using Kind = Recorder::ReadKind;
+
+PFN_vkGetDeviceProcAddr sharedImportResolver = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL rejectHostPointer(VkDevice, VkExternalMemoryHandleTypeFlagBits, const void*, VkMemoryHostPointerPropertiesEXT*) {
+    return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL rejectHostImport(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkGetMemoryHostPointerPropertiesEXT") == 0) return reinterpret_cast<PFN_vkVoidFunction>(rejectHostPointer);
+    return sharedImportResolver(device, name);
+}
+
+std::weak_ptr<HostImport> sharedImportTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    Require(context.hostImportAlignment != 0, "shared import tests require host import support");
+    const auto bytes = static_cast<std::size_t>(std::max<VkDeviceSize>(65536, context.hostImportAlignment));
+    Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    Buffer combinedReadback(context, bytes * 3, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        std::size_t bytes;
+        std::array<void*, 3> mappings{};
+        std::array<std::int64_t, 2> physical{-1, -1};
+        ~Release() {
+            recorder.Sync();
+            for (std::size_t i = 0; i < mappings.size(); ++i) {
+                if (mappings[i] == nullptr) continue;
+                const auto length = i == 0 ? bytes * 3 : bytes;
+                sceKernelMunmap(mappings[i], length);
+                static_cast<void>(HostImportFor(context, reinterpret_cast<std::uint64_t>(mappings[i]), length));
+            }
+            recorder.Sync();
+            for (std::size_t i = 0; i < physical.size(); ++i) if (physical[i] >= 0) sceKernelReleaseDirectMemory(physical[i], i == 0 ? bytes * 3 : bytes);
+        }
+    } release{context, recorder, bytes};
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes * 3, bytes, 0, &release.physical[0]) == 0, "allocate shared import backing");
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, bytes, 0, &release.physical[1]) == 0, "allocate remap backing");
+    Require(sceKernelMapDirectMemory(&release.mappings[0], bytes * 3, 3, 0, release.physical[0], bytes) == 0, "map shared import backing");
+    auto* original = static_cast<std::byte*>(release.mappings[0]);
+#ifndef _WIN32
+    {
+        using namespace AgcDriver::GuestMemory;
+        const auto address = reinterpret_cast<std::uint64_t>(original);
+        bool checkTracking = WriteWatched();
+        if (const char* request = std::getenv("APS5_WRITE_WATCH_IMPORTS"); request != nullptr && std::strcmp(request, "unwatch") == 0) checkTracking = false;
+        const auto checkWatch = [&] {
+            if (!checkTracking) return;
+            std::memset(original, 0x44, bytes * 3);
+            Require(CollectWritesUncached(address, bytes * 3) != 0, "shared backing was not watched before import");
+            const auto imported = HostImportFor(context, address, bytes * 3);
+            Require(imported != nullptr, "import watched shared backing");
+            if (imported->unwatched) {
+                checkTracking = false;
+                return;
+            }
+            Require(!imported->unwatched, "shared import unnecessarily disabled write tracking");
+            const auto generation = CollectWritesUncached(address, bytes * 3);
+            Require(generation != 0, "shared import lost write tracking");
+            const auto read = [&] {
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                CopyBuffer(context, commands, imported->buffer, address - imported->base, combinedReadback.Handle(), 0, bytes * 3);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                recorder.Sync();
+            };
+            read();
+            Require(std::all_of(combinedReadback.Bytes().begin(), combinedReadback.Bytes().end(), [](std::byte value) { return value == std::byte{0x44}; }), "watched shared import read wrong contents");
+            Require(CollectWritesUncached(address, bytes * 3) != 0 && UnchangedSince(address, bytes * 3, generation), "GPU read invalidated unchanged shared memory");
+            for (std::size_t offset = 0; offset < bytes * 3; offset += 4096) original[offset] = std::byte{0x66};
+            const auto written = CollectWritesUncached(address, bytes * 3);
+            Require(written > generation && !UnchangedSince(address, bytes * 3, generation), "shared import hid a CPU write");
+            for (std::size_t offset = 0; offset < bytes * 3; offset += 65536) Require(!UnchangedSince(address + offset, 65536, generation), "shared import missed a CPU-written block");
+            read();
+            for (std::size_t offset = 0; offset < bytes * 3; ++offset) Require(combinedReadback.Bytes()[offset] == (offset % 4096 == 0 ? std::byte{0x66} : std::byte{0x44}), "shared import missed a CPU write after a GPU read");
+            Require(CollectWritesUncached(address, bytes * 3) != 0 && UnchangedSince(address, bytes * 3, written), "repeated GPU read dirtied shared memory");
+        };
+        checkWatch();
+        void* middle = original + bytes;
+        Require(sceKernelMapDirectMemory(&middle, bytes, 3, 0x10, release.physical[1], bytes) == 0, "split watched shared import backing");
+        checkWatch();
+        Require(sceKernelMapDirectMemory(&middle, bytes, 3, 0x10, release.physical[0] + bytes, bytes) == 0, "restore watched shared import backing");
+        checkWatch();
+        std::cout << (checkTracking ? "Shared import write tracking checked across GPU reads, CPU writes, combined backings and remaps\n" : "Shared import write tracking disabled: tracking checks skipped\n");
+    }
+#endif
+    Require(sceKernelMapDirectMemory(&release.mappings[1], bytes, 3, 0, release.physical[1], bytes) == 0, "map remap backing");
+    Require(sceKernelMapDirectMemory(&release.mappings[2], bytes, 3, 0, release.physical[0] + bytes, bytes) == 0, "map nonzero backing offset");
+    std::memset(original, 0x11, bytes);
+    std::memset(original + bytes, 0x22, bytes);
+    std::memset(original + bytes * 2, 0x33, bytes);
+    std::memset(release.mappings[1], 0x77, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(release.mappings[2]);
+    const auto import = [&] {
+        const auto found = HostImportFor(context, address, bytes);
+        Require(found != nullptr, "shared direct-memory import failed");
+        return *found;
+    };
+    const auto read = [&](const HostImport& imported, std::byte expected) {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        CopyBuffer(context, commands, imported.buffer, address - imported.base, readback.Handle(), 0, bytes);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Sync();
+        Require(std::all_of(readback.Bytes().begin(), readback.Bytes().end(), [&](std::byte value) { return value == expected; }), "GPU read stale shared-memory backing");
+    };
+    const auto first = import();
+    const auto firstSerial = HostImportSerial(context, address, bytes, false);
+    read(first, std::byte{0x22});
+    {
+        GuestBufferMemory buffers(context);
+        buffers.AddReadable(address, bytes);
+        buffers.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto descriptor = buffers.Descriptor(address, bytes, adjustment);
+        Require(descriptor.buffer == first.buffer && buffers.DirectRegions().has_value(), "shared memory binding fell back to a CPU copy");
+    }
+    const auto commands = recorder.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, first.buffer, address - first.base, bytes, 0x55555555);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    recorder.Sync();
+    for (std::size_t i = 0; i < bytes; ++i) {
+        Require(original[i] == std::byte{0x11} && original[bytes + i] == std::byte{0x55} && original[bytes * 2 + i] == std::byte{0x33}, "shared GPU write missed its slice or changed a neighbor");
+    }
+    auto retained = std::make_unique<GuestBufferMemory>(context);
+    retained->AddReadable(address, bytes);
+    retained->Upload(false);
+    std::uint32_t retainedAdjustment = 0;
+    const auto retainedDescriptor = retained->Descriptor(address, bytes, retainedAdjustment);
+    const std::weak_ptr<HostImport> oldImport = HostImportFor(context, address, bytes);
+    CopyBuffer(context, recorder.Commands(), retainedDescriptor.buffer, retainedDescriptor.offset, readback.Handle(), 0, bytes);
+    Require(sceKernelMapDirectMemory(&release.mappings[2], bytes, 3, 0x10, release.physical[1], bytes) == 0, "replace shared backing at the same address");
+    const auto second = import();
+    Require(HostImportSerial(context, address, bytes, false) != firstSerial, "a remap retained the old import identity");
+    const auto afterRetirement = retained->Descriptor(address, bytes, retainedAdjustment);
+    Require(afterRetirement.buffer == retainedDescriptor.buffer && afterRetirement.offset == retainedDescriptor.offset, "import retirement changed an already prepared buffer descriptor");
+    Require(!retained->DirectRegions().has_value(), "retired buffer was cacheable under its replacement import identity");
+    retained.reset();
+    Require(!oldImport.expired(), "retired import was freed before its GPU commands completed");
+    recorder.Sync();
+    read(second, std::byte{0x77});
+    Require(sceKernelMapDirectMemory(&release.mappings[2], bytes, 3, 0x10, release.physical[0] + bytes, bytes) == 0, "remap before a refused import");
+    auto refused = context;
+    refused.dmaBufImport = false;
+    sharedImportResolver = context.deviceProc;
+    refused.deviceProc = rejectHostImport;
+    Require(HostImportFor(refused, address, bytes) == nullptr, "forced import failure was ignored");
+    Require(sceKernelMapDirectMemory(&release.mappings[2], bytes, 3, 0x10, release.physical[1], bytes) == 0, "remap after a refused import");
+    read(import(), std::byte{0x77});
+#ifndef _WIN32
+    void* middle = original + bytes;
+    Require(sceKernelMapDirectMemory(&middle, bytes, 3, 0x10, release.physical[1], bytes) == 0, "split the combined import across two backings");
+    const auto combinedAddress = reinterpret_cast<std::uint64_t>(original);
+    const auto narrow = HostImportFor(context, combinedAddress, bytes);
+    Require(narrow != nullptr, "import the first fragment before combining it");
+    const auto narrowBuffer = narrow->buffer;
+    const auto narrowSerial = HostImportSerial(context, combinedAddress, bytes, false);
+    const auto readCombined = [&](const HostImport& imported, const std::array<std::byte, 3>& expected) {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        CopyBuffer(context, commands, imported.buffer, combinedAddress - imported.base, combinedReadback.Handle(), 0, bytes * 3);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Sync();
+        for (std::size_t i = 0; i < bytes * 3; ++i) Require(combinedReadback.Bytes()[i] == expected[i / bytes], "combined import read the wrong backing at a boundary");
+    };
+    const auto combined = HostImportFor(context, combinedAddress, bytes * 3);
+    Require(combined != nullptr && combined->buffer != narrowBuffer, "a combined import reused an undersized buffer");
+    Require(narrow->buffer == narrowBuffer, "combining ranges retired an existing overlapping import");
+    Require(!narrow->shadowAllowed && !combined->shadowAllowed, "overlapping imports retained independent unit shadows");
+    const auto combinedSerial = HostImportSerial(context, combinedAddress, bytes * 3, false);
+    readCombined(*combined, {std::byte{0x11}, std::byte{0x77}, std::byte{0x33}});
+    {
+        GuestBufferMemory buffers(context);
+        buffers.AddReadable(combinedAddress, bytes * 3);
+        buffers.Upload(false);
+        std::uint32_t adjustment = 0;
+        Require(buffers.Descriptor(combinedAddress, bytes * 3, adjustment).buffer == combined->buffer && buffers.DirectRegions().has_value(), "fragmented memory still fell back to CPU copies");
+    }
+    const auto combinedCommands = recorder.Commands();
+    RecordMemoryBarrier(context, combinedCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(combinedCommands, combined->buffer, bytes - 4, bytes + 8, 0x99999999);
+    RecordMemoryBarrier(context, combinedCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    recorder.Sync();
+    for (std::size_t i = 0; i < bytes * 3; ++i) {
+        const auto expected = i < bytes - 4 ? std::byte{0x11} : i < bytes * 2 + 4 ? std::byte{0x99} : std::byte{0x33};
+        Require(original[i] == expected, "GPU write failed across combined backing boundaries");
+    }
+    Require(std::all_of(static_cast<std::byte*>(release.mappings[1]), static_cast<std::byte*>(release.mappings[1]) + bytes, [](std::byte value) { return value == std::byte{0x99}; }), "combined GPU writes missed the second backing's alias");
+    Require(sceKernelMapDirectMemory(&middle, bytes, 3, 0x10, release.physical[0] + bytes, bytes) == 0, "remap the middle of a combined import");
+    const auto replaced = HostImportFor(context, combinedAddress, bytes * 3);
+    Require(replaced != nullptr && HostImportSerial(context, combinedAddress, bytes * 3, false) != combinedSerial, "middle remap retained the combined import identity");
+    Require(narrow->buffer == narrowBuffer && narrow->serial == narrowSerial, "middle remap invalidated an unrelated fragment import");
+    std::memset(original, 0x11, bytes);
+    std::memset(original + bytes * 2, 0x33, bytes);
+    readCombined(*replaced, {std::byte{0x11}, std::byte{0x55}, std::byte{0x33}});
+#endif
+    std::cout << "Shared import roundtrip, direct binding, remap and failure recovery tests passed (" << (first.dmaBuf ? "dma-buf" : "host pointer") << ")\n";
+    return oldImport;
+}
+
+void combinedShadowTests(const Device& device, Recorder& recorder) {
+#ifndef _WIN32
+    using namespace AgcDriver::GuestMemory;
+    if (!UnitShadowEnabled()) {
+        std::cout << "Unit shadows unavailable: combined import shadow test skipped\n";
+        return;
+    }
+    const auto& context = device.GetContext();
+    const auto bytes = static_cast<std::size_t>(std::max<VkDeviceSize>(65536, context.hostImportAlignment));
+    Buffer readback(context, bytes * 3, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    void* block = AllocateWatched(bytes * 3, bytes);
+    Require(block != nullptr, "allocate watched combined-shadow memory");
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        std::size_t bytes;
+        ~Release() {
+            recorder.Sync();
+            {
+                GuestAllocations::Mutation mutation;
+                for (std::size_t i = 0; i < 3; ++i) mutation.Remove(static_cast<std::byte*>(block) + i * bytes);
+            }
+            static_cast<void>(HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes * 3));
+            recorder.Sync();
+            ReleaseWatched(block, bytes * 3);
+        }
+    } release{context, recorder, block, bytes};
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t i = 0; i < 3; ++i) mutation.Add(static_cast<std::byte*>(block) + i * bytes, bytes, true, true);
+    }
+    std::memset(block, 0x11, bytes * 3);
+    const auto narrow = HostImportFor(context, address + bytes, bytes);
+    Require(narrow != nullptr, "import narrow shadow memory");
+    if (!Watched(address + bytes, bytes)) {
+        std::cout << "Imports unwatch memory: combined import shadow test skipped\n";
+        return;
+    }
+    CollectWritesUncached(address, bytes * 3);
+    auto destination = ShadowDestinationFor(context, *narrow, address + bytes, address + bytes * 2);
+    Require(destination.has_value(), "make an unpublished narrow shadow");
+    auto commands = recorder.Commands();
+    recorder.Keep(destination->slab);
+    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, destination->buffer, destination->offset, bytes, 0x77777777);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    const ShadowedRange range{address + bytes, address + bytes * 2, destination->slab};
+    MarkShadowed(*narrow, std::span(&range, 1), TrackerGeneration());
+    Require(AnyShadowedOverlaps(address + bytes, bytes), "the narrow shadow was not pending");
+    const auto combined = HostImportFor(context, address, bytes * 3);
+    Require(combined != nullptr && !combined->shadowAllowed && !narrow->shadowAllowed, "combined import retained competing shadows");
+    Require(!AnyShadowedOverlaps(address, bytes * 3), "combining imports left an unpublished shadow");
+    Require(!ShadowDestinationFor(context, *narrow, address + bytes, address + bytes * 2).has_value(), "old narrow resources can still make a competing shadow");
+    commands = recorder.Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    CopyBuffer(context, commands, combined->buffer, 0, readback.Handle(), 0, bytes * 3);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    recorder.Sync();
+    for (std::size_t i = 0; i < bytes * 3; ++i) Require(readback.Bytes()[i] == (i >= bytes && i < bytes * 2 ? std::byte{0x77} : std::byte{0x11}), "combined import lost unpublished narrow-shadow data");
+    std::cout << "Combined import preserves unpublished narrow-shadow data\n";
+#endif
+}
 
 void readTrackingTests(const Device& device, Recorder& recorder) {
     Require(Recorder::ReadTracking(), "read tracking is off (APS5_COPY_READ_TRACKING=0 set?)");
@@ -675,7 +949,7 @@ void storeRunTests(const Device& device, Recorder& recorder) {
         GuestAllocations::Mutation mutation;
         mutation.Add(block, bytes, true, true);
     }
-    const auto* import = HostImportFor(context, address, bytes);
+    const auto import = HostImportFor(context, address, bytes);
     if (import == nullptr) {
         std::cout << "host import of the store test block refused: store runs not tested\n";
         return;
@@ -1372,7 +1646,7 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
             mutation.Remove(block);
         }
     } unregister{block};
-    const auto* import = HostImportFor(context, address, bytes);
+    const auto import = HostImportFor(context, address, bytes);
     if (import == nullptr) {
         std::cout << "host import of the shadow test block refused: unit shadows not tested\n";
         return;
@@ -1567,7 +1841,7 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
             HostImportFor(context, address, bytes);
         }
     } unregister{base, block, address};
-    const auto* import = HostImportFor(base, address, bytes);
+    const auto import = HostImportFor(base, address, bytes);
     if (import == nullptr) {
         std::cout << "host import of the storage refresh block refused: storage refresh not tested\n";
         return;
@@ -1737,7 +2011,7 @@ void importWatchTests(const Device& device) {
         BumpCollectEpoch();
         Require(CollectWrites(address, 2 * unit) != 0, "(u) the memoized collect of a watched block failed");
         registerRange(block, 2 * unit);
-        const auto* import = HostImportFor(context, address, 2 * unit);
+        const auto import = HostImportFor(context, address, 2 * unit);
         Require(import != nullptr && import->unwatched, "(u) an import made under the unwatch decision is not marked unwatched");
         Require(!Watched(address, 2 * unit) && !Watched(address + unit, 4096), "(u) an imported range stays watched");
         Require(CollectWrites(address, 2 * unit) == 0 && CollectWrites(address + 4096, 4096) == 0, "(u) a collect memoized before the import answers for the unwatched range");
@@ -1757,12 +2031,12 @@ void importWatchTests(const Device& device) {
         remap(block, 2 * unit);
         Require(Watched(address, 2 * unit), "(u) a remapped range is not watched");
         registerRange(block, 2 * unit);
-        const auto* kept = HostImportFor(context, address, 2 * unit);
+        const auto kept = HostImportFor(context, address, 2 * unit);
         Require(kept != nullptr && kept->unwatched && !Watched(address, 2 * unit) && CollectWrites(address, 2 * unit) == 0, "(u) an import kept over a remap left the range watched");
         unregisterRange(block);
         remap(block, 2 * unit);
         registerRange(block, unit);
-        const auto* again = HostImportFor(context, address, unit);
+        const auto again = HostImportFor(context, address, unit);
         Require(again != nullptr && again->unwatched && again->bytes == unit && !Watched(address, unit), "(u) a re-import after an unmap did not follow the decision");
         Require(Watched(address + unit, unit) && CollectWrites(address + unit, unit) != 0, "(u) the unregistered rest of a remapped range is not watched");
         unregisterRange(block);
@@ -1775,7 +2049,7 @@ void importWatchTests(const Device& device) {
         void* block = AllocateWatched(bytes, unit);
         const auto address = reinterpret_cast<std::uint64_t>(block);
         registerRange(block, bytes);
-        const auto* import = HostImportFor(context, address, bytes);
+        const auto import = HostImportFor(context, address, bytes);
         Require(import != nullptr && !import->unwatched && Watched(address, bytes), "(u) an import made under the watch decision left the watch");
         const auto generation = CollectWrites(address, bytes);
         Require(generation != 0 && UnchangedSince(address, bytes, generation), "(u) a watched import is not collected");
@@ -1865,7 +2139,7 @@ void staleGenerationTests(const Device& device, Recorder& recorder) {
         context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &red, 1, &range);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         image->MarkDirty();
-        const auto* import = HostImportFor(base, address, bytes);
+        const auto import = HostImportFor(base, address, bytes);
         if (import == nullptr) {
             std::cout << "host import of the stale generation block refused: a range leaving the watch not tested\n";
             recorder.Sync();
@@ -2118,7 +2392,7 @@ void importWindowTests(const Device& device, Recorder& recorder) {
         image->MarkDirty();
         const auto cached = CollectWritesUncached(address, surfaceBytes);
         Require(cached != 0 && UnchangedSince(address, surfaceBytes, cached), "(w) the cache's generation is not current before the import");
-        const auto* import = HostImportFor(base, address, bytes);
+        const auto import = HostImportFor(base, address, bytes);
         if (import == nullptr) {
             std::cout << "host import of the import window block refused: the import window not tested\n";
             recorder.Sync();
@@ -2252,7 +2526,7 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, address, bytes);
         }
     } unregister{context, block, address};
-    const auto* import = HostImportFor(context, address, bytes);
+    const auto import = HostImportFor(context, address, bytes);
     if (import == nullptr || import->address == 0) {
         std::cout << "host import of the occlusion counter block refused: occlusion counter dumps on the GPU not tested\n";
         return;
@@ -2361,7 +2635,7 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
     Require(keysUncompressed(), "the DCC decompress left the keys compressed");
     Require(memoryHolds({0xff, 0xff, 0xff, 0xff}), "the DCC decompress did not store the 1111 value");
     {
-        const auto* import = HostImportFor(base, address, bytes);
+        const auto import = HostImportFor(base, address, bytes);
         Require(import != nullptr, "the metadata pass block lost its import");
         const auto commands = recorder.Commands();
         context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, color.dccAddress - import->base, keyCount, 0x20202020u);
@@ -2812,11 +3086,23 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         Device device;
         std::lock_guard gpu(GpuMutex());
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
+        if (argc == 2 && std::string_view(argv[1]) == "--shared-import-only") {
+            std::weak_ptr<HostImport> retired;
+            {
+                Recorder recorder(device.GetContext());
+                recorder.Activate();
+                remappedImportTests(device);
+                retired = sharedImportTests(device, recorder);
+                combinedShadowTests(device, recorder);
+            }
+            Require(retired.expired(), "retired import survived its last resource and completed batch");
+            return 0;
+        }
         Recorder recorder(device.GetContext());
         recorder.Activate();
         readTrackingTests(device, recorder);
