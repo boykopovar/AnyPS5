@@ -32,7 +32,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     };
     auto drawParameters = Pm4::ResolveDraw(packet, queue);
     const bool pipelined = DrawPipeline::Active();
-    if (pipelined && drawParameters.indirect) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+    const bool pipelineIndirect = pipelined && drawParameters.indirect && DrawPipeline::PipelineIndirect();
+    if (pipelined && drawParameters.indirect && !pipelineIndirect) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
     bool traceIndirect = false;
     if (const auto verdict = precheckDraw(queue, submission, packet, drawParameters, rejected, traceIndirect)) return *verdict;
     phaseTiming.Phase(DrawRowPrecheck);
@@ -319,6 +320,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         for (const auto& read : reads) memory.push_back({read.address, std::as_bytes(std::span(read.bytes))});
     }
 
+    const auto regionBounds = [](const ShaderRecompiler::MemoryRegion& region) { return DrawPipeline::Range{region.guestAddress, region.guestAddress + region.bytes.size()}; };
+    if (pipelineIndirect && DrawPipeline::Queue0().DrainIfOverlaps(memory, regionBounds, DrawPipeline::DrainReason::Capture)) return draw(queue, packet, submission, rejected);
     if (pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
     if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(queue, packet, submission, rejected);
 
@@ -368,8 +371,105 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         recordLabelsForPacket(localDevice.get(), submission.queue);
         phaseTiming.Phase(DrawRowLabels);
     };
+    if (drawParameters.indirect && indirectCpu && pipelineIndirect && deferredLabels().labels.empty() && !graphics.rectList) {
+        const auto indirect = *drawParameters.indirect;
+        auto& pipeline = DrawPipeline::Queue0();
+        const std::array<DrawPipeline::Range, 2> argumentRanges{DrawPipeline::Range{indirect.arguments, indirect.arguments + indirect.RangeBytes()}, indirect.countIndirect ? DrawPipeline::Range{indirect.countAddress, indirect.countAddress + 4} : DrawPipeline::Range{0, 0}};
+        if (pipeline.DrainIfOverlaps(std::span<const DrawPipeline::Range>(argumentRanges), DrawPipeline::DrainReason::Indirect)) pipeline.Note(DrawPipeline::Event::IndirectArgsDrain);
+        recordQueuedLabelsBeforeRead(submission.queue);
+        const auto readStart = std::chrono::steady_clock::now();
+        const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+        std::vector<Pm4::DrawArguments> records;
+        for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(indirect, record));
+        Graphics::CountIndirectDraw(*indirectCpu, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+        const auto baseVertexWord = locate(indirect.baseVertexLocation);
+        const auto startInstanceWord = locate(indirect.startInstanceLocation);
+        const auto drawIndexWord = indirect.drawIndexEnabled ? locate(indirect.drawIndexLocation) : std::nullopt;
+        struct ExpandedDraw {
+            Pm4::DrawParameters direct;
+            std::vector<Graphics::CompiledShader> stages;
+            std::vector<Graphics::GuestMemorySnapshot> snapshots;
+            std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> patched;
+        };
+        std::vector<ExpandedDraw> expanded;
+        std::vector<DrawPipeline::Range> writes;
+        std::vector<const ShaderRecompiler::RecompileResult*> current(programResults.begin(), programResults.end());
+        const auto enqueueExpanded = [&] {
+            if (expanded.empty()) return;
+            phaseTiming.Phase(DrawRowVectors);
+            const auto commitQueue = submission.queue;
+            const auto commitPacket = (packet[0] >> 8u) & 0xffu;
+            const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
+            auto commit = [this, localDevice = std::move(localDevice), decode = std::move(decode), expanded = std::move(expanded), commitQueue, commitPacket, epoch, programs = std::move(programs), results = std::move(results), compiledStages = std::move(compiledStages), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry)] {
+                DrawPipeline::FollowEpoch(epoch);
+                GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
+                for (const auto& item : expanded) commitDraw(localDevice, commitQueue, decode->state, item.direct, item.stages, item.snapshots, nullptr, {}, 0);
+            };
+            auto held = std::make_shared<decltype(commit)>(std::move(commit));
+            pipeline.Enqueue([held] { (*held)(); }, std::move(writes));
+            pipeline.Note(DrawPipeline::Event::IndirectCommit);
+            phaseTiming.Phase(DrawRowLockWait);
+        };
+        for (std::uint32_t record = 0; record < records.size(); ++record) {
+            const auto& arguments = records[record];
+            if (traceIndirect) std::fprintf(stderr, "[draw]   record %u: count %u instances %u first %u vertexOffset %u startInstance %u\n", record, arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance);
+            if (arguments.count == 0 || arguments.instances == 0) continue;
+            std::set<std::size_t> patched;
+            const auto patch = [&](const std::optional<std::pair<std::size_t, std::size_t>>& word, std::uint32_t value) {
+                if (!word) return;
+                programs[word->first].userData[word->second] = value;
+                patched.insert(word->first);
+            };
+            patch(baseVertexWord, indirect.recordBytes == 20 ? arguments.vertexOffset : arguments.firstVertexOrIndex);
+            patch(startInstanceWord, arguments.firstInstance);
+            patch(drawIndexWord, record);
+            Pm4::DrawParameters direct{0, arguments.count, 0, arguments.instances, drawParameters.flags, drawParameters.indexed, 0, 0};
+            if (drawParameters.indexed) {
+                if (arguments.firstVertexOrIndex >= drawParameters.indexCount) continue;
+                direct.indexAddress = drawParameters.indexAddress + static_cast<std::uint64_t>(arguments.firstVertexOrIndex) * drawParameters.indexSize;
+                direct.indexCount = std::min(arguments.count, drawParameters.indexCount - arguments.firstVertexOrIndex);
+                direct.indexSize = drawParameters.indexSize;
+            } else {
+                direct.firstVertex = indirect.indxOffset;
+            }
+            if (graphics.stages.mesh) {
+                setMeshIndexBuffer(direct);
+                patched.insert(0);
+            }
+            ExpandedDraw item{direct, stages, {}, {}};
+            for (const auto programIndex : patched) {
+                if (programResults[programIndex] == nullptr) continue;
+                const auto pushBytes = programResults[programIndex]->pushConstants.size();
+                decodeVertexInfo(programIndex);
+                auto patchedResult = compileDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
+                if (!rejected.empty()) {
+                    enqueueExpanded();
+                    return DrawVerdict::Rejected;
+                }
+                require(patchedResult->pushConstants.size() == pushBytes, "patched program changed its push constant layout");
+                for (auto& stage : item.stages) {
+                    if (stage.program == programResults[programIndex]) stage.program = patchedResult.get();
+                }
+                current[programIndex] = patchedResult.get();
+                item.patched.push_back(std::move(patchedResult));
+            }
+            fold(*current[0], item.direct);
+            for (const auto& region : memory) item.snapshots.push_back({region.guestAddress, region.bytes});
+            if (auto known = localDevice->KnownDrawRejection(graphics, item.stages)) {
+                enqueueExpanded();
+                rejected = std::move(*known);
+                return DrawVerdict::Rejected;
+            }
+            const auto recordWrites = drawWriteRanges(graphics, item.stages);
+            writes.insert(writes.end(), recordWrites.begin(), recordWrites.end());
+            expanded.push_back(std::move(item));
+        }
+        enqueueExpanded();
+        timing.Mark("draw_enqueued");
+        return drawn();
+    }
     if (drawParameters.indirect && indirectCpu) {
-
+        if (pipelined) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
         const auto indirect = *drawParameters.indirect;
         for (std::size_t i = 0; i < programs.size(); ++i) {
             if (programResults[i] == nullptr) continue;
@@ -459,7 +559,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             return DrawVerdict::Rejected;
         }
     }
-    if (pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
+    if (pipelined && (!drawParameters.indirect || pipelineIndirect) && deferredLabels().labels.empty()) {
         phaseTiming.Phase(DrawRowVectors);
         auto writes = drawWriteRanges(graphics, stages);
         const auto commitQueue = submission.queue;
@@ -472,6 +572,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         };
         auto held = std::make_shared<decltype(commit)>(std::move(commit));
         DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes));
+        if (pipelineIndirect) DrawPipeline::Queue0().Note(DrawPipeline::Event::IndirectCommit);
         phaseTiming.Phase(DrawRowLockWait);
         timing.Mark("draw_enqueued");
         return drawn();

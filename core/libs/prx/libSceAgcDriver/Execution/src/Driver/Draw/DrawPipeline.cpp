@@ -28,11 +28,25 @@ std::size_t DrawPipeline::Depth() {
     static const std::size_t depth = [] {
         const char* text = std::getenv("APS5_PIPELINED_DRAWS");
         if (std::getenv("APS5_LOCKED_DRAW_PREPARE") != nullptr || std::getenv("APS5_DRAW_DRAIN") != nullptr || std::getenv("APS5_DRAIN_ALL") != nullptr || std::getenv("APS5_NO_WORDWISE_CAPTURE") != nullptr) return std::size_t{0};
-        if (text == nullptr) return std::size_t{8};
+        const std::size_t standard = PipelineIndirect() ? 64 : 8;
+        if (text == nullptr) return standard;
         const auto value = std::strtoull(text, nullptr, 10);
-        return value == 0 ? std::size_t{0} : value == 1 ? std::size_t{8} : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
+        return value == 0 ? std::size_t{0} : value == 1 ? standard : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
     }();
     return depth;
+}
+
+bool DrawPipeline::PipelineIndirect() {
+    static const bool enabled = [] { const char* text = std::getenv("APS5_PIPELINE_INDIRECT"); return text != nullptr && std::strcmp(text, "0") != 0; }();
+    return enabled;
+}
+
+bool DrawPipeline::DrainBeforeRead(std::uint64_t address, std::size_t bytes) {
+    if (!Active()) return false;
+    auto& pipeline = Queue0();
+    if (!pipeline.Busy() || !pipeline.Overlaps(address, bytes)) return false;
+    pipeline.Drain(DrainReason::Capture);
+    return true;
 }
 
 bool& DrawPipeline::Active() {
@@ -82,6 +96,7 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
 }
 
 void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
+    const auto windowNs = std::max<double>(1.0, static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastReport).count()));
     lastReport = now;
     std::string drainText;
     for (std::size_t i = 0; i < drains.size(); ++i) {
@@ -102,7 +117,14 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
     const auto perCommit = commits == 0 ? 0.0 : static_cast<double>(commitNs) / 1e3 / static_cast<double>(commits);
     const auto perDraw = enqueued == 0 ? 0.0 : static_cast<double>(fullWaitNs) / 1e3 / static_cast<double>(enqueued);
     const auto queued = enqueued == 0 ? 0.0 : static_cast<double>(depthSum) / static_cast<double>(enqueued);
-    std::fprintf(stderr, "[draw] pipelined (10 s, depth %zu): %llu commits at %.1f us each on the committer, %llu failed; %llu enqueued behind %.2f on average, waiting %.1f us per draw for room; drains:%s\n", Depth(), static_cast<unsigned long long>(commits), perCommit, static_cast<unsigned long long>(commitErrors), static_cast<unsigned long long>(enqueued), queued, perDraw, drainText.c_str());
+    std::array<std::uint64_t, static_cast<std::size_t>(Event::Count)> counted{};
+    for (std::size_t i = 0; i < counted.size(); ++i) {
+        const auto total = events[i].load(std::memory_order_relaxed);
+        counted[i] = total - reportedEvents[i];
+        reportedEvents[i] = total;
+    }
+    const auto busy = static_cast<double>(commitNs) * 100.0 / windowNs;
+    std::fprintf(stderr, "[draw] pipelined (10 s, depth %zu): %llu commits at %.1f us each on the committer (%.1f %% busy), %llu failed; %llu enqueued behind %.2f on average, waiting %.1f us per draw for room; indirect commits %llu, indirect drains (args overlap) %llu; drains:%s\n", Depth(), static_cast<unsigned long long>(commits), perCommit, busy, static_cast<unsigned long long>(commitErrors), static_cast<unsigned long long>(enqueued), queued, perDraw, static_cast<unsigned long long>(counted[0]), static_cast<unsigned long long>(counted[1]), drainText.c_str());
     commits = commitNs = commitErrors = enqueued = fullWaitNs = depthSum = 0;
     drains = {};
     drainWaitNs = {};
