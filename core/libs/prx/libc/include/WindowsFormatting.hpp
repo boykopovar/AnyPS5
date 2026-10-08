@@ -178,6 +178,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         const char conversion = *format;
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
+        if (flags.find('-') != std::string::npos) std::erase(flags, '0');
         const std::string spec = "%" + flags + width + precision;
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
