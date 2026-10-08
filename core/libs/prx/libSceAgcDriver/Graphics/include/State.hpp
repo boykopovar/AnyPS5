@@ -110,6 +110,10 @@ struct ColorMetadataPass {
     std::vector<ColorTarget> targets;
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
+struct DepthClearPass {
+    DepthTarget target;
+    VkImageAspectFlags aspects;
+};
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
 // this precheck covers, evaluated without exceptions before the draw is decoded; empty when they
 // pass (DecodeState still checks everything). A register a rule needs that is absent is no verdict.

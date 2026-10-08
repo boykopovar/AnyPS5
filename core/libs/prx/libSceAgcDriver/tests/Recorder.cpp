@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -6,7 +7,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -16,6 +19,8 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "ResidentPresent.hpp"
 #include "SampleLod_spv.h"
+#include "SampleDepthArray_spv.h"
+#include "SampleStencilArray_spv.h"
 #include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -28,9 +33,11 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -183,11 +190,13 @@ public:
             function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(context.physical, &context.memory);
             VkPhysicalDeviceProperties properties{};
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
+            std::cout << "Vulkan device: " << properties.deviceName << '\n';
             context.limits = properties.limits;
             context.bufferDeviceAddress = true;
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {
@@ -2460,7 +2469,7 @@ void dataRefreshTests(const Device& device, Recorder& recorder) {
 
 class SampleProgram {
 public:
-    SampleProgram(const Context& context, Recorder& recorder) : context(context), recorder(recorder), result(context, sizeof(float) * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+    SampleProgram(const Context& context, Recorder& recorder, std::span<const std::uint32_t> code = SAMPLE_LOD_SPV, bool integer = false) : context(context), recorder(recorder), result(context, sizeof(float) * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
         VkDescriptorSetLayoutBinding bindings[2]{};
         bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
         bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -2468,7 +2477,7 @@ public:
         layoutInfo.bindingCount = 2;
         layoutInfo.pBindings = bindings;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &setLayout), "vkCreateDescriptorSetLayout");
-        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float)};
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 2};
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &setLayout;
@@ -2476,8 +2485,8 @@ public:
         pipelineLayoutInfo.pPushConstantRanges = &push;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(SAMPLE_LOD_SPV);
-        moduleInfo.pCode = SAMPLE_LOD_SPV;
+        moduleInfo.codeSize = code.size_bytes();
+        moduleInfo.pCode = code.data();
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
@@ -2486,7 +2495,7 @@ public:
         VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         samplerInfo.magFilter = VK_FILTER_NEAREST;
         samplerInfo.minFilter = VK_FILTER_NEAREST;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.mipmapMode = integer ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR;
         samplerInfo.addressModeU = samplerInfo.addressModeV = samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
         Check(context.Function<PFN_vkCreateSampler>("vkCreateSampler")(context.device, &samplerInfo, nullptr, &sampler), "vkCreateSampler");
@@ -2509,7 +2518,7 @@ public:
     SampleProgram(const SampleProgram&) = delete;
     SampleProgram& operator=(const SampleProgram&) = delete;
 
-    float Red(VkImageView view, VkImageLayout layout, float lod) {
+    float Red(VkImageView view, VkImageLayout layout, float lod, float layer = 0) {
         VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         allocateInfo.descriptorPool = pool;
         allocateInfo.descriptorSetCount = 1;
@@ -2534,7 +2543,8 @@ public:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
-        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(lod), &lod);
+        const float parameters[]{lod, layer};
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), parameters);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         recorder.Submit();
@@ -2559,6 +2569,460 @@ private:
 
 void expectRed(float got, float want, const char* what) {
     if (std::abs(got - want) > 1.5f / 255.0f) throw std::runtime_error(std::string(what) + ": read " + std::to_string(got) + ", expected " + std::to_string(want));
+}
+
+void depthClearPassTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    DepthTarget target{0x10000, 0x20000, {64, 64}, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.25f, 19};
+    SampleProgram program(context, recorder);
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        ~Release() { recorder.Sync(); ClearDepthSurfaces(context.device); }
+    } release{context, recorder};
+    RunDepthClearPass(context, {target, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT});
+    GuestTextureResource resource{};
+    resource.baseAddress = target.address;
+    resource.width = 64;
+    resource.height = 64;
+    resource.mipCount = 1;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 22;
+    const std::array<std::uint32_t, 8> words{};
+    const VkComponentMapping mapping{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    const auto texture = DepthSurfaceTexture(context, words, resource, mapping);
+    Require(texture != nullptr, "depth clear did not create a sampleable surface");
+    expectRed(program.Red(texture->View(), texture->Layout(), 0.0f), 0.25f, "initial depth clear");
+    target.clearDepth = 0.75f;
+    RunDepthClearPass(context, {target, VK_IMAGE_ASPECT_DEPTH_BIT});
+    expectRed(program.Red(texture->View(), texture->Layout(), 0.0f), 0.75f, "repeated depth clear kept old depth");
+    target.clearDepth = 0.0f;
+    target.clearStencil = 47;
+    RunDepthClearPass(context, {target, VK_IMAGE_ASPECT_STENCIL_BIT});
+    expectRed(program.Red(texture->View(), texture->Layout(), 0.0f), 0.75f, "stencil-only clear changed depth");
+    recorder.Sync();
+}
+
+class DepthOperations {
+public:
+    explicit DepthOperations(Context& context) : context(context), resolver(context.deviceProc),
+        createImage(context.Function<PFN_vkCreateImage>("vkCreateImage")),
+        copyImage(context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")),
+        uploadImage(context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")) {
+        Require(active == nullptr, "nested depth operation counters");
+        active = this;
+        context.deviceProc = Resolve;
+    }
+    ~DepthOperations() {
+        context.deviceProc = resolver;
+        active = nullptr;
+    }
+    std::size_t images = 0;
+    std::size_t copies = 0;
+    std::size_t uploads = 0;
+
+private:
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL Resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkCreateImage") == 0) return reinterpret_cast<PFN_vkVoidFunction>(CreateImage);
+        if (std::strcmp(name, "vkCmdCopyImage") == 0) return reinterpret_cast<PFN_vkVoidFunction>(CopyImage);
+        if (std::strcmp(name, "vkCmdCopyBufferToImage") == 0) return reinterpret_cast<PFN_vkVoidFunction>(UploadImage);
+        return active->resolver(device, name);
+    }
+    static VKAPI_ATTR VkResult VKAPI_CALL CreateImage(VkDevice device, const VkImageCreateInfo* info, const VkAllocationCallbacks* allocator, VkImage* image) {
+        const auto result = active->createImage(device, info, allocator, image);
+        if (result == VK_SUCCESS) ++active->images;
+        return result;
+    }
+    static VKAPI_ATTR void VKAPI_CALL CopyImage(VkCommandBuffer commands, VkImage source, VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout, std::uint32_t count, const VkImageCopy* regions) {
+        active->copies += count;
+        active->copyImage(commands, source, sourceLayout, destination, destinationLayout, count, regions);
+    }
+    static VKAPI_ATTR void VKAPI_CALL UploadImage(VkCommandBuffer commands, VkBuffer source, VkImage destination, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) {
+        active->uploads += count;
+        active->uploadImage(commands, source, destination, layout, count, regions);
+    }
+    Context& context;
+    PFN_vkGetDeviceProcAddr resolver;
+    PFN_vkCreateImage createImage;
+    PFN_vkCmdCopyImage copyImage;
+    PFN_vkCmdCopyBufferToImage uploadImage;
+    static inline DepthOperations* active = nullptr;
+};
+
+void clearDepthAttachment(const Context& context, Recorder& recorder, const DepthTarget& target, float depth, const std::function<void()>& beforeWrite = {}) {
+    const auto view = DepthSurfaceView(context, target);
+    if (beforeWrite) beforeWrite();
+    VkAttachmentDescription attachment{};
+    attachment.format = target.format;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.initialLayout = attachment.finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    const VkAttachmentReference reference{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.pDepthStencilAttachment = &reference;
+    const auto stages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    const auto access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    const VkSubpassDependency dependencies[]{
+        {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, stages, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, access, 0},
+        {0, VK_SUBPASS_EXTERNAL, stages, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, access, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 0},
+    };
+    VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    info.attachmentCount = 1;
+    info.pAttachments = &attachment;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+    info.dependencyCount = 2;
+    info.pDependencies = dependencies;
+    VkRenderPass pass = VK_NULL_HANDLE;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    struct Release {
+        const Context& context;
+        VkRenderPass& pass;
+        VkFramebuffer& framebuffer;
+        Recorder& recorder;
+        ~Release() {
+            recorder.Sync();
+            if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
+            if (pass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, pass, nullptr);
+        }
+    } release{context, pass, framebuffer, recorder};
+    Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &info, nullptr, &pass), "depth test render pass");
+    VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebufferInfo.renderPass = pass;
+    framebufferInfo.attachmentCount = 1;
+    framebufferInfo.pAttachments = &view;
+    framebufferInfo.width = target.extent.width;
+    framebufferInfo.height = target.extent.height;
+    framebufferInfo.layers = 1;
+    Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "depth test framebuffer");
+    VkClearValue clear{};
+    clear.depthStencil.depth = depth;
+    VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    begin.renderPass = pass;
+    begin.framebuffer = framebuffer;
+    begin.renderArea.extent = target.extent;
+    begin.clearValueCount = 1;
+    begin.pClearValues = &clear;
+    const auto commands = recorder.Commands();
+    context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+    NoteDepthSurfaceWrite(context, target, VK_IMAGE_ASPECT_DEPTH_BIT);
+    recorder.Sync();
+}
+
+void depthArrayTests(const Device& device, Recorder& recorder, bool failBeforeSync = false) {
+    constexpr std::size_t reservedBytes = 12 * 1024 * 1024;
+#ifdef _WIN32
+    void* reserved = VirtualAlloc(nullptr, reservedBytes, MEM_RESERVE, PAGE_NOACCESS);
+    Require(reserved != nullptr, "cannot reserve depth array test addresses");
+#else
+    void* reserved = mmap(nullptr, reservedBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(reserved != MAP_FAILED, "cannot reserve depth array test addresses");
+#endif
+    struct Reservation {
+        void* address;
+        ~Reservation() {
+#ifdef _WIN32
+            VirtualFree(address, 0, MEM_RELEASE);
+#else
+            munmap(address, reservedBytes);
+#endif
+        }
+    } reservation{reserved};
+    const auto reservedAddress = reinterpret_cast<std::uint64_t>(reserved);
+    auto context = device.GetContext();
+    DepthOperations operations(context);
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache cache(context);
+    context.textureCache = &cache;
+    SampleProgram arrayProgram(context, recorder, SAMPLE_Depth_ARRAY_SPV);
+    SampleProgram stencilProgram(context, recorder, SAMPLE_Stencil_ARRAY_SPV, true);
+    SampleProgram flatProgram(context, recorder);
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        ~Release() { recorder.Sync(); ClearDepthSurfaces(context.device); }
+    } release{context, recorder};
+    for (const auto format : {VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT_S8_UINT}) {
+        const bool stencil = format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+        DepthTarget target{reservedAddress + (stencil ? 0x500000u : 0x100000u), stencil ? reservedAddress + 0x900000u : 0u, {129, 137}, format, 0.0f, 0};
+        const auto depthStride = DepthSliceBytes(target.extent, stencil ? 4u : 2u);
+        const auto stencilStride = DepthSliceBytes(target.extent, 1);
+        std::array<DepthTarget, 4> targets;
+        for (std::uint32_t layer = 0; layer < targets.size(); ++layer) {
+            auto& slice = targets[layer];
+            slice = target;
+            slice.address += layer * depthStride;
+            if (stencil) slice.stencilAddress += layer * stencilStride;
+            slice.clearDepth = (layer + 1) / 8.0f;
+            slice.clearStencil = static_cast<std::uint8_t>(11 + layer);
+            RunDepthClearPass(context, {slice, VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u)});
+        }
+        GuestTextureResource resource{};
+        resource.baseAddress = target.address;
+        resource.width = target.extent.width;
+        resource.height = target.extent.height;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kZ64KBX;
+        resource.dimension = TextureDimension::k2DArray;
+        resource.depthOrLastArray = 3;
+        resource.format = stencil ? 22 : 7;
+        const auto descriptorWords = [](const GuestTextureResource& descriptor) {
+            std::array<std::uint32_t, 8> words{};
+            words[0] = static_cast<std::uint32_t>(descriptor.baseAddress >> 8);
+            words[1] = static_cast<std::uint32_t>(descriptor.baseAddress >> 40) | (descriptor.format << 20) | (((descriptor.width - 1) & 3u) << 30);
+            words[2] = ((descriptor.width - 1) >> 2) | ((descriptor.height - 1) << 14);
+            words[3] = 0xd1800fac;
+            words[4] = descriptor.depthOrLastArray | (descriptor.baseArray << 16);
+            return words;
+        };
+        const VkComponentMapping swizzle{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+        const auto sample = [&](const GuestTextureResource& descriptor) {
+            return DepthSurfaceTexture(context, descriptorWords(descriptor), descriptor, swizzle);
+        };
+        const auto texture = sample(resource);
+        Require(texture != nullptr && texture->FirstLayerView() != VK_NULL_HANDLE, "depth array views are missing");
+        for (std::uint32_t layer = 0; layer < targets.size(); ++layer) expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, static_cast<float>(layer)), targets[layer].clearDepth, "depth array slice contents");
+        expectRed(flatProgram.Red(texture->FirstLayerView(), texture->Layout(), 0), targets[0].clearDepth, "depth array first-layer view");
+        Require(sample(resource) == texture, "an unchanged depth array was not reused");
+        const auto variantImages = operations.images;
+        const auto variantCopies = operations.copies;
+        auto oneMapping = swizzle;
+        oneMapping.r = VK_COMPONENT_SWIZZLE_ONE;
+        const auto oneTexture = DepthSurfaceTexture(context, descriptorWords(resource), resource, oneMapping);
+        expectRed(arrayProgram.Red(oneTexture->View(), oneTexture->Layout(), 0, 2), 1.0f, "depth array view ignored its component mapping");
+        auto alphaMapping = swizzle;
+        alphaMapping.a = VK_COMPONENT_SWIZZLE_R;
+        const auto alphaTexture = DepthSurfaceTexture(context, descriptorWords(resource), resource, alphaMapping);
+        if (failBeforeSync) {
+            auto extra = resource;
+            extra.baseArray = 1;
+            static_cast<void>(sample(extra));
+            throw std::runtime_error("intentional depth test failure with pending copies");
+        }
+        recorder.Sync();
+        Require(operations.images == variantImages, "a component mapping allocated another depth array");
+        Require(operations.copies == variantCopies, "a component mapping copied unchanged depth slices");
+        const auto readOnlyCopies = operations.copies;
+        static_cast<void>(DepthSurfaceView(context, targets[2]));
+        State readOnly{};
+        readOnly.depth = targets[2];
+        readOnly.depthTest = true;
+        readOnly.stencilTest = stencil;
+        readOnly.stencilFront.writeMask = 0xff;
+        readOnly.stencilBack.passOp = VK_STENCIL_OP_REPLACE;
+        NoteDepthSurfaceWrite(context, readOnly);
+        static_cast<void>(sample(resource));
+        Require(operations.copies == readOnlyCopies, "read-only attachment use copied a depth array");
+        auto disabled = readOnly;
+        disabled.depthTest = false;
+        disabled.depthWrite = true;
+        disabled.stencilTest = false;
+        disabled.stencilFront.passOp = VK_STENCIL_OP_REPLACE;
+        NoteDepthSurfaceWrite(context, disabled);
+        static_cast<void>(sample(resource));
+        Require(operations.copies == readOnlyCopies, "disabled depth testing copied a depth array");
+        ShaderRecompiler::RecompileResult compiled;
+        ShaderRecompiler::DescriptorBinding binding;
+        binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        binding.descriptorSet = 0;
+        binding.binding = 0;
+        binding.count = 1;
+        binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2DArray;
+        binding.imageSamplers = {0};
+        const auto words = descriptorWords(resource);
+        binding.guestDescriptor.assign(words.begin(), words.end());
+        compiled.bindings.push_back(binding);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compiled, 0};
+        ShaderResources bindings(context, shader);
+        Require(bindings.Reusable(), "depth array bindings cannot be revalidated");
+        targets[2].clearDepth = 0.875f;
+        RunDepthClearPass(context, {targets[2], VK_IMAGE_ASPECT_DEPTH_BIT});
+        Require(bindings.ProveCurrent(shader), "depth array bindings failed revalidation after a clear");
+        expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.875f, "cached shader resources did not refresh a depth array");
+        expectRed(arrayProgram.Red(alphaTexture->View(), alphaTexture->Layout(), 0, 2), 0.875f, "component mappings do not share depth refreshes");
+        Require(sample(resource) == texture, "updating a depth array replaced its sampled view");
+        expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.875f, "depth array retained a cleared layer");
+        expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, 1), targets[1].clearDepth, "depth array clear changed another layer");
+        auto subset = resource;
+        subset.baseArray = 2;
+        auto subsetTexture = sample(subset);
+        expectRed(arrayProgram.Red(subsetTexture->View(), subsetTexture->Layout(), 0, 0), 0.875f, "depth array BASE_ARRAY is ignored");
+        expectRed(arrayProgram.Red(subsetTexture->View(), subsetTexture->Layout(), 0, 1), targets[3].clearDepth, "depth array subset last layer");
+        expectRed(flatProgram.Red(subsetTexture->FirstLayerView(), subsetTexture->Layout(), 0), 0.875f, "depth array first-layer view ignores BASE_ARRAY");
+        subset.baseArray = 3;
+        subsetTexture = sample(subset);
+        expectRed(arrayProgram.Red(subsetTexture->View(), subsetTexture->Layout(), 0, 0), targets[3].clearDepth, "single-layer depth array");
+        clearDepthAttachment(context, recorder, targets[2], 0.625f, [&] {
+            Require(sample(resource) == texture, "attachment setup replaced a depth array view");
+            expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.875f, "depth array changed before the attachment write");
+        });
+        Require(bindings.ProveCurrent(shader), "depth array bindings failed revalidation after attachment use");
+        expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.625f, "depth array retained old attachment contents");
+        auto shifted = resource;
+        shifted.baseAddress -= depthStride;
+        shifted.baseArray = 1;
+        shifted.depthOrLastArray = 4;
+        const auto shiftedTexture = sample(shifted);
+        Require(shiftedTexture != nullptr, "a depth array subview requires its unused base slice to be resident");
+        expectRed(arrayProgram.Red(shiftedTexture->View(), shiftedTexture->Layout(), 0, 0), targets[0].clearDepth, "depth array shifted first layer");
+        expectRed(arrayProgram.Red(shiftedTexture->View(), shiftedTexture->Layout(), 0, 2), 0.625f, "depth array shifted attachment layer");
+        if (stencil) {
+            auto stencilResource = resource;
+            stencilResource.baseAddress = target.stencilAddress;
+            stencilResource.format = 5;
+            const auto stencilTexture = sample(stencilResource);
+            for (std::uint32_t layer = 0; layer < targets.size(); ++layer) expectRed(stencilProgram.Red(stencilTexture->View(), stencilTexture->Layout(), 0, static_cast<float>(layer)), targets[layer].clearStencil, "stencil array slice contents");
+            const auto stencilCopies = operations.copies;
+            NoteDepthSurfaceWrite(context, readOnly);
+            static_cast<void>(sample(stencilResource));
+            Require(operations.copies == stencilCopies, "read-only attachment use copied a stencil array");
+            targets[2].clearStencil = 37;
+            RunDepthClearPass(context, {targets[2], VK_IMAGE_ASPECT_STENCIL_BIT});
+            Require(sample(stencilResource) == stencilTexture, "stencil array view changed after a clear");
+            expectRed(stencilProgram.Red(stencilTexture->View(), stencilTexture->Layout(), 0, 2), 37, "stencil array retained a cleared layer");
+            Require(operations.copies == stencilCopies + 1, "a stencil clear copied unchanged slices");
+            static_cast<void>(sample(resource));
+            Require(operations.copies == stencilCopies + 1, "a stencil-only clear copied depth");
+            expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.625f, "stencil array clear changed depth");
+            RunDepthClearPass(context, {targets[2], VK_IMAGE_ASPECT_DEPTH_BIT});
+            static_cast<void>(sample(stencilResource));
+            Require(operations.copies == stencilCopies + 1, "a depth-only clear copied stencil");
+            expectRed(stencilProgram.Red(stencilTexture->View(), stencilTexture->Layout(), 0, 2), 37, "depth array clear changed stencil");
+            static_cast<void>(sample(resource));
+            Require(operations.copies == stencilCopies + 2, "a depth clear copied unchanged slices");
+            expectRed(arrayProgram.Red(texture->View(), texture->Layout(), 0, 2), targets[2].clearDepth, "depth-only clear did not refresh depth");
+            auto writableStencil = readOnly;
+            writableStencil.stencilBack.writeMask = 0xff;
+            NoteDepthSurfaceWrite(context, writableStencil);
+            static_cast<void>(sample(resource));
+            Require(operations.copies == stencilCopies + 2, "a stencil-writing state copied depth");
+            static_cast<void>(sample(stencilResource));
+            Require(operations.copies == stencilCopies + 3, "a stencil-writing state did not refresh its slice");
+        }
+        auto missing = resource;
+        missing.depthOrLastArray = 4;
+        bool refused = false;
+        try { static_cast<void>(sample(missing)); } catch (const std::runtime_error&) { refused = true; }
+        Require(refused, "depth array with an unbacked slice was silently sampled");
+        shifted.baseArray = 0;
+        refused = false;
+        try { static_cast<void>(sample(shifted)); } catch (const std::runtime_error&) { refused = true; }
+        Require(refused, "depth array with a missing first slice ignored its resident later layers");
+    }
+    recorder.Sync();
+}
+
+void depthArrayGuestTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    DepthOperations operations(context);
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    SampleProgram depthProgram(context, recorder, SAMPLE_Depth_ARRAY_SPV);
+    SampleProgram stencilProgram(context, recorder, SAMPLE_Stencil_ARRAY_SPV, true);
+    for (const auto format : {VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT_S8_UINT}) {
+        const bool stencil = format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+        const VkExtent2D extent{129, 137};
+        const auto depthBytes = stencil ? 4u : 2u;
+        const auto depthStride = DepthSliceBytes(extent, depthBytes);
+        const auto stencilStride = DepthSliceBytes(extent, 1);
+        std::vector<std::byte> memory(3 * (depthStride + stencilStride) + 256);
+        const auto address = (reinterpret_cast<std::uint64_t>(memory.data()) + 255) & ~std::uint64_t{255};
+        DepthTarget target{address, stencil ? address + 3 * depthStride : 0, extent, format, 0.25f, 19};
+        struct Release {
+            const Context& context;
+            Recorder& recorder;
+            ~Release() { recorder.Sync(); ClearDepthSurfaces(context.device); }
+        } release{context, recorder};
+        RunDepthClearPass(context, {target, VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u)});
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = extent.width;
+        resource.height = extent.height;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kZ64KBX;
+        resource.dimension = TextureDimension::k2DArray;
+        resource.depthOrLastArray = 2;
+        resource.format = stencil ? 22 : 7;
+        const std::array<std::uint32_t, 8> words{};
+        const VkComponentMapping mapping{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+        const auto sample = [&](const GuestTextureResource& descriptor) {
+            auto texture = DepthSurfaceTexture(context, words, descriptor, mapping);
+            Require(texture != nullptr, "mixed depth array was not recognized");
+            return texture;
+        };
+        const auto writeCenter = [&](std::uint64_t base, std::uint32_t bytes, std::uint32_t layer, std::uint32_t value) {
+            const auto block = ThinBlockLayout(TextureTileMode::kZ64KBX, bytes);
+            const auto* equation = FindTextureSwizzleEquation(24, bytes);
+            Require(equation != nullptr, "missing depth swizzle equation");
+            const auto x = extent.width / 2;
+            const auto y = extent.height / 2;
+            const auto coordinates = x | (y << 12) | (layer << 24);
+            std::uint64_t offset = 0;
+            for (std::uint32_t bit = 0; bit < equation->bits.size(); ++bit) offset |= std::uint64_t{std::popcount(coordinates & equation->bits[bit]) & 1u} << bit;
+            offset += ((y / block[2]) * ((extent.width + block[1] - 1) / block[1]) + x / block[1]) * block[0];
+            const auto destination = base + layer * DepthSliceBytes(extent, bytes) + offset;
+            AgcDriver::GuestMemory::Write(destination, std::span<const std::byte>(reinterpret_cast<const std::byte*>(&value), bytes));
+        };
+        const auto depthValue = [&](float value) { return stencil ? std::bit_cast<std::uint32_t>(value) : static_cast<std::uint32_t>(value * 65535.0f); };
+        writeCenter(address, depthBytes, 1, depthValue(0.5f));
+        writeCenter(address, depthBytes, 2, depthValue(0.75f));
+        auto texture = sample(resource);
+        expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 0), 0.25f, "mixed array lost its resident slice");
+        expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 1), 0.5f, "mixed array did not detile guest layer one");
+        expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.75f, "mixed array did not detile guest layer two");
+        Require(sample(resource) == texture, "unchanged mixed array was replaced");
+        const auto variantImages = operations.images;
+        const auto variantCopies = operations.copies;
+        const auto variantUploads = operations.uploads;
+        auto alphaMapping = mapping;
+        alphaMapping.a = VK_COMPONENT_SWIZZLE_R;
+        const auto alphaTexture = DepthSurfaceTexture(context, words, resource, alphaMapping);
+        recorder.Sync();
+        Require(operations.images == variantImages, "a mixed array mapping allocated another image");
+        Require(operations.copies == variantCopies && operations.uploads == variantUploads, "a mixed array mapping copied or uploaded unchanged slices");
+        writeCenter(address, depthBytes, 1, depthValue(0.875f));
+        Require(sample(resource) == texture, "guest write replaced the mixed array view");
+        expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 1), 0.875f, "mixed array retained old guest bytes");
+        expectRed(depthProgram.Red(alphaTexture->View(), alphaTexture->Layout(), 0, 1), 0.875f, "mixed array mappings do not share guest uploads");
+        expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.75f, "guest write changed an unrelated layer");
+        auto subset = resource;
+        subset.baseArray = 2;
+        auto subview = sample(subset);
+        expectRed(depthProgram.Red(subview->View(), subview->Layout(), 0), 0.75f, "guest-only subview lost its absolute slice swizzle");
+        if (stencil) {
+            auto plane = resource;
+            plane.baseAddress = target.stencilAddress;
+            plane.format = 5;
+            writeCenter(plane.baseAddress, 1, 1, 37);
+            writeCenter(plane.baseAddress, 1, 2, 59);
+            auto stencilTexture = sample(plane);
+            expectRed(stencilProgram.Red(stencilTexture->View(), stencilTexture->Layout(), 0, 0), 19, "mixed stencil array lost its resident slice");
+            expectRed(stencilProgram.Red(stencilTexture->View(), stencilTexture->Layout(), 0, 1), 37, "mixed stencil array lost guest layer one");
+            expectRed(stencilProgram.Red(stencilTexture->View(), stencilTexture->Layout(), 0, 2), 59, "mixed stencil array lost guest layer two");
+            expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 1), 0.875f, "guest stencil upload changed depth");
+        }
+        auto rendered = target;
+        rendered.address += 2 * depthStride;
+        if (stencil) rendered.stencilAddress += 2 * stencilStride;
+        rendered.clearDepth = 0.125f;
+        RunDepthClearPass(context, {rendered, VK_IMAGE_ASPECT_DEPTH_BIT});
+        Require(sample(resource) == texture, "rendering a guest layer replaced the mixed array view");
+        expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.125f, "mixed array ignored a newly rendered layer");
+        Require(sample(subset) == subview, "rendering replaced a guest-only subview");
+        expectRed(depthProgram.Red(subview->View(), subview->Layout(), 0), 0.125f, "guest-only subview ignored a newly rendered layer");
+        recorder.Sync();
+        ClearDepthSurfaces(context.device);
+        expectRed(depthProgram.Red(texture->View(), texture->Layout(), 0, 2), 0.125f, "a surviving depth array view lost its backing");
+        expectRed(depthProgram.Red(alphaTexture->View(), alphaTexture->Layout(), 0, 1), 0.875f, "a surviving component view lost its backing");
+        expectRed(depthProgram.Red(subview->View(), subview->Layout(), 0), 0.125f, "a surviving single-layer array view lost its backing");
+    }
 }
 
 void minLodTests(const Device& device, Recorder& recorder) {
@@ -2812,13 +3276,37 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         Device device;
         std::lock_guard gpu(GpuMutex());
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-array-failure-only") {
+            bool failed = false;
+            try {
+                depthArrayTests(device, recorder, true);
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "intentional depth test failure with pending copies") throw;
+                failed = true;
+            }
+            Require(failed, "the depth test did not exercise failure cleanup");
+            depthArrayTests(device, recorder);
+            std::cout << "Depth array failure cleanup and subsequent sampling tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-array-only") {
+            depthArrayTests(device, recorder);
+            depthArrayGuestTests(device, recorder);
+            std::cout << "Depth/stencil array sampling, subviews and refresh tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-clear-only") {
+            depthClearPassTests(device, recorder);
+            std::cout << "Resident depth clear sampling and aspect preservation tests passed\n";
+            return 0;
+        }
         readTrackingTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
@@ -2855,6 +3343,9 @@ int main() {
         firstLayerViewTests(device, recorder);
         atomicViewTests(device, recorder);
         metadataPassTests(device, recorder);
+        depthClearPassTests(device, recorder);
+        depthArrayTests(device, recorder);
+        depthArrayGuestTests(device, recorder);
         pendingKeyStoreTests(device, recorder);
         sampleDumpTests(device, recorder);
         std::cout << "Recorder read tracking and label tests passed\n";
