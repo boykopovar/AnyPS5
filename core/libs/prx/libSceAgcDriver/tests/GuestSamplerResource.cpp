@@ -449,9 +449,15 @@ void RunGuestSamplerResourceTests() {
     badPreclamp.pointPreclamp = true;
     rejectFields(badPreclamp, "point preclamping");
 
-    Fields badAnisoOverride = base;
-    badAnisoOverride.anisoOverride = true;
-    rejectFields(badAnisoOverride, "anisotropy override");
+    Fields anisoOverride = base;
+    anisoOverride.xyMagFilter = 2;
+    anisoOverride.xyMinFilter = 2;
+    anisoOverride.zFilter = 2;
+    anisoOverride.maxAnisoRatio = 3;
+    const auto withoutOverride = DecodeSamplerResource(pack(anisoOverride));
+    anisoOverride.anisoOverride = true;
+    const auto withOverride = DecodeSamplerResource(pack(anisoOverride));
+    Require(withOverride.anisotropyEnable == withoutOverride.anisotropyEnable && withOverride.maxAnisotropy == withoutOverride.maxAnisotropy && withOverride.magFilter == withoutOverride.magFilter && withOverride.minFilter == withoutOverride.minFilter, "ANISO_OVERRIDE changed the decoded sampler");
 
     Fields badBlendZero = base;
     badBlendZero.blendZeroPrt = true;
