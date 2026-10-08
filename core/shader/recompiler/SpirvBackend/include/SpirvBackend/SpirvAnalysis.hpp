@@ -15,6 +15,7 @@ struct SpirvRequirements {
     bool subgroupShuffle = false;
     bool subgroupLocalInvocationId = false;
     bool computeDerivatives = false;
+    bool neighbourLaneReads = false;
     bool imageGatherExtended = false;
     bool functionLds = false;
     bool ldsLock = false;

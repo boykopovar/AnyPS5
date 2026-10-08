@@ -73,9 +73,14 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         return bits;
     }
     if (kind == StageInputKind::HelperInvocation) {
-        const auto value = state.module.AllocateId();
+        auto value = state.module.AllocateId();
         const auto bits = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeBool(state), value, variable);
+        if (state.quadPixelUncovered != 0u) {
+            const auto helper = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLogicalOr, TypeBool(state), helper, value, state.quadPixelUncovered);
+            value = helper;
+        }
         state.module.AddFunction(spv::OpSelect, TypeU32(state), bits, value, ConstantU32(state, 1u), ConstantU32(state, 0u));
         return bits;
     }
@@ -931,6 +936,39 @@ void EmitProgram(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpBeginInvocationInterlockEXT);
     }
     EmitMemoryOffsets(state);
+    if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->quadPixelMask != 0xfu) {
+        const auto coordinate = [&](std::uint32_t component) {
+            const auto value = Unary(state, spv::OpBitcast, TypeF32(state), EmitBuiltinU32(state, StageInputKind::FragCoord, component));
+            return EmitBinaryU32(state, spv::OpBitwiseAnd, Unary(state, spv::OpConvertFToU, TypeU32(state), value), ConstantU32(state, 1u));
+        };
+        const auto quad = EmitBinaryU32(state, spv::OpBitwiseOr, coordinate(0u), EmitBinaryU32(state, spv::OpShiftLeftLogical, coordinate(1u), ConstantU32(state, 1u)));
+        const auto bit = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, ConstantU32(state, state.inputInfo.pixel->quadPixelMask), quad), ConstantU32(state, 1u));
+        const auto mask = static_cast<std::uint32_t>(state.inputInfo.pixel->quadPixelMask);
+        const bool demoteCapability = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDemoteToHelperInvocation)) != state.supportedCapabilities.end();
+        const bool demoteCore = state.spirvVersion >= 0x00010600u;
+        const bool demoteExtension = std::find(state.supportedExtensions.begin(), state.supportedExtensions.end(), "SPV_EXT_demote_to_helper_invocation") != state.supportedExtensions.end();
+        const bool demote = demoteCapability && (demoteCore || demoteExtension);
+        if (!demote && state.requirements.neighbourLaneReads) {
+            throw std::runtime_error("the PA_SC_AA_MASK quad pixel mask " + std::to_string(mask) + " leaves helper pixels whose lanes the pixel program reads (implicit-LOD sampling, whole-quad mode or cross-lane reads), which needs the device's shaderDemoteToHelperInvocation");
+        }
+        const auto uncovered = state.module.AllocateId();
+        state.module.AddFunction(spv::OpIEqual, TypeBool(state), uncovered, bit, ConstantU32(state, 0u));
+        state.quadPixelUncovered = uncovered;
+        const auto killLabel = state.module.AllocateId();
+        const auto mergeLabel = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, uncovered, killLabel, mergeLabel);
+        EmitLabel(state, killLabel);
+        if (demote) {
+            state.module.EmitCapability(spv::CapabilityDemoteToHelperInvocation);
+            if (!demoteCore) state.module.EmitExtension("SPV_EXT_demote_to_helper_invocation");
+            state.module.AddFunction(spv::OpDemoteToHelperInvocation);
+            state.module.AddFunction(spv::OpBranch, mergeLabel);
+        } else {
+            state.module.AddFunction(spv::OpKill);
+        }
+        EmitLabel(state, mergeLabel);
+    }
     if (program.BlockOrder().empty()) {
         if (OrderedPixelShader(state)) {
             state.module.AddFunction(spv::OpEndInvocationInterlockEXT);

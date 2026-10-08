@@ -312,6 +312,7 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     for (const std::uint8_t value : info.targetExportMapping) {
         writer.WriteU8(value);
     }
+    writer.WriteU8(info.quadPixelMask);
 }
 
 ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
@@ -353,6 +354,7 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     } else {
         info.targetExportMapping.fill(0u);
     }
+    if (version >= 14u) info.quadPixelMask = reader.ReadU8();
     if (version < 5u) {
         const auto input = [](PixelInput value, bool present) { return present ? PixelInputBit(value) : 0u; };
         info.inputAddr = input(PixelInput::PerspectiveSample, info.hasPerspectiveCenterVgpr && inputAddrOrCenterVgpr == 2u) | input(PixelInput::PerspectiveCenter, info.hasPerspectiveCenterVgpr) |
@@ -380,9 +382,10 @@ void writeVertexInfo(Writer& writer, const ShaderVertexStageInfo& info) {
     writer.WriteU32(info.fetchAttribReg);
     writer.WriteU32(info.fetchBufferReg);
     writer.WriteBool(info.fetchEmbedded);
+    writer.WriteU32(info.paClVsOutCntl);
 }
 
-ShaderVertexStageInfo readVertexInfo(Reader& reader) {
+ShaderVertexStageInfo readVertexInfo(Reader& reader, std::uint32_t version) {
     ShaderVertexStageInfo info{};
     for (auto& resource : info.resources) {
         for (std::uint32_t& value : resource.fields) {
@@ -399,6 +402,7 @@ ShaderVertexStageInfo readVertexInfo(Reader& reader) {
     info.fetchAttribReg = reader.ReadU32();
     info.fetchBufferReg = reader.ReadU32();
     info.fetchEmbedded = reader.ReadBool();
+    if (version >= 13u) info.paClVsOutCntl = reader.ReadU32();
     return info;
 }
 
@@ -536,7 +540,7 @@ GuestContext readGuestContext(Reader& reader, DeserializedRequest& result, std::
         context.pixel = result.pixel;
     }
     if (reader.ReadBool()) {
-        result.vertex = readVertexInfo(reader);
+        result.vertex = readVertexInfo(reader, version);
         context.vertex = result.vertex;
     }
     const auto regionCount = reader.ReadU64();
@@ -699,7 +703,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(12u);
+    writer.WriteU32(14u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -726,7 +730,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 12u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 14u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);

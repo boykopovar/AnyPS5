@@ -140,6 +140,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psExecuteOnNoop = pixel.executeOnNoop;
         pixelStorage.psConservativeZExport = pixel.conservativeZExport;
         pixelStorage.psOrderedPixelShader = pixel.orderedPixelShader;
+        pixelStorage.quadPixelMask = pixel.quadPixelMask;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;
         return result;
@@ -159,6 +160,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         vertexStorage = ShaderVertexInputInfo{};
         vertexStorage.logicalStage = _toIrShaderStage(stage);
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;
+        vertexStorage.paClVsOutCntl = vertex.paClVsOutCntl;
         vertexStorage.fetchExternal = false;
         vertexStorage.fetchAttribReg = static_cast<int>(vertex.fetchAttribReg);
         vertexStorage.fetchBufferReg = static_cast<int>(vertex.fetchBufferReg);
