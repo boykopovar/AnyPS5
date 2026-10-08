@@ -23,7 +23,7 @@ using Realign = void* (APS5_VABI *)(void*, std::size_t, std::size_t);
 using PosixAlign = int (APS5_VABI *)(void**, std::size_t, std::size_t);
 using Initialize = void (APS5_VABI *)();
 
-std::mutex heapMutex;
+std::recursive_mutex heapMutex;
 std::array<void*, 10> heapApi{};
 std::once_flag heapInitialization;
 std::exception_ptr heapFailure;
@@ -73,8 +73,23 @@ TValue read(const void* pointer, std::size_t offset) {
     return value;
 }
 
+void ensureInitialized() {
+    {
+        std::lock_guard lock(heapMutex);
+        if (heapApi[0] != nullptr || heapFailure != nullptr) return;
+    }
+    try {
+        const auto* parameters = ApplicationProcessParameters_nid_no_patch();
+        if (parameters != nullptr) {
+            ApplicationHeapInitialize_nid_no_patch(parameters);
+        }
+    } catch (...) {
+    }
+}
+
 template<typename TCallback>
 TCallback callback(std::size_t index) {
+    ensureInitialized();
     std::lock_guard lock(heapMutex);
     if (heapFailure) std::rethrow_exception(heapFailure);
     if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
@@ -140,6 +155,11 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
             const auto* libcParameters = read<const void*>(processParameters, 0x38);
             if (read<std::uint64_t>(libcParameters, 0) < 0x38) throw std::runtime_error("application heap: invalid libc parameters");
             const auto* replacement = read<const void*>(libcParameters, 0x30);
+            if (replacement == nullptr) {
+                std::array<void*, 10> api{};
+                ApplicationHeapRegister_nid_no_patch(api.data());
+                return;
+            }
             if (read<std::uint64_t>(replacement, 0) != 0x78 || read<std::uint64_t>(replacement, 8) != 2) throw std::runtime_error("application heap: unsupported allocator replacement table");
             std::array<void*, 10> api;
             std::memcpy(api.data(), static_cast<const std::byte*>(replacement) + 0x20, sizeof(api));
@@ -197,6 +217,7 @@ void* ApplicationHeapRealign_nid_no_patch(void* pointer, std::size_t bytes, std:
         return nullptr;
     }
     requireAlignment(alignment);
+    ensureInitialized();
     Realign realign;
     {
         std::lock_guard lock(heapMutex);
