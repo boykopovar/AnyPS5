@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <limits>
 #include <new>
+#include <vector>
 #include <stdexcept>
 
 extern "C" {
@@ -37,16 +38,9 @@ bool fail = false;
 bool recurse = false;
 bool nullPosixResult = false;
 
-void require(bool condition) {
-    if (!condition) throw std::runtime_error("application heap test failed");
-}
+#define require(condition) do { if (!(condition)) { std::fprintf(stderr, "require failed at line %d\n", __LINE__); throw std::runtime_error("application heap test failed"); } } while(0)
 
-template<typename TAction>
-void reject(TAction action) {
-    bool rejected = false;
-    try { action(); } catch (const std::exception&) { rejected = true; }
-    require(rejected);
-}
+#define reject(action) do { bool rejected = false; try { action(); } catch (const std::exception&) { rejected = true; } if (!rejected) { std::fprintf(stderr, "reject failed at line %d\n", __LINE__); throw std::runtime_error("application heap test failed"); } } while(0)
 
 void APS5_VABI initialize() { ++initializes; }
 void APS5_VABI finalize() { require(initializes == 1); }
@@ -102,7 +96,29 @@ void write(std::array<std::byte, TSize>& data, std::size_t offset, TValue value)
 }
 
 int main(int argc, char** argv) {
-    reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
+    void* temp_early = ApplicationHeapAllocate_nid_no_patch(16);
+    require(temp_early != nullptr);
+    ApplicationHeapFree_nid_no_patch(temp_early);
+
+    std::vector<void*> overflow_pointers;
+    for (int i = 0; i < 515; ++i) {
+        void* p = ApplicationHeapAllocate_nid_no_patch(8);
+        require(p != nullptr);
+        overflow_pointers.push_back(p);
+    }
+    for (void* p : overflow_pointers) {
+        ApplicationHeapFree_nid_no_patch(p);
+    }
+
+    void* early_ptr = ApplicationHeapAllocate_nid_no_patch(64);
+    require(early_ptr != nullptr);
+    void* early_calloc = ApplicationHeapCalloc_nid_no_patch(4, 16);
+    require(early_calloc != nullptr);
+    void* early_align = ApplicationHeapAlign_nid_no_patch(128, 64);
+    require(early_align != nullptr);
+    require(reinterpret_cast<std::uintptr_t>(early_align) % 128 == 0);
+    void* early_posix = nullptr;
+    require(ApplicationHeapPosixAlign_nid_no_patch(&early_posix, 256, 64) == 0 && early_posix != nullptr);
     reject([] { ApplicationHeapRegister_nid_no_patch(nullptr); });
     std::array<std::byte, 0x40> process{};
     std::array<std::byte, 0x38> libc{};
@@ -175,6 +191,15 @@ int main(int argc, char** argv) {
     ApplicationHeapInitialize_nid_no_patch(process.data());
     ApplicationHeapInitialize_nid_no_patch(process.data());
     require(initializes == 1);
+    void* early_realloc_ptr = ApplicationHeapReallocate_nid_no_patch(early_ptr, 128);
+    require(early_realloc_ptr != nullptr);
+    ApplicationHeapFree_nid_no_patch(early_realloc_ptr);
+    void* early_realign_ptr = ApplicationHeapRealign_nid_no_patch(early_align, 128, 512);
+    require(early_realign_ptr != nullptr);
+    require(reinterpret_cast<std::uintptr_t>(early_realign_ptr) % 512 == 0);
+    ApplicationHeapFree_nid_no_patch(early_realign_ptr);
+    ApplicationHeapFree_nid_no_patch(early_calloc);
+    ApplicationHeapFree_nid_no_patch(early_posix);
     void* pointer = ApplicationHeapAlign_nid_no_patch(4, 64);
     require(pointer == storage.data() && lastAlignment == 4 && lastSize == 64);
     release(pointer);

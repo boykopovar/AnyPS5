@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +25,113 @@ using PosixAlign = int (APS5_VABI *)(void**, std::size_t, std::size_t);
 using Initialize = void (APS5_VABI *)();
 
 std::mutex heapMutex;
+
+struct EarlyChunk {
+    static constexpr std::size_t Capacity = 510;
+    void* pointers[Capacity];
+    EarlyChunk* next;
+};
+constexpr std::size_t MaxChunks = 2048;
+EarlyChunk chunkPool[MaxChunks];
+std::size_t nextChunkIndex = 0;
+EarlyChunk* earlyChunks = nullptr;
+
+std::atomic<std::uintptr_t> minEarlyPointer{std::numeric_limits<std::uintptr_t>::max()};
+std::atomic<std::uintptr_t> maxEarlyPointer{0};
+
+bool removeEarlyPointerLocked(void* pointer) {
+    if (pointer == nullptr) return false;
+    std::uintptr_t uptr = reinterpret_cast<std::uintptr_t>(pointer);
+    if (uptr < minEarlyPointer.load(std::memory_order_acquire) || uptr > maxEarlyPointer.load(std::memory_order_acquire)) {
+        return false;
+    }
+    for (EarlyChunk* chunk = earlyChunks; chunk != nullptr; chunk = chunk->next) {
+        for (std::size_t i = 0; i < EarlyChunk::Capacity; ++i) {
+            if (chunk->pointers[i] == pointer) {
+                chunk->pointers[i] = nullptr;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void addEarlyPointerLocked(void* pointer) {
+    if (pointer == nullptr) return;
+    std::uintptr_t uptr = reinterpret_cast<std::uintptr_t>(pointer);
+    std::uintptr_t current_min = minEarlyPointer.load(std::memory_order_relaxed);
+    while (uptr < current_min && !minEarlyPointer.compare_exchange_weak(current_min, uptr, std::memory_order_release, std::memory_order_relaxed)) {}
+    std::uintptr_t current_max = maxEarlyPointer.load(std::memory_order_relaxed);
+    while (uptr > current_max && !maxEarlyPointer.compare_exchange_weak(current_max, uptr, std::memory_order_release, std::memory_order_relaxed)) {}
+    
+    for (EarlyChunk* chunk = earlyChunks; chunk != nullptr; chunk = chunk->next) {
+        for (std::size_t i = 0; i < EarlyChunk::Capacity; ++i) {
+            if (chunk->pointers[i] == nullptr) {
+                chunk->pointers[i] = pointer;
+                return;
+            }
+        }
+    }
+    if (nextChunkIndex >= MaxChunks) throw std::bad_alloc();
+    EarlyChunk* newChunk = &chunkPool[nextChunkIndex++];
+    std::memset(newChunk->pointers, 0, sizeof(newChunk->pointers));
+    newChunk->pointers[0] = pointer;
+    newChunk->next = earlyChunks;
+    earlyChunks = newChunk;
+}
+
+bool isEarlyPointerLocked(void* pointer) {
+    if (pointer == nullptr) return false;
+    std::uintptr_t uptr = reinterpret_cast<std::uintptr_t>(pointer);
+    if (uptr < minEarlyPointer.load(std::memory_order_acquire) || uptr > maxEarlyPointer.load(std::memory_order_acquire)) {
+        return false;
+    }
+    for (EarlyChunk* chunk = earlyChunks; chunk != nullptr; chunk = chunk->next) {
+        for (std::size_t i = 0; i < EarlyChunk::Capacity; ++i) {
+            if (chunk->pointers[i] == pointer) return true;
+        }
+    }
+    return false;
+}
+
+bool replaceEarlyPointerLocked(void* old_ptr, void* new_ptr) {
+    if (old_ptr == nullptr) return false;
+    std::uintptr_t uptr = reinterpret_cast<std::uintptr_t>(old_ptr);
+    if (uptr < minEarlyPointer.load(std::memory_order_acquire) || uptr > maxEarlyPointer.load(std::memory_order_acquire)) {
+        return false;
+    }
+    for (EarlyChunk* chunk = earlyChunks; chunk != nullptr; chunk = chunk->next) {
+        for (std::size_t i = 0; i < EarlyChunk::Capacity; ++i) {
+            if (chunk->pointers[i] == old_ptr) {
+                chunk->pointers[i] = new_ptr;
+                
+                std::uintptr_t new_uptr = reinterpret_cast<std::uintptr_t>(new_ptr);
+                std::uintptr_t current_min = minEarlyPointer.load(std::memory_order_relaxed);
+                while (new_uptr < current_min && !minEarlyPointer.compare_exchange_weak(current_min, new_uptr, std::memory_order_release, std::memory_order_relaxed)) {}
+                std::uintptr_t current_max = maxEarlyPointer.load(std::memory_order_relaxed);
+                while (new_uptr > current_max && !maxEarlyPointer.compare_exchange_weak(current_max, new_uptr, std::memory_order_release, std::memory_order_relaxed)) {}
+                
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+
+
+template <typename TFree>
+void trackEarlyPointer(void* pointer, TFree freeFunc) {
+    if (pointer == nullptr) return;
+    try {
+        std::lock_guard lock(heapMutex);
+        addEarlyPointerLocked(pointer);
+    } catch (...) {
+        freeFunc(pointer);
+        throw;
+    }
+}
+
 std::array<void*, 10> heapApi{};
 std::once_flag heapInitialization;
 std::exception_ptr heapFailure;
@@ -48,10 +156,11 @@ int APS5_VABI defaultPosixAlign(void** pointer, std::size_t alignment, std::size
     catch (const std::bad_alloc&) { return 12; }
 }
 
-std::array<void*, 10> defaultApi() {
-    return {reinterpret_cast<void*>(defaultAllocate), reinterpret_cast<void*>(defaultFree),
+const std::array<void*, 10>& defaultApi() {
+    static const std::array<void*, 10> api = {reinterpret_cast<void*>(defaultAllocate), reinterpret_cast<void*>(defaultFree),
         reinterpret_cast<void*>(defaultCalloc), reinterpret_cast<void*>(defaultReallocate),
         reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign)};
+    return api;
 }
 
 class CallbackScope {
@@ -74,15 +183,22 @@ TValue read(const void* pointer, std::size_t offset) {
 }
 
 template<typename TCallback>
-TCallback callback(std::size_t index) {
-    std::lock_guard lock(heapMutex);
+TCallback callback_locked(std::size_t index) {
     if (heapFailure) std::rethrow_exception(heapFailure);
     if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
-    if (heapApi[index] == nullptr) throw std::runtime_error("application heap: allocator API is not registered");
+    void* func = heapApi[index];
+    if (func == nullptr && heapApi[0] == nullptr) func = defaultApi()[index];
+    if (func == nullptr) throw std::runtime_error("application heap: allocator API is not registered");
     static_assert(sizeof(TCallback) == sizeof(void*));
     TCallback result;
-    std::memcpy(&result, &heapApi[index], sizeof(result));
+    std::memcpy(&result, &func, sizeof(result));
     return result;
+}
+
+template<typename TCallback>
+TCallback callback(std::size_t index) {
+    std::lock_guard lock(heapMutex);
+    return callback_locked<TCallback>(index);
 }
 
 void* requireAllocation(void* pointer) {
@@ -162,14 +278,36 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
 void* ApplicationHeapAllocate_nid_no_patch(std::size_t bytes) {
     const auto allocate = callback<Allocate>(0);
     CallbackScope scope;
-    return requireAllocation(allocate(bytes));
+    void* pointer = requireAllocation(allocate(bytes));
+    if (reinterpret_cast<void*>(allocate) == defaultApi()[0]) {
+        trackEarlyPointer(pointer, [](void* p) { defaultFree(p); });
+    }
+    return pointer;
 }
 
 void ApplicationHeapFree_nid_no_patch(void* pointer) {
     if (pointer == nullptr) return;
-    const auto free = callback<Free>(1);
+    Free free_func = nullptr;
+    bool wasEarly = false;
+    {
+        std::lock_guard lock(heapMutex);
+        wasEarly = removeEarlyPointerLocked(pointer);
+        if (!wasEarly) {
+            free_func = callback_locked<Free>(1);
+        }
+    }
+    if (wasEarly) {
+        try {
+            defaultFree(pointer);
+        } catch (...) {
+            std::lock_guard lock(heapMutex);
+            addEarlyPointerLocked(pointer);
+            throw;
+        }
+        return;
+    }
     CallbackScope scope;
-    free(pointer);
+    free_func(pointer);
 }
 
 void* ApplicationHeapReallocate_nid_no_patch(void* pointer, std::size_t bytes) {
@@ -177,9 +315,34 @@ void* ApplicationHeapReallocate_nid_no_patch(void* pointer, std::size_t bytes) {
         ApplicationHeapFree_nid_no_patch(pointer);
         return nullptr;
     }
+    bool isEarly = false;
+    std::uintptr_t uptr = reinterpret_cast<std::uintptr_t>(pointer);
+    if (uptr >= minEarlyPointer.load(std::memory_order_acquire) && uptr <= maxEarlyPointer.load(std::memory_order_acquire)) {
+        std::lock_guard lock(heapMutex);
+        isEarly = isEarlyPointerLocked(pointer);
+    }
+    if (isEarly) {
+        void* new_ptr = requireAllocation(defaultReallocate(pointer, bytes));
+        if (new_ptr != pointer) {
+            std::lock_guard lock(heapMutex);
+            if (!replaceEarlyPointerLocked(pointer, new_ptr)) {
+                try {
+                    addEarlyPointerLocked(new_ptr);
+                } catch (...) {
+                    defaultFree(new_ptr);
+                    throw;
+                }
+            }
+        }
+        return new_ptr;
+    }
     const auto reallocate = callback<Reallocate>(3);
     CallbackScope scope;
-    return requireAllocation(reallocate(pointer, bytes));
+    void* result = requireAllocation(reallocate(pointer, bytes));
+    if (reinterpret_cast<void*>(reallocate) == defaultApi()[3]) {
+        trackEarlyPointer(result, [](void* p) { defaultFree(p); });
+    }
+    return result;
 }
 
 void* ApplicationHeapAlign_nid_no_patch(std::size_t alignment, std::size_t bytes) {
@@ -188,6 +351,9 @@ void* ApplicationHeapAlign_nid_no_patch(std::size_t alignment, std::size_t bytes
     CallbackScope scope;
     void* pointer = requireAllocation(align(alignment, bytes));
     if (reinterpret_cast<std::uintptr_t>(pointer) % alignment != 0) throw std::runtime_error("application heap: allocator returned a misaligned pointer");
+    if (reinterpret_cast<void*>(align) == defaultApi()[4]) {
+        trackEarlyPointer(pointer, [](void* p) { defaultFree(p); });
+    }
     return pointer;
 }
 
@@ -197,18 +363,45 @@ void* ApplicationHeapRealign_nid_no_patch(void* pointer, std::size_t bytes, std:
         return nullptr;
     }
     requireAlignment(alignment);
+    bool isEarly = false;
+    std::uintptr_t uptr = reinterpret_cast<std::uintptr_t>(pointer);
+    if (uptr >= minEarlyPointer.load(std::memory_order_acquire) && uptr <= maxEarlyPointer.load(std::memory_order_acquire)) {
+        std::lock_guard lock(heapMutex);
+        isEarly = isEarlyPointerLocked(pointer);
+    }
+    if (isEarly) {
+        void* new_ptr = requireAllocation(defaultRealign(pointer, bytes, alignment));
+        if (reinterpret_cast<std::uintptr_t>(new_ptr) % alignment != 0) {
+            defaultFree(new_ptr);
+            throw std::runtime_error("application heap: allocator returned a misaligned pointer");
+        }
+        if (new_ptr != pointer) {
+            std::lock_guard lock(heapMutex);
+            if (!replaceEarlyPointerLocked(pointer, new_ptr)) {
+                try {
+                    addEarlyPointerLocked(new_ptr);
+                } catch (...) {
+                    defaultFree(new_ptr);
+                    throw;
+                }
+            }
+        }
+        return new_ptr;
+    }
     Realign realign;
     {
         std::lock_guard lock(heapMutex);
         if (heapFailure) std::rethrow_exception(heapFailure);
         if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
-        if (heapApi[0] == nullptr) throw std::runtime_error("application heap: allocator API is not registered");
-        if (heapApi[5] != nullptr) std::memcpy(&realign, &heapApi[5], sizeof(realign));
+        if (heapApi[0] != nullptr && heapApi[5] != nullptr) std::memcpy(&realign, &heapApi[5], sizeof(realign));
         else realign = defaultRealign;
     }
     CallbackScope scope;
     void* result = requireAllocation(realign(pointer, bytes, alignment));
     if (reinterpret_cast<std::uintptr_t>(result) % alignment != 0) throw std::runtime_error("application heap: allocator returned a misaligned pointer");
+    if (realign == defaultRealign) {
+        trackEarlyPointer(result, [](void* p) { defaultFree(p); });
+    }
     return result;
 }
 
@@ -216,7 +409,11 @@ void* ApplicationHeapCalloc_nid_no_patch(std::size_t count, std::size_t bytes) {
     if (bytes != 0 && count > std::numeric_limits<std::size_t>::max() / bytes) throw std::length_error("application heap: calloc size overflow");
     const auto calloc = callback<Calloc>(2);
     CallbackScope scope;
-    return requireAllocation(calloc(count, bytes));
+    void* pointer = requireAllocation(calloc(count, bytes));
+    if (reinterpret_cast<void*>(calloc) == defaultApi()[2]) {
+        trackEarlyPointer(pointer, [](void* p) { defaultFree(p); });
+    }
+    return pointer;
 }
 
 int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment, std::size_t bytes) {
@@ -230,6 +427,9 @@ int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment
     if (error != 0) return error;
     requireAllocation(result);
     if (reinterpret_cast<std::uintptr_t>(result) % alignment != 0) throw std::runtime_error("application heap: allocator returned a misaligned pointer");
+    if (reinterpret_cast<void*>(align) == defaultApi()[6]) {
+        trackEarlyPointer(result, [](void* p) { defaultFree(p); });
+    }
     *pointer = result;
     return 0;
 }
