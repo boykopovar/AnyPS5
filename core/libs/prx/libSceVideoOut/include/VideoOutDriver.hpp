@@ -19,6 +19,7 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 
 #include "SDL.h"
 #include "SceTypes.hpp"
@@ -173,7 +174,7 @@ struct FlipRequest final : AgcDriver::IFlipRequest, std::enable_shared_from_this
 
 struct FlipQueue {
     std::mutex mutex;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     std::list<std::shared_ptr<FlipRequest>> requests;
     std::atomic<std::size_t> reservations = 0;
     std::exception_ptr failure;
