@@ -3320,6 +3320,16 @@ void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
         Require(proved[use], "a set sampling an unchanged depth surface failed its proof on use " + name);
         Require(reports[use].path == ShaderResources::ProofPath::Fast, "a set sampling an unchanged depth surface left the fast proof for the full walk on use " + name);
     }
+    const auto resource = DecodeTextureResource(binding.guestDescriptor);
+    const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    const auto texture = DepthSurfaceTexture(context, binding.guestDescriptor, resource, identity);
+    Require(texture != nullptr && DepthSurfaceHolds(context, resource, texture.get()), "a 2D depth lookup is not fast-provable");
+    auto arrayed = resource;
+    arrayed.dimension = TextureDimension::k2DArray;
+    Require(!DepthSurfaceHolds(context, arrayed, texture.get()), "a 2D-array depth lookup took the fast proof instead of the full walk");
+    auto layered = resource;
+    layered.baseArray = 1;
+    Require(!DepthSurfaceHolds(context, layered, texture.get()), "a layered depth lookup took the fast proof instead of the full walk");
 }
 
 }

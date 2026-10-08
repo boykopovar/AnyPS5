@@ -221,7 +221,9 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     return (*found)->Sampled(words, resource, components);
 }
 
-bool DepthSurfaceHolds(const Context& context, std::uint64_t address, const Texture* texture) {
+bool DepthSurfaceHolds(const Context& context, const GuestTextureResource& resource, const Texture* texture) {
+    if (resource.dimension != TextureDimension::k2D || resource.baseArray != 0) return false;
+    const auto address = resource.baseAddress;
     std::lock_guard lock(surfacesMutex());
     const auto& list = surfaces();
     const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
