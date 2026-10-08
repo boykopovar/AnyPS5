@@ -29,6 +29,7 @@ Throughout the project, every function at every stage either **does exactly what
 - [sceAvPlayerSetTrickSpeed](../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) with a negative speed runs the clock backwards but delivers no frames; when a forward speed is set again, playback resumes from the rewound time.
 - [ulobjmgr](../../core/libs/prx/ulobjmgr/Export.cpp) registers no object: `_sceUlobjmgrRegisterObject` always hands out id 0 and `_sceUlobjmgrUnregisterObject` releases nothing, as shadPS4 does
 - [libSceHttp](../../core/libs/prx/libSceHttp/Export.cpp) - no request reaches the network, so `sceHttpSetResponseHeaderMaxSize` has no response header to limit and `sceHttpRedirectCacheFlush` no redirect to forget; `sceHttpsUnloadCert` returns success like `sceHttpsLoadCert`, which keeps no certificate
+- [libSceVoice](../../core/libs/prx/libSceVoice/Export.cpp) - ports carry no audio: `sceVoiceWriteToIPort` drops the frames it is given and `sceVoiceReadFromOPort` returns no frames, so a PCM input port connected to an output port with `sceVoiceConnectIPortToOPort` delivers nothing
 
 ### Unknown function info
 

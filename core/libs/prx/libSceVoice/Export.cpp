@@ -196,11 +196,12 @@ int APS5_VABI sceVoiceReadFromOPort(uint32_t output_port_id, void* data, uint32_
 }
 
 int APS5_VABI sceVoiceWriteToIPort(uint32_t input_port_id, const void* data, uint32_t* size, int16_t frame_gaps) {
-    (void)input_port_id;
-    (void)data;
-    (void)size;
     (void)frame_gaps;
-    NotImplemented_nid_no_patch(__func__);
+    if (data == nullptr || size == nullptr) APS5_INVALID_ARG_EX;
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    const std::int32_t type = RequirePort(voice, input_port_id, __func__).type;
+    if (type != PortInPcm && type != PortInVoice) Fail(__func__, "port is not a PCM or voice input port");
     return 0;
 }
 
