@@ -343,6 +343,7 @@ private:
     // lock and the cache still holds it; null sends the element to cachedTexture.
     std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
     void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
+    void applyAnisoOverride();
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
@@ -432,6 +433,14 @@ private:
     std::vector<bool> storageAtomic64;
     std::vector<std::shared_ptr<Sampler>> samplers;
     std::shared_ptr<Sampler> paddingSampler;
+    struct SamplerSource {
+        std::array<std::uint32_t, 4> words{};
+        bool compareEnable = false;
+        bool unnormalized = false;
+        bool singleLevelImage = false;
+        bool mipmappedImage = false;
+    };
+    std::vector<SamplerSource> samplerSources;
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;

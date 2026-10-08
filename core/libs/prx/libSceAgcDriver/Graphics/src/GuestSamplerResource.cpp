@@ -174,4 +174,11 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     return result;
 }
 
+std::optional<std::array<std::uint32_t, 4>> SingleLevelSamplerWords(std::span<const std::uint32_t, 4> words, bool singleLevelImage, bool mipmappedImage) {
+    const auto filters = words[2];
+    if (((filters >> 29u) & 1u) == 0 || !singleLevelImage || (!isAnisoFilter((filters >> 20u) & 3u) && !isAnisoFilter((filters >> 22u) & 3u))) return std::nullopt;
+    Require(!mipmappedImage, "guest sampler with ANISO_OVERRIDE is paired with both single-level and mipmapped images in one draw, which is not implemented");
+    return std::array<std::uint32_t, 4>{words[0], words[1], filters & ~((2u << 20u) | (2u << 22u)), words[3]};
+}
+
 }

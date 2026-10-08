@@ -1368,8 +1368,10 @@ void ShaderResources::buildComplete() {
     try {
         // The lookups run in plan order: Revalidate walks the bindings the same way, and consecutive
         // storage elements of one mip chain share the previous element's image.
+        for (auto& source : samplerSources) source.singleLevelImage = source.mipmappedImage = false;
         for (const auto& deferred : deferredImages) resolveImageBinding(*deferred.binding, bindings[deferred.index], std::span<const std::shared_ptr<Sampler>>(samplers).subspan(deferred.firstSampler, deferred.samplerCount));
         deferredImages.clear();
+        applyAnisoOverride();
         // The records served their purpose: each holds the cache entry's objects as of stage A,
         // which would otherwise keep a replaced texture or an evicted storage image (and its device
         // memory) alive, outside the caches' budgets, for as long as this object is cached.
@@ -2829,6 +2831,7 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
                 resource.compareEnable = compareEnable;
                 samplers.push_back(std::make_shared<Sampler>(context, resource));
             }
+            samplerSources.push_back({{words[0], words[1], words[2], words[3]}, compareEnable, unnormalized});
             item.imageAllocations.push_back(samplers.size() - 1);
         }
         Require(samplers.size() <= context.limits.maxDescriptorSetSamplers, "pipeline sampler descriptors exceed device limits");
@@ -2963,6 +2966,22 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(const ImageRecord& record)
     return record.texture;
 }
 
+void ShaderResources::applyAnisoOverride() {
+    for (std::size_t index = 0; index < samplerSources.size(); ++index) {
+        const auto& source = samplerSources[index];
+        const auto variant = SingleLevelSamplerWords(source.words, source.singleLevelImage, source.mipmappedImage);
+        if (!variant.has_value()) continue;
+        const auto& words = *variant;
+        if (context.samplerCache != nullptr && std::getenv("APS5_NO_SAMPLER_CACHE") == nullptr) {
+            samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized);
+        } else {
+            auto resource = DecodeSamplerResource(words, source.unnormalized);
+            resource.compareEnable = source.compareEnable;
+            samplers[index] = std::make_shared<Sampler>(context, resource);
+        }
+    }
+}
+
 void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers) {
     auto& counters = TextureCounts();
     // The element's stage-A record, when the pass ran (records follow the plan order exactly).
@@ -2998,6 +3017,15 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             }
             RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers[element], shaderSamplers);
             RequireBorderSwizzle(resource.bcSwizzle, binding.imageSamplers[element], shaderSamplers);
+            if (!shaderSamplers.empty()) {
+                const bool singleLevel = texture->SampledViewRange(firstLayer).levels == 1u;
+                const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
+                for (std::uint32_t sampler = 0; sampler < shaderSamplers.size() && sampler < 32u; ++sampler) {
+                    if (((binding.imageSamplers[element] >> sampler) & 1u) == 0) continue;
+                    auto& source = samplerSources.at(firstSampler + sampler);
+                    (singleLevel ? source.singleLevelImage : source.mipmappedImage) = true;
+                }
+            }
             textures.push_back(std::move(texture));
             textureFirstLayer.push_back(firstLayer);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});

@@ -458,6 +458,22 @@ void RunGuestSamplerResourceTests() {
     anisoOverride.anisoOverride = true;
     const auto withOverride = DecodeSamplerResource(pack(anisoOverride));
     Require(withOverride.anisotropyEnable == withoutOverride.anisotropyEnable && withOverride.maxAnisotropy == withoutOverride.maxAnisotropy && withOverride.magFilter == withoutOverride.magFilter && withOverride.minFilter == withoutOverride.minFilter, "ANISO_OVERRIDE changed the decoded sampler");
+    const auto overrideWords = pack(anisoOverride);
+    Require(!SingleLevelSamplerWords(overrideWords, false, true).has_value(), "ANISO_OVERRIDE changed a sampler of mipmapped images");
+    Require(!SingleLevelSamplerWords(overrideWords, false, false).has_value(), "ANISO_OVERRIDE changed a sampler with no paired image");
+    const auto singleLevel = SingleLevelSamplerWords(overrideWords, true, false);
+    Require(singleLevel.has_value() && (*singleLevel)[0] == overrideWords[0] && (*singleLevel)[1] == overrideWords[1] && (*singleLevel)[3] == overrideWords[3], "ANISO_OVERRIDE did not keep the sampler's other words");
+    const auto singleLevelSampler = DecodeSamplerResource(*singleLevel);
+    Require(!singleLevelSampler.anisotropyEnable && singleLevelSampler.maxAnisotropy == 1.0f && singleLevelSampler.magFilter == withOverride.magFilter && singleLevelSampler.minFilter == withOverride.minFilter && singleLevelSampler.mipmapMode == withOverride.mipmapMode, "ANISO_OVERRIDE left anisotropy on a single-level image's sampler");
+    reject([&] { SingleLevelSamplerWords(overrideWords, true, true); }, "both single-level and mipmapped");
+    Require(!SingleLevelSamplerWords(pack(base), true, false).has_value(), "a sampler without ANISO_OVERRIDE changed");
+    Fields linearOverride = base;
+    linearOverride.anisoOverride = true;
+    Require(!SingleLevelSamplerWords(pack(linearOverride), true, true).has_value(), "ANISO_OVERRIDE changed a sampler without anisotropy");
+    anisoOverride.xyMagFilter = 3;
+    anisoOverride.xyMinFilter = 3;
+    const auto linearPlain = DecodeSamplerResource(*SingleLevelSamplerWords(pack(anisoOverride), true, false));
+    Require(!linearPlain.anisotropyEnable && linearPlain.magFilter == VK_FILTER_LINEAR && linearPlain.minFilter == VK_FILTER_LINEAR, "ANISO_OVERRIDE did not keep linear filtering");
 
     Fields badBlendZero = base;
     badBlendZero.blendZeroPrt = true;
