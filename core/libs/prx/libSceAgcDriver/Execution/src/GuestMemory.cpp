@@ -592,6 +592,10 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         cursor = next;
 #else
         const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        const auto recordRun = [&](std::uintptr_t next, bool readable, bool writable) {
+            constexpr auto mask = static_cast<std::uintptr_t>(PageBytes - 1);
+            pages.record(cursor & ~mask, (next + mask) & ~mask, readable, writable, generation);
+        };
         if (const int fd = ProcMapsQueryFd(); fd >= 0) {
             procmap_query query{};
             query.size = sizeof(query);
@@ -605,12 +609,10 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
                     cursor = gapEnd;
                     continue;
                 }
-                const auto base = static_cast<std::uintptr_t>(query.vma_start);
-                const auto regionEnd = static_cast<std::uintptr_t>(query.vma_end);
                 const bool readable = (query.vma_flags & PROCMAP_QUERY_VMA_READABLE) != 0;
                 const bool writable = readable && (query.vma_flags & PROCMAP_QUERY_VMA_WRITABLE) != 0;
-                pages.record(base, regionEnd, readable, writable, generation);
                 const auto next = std::min<std::uintptr_t>(end, query.vma_end);
+                recordRun(next, readable, writable);
                 if (!emit(PageRun{cursor, next, readable, writable})) return true;
                 cursor = next;
                 continue;
@@ -642,8 +644,8 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             }
             const bool readable = permissions[0] == 'r';
             const bool writable = readable && permissions[1] == 'w';
-            pages.record(first, last, readable, writable, generation);
             const auto next = std::min(end, last);
+            recordRun(next, readable, writable);
             if (!emit(PageRun{cursor, next, readable, writable})) return true;
             cursor = next;
             found = true;
