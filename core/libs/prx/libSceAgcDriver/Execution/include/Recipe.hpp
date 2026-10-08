@@ -78,7 +78,7 @@ struct DrawRecipe {
     std::vector<std::weak_ptr<Graphics::StorageTexture>> targets;
     std::vector<VkImageView> targetViews;
     std::uint64_t passKey = 0;
-    Graphics::VertexInputLayout vertexInput;
+    std::shared_ptr<const Graphics::VertexInputLayout> vertexInput;
     std::array<std::byte, Graphics::PipelinePushConstantBytes> pushBytes{};
     VkShaderStageFlags pushStages = 0;
     std::optional<Graphics::State> masked;
