@@ -1528,6 +1528,12 @@ struct ContentExportInitParam2 {
     std::int64_t reserved1;
 };
 
+struct ContentExportParam {
+    char title[257];
+    char comment[257];
+    char content_type[65];
+};
+
 struct ContentSearchInitParam { std::size_t memory_size; };
 
 struct PngEncCreateParam {
