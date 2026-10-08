@@ -5,12 +5,21 @@
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include <atomic>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
 
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
 static std::atomic<int> g_nextHandle{1};
+using HttpRequestStatusCallback = void (APS5_VABI *)(int, int, void*);
+struct RequestStatusRegistration {
+    HttpRequestStatusCallback callback;
+    void* argument;
+};
+static std::mutex g_statusMutex;
+static std::map<int, RequestStatusRegistration> g_statusCallbacks;
 
 extern "C" {
 
@@ -80,7 +89,8 @@ int APS5_VABI sceHttpDeleteConnection(int conn_id) {
 }
 
 int APS5_VABI sceHttpDeleteRequest(int req_id) {
-    (void)req_id;
+    std::lock_guard lock(g_statusMutex);
+    g_statusCallbacks.erase(req_id);
     return 0;
 }
 
@@ -273,8 +283,11 @@ int APS5_VABI sceHttpSetInflateGZIPEnabled(int id, int enable) {
     return 0;
 }
 
-int APS5_VABI sceHttpSetRequestStatusCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpSetRequestStatusCallback(int id, HttpRequestStatusCallback callback, void* argument) {
+    if (id <= 0 || id >= g_nextHandle.load(std::memory_order_relaxed)) return static_cast<int>(0x80431100u);
+    std::lock_guard lock(g_statusMutex);
+    if (callback) g_statusCallbacks[id] = {callback, argument};
+    else g_statusCallbacks.erase(id);
     return 0;
 }
 
