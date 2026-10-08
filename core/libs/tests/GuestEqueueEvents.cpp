@@ -24,6 +24,8 @@ void* APS5_VABI sceKernelGetEventUserData(const KernelEvent* ev);
 }
 
 static constexpr int SCE_OK = 0;
+static constexpr std::uint16_t EV_ADD = 0x0001;
+static constexpr std::uint16_t EV_ERROR = 0x4000;
 static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
 static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
@@ -167,10 +169,14 @@ int main() {
     Require(sceKernelGetEventFflags(&rawEvent) == static_cast<intptr_t>(0x80000001LL));
     Require(sceKernelGetEventData(&rawEvent) == -5);
     Require(sceKernelGetEventUserData(&rawEvent) == nullptr);
-    rawEvent.fflags = 22;
-    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x80020016u));
-    rawEvent.fflags = 0;
     Require(sceKernelGetEventError(&rawEvent) == SCE_OK);
+    KernelEvent errorEvent{};
+    errorEvent.flags = EV_ADD | EV_ERROR;
+    errorEvent.fflags = 0x80000001u;
+    errorEvent.data = 22;
+    Require(sceKernelGetEventError(&errorEvent) == 22);
+    errorEvent.data = 0;
+    Require(sceKernelGetEventError(&errorEvent) == SCE_OK);
 
     Require(RejectsNull(sceKernelGetEventData));
     Require(RejectsNull(sceKernelGetEventError));
