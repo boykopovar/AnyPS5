@@ -985,7 +985,8 @@ std::uint32_t EmitMeshDrawParameter(SpirvValueEmitContext& ctx, const IrValue& i
         ctx.Fail(inst, "invalid mesh draw parameter");
     }
     const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, MeshDrawPushOffsetBytes / 4u + index));
+    const auto tableHeaderDwords = state.program.Metadata().bindings.descriptorSet == 1u ? 2u : 0u;
+    state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, (MeshDrawPushOffsetBytes / 4u) + tableHeaderDwords + index));
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, TypeU32(state), result, pointer);
     return result;
@@ -999,7 +1000,8 @@ std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst) 
     }
     const auto push = [&](std::uint32_t dword) {
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, MeshDrawPushOffsetBytes / 4u + dword));
+        const auto tableHeaderDwords = state.program.Metadata().bindings.descriptorSet == 1u ? 2u : 0u;
+        state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, (MeshDrawPushOffsetBytes / 4u) + tableHeaderDwords + dword));
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
         return Unary(state, spv::OpUConvert, TypeScalarU64(state), value);

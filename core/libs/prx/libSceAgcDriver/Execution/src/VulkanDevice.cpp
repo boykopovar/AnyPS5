@@ -18,6 +18,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -62,6 +63,14 @@ void check(VkResult result, const char* operation) {
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("Vulkan presentation: ") + reason);
+}
+
+Graphics::ImageTableMode imageTableMode() {
+    const char* value = std::getenv("APS5_IMAGE_TABLE_MODE");
+    if (value == nullptr || std::strcmp(value, "off") == 0) return Graphics::ImageTableMode::Off;
+    if (std::strcmp(value, "shadow") == 0) return Graphics::ImageTableMode::Shadow;
+    if (std::strcmp(value, "on") == 0) return Graphics::ImageTableMode::On;
+    throw std::runtime_error("APS5_IMAGE_TABLE_MODE must be off, shadow, or on");
 }
 
 // The ShaderResources content cache dispatches share with recorded draws: Graphics::ResourceCache,
@@ -196,6 +205,10 @@ struct VulkanDevice::State {
     // VK_EXT_descriptor_indexing with non-uniform image array indexing (bindless image tables in
     // graphics stages, and compute workgroups wider than a wave).
     bool descriptorIndexing = false;
+    bool descriptorTableUpdateAfterBind = false;
+    std::uint32_t descriptorTableCapacity = 0;
+    bool imageTableLayoutPrefix = false;
+    bool imageTableHeaderEnabled = false;
     bool imageInt64Atomics = false;
     bool primitiveListRestart = false;
     bool depthClipControl = false;
@@ -243,6 +256,7 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::TextureCache> textureCache;
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
     std::unique_ptr<Graphics::DescriptorCache> descriptorCache;
+    std::unique_ptr<Graphics::ImageTable> imageTable;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
     Graphics::ResourceCache& resourceCache = Graphics::SharedResourceCache();
     // Recorded dispatches that write a copied buffer (their results reach guest memory by a CPU
@@ -525,6 +539,7 @@ struct VulkanDevice::State {
             Graphics::ClearCachedTextures(device);
             Graphics::ClearImageMirrors(device);
             patternBuffers.clear();
+            imageTable.reset();
             descriptorCache.reset();
             emptyBuffer.reset();
             samplerCache.reset();
@@ -725,6 +740,19 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     std::vector<VkExtensionProperties> availableExtensions(extensionCount);
     check(enumerateDeviceExtensions(selected, nullptr, &extensionCount, availableExtensions.data()), "vkEnumerateDeviceExtensionProperties");
     const auto hasExtension = [&](const char* name) { return std::any_of(availableExtensions.begin(), availableExtensions.end(), [&](const auto& item) { return std::strcmp(item.extensionName, name) == 0; }); };
+    if (hasExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)) {
+        VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &descriptorProperties};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties2);
+        const auto capacity = std::min({
+            16386u,
+            descriptorProperties.maxPerStageDescriptorUpdateAfterBindSampledImages,
+            descriptorProperties.maxDescriptorSetUpdateAfterBindSampledImages,
+            descriptorProperties.maxPerStageUpdateAfterBindResources,
+            descriptorProperties.maxUpdateAfterBindDescriptorsInAllPools
+        });
+        state->descriptorTableCapacity = capacity;
+    }
     auto byteFeatures = QueryBdaByteFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
     auto bdaFeatures = QueryBdaFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
     require(hasExtension(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME), "VK_KHR_shader_float_controls is unavailable");
@@ -948,11 +976,16 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &descriptorIndexingFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->descriptorIndexing = descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing == VK_TRUE && descriptorIndexingFeatures.shaderStorageImageArrayNonUniformIndexing == VK_TRUE;
+        state->descriptorTableUpdateAfterBind = state->descriptorIndexing &&
+            descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE &&
+            descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE;
     }
     descriptorIndexingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT};
     if (state->descriptorIndexing) {
         descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         descriptorIndexingFeatures.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+        descriptorIndexingFeatures.descriptorBindingPartiallyBound = state->descriptorTableUpdateAfterBind ? VK_TRUE : VK_FALSE;
+        descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = state->descriptorTableUpdateAfterBind ? VK_TRUE : VK_FALSE;
         deviceExtensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
         state->capabilities.push_back(spv::CapabilityShaderNonUniform);
         state->capabilities.push_back(spv::CapabilitySampledImageArrayNonUniformIndexing);
@@ -1081,6 +1114,19 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
     state->descriptorCache = std::make_unique<Graphics::DescriptorCache>(graphicsContext());
+    state->imageTable = std::make_unique<Graphics::ImageTable>(graphicsContext());
+    const auto requestedTableMode = imageTableMode();
+    if (requestedTableMode == Graphics::ImageTableMode::On) {
+        std::fprintf(stderr, "[image-table] mode=on requested; using legacy rendering until Stage 4 mapping is implemented\n");
+    } else if (requestedTableMode == Graphics::ImageTableMode::Shadow) {
+        state->imageTableHeaderEnabled = state->imageTable->Enabled() && state->properties.limits.maxPushConstantsSize >= Graphics::ImageTablePushConstantBytes;
+        state->imageTableLayoutPrefix = state->imageTableHeaderEnabled;
+        if (state->imageTableLayoutPrefix) {
+            std::fprintf(stderr, "[image-table] mode=shadow plumbing enabled; rendering uses legacy descriptors; descriptor comparison is pending Stage 3\n");
+        } else {
+            std::fprintf(stderr, "[image-table] mode=shadow requested but descriptor indexing or a %u-byte push-constant range is unavailable; using legacy 128-byte layout\n", Graphics::ImageTablePushConstantBytes);
+        }
+    }
     state->samplerCache = std::make_unique<Graphics::SamplerCache>();
     state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores);
     state->recorder->Activate();
@@ -2398,6 +2444,14 @@ std::string VulkanDevice::DeviceName() const {
     return state->properties.deviceName;
 }
 
+bool VulkanDevice::ImageTableLayoutPrefix() const {
+    return state->imageTableLayoutPrefix;
+}
+
+bool VulkanDevice::ImageTableHeaderEnabled() const {
+    return state->imageTableHeaderEnabled;
+}
+
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     const auto& limits = state->properties.limits;
     ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_1, state->meshShader ? 0x00010400u : 0x00010300u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
@@ -2470,6 +2524,12 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.copiedWriters = state->copiedWriters.get();
     context.functions = state->functionsReady ? &state->deviceFunctions : nullptr;
     context.descriptorIndexing = state->descriptorIndexing;
+    context.descriptorTableUpdateAfterBind = state->descriptorTableUpdateAfterBind;
+    context.descriptorTableCapacity = state->descriptorTableCapacity;
+    context.imageTable = state->imageTable.get();
+    context.imageTableLayoutPrefix = state->imageTableLayoutPrefix;
+    context.imageTableHeaderEnabled = state->imageTableHeaderEnabled;
+    context.pushConstantBytes = state->imageTableHeaderEnabled ? Graphics::ImageTablePushConstantBytes : Graphics::LegacyPushConstantBytes;
     context.imageInt64Atomics = state->imageInt64Atomics;
     context.geometryShader = state->geometryShader;
     context.sampleRateShading = state->sampleRateShading;
@@ -3261,7 +3321,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->pipeline);
     resources.Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout);
     if (record.pushStages != 0) {
-        context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::PipelinePushConstantBytes, record.pushBytes->data());
+        context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, context.pushConstantBytes, record.pushBytes->data());
     }
     const auto gpuTiming = recorder.BeginGpuTiming(record.programAddress != 0 ? record.programAddress : record.shader->program->variantId);
     if (argumentImport != nullptr) context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect")(commands, argumentImport->buffer, arguments - argumentImport->base);
@@ -3305,12 +3365,17 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         throw std::runtime_error("Vulkan dispatch: invalid SPIR-V");
     }
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
-    const auto pushStages = Graphics::PushConstantStages(shaders);
-    if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::PipelinePushConstantBytes) {
+    auto pushStages = Graphics::PushConstantStages(shaders);
+    const auto context = graphicsContext();
+    if (context.imageTableHeaderEnabled) pushStages |= VK_SHADER_STAGE_COMPUTE_BIT;
+    if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < context.pushConstantBytes) {
         throw std::runtime_error("Vulkan dispatch: compute push constant range exceeds device limit");
     }
     auto pushBytes = Graphics::AssemblePushConstants(shaders);
-    const auto context = graphicsContext();
+    if (context.imageTableHeaderEnabled) {
+        const std::array<std::uint32_t, 2> tableHeader{};
+        std::memcpy(pushBytes.data(), tableHeader.data(), sizeof(tableHeader));
+    }
     const auto* limit = state->properties.limits.maxComputeWorkGroupCount;
     if (arguments == 0 && (x > limit[0] || y > limit[1] || z > limit[2])) {
         throw std::runtime_error("Vulkan dispatch: workgroup count exceeds device limits");
@@ -3462,6 +3527,9 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     timing.Mark("shader_resources");
     timer.phase(PhaseResources);
     if (objects == nullptr) {
+        if (context.imageTableLayoutPrefix) {
+            Graphics::Require(context.imageTable != nullptr && context.imageTable->Layout() != VK_NULL_HANDLE, "image table prefix has no descriptor set layout");
+        }
         objects = std::make_shared<ComputePipelineObjects>();
         objects->device = state->device;
         objects->destroyModule = state->DeviceFunction<PFN_vkDestroyShaderModule>("vkDestroyShaderModule");
@@ -3473,12 +3541,13 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         check(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule")(state->device, &moduleInfo, nullptr, &objects->module), "vkCreateShaderModule");
         timing.Mark("validate_shader_module");
         const auto setLayout = resources->Layout();
-        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::PipelinePushConstantBytes};
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, context.pushConstantBytes};
+        const std::array<VkDescriptorSetLayout, 2> setLayouts{context.imageTableLayoutPrefix ? context.imageTable->Layout() : VK_NULL_HANDLE, setLayout};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutInfo.setLayoutCount = 1;
-        layoutInfo.pSetLayouts = &setLayout;
-        layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
-        layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;
+        layoutInfo.setLayoutCount = context.imageTableLayoutPrefix ? 2u : 1u;
+        layoutInfo.pSetLayouts = context.imageTableLayoutPrefix ? setLayouts.data() : &setLayout;
+        layoutInfo.pushConstantRangeCount = (pushStages != 0 || context.imageTableHeaderEnabled) ? 1u : 0u;
+        layoutInfo.pPushConstantRanges = (pushStages != 0 || context.imageTableHeaderEnabled) ? &push : nullptr;
         check(state->DeviceFunction<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(state->device, &layoutInfo, nullptr, &objects->layout), "vkCreatePipelineLayout");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.flags = context.pipelineExecutableInfo ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0;

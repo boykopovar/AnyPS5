@@ -140,6 +140,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderInputState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderResources.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ImageTable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestBufferMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
@@ -433,6 +434,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         tests/TextureTiling.cpp
         tests/GuestTextureResource.cpp
         tests/GuestSamplerResource.cpp
+        tests/ImageTable.cpp
         tests/TextureDetiler.cpp
         Graphics/src/Draw.cpp
         Graphics/src/DepthSurface.cpp
@@ -442,6 +444,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         Graphics/src/ColorTargetTransfer.cpp
         Graphics/src/Resources.cpp
         Graphics/src/ShaderResources.cpp
+        Graphics/src/ImageTable.cpp
         Graphics/src/ShaderAddressResources.cpp
         Graphics/src/GuestBufferMemory.cpp
         Graphics/src/BdaResources.cpp

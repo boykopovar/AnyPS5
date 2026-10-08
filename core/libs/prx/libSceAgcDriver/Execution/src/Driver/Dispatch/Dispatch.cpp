@@ -63,11 +63,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             if (threads[axis] % compute.numThreads[axis] != 0) compute.partialThreads = threads;
         }
     }
+    const bool tablePrefix = localDevice->ImageTableLayoutPrefix();
+    const bool tableHeader = localDevice->ImageTableHeaderEnabled();
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
         {(packet[4] & 0x8000u) != 0 ? 32u : 64u, 0, userData, compute, std::nullopt, std::nullopt, memory},
         localDevice->ComputeTarget((packet[4] & 0x8000u) != 0 ? 32u : 64u),
-        {0, 0, 0, 128}
+        {tablePrefix ? 1u : 0u, 0, tableHeader ? 8u : 0u, tableHeader ? 128u : Graphics::LegacyPushConstantBytes}
     };
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static double captureMs = 0, keyMs = 0, recompileMs = 0, deviceMs = 0;

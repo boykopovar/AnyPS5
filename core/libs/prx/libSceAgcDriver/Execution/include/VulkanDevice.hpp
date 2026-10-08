@@ -36,6 +36,8 @@ public:
     std::string DeviceName() const;
     ShaderRecompiler::SpirvTarget Target() const;
     ShaderRecompiler::SpirvTarget ComputeTarget(std::uint32_t waveSize) const;
+    bool ImageTableLayoutPrefix() const;
+    bool ImageTableHeaderEnabled() const;
     // Distinguishes this device from every earlier one in the process (a memo keyed by the device
     // cannot rely on the pointer, which a replacement may reuse).
     std::uint64_t Serial() const { return serial; }

@@ -3,6 +3,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <algorithm>
 #include <atomic>
@@ -894,7 +895,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         if (++profile.builds % 1000 == 0) profile.merge();
     }
     try {
-        Require(!shaders.empty() && context.limits.maxBoundDescriptorSets >= 1, "shader descriptor set exceeds device limits");
+        Require(!shaders.empty() && context.limits.maxBoundDescriptorSets >= (context.imageTableLayoutPrefix ? 2u : 1u), "shader descriptor set exceeds device limits");
         std::set<std::uint32_t> occupied;
         for (const auto& shader : shaders) {
             Require(shader.program != nullptr, "missing compiled shader");
@@ -906,7 +907,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             const auto firstSampler = samplers.size();
             const auto firstDeferred = deferredImages.size();
             for (const auto& binding : shader.program->bindings) {
-                Require(binding.descriptorSet == 0, "unexpected descriptor set: every shader resource must use descriptor set zero");
+                Require(binding.descriptorSet == (context.imageTableLayoutPrefix ? 1u : 0u), "shader descriptor set does not match the fixed image-table prefix");
                 Require(occupied.insert(binding.binding).second, "duplicate shader binding");
                 const bool addressRole = binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer;
                 const bool bufferRole = addressRole || binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
@@ -2821,8 +2822,14 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
 }
 
 void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
-    if (_set == VK_NULL_HANDLE) return;
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, 0, 1, &_set, 0, nullptr);
+    const auto bind = context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
+    if (context.imageTableLayoutPrefix && context.imageTable != nullptr && context.imageTable->Set() != VK_NULL_HANDLE) {
+        const auto tableSet = context.imageTable->Set();
+        bind(commands, bindPoint, layout, 0, 1, &tableSet, 0, nullptr);
+    }
+    if (_set != VK_NULL_HANDLE) {
+        bind(commands, bindPoint, layout, context.imageTableLayoutPrefix ? 1u : 0u, 1, &_set, 0, nullptr);
+    }
 }
 
 namespace {

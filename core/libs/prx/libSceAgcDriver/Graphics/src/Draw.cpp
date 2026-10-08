@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -1220,6 +1221,11 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
         resources.PatchPushConstants(block);
         stages = PushConstantStages(shaders);
     }
+    if (pipeline.PushConstantBytes() == ImageTablePushConstantBytes) {
+        const std::array<std::uint32_t, 2> tableHeader{};
+        std::memcpy(block.data(), tableHeader.data(), sizeof(tableHeader));
+        for (const auto& shader : shaders) stages |= VulkanStage(shader.stage);
+    }
     if (!state.stages.mesh) {
         pipeline.PushConstants(commands, stages, block);
         return;
@@ -1227,8 +1233,10 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
     const auto firstVertex = draw.indirect ? draw.indirect->vertexConstant : draw.firstVertex;
     const auto firstInstance = draw.indirect ? draw.indirect->instanceConstant : draw.firstInstance;
     const std::array<std::uint32_t, ShaderRecompiler::MeshDrawPushBytes / 4> words{draw.indexCount, firstVertex, firstInstance, draw.indexed ? draw.indexSize : 0u, static_cast<std::uint32_t>(meshArguments), static_cast<std::uint32_t>(meshArguments >> 32u)};
-    static_assert(ShaderRecompiler::MeshDrawPushOffsetBytes + ShaderRecompiler::MeshDrawPushBytes == PipelinePushConstantBytes);
-    std::memcpy(block.data() + ShaderRecompiler::MeshDrawPushOffsetBytes, words.data(), sizeof(words));
+    const auto meshPushOffset = pipeline.PushConstantBytes() - ShaderRecompiler::MeshDrawPushBytes;
+    Require(meshPushOffset == ShaderRecompiler::MeshDrawPushOffsetBytes ||
+        meshPushOffset == ShaderRecompiler::MeshDrawPushOffsetBytes + 8u, "mesh draw push constant offset is inconsistent with the pipeline prefix");
+    std::memcpy(block.data() + meshPushOffset, words.data(), sizeof(words));
     pipeline.PushConstants(commands, stages | VK_SHADER_STAGE_MESH_BIT_EXT, block);
 }
 
@@ -1403,7 +1411,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     if (drawBindings != nullptr) {
         const auto set = drawBindings->allocation.set;
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
+        const auto bind = context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
+        if (context.imageTableLayoutPrefix && context.imageTable != nullptr && context.imageTable->Set() != VK_NULL_HANDLE) {
+            const auto tableSet = context.imageTable->Set();
+            bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &tableSet, 0, nullptr);
+        }
+        bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), context.imageTableLayoutPrefix ? 1u : 0u, 1, &set, 0, nullptr);
     } else {
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     }

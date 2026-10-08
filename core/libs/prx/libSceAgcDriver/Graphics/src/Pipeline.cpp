@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <algorithm>
 #include <array>
@@ -101,6 +102,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     Require(!depthBounds || context.depthBounds, "device does not support the depth bounds test");
     Require(!depthBias || state.depthBiasClamp == 0.0f || context.depthBiasClamp, "device does not support depth bias clamping");
     Require(!state.negativeOneToOne || context.depthClipControl, "negative-one-to-one depth clipping requires VK_EXT_depth_clip_control with depthClipControl enabled");
+    Require(!context.imageTableLayoutPrefix || (context.imageTable != nullptr && context.imageTable->Layout() != VK_NULL_HANDLE), "image table layout prefix is enabled without a valid set layout");
     if (state.rectList) Require(context.tessellationShader && context.limits.maxTessellationPatchSize >= 4, "rect-list requires tessellation with four output control points");
     if (state.stages.tessellation) {
         Require(context.tessellationShader, "device does not support tessellation shaders");
@@ -113,8 +115,11 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(invocations <= context.meshLimits.maxMeshWorkGroupInvocations && invocations <= context.meshLimits.maxMeshWorkGroupSize[0], "mesh workgroup exceeds device limits");
         Require(mesh.maxVertices <= context.meshLimits.maxMeshOutputVertices && mesh.maxPrimitives <= context.meshLimits.maxMeshOutputPrimitives && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.meshLimits.maxMeshSharedMemorySize, "mesh output or LDS exceeds device limits");
     }
-    const auto pushStages = PushConstantStages(shaders);
-    Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PipelinePushConstantBytes, "graphics push constant range exceeds device limit");
+    auto pushStages = PushConstantStages(shaders);
+    if (context.imageTableHeaderEnabled) {
+        for (const auto& shader : shaders) pushStages |= VulkanStage(shader.stage);
+    }
+    Require(pushStages == 0 || context.limits.maxPushConstantsSize >= context.pushConstantBytes, "graphics push constant range exceeds device limit");
     try {
         std::vector<VkPipelineShaderStageCreateInfo> stages(shaders.size());
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
@@ -132,10 +137,11 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
         const auto setLayout = resources.Layout();
-        const VkPushConstantRange push{pushStages, 0, PipelinePushConstantBytes};
+        const std::array<VkDescriptorSetLayout, 2> setLayouts{context.imageTableLayoutPrefix ? context.imageTable->Layout() : VK_NULL_HANDLE, setLayout};
+        const VkPushConstantRange push{pushStages, 0, context.pushConstantBytes};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutInfo.setLayoutCount = 1;
-        layoutInfo.pSetLayouts = &setLayout;
+        layoutInfo.setLayoutCount = context.imageTableLayoutPrefix ? 2u : 1u;
+        layoutInfo.pSetLayouts = context.imageTableLayoutPrefix ? setLayouts.data() : &setLayout;
         layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
         layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "vkCreatePipelineLayout graphics");
@@ -342,7 +348,7 @@ void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
 
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
     if (stages == 0) return;
-    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, stages, 0, PipelinePushConstantBytes, bytes.data());
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, stages, 0, context.pushConstantBytes, bytes.data());
 }
 
 namespace {

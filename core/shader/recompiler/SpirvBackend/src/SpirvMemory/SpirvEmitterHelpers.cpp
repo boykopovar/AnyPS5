@@ -109,7 +109,7 @@ std::uint32_t StorageBufferU64BlockType(SpirvEmitterState& state) {
 }
 
 std::uint32_t PushConstantArrayType(SpirvEmitterState& state) {
-    const auto count = ConstantU32(state, PushData::DwordCount);
+    const auto count = ConstantU32(state, PushData::BlockDwordCount);
     return state.module.DecoratedType(spv::OpTypeArray,
         {{spv::OpDecorate, {spv::DecorationArrayStride, static_cast<std::uint32_t>(sizeof(std::uint32_t))}}},
         TypeU32(state), count);
@@ -143,7 +143,7 @@ void CheckBindings(const IrProgram& program, const BindingAllocationResult& bind
         if (physical.count != expectedCount) {
             FailEmit("descriptor binding " + std::to_string(index) + " has an incorrect descriptor count");
         }
-        if (physical.descriptorSet != 0u) {
+        if (physical.descriptorSet != bindings.layout.descriptorSet) {
             FailEmit("descriptor binding " + std::to_string(index) + " is bound to the wrong descriptor set");
         }
         if (physical.binding != NativeBinding(stage, logical.kind)) {
@@ -388,7 +388,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         const auto Define = [&](std::uint32_t type, const char* name, std::uint32_t storage = spv::StorageClassStorageBuffer) {
             const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
             state.module.AddName(variable, name);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, 0u);
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, layout.descriptorSet);
             state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(stage, binding.kind));
             return variable;
         };

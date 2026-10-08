@@ -8,6 +8,10 @@
   - libstdc++-6.dll
   - libwinpthread-1.dll
 
+### Graphics
+
+- The device-owned [image descriptor table](../../core/libs/prx/libSceAgcDriver/Graphics/include/ImageTable.hpp) has a logical address space of 16,386 entries and resident physical capacity bounded by update-after-bind limits. Physical slots stay assigned while resident; eviction first retires a slot and it is reusable only after the last-used, nonzero submission serial completes. The serials must be monotonic because the single device queue completes submissions in order. Descriptor deltas are staged per frame with owners retained, and dirty slots coalesce into contiguous runs with version snapshots so an older flush cannot clear a newer update. `APS5_IMAGE_TABLE_MODE=shadow` enables the table-set/push-constant prefix for guest graphics and compute pipelines only when a 136-byte push-constant range is supported; legacy resources move to set 1, while rendering still uses legacy descriptors and logs that table comparison is pending Stage 3 (it does not report a pass). The prefix header is reserved but unused, and utility/driver-generated pipeline layouts are not migrated. `on` remains a legacy-rendering fallback until Stage 4 provides logical-to-physical mapping. `off` is the default. Descriptor writes/flush, table comparison, and shader table indexing remain unwired.
+
 ### Silent stubs
 
 Throughout the project, every function at every stage either **does exactly what it's supposed to or throws an exception**. Everywhere... except:

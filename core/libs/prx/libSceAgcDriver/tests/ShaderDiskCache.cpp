@@ -191,6 +191,7 @@ CompiledVariant sampleVariant() {
     info.info.vertexOffsetSgpr = 6;
     info.info.hasBitwiseXor = true;
     info.info.usesDma = true;
+    info.bindings.descriptorSet = 1;
     info.bindings.pushDataStartDword = 2;
     info.bindings.memoryOffsetDword = 1;
     info.bindings.memoryOffsetCount = 5;
@@ -200,6 +201,7 @@ CompiledVariant sampleVariant() {
     variant.bindings.pushConstantOffsetBytes = 16;
     variant.bindings.pushConstantSizeBytes = 112;
     variant.bindings.bindings = {sampleBinding(3)};
+    variant.bindings.bindings.front().descriptorSet = 1;
     variant.bindings.pushConstants = {std::byte{9}, std::byte{8}};
     return variant;
 }

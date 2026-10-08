@@ -13,11 +13,15 @@ ShaderRecompiler::RecompileResult Driver::compileDrawStage(std::size_t i, std::u
     phaseTiming.Phase(DrawRowVectors);
     const auto& program = programs[i];
     const auto waveSize = program.binary.stage == Stage::Fragment ? graphics.stages.fragmentWaveSize : graphics.stages.vertexWaveSize;
+    const auto pushLimit = graphics.stages.mesh
+        ? ShaderRecompiler::MeshDrawPushOffsetBytes + (localDevice->ImageTableHeaderEnabled() ? 8u : 0u)
+        : (localDevice->ImageTableHeaderEnabled() ? Graphics::ImageTablePushConstantBytes : Graphics::LegacyPushConstantBytes);
+    require(pushOffset <= pushLimit, "shader push constant offset exceeds the selected pipeline layout");
     ShaderRecompiler::RecompileRequest request{
         program.binary,
         {waveSize, program.firstUserSgpr, program.userData, std::nullopt, program.binary.stage == Stage::Fragment ? std::optional(pixel) : std::nullopt, vertexInfos[i], memory},
         localDevice->Target(),
-        {0, 0, pushOffset, (graphics.stages.mesh ? ShaderRecompiler::MeshDrawPushOffsetBytes : Graphics::PipelinePushConstantBytes) - pushOffset},
+        {localDevice->ImageTableLayoutPrefix() ? 1u : 0u, 0, pushOffset, pushLimit - pushOffset},
         ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, graphics.stages.mesh, graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}}
     };
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;

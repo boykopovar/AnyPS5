@@ -9,7 +9,9 @@
 
 namespace AgcDriver::Graphics {
 
-inline constexpr std::uint32_t PipelinePushConstantBytes = 128;
+inline constexpr std::uint32_t LegacyPushConstantBytes = 128;
+inline constexpr std::uint32_t ImageTablePushConstantBytes = 136;
+inline constexpr std::uint32_t PipelinePushConstantBytes = ImageTablePushConstantBytes;
 
 struct CompiledShader {
     ShaderRecompiler::ShaderStage stage;

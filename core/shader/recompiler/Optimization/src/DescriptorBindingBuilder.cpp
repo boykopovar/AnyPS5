@@ -310,7 +310,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     std::size_t readOnlyHere = 0;
     for (const IrDescriptorBinding& logical : layout.descriptors) {
         DescriptorBinding physical;
-        physical.descriptorSet = 0u;
+        physical.descriptorSet = layout.descriptorSet;
         physical.binding = NativeBinding(stage, logical.kind);
         physical.count = logical.resources.empty() ? 1u : static_cast<std::uint32_t>(logical.resources.size());
         physical.kind = PhysicalKindFor(logical.kind);

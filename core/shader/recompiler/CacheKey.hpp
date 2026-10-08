@@ -32,6 +32,10 @@ public:
         append(key, request.context.vertex);
         appendMesh(key, request);
         append(key, request.target);
+        append(key, request.layout.descriptorSet);
+        append(key, request.layout.firstBinding);
+        append(key, request.layout.pushConstantOffsetBytes);
+        append(key, request.layout.pushConstantSizeBytes);
         append(key, DebugProbeActive());
         append(key, RayTracingStrict());
         append(key, RayTracingMiss());
@@ -48,6 +52,10 @@ public:
         append(key, request.context.waveSize);
         append(key, request.context.userDataBaseRegister);
         append(key, request.context.userData.size());
+        append(key, request.layout.descriptorSet);
+        append(key, request.layout.firstBinding);
+        append(key, request.layout.pushConstantOffsetBytes);
+        append(key, request.layout.pushConstantSizeBytes);
         append(key, request.context.compute);
         append(key, request.context.pixel);
         append(key, request.context.vertex);

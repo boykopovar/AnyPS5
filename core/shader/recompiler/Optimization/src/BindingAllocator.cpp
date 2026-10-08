@@ -73,8 +73,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
                                           : "shader binding layout failed: shader info is not ready");
     }
-    if (layout.descriptorSet != 0u) {
-        fail("shader binding layout failed: descriptor set must be 0");
+    if (layout.descriptorSet > 1u) {
+        fail("shader binding layout failed: descriptor set exceeds the supported fixed prefix");
     }
     if (layout.firstBinding != 0u) {
         fail("shader binding layout failed: first binding must be 0");
@@ -85,20 +85,26 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (layout.pushConstantSizeBytes % 4u != 0u) {
         fail("shader binding layout failed: push constant size is not dword-aligned");
     }
-    if (layout.pushConstantOffsetBytes + layout.pushConstantSizeBytes > NativePushConstantSize) {
+    const std::uint32_t pushConstantLimit = NativePushConstantSize + (layout.descriptorSet == 1u ? 8u : 0u);
+    if (layout.pushConstantOffsetBytes + layout.pushConstantSizeBytes > pushConstantLimit) {
         fail("shader binding layout failed: push constant range exceeds the native push constant size");
     }
 
     const ShaderInfo& info = program.Resources().info;
 
     IrBindingLayout next;
+    next.descriptorSet = layout.descriptorSet;
     next.userDataRegisters = collectUserData(program);
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
     next.memoryOffsetCount = static_cast<std::uint32_t>(info.buffers.size());
     next.dispatchThreadLimit = info.dispatchThreadLimit;
     const std::uint32_t pushDataStartDword = layout.pushConstantOffsetBytes / 4u;
     const std::uint32_t pushConstantSizeDwords = layout.pushConstantSizeBytes / 4u;
-    const bool usesPushData = next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushConstantSizeDwords;
+    const std::uint32_t pushBlockDwords = PushData::DwordCount + (layout.descriptorSet == 1u ? 2u : 0u);
+    const bool usesPushData = next.ShaderDataDwords() != 0u &&
+        pushDataStartDword <= pushBlockDwords &&
+        next.ShaderDataDwords() <= pushBlockDwords - pushDataStartDword &&
+        next.ShaderDataDwords() <= pushConstantSizeDwords;
     next.pushDataStartDword = usesPushData ? pushDataStartDword : PushData::NoStart;
 
     if (!info.buffers.empty()) {

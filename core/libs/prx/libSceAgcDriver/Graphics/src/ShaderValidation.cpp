@@ -439,7 +439,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const auto& array = module.Type(type[2]);
             Require(array.size() == 4 && (array[0] & 0xffffu) == spv::OpTypeArray && module.Signature(array[2]) == "u32", "push constant member must be an array of u32");
             const auto length = module.constants.find(array[3]);
-            Require(length != module.constants.end() && length->second == PipelinePushConstantBytes / 4, "push constant array must contain 32 elements");
+            Require(length != module.constants.end() && length->second == ShaderRecompiler::PushData::BlockDwordCount, "push constant array has an unexpected size");
             const auto stride = module.decorations[type[2]].stride;
             Require(stride.has_value() && *stride == 4, "push constant array must have an ArrayStride of 4");
         } else if (variable.storage == spv::StorageClassWorkgroup) {

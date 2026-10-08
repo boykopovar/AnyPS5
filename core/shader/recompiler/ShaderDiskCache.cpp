@@ -347,6 +347,7 @@ void decodeResult(Reader& reader, RecompileResult& result) {
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
+    writer.Value(layout.descriptorSet);
     writer.Value(layout.pushDataStartDword);
     writer.Value(layout.memoryOffsetDword);
     writer.Value(layout.memoryOffsetCount);
@@ -359,6 +360,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
 }
 
 void decodeLayout(Reader& reader, IrBindingLayout& layout) {
+    reader.Value(layout.descriptorSet);
     reader.Value(layout.pushDataStartDword);
     reader.Value(layout.memoryOffsetDword);
     reader.Value(layout.memoryOffsetCount);

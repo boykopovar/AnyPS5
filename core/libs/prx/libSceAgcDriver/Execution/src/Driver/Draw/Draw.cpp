@@ -146,7 +146,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     std::vector<Graphics::CompiledShader> stages;
     results.reserve(programs.size() + (graphics.rectList ? 2u : 0u));
     stages.reserve(programs.size());
-    std::uint32_t pushCursorBytes = 0;
+    std::uint32_t pushCursorBytes = localDevice->ImageTableHeaderEnabled() ? 8u : 0u;
 
     std::vector<const ShaderRecompiler::RecompileResult*> programResults(programs.size(), nullptr);
 
@@ -214,7 +214,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         } else if (i == 0) {
             fold(result, drawParameters);
         }
-        require(result.pushConstants.size() <= Graphics::PipelinePushConstantBytes - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
+        require(result.pushConstants.size() <= (localDevice->ImageTableHeaderEnabled() ? Graphics::ImageTablePushConstantBytes : Graphics::LegacyPushConstantBytes) - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
         stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes});
         pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
     }

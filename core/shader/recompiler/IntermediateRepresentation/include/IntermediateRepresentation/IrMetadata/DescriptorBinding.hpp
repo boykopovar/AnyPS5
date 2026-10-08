@@ -26,6 +26,7 @@ enum class DescriptorBindingKind : std::uint32_t {
 
 struct PushData {
     static constexpr std::uint32_t DwordCount = 32;
+    static constexpr std::uint32_t BlockDwordCount = DwordCount + 2;
     static constexpr std::uint32_t MeshDrawDwordCount = 6;
     static constexpr std::uint32_t NoStart = std::numeric_limits<std::uint32_t>::max();
     std::array<std::uint32_t, DwordCount> dwords {};
@@ -46,6 +47,7 @@ struct IrDescriptorBinding {
 };
 
 struct IrBindingLayout {
+    std::uint32_t descriptorSet = 0;
     std::uint32_t pushDataStartDword = PushData::NoStart;
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t memoryOffsetCount = 0;

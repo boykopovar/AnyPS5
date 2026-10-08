@@ -22,8 +22,11 @@ class DrawQueue;
 class GraphicsPipelineCache;
 class Recorder;
 class DescriptorCache;
+class ImageTable;
 class SamplerCache;
 class ShaderResources;
+
+enum class ImageTableMode : std::uint8_t { Off, Shadow, On };
 
 inline void Require(bool condition, const std::string& reason) {
     if (!condition) throw std::runtime_error("AGC graphics: " + reason);
@@ -135,6 +138,14 @@ struct Context {
     // VK_EXT_descriptor_indexing with non-uniform sampled/storage image array indexing enabled
     // (bindless image tables in graphics stages).
     bool descriptorIndexing = false;
+    // Descriptor indexing features needed by a persistent, partially-bound image table.
+    bool descriptorTableUpdateAfterBind = false;
+    // Sampled-image slots supported by the update-after-bind device limits, capped by ImageTable.
+    std::uint32_t descriptorTableCapacity = 0;
+    ImageTable* imageTable = nullptr;
+    bool imageTableLayoutPrefix = false;
+    bool imageTableHeaderEnabled = false;
+    std::uint32_t pushConstantBytes = 128;
     bool imageInt64Atomics = false;
     bool geometryShader = false;
     bool sampleRateShading = false;
