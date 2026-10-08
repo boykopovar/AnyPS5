@@ -36,7 +36,7 @@ public:
         block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
 #endif
         Require(block != nullptr, "masked global store: cannot allocate the guest block");
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }
     ~GuestBlock() { GuestAllocations::Mutation().Remove(block); }
     GuestBlock(const GuestBlock&) = delete;

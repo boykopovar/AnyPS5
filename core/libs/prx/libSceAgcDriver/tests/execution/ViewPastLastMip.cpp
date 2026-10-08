@@ -95,7 +95,7 @@ int main() {
         std::fill(texels, texels + SurfaceBytes / 4u, Untouched);
         {
             GuestAllocations::Mutation mutation;
-            mutation.Add(texels, SurfaceBytes, true, true);
+            mutation.Add(texels, SurfaceBytes, true, true, true);
         }
         Store(*device, texels, 3u, StorePastCode);
         Check(texels, false, "store through level 3");

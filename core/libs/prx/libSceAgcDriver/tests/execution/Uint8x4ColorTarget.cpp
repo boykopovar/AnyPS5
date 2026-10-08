@@ -101,7 +101,7 @@ struct Block {
         Require(data != nullptr, "cannot allocate the color target");
         Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "the color target is not write-watched");
         GuestAllocations::Mutation mutation;
-        mutation.Add(data, bytes, true, true);
+        mutation.Add(data, bytes, true, true, true);
     }
     ~Block() {
         AgcDriver::Graphics::StorageTexture::FlushPending(Address(), bytes, nullptr, "test release");

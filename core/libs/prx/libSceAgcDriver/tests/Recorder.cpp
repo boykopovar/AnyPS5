@@ -742,7 +742,7 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     const auto* import = HostImportFor(context, address, bytes);
     if (import == nullptr) {
@@ -816,7 +816,7 @@ void remappedImportTests(const Device& device) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     if (HostImportFor(context, address, bytes) == nullptr) {
         std::cout << "host import of the remap test block refused: remapped imports not tested\n";
@@ -827,7 +827,7 @@ void remappedImportTests(const Device& device) {
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block);
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     Require(HostImportFor(context, address, bytes) != nullptr, "the remapped range was not imported again");
     const auto second = HostImportSerial(context, address, bytes, true);
@@ -861,7 +861,7 @@ void movedMetadataTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -954,7 +954,7 @@ void viewPastLastMipTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -1038,7 +1038,7 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     if (HostImportFor(context, address, bytes) == nullptr) {
         std::cout << "host import of the test block refused: resource read notes not tested\n";
@@ -1146,7 +1146,7 @@ void misalignedRegionTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -1234,7 +1234,7 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -1309,7 +1309,7 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -1461,7 +1461,7 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     alignas(64) static std::byte other[64];
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(other, sizeof(other), true, true);
+        mutation.Add(other, sizeof(other), true, true, true);
     }
     {
         GuestAllocations::Mutation mutation;
@@ -1506,7 +1506,7 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -1578,7 +1578,7 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -1732,7 +1732,7 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block);
-        mutation.Add(block, static_cast<std::size_t>(5 * unit), true, true);
+        mutation.Add(block, static_cast<std::size_t>(5 * unit), true, true, true);
     }
     Require(HostImportFor(context, address, bytes) == nullptr, "a shrunk registration still imports the old range");
     Require(!AnyShadowedOverlaps(address, bytes), "the retired import's shadow survived");
@@ -1775,7 +1775,7 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -1962,7 +1962,7 @@ void hostImportUnmapTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     const HostImport* imported = nullptr;
     {
@@ -2036,7 +2036,7 @@ void importWatchTests(const Device& device) {
     };
     const auto registerRange = [](void* block, std::size_t bytes) {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     };
     const auto unregisterRange = [](void* block) {
         GuestAllocations::Mutation mutation;
@@ -2140,7 +2140,7 @@ void staleGenerationTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -2282,7 +2282,7 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
         const auto address = blockAddress + test.offset;
         {
             GuestAllocations::Mutation mutation;
-            mutation.Add(block, bytes, true, true);
+            mutation.Add(block, bytes, true, true, true);
         }
         struct Unregister {
             const Context& context;
@@ -2385,7 +2385,7 @@ void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
             const auto address = blockAddress + offset;
             {
                 GuestAllocations::Mutation mutation;
-                mutation.Add(block, bytes, true, true);
+                mutation.Add(block, bytes, true, true, true);
             }
             struct Unregister {
                 const Context& context;
@@ -2509,7 +2509,7 @@ void importWindowTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -2897,7 +2897,7 @@ void pendingKeyStoreTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -2964,7 +2964,7 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -3036,7 +3036,7 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -3563,7 +3563,7 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     const auto keysAddress = address + surfaceBytes;
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
@@ -3673,7 +3673,7 @@ void denormalClearTests(const Device& device, Recorder& recorder) {
     const auto address = reinterpret_cast<std::uint64_t>(block);
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
+        mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;

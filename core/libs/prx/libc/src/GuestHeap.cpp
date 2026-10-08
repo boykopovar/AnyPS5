@@ -210,7 +210,7 @@ void* allocate(GuestAllocations::Mutation& mutation, std::size_t alignment, std:
     reinterpret_cast<void**>(pointer)[-2] = raw;
     reinterpret_cast<std::size_t*>(pointer)[-1] = blockBytes;
     try {
-        mutation.Add(pointer, bytes, true, true);
+        mutation.Add(pointer, bytes, true, true, true);
     } catch (...) {
         rawFree(raw, blockBytes);
         throw;

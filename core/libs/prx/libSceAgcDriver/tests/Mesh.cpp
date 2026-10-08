@@ -288,7 +288,7 @@ int main() {
         auto* record = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));
         {
             GuestAllocations::Mutation mutation;
-            mutation.Add(record, recordBlockBytes, true, true);
+            mutation.Add(record, recordBlockBytes, true, true, true);
         }
         const auto drawIndirect = [&](std::uint32_t count, std::uint32_t instances, std::uint32_t first) {
             const std::array<std::uint32_t, 5> words{count, instances, first, 0u, 0u};

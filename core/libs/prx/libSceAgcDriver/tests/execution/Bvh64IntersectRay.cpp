@@ -152,7 +152,7 @@ public:
 #endif
         Require(block != nullptr, "bvh64 intersect ray: cannot allocate the guest block");
         std::memset(block, 0, BlockBytes);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, false);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, false, true);
     }
 
     ~GuestBlock() {

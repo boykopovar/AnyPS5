@@ -58,7 +58,7 @@ public:
         block = static_cast<std::uint8_t*>(std::aligned_alloc(GuestBytes, 2 * GuestBytes));
 #endif
         Require(block != nullptr, "pixel interlock: cannot allocate the guest block");
-        GuestAllocations::Mutation().Add(block, GuestBytes, true, true);
+        GuestAllocations::Mutation().Add(block, GuestBytes, true, true, true);
     }
 
     ~GuestCounters() {

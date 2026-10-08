@@ -100,7 +100,7 @@ int main() {
         const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + (MaxSurfaces - 1u) * Stride);
         {
             GuestAllocations::Mutation mutation;
-            mutation.Add(texels, blockBytes, true, true);
+            mutation.Add(texels, blockBytes, true, true, true);
         }
         const auto release = [&] {
             AgcDriver::Graphics::ClearCachedTextures(device->Device());

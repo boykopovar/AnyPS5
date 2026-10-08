@@ -35,7 +35,7 @@ public:
 #endif
         Require(block != nullptr, "host import teardown: cannot allocate the guest block");
         std::memset(block, 0, BlockBytes);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }
 
     ~GuestBlock() {

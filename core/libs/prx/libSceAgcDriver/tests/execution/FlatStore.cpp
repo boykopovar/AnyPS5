@@ -47,7 +47,7 @@ public:
 #endif
         Require(block != nullptr, "flat store: cannot allocate the guest block");
         Clear();
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, writable);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, writable, true);
     }
 
     ~GuestBlock() {

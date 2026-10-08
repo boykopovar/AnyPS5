@@ -1810,7 +1810,7 @@ void GuestBufferMemory::AcquireRegistered() {
         std::vector<AddressCopy> copies;
         std::vector<std::uint64_t> imported;
         for (const auto& range : lease) {
-            if (!range->readable) continue;
+            if (!range->readable || !range->gpu) continue;
             validate(range->address, range->bytes);
             Region region{range->address, range->address + range->bytes, range->writable, {}, nullptr};
             const HostImport* entry = nullptr;

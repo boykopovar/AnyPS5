@@ -166,7 +166,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true);
+        GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true, true);
         constexpr Format r8{R8UInt, 1u, 1u};
         constexpr Format r16{R16UInt, 2u, 1u};
         constexpr Format rg8{Rg8UInt, 1u, 2u};

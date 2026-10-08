@@ -163,7 +163,7 @@ public:
 #endif
         Require(memory != nullptr, "cannot allocate the texture block");
         std::memset(memory, 0x5a, BlockBytes);
-        GuestAllocations::Mutation().Add(memory, BlockBytes, true, true);
+        GuestAllocations::Mutation().Add(memory, BlockBytes, true, true, true);
     }
 
     ~Block() {

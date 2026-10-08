@@ -94,7 +94,7 @@ int main() {
         std::fill(texels, texels + BlockBytes / 4u, Untouched);
         {
             GuestAllocations::Mutation mutation;
-            mutation.Add(texels, BlockBytes, true, true);
+            mutation.Add(texels, BlockBytes, true, true, true);
         }
         const auto surface = AddressOf(texels);
         const auto chainBytes = GuestBytes(texels, 1u);

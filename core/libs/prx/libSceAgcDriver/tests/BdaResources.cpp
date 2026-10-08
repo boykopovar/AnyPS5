@@ -53,7 +53,7 @@ void importCrossingTests(const Context& context, const BdaTestAccess& access) {
     const auto registry = [&](bool add) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
         for (auto* range : {guest, guest + half}) {
-            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, half, true, false);
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, half, true, false, true);
             else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
         }
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
@@ -108,7 +108,7 @@ void importedHeapMirrorTests(const Context& context, const BdaTestAccess& access
     importing.hostImportAlignment = bytes;
     const auto registry = [&](bool add) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, false);
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, false, true);
         else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
@@ -163,7 +163,7 @@ void importedFreshTests(const Context& context) {
     importing.hostImportAlignment = blockBytes;
     const auto registry = [&](bool add) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, reinterpret_cast<void*>(base), blockBytes, true, true);
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, reinterpret_cast<void*>(base), blockBytes, true, true, true);
         else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, reinterpret_cast<void*>(base));
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
@@ -279,7 +279,7 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     const auto address = reinterpret_cast<std::uintptr_t>(block);
     const auto registry = [&](bool add, bool writable) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, writable);
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, bytes, true, writable, true);
         else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
@@ -370,7 +370,7 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
         const auto registerPair = [&](bool add) {
             auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
             for (auto* range : {first, second}) {
-                if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, half, true, false);
+                if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, half, true, false, true);
                 else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
             }
             GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
@@ -423,7 +423,7 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
         GuestAllocations::GuestAllocationsInvalidate_nid_postfix(page, 4096);
         const auto registerRange = [&](bool add) {
             auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
-            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, raw, size, true, true);
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, raw, size, true, true, true);
             else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, raw);
             GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
         };
@@ -483,7 +483,7 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
         const auto change = [&](std::initializer_list<std::size_t> added, std::initializer_list<std::size_t> removed) {
             auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
             for (const auto index : removed) GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, heaps[index]);
-            for (const auto index : added) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, heaps[index], sizes[index], true, false);
+            for (const auto index : added) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, heaps[index], sizes[index], true, false, true);
             GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
         };
         const auto mirrored = [&](std::size_t index) {
@@ -539,6 +539,34 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
 }
 
+}
+
+void gpuMappingTests(const Context& context) {
+    constexpr std::size_t bytes = 65536;
+    auto* cpu = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
+    auto* gpu = static_cast<std::byte*>(::operator new(bytes, std::align_val_t{bytes}));
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(cpu, bytes, true, true, false);
+        mutation.Add(gpu, bytes, true, true, true);
+    }
+    {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        const auto has = [&](const std::byte* block) { return std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == reinterpret_cast<std::uintptr_t>(block); }); };
+        Require(has(gpu), "a GPU-mapped range is missing from the BDA table");
+        Require(!has(cpu), "a range mapped without GPU access is in the BDA table");
+        leased.WriteBack();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(cpu);
+        mutation.Remove(gpu);
+    }
+    ::operator delete(cpu, std::align_val_t{bytes});
+    ::operator delete(gpu, std::align_val_t{bytes});
 }
 
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
@@ -694,6 +722,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importedHeapMirrorTests(context, access);
     importWatchTests();
     importedFreshTests(context);
+    gpuMappingTests(context);
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");

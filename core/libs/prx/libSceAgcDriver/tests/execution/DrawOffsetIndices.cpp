@@ -221,7 +221,7 @@ public:
         std::copy(instance.begin(), instance.end(), BufferTable.begin() + 4);
         records = static_cast<std::uint32_t*>(::operator new(RecordBytes, std::align_val_t{65536}));
         GuestAllocations::Mutation mutation;
-        mutation.Add(records, RecordBytes, true, true);
+        mutation.Add(records, RecordBytes, true, true, true);
     }
 
     std::vector<std::uint32_t> UserData(std::uint32_t baseVertex, std::uint32_t startInstance) const {

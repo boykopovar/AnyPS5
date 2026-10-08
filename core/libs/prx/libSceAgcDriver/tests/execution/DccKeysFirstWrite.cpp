@@ -104,7 +104,7 @@ public:
 #endif
         Require(block != nullptr, "DCC keys first write: cannot allocate the guest block");
         Require(!watched || AgcDriver::GuestMemory::Watched(AddressOf(block), BlockBytes), "DCC keys first write: the watched guest block is not write-watched");
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }
 
     ~GuestBlock() {

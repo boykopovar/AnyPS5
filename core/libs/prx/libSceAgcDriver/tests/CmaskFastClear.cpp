@@ -177,8 +177,8 @@ int main() {
         }
         {
             GuestAllocations::Mutation mutation;
-            mutation.Add(SurfaceStorage.data(), SurfaceStorage.size(), true, true);
-            mutation.Add(Cmask.data(), Cmask.size(), true, true);
+            mutation.Add(SurfaceStorage.data(), SurfaceStorage.size(), true, true, true);
+            mutation.Add(Cmask.data(), Cmask.size(), true, true, true);
         }
         run(*device, ColorTileMode::Linear, "linear");
         run(*device, ColorTileMode::RenderTarget, "SW_64KB_R_X");

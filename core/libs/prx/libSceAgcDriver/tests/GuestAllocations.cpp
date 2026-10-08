@@ -34,8 +34,8 @@ void RunGuestLeaseWaitTests() {
     const auto address = reinterpret_cast<std::uintptr_t>(memory.data());
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(memory.data(), 64, true, true);
-        mutation.Add(memory.data() + 64, 64, true, true);
+        mutation.Add(memory.data(), 64, true, true, true);
+        mutation.Add(memory.data() + 64, 64, true, true, true);
     }
     auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     std::erase_if(lease, [&](const auto& range) { return range->address != address; });
@@ -83,7 +83,7 @@ void RunGuestAllocationTests() {
         reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
         GuestAllocations::Mutation mutation;
         bool applied = false;
-        reject([&] { mutation.Protect(pointer, 32, true, false, [&] { applied = true; }); });
+        reject([&] { mutation.Protect(pointer, 32, true, false, true, [&] { applied = true; }); });
         Require(!applied, "pinned guest protection changed");
     }
     pointer = GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64);
@@ -102,9 +102,9 @@ void RunGuestAllocationTests() {
     std::array<std::byte, 128> mapping{};
     {
         GuestAllocations::Mutation mutation;
-        mutation.Add(mapping.data(), mapping.size(), true, true);
+        mutation.Add(mapping.data(), mapping.size(), true, true, true);
         reject([&] { mutation.RequireAvailable(mapping.data() + 32, 16); });
-        mutation.Protect(mapping.data() + 32, 32, true, false, [] {});
+        mutation.Protect(mapping.data() + 32, 32, true, false, true, [] {});
     }
     {
         const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
@@ -120,7 +120,7 @@ void RunGuestAllocationTests() {
             applied = true;
         });
         Require(applied, "partial unmap callback was not called");
-        reject([&] { mutation.Protect(mapping.data(), mapping.size(), true, true, [] {}); });
+        reject([&] { mutation.Protect(mapping.data(), mapping.size(), true, true, true, [] {}); });
         mutation.Unmap(mapping.data(), 32, [&](const void*, std::size_t, const void* allocation, bool last) {
             Require(allocation == mapping.data() && !last, "first fragment released remaining mapping");
         });
@@ -144,10 +144,11 @@ void RunGuestAllocationTests() {
         imageRangeCount = lease.size();
         const auto found = std::find_if(lease.begin(), lease.end(), [&](const auto& range) { return imageAddress >= range->address && imageAddress - range->address < range->bytes; });
         Require(found != lease.end() && (*found)->writable && !(*found)->releasable, "main image registration is missing or releasable");
+        Require(std::none_of(lease.begin(), lease.end(), [](const auto& range) { return !range->releasable && range->gpu; }), "main image registered as GPU-mapped");
         allocationAddress = (*found)->allocationAddress;
         GuestAllocations::Mutation mutation;
         bool applied = false;
-        reject([&] { mutation.Protect(&imageProbe, 1, true, false, [&] { applied = true; }); });
+        reject([&] { mutation.Protect(&imageProbe, 1, true, false, true, [&] { applied = true; }); });
         Require(!applied, "pinned image protection changed");
     }
     {
@@ -157,12 +158,12 @@ void RunGuestAllocationTests() {
         bool applied = false;
         reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
         Require(!applied, "image memory was unmapped");
-        reject([&] { mutation.Protect(&imageProbe, 1, true, false, [] { throw std::runtime_error("host protection failure"); }); });
+        reject([&] { mutation.Protect(&imageProbe, 1, true, false, true, [] { throw std::runtime_error("host protection failure"); }); });
     }
     Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().size() == imageRangeCount, "failed image protection changed registry ranges");
     {
         GuestAllocations::Mutation mutation;
-        mutation.Protect(&imageProbe, 1, true, true, [] {});
+        mutation.Protect(&imageProbe, 1, true, true, true, [] {});
         bool applied = false;
         reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
         Require(!applied, "split image memory became releasable");

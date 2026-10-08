@@ -35,7 +35,7 @@ public:
 #endif
         Require(block != nullptr, "constant store: cannot allocate the guest block");
         Clear();
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }
 
     ~GuestBlock() {
