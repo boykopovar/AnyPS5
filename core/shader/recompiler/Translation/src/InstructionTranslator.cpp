@@ -341,6 +341,14 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         if (loaded(PixelInput::Ancillary)) {
             entryIr.SetVectorReg(static_cast<VectorReg>(vgpr(PixelInput::Ancillary)), builtin(StageInputKind::PackedAncillary));
         }
+        if (loaded(PixelInput::LineStipple)) {
+            entryIr.SetVectorReg(static_cast<VectorReg>(vgpr(PixelInput::LineStipple)), entryIr.Constant(0u));
+        }
+        if (loaded(PixelInput::PositionFixedPoint)) {
+            IrValue& x = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(builtin(StageInputKind::FragCoord, 0u))});
+            IrValue& y = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(builtin(StageInputKind::FragCoord, 1u))});
+            entryIr.SetVectorReg(static_cast<VectorReg>(vgpr(PixelInput::PositionFixedPoint)), entryIr.BitwiseOr(entryIr.BitwiseAnd(x, entryIr.Constant(0xffffu)), entryIr.ShiftLeftLogical(y, entryIr.Constant(16u))));
+        }
     } else if (options.stage == ShaderStageKind::Vertex) {
         if (options.userDataBaseRegister >= 8u) {
             entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.Constant(options.waveSize | (options.waveSize << 8u)));
