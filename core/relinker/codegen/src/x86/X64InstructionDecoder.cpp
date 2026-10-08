@@ -105,6 +105,8 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
 
     bool hasModRm = false;
     std::size_t immediateSize = ImmSizeNone;
+    const bool rexWPresent = rexPresent && (rex & RexWBit) != 0;
+    const bool effectiveOperandSizeOverride = operandSizeOverride && !rexWPresent;
 
     const bool vectorImmediate = vexMap == 1 && ((opcode >= 0x70 && opcode <= 0x73) || opcode == 0xC2 || opcode == 0xC4 || opcode == 0xC5 || opcode == 0xC6);
 
@@ -172,10 +174,10 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
                    opcode == OneByteTestEaxImm32 ||
                    (opcode >= OneByteMovImm32RegMin && opcode <= OneByteMovImm32RegMax)) {
             if (opcode >= OneByteMovImm32RegMin && opcode <= OneByteMovImm32RegMax) {
-                immediateSize = (rexPresent && (rex & RexWBit) != 0) ? ImmSize64 :
+                immediateSize = rexWPresent ? ImmSize64 :
                     (operandSizeOverride ? ImmSize16 : ImmSize32);
             } else {
-                immediateSize = operandSizeOverride ? ImmSize16 : ImmSize32;
+                immediateSize = effectiveOperandSizeOverride ? ImmSize16 : ImmSize32;
             }
         } else if (opcode == OneByteImm8Grp1 || opcode == OneByteImulRm32Imm8) {
             immediateSize = ImmSize8;
@@ -279,7 +281,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         reg <= Grp3RegTestMax) {
         immediateSize = (opcode == OneByteTestGrp3Rm8)
             ? ImmSize8
-            : (operandSizeOverride ? ImmSize16 : ImmSize32);
+            : (effectiveOperandSizeOverride ? ImmSize16 : ImmSize32);
     }
 
     if (mod != ModRmModRegister && rm == ModRmRmSibPresent) {
