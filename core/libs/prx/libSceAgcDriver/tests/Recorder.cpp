@@ -3,9 +3,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
@@ -187,6 +189,7 @@ public:
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {
@@ -1136,6 +1139,86 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
     recorder.Activate();
 }
 
+void resourceBuildBenchmark(const Device& device) {
+    std::unique_lock gpu(GpuMutex());
+    auto context = device.GetContext();
+    context.hostImportAlignment = 0;
+    context.dmaBufImport = false;
+    DeviceFunctions functions;
+    FillDeviceFunctions(context, functions);
+    context.functions = &functions;
+    DescriptorCache cache(context);
+    context.descriptorCache = &cache;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache textureCache(context);
+    context.textureCache = &textureCache;
+    context.bufferPool = std::make_shared<BufferPool>(context);
+    Recorder recorder(context);
+    recorder.Activate();
+    constexpr std::size_t bytes = 16 * 16384;
+    void* memory = AllocateWatched(bytes, 65536);
+    Require(memory != nullptr, "resource benchmark requires watched memory");
+    struct Cleanup {
+        Context& context;
+        Recorder& recorder;
+        void* memory;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ReleaseWatched(memory, bytes); }
+    } cleanup{context, recorder, memory};
+    std::memset(memory, 0x71, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(memory);
+    for (const std::uint32_t imageCount : {0u, 8u}) {
+        ShaderRecompiler::RecompileResult program;
+        program.variantId = 1000000 + imageCount;
+        program.pushConstants.resize(16);
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            ShaderRecompiler::DescriptorBinding binding{};
+            binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+            binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+            binding.binding = i;
+            binding.count = 1;
+            binding.bufferWritten = {false};
+            const auto base = address + i * 256;
+            binding.guestDescriptor = {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32), 256, 0x31016fac};
+            program.bindings.push_back(std::move(binding));
+        }
+        for (std::uint32_t i = 0; i < imageCount; ++i) {
+            ShaderRecompiler::DescriptorBinding binding{};
+            binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+            binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+            binding.binding = 8 + i;
+            binding.count = 1;
+            binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+            binding.imageSamplers = {0};
+            const auto base = address + (i + 1) * 16384;
+            binding.guestDescriptor = {static_cast<std::uint32_t>(base >> 8), static_cast<std::uint32_t>(base >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x90000fac, 0, 0, 0, 0};
+            program.bindings.push_back(std::move(binding));
+        }
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Fragment, &program, 0};
+        ColorTarget target{};
+        std::array<double, 9> times{};
+        std::uint64_t checksum = 0;
+        for (std::size_t pass = 0; pass <= times.size(); ++pass) {
+            const auto started = std::chrono::steady_clock::now();
+            for (unsigned batch = 0; batch < 32; ++batch) {
+                for (unsigned draw = 0; draw < 32; ++draw) {
+                    const auto base = address + ((batch * 32 + draw) % 8) * 256;
+                    program.bindings.front().guestDescriptor[0] = static_cast<std::uint32_t>(base);
+                    program.bindings.front().guestDescriptor[1] = static_cast<std::uint32_t>(base >> 32);
+                    ShaderResources resources(context, std::span(&shader, 1), target, 0, 0);
+                    checksum += resources.LayoutKey().size();
+                }
+                recorder.Sync();
+                gpu.unlock();
+                gpu.lock();
+            }
+            if (pass != 0) times[pass - 1] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / 1024;
+        }
+        std::sort(times.begin(), times.end());
+        std::cout << "Resource build (" << imageCount << " textures): median " << times[4] << " us, p95 " << times[8] << " us, minimum " << times[0] << " us, checksum " << checksum << '\n';
+    }
+}
+
 void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     constexpr std::size_t bytes = 65536;
@@ -1197,12 +1280,17 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
             Require(contents.size() == elementBytes && std::all_of(contents.begin(), contents.end(), [&](std::byte value) { return value == expected; }), "a draw snapshot does not hold the guest bytes of its draw");
             return buffer;
         };
+        const bool watched = AgcDriver::GuestMemory::Watched(element, elementBytes);
         const auto first = snapshot(std::byte{0x11});
-        Require(snapshot(std::byte{0x11}) == first, "an unchanged draw input was copied again");
+        const auto repeated = snapshot(std::byte{0x11});
+        Require(!watched || repeated == first, "an unchanged watched draw input was copied again");
+        Require(watched || repeated != first, "an unwatched imported input reused an unvalidated snapshot");
         std::memset(reinterpret_cast<void*>(element), 0x22, elementBytes);
         const auto afterCpu = snapshot(std::byte{0x22});
         Require(afterCpu != first, "a draw snapshot outlived a CPU store to its range");
-        Require(snapshot(std::byte{0x22}) == afterCpu, "the recopied draw input was not kept");
+        const auto repeatedCpu = snapshot(std::byte{0x22});
+        Require(!watched || repeatedCpu == afterCpu, "the recopied watched draw input was not kept");
+        Require(watched || repeatedCpu != afterCpu, "an unwatched imported input was kept after a CPU store");
         std::memset(reinterpret_cast<void*>(element), 0x33, elementBytes);
         AgcDriver::GuestMemory::MarkWritten(element, 4);
         const auto afterStore = snapshot(std::byte{0x33});
@@ -2811,13 +2899,25 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         Device device;
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-resource-build") {
+            resourceBuildBenchmark(device);
+            return 0;
+        }
         std::lock_guard gpu(GpuMutex());
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--binding-plan-only") {
+            resourceReadTests(device, recorder);
+            drawSnapshotReuseTests(device, recorder);
+            drawInputReuseTests(device, recorder);
+            dataRefreshTests(device, recorder);
+            std::cout << "Binding plan resources, snapshots, and live input tests passed\n";
+            return 0;
+        }
         readTrackingTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
