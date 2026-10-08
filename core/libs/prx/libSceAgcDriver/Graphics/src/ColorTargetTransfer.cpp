@@ -7,7 +7,7 @@ namespace AgcDriver::Graphics {
 
 void ReadColorTarget(const ColorTarget& target, std::span<std::byte> destination) {
     PerformanceTimer timing("ColorTarget.Read");
-    const ColorTargetLayout layout(target.extent.width, target.extent.height, target.tileMode, target.elementBytes);
+    const ColorTargetLayout layout(target.extent.width, target.extent.height, target.tileMode, target.elementBytes, target.pipeBankXor);
     Require(target.bytes == layout.Bytes() && destination.size() == layout.LinearBytes(), "color target transfer size mismatch");
     if (target.tileMode == ColorTileMode::Linear && layout.Bytes() == layout.LinearBytes()) {
         GuestMemory::Read(target.address, destination, layout.Alignment());
@@ -23,7 +23,7 @@ void ReadColorTarget(const ColorTarget& target, std::span<std::byte> destination
 
 void WriteColorTarget(const ColorTarget& target, std::span<const std::byte> source) {
     PerformanceTimer timing("ColorTarget.Write");
-    const ColorTargetLayout layout(target.extent.width, target.extent.height, target.tileMode, target.elementBytes);
+    const ColorTargetLayout layout(target.extent.width, target.extent.height, target.tileMode, target.elementBytes, target.pipeBankXor);
     Require(target.bytes == layout.Bytes() && source.size() == layout.LinearBytes(), "color target transfer size mismatch");
     if (target.tileMode == ColorTileMode::Linear && layout.Bytes() == layout.LinearBytes()) {
         GuestMemory::Write(target.address, source, layout.Alignment());

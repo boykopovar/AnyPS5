@@ -145,4 +145,31 @@ void RunColorTargetLayoutTests() {
     std::array<std::byte, 512> linearReadback{};
     ReadColorTarget(target, linearReadback);
     Require(linearReadback == linearPixels && guest[512] == std::byte{0x6b}, "linear guest color transfer changed");
+
+    const ColorTargetLayout plainLayout(256, 70, ColorTileMode::RenderTarget, 4);
+    const ColorTargetLayout xorLayout(256, 70, ColorTileMode::RenderTarget, 4, 0x5600);
+    for (const auto& [x, y] : {std::pair{0u, 0u}, std::pair{1u, 0u}, std::pair{0u, 1u}, std::pair{127u, 69u}, std::pair{128u, 0u}, std::pair{255u, 69u}, std::pair{200u, 33u}}) {
+        const auto plain = plainLayout.Offset(x, y);
+        Require(xorLayout.Offset(x, y) == (plain & ~std::size_t{0xffff}) + ((plain & 0xffffu) ^ 0x5600u), "a pipe/bank XOR did not apply to the offset inside the SW_64KB_R_X block");
+    }
+    std::vector<std::byte> xorLinear(xorLayout.LinearBytes());
+    for (std::size_t i = 0; i < xorLinear.size(); ++i) xorLinear[i] = static_cast<std::byte>((i * 7u) & 255u);
+    std::vector<std::byte> xorTiled(xorLayout.Bytes(), std::byte{0});
+    std::vector<std::byte> xorRestored(xorLinear.size());
+    xorLayout.Tile(xorLinear, xorTiled);
+    xorLayout.Detile(xorTiled, xorRestored);
+    Require(xorRestored == xorLinear, "color tiling round trip with a pipe/bank XOR lost pixels");
+    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::Standard64KB, 4, 0x100)); });
+    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::Linear, 4, 0x100)); });
+    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::RenderTarget, 4, 0x80)); });
+    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::RenderTarget, 4, 0x10000)); });
+
+    std::fill(guest.begin(), guest.end(), std::byte{0x6b});
+    target = {reinterpret_cast<std::uintptr_t>(guest.data()), {2, 2}, VK_FORMAT_R8G8B8A8_UNORM, guest.size(), 0xe4, ColorTileMode::RenderTarget};
+    target.pipeBankXor = 0x3200;
+    WriteColorTarget(target, pixels);
+    Require(guest[0x3200] == std::byte{0x32} && guest[0x3210] == std::byte{0x32} && guest[0] == std::byte{0x6b} && guest[16] == std::byte{0x6b}, "a color target with a pipe/bank XOR was written at the unswizzled offsets");
+    readback.fill(std::byte{0});
+    ReadColorTarget(target, readback);
+    Require(readback == pixels, "guest color transfer round trip with a pipe/bank XOR failed");
 }

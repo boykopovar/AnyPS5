@@ -99,9 +99,10 @@ const SwizzleTables& standardTables(std::uint32_t bytesPerElement, std::uint32_t
 
 }
 
-ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, ColorTileMode mode, std::uint32_t bytesPerElement) : width(width), height(height), pitch(width), mode(mode), bytes(0), elementBytes(bytesPerElement) {
+ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, ColorTileMode mode, std::uint32_t bytesPerElement, std::uint32_t pipeBankXor) : width(width), height(height), pitch(width), mode(mode), bytes(0), elementBytes(bytesPerElement), pipeBankXor(pipeBankXor) {
     require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "AGC graphics: invalid color surface extent");
     require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "AGC graphics: unsupported color element size");
+    require(pipeBankXor == 0 || (mode == ColorTileMode::RenderTarget && pipeBankXor < 65536u && pipeBankXor % 256u == 0), "AGC graphics: a color pipe/bank XOR applies only to whole 256-byte units of SW_64KB_R_X blocks");
     std::uint32_t paddedHeight = height;
     switch (mode) {
         case ColorTileMode::Linear: {
@@ -145,7 +146,7 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
 std::size_t ColorTargetLayout::offset(std::uint32_t x, std::uint32_t y) const {
     if (mode == ColorTileMode::Linear) return (static_cast<std::size_t>(y) * pitch + x) * elementBytes;
     const auto block = static_cast<std::size_t>(y / blockHeight) * (pitch / blockWidth) + x / blockWidth;
-    return block * Alignment() + (xOffsets[x % blockWidth] ^ yOffsets[y % blockHeight]);
+    return block * Alignment() + (xOffsets[x % blockWidth] ^ yOffsets[y % blockHeight] ^ pipeBankXor);
 }
 
 std::size_t ColorTargetLayout::Offset(std::uint32_t x, std::uint32_t y) const {

@@ -66,6 +66,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     const bool chain = color.mipCount > 1;
     GuestTextureResource surface{};
     surface.baseAddress = chain ? color.surfaceAddress : color.address;
+    surface.pipeBankXor = color.pipeBankXor;
     surface.width = chain ? color.surfaceExtent.width : color.extent.width;
     surface.height = chain ? color.surfaceExtent.height : color.extent.height;
     surface.depthOrLastArray = color.depth - 1u;
@@ -750,7 +751,7 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     }
     key.push_back(colorAttachments);
     if (ranges) {
-        append64(target.address);
+        append64(target.address | target.pipeBankXor);
         append64(target.bytes);
         append64(indexAddress);
         append64(indexBytes);
@@ -2126,7 +2127,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (binding.gpuTiling) {
             CopyBuffer(context, commands, binding.tiled->Handle(), 0, binding.tiledDevice->Handle(), 0, binding.original.size());
             memoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-            context.detiler->Dispatch(commands, TextureTileMode::kR64KBX, binding.color.elementBytes, binding.tiledDevice->Handle(), 0, binding.linearDevice->Handle(), 0, binding.mip);
+            context.detiler->Dispatch(commands, TextureTileMode::kR64KBX, binding.color.elementBytes, binding.tiledDevice->Handle(), 0, binding.linearDevice->Handle(), 0, binding.mip, false, 0, false, {.pipeBankXor = binding.color.pipeBankXor});
             memoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         }
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -2187,7 +2188,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                     CopyBuffer(context, commands, binding.linearDevice->Handle(), 0, binding.dump->Handle(), 0, binding.linearDevice->Size());
                 }
             }
-            context.detiler->Dispatch(commands, TextureTileMode::kR64KBX, binding.color.elementBytes, binding.linearDevice->Handle(), 0, binding.tiledDevice->Handle(), 0, binding.mip, true);
+            context.detiler->Dispatch(commands, TextureTileMode::kR64KBX, binding.color.elementBytes, binding.linearDevice->Handle(), 0, binding.tiledDevice->Handle(), 0, binding.mip, true, 0, false, {.pipeBankXor = binding.color.pipeBankXor});
             memoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             CopyBuffer(context, commands, binding.tiledDevice->Handle(), 0, binding.tiled->Handle(), 0, binding.original.size());
         }
