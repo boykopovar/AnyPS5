@@ -10,6 +10,7 @@ endfunction()
 
 option(BUILD_TESTING "Build and register relinker tests" OFF)
 option(ANYPS5_RELINKER_ONLY "Build the relinker without system libraries or third-party dependencies" OFF)
+option(ANYPS5_NATIVE_AOT "Build the experimental offline Apple ARM64 compiler" OFF)
 if(BUILD_TESTING)
     enable_testing()
     if(MINGW)
@@ -46,6 +47,10 @@ if(BUILD_TESTING)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
     endif()
+endif()
+
+if(ANYPS5_NATIVE_AOT)
+    add_subdirectory(core/aot)
 endif()
 
 if(ANYPS5_RELINKER_ONLY)

@@ -1,0 +1,41 @@
+if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    message(FATAL_ERROR "The experimental native AOT tool currently requires an Apple ARM64 host")
+endif()
+if(CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+    message(FATAL_ERROR "The experimental native AOT tool requires an arm64 build")
+endif()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+enable_language(C)
+set(BUILD_SHARED_LIBS ON)
+set(BUILD_STATIC_LIBS OFF)
+set(CAPSTONE_ARCHITECTURE_DEFAULT OFF)
+set(CAPSTONE_X86_SUPPORT ON)
+set(CAPSTONE_BUILD_MACOS_THIN ON)
+set(CAPSTONE_BUILD_TESTS OFF)
+set(CAPSTONE_BUILD_CSTOOL OFF)
+set(CAPSTONE_BUILD_CSTEST OFF)
+add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/capstone ${CMAKE_CURRENT_BINARY_DIR}/capstone EXCLUDE_FROM_ALL)
+
+set(aotPythonPath "${CMAKE_SOURCE_DIR}/3rdparty/capstone/bindings/python:${CMAKE_SOURCE_DIR}/3rdparty/pyelftools:${CMAKE_CURRENT_SOURCE_DIR}")
+configure_file(launcher.py.in native_aot.py @ONLY)
+add_custom_target(native_aot ALL DEPENDS capstone_shared)
+if(BUILD_TESTING)
+    file(GLOB testSources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.py")
+    foreach(testSource IN LISTS testSources)
+        get_filename_component(suite "${testSource}" NAME_WE)
+        string(REGEX REPLACE "^test_" "" suite "${suite}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${testSource}")
+        execute_process(COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/list_cases.py" "${testSource}"
+            OUTPUT_VARIABLE cases OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+        string(REPLACE "\n" ";" cases "${cases}")
+        foreach(case IN LISTS cases)
+            add_test(NAME native_aot_${suite}.${case}
+                COMMAND ${CMAKE_COMMAND} -E env
+                    "LIBCAPSTONE_PATH=$<TARGET_FILE_DIR:capstone_shared>"
+                    "PYTHONPATH=${aotPythonPath}"
+                    ${Python3_EXECUTABLE} "${testSource}" "${case}")
+            set_tests_properties(native_aot_${suite}.${case} PROPERTIES TIMEOUT 30)
+        endforeach()
+    endforeach()
+endif()
