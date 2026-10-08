@@ -34,6 +34,7 @@ Throughout the project, every function at every stage either **does exactly what
 - [ulobjmgr](../../core/libs/prx/ulobjmgr/Export.cpp) registers no object: `_sceUlobjmgrRegisterObject` always hands out id 0 and `_sceUlobjmgrUnregisterObject` releases nothing, as shadPS4 does
 - [libSceHttp](../../core/libs/prx/libSceHttp/Export.cpp) - no request reaches the network, so `sceHttpSetResponseHeaderMaxSize` has no response header to limit and `sceHttpRedirectCacheFlush` no redirect to forget; `sceHttpsUnloadCert` returns success like `sceHttpsLoadCert`, which keeps no certificate
 - [sceFontGlyphDefineAttribute](../../core/libs/prx/libSceFont/src/Render.cpp) (libSceFont) checks the glyph and ignores the attribute and its value, whose meaning is unknown. PPSA01325 sets attribute 0x11 to 0 on a glyph from `sceFontGenerateCharGlyph` that it deletes unused, and draws the character with `sceFontRenderCharGlyphImageHorizontal`
+- [libSceFontFt](../../core/libs/prx/libSceFontFt/Export.cpp) - format support functions (such as `sceFontFtSupportTrueType`, `sceFontFtSupportOpenType`, `sceFontFtSupportSystemFonts`) return success and perform no additional driver registration, as all supported formats are built into FreeType, as shadPS4 does
 
 ### Unknown function info
 
