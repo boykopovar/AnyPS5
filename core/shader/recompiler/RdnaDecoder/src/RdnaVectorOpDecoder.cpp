@@ -459,6 +459,9 @@ constexpr VopcOpcodeInfo vopcOpcodes[] = {
 };
 
 constexpr VectorOpcodeInfo vop3Opcodes[] = {
+    {0x200u, RdnaOpcode::VInterpP1F32},
+    {0x201u, RdnaOpcode::VInterpP2F32},
+    {0x202u, RdnaOpcode::VInterpMovF32},
     {0x140u, RdnaOpcode::VMadLegacyF32},
     {0x141u, RdnaOpcode::VMadF32},
     {0x142u, RdnaOpcode::VMadI32I24},
@@ -2232,6 +2235,33 @@ RdnaInstruction DecodeRdnaVop3(std::uint32_t programCounter, std::span<const std
     instruction.opcodeId = opcode;
     instruction.op = lookupVop3Opcode(opcode);
     SetRdnaRawWords(instruction, code, wordIndex, 2);
+
+    if (opcode >= 0x200u && opcode <= 0x202u) {
+        if (abs != 0u || opSel != 0u || clamp != 0u || omod != 0u || neg != 0u) {
+            throw std::invalid_argument("VOP3 interpolation modifiers are not implemented");
+        }
+        if (src0 > 0xffu || src2 != 128u) {
+            throw std::invalid_argument("VOP3 interpolation requires canonical attribute and unused-source fields");
+        }
+        instruction.destination = DecodeRdnaVectorGpr(vdst);
+        if (instruction.op == RdnaOpcode::VInterpMovF32) {
+            if (src1 > 2u) throw std::invalid_argument("VOP3 interpolation parameter selector is reserved");
+            instruction.source0.kind = RdnaOperandKind::IntegerInlineConstant;
+            instruction.source0.value = src1;
+            instruction.source0.signedVal = static_cast<std::int32_t>(src1);
+        } else {
+            if (src1 < 256u) throw std::invalid_argument("VOP3 interpolation requires a vector source");
+            instruction.source0 = DecodeRdnaVectorGpr(src1 - 256u);
+        }
+        instruction.source1.kind = RdnaOperandKind::IntegerInlineConstant;
+        instruction.source1.value = src0 & 0x3fu;
+        instruction.source1.signedVal = static_cast<std::int32_t>(instruction.source1.value);
+        instruction.source2.kind = RdnaOperandKind::IntegerInlineConstant;
+        instruction.source2.value = (src0 >> 6u) & 3u;
+        instruction.source2.signedVal = static_cast<std::int32_t>(instruction.source2.value);
+        instruction.sourceCount = 3;
+        return instruction;
+    }
 
     const bool carryInOut = (instruction.op == RdnaOpcode::VAddcU32 && opcode == 0x128u) ||
         (instruction.op == RdnaOpcode::VSubCoCiU32 && opcode == 0x129u) ||
