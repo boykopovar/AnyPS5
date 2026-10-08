@@ -419,6 +419,7 @@ void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {
         out.Value(image.packed);
         out.Value(image.packedFormat);
         out.Value(image.emulatedCompare);
+        out.Value(image.emulatedFilter);
         out.Value(image.indirectRoot);
         out.Value(image.indirectMappingOffset);
         out.Value(image.indirectSearchIterations);
@@ -512,6 +513,7 @@ void decodeInfo(Reader& reader, CompiledShaderInfo& compiled) {
         in.Value(image.packed);
         in.Value(image.packedFormat);
         in.Value(image.emulatedCompare);
+        in.Value(image.emulatedFilter);
         in.Value(image.indirectRoot);
         in.Value(image.indirectMappingOffset);
         in.Value(image.indirectSearchIterations);
@@ -829,6 +831,7 @@ void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, c
         out.Value(image.depthUnorm16);
         out.Value(image.packedFormat);
         out.Value(image.emulatedCompare);
+        out.Value(image.emulatedFilter);
         out.Value(image.srgbDecode);
     });
     writer.Values(std::span<const std::uint32_t>(specialization.boundDescriptors));
