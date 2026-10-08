@@ -28,6 +28,7 @@ struct GuestImage {
     std::filesystem::path SourcePath;
     std::string OutputName;
     std::string Soname;
+    std::vector<std::string> ModuleNames;
     std::vector<std::uint8_t> Bytes;
     std::vector<Codegen::TrampolineSite> Trampolines;
     std::vector<Domain::ProgramHeader> Headers;
@@ -44,6 +45,7 @@ struct GuestImage {
 
 class GuestImageReader {
 public:
+    std::vector<std::string> ReadModuleNames(const std::vector<std::uint8_t>& bytes) const;
     GuestImage Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes) const;
 };
 
