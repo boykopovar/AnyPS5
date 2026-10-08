@@ -776,8 +776,7 @@ private:
         std::error_code error;
         std::filesystem::create_directories(directory, error);
         const auto stamp = directory / "last-used";
-        if (!std::ofstream(stamp, std::ios::binary | std::ios::trunc))
-            return;
+        std::ofstream(stamp, std::ios::binary | std::ios::trunc).close();
         std::filesystem::last_write_time(stamp, std::filesystem::file_time_type::clock::now(), error);
         const auto now = std::filesystem::file_time_type::clock::now();
         for (std::filesystem::directory_iterator it(root, error), end; !error && it != end; it.increment(error)) {

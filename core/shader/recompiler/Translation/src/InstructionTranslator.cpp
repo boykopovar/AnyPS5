@@ -87,10 +87,6 @@ const ShaderWorkgroupInputInfo* shaderWorkgroupInput(ShaderStageKind stage, cons
     }
 }
 
-bool isCodeTableLoad(const ControlFlowGraph& cfg, std::uint32_t programCounter) {
-    return std::find(cfg.codeTableLoadProgramCounters.begin(), cfg.codeTableLoadProgramCounters.end(), programCounter) != cfg.codeTableLoadProgramCounters.end();
-}
-
 void translateExternalFetch(TranslationContext& context, const RdnaInstruction& call, const ShaderVertexInputInfo* input) {
     if (input == nullptr || input->resourcesNum <= 0) {
         throw std::runtime_error("s_swappc_b64 fetch-shader call at program counter " + std::to_string(call.programCounter) + " has no parsed fetch-shader plan to inline");
