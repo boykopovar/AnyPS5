@@ -7,8 +7,21 @@ if(BUILD_TESTING)
     target_link_libraries(guest_audiodec_tests PRIVATE libSceAudiodec libc)
     configure_windows_unwind(guest_audiodec_tests)
     add_test(NAME guest_audiodec COMMAND guest_audiodec_tests)
+    add_test_executable(guest_audiodec_reuse_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestAudiodec.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/Codecs.cpp)
+    target_include_directories(guest_audiodec_reuse_tests PRIVATE
+            ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/LibAtrac9/C/src)
+    target_link_libraries(guest_audiodec_reuse_tests PRIVATE atrac9 ffmpeg libc libkernel)
+    target_compile_definitions(guest_audiodec_reuse_tests PRIVATE
+            ANYPS5_TEST_FFMPEG_REUSE av_packet_alloc=CountPacketAlloc av_frame_alloc=CountFrameAlloc)
+    configure_windows_unwind(guest_audiodec_reuse_tests)
+    add_test(NAME guest_audiodec_reuse COMMAND guest_audiodec_reuse_tests)
     if(WIN32)
         set_tests_properties(guest_audiodec PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodec>")
+        set_tests_properties(guest_audiodec_reuse PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

@@ -5,6 +5,21 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#ifdef ANYPS5_TEST_FFMPEG_REUSE
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+#undef av_packet_alloc
+#undef av_frame_alloc
+static std::size_t packetAllocations = 0;
+static std::size_t frameAllocations = 0;
+extern "C" {
+AVPacket* av_packet_alloc();
+AVFrame* av_frame_alloc();
+AVPacket* CountPacketAlloc() { ++packetAllocations; return av_packet_alloc(); }
+AVFrame* CountFrameAlloc() { ++frameAllocations; return av_frame_alloc(); }
+}
+#endif
 
 extern "C" {
 std::int32_t APS5_VABI sceAudiodecInitLibrary(std::uint32_t);
@@ -124,10 +139,17 @@ void TestAac(bool adts) {
     Streams streams;
     int crossings = 0;
     for (std::size_t offset = 0, frame = 0; offset < sizeof(AAC_ADTS); offset += AdtsLength(AAC_ADTS + offset), ++frame) {
+#ifdef ANYPS5_TEST_FFMPEG_REUSE
+        const auto previousPacketAllocations = packetAllocations;
+        const auto previousFrameAllocations = frameAllocations;
+#endif
         const std::size_t length = AdtsLength(AAC_ADTS + offset);
         const std::uint8_t* data = adts ? AAC_ADTS + offset : AAC_ADTS + offset + 7;
         const std::size_t size = adts ? sizeof(AAC_ADTS) - offset : length - 7;
         Require(Decode(handle, ctrl, streams, data, size) == 0);
+#ifdef ANYPS5_TEST_FFMPEG_REUSE
+        if (frame != 0) Require(packetAllocations == previousPacketAllocations && frameAllocations == previousFrameAllocations);
+#endif
         Require(streams.au.ui_au_size == (adts ? length : length - 7));
         Require(streams.pcm.ui_pcm_size == 1024 * 2 * 2 && info.i_result == 0);
         Require(info.ui_sampling_freq == 48000 && info.ui_number_of_channels == 2 && info.ui_heaac == 0);
@@ -139,7 +161,17 @@ void TestAac(bool adts) {
         Require(Decode(handle, ctrl, streams, AAC_ADTS, 50) == errorApiFail && info.i_result == -5);
         Require(Decode(handle, ctrl, streams, AAC_ADTS + 1, 50) == errorApiFail && info.i_result == -4);
     }
+#ifdef ANYPS5_TEST_FFMPEG_REUSE
+    const auto previousPacketAllocations = packetAllocations;
+    const auto previousFrameAllocations = frameAllocations;
+#endif
     Require(sceAudiodecClearContext(handle) == 0);
+    Require(Decode(handle, ctrl, streams, adts ? AAC_ADTS : AAC_ADTS + 7,
+                   adts ? AdtsLength(AAC_ADTS) : AdtsLength(AAC_ADTS) - 7) == 0);
+    Require(streams.pcm.ui_pcm_size == 1024 * 2 * 2 && info.i_result == 0);
+#ifdef ANYPS5_TEST_FFMPEG_REUSE
+    Require(packetAllocations == previousPacketAllocations && frameAllocations == previousFrameAllocations);
+#endif
     Require(sceAudiodecDeleteDecoder(handle) == 0);
 }
 
@@ -155,7 +187,14 @@ void TestMp3() {
     int frames = 0;
     float peak = 0;
     while (offset < sizeof(MP3_MONO)) {
+#ifdef ANYPS5_TEST_FFMPEG_REUSE
+        const auto previousPacketAllocations = packetAllocations;
+        const auto previousFrameAllocations = frameAllocations;
+#endif
         Require(Decode(handle, ctrl, streams, MP3_MONO + offset, sizeof(MP3_MONO) - offset) == 0);
+#ifdef ANYPS5_TEST_FFMPEG_REUSE
+        if (frames != 0) Require(packetAllocations == previousPacketAllocations && frameAllocations == previousFrameAllocations);
+#endif
         Require(streams.au.ui_au_size == 144 * 32000 / 48000 + (MP3_MONO[offset + 2] >> 1 & 1));
         Require(streams.pcm.ui_pcm_size == 1152 * 4);
         Require(info.ui_header >> 21 == 0x7FF && info.uc_mode == 3 && info.i_result == 0);

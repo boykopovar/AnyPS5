@@ -9,6 +9,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -42,13 +43,13 @@ public:
 
 protected:
     DecodeResult decodePacket(const std::uint8_t* data, std::size_t size, std::uint8_t* pcm, std::size_t pcmSize) {
-        AVPacket* packet = av_packet_alloc();
-        AVFrame* frame = av_frame_alloc();
-        if (!packet || !frame) {
-            av_packet_free(&packet);
-            av_frame_free(&frame);
-            throw std::bad_alloc();
-        }
+        if (!packetStorage) packetStorage.reset(av_packet_alloc());
+        if (!frameStorage) frameStorage.reset(av_frame_alloc());
+        auto* packet = packetStorage.get();
+        auto* frame = frameStorage.get();
+        if (!packet || !frame) throw std::bad_alloc();
+        av_packet_unref(packet);
+        av_frame_unref(frame);
         packet->data = const_cast<std::uint8_t*>(data);
         packet->size = static_cast<int>(size);
         DecodeResult result{};
@@ -77,8 +78,8 @@ protected:
             result.highEfficiency = context->profile == AV_PROFILE_AAC_HE || context->profile == AV_PROFILE_AAC_HE_V2;
             av_frame_unref(frame);
         }
-        av_packet_free(&packet);
-        av_frame_free(&frame);
+        av_packet_unref(packet);
+        av_frame_unref(frame);
         return result;
     }
 
@@ -100,6 +101,8 @@ private:
     std::vector<std::uint8_t> extradata;
     AVCodecID id;
     AVCodecContext* context = nullptr;
+    std::unique_ptr<AVPacket, void (*)(AVPacket*)> packetStorage{nullptr, [](AVPacket* packet) { av_packet_free(&packet); }};
+    std::unique_ptr<AVFrame, void (*)(AVFrame*)> frameStorage{nullptr, [](AVFrame* frame) { av_frame_free(&frame); }};
 };
 
 class Mp3Decoder final : public FfmpegDecoder {
