@@ -238,9 +238,7 @@ int main() {
         const auto chain = TextureDescriptor(MultiLevel.data(), StorageLevels - 1u, StorageLevels - 1u);
         auto fromLevelOne = chain;
         fromLevelOne[3] |= 1u << 12u;
-        // llvmpipe returns 1.0 for unnormalized samples of a view whose base mip level is not 0, though it samples
-        // the same view correctly with normalized coordinates; Vulkan only requires a single-level, single-layer view.
-        const bool viewsAboveMipZero = device->DeviceName().find("llvmpipe") == std::string::npos;
+        const bool driverSamplesUnnormalizedAboveMipZero = device->DeviceName().find("llvmpipe") == std::string::npos;
         for (const auto& sampler : Samplers) {
             const auto singleSamples = Run(*device, single, sampler.words, coordinates);
             Check(sampler, 0u, "1-level image", coordinates, singleSamples);
@@ -250,7 +248,7 @@ int main() {
             const auto chainSamples = Run(*device, chain, sampler.words, coordinates);
             Check(sampler, 0u, "4-level view", coordinates, chainSamples);
             Require(chainSamples == singleSamples, std::string(sampler.name) + ": a 4-level view does not sample its base level like a 1-level image");
-            if (viewsAboveMipZero) Check(sampler, 1u, "3-level view starting at mip 1", levelOneCoordinates, Run(*device, fromLevelOne, sampler.words, levelOneCoordinates));
+            if (driverSamplesUnnormalizedAboveMipZero) Check(sampler, 1u, "3-level view starting at mip 1", levelOneCoordinates, Run(*device, fromLevelOne, sampler.words, levelOneCoordinates));
         }
         ExpectFailure(*device, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, "different minification", "unequal minification and magnification filters");
         ExpectFailure(*device, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, "clamp mode 0", "wrap on X");
