@@ -71,6 +71,21 @@ def main():
                 assert result.returncode == expected, (result.returncode, result.stdout, result.stderr)
 
         for windows in (True, False):
+            for directory in ('sce_module', '.', 'Media/Modules'):
+                result, output = convert(f'sprx-request-{windows}-{directory.replace("/", "-")}', windows,
+                    'libGuest.sprx', module_directory=directory, guest_request='libGuest.sprx',
+                    providers={'renamed.sprx': declared_provider(22, ('libGuest',))})
+                assert result.returncode == 0, result.stderr
+                artifact = output.parent / 'app0' / directory / 'renamed.sprx.guest.prx'
+                assert artifact.is_file(), list((output.parent / 'app0').rglob('*'))
+                assert len(list((output.parent / 'app0').rglob('*.guest.prx'))) == 2
+                if windows:
+                    run(output)
+                else:
+                    assert needed_libraries(output.read_bytes()) == [
+                        '$ORIGIN/app0/' + directory + '/renamed.sprx.guest.prx',
+                        '$ORIGIN/app0/sce_module/consumer.prx.guest.prx']
+
             for directory in ('.', 'Media/Modules'):
                 for suffix in ('.prx', '.sprx', '.suprx'):
                     relative = Path(directory) / ('renamed' + suffix)
@@ -136,7 +151,7 @@ def main():
 
         for windows in (True, False):
             for tag in (0x6100000d, 0x61000043):
-                for suffix in ('.suprx', '.prx'):
+                for suffix in ('.suprx', '.prx', '.sprx'):
                     request = 'libGuest' + suffix
                     result, output = convert(f'{windows}-{tag}-{suffix}', windows, request,
                         providers={'renamed.prx': declared_provider(22, ('libGuest',), tag=tag)}, guest_request=request)

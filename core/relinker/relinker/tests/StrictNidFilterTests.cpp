@@ -68,6 +68,17 @@ void deadTailAndExplicitEntry() {
     require(live.ImportSlots == std::set<std::uint64_t>{0x2000}, "Explicit entry after UD2 lost its import");
 }
 
+void ud1DeadTail() {
+    auto input = fixture();
+    emit(input, 0, {0x0F, 0xB9, 0xC0});
+    importThunk(input, 16, 0x2000);
+    require(AnalyzeStrictReachability(input).ImportSlots.empty(), "UD1 fallthrough retained a dead import");
+    input = fixture();
+    ripOperand(input, 0, {0x0F, 0xB9, 0x05}, 0x3000);
+    importThunk(input, 16, 0x2000);
+    require(AnalyzeStrictReachability(input).ImportSlots.empty(), "UD1 with a RIP-relative operand retained a dead import");
+}
+
 void conditionalTailCall() {
     auto input = fixture();
     emit(input, 0, {0x75, 0x0E, 0xC3});
@@ -283,6 +294,7 @@ void filterAndPltCompaction() {
 int main() {
     try {
         deadTailAndExplicitEntry();
+        ud1DeadTail();
         conditionalTailCall();
         callbackAndRelocationRoots();
         registerImportCall();

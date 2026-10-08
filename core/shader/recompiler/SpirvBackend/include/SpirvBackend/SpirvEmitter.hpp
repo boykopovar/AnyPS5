@@ -19,6 +19,7 @@ struct SpirvTargetOptions {
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
     bool nonConstantImageOffsets = false;
+    bool narrowSubgroupClock = false;
 };
 
 class SpirvEmitter {

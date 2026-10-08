@@ -315,7 +315,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
     const auto& info = lookupOpcode(opcode);
     const bool samplerOp = info.sample || info.gather || opcode == 0x60u;
-    const auto texelStatusBits = samplerOp ? 0x00010000u : opcode <= 0x0eu ? 0x00030000u : 0u;
+    const auto texelStatusBits = info.sample || info.gather || opcode <= 0x0eu ? 0x00030000u : samplerOp ? 0x00010000u : 0u;
     const auto reservedWord0 = (info.sample || info.gather ? 0x00035040u : info.atomic ? 0x000340C0u : 0x00034040u) & ~texelStatusBits;
     if ((word0 & reservedWord0) != 0u || (word1 & 0x3C000000u) != 0u) {
         char message[96];

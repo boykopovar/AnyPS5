@@ -1276,6 +1276,10 @@ struct NpEntitlementAccessAddcontEntitlementInfo {
     std::uint32_t download_status;
 };
 
+struct NpEntitlementAccessEntitlementKey {
+    std::uint8_t data[16];
+};
+
 
 
 struct NpUniversalDataSystemInitParam {
@@ -1847,12 +1851,6 @@ struct LibcHeapInfo {
 };
 
 using Info = LibcHeapInfo;
-
-#define VA_ARGS \
-    std::uint64_t rdi, std::uint64_t rsi, std::uint64_t rdx, std::uint64_t rcx, \
-    std::uint64_t r8, std::uint64_t r9, std::uint64_t overflow_arg_area, \
-    __m128 xmm0, __m128 xmm1, __m128 xmm2, __m128 xmm3, \
-    __m128 xmm4, __m128 xmm5, __m128 xmm6, __m128 xmm7, ...
 
 struct Packet {
     std::uint32_t* addr;

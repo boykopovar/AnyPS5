@@ -19,6 +19,11 @@
 namespace GuestArena {
 namespace {
 
+#ifdef _WIN32
+std::atomic<std::uint64_t> commitGeneration{1};
+std::atomic<void (*)(std::uintptr_t, std::size_t, std::uint64_t)> privateMappingObserver{nullptr};
+#endif
+
 constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull;
 constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull;
 constexpr std::uintptr_t SystemReservedEnd = 0x0000001000000000ull;
@@ -221,9 +226,21 @@ std::invalid_argument OutsideArena(const char* operation, const void* pointer, s
 
 }
 
+std::uint64_t GuestArenaCommitGeneration_nid_postfix() {
+    return commitGeneration.load(std::memory_order_acquire);
+}
+
+void GuestArenaSetPrivateMappingObserver_nid_postfix(void (*callback)(std::uintptr_t, std::size_t, std::uint64_t)) {
+    privateMappingObserver.store(callback, std::memory_order_release);
+}
+
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
-    WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
+    const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const auto created = WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
+    if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) {
+        for (const auto& [address, size] : created) callback(address, size, generation);
+    }
 }
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {

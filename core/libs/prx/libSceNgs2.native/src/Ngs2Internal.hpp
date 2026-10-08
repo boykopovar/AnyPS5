@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCENGS2_SRC_NGS2INTERNAL_HPP
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -114,6 +115,9 @@ struct Ngs2Voice {
     float fbwLevel = 1.0f;
     float lfeLevel = 1.0f;
     std::vector<Ngs2UserFx2> userFx;
+    Ngs2UserFxProcessHandler userFxHandler = nullptr;
+    std::array<std::uintptr_t, 3> userFxData{};
+    std::uint32_t userFxFlags = 0;
     std::vector<float> samples;
     bool rendering = false;
     bool rendered = false;
@@ -176,6 +180,7 @@ void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
+void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 
 #endif

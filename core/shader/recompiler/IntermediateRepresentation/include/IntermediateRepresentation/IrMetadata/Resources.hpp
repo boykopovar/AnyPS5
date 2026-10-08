@@ -27,6 +27,7 @@ struct BufferResource {
     bool formatted = false;
     bool scalar = false;
     bool empty = false;
+    std::uint8_t baseMisalignment = 0;
 
     bool operator==(const BufferResource& other) const = default;
 };
@@ -103,8 +104,11 @@ inline bool ImageSampleExplicitLod(std::uint32_t flags, IrShaderStage stage) {
 }
 
 struct SamplerResource {
+    static constexpr std::uint32_t NoCopy = std::numeric_limits<std::uint32_t>::max();
+
     std::uint32_t source = 0;
     std::uint32_t firstUsePc = 0;
+    std::uint32_t copyOf = NoCopy;
     bool forcePointFiltering = false;
     bool depthCompare = false;
     std::uint8_t uses = 0;

@@ -209,10 +209,17 @@ int main() {
     address_size = peer.size();
     const int accepted = sceNetAccept(listener, peer.data(), &address_size);
     Require(accepted >= 0 && address_size == 16);
+    Require(sceNetConnect(client, address.data(), address.size()) == static_cast<int>(0x80410138) && *sceNetErrnoLoc() == 56);
     const int nonblocking = 1;
     Require(sceNetSetsockopt(accepted, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
     char pending = 0;
     Require(sceNetRecv(accepted, &pending, sizeof(pending), 0) == static_cast<int>(0x80410123) && *sceNetErrnoLoc() == 35);
+    const int connecting = sceNetSocket(nullptr, 2, 1, 6);
+    Require(connecting >= 0);
+    Require(sceNetSetsockopt(connecting, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
+    const int started = sceNetConnect(connecting, address.data(), address.size());
+    Require(started == 0 || (started == static_cast<int>(0x80410124) && *sceNetErrnoLoc() == 36));
+    Require(sceNetSocketClose(connecting) == 0);
 
     const int epoll = sceNetEpollCreate("guest-sce-net", 0);
     Require(epoll >= 0);

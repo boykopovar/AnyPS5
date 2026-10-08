@@ -98,3 +98,35 @@ The game runs on the first Vulkan 1.1 device with graphics and compute queues an
 ## Exit codes
 
 `0`: conversion succeeded. `1`: invalid arguments. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.
+
+## Import audit
+
+[`tools/import_audit.py`](../../tools/import_audit.py) lists the system functions a converted game imports and whether the built libraries provide them, before the game is launched. It needs Python 3 and nothing else.
+
+```sh
+relinker --registry source/input.elf app.elf
+python3 tools/import_audit.py app.registry.json --libs build/core/libs/libs --modules source/sce_module
+```
+
+`--registry` writes `app.registry.json` beside the output. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
+
+| Class | Meaning |
+|-------|---------|
+| `implemented` | A built library exports the NID and its function is not a throwing stub. |
+| `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
+| `absent` | No built library exports the NID: the loader fails. |
+| `module` | The import names a file found in `--modules` (the title's own library); its exports are not checked. |
+
+The report also lists needed libraries that have no file in `--libs` or `--modules`, and imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+
+| Option | Effect |
+|--------|--------|
+| `--libs <dir>` | Built `.prx` directory. Required; repeat for several. |
+| `--modules <dir>` | Directory of the title's own modules; repeat for several. |
+| `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
+| `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
+| `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
+
+Exit codes: `0` nothing blocks loading, `1` there are `absent` imports or needed libraries without a file, `2` an input could not be read; the message names the file and the value.
+
+The registry lists the imports of the executable, not of its bundled modules.

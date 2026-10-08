@@ -1170,7 +1170,7 @@ std::uint32_t EmitReadClock(SpirvValueEmitContext& ctx, const IrValue& inst, spv
 }
 
 std::uint32_t EmitShaderClock(SpirvValueEmitContext& ctx, const IrValue& inst) {
-    return EmitReadClock(ctx, inst, spv::ScopeSubgroup);
+    return EmitReadClock(ctx, inst, ctx.state.narrowSubgroupClock ? spv::ScopeDevice : spv::ScopeSubgroup);
 }
 
 std::uint32_t EmitRealtimeClock(SpirvValueEmitContext& ctx, const IrValue& inst) {

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -206,7 +207,11 @@ void CheckTriangles(const char* what) {
 
 int main() {
     try {
-        setenv("APS5_NO_SHADER_DISK_CACHE", "1", 1);
+#ifdef _WIN32
+        _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+#else
+        setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+#endif
         for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
             const auto vertices = TriangleVertices(triangle);
             for (std::uint32_t k = 0; k < 3; ++k) {
@@ -253,8 +258,7 @@ int main() {
         }
 
         constexpr std::size_t recordBlockBytes = 65536;
-        auto* record = static_cast<std::uint32_t*>(std::aligned_alloc(65536, recordBlockBytes));
-        Require(record != nullptr, "cannot allocate the indirect record block");
+        auto* record = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(record, recordBlockBytes, true, true);

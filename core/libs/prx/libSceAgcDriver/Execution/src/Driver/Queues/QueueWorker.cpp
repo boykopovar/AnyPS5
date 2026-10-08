@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include <cstdlib>
@@ -58,6 +59,16 @@ void Driver::run(std::uint32_t id) noexcept {
                 workerQueued() = &worker.queued;
                 if (traceGpu && pending.empty()) std::fprintf(stderr, "[gpu] %.1f idle queue=0x%x\n", TraceMs(), id);
                 const auto ready = [&] { return failure || stopping || !pending.empty(); };
+                const auto poll = [&](const auto& done) {
+#ifdef _WIN32
+                    lock.unlock();
+                    PollSleep();
+                    lock.lock();
+                    return done();
+#else
+                    return changed.wait_for(lock, std::chrono::milliseconds(1), done);
+#endif
+                };
 
                 while (!ready()) {
                     if (!completionsPending() || (id != 0 && Graphics::Recorder::PendingCompletionLabels() == 0)) {
@@ -66,7 +77,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         if (id == 0) queue0Dormant.store(false, std::memory_order_relaxed);
                         break;
                     }
-                    if (changed.wait_for(lock, std::chrono::milliseconds(1), ready)) break;
+                    if (poll(ready)) break;
                     lock.unlock();
                     reapCompletionLabels();
                     lock.lock();
@@ -80,7 +91,8 @@ void Driver::run(std::uint32_t id) noexcept {
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
                 if (submission.waitFree) {
                     orderHolders.fetch_add(1, std::memory_order_acq_rel);
-                    while (!failure && !stopping && !orderReleased(id, submission.received)) changed.wait_for(lock, std::chrono::milliseconds(1));
+                    const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
+                    while (!released()) poll(released);
                     orderHolders.fetch_sub(1, std::memory_order_acq_rel);
                     rethrowFailure();
                 }

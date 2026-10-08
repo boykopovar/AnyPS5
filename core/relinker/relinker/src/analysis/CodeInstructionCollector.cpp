@@ -247,9 +247,21 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             position = next;
         }
     }
+    const auto decodesInSegment = [&](std::uint64_t address) {
+        for (const auto& header : headers) {
+            if (header.Type != 1 || (header.Flags & 1) == 0 || address < header.MappedAddress || address - header.MappedAddress >= header.FileSize) continue;
+            const auto offset = address - header.MappedAddress;
+            try {
+                return decoder.DecodeInstruction(bytes.data() + header.Offset + offset, header.FileSize - offset).Length != 0;
+            } catch (const Codegen::CodegenException&) {
+                return false;
+            }
+        }
+        return false;
+    };
     for (const auto target : staticTargets) {
         for (const auto& [skipBegin, skipEnd] : skipped) {
-            if (skipBegin <= target && target < skipEnd)
+            if (skipBegin <= target && target < skipEnd && !decodesInSegment(target))
                 throw Domain::RelinkerException("Code analysis: branch into skipped range tail", target);
         }
     }

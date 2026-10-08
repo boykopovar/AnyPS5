@@ -331,6 +331,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     targetOptions.supportedCapabilities = request.target.supportedCapabilities;
     targetOptions.supportedExtensions = request.target.supportedExtensions;
     targetOptions.nonConstantImageOffsets = request.target.nonConstantImageOffsets;
+    targetOptions.narrowSubgroupClock = request.target.narrowSubgroupClock;
 
     constexpr SpirvEmitter spirvEmitter;
     RecompileResult result;

@@ -62,12 +62,18 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelW = 7;
     surface.dccAddress = color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
+    surface.dccPipeAligned = color.dccPipeAligned;
     return surface;
 }
 
 }
 
 namespace {
+
+std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
+    if (color.mipCount != 1 || color.depth != 1 || !color.dccPipeAligned) return DccKeyBytes(bytes);
+    return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+}
 
 std::array<std::byte, 16> clearTexel(const ColorTarget& color, DccKeys keys) {
     std::array<std::byte, 16> texel{};
@@ -102,7 +108,7 @@ void storeClearTexels(const Context& context, const ColorTarget& color, const st
     const auto keys = ReadDccKeys(color.dccAddress, color.bytes);
     if (!IsDccClear(keys)) return;
     writeTexels(color, keys == DccKeys::ClearRegister ? texel : clearTexel(color, keys));
-    MarkDccUncompressed(context, color.dccAddress, color.bytes);
+    MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
 }
 
 void materializeRegisterClear(const Context& context, const ColorTarget& color, StorageTexture& resident) {
@@ -121,7 +127,7 @@ void materializeRegisterClear(const Context& context, const ColorTarget& color, 
         }
     }
     if (cleared) {
-        MarkDccUncompressed(context, color.dccAddress, color.bytes);
+        MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
         return;
     }
     storeClearTexels(context, color, texel);
@@ -1990,7 +1996,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (binding.gpuTiling) GuestMemory::WriteChanged(binding.color.address, binding.tiled->Bytes(), binding.original);
         else WriteColorTarget(binding.color, binding.transfer->Bytes());
         // The stored texels are the whole target now, so later reads must see them rather than a fast clear.
-        MarkDccUncompressed(binding.color.dccAddress, ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes());
+        const auto targetBytes = ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes();
+        MarkDccUncompressed(binding.color.dccAddress, targetBytes, colorKeyCount(binding.color, targetBytes));
     }
     timer.phase(PhaseWriteBack);
     if (profile && traceDraws) {
@@ -2159,7 +2166,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
             const bool current = keys == DccKeys::ClearRegister ? clearToTexel(*resident, texel, color.elementBytes, refusal) : StorageTexture::FindPending(color.address, color.bytes) == resident || resident->UploadedKeys() == keys;
             if (current) {
                 resident->MarkDirty();
-                MarkDccUncompressed(context, color.dccAddress, color.bytes);
+                MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
                 continue;
             }
         }

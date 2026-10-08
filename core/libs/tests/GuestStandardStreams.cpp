@@ -180,6 +180,10 @@ int main() {
     Require(&guest == &stream.GuestState());
     Require(guest.position == nullptr && guest.readRemaining == 0 && guest.writeRemaining == 0);
     Require(guest.descriptor == fileno_nid_postfix(&stream));
+    FileStream lineBuffered(std::tmpfile());
+    Require(setvbuf_nid_postfix(&lineBuffered, nullptr, 1, 0) == 0);
+    FileStream fullyBuffered(std::tmpfile());
+    Require(setvbuf_nid_postfix(&fullyBuffered, nullptr, 0, 0) == 0);
     Require(setvbuf_nid_postfix(&stream, nullptr, 2, 0) == 0);
     Require(fputc_nid_postfix('A', &stream) == 'A');
     Require(--guest.writeRemaining < 0 && __swbuf_nid_postfix('\n', &stream) == '\n');

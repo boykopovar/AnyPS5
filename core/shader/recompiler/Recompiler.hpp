@@ -200,6 +200,7 @@ struct SpirvTarget {
     std::optional<TessellationTargetLimits> tessellation;
     bool nonConstantImageOffsets = false;
     std::uint32_t srgbDecodeFormats = 0;
+    bool narrowSubgroupClock = false;
 };
 
 struct BindingLayout {

@@ -20,6 +20,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
 namespace {
@@ -541,9 +542,10 @@ void VideoOutDriver::vblankLoop(std::stop_token token) {
     try {
         for (int64_t frame = 1; !token.stop_requested(); ++frame) {
             const auto next = start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(Frame(frame));
+            const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(next - std::chrono::steady_clock::now()).count();
+            if (remaining > 0) PreciseSleepUs(static_cast<unsigned long long>(remaining));
             {
-                std::unique_lock lock(flipQueue->mutex);
-                flipQueue->changed.wait_until(lock, next, [&] { return token.stop_requested() || flipQueue->failure; });
+                std::lock_guard lock(flipQueue->mutex);
                 if (token.stop_requested() || flipQueue->failure) return;
             }
             vblankEnd();

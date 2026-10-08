@@ -215,7 +215,6 @@ inline constexpr std::uint8_t SibBaseDisp32 = 0x05;
 inline constexpr std::size_t Disp8Size = 1;
 inline constexpr std::size_t Disp32Size = 4;
 
-inline constexpr std::size_t Rel32InstructionLength = 5;
 
 inline constexpr std::size_t Vex2PrefixLength = 2;
 inline constexpr std::size_t Vex3PrefixLength = 3;

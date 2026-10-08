@@ -114,11 +114,51 @@ std::uint32_t ActiveArgument(SpirvValueEmitContext& ctx, const IrValue& inst) {
 
 std::uint32_t LoadWordInBounds(SpirvValueEmitContext& ctx, const MemoryResourceAccess& resource, std::uint32_t index) {
     auto& state = ctx.state;
-    const auto pointer = EmitMemoryElementPointer(state, resource, index);
-    const auto value = state.module.AllocateId();
-    if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, resource.memoryAccess);
-    else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-    return value;
+    const auto load = [&](std::uint32_t element) {
+        const auto pointer = EmitMemoryElementPointer(state, resource, element);
+        const auto value = state.module.AllocateId();
+        if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, resource.memoryAccess);
+        else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+        return value;
+    };
+    if (resource.misalignment == 0u) return load(index);
+    const auto shift = resource.misalignment * 8u;
+    const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), load(index), ConstantU32(state, shift));
+    const auto high = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), load(EmitAddU32(state, index, ConstantU32(state, 1u))), ConstantU32(state, 32u - shift));
+    return Binary(state, spv::OpBitwiseOr, TypeU32(state), low, high);
+}
+
+void StoreMisalignedBits(SpirvValueEmitContext& ctx, const MemoryResourceAccess& resource, std::uint32_t index, std::uint32_t mask, std::uint32_t value) {
+    auto& state = ctx.state;
+    const auto shift = resource.misalignment * 8u;
+    const auto merge = [&](std::uint32_t element, spv::Op direction, std::uint32_t amount) {
+        const auto partMask = Binary(state, direction, TypeU32(state), mask, ConstantU32(state, amount));
+        const auto partValue = Binary(state, direction, TypeU32(state), value, ConstantU32(state, amount));
+        AtomicUpdate(state, EmitMemoryElementPointer(state, resource, element), resource.kind, [&](std::uint32_t old) {
+            return Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), old, Unary(state, spv::OpNot, TypeU32(state), partMask)), partValue);
+        });
+    };
+    merge(index, spv::OpShiftLeftLogical, shift);
+    merge(EmitAddU32(state, index, ConstantU32(state, 1u)), spv::OpShiftRightLogical, 32u - shift);
+}
+
+void StoreMisalignedSubword(SpirvValueEmitContext& ctx, const MemoryResourceAccess& resource, std::uint32_t address, std::uint32_t index, std::uint32_t bits, std::uint32_t data) {
+    auto& state = ctx.state;
+    if (bits != 8u && bits != 16u) {
+        ctx.Fail("subword store has an unsupported width");
+    }
+    const auto shift = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), address, ConstantU32(state, 3u)), ConstantU32(state, 3u));
+    const auto fieldMask = ConstantU32(state, bits == 8u ? 0xffu : 0xffffu);
+    const auto mask = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), fieldMask, shift);
+    StoreMisalignedBits(ctx, resource, index, mask, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), data, fieldMask), shift));
+}
+
+void RequireAlignedAtomic(SpirvValueEmitContext& ctx, const MemoryResourceAccess& resource) {
+    if (resource.misalignment != 0u) ctx.Fail("buffer atomic on a V# whose base is not DWORD aligned");
+}
+
+void RequireAlignedFormattedElement(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryResourceAccess& resource, const SpirvBufferFormatInfo& info) {
+    if (resource.misalignment % std::min(info.byteSize, 4u) != 0u) ctx.Fail(inst, "is a formatted buffer access through a V# whose base is not aligned to its element");
 }
 
 std::uint32_t LoadSubwordInBounds(SpirvValueEmitContext& ctx, const MemoryResourceAccess& resource, std::uint32_t address, std::uint32_t index, std::uint32_t bits, bool signExtend) {
@@ -361,6 +401,7 @@ std::uint32_t FormattedLoadPrepared(SpirvValueEmitContext& ctx, const IrValue& i
         if (mem.d16) ctx.Fail(inst, "is a D16 format load with an unknown buffer format");
         return LoadWordPrepared(ctx, inst, RebaseRawComponent(mem, outputComponent), resource);
     }
+    RequireAlignedFormattedElement(ctx, inst, resource, info);
     return LoadFormattedComponent(ctx, mem, info, outputComponent, [&](std::uint32_t component) {
         return LoadWordPrepared(ctx, inst, RebaseFormattedComponent(mem, info, component), resource);
     }, [&](std::uint32_t component, std::uint32_t bits, bool signExtend) {
@@ -377,6 +418,10 @@ std::uint32_t FormattedLoad(SpirvValueEmitContext& ctx, const IrValue& inst, con
 
 void StoreWordInBounds(SpirvValueEmitContext& ctx, const MemoryResourceAccess& resource, std::uint32_t index, std::uint32_t data) {
     auto& state = ctx.state;
+    if (resource.misalignment != 0u) {
+        StoreMisalignedBits(ctx, resource, index, ConstantU32(state, 0xffffffffu), data);
+        return;
+    }
     if (resource.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, EmitMemoryElementPointer(state, resource, index), data, resource.memoryAccess);
     else state.module.AddFunction(spv::OpStore, EmitMemoryElementPointer(state, resource, index), data);
 }
@@ -414,7 +459,8 @@ void StoreSubwordPrepared(SpirvValueEmitContext& ctx, const IrValue& inst, const
     const auto rawIndex = Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u));
     const auto index = EmitMemoryElementIndex(state, resource, rawIndex);
     EmitIfCondition(state, EmitMemoryElementInBounds(state, resource, index), [&]() {
-        StoreSubwordInBounds(ctx, mem, resource, address, index, bits, data);
+        if (resource.misalignment != 0u) StoreMisalignedSubword(ctx, resource, address, index, bits, data);
+        else StoreSubwordInBounds(ctx, mem, resource, address, index, bits, data);
     });
 }
 
@@ -455,6 +501,7 @@ enum class FormattedAccess {
 
 PreparedFormattedMemory PrepareFormattedMemory(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, const MemoryResourceAccess& resource, const SpirvBufferFormatInfo& info, std::uint32_t components, FormattedAccess access) {
     auto& state = ctx.state;
+    RequireAlignedFormattedElement(ctx, inst, resource, info);
     PreparedFormattedMemory plan;
     plan.info = info;
     plan.resource = resource;
@@ -552,7 +599,8 @@ void StoreFormattedElement(SpirvValueEmitContext& ctx, const MemoryInfo& mem, co
     for (std::uint32_t component = 0; component < info.componentCount; component++) {
         const auto bits = info.componentBits[component];
         if (bits == 8u || bits == 16u) {
-            StoreSubwordInBounds(ctx, mem, plan.resource, plan.addresses.at(component), plan.indices.at(component), bits, encoded.at(component));
+            if (plan.resource.misalignment != 0u) StoreMisalignedSubword(ctx, plan.resource, plan.addresses.at(component), plan.indices.at(component), bits, encoded.at(component));
+            else StoreSubwordInBounds(ctx, mem, plan.resource, plan.addresses.at(component), plan.indices.at(component), bits, encoded.at(component));
         } else {
             StoreWordInBounds(ctx, plan.resource, plan.indices.at(component), encoded.at(component));
         }
@@ -606,7 +654,7 @@ std::uint32_t LoadWideBuffer(SpirvValueEmitContext& ctx, const IrValue& inst, co
     return EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), TypeU32Composite(state, components), ConstantU32CompositeZero(state, components), [&]() {
         const auto resource = PrepareMemoryResourceAccess(state, mem);
         const auto info = MemoryFormatInfo(state, mem);
-        if (info.type == SpirvFormatComponentType::Unknown && components == 2u && mem.coherent && state.storageBufferU64Variable != 0u) {
+        if (info.type == SpirvFormatComponentType::Unknown && components == 2u && mem.coherent && state.storageBufferU64Variable != 0u && resource.misalignment == 0u) {
             return LoadCoherentPair(ctx, inst, mem, resource);
         }
         if (info.type != SpirvFormatComponentType::Unknown) {
@@ -788,6 +836,7 @@ struct PreparedMemoryElement {
 
 PreparedMemoryElement PrepareMemoryElement(SpirvValueEmitContext& ctx, const MemoryInfo& mem, std::uint32_t rawIndex) {
     const auto resource = PrepareMemoryResourceAccess(ctx.state, mem);
+    RequireAlignedAtomic(ctx, resource);
     return {resource, EmitMemoryElementIndex(ctx.state, resource, rawIndex)};
 }
 
@@ -970,6 +1019,7 @@ std::uint32_t BufferAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto& mem = BufferMemory(ctx, inst);
     return EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), TypeU64(state), ConstantU64(state, 0u), [&]() {
         const auto resource = PrepareStorageBufferResourceAccess(state, mem, state.storageBufferU64Variable, TypeStorageBufferU64Pointer(state));
+        RequireAlignedAtomic(ctx, resource);
         const auto byteAddress = Binary(state, spv::OpIAdd, TypeU32(state), ByteAddress(ctx, inst, mem), resource.byteOffset);
         const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byteAddress, ConstantU32(state, 3u));
         return EmitValueOrDefaultIfCondition(state, EmitMemoryElementInBounds(state, resource, index), TypeU64(state), ConstantU64(state, 0u), [&]() {
@@ -1048,6 +1098,7 @@ std::uint32_t BufferAtomic64Update(SpirvValueEmitContext& ctx, const IrValue& in
     const auto& mem = BufferMemory(ctx, inst);
     return EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), TypeU64(state), ConstantU64(state, 0u), [&]() {
         const auto resource = PrepareStorageBufferResourceAccess(state, mem, state.storageBufferU64Variable, TypeStorageBufferU64Pointer(state));
+        RequireAlignedAtomic(ctx, resource);
         const auto byteAddress = Binary(state, spv::OpIAdd, TypeU32(state), ByteAddress(ctx, inst, mem), resource.byteOffset);
         const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byteAddress, ConstantU32(state, 3u));
         return EmitValueOrDefaultIfCondition(state, EmitMemoryElementInBounds(state, resource, index), TypeU64(state), ConstantU64(state, 0u), [&]() {

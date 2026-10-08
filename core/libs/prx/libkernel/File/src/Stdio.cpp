@@ -313,12 +313,10 @@ int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
 }
 
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
-    if (path == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
+    if (const int error = PathError(path)) return PosixFailure(error);
     auto native = ResolvePath_nid_no_patch(path);
     if (NativeMkdir(native, mode) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": mkdir failed for " + native.string() + ", errno=" + std::to_string(errno));
+        return PosixResult(SceErrorFromErrno(errno));
     }
     RecordWrittenPath_nid_no_patch(native);
     return 0;

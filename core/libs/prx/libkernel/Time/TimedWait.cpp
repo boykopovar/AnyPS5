@@ -94,9 +94,12 @@ struct Waiter {
     HANDLE timer = CreateHighResolutionTimer();
     Waiter* previous = nullptr;
     Waiter* next = nullptr;
+    Waiter* nested = nullptr;
     bool queued = false;
+    bool busy = false;
 
     ~Waiter() {
+        delete nested;
         if (event) CloseHandle(event);
         if (timer) CloseHandle(timer);
     }
@@ -115,6 +118,16 @@ Waiter* ThisThreadWaiter() {
         const DWORD slot = WaiterSlotIndex();
         if (slot != FLS_OUT_OF_INDEXES) FlsSetValue(slot, waiter);
     }
+    return waiter;
+}
+
+Waiter* AcquireWaiter() {
+    Waiter* waiter = ThisThreadWaiter();
+    while (waiter->busy) {
+        if (!waiter->nested) waiter->nested = new Waiter();
+        waiter = waiter->nested;
+    }
+    waiter->busy = true;
     return waiter;
 }
 
@@ -147,7 +160,7 @@ bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
 }  // namespace
 
 Waiter* Condition::enqueue() {
-    Waiter* waiter = ThisThreadWaiter();
+    Waiter* waiter = AcquireWaiter();
     std::lock_guard lock(queueLock);
     waiter->queued = true;
     waiter->next = nullptr;
@@ -170,17 +183,22 @@ void Condition::unlink(Waiter* waiter) {
 
 void Condition::waitSignal(Waiter* waiter) {
     AlertableWait(1, &waiter->event, INFINITE);
+    waiter->busy = false;
 }
 
 bool Condition::waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
-    if (WaitEventUntil(waiter, deadlineNanos)) return true;
-    std::lock_guard lock(queueLock);
-    if (waiter->queued) {
-        unlink(waiter);
-        return false;
+    bool signaled = WaitEventUntil(waiter, deadlineNanos);
+    if (!signaled) {
+        std::lock_guard lock(queueLock);
+        if (waiter->queued) {
+            unlink(waiter);
+        } else {
+            WaitForSingleObject(waiter->event, 0);
+            signaled = true;
+        }
     }
-    WaitForSingleObject(waiter->event, 0);
-    return true;
+    waiter->busy = false;
+    return signaled;
 }
 
 void Condition::NotifyOne() {

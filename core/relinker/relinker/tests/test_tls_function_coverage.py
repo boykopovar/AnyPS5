@@ -382,8 +382,8 @@ def pe_bytes_at(pe, rva, size):
     raise AssertionError(f"Unmapped PE RVA {rva:#x}")
 
 
-def add_alias(image, size):
-    struct.pack_into("<IBBHQQ", image, 0x650, 0, 0x12, 0, 1, 0x1200, size)
+def add_alias(image, size, begin=0x1200):
+    struct.pack_into("<IBBHQQ", image, 0x650, 0, 0x12, 0, 1, begin, size)
     struct.pack_into("<IIIII", image, 0x680, 1, 3, 1, 0, 0)
     return image
 
@@ -438,6 +438,15 @@ def main():
         alias_tail[0x1258:0x1260] = bytes.fromhex("64 8b 04 25 28 00 00 00")
         convert("symbol-alias-unreachable-tls-tail", alias_tail,
                 "Unsupported Windows guest TLS instruction", error_offset=0x1258)
+        for metadata in ("unwind", "symbol"):
+            convert(f"branch-into-cut-tail-{metadata}",
+                    make_image("register", metadata, 0x50, TLS_LOAD + bytes.fromhex("eb 00 8b 40 f0 c3")))
+        convert("branch-into-undecodable-tail",
+                make_image("register", "unwind", 0x50, TLS_LOAD + bytes.fromhex("eb 01 66 0f 78 c0 01 02 c3")),
+                "Code analysis: branch into skipped range tail", error_offset=0x124f)
+        split_body = TLS_LOAD + bytes.fromhex("eb 00 8b 40 f0 48 b9 00 00 00 65 2e 62 69 6e") + b"\xc3" * 8
+        convert("function-begins-inside-instruction",
+                add_alias(make_image("register", "symbol", 0x55, split_body), 0x0c, 0x1256))
         overlapping = make_image("register", "unwind")
         overlapping[0x1200:0x1205] = b"\xe9" + struct.pack("<i", 0x1245 - 0x1205)
         convert("overlapping-entry", overlapping, "Code analysis: overlapping instruction boundaries")
