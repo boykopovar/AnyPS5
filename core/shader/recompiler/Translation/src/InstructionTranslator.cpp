@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace ShaderRecompiler {
@@ -354,6 +355,9 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         throw std::runtime_error("cannot translate an empty control flow graph");
     }
 
+    const std::unordered_set<std::uint32_t> codeTablePCs(
+        cfg.codeTableLoadProgramCounters.begin(), cfg.codeTableLoadProgramCounters.end());
+
     std::uint32_t vectorLimit = 1u;
     for (const auto& cfgBlock : cfg.blocks) {
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
@@ -361,7 +365,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 throw std::runtime_error("control flow graph block " + std::to_string(cfgBlock.id) + " references instruction " + std::to_string(index) + " outside decoded program of size " + std::to_string(decoded.instructions.size()));
             }
             const auto& instruction = decoded.instructions[index];
-            if (isCodeTableLoad(cfg, instruction.programCounter)) {
+            if (codeTablePCs.contains(instruction.programCounter)) {
                 continue;
             }
             includeInstructionVectorRegisters(instruction, vectorLimit);
@@ -429,16 +433,20 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
 
     emitEntryPrologue(program, *blocks.front(), options);
 
+    std::unordered_map<std::uint32_t, const ControlFlowGraph::CodeTableLoad*> codeTableLoadMap;
+    for (const auto& entry : cfg.codeTableLoads)
+        codeTableLoadMap.emplace(entry.programCounter, &entry);
+
     for (const auto& cfgBlock : cfg.blocks) {
         const auto typedIndex = blockIndices.at(cfgBlock.id);
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
-            if (isCodeTableLoad(cfg, instruction.programCounter)) {
-                const auto table = std::find_if(cfg.codeTableLoads.begin(), cfg.codeTableLoads.end(), [&](const auto& entry) { return entry.programCounter == instruction.programCounter; });
-                if (table == cfg.codeTableLoads.end()) throw std::runtime_error("missing shader code table values");
-                context.TranslateCodeTableLoad(instruction, *table);
+            if (codeTablePCs.contains(instruction.programCounter)) {
+                const auto it = codeTableLoadMap.find(instruction.programCounter);
+                if (it == codeTableLoadMap.end()) throw std::runtime_error("missing shader code table values");
+                context.TranslateCodeTableLoad(instruction, *it->second);
                 continue;
             }
             if (options.embeddedFetch != nullptr) {

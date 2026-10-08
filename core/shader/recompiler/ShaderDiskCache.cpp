@@ -382,7 +382,7 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
         in.Value(constant.id);
         in.Value(constant.value);
     });
-    reader.List(invocation.bindings, 8, decodeBinding);
+    reader.List(invocation.bindings, 114, decodeBinding);
     std::vector<std::uint8_t> pushConstants;
     reader.Values(pushConstants);
     invocation.pushConstants.resize(pushConstants.size());
@@ -776,7 +776,8 @@ private:
         std::error_code error;
         std::filesystem::create_directories(directory, error);
         const auto stamp = directory / "last-used";
-        std::ofstream(stamp, std::ios::binary | std::ios::trunc).close();
+        if (!std::ofstream(stamp, std::ios::binary | std::ios::trunc))
+            return;
         std::filesystem::last_write_time(stamp, std::filesystem::file_time_type::clock::now(), error);
         const auto now = std::filesystem::file_time_type::clock::now();
         for (std::filesystem::directory_iterator it(root, error), end; !error && it != end; it.increment(error)) {

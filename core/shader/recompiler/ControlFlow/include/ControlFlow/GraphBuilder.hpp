@@ -4,6 +4,7 @@
 #include "ControlFlow/ControlFlowGraph.hpp"
 #include "RdnaDecoder/RdnaProgram.hpp"
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -29,8 +30,10 @@ public:
     [[nodiscard]] ControlFlowGraph Build(const RdnaProgram& program, const SwappcInfo* swappc = nullptr) const;
 
 private:
-    [[nodiscard]] std::vector<BasicBlock> splitIntoBlocks(const RdnaProgram& program, const std::vector<SwappcCall>& calls) const;
-    void linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram& program, const std::vector<SwappcCall>& calls) const;
+    [[nodiscard]] std::vector<BasicBlock> splitIntoBlocks(const RdnaProgram& program, const std::vector<SwappcCall>& calls,
+                                                          std::span<const std::uint32_t> sortedDirectBranchTargets) const;
+    void linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram& program, const std::vector<SwappcCall>& calls,
+                    std::span<const std::uint32_t> sortedDirectBranchTargets) const;
 };
 
 }

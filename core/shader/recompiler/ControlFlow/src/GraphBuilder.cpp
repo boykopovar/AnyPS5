@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <map>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -220,7 +221,8 @@ bool addsImmediate(const RdnaInstruction& instruction, std::uint32_t reg, std::u
          (isRegister(instruction.source1, RdnaOperandKind::ScalarRegister, reg) && isImmediate(instruction.source0, immediate)));
 }
 
-bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result) {
+bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result,
+                      std::span<const std::uint32_t> sortedDirectBranchTargets) {
     if (index < 9u) return false;
     const auto& branch = program.instructions[index];
     if (branch.source0.kind != RdnaOperandKind::ScalarRegister) return false;
@@ -260,8 +262,9 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
             bound.op != RdnaOpcode::SMinU32 || !sameRegister(bound.destination, load.source1) ||
             !sameRegister(bound.source0, load.source1) || !isImmediate(bound.source1, maximum) || maximum > 255u) return false;
         if (load.source1.kind == RdnaOperandKind::ScalarRegister && load.source1.reg >= baseReg && load.source1.reg <= baseReg + 1u) return false;
-        for (const auto& instruction : program.instructions) {
-            if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > bound.programCounter && instruction.branchTarget <= branch.programCounter) return false;
+        {
+            auto it = std::upper_bound(sortedDirectBranchTargets.begin(), sortedDirectBranchTargets.end(), bound.programCounter);
+            if (it != sortedDirectBranchTargets.end() && *it <= branch.programCounter) return false;
         }
         const std::uint64_t table = static_cast<std::uint64_t>(instructionEndProgramCounter(basePc)) + displacement + load.memoryOffset;
         const std::uint64_t byteCount = (static_cast<std::uint64_t>(maximum) + 1u) * 8u;
@@ -331,7 +334,8 @@ bool findLastWriter(const RdnaProgram& program, std::uint32_t end, std::initiali
     return false;
 }
 
-bool resolveDwordJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result) {
+bool resolveDwordJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result,
+                           std::span<const std::uint32_t> sortedDirectBranchTargets) {
     if (index < 2u) return false;
     const auto& branch = program.instructions[index];
     const auto& low = program.instructions[index - 2u];
@@ -365,8 +369,9 @@ bool resolveDwordJumpTable(const RdnaProgram& program, std::uint32_t index, Boun
         baseLow.op != RdnaOpcode::SAddU32 || !addsImmediateTo(baseLow, pcReg, displacement) ||
         baseHigh.op != RdnaOpcode::SAddcU32 || !addsImmediateTo(baseHigh, pcReg + 1u, carry) || carry != 0u) return false;
     const auto& first = program.instructions[std::min(boundIndex, baseIndex - 2u)];
-    for (const auto& instruction : program.instructions) {
-        if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > first.programCounter && instruction.branchTarget <= branch.programCounter) return false;
+    {
+        auto it = std::upper_bound(sortedDirectBranchTargets.begin(), sortedDirectBranchTargets.end(), first.programCounter);
+        if (it != sortedDirectBranchTargets.end() && *it <= branch.programCounter) return false;
     }
     const auto base = static_cast<std::int64_t>(instructionEndProgramCounter(basePc)) + displacement;
     const auto table = base + static_cast<std::int32_t>(load.memoryOffset);
@@ -386,10 +391,11 @@ bool resolveDwordJumpTable(const RdnaProgram& program, std::uint32_t index, Boun
     return true;
 }
 
-bool resolveBoundedJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result) {
-    if (resolveJumpTable(program, index, result)) return true;
+bool resolveBoundedJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJumpTable& result,
+                             std::span<const std::uint32_t> sortedDirectBranchTargets) {
+    if (resolveJumpTable(program, index, result, sortedDirectBranchTargets)) return true;
     result = BoundedJumpTable{};
-    return resolveDwordJumpTable(program, index, result);
+    return resolveDwordJumpTable(program, index, result, sortedDirectBranchTargets);
 }
 
 bool pairOverlapsRegister(const RdnaOperand& operand, std::uint32_t linkRegister, std::uint32_t count = 1u) {
@@ -705,7 +711,8 @@ void pruneUnreachableBlocks(ControlFlowGraph& graph) {
 
 }
 
-std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program, const std::vector<SwappcCall>& calls) const {
+std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program, const std::vector<SwappcCall>& calls,
+                                                       std::span<const std::uint32_t> sortedDirectBranchTargets) const {
     if (program.instructions.empty()) {
         throw std::invalid_argument("cannot build a control flow graph for an empty program");
     }
@@ -740,7 +747,7 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
                 target = returnCall->returnTargetProgramCounter;
             } else if (!resolveSetpcTarget(program, index, target)) {
                 BoundedJumpTable table;
-                if (!resolveBoundedJumpTable(program, index, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(instruction.programCounter));
+                if (!resolveBoundedJumpTable(program, index, table, sortedDirectBranchTargets)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(instruction.programCounter));
                 for (const auto tableTarget : table.targets) {
                     if (!instructionProgramCounters.contains(tableTarget)) throw std::invalid_argument("jump table targets invalid instruction boundary " + toHexString(tableTarget));
                     labels.insert(tableTarget);
@@ -793,7 +800,8 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
     return blocks;
 }
 
-void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram& program, const std::vector<SwappcCall>& calls) const {
+void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram& program, const std::vector<SwappcCall>& calls,
+                               std::span<const std::uint32_t> sortedDirectBranchTargets) const {
     std::map<std::uint32_t, std::uint32_t> programCounterToBlock;
     for (const auto& block : blocks) {
         programCounterToBlock.emplace(block.startProgramCounter, block.id);
@@ -819,7 +827,7 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
                 block.terminator.trueBlock = programCounterToBlock.at(returnCall->returnTargetProgramCounter);
             } else if (!resolveSetpcTarget(program, block.instructionEnd - 1u, target)) {
                 BoundedJumpTable table;
-                if (!resolveBoundedJumpTable(program, block.instructionEnd - 1u, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(last.programCounter));
+                if (!resolveBoundedJumpTable(program, block.instructionEnd - 1u, table, sortedDirectBranchTargets)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(last.programCounter));
                 block.terminator.kind = TerminatorKind::IndirectBranch;
                 block.terminator.indirectPcSgpr = last.source0.reg;
                 sortUnique(table.targets);
@@ -892,9 +900,16 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
 
 ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInfo* swappc) const {
     const std::vector<SwappcCall> calls = analyzeSwappcCalls(program, swappc);
+    std::vector<std::uint32_t> sortedDirectBranchTargets;
+    for (const auto& instr : program.instructions) {
+        if (IsDirectBranchOpcode(instr.op))
+            sortedDirectBranchTargets.push_back(instr.branchTarget);
+    }
+    std::sort(sortedDirectBranchTargets.begin(), sortedDirectBranchTargets.end());
+
     ControlFlowGraph graph;
-    graph.blocks = splitIntoBlocks(program, calls);
-    linkBlocks(graph.blocks, program, calls);
+    graph.blocks = splitIntoBlocks(program, calls, sortedDirectBranchTargets);
+    linkBlocks(graph.blocks, program, calls, sortedDirectBranchTargets);
     for (const auto& call : calls) {
         if (call.fetch) {
             graph.hasFetchCall = true;
@@ -906,7 +921,7 @@ ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInf
         const auto term = graph.blocks[id].terminator;
         if (term.kind != TerminatorKind::IndirectBranch) continue;
         BoundedJumpTable table;
-        if (!resolveBoundedJumpTable(program, graph.blocks[id].instructionEnd - 1u, table)) throw std::logic_error("jump table resolution changed");
+        if (!resolveBoundedJumpTable(program, graph.blocks[id].instructionEnd - 1u, table, sortedDirectBranchTargets)) throw std::logic_error("jump table resolution changed");
         if (table.firstProgramCounter < graph.blocks[id].startProgramCounter) throw std::invalid_argument("jump table bound does not dominate its branch in the same block");
         graph.codeTableLoadProgramCounters.push_back(table.load.programCounter);
         graph.codeTableLoads.push_back(std::move(table.load));
