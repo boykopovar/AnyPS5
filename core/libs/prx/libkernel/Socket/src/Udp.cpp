@@ -39,6 +39,7 @@ constexpr auto Invalid = -1;
 #endif
 int Fail(int error) { *__error_nid_postfix() = error; return -1; }
 constexpr int GuestNoSignal = 0x20000;
+constexpr int GuestUnixFamily = 1;
 int NativeSendFlags(int flags) {
 #ifdef _WIN32
     static_cast<void>(flags);
@@ -168,6 +169,96 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
     std::memcpy(output, bytes, std::min<std::uint32_t>(*length, bytes[0]));
     *length = bytes[0];
 }
+void GuestUnixAddress(void* output, std::uint32_t* length) {
+    const unsigned char unnamed[2] = {2, GuestUnixFamily};
+    std::memcpy(output, unnamed, std::min<std::uint32_t>(*length, 2u));
+    *length = 2;
+}
+int CreatePair(int nativeType, NativeSocket* pair) {
+#ifdef _WIN32
+    static const int startup = [] { WSADATA data{}; return WSAStartup(MAKEWORD(2, 2), &data); }();
+    if (startup) return 5;
+    if (nativeType == SOCK_DGRAM) {
+        NativeSocket ends[2] = {::socket(AF_INET, SOCK_DGRAM, 0), ::socket(AF_INET, SOCK_DGRAM, 0)};
+        if (ends[0] == Invalid || ends[1] == Invalid) {
+            const int error = NativeError();
+            for (const auto end : ends) if (end != Invalid) closesocket(end);
+            return error;
+        }
+        sockaddr_in addresses[2]{};
+        for (int i = 0; i < 2; ++i) {
+            addresses[i].sin_family = AF_INET;
+            addresses[i].sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            if (::bind(ends[i], reinterpret_cast<sockaddr*>(&addresses[i]), sizeof(addresses[i]))) {
+                const int error = NativeError();
+                closesocket(ends[0]);
+                closesocket(ends[1]);
+                return error;
+            }
+            socklen_t boundLength = sizeof(addresses[i]);
+            if (::getsockname(ends[i], reinterpret_cast<sockaddr*>(&addresses[i]), &boundLength)) {
+                const int error = NativeError();
+                closesocket(ends[0]);
+                closesocket(ends[1]);
+                return error;
+            }
+        }
+        for (int i = 0; i < 2; ++i) {
+            if (::connect(ends[i], reinterpret_cast<sockaddr*>(&addresses[1 - i]), sizeof(addresses[1 - i]))) {
+                const int error = NativeError();
+                closesocket(ends[0]);
+                closesocket(ends[1]);
+                return error;
+            }
+        }
+        pair[0] = ends[0];
+        pair[1] = ends[1];
+        return 0;
+    }
+    const auto listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listener == Invalid) return NativeError();
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(listener, reinterpret_cast<sockaddr*>(&local), sizeof(local)) || ::listen(listener, 1)) {
+        const int error = NativeError();
+        closesocket(listener);
+        return error;
+    }
+    sockaddr_in bound{};
+    socklen_t boundLength = sizeof(bound);
+    if (::getsockname(listener, reinterpret_cast<sockaddr*>(&bound), &boundLength)) {
+        const int error = NativeError();
+        closesocket(listener);
+        return error;
+    }
+    const auto first = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (first == Invalid) {
+        const int error = NativeError();
+        closesocket(listener);
+        return error;
+    }
+    if (::connect(first, reinterpret_cast<sockaddr*>(&bound), boundLength)) {
+        const int error = NativeError();
+        closesocket(first);
+        closesocket(listener);
+        return error;
+    }
+    const auto second = ::accept(listener, nullptr, nullptr);
+    closesocket(listener);
+    if (second == Invalid) {
+        const int error = NativeError();
+        closesocket(first);
+        return error;
+    }
+    pair[0] = first;
+    pair[1] = second;
+    return 0;
+#else
+    if (::socketpair(AF_UNIX, nativeType, 0, pair)) return NativeError();
+    return 0;
+#endif
+}
 }
 
 int GuestSockets::Close(int descriptor) {
@@ -286,9 +377,46 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
         return Fail(12);
     }
 }
+int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* descriptors) {
+    if (!descriptors) return Fail(14);
+    descriptors[0] = -1;
+    descriptors[1] = -1;
+    if (family != GuestUnixFamily) return Fail(47);
+    const int nativeType = type == 1 ? SOCK_STREAM : type == 2 ? SOCK_DGRAM : -1;
+    if (nativeType == -1 || protocol != 0) return Fail(43);
+    NativeSocket native[2] = {Invalid, Invalid};
+    if (const int error = CreatePair(nativeType, native)) return Fail(error);
+    Socket firstGuard(native[0], family, type);
+    Socket secondGuard(native[1], family, type);
+    try {
+        auto first = std::make_shared<Socket>(native[0], family, type);
+        auto second = std::make_shared<Socket>(native[1], family, type);
+        firstGuard.value = Invalid;
+        secondGuard.value = Invalid;
+        std::lock_guard lock(socketsMutex);
+        if (nextDescriptor > INT_MAX - 2) return Fail(24);
+        const int firstOut = nextDescriptor++;
+        const int secondOut = nextDescriptor++;
+        try {
+            sockets.emplace(firstOut, first);
+            sockets.emplace(secondOut, second);
+        } catch (...) {
+            sockets.erase(firstOut);
+            sockets.erase(secondOut);
+            throw;
+        }
+        descriptors[0] = firstOut;
+        descriptors[1] = secondOut;
+        return 0;
+    } catch (const std::bad_alloc&) {
+        return Fail(12);
+    }
+}
 int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (!address || length < 2) return Fail(14);
+    if (socket->family == GuestUnixFamily) return Fail(56);
     sockaddr_storage native{};
     socklen_t size;
     if (!Address(address, length, native, size)) return -1;
@@ -361,6 +489,10 @@ int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (!address || !length) return Fail(14);
+    if (socket->family == GuestUnixFamily) {
+        GuestUnixAddress(address, length);
+        return 0;
+    }
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
     if (::getsockname(socket->value, reinterpret_cast<sockaddr*>(&native), &size)) return Fail(NativeError());
@@ -371,6 +503,10 @@ int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (!address || !length) return Fail(14);
+    if (socket->family == GuestUnixFamily) {
+        GuestUnixAddress(address, length);
+        return 0;
+    }
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
     if (::getpeername(socket->value, reinterpret_cast<sockaddr*>(&native), &size)) return Fail(NativeError());
@@ -430,7 +566,10 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     const auto result = ::recvfrom(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
         flags & 2 ? MSG_PEEK : 0, reinterpret_cast<sockaddr*>(&native), &size);
     if (result < 0) return Fail(NativeError());
-    if (address) GuestAddress(native, address, addressLength);
+    if (address) {
+        if (socket->family == GuestUnixFamily) GuestUnixAddress(address, addressLength);
+        else GuestAddress(native, address, addressLength);
+    }
     return result;
 }
 struct GuestIovec {
