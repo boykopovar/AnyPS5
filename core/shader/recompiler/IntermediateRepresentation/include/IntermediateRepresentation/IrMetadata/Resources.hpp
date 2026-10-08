@@ -62,6 +62,7 @@ inline constexpr std::uint32_t ClampYShift = 5u;
 inline constexpr std::uint32_t SingleLevel = 1u << 8u;
 inline constexpr std::uint32_t MipShift = 9u;
 inline constexpr std::uint32_t BorderShift = 11u;
+inline constexpr std::uint32_t Unnormalized = 1u << 13u;
 inline constexpr std::uint32_t AddressWrap = 0u;
 inline constexpr std::uint32_t AddressEdge = 1u;
 inline constexpr std::uint32_t AddressMirror = 2u;

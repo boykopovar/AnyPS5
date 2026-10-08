@@ -218,6 +218,9 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
                 continue;
             }
             const auto& image = info.images.at(pair.image);
+            if ((image.emulatedFilter & EmulatedFilter::Enabled) != 0u) {
+                continue;
+            }
             if (image.indirectRoot != ImageResource::NoIndirectImage) {
                 failUnnormalized("samples an image selected at run time");
             }

@@ -1188,7 +1188,8 @@ void EmitEmulatedFilterSample(SpirvValueEmitContext& ctx, const ImageEmitAccess&
     const auto& image = access.image;
     const auto filter = image.emulatedFilter;
     if (access.slot != 0) ctx.Fail(access.inst, "filters a converted image through a bindless image table, which is not implemented");
-    const bool baseOnly = HasFlag(mem, RdnaImageSampleFlagLevelZero) || (filter & EmulatedFilter::SingleLevel) != 0u || EmulatedFilter::Mip(filter) == EmulatedFilter::MipBase;
+    const bool unnormalized = (filter & EmulatedFilter::Unnormalized) != 0u;
+    const bool baseOnly = unnormalized || HasFlag(mem, RdnaImageSampleFlagLevelZero) || (filter & EmulatedFilter::SingleLevel) != 0u || EmulatedFilter::Mip(filter) == EmulatedFilter::MipBase;
     if (!baseOnly && (!HasFlag(mem, RdnaImageSampleFlagLod) || setup.layout.clamp != NoImageComponent)) ctx.Fail(access.inst, "filters a converted image across mip levels without an explicit, unclamped LOD, which is not implemented");
     const bool arrayed = image.dimension == RdnaImageDimension::Dim2DArray;
     if (image.dimension != RdnaImageDimension::Dim2D && !arrayed) ctx.Fail(access.inst, "filters a converted image that is not a 2D or 2D array view, which is not implemented");
@@ -1283,8 +1284,8 @@ void EmitEmulatedFilterSample(SpirvValueEmitContext& ctx, const ImageEmitAccess&
         const auto size = levelSize(level);
         const auto width = Unary(state, spv::OpBitcast, i32, extract(u32, size, 0u));
         const auto height = Unary(state, spv::OpBitcast, i32, extract(u32, size, 1u));
-        auto scaledU = Binary(state, spv::OpFMul, f32, extract(f32, setup.coord, 0u), Unary(state, spv::OpConvertSToF, f32, width));
-        auto scaledV = Binary(state, spv::OpFMul, f32, extract(f32, setup.coord, 1u), Unary(state, spv::OpConvertSToF, f32, height));
+        auto scaledU = unnormalized ? extract(f32, setup.coord, 0u) : Binary(state, spv::OpFMul, f32, extract(f32, setup.coord, 0u), Unary(state, spv::OpConvertSToF, f32, width));
+        auto scaledV = unnormalized ? extract(f32, setup.coord, 1u) : Binary(state, spv::OpFMul, f32, extract(f32, setup.coord, 1u), Unary(state, spv::OpConvertSToF, f32, height));
         if (EmulatedFilter::AddressX(filter) == EmulatedFilter::AddressHalfBorder) scaledU = ext(f32, GLSLstd450FClamp, {scaledU, ConstantF32(state, 0u), Unary(state, spv::OpConvertSToF, f32, width)});
         if (EmulatedFilter::AddressY(filter) == EmulatedFilter::AddressHalfBorder) scaledV = ext(f32, GLSLstd450FClamp, {scaledV, ConstantF32(state, 0u), Unary(state, spv::OpConvertSToF, f32, height)});
         if (!linear) {

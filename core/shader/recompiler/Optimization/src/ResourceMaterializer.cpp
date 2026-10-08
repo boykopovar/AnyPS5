@@ -596,7 +596,6 @@ std::uint32_t emulatedFilterState(const IrResourcePlan& plan, const ResourceSnap
         const auto addressX = addressMode(clampX);
         const auto addressY = addressMode(clampY);
         if (magFilter != minFilter || magFilter > 1u) throw std::runtime_error("filtering a converted image in the shader is implemented only with equal point or bilinear minification and magnification filters");
-        if (unnormalized) throw std::runtime_error("filtering a converted image in the shader does not implement unnormalized coordinates");
         const auto borderType = (words[3] >> 30u) & 0x3u;
         const bool border = addressX == EmulatedFilter::AddressBorder || addressX == EmulatedFilter::AddressHalfBorder || addressY == EmulatedFilter::AddressBorder || addressY == EmulatedFilter::AddressHalfBorder;
         if (border && borderType == 3u) throw std::runtime_error("filtering a converted image in the shader with a border color table is not implemented");
@@ -607,7 +606,7 @@ std::uint32_t emulatedFilterState(const IrResourcePlan& plan, const ResourceSnap
         const auto lastLevel = (descriptor.dwords[3] >> 16u) & 0xfu;
         const bool lodClamped = (words[2] & 0x3fffu) != 0u || (words[1] & 0xfffu) != 0u || ((words[1] >> 12u) & 0xfffu) < (lastLevel - baseLevel) * 256u || ((descriptor.dwords[1] >> 8u) & 0xfffu) > baseLevel * 256u;
         if (lastLevel > baseLevel && mip != EmulatedFilter::MipBase && lodClamped) throw std::runtime_error("filtering a converted image in the shader across mip levels with a LOD bias or clamp is not implemented");
-        const auto state = EmulatedFilter::Enabled | (magFilter == 1u ? EmulatedFilter::Linear : 0u) | (addressX << EmulatedFilter::ClampXShift) | (addressY << EmulatedFilter::ClampYShift) | (mip << EmulatedFilter::MipShift) | ((border ? borderType : 0u) << EmulatedFilter::BorderShift);
+        const auto state = EmulatedFilter::Enabled | (magFilter == 1u ? EmulatedFilter::Linear : 0u) | (addressX << EmulatedFilter::ClampXShift) | (addressY << EmulatedFilter::ClampYShift) | (mip << EmulatedFilter::MipShift) | ((border ? borderType : 0u) << EmulatedFilter::BorderShift) | (unnormalized ? EmulatedFilter::Unnormalized : 0u);
         if (filterState.has_value() && *filterState != state) throw std::runtime_error("filtering a converted image in the shader through samplers that disagree is not implemented");
         filterState = state;
     }

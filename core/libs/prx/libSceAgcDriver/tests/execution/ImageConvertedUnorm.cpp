@@ -95,6 +95,11 @@ alignas(256) constexpr std::array<std::uint32_t, 13> SpreadSampleLz{
 constexpr std::array<std::uint32_t, 4> WrapBilinearSampler{0x00000000u, 0x00fff000u, 0x00500000u, 0u};
 constexpr std::array<std::uint32_t, 4> EdgeBilinearSampler{0x00000092u, 0x00fff000u, 0x00500000u, 0u};
 constexpr std::array<std::uint32_t, 4> MirrorBilinearSampler{0x00000049u, 0x00fff000u, 0x00500000u, 0u};
+constexpr std::array<std::uint32_t, 4> UnnormalizedBilinearSampler{0x00008092u, 0x00fff000u, 0x00500000u, 0u};
+alignas(256) constexpr std::array<std::uint32_t, 11> TexelSpreadSampleLz{
+    0x34060084u, 0x7e280d00u, 0x062828ffu, 0x3e800000u, 0x7e2a02f0u, 0xf09c0f08u, 0x00610a14u, 0xbf8c3f70u,
+    0xe0781000u, 0x80000a03u, 0xbf810000u,
+};
 constexpr std::array<std::uint32_t, 4> HalfBorderBilinearSampler{0x00000124u, 0x00fff000u, 0x00500000u, 0x80000000u};
 constexpr std::array<std::uint32_t, 4> MirrorOnceSampler{0x000000dbu, 0x00fff000u, 0u, 0u};
 
@@ -306,12 +311,12 @@ void CheckFloatStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
 }
 
-void CheckFloatSample(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const std::array<std::uint32_t, 4>& sampler, bool linear, bool wrap, const std::string& what, bool whiteBorder = false) {
+void CheckFloatSample(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const std::array<std::uint32_t, 4>& sampler, bool linear, bool wrap, const std::string& what, bool whiteBorder = false, std::span<const std::uint32_t> code = SpreadSampleLz) {
     for (std::uint32_t index = 0; index < Threads; ++index) {
         const auto texel = FloatTexel(index);
         std::memcpy(texels + index * 4u, &texel, 4u);
     }
-    Run(device, SpreadSampleLz, TextureDescriptor(texels, FloatFormat, SwizzleXYZ1, Threads), sampler, 1);
+    Run(device, code, TextureDescriptor(texels, FloatFormat, SwizzleXYZ1, Threads), sampler, 1);
     const auto value = [](std::int32_t index, std::uint32_t component) {
         return component == 3u ? 1.0f : FloatValues[(static_cast<std::uint32_t>(index) + component * 4u) % 11u];
     };
@@ -367,6 +372,7 @@ int main() {
         RequireRefused(*device, Gather4Lz, texels + FloatOffset, SwizzleXYZ1, PointSampler, "samples or gathers a converted float image", "image_gather4_lz of R10_G11_B11_FLOAT", FloatFormat);
         CheckFloatSample(*device, texels + FloatOffset, MirrorBilinearSampler, true, false, "image_sample_lz of R10_G11_B11_FLOAT, bilinear, mirror");
         CheckFloatSample(*device, texels + FloatOffset, HalfBorderBilinearSampler, true, false, "image_sample_lz of R10_G11_B11_FLOAT, bilinear, half border, white", true);
+        CheckFloatSample(*device, texels + FloatOffset, UnnormalizedBilinearSampler, true, false, "image_sample_lz of R10_G11_B11_FLOAT, bilinear, unnormalized coordinates", false, TexelSpreadSampleLz);
         RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, MirrorOnceSampler, "clamp-to-half-border or clamp-to-border addressing", "image_sample_lz with mirror-once addressing");
         RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "samples or gathers a converted unorm image", "image_gather4_lz");
         RequireRefused(*device, GetLod, texels, SwizzleXYZ1, PointSampler, "queries the level of detail of a converted unorm image", "image_get_lod");
