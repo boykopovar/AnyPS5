@@ -4,14 +4,25 @@
 #include "WindowsFormatting.hpp"
 #include "General.hpp"
 #include <cerrno>
+#include <cstdint>
+#include <deque>
 
 namespace LibcDetail {
+
+struct NarrowScannedInteger {
+    void* destination;
+    size_t size;
+    size_t assignment;
+};
 
 template <typename TScanner>
 inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* source, TScanner scan) {
     if (!format || !source) { errno = 22; return EOF; }
     std::string translated;
     std::vector<void*> pointers;
+    std::deque<std::uint64_t> wideIntegers;
+    std::vector<NarrowScannedInteger> narrowIntegers;
+    size_t assignments = 0;
     FormatArguments args(source);
     while (*format) {
         const char value = *format++;
@@ -33,7 +44,8 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
             return EOF;
         }
         ++format;
-        if (std::strchr("diouxXn", conversion) && (length == "l" || length == "j" || length == "z" || length == "t"))
+        const bool narrowInteger = std::strchr("diouxX", conversion) && (length.empty() || length == "h" || length == "hh");
+        if (narrowInteger || (std::strchr("diouxXn", conversion) && (length == "l" || length == "j" || length == "z" || length == "t")))
             translated += "ll";
         else translated += length;
         translated += conversion;
@@ -44,9 +56,21 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
             if (*format != ']') { errno = 22; return EOF; }
             translated += *format++;
         }
-        if (!suppressed) pointers.push_back(args.Next<void*>());
+        if (suppressed) continue;
+        void* destination = args.Next<void*>();
+        if (narrowInteger) {
+            const size_t size = length.empty() ? sizeof(int) : length == "h" ? sizeof(short) : sizeof(char);
+            narrowIntegers.push_back({destination, size, assignments});
+            destination = &wideIntegers.emplace_back();
+        }
+        pointers.push_back(destination);
+        if (conversion != 'n') ++assignments;
     }
-    return scan(translated.c_str(), reinterpret_cast<char*>(pointers.data()));
+    const int result = scan(translated.c_str(), reinterpret_cast<char*>(pointers.data()));
+    for (size_t i = 0; i < narrowIntegers.size(); ++i)
+        if (result != EOF && narrowIntegers[i].assignment < static_cast<size_t>(result))
+            std::memcpy(narrowIntegers[i].destination, &wideIntegers[i], narrowIntegers[i].size);
+    return result;
 }
 
 inline int ScanWindows(const char* input, const char* format, const void* source) {
