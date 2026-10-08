@@ -999,8 +999,8 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
 struct IndirectRecord {
     const Pm4::DrawParameters::IndirectDraw* args = nullptr;
     IndirectDrawPath path = IndirectDrawPath::Gpu;
-    const HostImport* argumentImport = nullptr;
-    const HostImport* countImport = nullptr;
+    std::shared_ptr<HostImport> argumentImport = nullptr;
+    std::shared_ptr<HostImport> countImport = nullptr;
     std::span<const Pm4::DrawArguments> records;
     double readMs = 0;
 };
@@ -1070,6 +1070,8 @@ bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, R
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
     countBarrier(1);
     if (recorded) {
+        recorder->Keep(indirect.argumentImport);
+        if (indirect.countImport != nullptr) recorder->Keep(indirect.countImport);
         // Read in place from the import when the batch runs (a synchronous draw waits for its own).
         recorder->NotePendingRead(args->arguments, static_cast<std::size_t>(args->RangeBytes()), Recorder::ReadKind::Indirect);
         if (args->countIndirect) recorder->NotePendingRead(args->countAddress, 4, Recorder::ReadKind::Indirect);
@@ -1282,7 +1284,7 @@ void captureInputs(const Context& context, Recorder& recorder, VkCommandBuffer c
             CaptureTrace::Log("input-skip draw=%llu batch=%llu address=%llx bytes=%zu reason=gpu-writer", draw, batch, static_cast<unsigned long long>(begin), bytes);
             continue;
         }
-        const auto* imported = HostImportFor(context, begin, bytes);
+        const auto imported = HostImportFor(context, begin, bytes);
         Require(imported != nullptr, "capture input has no host import");
         addSample(begin, bytes, imported->buffer, begin - imported->base, reinterpret_cast<const std::byte*>(begin));
     }
@@ -1624,7 +1626,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     std::vector<Pm4::DrawArguments> records;
     if (args != nullptr) {
         static const bool gpuIndirectDraws = std::getenv("APS5_NO_GPU_INDIRECT_DRAW") == nullptr;
-        const auto decide = [&](std::uint64_t address, std::size_t bytes, const HostImport*& import) {
+        const auto decide = [&](std::uint64_t address, std::size_t bytes, std::shared_ptr<HostImport>& import) {
             if (StorageTexture::FlushPending(address, bytes, nullptr, "indirect draw arguments")) {
                 if (recorder != nullptr) {
                     Recorder::CountSync(2);

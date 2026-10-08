@@ -521,6 +521,7 @@ struct VulkanDevice::State {
             // Every ShaderResources (kept by the recorder or the resource cache) is gone now, so the
             // sets and samplers they borrowed can go.
             copiedWriters->clear();
+            Graphics::DrawCopiedWriters()->clear();
             resourceCache.Clear();
             Graphics::ClearCachedTextures(device);
             Graphics::ClearImageMirrors(device);
@@ -530,6 +531,7 @@ struct VulkanDevice::State {
             samplerCache.reset();
             textureCache.reset();
             detiler.reset();
+            Graphics::ClearHostImports(device);
             colorTransfer.reset();
             scaler.reset();
             pipelineCache.reset();
@@ -1252,7 +1254,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     if (recorder.Idle()) return 1;
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
-    const auto* import = Graphics::HostImportFor(context, address, bytes.size());
+    const auto import = Graphics::HostImportFor(context, address, bytes.size());
     if (import == nullptr) {
         // Memory the GPU has no view of: the store is a completion action of the batch (it runs after
         // the recorded work, in order, like a label behind write-backs) instead of a device drain.
@@ -1269,7 +1271,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
     // stores of a run against each other and against the work before and after, the queued DCC
     // key stores included).
-    const auto recordStore = [&] { recorder.RecordStore(import->buffer, address - import->base, bytes, address); };
+    const auto recordStore = [&] {
+        recorder.RecordStore(import->buffer, address - import->base, bytes, address);
+        if (Graphics::ShadowVerify()) recorder.Keep(import);
+    };
     // Only a write-back that can land over these bytes (a listed copied writer of the range, as
     // FillBuffer tests) puts the label behind the completions; any other pending completion
     // stores elsewhere. Debug aid: APS5_LABEL_GATE_ALL=1 gates on any completion, as before (a
@@ -1320,12 +1325,13 @@ bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
     if (state->CopiedWriterOverlaps(address, bytes) || (Graphics::Recorder::PendingCompletionLabels() != 0 && recorder.CompletionLabelIn(address, bytes))) return false;
     const auto context = graphicsContext();
     Graphics::StorageTexture::FlushPending(address, bytes, nullptr, "occlusion counter dump", Graphics::PublishScope::PartialUnits);
-    const auto* import = Graphics::HostImportFor(context, address, bytes);
+    const auto import = Graphics::HostImportFor(context, address, bytes);
     if (import == nullptr || import->address == 0) return false;
     if (Graphics::AnyShadowedOverlaps(address, bytes)) Graphics::PublishShadow(address, bytes, Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
     recorder.FlushStoresOverlapping(address, bytes);
     recorder.FlushKeyStoresOverlapping(address, bytes);
     if (!recorder.DumpSamples(import->address + (address - import->base))) return false;
+    if (Graphics::ShadowVerify()) recorder.Keep(import);
     recorder.NotePendingWrite(address, bytes);
     GuestMemory::MarkWritten(address, bytes);
     return true;
@@ -1340,7 +1346,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     // import table. Debug aid: APS5_NO_OPPORTUNISTIC_REAP=1 skips it.
     if (OpportunisticReap()) recorder.Reap();
     const auto context = graphicsContext();
-    const Graphics::HostImport* import = Graphics::HostImportFor(context, address, bytes);
+    std::shared_ptr<Graphics::HostImport> import = Graphics::HostImportFor(context, address, bytes);
     if (import == nullptr) return false;
     // Earlier recorded work that stores into the range must land before the fill, or it would
     // overwrite the fill later. Stores the GPU makes (direct dispatch writes, GPU labels, earlier
@@ -1699,8 +1705,8 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     Graphics::StorageTexture::FlushPending(destination, bytes, nullptr, "buffer copy destination", Graphics::PublishScope::PartialUnits);
     // Looked up after the sync (its completions' write-backs can refresh the import table and
     // retire an import) and the flushes (which may import memory themselves).
-    const Graphics::HostImport* destinationImport = Graphics::HostImportFor(context, destination, bytes);
-    const Graphics::HostImport* sourceImport = destinationImport != nullptr ? Graphics::HostImportFor(context, source, bytes) : nullptr;
+    std::shared_ptr<Graphics::HostImport> destinationImport = Graphics::HostImportFor(context, destination, bytes);
+    std::shared_ptr<Graphics::HostImport> sourceImport = destinationImport != nullptr ? Graphics::HostImportFor(context, source, bytes) : nullptr;
     if (destinationImport == nullptr || sourceImport == nullptr) return outcome;
     using CommandClass = Graphics::Recorder::CommandClass;
     // A queued DCC key store over either range must land before the transfer reads or writes it.
@@ -1712,6 +1718,8 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     // The class range covers the barriers too; the program-keyed range inside it is the transfer.
+    recorder.Keep(sourceImport);
+    recorder.Keep(destinationImport);
     const auto classTiming = recorder.BeginGpuTiming(CommandClass::Copy);
     if (Graphics::Recorder::BarrierValidate()) {
         const std::pair<std::uint64_t, std::uint64_t> read{source, source + bytes}, written{destination, destination + bytes};
@@ -2886,7 +2894,7 @@ struct RecordedDispatch {
     std::uint32_t x, y, z;
     // The DISPATCH_INDIRECT arguments (0: direct) and their host import when the GPU reads them.
     std::uint64_t arguments;
-    const Graphics::HostImport* argumentImport;
+    std::shared_ptr<Graphics::HostImport> argumentImport;
     std::uint64_t programAddress;
     // What decides the template's data refresh: None (the object was built by this call), Words
     // (a template hit: RefreshData compares every buffer's words), Hash (a recipe: the template's
@@ -3178,7 +3186,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const auto& context = *record.context;
     auto& resources = *record.resources;
     const auto arguments = record.arguments;
-    const auto* argumentImport = record.argumentImport;
+    const auto argumentImport = record.argumentImport;
     // The record phase split (APS5_PROFILE_DRAW, rows "record: ..." of the [dispatch] totals):
     // opening the batch, the keeps, the data refresh, the barriers with the bind and the dispatch
     // itself, the pending-write notes and marks (MarkGpuWrites), and the completion registration.
@@ -3238,6 +3246,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.NoteAccess(CommandClass::DispatchLeading, Graphics::Recorder::Access{reads, resources.GpuWrites(), images, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, resources.HoldsLease()});
     }
     if (argumentImport != nullptr) {
+        recorder.Keep(argumentImport);
         // The group counts were stored by earlier recorded work (a dispatch in place, a fill) or the
         // host; the indirect read follows all of it.
         const auto timing = recorder.BeginGpuTiming(CommandClass::IndirectArguments);

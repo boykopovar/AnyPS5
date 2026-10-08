@@ -2928,9 +2928,6 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         // later batch's own ordering against this write-back is its recorder's business at record
         // time (FillBuffer and DispatchIndirect consult copiedWriters; a later copied writer's
         // write-back runs after this one in finish order; a label behind completions lands after).
-        // Known gap, not introduced here: a later batch writing the same range GPU-direct in place
-        // (a writable region bound in place, or a GPU copy-back) is not ordered against this
-        // write-back by the resource build; it went from deterministically stale to racy.
         announcedSource = 4;
         announcedSite = nullptr;
         ++holdCounters.completionSyncsSkipped;

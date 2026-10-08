@@ -24,6 +24,7 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+void CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.

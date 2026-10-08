@@ -370,10 +370,24 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcBufferUpdateSource ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/BufferUpdate.comp)
+set(agcBufferUpdateSpv ${agcTestShaderGeneratedRoot}/BufferUpdate.spv)
+set(agcBufferUpdateHeader ${agcTestShaderGeneratedRoot}/BufferUpdate_spv.h)
+add_custom_command(
+        OUTPUT "${agcBufferUpdateHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcBufferUpdateSpv}" "${agcBufferUpdateSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcBufferUpdateSpv} -DOUTPUT=${agcBufferUpdateHeader}
+        -DSYMBOL=BUFFER_UPDATE_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcBufferUpdateSource}" glslang-standalone
+        VERBATIM
+)
+
 add_test_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
         tests/ResidentPresent.cpp
         ${agcSampleLodShaderHeader}
+        ${agcBufferUpdateHeader}
 )
 
 target_include_directories(agc_driver_recorder_tests PRIVATE
@@ -387,6 +401,7 @@ target_link_libraries(agc_driver_recorder_tests PRIVATE
         libSceAgcDriver
         SDL2-static
         libc
+        libkernel
 )
 
 set_target_properties(agc_driver_recorder_tests PROPERTIES CXX_EXTENSIONS OFF)
