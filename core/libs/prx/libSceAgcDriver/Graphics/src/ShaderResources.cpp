@@ -1056,11 +1056,11 @@ void ShaderResources::buildComplete() {
                 bufferCount += binding.allocations.size();
                 imageCount += binding.imageAllocations.size();
             }
-            std::vector<VkDescriptorBufferInfo> buffers;
-            std::vector<VkDescriptorImageInfo> images;
+            auto& buffers = descriptorBuffers;
+            auto& images = descriptorImages;
             buffers.reserve(bufferCount);
             images.reserve(imageCount);
-            std::vector<VkWriteDescriptorSet> writes;
+            auto& writes = descriptorWrites;
             writes.reserve(bindings.size());
             for (const auto& binding : bindings) {
                 VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -2783,37 +2783,23 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     result->cache = context.descriptorCache;
     result->allocation = result->cache->Allocate(_layout, sizes);
     Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
-    std::vector<VkCopyDescriptorSet> copies;
-    for (const auto& binding : bindings) {
-        VkCopyDescriptorSet copy{VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET};
-        copy.srcSet = _set;
-        copy.srcBinding = binding.layout.binding;
-        copy.dstSet = result->allocation.set;
-        copy.dstBinding = binding.layout.binding;
-        copy.descriptorCount = binding.layout.descriptorCount;
-        copies.push_back(copy);
-    }
-    const auto update = context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets");
-    update(context.device, 0, nullptr, static_cast<std::uint32_t>(copies.size()), copies.data());
-    std::vector<VkDescriptorBufferInfo> infos;
-    infos.reserve(selected.size());
-    for (const auto& snapshot : result->snapshots) infos.push_back({snapshot.buffer->Handle(), 0, snapshot.buffer->Bytes().size()});
-    std::vector<VkWriteDescriptorSet> writes;
-    for (const auto& binding : bindings) {
+    auto buffers = descriptorBuffers;
+    auto writes = descriptorWrites;
+    for (std::size_t index = 0; index < bindings.size(); ++index) {
+        const auto& binding = bindings[index];
+        auto& write = writes[index];
+        write.dstSet = result->allocation.set;
+        if (binding.allocations.empty()) continue;
+        const auto offset = static_cast<std::size_t>(write.pBufferInfo - descriptorBuffers.data());
+        write.pBufferInfo = buffers.data() + offset;
         for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
             const auto found = std::find(selected.begin(), selected.end(), binding.allocations[element]);
             if (found == selected.end()) continue;
-            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            write.dstSet = result->allocation.set;
-            write.dstBinding = binding.layout.binding;
-            write.dstArrayElement = static_cast<std::uint32_t>(element);
-            write.descriptorCount = 1;
-            write.descriptorType = binding.layout.descriptorType;
-            write.pBufferInfo = &infos[static_cast<std::size_t>(found - selected.begin())];
-            writes.push_back(write);
+            const auto& snapshot = result->snapshots[static_cast<std::size_t>(found - selected.begin())];
+            buffers[offset + element] = {snapshot.buffer->Handle(), 0, snapshot.buffer->Bytes().size()};
         }
     }
-    update(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     recorder.Keep(result);
     return result;
 }

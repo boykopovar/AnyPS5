@@ -187,6 +187,7 @@ public:
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {
@@ -1132,6 +1133,99 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
         Require(contents.size() >= adjustment + elementBytes, "a draw snapshot ends before the bytes the shader reads");
         Require(std::memcmp(contents.data() + adjustment, guest + offset, elementBytes) == 0, "the shader's offset into a draw snapshot misses the view's bytes");
         snapshotRecorder.Sync();
+    }
+    recorder.Activate();
+}
+
+class DescriptorUpdates {
+public:
+    struct Contents {
+        std::map<std::pair<std::uint32_t, std::uint32_t>, VkDescriptorBufferInfo> buffers;
+        std::map<std::pair<std::uint32_t, std::uint32_t>, VkDescriptorImageInfo> images;
+    };
+    explicit DescriptorUpdates(Context& context) : context(context), previous(context.functions),
+        update(context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")) {
+        Require(active == nullptr, "nested descriptor update capture");
+        if (previous != nullptr) functions = *previous;
+        functions.updateDescriptorSets = captureUpdate;
+        context.functions = &functions;
+        active = this;
+    }
+    ~DescriptorUpdates() { context.functions = previous; active = nullptr; }
+    std::vector<Contents> calls;
+    std::uint32_t copies = 0;
+
+private:
+    static VKAPI_ATTR void VKAPI_CALL captureUpdate(VkDevice device, std::uint32_t count, const VkWriteDescriptorSet* writes, std::uint32_t copyCount, const VkCopyDescriptorSet* copies) {
+        Contents contents;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto& write = writes[i];
+            for (std::uint32_t element = 0; element < write.descriptorCount; ++element) {
+                const auto key = std::pair{write.dstBinding, write.dstArrayElement + element};
+                if (write.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) contents.buffers[key] = write.pBufferInfo[element];
+                else contents.images[key] = write.pImageInfo[element];
+            }
+        }
+        active->calls.push_back(std::move(contents));
+        active->copies += copyCount;
+        active->update(device, count, writes, copyCount, copies);
+    }
+    Context& context;
+    const DeviceFunctions* previous;
+    DeviceFunctions functions{};
+    PFN_vkUpdateDescriptorSets update;
+    static inline DescriptorUpdates* active = nullptr;
+};
+
+void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    DescriptorUpdates updates(context);
+    {
+        DescriptorCache cache(context);
+        context.descriptorCache = &cache;
+        Recorder snapshots(context);
+        snapshots.Activate();
+        ShaderRecompiler::RecompileResult program;
+        ShaderRecompiler::DescriptorBinding data{};
+        data.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+        data.role = ShaderRecompiler::DescriptorRole::FlattenedSrt;
+        data.binding = 2;
+        data.count = 1;
+        data.guestDescriptor = {1, 2, 3, 4};
+        program.bindings.push_back(data);
+        data.binding = 7;
+        program.bindings.push_back(data);
+        ShaderRecompiler::DescriptorBinding sampler{};
+        sampler.kind = ShaderRecompiler::DescriptorKind::Sampler;
+        sampler.role = ShaderRecompiler::DescriptorRole::GuestSamplers;
+        sampler.binding = 11;
+        sampler.count = 2;
+        sampler.guestDescriptor.resize(8);
+        sampler.samplerDepthCompare = {false, false};
+        program.bindings.push_back(sampler);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        ShaderResources resources(context, shader);
+        Require(updates.calls.size() == 1, "building resources did not write one descriptor set");
+        const auto original = updates.calls.front();
+        Require(original.buffers.size() == 2 && original.images.size() == 2, "descriptor test lacks mixed bindings and an image array");
+        for (std::size_t allocation = 0; allocation < 2; ++allocation) {
+            const ShaderResources::MovedBuffer moved{allocation, 0, 16, {5, 6, 7, 8}};
+            const auto draw = resources.PrepareDrawBindings(snapshots, std::span(&moved, 1));
+            Require(draw != nullptr && draw->snapshots.size() == 1, "moved shader data did not create a draw snapshot");
+            Require(updates.calls.size() == allocation + 2 && updates.copies == 0, "draw descriptors copied GPU memory or needed multiple updates");
+            const auto& actual = updates.calls.back();
+            Require(actual.buffers.size() == original.buffers.size() && actual.images.size() == original.images.size(), "snapshot update omitted unchanged descriptors");
+            for (const auto& [key, before] : original.buffers) {
+                const auto after = actual.buffers.at(key);
+                const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
+                Require(after.buffer == expected && after.offset == before.offset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
+            }
+            for (const auto& [key, before] : original.images) {
+                const auto after = actual.images.at(key);
+                Require(after.sampler == before.sampler && after.imageView == before.imageView && after.imageLayout == before.imageLayout, "snapshot update changed an image descriptor");
+            }
+        }
+        snapshots.Sync();
     }
     recorder.Activate();
 }
@@ -2811,13 +2905,19 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         Device device;
         std::lock_guard gpu(GpuMutex());
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-descriptors-only") {
+            drawDescriptorWriteTests(device, recorder);
+            std::cout << "Draw descriptor writes and snapshot overrides passed\n";
+            return 0;
+        }
+
         readTrackingTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
@@ -2832,6 +2932,7 @@ int main() {
         resourceReadTests(device, recorder);
         misalignedSnapshotTests(device, recorder);
         drawSnapshotReuseTests(device, recorder);
+        drawDescriptorWriteTests(device, recorder);
         drawSnapshotEvictionTests(device);
         drawInputReuseTests(device, recorder);
         RunResidentPresentTests(device.GetContext());

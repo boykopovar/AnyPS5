@@ -401,6 +401,9 @@ private:
     // The cache pool the set was allocated from, freed back to it on release.
     VkDescriptorPool cachePool = VK_NULL_HANDLE;
     std::vector<Allocation> allocations;
+    std::vector<VkDescriptorBufferInfo> descriptorBuffers;
+    std::vector<VkDescriptorImageInfo> descriptorImages;
+    std::vector<VkWriteDescriptorSet> descriptorWrites;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
     std::size_t readOnlyBuffers = 0;
