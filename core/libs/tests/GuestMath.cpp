@@ -14,6 +14,7 @@ float APS5_VABI strtof_nid_postfix(const char*, char**);
 long double APS5_VABI strtold_nid_postfix(const char*, char**);
 std::int64_t APS5_VABI strtol_nid_postfix(const char*, char**, int);
 std::uint64_t APS5_VABI strtoul_nid_postfix(const char*, char**, int);
+std::uint64_t APS5_VABI _Stoul_nid_postfix(const char*, char**, int);
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char*, char**, int);
 int* APS5_VABI __error_nid_postfix();
 struct LibcFloatConstant { std::uint32_t bits[4]; };
@@ -137,6 +138,8 @@ static void CheckIntegerConversions() {
     Require(*__error_nid_postfix() == 13);
     Require(strtoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
     Require(*__error_nid_postfix() == 13);
+    Require(_Stoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
+    Require(_Stoul_nid_postfix("-1", nullptr, 10) == UINT64_MAX && *__error_nid_postfix() == 13);
     *__error_nid_postfix() = 0;
 }
 
