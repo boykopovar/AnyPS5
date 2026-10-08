@@ -53,9 +53,9 @@ alignas(256) constexpr std::array<std::uint32_t, 17> VolumeCode{
     0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 11> NarrowCode{
-    0x34020087, 0xe0301040, 0x80001001, 0xe0301044, 0x80001101, 0xbf8c3f70, 0xf0900f00, 0x00610c10,
-    0xe0701070, 0x80000c01, 0xbf810000,
+alignas(256) constexpr std::array<std::uint32_t, 15> NarrowCode{
+    0x34020087, 0xe0301040, 0x80001001, 0xe0301048, 0x80001101, 0xbf8c3f70, 0xf0900f00, 0x00610c10,
+    0xe0701070, 0x80000c01, 0xe0701074, 0x80000d01, 0xe0701078, 0x80000e01, 0xbf810000,
 };
 
 struct Sample {
@@ -213,14 +213,17 @@ void CheckVolume() {
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device) {
-    std::string refusal;
-    try {
-        Run(device, NarrowCode, TextureDescriptor(Texels.data()));
-    } catch (const std::exception& error) {
-        refusal = error.what();
+void CheckNarrow(AgcDriver::VulkanDevice& device) {
+    FillInput();
+    Run(device, NarrowCode, TextureDescriptor(Texels.data()));
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto sample = SampleOf(tid);
+        const std::array<std::uint32_t, 3> expected{sample.level, sample.x >> sample.level, 0u};
+        for (std::uint32_t component = 0; component < 3u; ++component) {
+            const float value = std::bit_cast<float>(Buffer[tid * Words + PlainResult + 4u + component]) * 255.0f;
+            Require(std::lround(value) == static_cast<long>(expected[component]), "image_sample_l 1d on a 2D texture: thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + std::to_string(value) + ", expected " + std::to_string(expected[component]));
+        }
     }
-    Require(refusal.find("too few coordinate components") != std::string::npos, "image_sample_l 1d on a 2D texture was not refused: " + refusal);
 }
 
 }
@@ -236,7 +239,7 @@ int main() {
         FillVolume();
         Run(*device, VolumeCode, VolumeDescriptor());
         CheckVolume();
-        RequireRefused(*device);
+        CheckNarrow(*device);
         std::puts("image address dimension tests passed");
         return 0;
     } catch (const std::exception& error) {
