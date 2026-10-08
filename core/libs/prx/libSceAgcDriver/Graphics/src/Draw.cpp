@@ -867,7 +867,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             shortBuffers[index] = std::move(buffer);
             continue;
         }
-        // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
         const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
         fetchOf[index] = fetches.size();
         Require(!state.hasColorTarget || address + bytes <= state.color.address || state.color.address + state.color.bytes <= address, "vertex buffer aliases the render target");
