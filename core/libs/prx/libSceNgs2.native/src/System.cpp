@@ -194,6 +194,8 @@ int APS5_VABI sceNgs2SystemSetSampleRate(uintptr_t system_handle, uint32_t sampl
     if (sample_rate == 0) APS5_INVALID_ARG_EX;
     for (const auto* rack : system->racks) {
         for (const auto& voice : rack->voices) {
+            if (voice.reverb && sample_rate != system->option.sample_rate)
+                throw std::runtime_error("NGS2: changing the sample rate under a configured reverb is not implemented");
             for (const auto& filter : voice.filters) {
                 if (filter.enabled && sample_rate != system->option.sample_rate) {
                     throw std::runtime_error("NGS2: changing the sample rate under an enabled sampler filter is not implemented");

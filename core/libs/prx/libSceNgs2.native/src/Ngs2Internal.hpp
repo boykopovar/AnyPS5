@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCENGS2_SRC_NGS2INTERNAL_HPP
 #define CORE_LIBS_PRX_LIBSCENGS2_SRC_NGS2INTERNAL_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -58,6 +59,46 @@ struct Ngs2Atrac9 {
 
 struct Ngs2Voice;
 
+struct Ngs2ReverbShelf {
+    double b0 = 1.0;
+    double b1 = 0.0;
+    double a1 = 0.0;
+    double x1 = 0.0;
+    double y1 = 0.0;
+
+    void Configure(double lowGain, double highGain, double frequency, double sampleRate);
+    float Process(float input);
+};
+
+struct Ngs2ReverbDelay {
+    std::vector<float> samples;
+    std::size_t cursor = 0;
+
+    void Resize(std::size_t size);
+    float Read(std::size_t delay) const;
+    void Write(float input);
+    void Clear();
+};
+
+struct Ngs2Reverb {
+    Ngs2ReverbI3dl2Param param{};
+    std::array<Ngs2ReverbDelay, 2> input;
+    std::array<Ngs2ReverbShelf, 2> inputShelf;
+    std::array<Ngs2ReverbDelay, 8> lines;
+    std::array<Ngs2ReverbShelf, 8> feedback;
+    std::array<std::size_t, 8> delays{};
+    std::size_t earlyDelay = 0;
+    std::size_t lateDelay = 0;
+    std::uint64_t tailSamples = 0;
+    std::uint64_t remainingSamples = 0;
+    float earlyGain = 0.0f;
+    float lateGain = 0.0f;
+    float sine = 0.0f;
+    float cosine = 1.0f;
+
+    void Clear();
+};
+
 struct Ngs2FilterHistory {
     double x1 = 0.0;
     double x2 = 0.0;
@@ -94,9 +135,11 @@ struct Ngs2Voice {
     Ngs2PlayState state = Ngs2PlayState::Empty;
     std::uint32_t stateFlags = 0;
     std::uint32_t channels = 0;
+    std::uint32_t inputChannels = 0;
     std::uint32_t sampleRate = 0;
     std::uint32_t waveformType = 0;
     Ngs2Atrac9 atrac9;
+    std::unique_ptr<Ngs2Reverb> reverb;
     float pitch = 1.0f;
     std::uint64_t phase = 0;
     std::deque<Ngs2Block> blocks;
@@ -176,6 +219,8 @@ void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
+void Ngs2SetReverb(Ngs2Voice& voice, const Ngs2ReverbI3dl2Param& param);
+void Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 
 #endif

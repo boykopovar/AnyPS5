@@ -162,7 +162,8 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
 
 static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& port, std::uint32_t grain) {
     const auto* matrix = port.matrix < 0 ? nullptr : &source.matrices[port.matrix];
-    const std::size_t outputs = matrix == nullptr ? voice.channels : std::min<std::size_t>(voice.channels, matrix->size() / source.channels);
+    const auto channels = voice.rack->rackId == SCE_NGS2_RACK_ID_REVERB ? voice.inputChannels : voice.channels;
+    const std::size_t outputs = matrix == nullptr ? channels : std::min<std::size_t>(channels, matrix->size() / source.channels);
     for (std::size_t dst = 0; dst < outputs; dst++) {
         for (std::uint32_t src = 0; src < source.channels; src++) {
             const float level = port.volume * (matrix == nullptr ? (src == dst ? 1.0f : 0.0f) : (*matrix)[dst * source.channels + src]);
@@ -188,14 +189,18 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
     if (voice.rendered) return;
     if (voice.rendering) throw std::invalid_argument("NGS2: the voice patches form a cycle");
     voice.rendering = true;
-    voice.samples.assign(static_cast<std::size_t>(grain) * voice.channels, 0.0f);
+    struct RenderingScope {
+        bool& active;
+        ~RenderingScope() { active = false; }
+    } renderingScope{voice.rendering};
+    voice.samples.assign(static_cast<std::size_t>(grain) * std::max(voice.channels, voice.inputChannels), 0.0f);
     voice.hasSamples = false;
     if (voice.state == Ngs2PlayState::Playing && voice.channels != 0) {
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_SAMPLER) RenderSampler(voice, grain, systemRate);
         else MixInputs(voice, voices, grain, systemRate);
+        if (voice.rack->rackId == SCE_NGS2_RACK_ID_REVERB) Ngs2ProcessReverb(voice, grain);
         if (voice.hasSamples) Ngs2ProcessUserFx(voice, grain, systemRate);
     }
-    voice.rendering = false;
     voice.rendered = true;
 }
 

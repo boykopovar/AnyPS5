@@ -33,6 +33,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
         case SCE_NGS2_VOICE_EVENT_STOP_IMM:
         case SCE_NGS2_VOICE_EVENT_KILL:
             state = Ngs2PlayState::Empty;
+            if (reverb) reverb->Clear();
             break;
         case SCE_NGS2_VOICE_EVENT_PAUSE:
             if (state == Ngs2PlayState::Playing) state = Ngs2PlayState::Paused;
@@ -52,9 +53,11 @@ void Ngs2Voice::ResetSetup() {
     fbwLevel = 1.0f;
     lfeLevel = 1.0f;
     channels = 0;
+    inputChannels = 0;
     sampleRate = 0;
     waveformType = 0;
     atrac9 = {};
+    reverb.reset();
     pitch = 1.0f;
     phase = 0;
     blocks.clear();
@@ -293,6 +296,20 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             if (ParamAs<Ngs2SubmixerVoiceSetupParam>(param).flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
             SetupMixer(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);
             return;
+        case SCE_NGS2_RACK_ID_REVERB:
+            if (param.id == SCE_NGS2_REVERB_VOICE_PARAM_SETUP) {
+                const auto& setup = ParamAs<Ngs2ReverbVoiceSetupParam>(param);
+                if (setup.flags != 0) throw std::runtime_error("NGS2: reverb setup flags are not implemented");
+                if (setup.num_input_channels == 0 || setup.num_input_channels > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
+                SetupMixer(voice, setup.num_output_channels);
+                voice.inputChannels = setup.num_input_channels;
+                return;
+            }
+            if (param.id == SCE_NGS2_REVERB_VOICE_PARAM_I3DL2) {
+                Ngs2SetReverb(voice, ParamAs<Ngs2ReverbVoiceI3dl2Param>(param).i3dl2);
+                return;
+            }
+            break;
         case SCE_NGS2_RACK_ID_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP) {
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
@@ -382,6 +399,10 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             submixer.voice_state.state_flags = voice.stateFlags;
             return SCE_NGS2_OK;
         }
+        case SCE_NGS2_RACK_ID_REVERB:
+            if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            *state = {voice.stateFlags, 0};
+            return SCE_NGS2_OK;
         default: throw std::runtime_error("NGS2: voice state of rack " + Ngs2Hex(voice.rack->rackId) + " is not implemented");
     }
 }
