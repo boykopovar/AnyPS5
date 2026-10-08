@@ -85,6 +85,17 @@ int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoList(uint32_t servi
     return 0;
 }
 
+int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, NpEntitlementAccessEntitlementKey* key) {
+    (void)service_label;
+    if (!entitlement_label || !key) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
+    for (const auto& addon : OwnedAddons()) {
+        if (std::strncmp(addon.entitlement_label.data, entitlement_label->data, sizeof(entitlement_label->data)) == 0) {
+            NotImplemented_nid_no_patch("sceNpEntitlementAccessGetEntitlementKey of an owned add-on");
+        }
+    }
+    return SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND;
+}
+
 int APS5_VABI sceNpEntitlementAccessGetSkuFlag(uint32_t* sku_flag) {
     if (!sku_flag) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
     *sku_flag = SKU_FLAG_FULL;

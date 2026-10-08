@@ -1,0 +1,15 @@
+add_library(libSceNpEntitlementAccess SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpEntitlementAccess PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpEntitlementAccess)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_entitlement_access_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpEntitlementAccess.cpp)
+    target_include_directories(guest_np_entitlement_access_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_entitlement_access_tests PRIVATE libSceNpEntitlementAccess libc)
+    configure_windows_unwind(guest_np_entitlement_access_tests)
+    add_test(NAME guest_np_entitlement_access COMMAND guest_np_entitlement_access_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_entitlement_access PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpEntitlementAccess>")
+    endif()
+endif()
