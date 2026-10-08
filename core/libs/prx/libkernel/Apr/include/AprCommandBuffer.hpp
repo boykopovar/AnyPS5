@@ -5,6 +5,7 @@
 #include <cstdint>
 
 // Shared between libSceAmpr (which records commands) and libkernel (which executes them).
+// The object layout is guest ABI; command records use the shared host encoding.
 namespace Apr {
 
 enum class BufferType : std::uint16_t {
@@ -22,6 +23,9 @@ struct CommandBufferObject {
 };
 static_assert(sizeof(CommandBufferObject) == 0x18, "guest reserves 0x18 bytes for sce::Ampr::CommandBuffer");
 
+static_assert(offsetof(CommandBufferObject, type) == 0x00);
+static_assert(offsetof(CommandBufferObject, recording) == 0x02);
+static_assert(offsetof(CommandBufferObject, numCommands) == 0x08);
 static_assert(offsetof(CommandBufferObject, offset) == 0x04);
 static_assert(offsetof(CommandBufferObject, size) == 0x0c);
 static_assert(offsetof(CommandBufferObject, base) == 0x10);
@@ -59,6 +63,7 @@ enum class Opcode : std::uint32_t {
     AmmAllocatePaForPrt = 26,
     AmmRemapIntoPrt = 27,
     AmmUnmapToPrt = 28,
+    CompactReadFileGather = 29,
 };
 
 struct CommandHeader {
@@ -74,6 +79,13 @@ struct ReadFileCommand {
     std::uint64_t size;
     std::uint64_t offset;
 };
+
+struct CompactReadFileGatherCommand {
+    std::uint32_t opcodeAndOffsetHigh;
+    std::uint32_t sizeMinusOne;
+    std::uint32_t offsetLow;
+};
+static_assert(sizeof(CompactReadFileGatherCommand) == 12);
 
 struct ResetGatherScatterStateCommand {
     CommandHeader header;

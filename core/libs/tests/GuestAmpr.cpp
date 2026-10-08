@@ -164,7 +164,10 @@ void RequireAppended(const Recorder& recorder, std::uint32_t offset, std::uint32
     Require(recorder.Commands() == commands + 1);
     Apr::CommandHeader header;
     std::memcpy(&header, recorder.memory.data() + offset, sizeof(header));
-    Require(header.opcode == opcode && header.bytes == measured);
+    if (opcode == Apr::Opcode::CompactReadFileGather) {
+        Require((static_cast<std::uint32_t>(header.opcode) & 0xffu) == static_cast<std::uint32_t>(opcode));
+        Require(measured == sizeof(Apr::CompactReadFileGatherCommand));
+    } else Require(header.opcode == opcode && header.bytes == measured);
 }
 
 void RequireRecorded(const Recorder& recorder, std::uint32_t offset, std::uint32_t commands, Apr::Opcode opcode, std::uint64_t measured, const std::string& text) {
@@ -582,6 +585,15 @@ void TestGatherScatter() {
     std::uint32_t failed = 0;
     Require(sceKernelAprResolveFilepathsToIds(&path, 1, &fileId, &failed) == 0);
 
+    Recorder compact(64);
+    std::array<std::uint8_t, 24> compactData{};
+    Require(sceAmprAprCommandBufferReadFile(&compact.buffer, &compact.gatherState, &compact.scatterState, fileId, compactData.data(), 8, 100) == 0);
+    Require(sceAmprAprCommandBufferReadFileGather(&compact.buffer, &compact.gatherState, &compact.scatterState, 8, 108) == 0);
+    Require(sceAmprAprCommandBufferReadFileGather(&compact.buffer, &compact.gatherState, &compact.scatterState, 8, 116) == 0);
+    Require(compact.Offset() == 64);
+    Require(sceKernelAprSubmitCommandBuffer(&compact.buffer, 0) == 0);
+    Require(MatchesFile(compactData.data(), 100, compactData.size()));
+
     Recorder recorder;
     auto* buffer = &recorder.buffer;
     auto* map = &recorder.gatherState;
@@ -597,7 +609,7 @@ void TestGatherScatter() {
     auto offset = recorder.Offset();
     auto commands = recorder.Commands();
     Require(sceAmprAprCommandBufferReadFileGather(buffer, map, state, 8, 500) == 0);
-    RequireAppended(recorder, offset, commands, Apr::Opcode::ReadFileGather, sceAmprMeasureCommandSizeReadFileGather(8, 500));
+    RequireAppended(recorder, offset, commands, Apr::Opcode::CompactReadFileGather, sceAmprMeasureCommandSizeReadFileGather(8, 500));
     offset = recorder.Offset();
     commands = recorder.Commands();
     Require(sceAmprAprCommandBufferReadFileScatter(buffer, map, state, second.data(), 8) == 0);
@@ -637,7 +649,7 @@ void TestGatherScatter() {
     Require(sceAmprAprCommandBufferReadFile(nullptr, map, state, fileId, first.data(), 4, 0) == invalidArgument);
     Require(empty.Offset() == 0 && empty.Commands() == 0);
     Require(sceAmprMeasureCommandSizeReadFileGather(0, 0) == rejected);
-    Require(sceAmprMeasureCommandSizeReadFileGather(0x100000000ull, 0x10000000000ull - 1u) == sizeof(Apr::ReadFileCommand));
+    Require(sceAmprMeasureCommandSizeReadFileGather(0x100000000ull, 0x10000000000ull - 1u) == sizeof(Apr::CompactReadFileGatherCommand));
     Require(sceAmprMeasureCommandSizeReadFileGather(4, 0x10000000000ull) == rejected);
     Require(sceAmprMeasureCommandSizeReadFileScatter(first.data(), 0x100000001ull) == rejected);
     Require(sceAmprMeasureCommandSizeReadFileScatter(high, 4) == rejected);
