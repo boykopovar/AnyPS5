@@ -52,7 +52,10 @@ public:
 
 class VideoOutput final : public AgcDriver::IVideoOutput {
 public:
-    VideoOutput(std::shared_ptr<VideoOutConfig> config, std::shared_ptr<FlipQueue> requests) : cfg(std::move(config)), queue(std::move(requests)) {}
+    VideoOutput(std::shared_ptr<VideoOutConfig> config, std::shared_ptr<FlipQueue> requests) : cfg(std::move(config)), queue(std::move(requests)) {
+        require(cfg != nullptr, "video output built with a null config backend");
+        require(queue != nullptr, "video output built with a null flip queue backend");
+    }
 
     std::shared_ptr<AgcDriver::IRenderingWait> CaptureRenderingWait(std::uint32_t index) override {
         std::lock_guard lock(cfg->mutex);
