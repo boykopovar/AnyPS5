@@ -156,7 +156,10 @@ inline Registers InitialContextRegisters() {
         {0x318, 0}, {0x31b, 0}, {0x31c, 0}, {0x31d, 0},
         {0x390, 0}, {0x3b0, 0}, {0x3b8, 0}
     };
-    for (std::uint32_t i = 0; i < 8; ++i) result.emplace(0x1e0 + i, 0x20010001);
+    for (std::uint32_t i = 0; i < 8; ++i) {
+        result.emplace(0x1e0 + i, 0x20010001);
+        result.emplace(0x31c + 0xfu * i, 0);
+    }
     for (std::uint32_t i = 0; i < 16; ++i) {
         result.emplace(0x94 + 2 * i, 0x80000000);
         result.emplace(0x95 + 2 * i, 0x40004000);

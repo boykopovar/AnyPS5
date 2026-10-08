@@ -370,10 +370,31 @@ add_custom_command(
         VERBATIM
 )
 
+foreach(agcSampleAspect IN ITEMS Depth Stencil)
+    set(agcSampleArrayDefines)
+    if(agcSampleAspect STREQUAL "Stencil")
+        set(agcSampleArrayDefines -DSTENCIL=1)
+    endif()
+    set(agcSampleArraySource ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/SampleArray.comp)
+    set(agcSampleArraySpv ${agcTestShaderGeneratedRoot}/Sample${agcSampleAspect}Array.spv)
+    set(agcSampleArrayHeader ${agcTestShaderGeneratedRoot}/Sample${agcSampleAspect}Array_spv.h)
+    add_custom_command(
+            OUTPUT "${agcSampleArrayHeader}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTestShaderGeneratedRoot}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 ${agcSampleArrayDefines} -o "${agcSampleArraySpv}" "${agcSampleArraySource}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSampleArraySpv} -DOUTPUT=${agcSampleArrayHeader}
+            -DSYMBOL=SAMPLE_${agcSampleAspect}_ARRAY_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${agcSampleArraySource}" glslang-standalone
+            VERBATIM
+    )
+    list(APPEND agcSampleArrayHeaders "${agcSampleArrayHeader}")
+endforeach()
+
 add_test_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
         tests/ResidentPresent.cpp
         ${agcSampleLodShaderHeader}
+        ${agcSampleArrayHeaders}
 )
 
 target_include_directories(agc_driver_recorder_tests PRIVATE

@@ -155,8 +155,8 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     return face;
 }
 
-void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result) {
-    zero(cx, 0x000, 0x00001f9fu, "depth/stencil clear, copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
+void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result, bool clearing = false, bool copying = false) {
+    zero(cx, 0x000, clearing ? 0x00001f9cu : 0x00001f9fu, "depth/stencil clear, copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
     const auto view = read(cx, 0x002);
     zero(cx, 0x002, 0x3c000000u, "depth mips (DB_DEPTH_VIEW MIP_LEVEL)");
     zero(cx, 0x010, 0x000f100cu, "multisampled, partially resident or mipmapped depth (DB_Z_INFO)");
@@ -175,8 +175,8 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
     DepthTarget depth{};
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
     depth.stencilAddress = stencil ? base(0x013, 0x01b) : 0;
-    Require(zFormat == 0 || depthReadOnly || base(0x014, 0x01c) == depth.address, "depth read and written at different addresses is unsupported");
-    Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == depth.stencilAddress, "stencil read and written at different addresses is unsupported");
+    Require(copying || zFormat == 0 || depthReadOnly || base(0x014, 0x01c) == depth.address, "depth read and written at different addresses is unsupported");
+    Require(copying || !stencil || stencilReadOnly || base(0x015, 0x01d) == depth.stencilAddress, "stencil read and written at different addresses is unsupported");
     const auto size = read(cx, 0x007);
     depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
     if (const auto slice = view & 0x1fffu; slice != 0) {
@@ -431,7 +431,14 @@ ShaderStages DecodeShaderStages(const QueueState& queue) {
     return result;
 }
 
+std::string DepthMaintenanceRejection(const QueueState& queue) {
+    const auto control = find(queue.context, 0x000);
+    if (control == queue.context.end() || (control->second & ~0x2063u) == 0) return {};
+    return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
+}
+
 State DecodeState(const QueueState& queue) {
+    if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) throw std::runtime_error(reason);
     const auto& cx = queue.context;
     State result{};
     result.stages = DecodeShaderStages(queue);
@@ -514,7 +521,7 @@ State DecodeState(const QueueState& queue) {
     const auto shaderMask = read(cx, 0x8f);
     // Channels of targets the pixel shader does not export are never written, so the target mask only
     // matters where the shader exports.
-    const auto targetMask = read(cx, 0x8e) & shaderMask;
+    const auto targetMask = ColorWriteMask(cx);
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
     std::vector<std::uint32_t> exportSlots;
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
@@ -639,6 +646,17 @@ std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height) {
     return ((width + metablockWidth - 1) / metablockWidth) * ((height + metablockHeight - 1) / metablockHeight) * metablockBytes;
 }
 
+std::uint32_t ColorWriteMask(const Registers& context) {
+    auto mask = read(context, 0x8e) & read(context, 0x8f);
+    for (std::uint32_t slot = 0; slot < 8; ++slot) {
+        const auto channels = 0xfu << (slot * 4u);
+        if ((mask & channels) == 0) continue;
+        const auto info = find(context, 0x31c + slot * 0xfu);
+        if (info != context.end() && ((info->second >> 2u) & 0x1fu) == 0) mask &= ~channels;
+    }
+    return mask;
+}
+
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     const auto stride = slot * 0xfu;
     ColorTarget color{};
@@ -758,7 +776,108 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
     return pass;
 }
 
+std::optional<DepthClearPass> DecodeDepthClearPass(const QueueState& queue) {
+    const auto& cx = queue.context;
+    const auto control = find(cx, 0x000);
+    if (control == cx.end()) return std::nullopt;
+    Require((control->second & ~0x2063u) == 0, "depth copy, resummarize or decompress is unsupported");
+    if ((control->second & 3u) == 0) return std::nullopt;
+    Require(ColorWriteMask(cx) == 0, "depth clear with color writes is unsupported");
+    zero(cx, 0x1c4, ~0u, "depth clear with shader depth or sample-mask export");
+    zero(cx, 0x2f8, ~0u, "depth clear with multisampling or coverage conversion");
+    zero(cx, 0x080, ~0u, "depth clear with a window offset");
+    const auto view = read(cx, 0x002);
+    const auto lastSlice = ((view >> 13u) & 0x7ffu) | ((view >> 19u) & 0x1800u);
+    Require((view & 0x1fffu) == lastSlice, "depth clear over multiple slices is unsupported");
+    const auto depthControl = read(cx, 0x200);
+    Require((depthControl & 8u) == 0, "depth clear with depth bounds is unsupported");
+    const bool depthUnchanged = (depthControl & 2u) == 0 || ((depthControl & 4u) == 0 && ((depthControl >> 4u) & 7u) == 7u);
+    Require((control->second & 1u) != 0 || depthUnchanged, "stencil clear with ordinary depth work is unsupported");
+    Require((control->second & 2u) != 0 || (depthControl & 1u) == 0, "depth clear with ordinary stencil work is unsupported");
+    VkImageAspectFlags aspects = 0;
+    if ((control->second & 1u) != 0) {
+        Require((depthControl & 6u) == 6u && (view & 0x01000000u) == 0 && (read(cx, 0x010) & 3u) != 0, "depth clear needs a writable enabled depth plane");
+        aspects |= VK_IMAGE_ASPECT_DEPTH_BIT;
+    }
+    if ((control->second & 2u) != 0) {
+        Require((depthControl & 1u) != 0 && (view & 0x02000000u) == 0 && (read(cx, 0x011) & 1u) != 0, "stencil clear needs a writable enabled stencil plane");
+        aspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    }
+    State decoded{};
+    decodeDepth(cx, depthControl, decoded, true);
+    const auto& target = *decoded.depth;
+    if ((aspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) Require(std::isfinite(target.clearDepth) && target.clearDepth >= 0.0f && target.clearDepth <= 1.0f, "depth clear value is outside [0, 1]");
+    Require(read(cx, 0x206) == 0x43fu, "unsupported viewport transform for depth clear");
+    const auto xs = std::fabs(readFloat(cx, 0x10f));
+    const auto xo = readFloat(cx, 0x110);
+    const auto ys = std::fabs(readFloat(cx, 0x111));
+    const auto yo = readFloat(cx, 0x112);
+    Require(std::isfinite(xs) && std::isfinite(xo) && std::isfinite(ys) && std::isfinite(yo), "non-finite depth clear viewport");
+    VkRect2D covered{{0, 0}, {0x7fffu, 0x7fffu}};
+    intersect(covered, cx, 0x00c, true);
+    intersect(covered, cx, 0x081, false);
+    intersect(covered, cx, 0x090, false);
+    if ((read(cx, 0x292) & 2u) != 0) intersect(covered, cx, 0x094, false);
+    const bool viewportCovers = xo - xs <= 0.0f && xo + xs >= target.extent.width && yo - ys <= 0.0f && yo + ys >= target.extent.height;
+    const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= target.extent.width && covered.extent.height >= target.extent.height;
+    Require(viewportCovers && scissorCovers, "depth clear over part of a surface is unsupported");
+    return DepthClearPass{target, aspects};
+}
+
+std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue) {
+    const auto& cx = queue.context;
+    const auto overrideRegister = find(cx, 0x003);
+    if (overrideRegister == cx.end()) return std::nullopt;
+    const auto overrides = overrideRegister->second;
+    const bool depth = (overrides & 0x28000000u) == 0x28000000u && (read(cx, 0x010) & 3u) != 0;
+    const bool stencil = (overrides & 0x50000000u) == 0x50000000u && (read(cx, 0x011) & 1u) != 0;
+    if ((!depth && !stencil) || ((read(cx, 0x202) >> 4u) & 7u) != 0) return std::nullopt;
+    const auto base = [&](std::uint32_t low, std::uint32_t high) {
+        const auto upper = find(cx, high);
+        return (upper == cx.end() ? 0ull : static_cast<std::uint64_t>(upper->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, low)) << 8u);
+    };
+    const auto depthWrite = base(0x014, 0x01c);
+    const auto stencilWrite = base(0x015, 0x01d);
+    const bool copyDepth = depth && depthWrite != base(0x012, 0x01a);
+    const bool copyStencil = stencil && stencilWrite != base(0x013, 0x01b);
+    if (!copyDepth && !copyStencil) return std::nullopt;
+    Require((read(cx, 0x000) & ~0x2060u) == 0, "depth override copy with clear, color copy or resummarization is unsupported");
+    Require((read(cx, 0x200) & DepthControlMask) == 0, "depth override copy with depth or stencil tests is unsupported");
+    zero(cx, 0x1c4, ~0u, "depth override copy with shader depth or sample-mask export");
+    zero(cx, 0x2f8, ~0u, "depth override copy with multisampling or coverage conversion");
+    zero(cx, 0x080, ~0u, "depth override copy with a window offset");
+    const auto view = read(cx, 0x002);
+    const auto slice = view & 0x1fffu;
+    const auto lastSlice = ((view >> 13u) & 0x7ffu) | ((view >> 19u) & 0x1800u);
+    Require(slice == lastSlice, "depth override copy over multiple slices is unsupported");
+    Require(!copyDepth || (view & 0x01000000u) == 0, "depth override copy has a read-only depth destination");
+    Require(!copyStencil || (view & 0x02000000u) == 0, "depth override copy has a read-only stencil destination");
+    State decoded{};
+    decodeDepth(cx, 0, decoded, false, true);
+    const auto& source = *decoded.depth;
+    auto destination = source;
+    if (source.address != 0) destination.address = depthWrite + slice * DepthSliceBytes(source.extent, (read(cx, 0x010) & 3u) == 1 ? 2u : 4u);
+    if (source.stencilAddress != 0) destination.stencilAddress = stencilWrite + slice * DepthSliceBytes(source.extent, 1u);
+    Require(!copyDepth || (depthWrite != 0 && source.address != 0), "depth override copy has an absent depth plane");
+    Require(!copyStencil || (stencilWrite != 0 && source.stencilAddress != 0), "depth override copy has an absent stencil plane");
+    Require(read(cx, 0x206) == 0x43fu, "unsupported viewport transform for depth override copy");
+    const auto xs = std::fabs(readFloat(cx, 0x10f));
+    const auto xo = readFloat(cx, 0x110);
+    const auto ys = std::fabs(readFloat(cx, 0x111));
+    const auto yo = readFloat(cx, 0x112);
+    VkRect2D covered{{0, 0}, {0x7fffu, 0x7fffu}};
+    intersect(covered, cx, 0x00c, true);
+    intersect(covered, cx, 0x081, false);
+    intersect(covered, cx, 0x090, false);
+    if ((read(cx, 0x292) & 2u) != 0) intersect(covered, cx, 0x094, false);
+    const bool viewportCovers = xo - xs <= 0.0f && xo + xs >= source.extent.width && yo - ys <= 0.0f && yo + ys >= source.extent.height;
+    const bool scissorCovers = covered.offset.x == 0 && covered.offset.y == 0 && covered.extent.width >= source.extent.width && covered.extent.height >= source.extent.height;
+    Require(viewportCovers && scissorCovers, "depth override copy over part of a surface is unsupported");
+    return DepthCopyPass{source, destination, (copyDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : 0u) | (copyStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u)};
+}
+
 std::string DrawRejection(const QueueState& queue, bool indexed) {
+    if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) return reason;
     const auto& cx = queue.context;
     // A register a rule needs that is absent gives no verdict here: DecodeState reports it.
     const auto value = [&](const Registers& registers, std::uint32_t offset, std::uint32_t& out) {
@@ -805,7 +924,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
     if (auto reason = nonzero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
-    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, (targetMask & shaderMask) != 0)) return colorControlMessage(word);
+    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, ColorWriteMask(cx) != 0)) return colorControlMessage(word);
     if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
     if (PixelProgramSkipped(queue)) return NullPixelProgramRejection(queue);
     for (const auto offset : {0x1b3u, 0x1b4u, 0x1c5u}) {
@@ -834,7 +953,7 @@ std::string NullPixelProgramRejection(const QueueState& queue) {
     const auto targetMask = find(queue.context, 0x8e);
     const auto shaderMask = find(queue.context, 0x8f);
     if (targetMask == queue.context.end() || shaderMask == queue.context.end()) return "AGC graphics: a draw without a pixel program needs CB_TARGET_MASK and CB_SHADER_MASK";
-    if ((targetMask->second & shaderMask->second) != 0) return "AGC graphics: a draw without a pixel program writes color";
+    if (ColorWriteMask(queue.context) != 0) return "AGC graphics: a draw without a pixel program writes color";
     return {};
 }
 

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -84,6 +85,14 @@ void stateTests() {
     initial.context[0xdead] = 1;
     initial.ClearContext();
     Require(initial.context.at(0x200) == 0 && !initial.context.contains(0xdead), "context reset did not restore defaults");
+    for (std::uint32_t slot = 0; slot < 8; ++slot) {
+        const auto info = 0x31cu + 0xfu * slot;
+        Require(initial.context.at(info) == 0, "reset color target was not disabled");
+        initial.context[info] = 10u << 2u;
+    }
+    initial.ClearContext();
+    initial.context[0x8e] = initial.context[0x8f] = 0xffffffffu;
+    Require(AgcDriver::Graphics::ColorWriteMask(initial.context) == 0, "context clear kept old color targets enabled");
     Require(initial.userConfig.at(0x24b) == 0, "primitive restart must be disabled in initial queue state");
     initial.userConfig[0x24b] = 1;
     initial.ClearContext();
@@ -541,6 +550,27 @@ void DisabledColorTests() {
     Require(partial.hasColorTarget && partial.blend.colorWriteMask == 3, "partial color write mask changed");
     queue.context.erase(0x31c);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
+    queue = makeState();
+    queue.context[0x31c] = 0;
+    for (const auto offset : {0x31bu, 0x31du, 0x3b0u, 0x3b8u, 0x390u, 0x318u, 0x1e0u}) queue.context.erase(offset);
+    const auto disabled = AgcDriver::Graphics::DecodeState(queue);
+    Require(!disabled.hasColorTarget && disabled.colors.empty() && disabled.blends.empty(), "COLOR_INVALID retained an attachment despite the disabled buffer");
+    Require(disabled.renderExtent.width == 64 && disabled.renderExtent.height == 4, "COLOR_INVALID lost the attachment-free render extent");
+    queue.shader[0x008] = 0;
+    queue.shader[0x009] = 0;
+    Require(AgcDriver::Graphics::NullPixelProgramRejection(queue).empty(), "COLOR_INVALID rejected a draw without a pixel shader");
+    queue.context[0x200] = 0x36;
+    queue.context[0x000] = 0;
+    queue.context[0x002] = 0;
+    queue.context[0x010] = 0x80000181;
+    queue.context[0x011] = 0x20000180;
+    queue.context[0x012] = 0x100;
+    queue.context[0x014] = 0x100;
+    queue.context[0x007] = 0x003f003f;
+    queue.context[0x00a] = 0;
+    queue.context[0x00b] = std::bit_cast<std::uint32_t>(1.0f);
+    const auto depthOnly = AgcDriver::Graphics::DecodeState(queue);
+    Require(!depthOnly.hasColorTarget && depthOnly.depth && depthOnly.depthTest && depthOnly.depthWrite && depthOnly.renderExtent.height == 64, "COLOR_INVALID discarded a depth-only draw");
 }
 
 void CompactedExportTests() {
@@ -562,6 +592,10 @@ void CompactedExportTests() {
     Require(state.colors[1].slot == 4 && state.colors[1].exportIndex == 1 && state.colors[1].address == slotFour, "export 1 did not reach MRT slot 4, the second slot CB_SHADER_MASK enables");
     Require(!state.blends[0].blendEnable && state.blends[1].blendEnable && state.blends[1].colorWriteMask == (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT), "export 1 did not take MRT slot 4's blend control and target mask");
     Require(AgcDriver::Graphics::ExportMappings(state)[1] == state.colors[1].componentMapping, "export 1 did not take MRT slot 4's component mapping");
+    auto disabledFirst = queue;
+    disabledFirst.context[0x31c] = 0;
+    const auto withHole = AgcDriver::Graphics::DecodeState(disabledFirst);
+    Require(withHole.colors.size() == 1 && withHole.colors[0].slot == 4 && withHole.colors[0].exportIndex == 1 && withHole.blends.size() == 2 && withHole.blends[0].colorWriteMask == 0, "COLOR_INVALID shifted a later MRT export");
     queue.context[0x1c5] = 0x90009u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 0");
     queue.context[0x8e] = 0xf000fu;
@@ -648,6 +682,31 @@ void DepthStencilTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DCC 3D color targets");
 }
 
+void depthMaintenanceTests() {
+    for (const auto mode : {0x4u, 0x8u, 0x10u, 0x80u, 0x100u, 0x1000u, 0x4000u}) {
+        for (const auto clear : {0u, 1u, 2u, 3u}) {
+            auto queue = makeState();
+            queue.context[0x000] = mode | clear;
+            queue.context[0x200] = 0;
+            queue.context[0x8e] = 0;
+            queue.context[0x8f] = 0;
+            queue.shader.erase(0x8);
+            const auto reason = AgcDriver::Graphics::DepthMaintenanceRejection(queue);
+            Require(reason.find("DB_RENDER_CONTROL") != std::string::npos, "depth maintenance passed without depth tests or color writes");
+            Require(AgcDriver::Graphics::DrawRejection(queue, false) == reason, "draw precheck did not reject depth maintenance first");
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, reason);
+        }
+    }
+    for (const auto control : {0u, 1u, 2u, 3u, 0x20u, 0x40u, 0x2000u, 0x2063u}) {
+        auto queue = makeState();
+        queue.context[0x000] = control;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "ordinary depth controls were mistaken for maintenance");
+    }
+    auto absent = makeState();
+    absent.context.erase(0x000);
+    Require(AgcDriver::Graphics::DepthMaintenanceRejection(absent).empty(), "an absent depth control produced a maintenance verdict");
+}
+
 // SPI_SHADER_Z_FORMAT (0x1c4) and the export enables of DB_SHADER_CONTROL (0x203): Z export needs a
 // format with a depth channel (1, 2, 3 or 32_ABGR 9), the sample mask needs 32_ABGR, and the
 // formats the export path does not lay out are refused. A missing 0x1c4 gives no verdict here.
@@ -725,6 +784,120 @@ void DepthBoundsBiasTests() {
 }
 
 alignas(256) std::array<std::uint8_t, 4> dccKeys{};
+
+void depthClearPassTests() {
+    using namespace AgcDriver::Graphics;
+    auto queue = makeState();
+    queue.context[0x000] = 0;
+    Require(!DecodeDepthClearPass(queue), "ordinary draw was decoded as a depth clear");
+    for (const auto mode : {0x4u, 0x8u, 0x10u, 0x1000u}) {
+        auto maintenance = queue;
+        maintenance.context[0x000] = mode;
+        maintenance.context[0x200] = 0;
+        maintenance.context[0x8e] = maintenance.context[0x8f] = 0;
+        expectFailure([&] { DecodeDepthClearPass(maintenance); }, "copy, resummarize or decompress");
+    }
+    queue.context[0x000] = 0x2060;
+    Require(!DecodeDepthClearPass(queue), "ordinary compression and invocation controls were decoded as a clear");
+    queue.context[0x000] = 3;
+    queue.context[0x002] = 0;
+    queue.context[0x200] = 0x777;
+    queue.context[0x8e] = 0;
+    queue.context[0x010] = 0x80000183;
+    queue.context[0x011] = 0x20000181;
+    queue.context[0x012] = queue.context[0x014] = 0x100;
+    queue.context[0x013] = queue.context[0x015] = 0x200;
+    queue.context[0x007] = (3u << 16u) | 63u;
+    queue.context[0x00a] = 37;
+    queue.context[0x00b] = std::bit_cast<std::uint32_t>(0.75f);
+    queue.context[0x10b] = 0x333;
+    queue.context[0x10c] = queue.context[0x10d] = 0xffffffff;
+    const auto pass = DecodeDepthClearPass(queue);
+    Require(pass && pass->aspects == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) && pass->target.clearDepth == 0.75f && pass->target.clearStencil == 37, "explicit depth/stencil clear lost its aspects or values");
+    Require(!queue.context.contains(0x1b3), "clear test accidentally supplies pixel inputs");
+    auto invalid = queue;
+    invalid.context[0x8e] = 0xf;
+    expectFailure([&] { DecodeDepthClearPass(invalid); }, "color writes");
+    invalid = queue;
+    invalid.context[0x91] = 0x40020;
+    expectFailure([&] { DecodeDepthClearPass(invalid); }, "part of a surface");
+    invalid = queue;
+    invalid.context[0x2] = 1u << 24u;
+    expectFailure([&] { DecodeDepthClearPass(invalid); }, "writable enabled depth plane");
+    invalid = queue;
+    invalid.context[0x2] = 1u << 13u;
+    expectFailure([&] { DecodeDepthClearPass(invalid); }, "multiple slices");
+    queue.context[0x000] = 1;
+    queue.context[0x200] = 0x76;
+    Require(DecodeDepthClearPass(queue)->aspects == VK_IMAGE_ASPECT_DEPTH_BIT, "depth-only clear included stencil");
+    queue.context[0x000] = 2;
+    queue.context[0x200] = 0x701;
+    Require(DecodeDepthClearPass(queue)->aspects == VK_IMAGE_ASPECT_STENCIL_BIT, "stencil-only clear included depth");
+    queue.context[0x200] = 0x773;
+    Require(DecodeDepthClearPass(queue)->aspects == VK_IMAGE_ASPECT_STENCIL_BIT, "an always-pass read-only depth test rejected a stencil clear");
+    queue.context[0x200] = 0x777;
+    expectFailure([&] { DecodeDepthClearPass(queue); }, "ordinary depth work");
+    queue.context[0x200] = 0x733;
+    expectFailure([&] { DecodeDepthClearPass(queue); }, "ordinary depth work");
+    queue.context[0x200] = 0x77b;
+    expectFailure([&] { DecodeDepthClearPass(queue); }, "depth bounds");
+}
+
+void depthCopyPassTests() {
+    using namespace AgcDriver::Graphics;
+    auto queue = makeState();
+    Require(!DecodeDepthCopyPass(queue), "unconfigured depth override became a copy");
+    queue.context[0x000] = 0x60;
+    queue.context[0x00a] = 0;
+    queue.context[0x00b] = std::bit_cast<std::uint32_t>(1.0f);
+    queue.context[0x003] = 0xf8000000;
+    queue.context[0x002] = 0;
+    queue.context[0x200] = 0;
+    queue.context[0x202] = 0xcc0000;
+    queue.context[0x8e] = queue.context[0x8f] = 0;
+    queue.context[0x010] = 0xa0000183;
+    queue.context[0x011] = 0x20000181;
+    queue.context[0x012] = 0x100;
+    queue.context[0x013] = 0x200;
+    queue.context[0x014] = 0x300;
+    queue.context[0x015] = 0x400;
+    queue.context[0x007] = (3u << 16u) | 63u;
+    const auto pass = DecodeDepthCopyPass(queue);
+    Require(pass && pass->source.address == 0x10000 && pass->destination.address == 0x30000 && pass->source.stencilAddress == 0x20000 && pass->destination.stencilAddress == 0x40000 && pass->aspects == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT), "depth override copy lost its read/write bases or aspects");
+    auto changed = queue;
+    changed.context[0x003] = 0x28000000;
+    Require(DecodeDepthCopyPass(changed)->aspects == VK_IMAGE_ASPECT_DEPTH_BIT, "depth-only override copied stencil");
+    changed.context[0x003] = 0x50000000;
+    Require(DecodeDepthCopyPass(changed)->aspects == VK_IMAGE_ASPECT_STENCIL_BIT, "stencil-only override copied depth");
+    changed.context[0x003] = 0x18000000;
+    Require(!DecodeDepthCopyPass(changed), "dirty without valid requested a depth copy");
+    changed.context[0x003] = 0x60000000;
+    Require(!DecodeDepthCopyPass(changed), "valid without dirty requested a depth copy");
+    changed = queue;
+    changed.context[0x202] = 0xcc0010;
+    Require(!DecodeDepthCopyPass(changed), "ordinary color rendering became a depth copy");
+    changed = queue;
+    changed.context[0x014] = changed.context[0x012];
+    changed.context[0x015] = changed.context[0x013];
+    Require(!DecodeDepthCopyPass(changed), "in-place expansion became a copy");
+    changed = queue;
+    changed.context[0x002] = 2u | (2u << 13u);
+    changed.context[0x01a] = changed.context[0x01c] = 1;
+    const auto sliced = DecodeDepthCopyPass(changed);
+    Require(sliced->source.address == (1ull << 40u) + 0x10000 + 2 * DepthSliceBytes({64, 4}, 4) && sliced->destination.address == (1ull << 40u) + 0x30000 + 2 * DepthSliceBytes({64, 4}, 4), "depth copy lost slice or high address bits");
+    changed = queue;
+    changed.context[0x200] = 2;
+    expectFailure([&] { DecodeDepthCopyPass(changed); }, "tests");
+    changed = queue;
+    changed.context[0x000] = 0x61;
+    expectFailure([&] { DecodeDepthCopyPass(changed); }, "clear");
+    changed = queue;
+    changed.context[0x002] = 1u << 13u;
+    expectFailure([&] { DecodeDepthCopyPass(changed); }, "multiple slices");
+    changed = queue;
+    changed.context[0x091] = 0x40020;
+    expectFailure([&] { DecodeDepthCopyPass(changed); }, "part of a surface");
+}
 
 void metadataPassTests() {
     using AgcDriver::Graphics::ColorMetadataPass;
@@ -2289,6 +2462,7 @@ int main() {
             AgcDriver::Graphics::ValidateDepthBounds(unrestricted, bounded);
         }
         stateTests();
+        depthMaintenanceTests();
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();
@@ -2300,6 +2474,8 @@ int main() {
         CompactedExportTests();
         metadataPassTests();
         cmaskTests();
+        depthClearPassTests();
+        depthCopyPassTests();
         ShaderStageTests();
         PixelInputLayoutTests();
         InitialContextTests();
