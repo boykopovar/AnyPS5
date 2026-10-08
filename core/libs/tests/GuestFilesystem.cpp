@@ -19,6 +19,7 @@ int APS5_VABI sceKernelFchmod(int, unsigned short);
 int APS5_VABI fchmod_nid_postfix(int, int);
 int APS5_VABI chmod_nid_postfix(const char*, int);
 int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
+int APS5_VABI sceKernelFutimes(int, const KernelTimeval*);
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI sceKernelFsync(int);
 int APS5_VABI fdatasync_nid_postfix(int);
@@ -153,11 +154,12 @@ int main() {
     Require(sceKernelFtruncate(descriptor, 3) == 0);
     FileStat times{};
     const KernelTimeval past[2]{{1000000000, 0}, {1000000000, 500000}};
-    Require(futimes_nid_postfix(descriptor, past) == 0);
+    Require(sceKernelFutimes(descriptor, past) == 0);
     Require(stat_nid_postfix(sized.string().c_str(), &times) == 0 && times.st_mtim.tv_sec == 1000000000);
     Require(futimes_nid_postfix(descriptor, nullptr) == 0);
     Require(stat_nid_postfix(sized.string().c_str(), &times) == 0 && times.st_mtim.tv_sec > 1000000000);
     const KernelTimeval overflow[2]{{0, 0}, {0, 1000000}};
+    Require(sceKernelFutimes(descriptor, overflow) == static_cast<int>(0x80020016u));
     Require(futimes_nid_postfix(descriptor, overflow) == -1 && *__error_nid_postfix() == 22);
     const KernelTimeval negative[2]{{0, -1}, {0, 0}};
     Require(futimes_nid_postfix(descriptor, negative) == -1 && *__error_nid_postfix() == 22);
@@ -166,6 +168,7 @@ int main() {
 #ifndef _WIN32
     Require(sceKernelFchmod(descriptor, 0600) == static_cast<int>(0x80020009u));
     Require(fchmod_nid_postfix(descriptor, 0600) == -1 && *__error_nid_postfix() == 9);
+    Require(sceKernelFutimes(descriptor, nullptr) == static_cast<int>(0x80020009u));
     Require(futimes_nid_postfix(descriptor, nullptr) == -1 && *__error_nid_postfix() == 9);
     Require(fdatasync_nid_postfix(descriptor) == -1 && *__error_nid_postfix() == 9);
 #endif
