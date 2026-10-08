@@ -4,17 +4,113 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 #define CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #include "SceTypes.hpp"
 
 namespace AvPlayer {
+
+#ifdef _WIN32
+struct HostMutex {
+    SRWLOCK native = SRWLOCK_INIT;
+
+    HostMutex() = default;
+    HostMutex(const HostMutex&) = delete;
+    HostMutex& operator=(const HostMutex&) = delete;
+
+    void lock() { AcquireSRWLockExclusive(&native); }
+    void unlock() { ReleaseSRWLockExclusive(&native); }
+};
+
+class HostCondition {
+public:
+    HostCondition() {
+        notify = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (notify == nullptr) throw std::runtime_error("AvPlayer controller wait init failed: " + std::to_string(GetLastError()));
+        timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        if (timer == nullptr) {
+            const DWORD error = GetLastError();
+            CloseHandle(notify);
+            notify = nullptr;
+            throw std::runtime_error("AvPlayer controller wait init failed: " + std::to_string(error));
+        }
+    }
+
+    ~HostCondition() {
+        if (timer != nullptr) CloseHandle(timer);
+        if (notify != nullptr) CloseHandle(notify);
+    }
+
+    HostCondition(const HostCondition&) = delete;
+    HostCondition& operator=(const HostCondition&) = delete;
+
+    void NotifyAll() {
+        if (!SetEvent(notify)) throw std::runtime_error("AvPlayer controller notify failed: " + std::to_string(GetLastError()));
+    }
+
+    template <typename Predicate>
+    bool WaitFor(std::unique_lock<HostMutex>& lock, std::chrono::milliseconds timeout, Predicate predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (!predicate()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) return false;
+            const auto remain = std::chrono::ceil<std::chrono::microseconds>(deadline - now).count();
+            LARGE_INTEGER due{};
+            due.QuadPart = -static_cast<LONGLONG>(remain * 10LL);
+            if (!SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0)) throw std::runtime_error("AvPlayer controller wait failed: " + std::to_string(GetLastError()));
+            HANDLE handles[2] = {notify, timer};
+            lock.unlock();
+            const DWORD woke = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+            const DWORD waitError = woke == WAIT_FAILED ? GetLastError() : ERROR_SUCCESS;
+            lock.lock();
+            if (woke == WAIT_FAILED) throw std::runtime_error("AvPlayer controller wait failed: " + std::to_string(waitError));
+            if (woke != WAIT_OBJECT_0 && woke != WAIT_OBJECT_0 + 1) throw std::runtime_error("AvPlayer controller wait failed");
+            if (woke == WAIT_OBJECT_0 && !CancelWaitableTimer(timer)) throw std::runtime_error("AvPlayer controller wait failed: " + std::to_string(GetLastError()));
+        }
+        return true;
+    }
+
+private:
+    HANDLE notify = nullptr;
+    HANDLE timer = nullptr;
+};
+#else
+using HostMutex = std::mutex;
+
+class HostCondition {
+public:
+    HostCondition() = default;
+    HostCondition(const HostCondition&) = delete;
+    HostCondition& operator=(const HostCondition&) = delete;
+
+    void NotifyAll() { native.notify_all(); }
+
+    template <typename Predicate>
+    bool WaitFor(std::unique_lock<HostMutex>& lock, std::chrono::milliseconds timeout, Predicate predicate) {
+        return native.wait_for(lock, timeout, predicate);
+    }
+
+private:
+    std::condition_variable native;
+};
+#endif
 
 constexpr int SCE_OK = 0;
 constexpr int SCE_AVPLAYER_ERROR_INVALID_PARAMS = static_cast<int>(0x806A0001u);
@@ -148,8 +244,8 @@ private:
     std::uint32_t syncMode = SyncModeDefault;
     std::uint32_t demuxVideoBytes = 0;
 
-    std::mutex eventMutex;
-    std::condition_variable eventCondition;
+    HostMutex eventMutex;
+    HostCondition eventCondition;
     std::deque<Event> events;
     bool quit = false;
     std::thread controller;

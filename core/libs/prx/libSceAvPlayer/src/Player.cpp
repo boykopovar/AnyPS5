@@ -74,7 +74,7 @@ Player::~Player() {
         std::lock_guard lock(eventMutex);
         quit = true;
     }
-    eventCondition.notify_all();
+    eventCondition.NotifyAll();
     controller.join();
     std::lock_guard lock(mutex);
     source.reset();
@@ -85,7 +85,7 @@ void Player::queue(const Event& event) {
         std::lock_guard lock(eventMutex);
         events.push_back(event);
     }
-    eventCondition.notify_all();
+    eventCondition.NotifyAll();
 }
 
 void Player::OnWarning(std::int32_t code) {
@@ -102,7 +102,7 @@ void Player::controllerLoop() {
         bool pending = false;
         {
             std::unique_lock lock(eventMutex);
-            eventCondition.wait_for(lock, std::chrono::milliseconds(5), [this] { return quit || !events.empty(); });
+            eventCondition.WaitFor(lock, std::chrono::milliseconds(5), [this] { return quit || !events.empty(); });
             if (quit) return;
             if (!events.empty()) {
                 event = events.front();
