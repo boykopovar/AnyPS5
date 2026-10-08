@@ -19,10 +19,12 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
 int APS5_VABI sceKernelDeleteSema(KernelSema sem);
 int APS5_VABI sceKernelSignalSema(KernelSema sem, int count);
 int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time);
+int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
 }
 
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
+static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
 static constexpr int SIGUSR1 = 30;
 static constexpr int Repeats = 100;
 
@@ -107,6 +109,94 @@ static std::atomic<bool> finishedReturned{false};
 static void* APS5_VABI Finished(void*) {
     finishedReturned.store(true);
     return nullptr;
+}
+
+static std::uint32_t nestedWord = 0;
+static KernelUseconds nestedTimeout = 0;
+static std::atomic<bool> nestedEntered{false};
+static std::atomic<int> nestedResult{0};
+static std::atomic<int> nestedCalls{0};
+
+static void APS5_VABI NestedHandler(int signum, void*) {
+    Require(signum == SIGUSR1);
+    nestedEntered.store(true);
+    KernelUseconds timeout = nestedTimeout;
+    nestedResult.store(sceKernelSyncOnAddressWait(&nestedWord, 0, &timeout, "nested"));
+    nestedCalls.fetch_add(1);
+}
+
+struct SemaWaiter {
+    KernelSema sem = nullptr;
+    std::atomic<bool> started{false};
+    std::atomic<bool> returned{false};
+    int result = -1;
+};
+
+static void* APS5_VABI WaitSemaOnce(void* arg) {
+    auto& waiter = *static_cast<SemaWaiter*>(arg);
+    waiter.started.store(true);
+    waiter.result = sceKernelWaitSema(waiter.sem, 1, nullptr);
+    waiter.returned.store(true);
+    return nullptr;
+}
+
+static void StartSemaWaiter(Pthread* thread, SemaWaiter& waiter, KernelSema sem, const char* name) {
+    waiter.sem = sem;
+    Require(scePthreadCreate(thread, nullptr, WaitSemaOnce, &waiter, name) == 0);
+    while (!waiter.started.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
+
+static void ExpectReturned(SemaWaiter& waiter) {
+    for (int attempt = 0; attempt < 5000 && !waiter.returned.load(); ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(waiter.returned.load());
+    Require(waiter.result == 0);
+}
+
+static void ExpectNestedDone(int before) {
+    for (int attempt = 0; attempt < 5000 && nestedCalls.load() == before; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(nestedCalls.load() == before + 1);
+    Require(nestedResult.load() == SCE_KERNEL_ERROR_ETIMEDOUT);
+}
+
+static void NestedWaitKeepsLaterWaiters() {
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "nested later", 0, 0, 2, nullptr) == 0);
+    SemaWaiter first;
+    SemaWaiter second;
+    Pthread firstThread = nullptr;
+    Pthread secondThread = nullptr;
+    StartSemaWaiter(&firstThread, first, sem, "nested first");
+    StartSemaWaiter(&secondThread, second, sem, "nested second");
+    nestedTimeout = 20000;
+    const int before = nestedCalls.load();
+    Require(sceKernelRaiseException(firstThread, SIGUSR1) == 0);
+    ExpectNestedDone(before);
+    Require(sceKernelSignalSema(sem, 2) == 0);
+    ExpectReturned(first);
+    ExpectReturned(second);
+    Require(scePthreadJoin(firstThread, nullptr) == 0);
+    Require(scePthreadJoin(secondThread, nullptr) == 0);
+    Require(sceKernelDeleteSema(sem) == 0);
+}
+
+static void NestedWaitKeepsOuterWake() {
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "nested outer", 0, 0, 1, nullptr) == 0);
+    SemaWaiter waiter;
+    Pthread thread = nullptr;
+    StartSemaWaiter(&thread, waiter, sem, "nested outer");
+    nestedTimeout = 1000000;
+    nestedEntered.store(false);
+    const int before = nestedCalls.load();
+    Require(sceKernelRaiseException(thread, SIGUSR1) == 0);
+    while (!nestedEntered.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(sceKernelSignalSema(sem, 1) == 0);
+    ExpectNestedDone(before);
+    ExpectReturned(waiter);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(sceKernelDeleteSema(sem) == 0);
 }
 
 static void ExpectDelivery(int before, std::thread::id thread) {
@@ -198,5 +288,10 @@ int main() {
     Require(sceKernelRaiseException(finishedThread, SIGUSR1) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadJoin(finishedThread, nullptr) == 0);
 
+    Require(sceKernelRemoveExceptionHandler(SIGUSR1) == 0);
+
+    Require(sceKernelInstallExceptionHandler(SIGUSR1, reinterpret_cast<void*>(&NestedHandler)) == 0);
+    NestedWaitKeepsLaterWaiters();
+    NestedWaitKeepsOuterWake();
     Require(sceKernelRemoveExceptionHandler(SIGUSR1) == 0);
 }

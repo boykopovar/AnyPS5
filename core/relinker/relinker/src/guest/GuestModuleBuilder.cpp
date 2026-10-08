@@ -89,7 +89,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::map<std::filesystem::path, GuestImage> discovered;
     const auto matchesIdentity = [](const std::string& name, const std::vector<std::string>& identities) {
         return std::any_of(identities.begin(), identities.end(), [&](const auto& identity) {
-            return name == identity || name == identity + ".prx" || name == identity + ".suprx";
+            return name == identity || name == identity + ".prx" || name == identity + ".sprx" || name == identity + ".suprx";
         });
     };
     const auto foldFilename = [](std::string name) {
@@ -130,6 +130,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     }
     if (!unmatchedExclusions.empty()) throw Domain::RelinkerException("Excluded guest module file not found: " + *unmatchedExclusions.begin());
     std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
     if (paths.empty()) return {};
     if (lazyBinding) throw Domain::RelinkerException("Guest modules require eager binding; --lazy-binding is incompatible");
     std::vector<GuestImage> images;
