@@ -633,6 +633,7 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
         if (have && !read_file_all(path, data)) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
+        const std::vector<char> originalData = data;
         data.resize(setup_param->memory_size, 0);
         if (!write_file_replace(path, data)) {
             return SAVE_DATA_ERROR_INTERNAL;
@@ -640,7 +641,15 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
         if (setup_param->init_param != nullptr && (setup_param->option & 1u) != 0) {
             std::vector<char> pd(sizeof(SaveDataParam));
             std::memcpy(pd.data(), setup_param->init_param, sizeof(SaveDataParam));
-            write_file_replace(mem_path(setup_param->user_id, setup_param->slot_id, "param"), pd);
+            if (!write_file_replace(mem_path(setup_param->user_id, setup_param->slot_id, "param"), pd)) {
+                if (!have) {
+                    std::error_code removeError;
+                    std::filesystem::remove(path, removeError);
+                } else {
+                    write_file_replace(path, originalData);
+                }
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
         }
     }
     if (result != nullptr) {

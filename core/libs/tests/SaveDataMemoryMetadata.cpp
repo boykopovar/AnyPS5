@@ -19,6 +19,7 @@ extern "C" {
 int APS5_VABI sceSaveDataInitialize3(const void*);
 int APS5_VABI sceSaveDataTerminate();
 int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2*);
+int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2*, SaveDataMemorySetupResult*);
 }
 
 static void Check(bool value, int line) {
@@ -115,6 +116,48 @@ int main() {
     Require(sceSaveDataSetSaveDataMemory2(&set) == 0);
     std::copy(first.begin(), first.end(), memoryExpected.begin() + 4);
     Require(Read(memoryPath) == memoryExpected);
+    const auto setupParamPath = std::filesystem::path("_sd_mem/u42/slot0.param");
+    const auto setupBinPath = std::filesystem::path("_sd_mem/u42/slot0.bin");
+    const auto setupParamTemp = setupParamPath.string() + ".tmp";
+    Require(std::filesystem::create_directories(setupParamPath.parent_path()));
+    Require(std::filesystem::create_directory(setupParamTemp));
+    SaveDataParam setupParam{};
+    setupParam.user_param = 100;
+    SaveDataMemorySetup2 setup2{};
+    setup2.user_id = 42;
+    setup2.slot_id = 0;
+    setup2.memory_size = 128;
+    setup2.option = 1;
+    setup2.init_param = &setupParam;
+    SaveDataMemorySetupResult setupResult{};
+    setupResult.existed_memory_size = 555;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == static_cast<int>(0x809F000Bu));
+    Require(setupResult.existed_memory_size == 555);
+    Require(!std::filesystem::exists(setupBinPath));
+    Require(!std::filesystem::exists(setupParamPath));
+    Require(!std::filesystem::exists(setupParamTemp));
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
+    Require(setupResult.existed_memory_size == 0);
+    Require(Read(setupBinPath) == std::vector<char>(128, 0));
+    const auto* setupBytes = reinterpret_cast<const char*>(&setupParam);
+    Require(Read(setupParamPath) == std::vector<char>(setupBytes, setupBytes + sizeof(setupParam)));
+    const auto growthParamTemp = setupParamPath.string() + ".tmp";
+    Require(std::filesystem::create_directory(growthParamTemp));
+    SaveDataParam previousParam = setupParam;
+    setupParam.user_param = 200;
+    setup2.memory_size = 256;
+    setupResult.existed_memory_size = 999;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == static_cast<int>(0x809F000Bu));
+    Require(setupResult.existed_memory_size == 999);
+    Require(Read(setupBinPath) == std::vector<char>(128, 0));
+    const auto* previousBytes = reinterpret_cast<const char*>(&previousParam);
+    Require(Read(setupParamPath) == std::vector<char>(previousBytes, previousBytes + sizeof(previousParam)));
+    Require(!std::filesystem::exists(growthParamTemp));
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
+    Require(setupResult.existed_memory_size == 128);
+    Require(Read(setupBinPath) == std::vector<char>(256, 0));
+    const auto* updatedBytes = reinterpret_cast<const char*>(&setupParam);
+    Require(Read(setupParamPath) == std::vector<char>(updatedBytes, updatedBytes + sizeof(setupParam)));
     Require(sceSaveDataTerminate() == 0);
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
