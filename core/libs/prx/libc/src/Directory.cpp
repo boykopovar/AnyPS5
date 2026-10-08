@@ -76,7 +76,12 @@ GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle) {
         directory.entry.fileNumber = inode <= UINT32_MAX ? static_cast<std::uint32_t>(inode) : 0;
         directory.entry.recordLength = static_cast<std::uint16_t>(8 + ((length + 1 + 3) & ~3));
         directory.entry.nameLength = static_cast<std::uint8_t>(length);
+#ifdef __linux__
+        directory.entry.type = entry->d_type != DT_UNKNOWN
+            ? entry->d_type : DirectoryType(directory.path / entry->d_name);
+#else
         directory.entry.type = DirectoryType(directory.path / entry->d_name);
+#endif
         std::memcpy(directory.entry.name, entry->d_name, length + 1);
         errno = savedError;
         return &directory.entry;

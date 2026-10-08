@@ -7,6 +7,22 @@
 #include <fstream>
 #include <map>
 #include <string>
+#ifdef __linux__
+#include <dirent.h>
+#include <dlfcn.h>
+static bool forceUnknownType = false;
+static bool allTypesKnown = true;
+extern "C" dirent* readdir(DIR* directory) {
+    static const auto nativeRead = reinterpret_cast<dirent* (*)(DIR*)>(dlsym(RTLD_NEXT, "readdir"));
+    if (!nativeRead) std::abort();
+    auto* entry = nativeRead(directory);
+    if (entry) {
+        if (entry->d_type == DT_UNKNOWN) allTypesKnown = false;
+        if (forceUnknownType) entry->d_type = DT_UNKNOWN;
+    }
+    return entry;
+}
+#endif
 extern "C" {
 void* APS5_VABI opendir_nid_postfix(const char*);
 GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void*);
@@ -21,6 +37,10 @@ int main() {
     Require(std::filesystem::create_directory(root));
     Require(std::filesystem::create_directory(root / "subdirectory"));
     { std::ofstream file(root / "sample.txt"); file << "test"; }
+#ifdef __linux__
+    std::filesystem::create_symlink("sample.txt", root / "link");
+    std::filesystem::create_symlink("missing", root / "dangling-link");
+#endif
     void* directory = opendir_nid_postfix(root.string().c_str());
     Require(directory != nullptr);
     std::map<std::string, int> entries;
@@ -35,6 +55,25 @@ int main() {
     Require(entries.at("sample.txt") == 8);
     Require(entries.at("subdirectory") == 4);
     Require(entries.at(".") == 4 && entries.at("..") == 4);
+#ifdef __linux__
+    Require(entries.at("link") == 10 && entries.at("dangling-link") == 10);
+    if (allTypesKnown) {
+        const auto renamed = root.string() + "-renamed";
+        std::filesystem::rename(root, renamed);
+        rewinddir_nid_postfix(directory);
+        std::map<std::string, int> renamedEntries;
+        while (auto* entry = readdir_nid_postfix(directory)) renamedEntries[entry->name] = entry->type;
+        std::filesystem::rename(renamed, root);
+        Require(renamedEntries == entries);
+    }
+    forceUnknownType = true;
+    rewinddir_nid_postfix(directory);
+    std::map<std::string, int> unknownEntries;
+    while (auto* entry = readdir_nid_postfix(directory)) unknownEntries[entry->name] = entry->type;
+    Require(unknownEntries == entries);
+    Require(*__error_nid_postfix() == 13);
+    forceUnknownType = false;
+#endif
     rewinddir_nid_postfix(directory);
     std::size_t count = 0;
     while (readdir_nid_postfix(directory)) ++count;
@@ -46,7 +85,5 @@ int main() {
     Require(*__error_nid_postfix() == 20);
     Require(opendir_nid_postfix("") == nullptr && *__error_nid_postfix() == 2);
     Require(closedir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
-    std::filesystem::remove(root / "sample.txt");
-    std::filesystem::remove(root / "subdirectory");
-    std::filesystem::remove(root);
+    std::filesystem::remove_all(root);
 }
