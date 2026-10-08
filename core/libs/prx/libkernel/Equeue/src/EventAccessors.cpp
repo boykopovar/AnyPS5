@@ -4,6 +4,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 
 static const KernelEvent& requireEvent(const KernelEvent* ev, const char* caller) {
     if (ev == nullptr) {
@@ -19,9 +20,8 @@ intptr_t APS5_VABI sceKernelGetEventData(const KernelEvent* ev) {
 }
 
 int APS5_VABI sceKernelGetEventError(const KernelEvent* ev) {
- (void)ev;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    const KernelEvent& event = requireEvent(ev, __func__);
+    return (event.flags & EV_ERROR) != 0 ? static_cast<int>(event.data) : 0;
 }
 
 intptr_t APS5_VABI sceKernelGetEventFflags(const KernelEvent* ev) {
