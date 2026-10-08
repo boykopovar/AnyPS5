@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace ShaderRecompiler {
 
@@ -950,8 +951,14 @@ std::optional<ControlFlowGraph> routeThroughJunction(const ControlFlowGraph& gra
     }
 
     const auto order = reversePostOrder(graph);
+    std::unordered_map<std::uint32_t, std::size_t> orderIndex;
+    orderIndex.reserve(order.size());
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        orderIndex.emplace(order[i], i);
+    }
     const auto orderOf = [&](std::uint32_t blockId) {
-        return std::distance(order.begin(), std::find(order.begin(), order.end(), blockId));
+        const auto it = orderIndex.find(blockId);
+        return it != orderIndex.end() ? it->second : order.size();
     };
     std::vector<std::uint32_t> targets;
     bool reachesMerge = false;
@@ -1020,8 +1027,14 @@ std::optional<ControlFlowGraph> routeLoopExits(const ControlFlowGraph& graph, co
     }
 
     const auto order = reversePostOrder(graph);
+    std::unordered_map<std::uint32_t, std::size_t> orderIndex;
+    orderIndex.reserve(order.size());
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        orderIndex.emplace(order[i], i);
+    }
     const auto orderOf = [&](std::uint32_t blockId) {
-        return std::distance(order.begin(), std::find(order.begin(), order.end(), blockId));
+        const auto it = orderIndex.find(blockId);
+        return it != orderIndex.end() ? it->second : order.size();
     };
     std::vector<std::uint32_t> targets;
     for (const auto& edge : exits) {

@@ -49,23 +49,25 @@ void PlanBuilder::Collect(IrValue* raw, std::uint32_t usePc) {
         return;
     }
     IrValue* inst = value;
-    const auto cycle = std::find(_visiting.begin(), _visiting.end(), inst);
-    if (cycle != _visiting.end()) {
+    if (_visitingSet.contains(inst)) {
+        const auto cycle = std::find(_visiting.begin(), _visiting.end(), inst);
         const auto containsPhi = std::any_of(cycle, _visiting.end(), [](IrValue* candidate) { return candidate->Opcode() == IrOpcode::Phi; });
         if (containsPhi) {
             return;
         }
         Fail(_program.Resources(), usePc, "cyclic typed planning value " + std::string(IrOpcodeName(inst->Opcode())) + " without a phi");
     }
-    if (std::find(_visited.begin(), _visited.end(), inst) != _visited.end()) {
+    if (_visited.contains(inst)) {
         return;
     }
     _visiting.push_back(inst);
+    _visitingSet.insert(inst);
     for (std::size_t index = 0; index < inst->ArgumentCount(); index++) {
         Collect(inst->Argument(index), usePc);
     }
     _visiting.pop_back();
-    _visited.push_back(inst);
+    _visitingSet.erase(inst);
+    _visited.insert(inst);
     if (!IsRawRead(_program.Resources(), *inst)) {
         return;
     }

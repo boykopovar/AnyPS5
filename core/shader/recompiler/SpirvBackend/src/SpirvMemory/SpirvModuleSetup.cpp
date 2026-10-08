@@ -77,7 +77,7 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitExtension(extension);
     }
     if (state.requirements.bufferInt64Atomics) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) == state.supportedCapabilities.end()) {
+        if (!state.capabilitySet.contains(static_cast<std::uint32_t>(spv::CapabilityInt64Atomics))) {
             FailEmit("64-bit buffer atomics need shaderBufferInt64Atomics");
         }
         state.module.EmitCapability(spv::CapabilityInt64);
@@ -87,7 +87,7 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityInt64);
     }
     if (state.requirements.imageInt64Atomics) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end()) {
+        if (!state.capabilitySet.contains(static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT))) {
             FailEmit("64-bit image atomics need VK_EXT_shader_image_atomic_int64");
         }
         state.module.EmitCapability(spv::CapabilityInt64);
@@ -142,7 +142,7 @@ void DefineModule(SpirvEmitterState& state) {
     state.module.EmitExtension("SPV_KHR_float_controls");
     state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 32u);
     if (state.requirements.float64) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) == state.supportedCapabilities.end()) {
+        if (!state.capabilitySet.contains(static_cast<std::uint32_t>(spv::CapabilityFloat64))) {
             throw std::runtime_error("64-bit float instructions need the Float64 capability, which the device lacks");
         }
         state.module.EmitCapability(spv::CapabilityFloat64);
@@ -180,7 +180,7 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeEarlyFragmentTests);
         }
         if (pixel.psOrderedPixelShader) {
-            if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFragmentShaderPixelInterlockEXT)) == state.supportedCapabilities.end()) {
+            if (!state.capabilitySet.contains(static_cast<std::uint32_t>(spv::CapabilityFragmentShaderPixelInterlockEXT))) {
                 throw std::runtime_error("a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
             }
             state.module.EmitCapability(spv::CapabilityFragmentShaderPixelInterlockEXT);

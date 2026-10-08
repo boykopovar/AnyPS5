@@ -247,6 +247,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.spirvVersion = target.spirvVersion;
     state.supportedCapabilities = target.supportedCapabilities;
     state.supportedExtensions = target.supportedExtensions;
+    state.capabilitySet = {target.supportedCapabilities.begin(), target.supportedCapabilities.end()};
+    state.extensionSet = {target.supportedExtensions.begin(), target.supportedExtensions.end()};
     state.nonConstantImageOffsets = target.nonConstantImageOffsets;
     state.hostSubgroupSize = target.subgroupSize;
     state.splitSubgroup = program.WaveSize() == 32u && target.subgroupSize > 32u;

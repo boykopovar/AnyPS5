@@ -1210,8 +1210,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         operands.push_back(AddressF32(ctx, access, setup.layout.bias));
     }
     if (setup.layout.clamp != NoImageComponent) {
-        const auto& capabilities = state.supportedCapabilities;
-        if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityMinLod)) == capabilities.end()) ctx.Fail(access.inst, "clamps its LOD, which needs the device's shaderResourceMinLod");
+        if (!state.capabilitySet.contains(static_cast<std::uint32_t>(spv::CapabilityMinLod))) ctx.Fail(access.inst, "clamps its LOD, which needs the device's shaderResourceMinLod");
         const auto clamp = AddressF32(ctx, access, setup.layout.clamp);
         if ((operandMask & spv::ImageOperandsLodMask) != 0u) {
             const auto clamped = state.module.AllocateId();
@@ -1231,7 +1230,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         return value->HasImmediate() ? value : nullptr;
     };
     if (setup.layout.offset != NoImageComponent && constantOffset() == nullptr) {
-        const bool gatherExtended = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended)) != state.supportedCapabilities.end();
+        const bool gatherExtended = state.capabilitySet.contains(static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended));
         if (!state.nonConstantImageOffsets || !gatherExtended) {
             ctx.Fail(access.inst, "has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
         }

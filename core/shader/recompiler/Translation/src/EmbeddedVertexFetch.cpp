@@ -3,6 +3,7 @@
 #include <array>
 #include <map>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace ShaderRecompiler {
 
@@ -439,8 +440,9 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     plan.instanceOffsetConflict = instanceOffsetConflict;
     const auto shared = [&](std::int32_t sgpr, const std::vector<std::uint32_t>& addPcs) {
         if (sgpr < 0) return false;
+        const std::unordered_set<std::uint32_t> addPcSet(addPcs.begin(), addPcs.end());
         for (const auto& inst : program.instructions) {
-            if (std::find(addPcs.begin(), addPcs.end(), inst.programCounter) != addPcs.end()) continue;
+            if (addPcSet.contains(inst.programCounter)) continue;
             if (touchesSgpr(inst, static_cast<std::uint32_t>(sgpr))) return true;
         }
         return false;

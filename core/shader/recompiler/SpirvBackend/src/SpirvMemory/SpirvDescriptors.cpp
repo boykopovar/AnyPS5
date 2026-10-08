@@ -58,11 +58,8 @@ std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t r
 // VK_EXT_descriptor_indexing on the device.
 std::uint32_t TableImageIndex(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, std::uint32_t arrayIndex, std::uint32_t slotId) {
     const bool storage = ImageBindingResourceClass(kind) == ImageResourceClass::Storage;
-    const auto supported = [&](std::uint32_t capability) {
-        return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), capability) != state.supportedCapabilities.end();
-    };
     const auto dynamic = storage ? spv::CapabilityStorageImageArrayDynamicIndexing : spv::CapabilitySampledImageArrayDynamicIndexing;
-    if (!supported(dynamic)) {
+    if (!state.capabilitySet.contains(dynamic)) {
         ExitDescriptorBindingFailure(state, kind, resource, "bindless image table needs image array dynamic indexing, which the device lacks");
     }
     state.module.EmitCapability(dynamic);
@@ -72,7 +69,7 @@ std::uint32_t TableImageIndex(SpirvEmitterState& state, DescriptorBindingKind ki
     }
     const auto nonUniform = storage ? spv::CapabilityStorageImageArrayNonUniformIndexing : spv::CapabilitySampledImageArrayNonUniformIndexing;
     const bool extension = state.spirvVersion < 0x00010500u;
-    if (!supported(spv::CapabilityShaderNonUniform) || !supported(nonUniform) || (extension && std::find(state.supportedExtensions.begin(), state.supportedExtensions.end(), "SPV_EXT_descriptor_indexing") == state.supportedExtensions.end())) {
+    if (!state.capabilitySet.contains(static_cast<std::uint32_t>(spv::CapabilityShaderNonUniform)) || !state.capabilitySet.contains(nonUniform) || (extension && !state.extensionSet.contains("SPV_EXT_descriptor_indexing"))) {
         ResourceMaterializer::CountBindlessRejection(BindlessRejection::NonUniform);
         throw std::runtime_error("bindless image table: the slot is not uniform over the workgroup and the device lacks non-uniform image indexing");
     }
