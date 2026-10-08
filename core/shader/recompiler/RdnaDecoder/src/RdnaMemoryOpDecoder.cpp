@@ -273,6 +273,7 @@ constexpr MemoryOpcodeInfo dsOpcodes[] = {
     {0x6bu, RdnaOpcode::DsXorRtnB64, 2, 32, false, false, false},
     {0x6cu, RdnaOpcode::DsMskorRtnB64, 2, 32, false, false, false},
     {0x6du, RdnaOpcode::DsWrxchgRtnB64, 2, 32, false, false, false},
+    {0x7Eu, RdnaOpcode::DsCondxchg32RtnB64, 2, 32, false, false, false},
     {0x70u, RdnaOpcode::DsCmpstRtnB64, 2, 32, false, false, false},
     {0x71u, RdnaOpcode::DsCmpstRtnF64, 2, 32, false, false, false},
     {0x72u, RdnaOpcode::DsMinRtnF64, 2, 32, false, false, false},
@@ -526,6 +527,7 @@ bool isDsAtomicOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::DsOrRtnB64:
         case RdnaOpcode::DsXorRtnB64:
         case RdnaOpcode::DsWrxchgRtnB64:
+        case RdnaOpcode::DsCondxchg32RtnB64:
         case RdnaOpcode::DsMinRtnF64:
         case RdnaOpcode::DsMaxRtnF64:
             return true;

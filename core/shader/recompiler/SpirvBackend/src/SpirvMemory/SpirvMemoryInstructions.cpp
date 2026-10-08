@@ -1896,6 +1896,26 @@ std::uint32_t EmitSharedAtomicMskor64(SpirvValueEmitContext& ctx, const IrValue&
     });
 }
 
+std::uint32_t EmitSharedAtomicCondxchg64(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    const auto data = ScalarU64Argument(ctx, inst, 2u);
+    return SharedAtomic64(ctx, inst, [&](SpirvEmitterState& state, std::uint32_t old) {
+        const auto lowMask = ScalarU64Constant(state, 0xffffffffu);
+        const auto bit31 = ScalarU64Constant(state, 0x80000000u);
+        const auto shift = ScalarU64Constant(state, 32u);
+        const auto oldLow = Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), old, lowMask);
+        const auto oldHigh = Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), old, shift);
+        const auto dataLow = Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), data, lowMask);
+        const auto dataHigh = Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), data, shift);
+        const auto writeLow = Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), dataLow, Unary(state, spv::OpNot, TypeScalarU64(state), bit31));
+        const auto writeHigh = Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), dataHigh, Unary(state, spv::OpNot, TypeScalarU64(state), bit31));
+        const auto lowEnabled = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), dataLow, ScalarU64Constant(state, 31u)), ScalarU64Constant(state, 0u));
+        const auto highEnabled = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), dataHigh, ScalarU64Constant(state, 31u)), ScalarU64Constant(state, 0u));
+        const auto nextLow = Select(state, TypeScalarU64(state), lowEnabled, writeLow, oldLow);
+        const auto nextHigh = Select(state, TypeScalarU64(state), highEnabled, writeHigh, oldHigh);
+        return Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), nextLow, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), nextHigh, shift));
+    });
+}
+
 std::uint32_t EmitBufferAtomicInc32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     return EmitAtomicUpdate(ctx, inst, BufferMemory(ctx, inst), AtomicIncrement);
 }

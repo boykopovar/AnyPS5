@@ -630,6 +630,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::SharedAtomicCmpst64: return Invoke(EmitSharedAtomicCmpst64, ctx, inst);
         case IrOpcode::SharedAtomicCmpstF64: return Invoke(EmitSharedAtomicCmpstF64, ctx, inst);
         case IrOpcode::SharedAtomicMskor64: return Invoke(EmitSharedAtomicMskor64, ctx, inst);
+        case IrOpcode::SharedAtomicCondxchg64: return Invoke(EmitSharedAtomicCondxchg64, ctx, inst);
         case IrOpcode::DataAppend: return Invoke(EmitDataAppend, ctx, inst);
         case IrOpcode::DataConsume: return Invoke(EmitDataConsume, ctx, inst);
         case IrOpcode::SwizzleU32: return Invoke(EmitSwizzleU32, ctx, inst);
