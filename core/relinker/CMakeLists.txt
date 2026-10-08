@@ -236,6 +236,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_identity.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_import_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_import_modules.py $<TARGET_FILE:relinker>)
+        add_test(NAME import_library_identity COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_import_library_identity.py $<TARGET_FILE:relinker>)
         add_test(NAME elf_header COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_elf_header.py $<TARGET_FILE:relinker>)
         add_test(NAME input_magic COMMAND ${Python3_EXECUTABLE}

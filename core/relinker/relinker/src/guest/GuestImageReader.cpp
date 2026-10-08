@@ -140,6 +140,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> moduleImports;
     std::vector<std::uint64_t> moduleExports;
+    std::vector<std::uint64_t> libraryImports;
     bool terminated = false;
     for (std::uint64_t offset = dynamic->Offset; offset < dynamic->Offset + dynamic->FileSize; offset += 16) {
         const auto tag = Io::ReadU64(bytes, offset);
@@ -148,6 +149,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag == 1) needed.push_back(value);
         else if (tag == 0x61000045) moduleImports.push_back(value);
         else if (tag == 0x6100000d || tag == 0x61000043) moduleExports.push_back(value);
+        else if (tag == 0x61000049) libraryImports.push_back(value);
         else if (tag < 0x60000000 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
             if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
         }
@@ -202,12 +204,15 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::map<std::uint64_t, std::string> importModules;
     for (const auto value : moduleImports)
         if (!importModules.emplace(value >> 48, string(value & 0xffffffffu)).second) fail("Duplicate import module ID");
+    std::map<std::uint64_t, std::string> importLibraries;
+    for (const auto value : libraryImports)
+        if (!importLibraries.emplace(value >> 48, string(value & 0xffffffffu)).second) fail("Duplicate import library ID");
     std::vector<std::string> neededLibraries;
     for (const auto offset : needed) neededLibraries.push_back(string(offset));
     std::set<std::string> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
-        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries) : std::string{};
+        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries, importLibraries) : std::string{};
         name = name.substr(0, name.find('#'));
         const auto info = bytes[symOffset + offset + 4];
         const auto visibility = bytes[symOffset + offset + 5];

@@ -185,9 +185,12 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     }
 
     std::map<std::uint64_t, std::string> importModules;
+    std::map<std::uint64_t, std::string> importLibraries;
     for (const auto& tag : dynTags) {
         if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
             throw RelinkerException("Duplicate import module ID");
+        if (tag.Tag == 0x61000049 && !importLibraries.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
+            throw RelinkerException("Duplicate import library ID");
     }
 
     auto relaEntryPos = [&](const FileByteOffset relaOff, const ByteCount off) -> FileByteOffset {
@@ -223,7 +226,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             std::memcpy(&nameOff, raw.data() + symOff, 4);
 
             const auto name = readCStr(nameOff);
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend});
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, importLibraries), relType, pos, rOffset, rAddend});
         }
     };
 
