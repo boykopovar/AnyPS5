@@ -7,6 +7,7 @@
 namespace File {
 
 int OpenDirectoryDescriptor(const std::filesystem::path& path);
+std::optional<int> DuplicateDirectoryDescriptor(int fd);
 std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd);
 void ForgetDirectoryDescriptor(int fd);
 int ReadDirectoryDescriptor(int fd, char* buf, int nbytes);

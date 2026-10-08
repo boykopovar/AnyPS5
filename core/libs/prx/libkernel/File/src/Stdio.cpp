@@ -264,6 +264,19 @@ int APS5_VABI close_nid_postfix(int d) {
 #endif
 }
 
+int APS5_VABI dup_nid_postfix(int descriptor) {
+    if (descriptor >= GuestSockets::FirstDescriptor) return GuestSockets::Duplicate(descriptor);
+    if (const auto duplicate = File::DuplicateDirectoryDescriptor(descriptor)) {
+        return *duplicate < 0 ? PosixFailure(SceErrorFromErrno(errno) & 0xffff) : *duplicate;
+    }
+#ifdef _WIN32
+    const int duplicate = ::_dup(descriptor);
+#else
+    const int duplicate = ::dup(descriptor);
+#endif
+    return duplicate < 0 ? PosixFailure(SceErrorFromErrno(errno) & 0xffff) : duplicate;
+}
+
 int APS5_VABI _close_nid_postfix(int descriptor) {
     return close_nid_postfix(descriptor);
 }

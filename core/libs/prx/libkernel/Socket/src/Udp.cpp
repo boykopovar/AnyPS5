@@ -175,6 +175,16 @@ int GuestSockets::Close(int descriptor) {
     return sockets.erase(descriptor) ? 0 : Fail(9);
 }
 
+int GuestSockets::Duplicate(int descriptor) {
+    std::lock_guard lock(socketsMutex);
+    const auto found = sockets.find(descriptor);
+    if (found == sockets.end()) return Fail(9);
+    if (nextDescriptor == INT_MAX) return Fail(24);
+    const int duplicate = nextDescriptor++;
+    sockets.emplace(duplicate, found->second);
+    return duplicate;
+}
+
 bool GuestSockets::IsOpen(int descriptor) {
     std::lock_guard lock(socketsMutex);
     return sockets.contains(descriptor);

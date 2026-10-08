@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -26,7 +27,7 @@ struct DirectoryState {
 };
 
 std::mutex g_mutex;
-std::map<int, DirectoryState> g_directories;
+std::map<int, std::shared_ptr<DirectoryState>> g_directories;
 
 }
 
@@ -36,15 +37,27 @@ int OpenDirectoryDescriptor(const std::filesystem::path& path) {
     const int fd = ::_open("NUL", _O_RDONLY | _O_BINARY);
     if (fd < 0) return -1;
     std::lock_guard lock(g_mutex);
-    g_directories[fd] = DirectoryState{path};
+    auto state = std::make_shared<DirectoryState>();
+    state->path = path;
+    g_directories[fd] = std::move(state);
     return fd;
+}
+
+std::optional<int> DuplicateDirectoryDescriptor(int fd) {
+    std::lock_guard lock(g_mutex);
+    const auto found = g_directories.find(fd);
+    if (found == g_directories.end()) return std::nullopt;
+    const int duplicate = ::_dup(fd);
+    if (duplicate < 0) return duplicate;
+    g_directories[duplicate] = found->second;
+    return duplicate;
 }
 
 std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd) {
     std::lock_guard lock(g_mutex);
     const auto found = g_directories.find(fd);
     if (found == g_directories.end()) return std::nullopt;
-    return found->second.path;
+    return found->second->path;
 }
 
 void ForgetDirectoryDescriptor(int fd) {
@@ -56,7 +69,7 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes) {
     std::lock_guard lock(g_mutex);
     const auto found = g_directories.find(fd);
     if (found == g_directories.end()) return SCE_KERNEL_ERROR_ENOTDIR;
-    auto& state = found->second;
+    auto& state = *found->second;
     if (!state.loaded) {
         state.loaded = true;
         state.entries.emplace_back(".", GuestDirectoryType);
@@ -88,6 +101,16 @@ int ReadDirectoryDescriptor(int fd, char* buf, int nbytes) {
         ++state.cursor;
     }
     return static_cast<int>(used);
+}
+
+}
+
+#else
+
+namespace File {
+
+std::optional<int> DuplicateDirectoryDescriptor(int) {
+    return std::nullopt;
 }
 
 }
