@@ -12,6 +12,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     bool rexPresent = false;
     std::uint8_t rex = 0;
     bool operandSizeOverride = false;
+    bool addressSizeOverride = false;
     bool repnePrefix = false;
 
     while (pos < available) {
@@ -28,7 +29,9 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             repnePrefix = true;
         } else if (b == PrefixOperandSize) {
             operandSizeOverride = true;
-        } else if (b != PrefixLock && b != PrefixRep && b != PrefixAddressSize &&
+        } else if (b == PrefixAddressSize) {
+            addressSizeOverride = true;
+        } else if (b != PrefixLock && b != PrefixRep &&
                    b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
                    b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
             break;
@@ -202,6 +205,10 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
 
         if (opcode == OneByteEnter) {
             immediateSize = ImmSizeEnter;
+        }
+
+        if (opcode >= 0xA0 && opcode <= 0xA3) {
+            immediateSize = addressSizeOverride ? Disp32Size : ImmSize64;
         }
     } else {
         if (opcode == TwoByteExtrqInsertqImm8Imm8) {
