@@ -77,6 +77,48 @@ void expectFailure(TAction action, std::string_view reason) {
     throw std::runtime_error("expected graphics rejection: " + std::string(reason));
 }
 
+void hdrComponentSwapTests() {
+    using namespace AgcDriver::Graphics;
+    for (const auto number : {0u, 1u, 4u, 7u}) {
+        auto queue = makeState();
+        queue.context[0x31c] = (queue.context[0x31c] & ~0x1f7cu) | (12u << 2u) | (number << 8u) | (1u << 11u);
+        const auto address = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
+        queue.context[0x318] = static_cast<std::uint32_t>(address >> 8u);
+        queue.context[0x390] = static_cast<std::uint32_t>(address >> 40u);
+        queue.context[0x1b3] = queue.context[0x1b4] = 2;
+        auto state = DecodeState(queue);
+        const auto expected = number == 0 ? VK_FORMAT_R16G16B16A16_UNORM : number == 1 ? VK_FORMAT_R16G16B16A16_SNORM : number == 4 ? VK_FORMAT_R16G16B16A16_UINT : VK_FORMAT_R16G16B16A16_SFLOAT;
+        Require(state.color.format == expected && state.color.elementBytes == 8, "alternate 16-bit color format was not decoded");
+        Require(state.color.componentMapping == 0xc6u && ExportMappings(state)[0] == 0xc6u, "alternate 16-bit color export did not swap red and blue");
+        Require(DecodePixelStageInfo(queue.context, ExportMappings(state)).targetExportMapping[0] == 0xc6u, "pixel export lost the alternate color mapping");
+        queue.context[0x8e] = 1;
+        state = DecodeState(queue);
+        Require(state.blend.colorWriteMask == VK_COLOR_COMPONENT_B_BIT, "alternate red-only write did not select the third storage component");
+        queue.context[0x8e] = 0xf;
+        queue.context[0x1e0] = (1u << 30u) | 13u;
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+        state = DecodeState(queue);
+        Require(state.blendConstants == std::array<float, 4>{0.375f, 0.25f, 0.125f, 0.5f}, "alternate color blend constants were not swizzled with the export");
+        queue.context[0x31c] &= ~(1u << 11u);
+        state = DecodeState(queue);
+        Require(state.color.componentMapping == 0xe4u && state.blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "standard color mapping changed");
+        queue.context[0x31c] |= 2u << 11u;
+        expectFailure([&] { DecodeState(queue); }, "unsupported color format");
+    }
+    auto queue = makeState();
+    queue.context[0x31c] = (queue.context[0x31c] & ~0x1f7cu) | (12u << 2u) | (7u << 8u) | (1u << 11u);
+    for (const auto offset : {0x318u, 0x31bu, 0x31cu, 0x31du}) queue.context[offset + 0xfu] = queue.context.at(offset);
+    for (const auto offset : {0x390u, 0x3b0u, 0x3b8u}) queue.context[offset + 1u] = queue.context.at(offset);
+    queue.context[0x31c + 0xfu] &= ~(1u << 11u);
+    queue.context[0x1c5] = 0x99u;
+    queue.context[0x8e] = queue.context[0x8f] = 0xffu;
+    queue.context[0x1e0] = queue.context[0x1e1] = (1u << 30u) | 13u;
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+    expectFailure([&] { DecodeState(queue); }, "conflicting blend constants");
+    queue.context[0x107] = queue.context[0x105];
+    Require(DecodeState(queue).colors.size() == 2, "compatible constants rejected mixed component orders");
+}
+
 void stateTests() {
     AgcDriver::QueueState initial;
     Require(initial.context.at(0x200) == 0 && initial.context.at(0x83) == 0xffff, "initial context state is missing");
@@ -2289,6 +2331,7 @@ int main() {
             AgcDriver::Graphics::ValidateDepthBounds(unrestricted, bounded);
         }
         stateTests();
+        hdrComponentSwapTests();
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();

@@ -343,11 +343,10 @@ DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number,
             if (number == uint) return {VK_FORMAT_R32G32_UINT, 8};
             return fail();
         case 12:
-            if (swap != 0) return fail();
-            if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8};
-            if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8};
-            if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8};
-            if (number == uint) return {VK_FORMAT_R16G16B16A16_UINT, 8};
+            if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8, static_cast<std::uint8_t>(alternate ? 0xc6u : 0xe4u)};
+            if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8, static_cast<std::uint8_t>(alternate ? 0xc6u : 0xe4u)};
+            if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8, static_cast<std::uint8_t>(alternate ? 0xc6u : 0xe4u)};
+            if (number == uint) return {VK_FORMAT_R16G16B16A16_UINT, 8, static_cast<std::uint8_t>(alternate ? 0xc6u : 0xe4u)};
             return fail();
         case 14:
             if (swap != 0) return fail();
@@ -588,6 +587,8 @@ State DecodeState(const QueueState& queue) {
     if ((read(cx, 0x292) & 2u) != 0) intersect(result.scissor, cx, 0x94, false);
     APS5_LOG_OUT_DEBUG("Scissor offset=(%d,%d) extent=%ux%u", result.scissor.offset.x, result.scissor.offset.y, result.scissor.extent.width, result.scissor.extent.height);
     result.blends.assign(exportCount, VkPipelineColorBlendAttachmentState{});
+    std::array<float, 3> requiredBlendConstants{};
+    std::uint32_t requiredBlendMask = 0;
     for (const auto& color : result.colors) {
         const auto slot = color.slot;
         const auto blend = read(cx, 0x1e0 + slot);
@@ -615,8 +616,21 @@ State DecodeState(const QueueState& queue) {
                 state.colorBlendOp = state.alphaBlendOp;
             }
             for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
+            const auto constantColor = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
+            if (state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
+                for (std::uint32_t i = 0; i < 3; ++i) {
+                    if ((state.colorWriteMask & (1u << i)) == 0) continue;
+                    const auto value = result.blendConstants[(mapping >> (2u * i)) & 3u];
+                    Require((requiredBlendMask & (1u << i)) == 0 || requiredBlendConstants[i] == value, "color targets require conflicting blend constants after component swap");
+                    requiredBlendConstants[i] = value;
+                    requiredBlendMask |= 1u << i;
+                }
+            }
         }
         result.blends[color.exportIndex] = state;
+    }
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        if ((requiredBlendMask & (1u << i)) != 0) result.blendConstants[i] = requiredBlendConstants[i];
     }
     if (!result.colors.empty()) result.blend = result.blends[result.colors.front().exportIndex];
     APS5_LOG_OUT_DEBUG("DecodeState done colorTarget=%u render=%ux%u topology=%u", result.hasColorTarget ? 1u : 0u, result.renderExtent.width, result.renderExtent.height, static_cast<unsigned>(result.topology));
