@@ -5,7 +5,6 @@
 #include <cstdint>
 
 // Shared between libSceAmpr (which records commands) and libkernel (which executes them).
-// The guest treats both the command buffer object and its memory as opaque, so the encoding is ours.
 namespace Apr {
 
 enum class BufferType : std::uint16_t {
@@ -14,14 +13,18 @@ enum class BufferType : std::uint16_t {
 };
 
 struct CommandBufferObject {
-    std::uint8_t* base;
-    std::uint32_t size;
-    std::uint32_t offset;
-    std::uint32_t numCommands;
     BufferType type;
     std::uint16_t recording;
+    std::uint32_t offset;
+    std::uint32_t numCommands;
+    std::uint32_t size;
+    std::uint8_t* base;
 };
 static_assert(sizeof(CommandBufferObject) == 0x18, "guest reserves 0x18 bytes for sce::Ampr::CommandBuffer");
+
+static_assert(offsetof(CommandBufferObject, offset) == 0x04);
+static_assert(offsetof(CommandBufferObject, size) == 0x0c);
+static_assert(offsetof(CommandBufferObject, base) == 0x10);
 
 inline constexpr std::uint16_t ScatterGatherValid = 1;
 inline constexpr std::uint16_t MapActive = 2;
