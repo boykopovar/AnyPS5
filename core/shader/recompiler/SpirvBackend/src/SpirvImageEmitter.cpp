@@ -161,23 +161,37 @@ std::uint32_t CubeLayer(SpirvEmitterState& state, std::uint32_t value) {
     return result;
 }
 
-std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t first, std::uint32_t components, std::uint32_t encoded) {
-    if (first == NoImageComponent || encoded < components || access.mem.imageAddressComponents < first + encoded) {
+std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t first, std::uint32_t components, std::uint32_t encoded, bool position = false) {
+    const bool cube = access.image.cube;
+    const auto present = std::min(encoded, components);
+    if (first == NoImageComponent || (encoded < components && (cube || encoded == 0u)) || access.mem.imageAddressComponents < first + present) {
         ctx.Fail(access.inst, "has an image address with too few coordinate components");
     }
-    const bool cube = access.image.cube;
-    auto x = AddressF32(ctx, access, first);
+    std::uint32_t size = 0;
+    const auto component = [&](std::uint32_t index) {
+        if (index < present) return AddressF32(ctx, access, first + index);
+        if (!position || index >= RdnaImageDimensionInfoFor(access.image.dimension).spatialComponents) return ZeroF32(ctx.state);
+        if (size == 0u) {
+            ctx.state.module.EmitCapability(spv::CapabilityImageQuery);
+            size = ctx.state.module.AllocateId();
+            ctx.state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(ctx.state, access.image.dimension), size, LoadSampledImageDescriptor(ctx.state, access.mem.resource, access.slot), ConstantU32(ctx.state, 0u));
+        }
+        const auto extent = ctx.state.module.AllocateId();
+        ctx.state.module.AddFunction(spv::OpCompositeExtract, TypeU32(ctx.state), extent, size, index);
+        return Binary(ctx.state, spv::OpFDiv, TypeF32(ctx.state), ConstantF32(ctx.state, 0x3f000000u), Unary(ctx.state, spv::OpConvertUToF, TypeF32(ctx.state), extent));
+    };
+    auto x = component(0u);
     if (components == 1u) {
         return x;
     }
-    auto y = AddressF32(ctx, access, first + 1u);
+    auto y = component(1u);
     if (cube) {
         x = CubeAxis(ctx.state, x);
         y = CubeAxis(ctx.state, y);
     }
     const auto result = ctx.state.module.AllocateId();
     if (components == 3u) {
-        auto z = AddressF32(ctx, access, first + 2u);
+        auto z = component(2u);
         if (cube) {
             z = CubeLayer(ctx.state, z);
         }
@@ -842,7 +856,7 @@ void EmitQueryLodOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     }
     state.module.EmitCapability(spv::CapabilityImageQuery);
     const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler, access.slot);
-    const auto coord = CoordF32(ctx, access, 0, RdnaImageDimensionInfoFor(access.image.dimension).spatialComponents, AddressDimension(access).spatialComponents);
+    const auto coord = CoordF32(ctx, access, 0, RdnaImageDimensionInfoFor(access.image.dimension).spatialComponents, AddressDimension(access).spatialComponents, true);
     const auto lod = state.module.AllocateId();
     state.module.AddFunction(spv::OpImageQueryLod, TypeF32Vector(state, 2), lod, sampled, coord);
     std::uint32_t values[4] = {ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0), ConstantU32(state, 0)};
@@ -962,7 +976,7 @@ SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& a
     if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Unorm) {
         ctx.Fail(access.inst, "samples or gathers a converted unorm image, which needs filtering in the shader and is not implemented");
     }
-    const auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
+    const auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents, true);
     return {dimensionInfo, layout, access.image.numericClass, dref, coord};
 }
 
