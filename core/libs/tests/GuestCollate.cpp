@@ -136,12 +136,24 @@ int main() {
     require(allocations == 3 && lastSize == 4095 && result.capacity == 4094 && std::string(result.pointer) == largest);
     std::free(result.pointer);
 
-    const std::string tooLong(4095, 'z');
-    reject([&] { Vtable(facet).transform(&result, collate, tooLong.data(), tooLong.data() + tooLong.size()); });
+    for (const std::size_t length : {4095u, 4096u, 65536u}) {
+        const std::string large(length, 'z');
+        std::memset(&result, 0xcd, sizeof(result));
+        require(Vtable(facet).transform(&result, collate, large.data(), large.data() + large.size()) == &result);
+        require(result.reserved == 0xcdcdcdcdcdcdcdcdull && result.size == length && result.capacity == length);
+        require(reinterpret_cast<std::uintptr_t>(result.pointer) % 32 == 0);
+        require(std::memcmp(result.pointer, large.data(), length) == 0 && result.pointer[length] == 0);
+        void* allocation = nullptr;
+        std::memcpy(&allocation, result.pointer - sizeof(allocation), sizeof(allocation));
+        require(allocation == lastAllocation);
+        const auto offset = reinterpret_cast<std::uintptr_t>(result.pointer) - reinterpret_cast<std::uintptr_t>(allocation);
+        require(offset >= sizeof(void*) && offset <= 39 && lastSize >= offset + length + 1);
+        std::free(allocation);
+    }
     const std::string embedded("a\0b", 3);
     reject([&] { Vtable(facet).transform(&result, collate, embedded.data(), embedded.data() + embedded.size()); });
     reject([&] { Vtable(facet).transform(nullptr, collate, text, text + 1); });
-    require(allocations == 3);
+    require(allocations == 6);
 
     Vtable(facet).facet.retain(facet);
     Vtable(facet).facet.retain(facet);

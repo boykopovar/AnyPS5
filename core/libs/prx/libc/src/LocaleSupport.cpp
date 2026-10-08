@@ -80,6 +80,8 @@ GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFa
 
 constexpr std::size_t GuestStringInlineCapacity = 15;
 constexpr std::size_t GuestStringLargeAllocation = 0x1000;
+constexpr std::size_t GuestStringAlignment = 32;
+constexpr std::size_t GuestStringAllocationPadding = sizeof(void*) + GuestStringAlignment - 1;
 
 void ValidateCharacterRange(const char* first, const char* last, const char* function) {
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
@@ -118,13 +120,19 @@ GuestLocale::String* APS5_VABI CollateTransform(GuestLocale::String* result, con
     if (result == nullptr) throw std::invalid_argument("collate::do_transform: null result");
     ValidateCharacterRange(first, last, "collate::do_transform");
     const auto length = static_cast<std::size_t>(last - first);
+    if (length > std::numeric_limits<std::size_t>::max() - GuestStringAllocationPadding - 1) throw std::length_error("collate::do_transform: allocation size overflow");
     if (length != 0 && std::memchr(first, 0, length) != nullptr) throw std::runtime_error("collate::do_transform: embedded null characters are not supported");
-    if (length + 1 >= GuestStringLargeAllocation) throw std::runtime_error("collate::do_transform: results of 4095 characters or more are not supported");
     char* data = result->buffer;
     std::size_t capacity = GuestStringInlineCapacity;
     if (length > GuestStringInlineCapacity) {
         capacity = length;
-        data = static_cast<char*>(_Znwm_nid_postfix(capacity + 1));
+        if (capacity + 1 >= GuestStringLargeAllocation) {
+            void* allocation = _Znwm_nid_postfix(capacity + 1 + GuestStringAllocationPadding);
+            data = reinterpret_cast<char*>((reinterpret_cast<std::uintptr_t>(allocation) + GuestStringAllocationPadding) & ~static_cast<std::uintptr_t>(GuestStringAlignment - 1));
+            std::memcpy(data - sizeof(allocation), &allocation, sizeof(allocation));
+        } else {
+            data = static_cast<char*>(_Znwm_nid_postfix(capacity + 1));
+        }
     }
     if (length != 0) std::memcpy(data, first, length);
     data[length] = 0;
