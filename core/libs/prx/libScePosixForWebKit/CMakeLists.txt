@@ -6,6 +6,16 @@ endif()
 configure_windows_unwind(libScePosixForWebKit)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_isatty_tests ${LIBS_INCLUDE_DIR}/tests/GuestIsatty.cpp)
+    target_include_directories(guest_isatty_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_isatty_tests PRIVATE libScePosixForWebKit)
+    configure_windows_unwind(guest_isatty_tests)
+    add_test(NAME guest_isatty COMMAND guest_isatty_tests)
+    if(WIN32)
+        set_tests_properties(guest_isatty PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
+    endif()
+
     add_test_executable(guest_resolver_tests ${LIBS_INCLUDE_DIR}/tests/GuestResolver.cpp)
     target_include_directories(guest_resolver_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_resolver_tests PRIVATE libScePosixForWebKit)
