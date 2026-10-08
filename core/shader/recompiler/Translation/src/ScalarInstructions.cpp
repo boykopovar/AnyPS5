@@ -43,7 +43,7 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         sCselectB32(inst);
         return true;
     case RdnaOpcode::SCselectB64:
-        scalarSelect64(inst, sourceAt(inst, 1u));
+        scalarSelectMask64(inst);
         return true;
     case RdnaOpcode::SCmovB32: {
         const IrU32 source = readU32(sourceAt(inst, 0u));

@@ -244,6 +244,21 @@ void TranslationContext::scalarSelect64(const RdnaInstruction& inst, const RdnaO
     writeU32Pair(inst.destination, {low, high});
 }
 
+void TranslationContext::scalarSelectMask64(const RdnaInstruction& inst) {
+    if (inst.destination.kind != RdnaOperandKind::ScalarRegister) {
+        scalarSelect64(inst, sourceAt(inst, 1u));
+        return;
+    }
+    const RdnaOperand& trueSource = sourceAt(inst, 0u);
+    const RdnaOperand& falseSource = sourceAt(inst, 1u);
+    IrValue& valid = ir.LogicalAnd(readMaskValid(trueSource).Value(), readMaskValid(falseSource).Value());
+    IrValue& bit = ir.Emit(IrOpcode::SelectU1, IrType::U1, {&ir.GetScc(), &readMask(trueSource).Value(), &readMask(falseSource).Value()});
+    scalarSelect64(inst, falseSource);
+    const auto dst = static_cast<ScalarReg>(inst.destination.reg);
+    ir.SetThreadBitScalarReg(dst, bit);
+    ir.SetScalarMaskTag(dst, valid);
+}
+
 void TranslationContext::movB32(const RdnaInstruction& inst, bool applyFloatModifiers) {
     if (applyFloatModifiers) {
         IrF32 value(*readOperand(sourceAt(inst, 0u), IrType::F32));

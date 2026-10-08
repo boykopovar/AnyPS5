@@ -19,6 +19,13 @@ IrU32 TranslationContext::hostExecWord(std::uint32_t half) {
 }
 
 IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask) {
+    const bool wide = program.WaveSize() == 64u;
+    if (mask[0].Value().HasImmediate() && (!wide || mask[1].Value().HasImmediate())) {
+        const std::uint32_t low = mask[0].Value().ImmediateU32();
+        const std::uint32_t high = wide ? mask[1].Value().ImmediateU32() : low;
+        if (low == 0u && high == 0u) return IrU1(ir.ConstantBool(false));
+        if (low == 0xffffffffu && high == 0xffffffffu) return IrU1(ir.ConstantBool(true));
+    }
     const IrU32 lane(ir.Emit(IrOpcode::LaneId, IrType::U32, {}));
     const IrU32 word = program.WaveSize() == 64u ? IrU32(ir.Select(ir.ULessThan(lane.Value(), ir.Constant(32u)), mask[0].Value(), mask[1].Value())) : mask[0];
     const IrU32 bit(ir.BitwiseAnd(lane.Value(), ir.Constant(31u)));

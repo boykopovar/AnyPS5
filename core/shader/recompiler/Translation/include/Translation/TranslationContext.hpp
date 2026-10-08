@@ -302,6 +302,7 @@ private:
     void sSwappcB64(const RdnaInstruction& inst);
     void sCselectB32(const RdnaInstruction& inst);
     void scalarSelect64(const RdnaInstruction& inst, const RdnaOperand& falseSource);
+    void scalarSelectMask64(const RdnaInstruction& inst);
     void movB32(const RdnaInstruction& inst, bool applyFloatModifiers);
     void sMovB64(const RdnaInstruction& inst);
     void sWqm(const RdnaInstruction& inst, bool wide);
