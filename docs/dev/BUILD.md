@@ -7,7 +7,7 @@ git submodule update --init --recursive
 ## Requirements
 
 - x86-64, Git, CMake 3.22.1 or newer, Ninja, C++20.
-- Linux: GCC, G++, binutils. SDL's X11 backend requires X11 and Xext development headers (`libx11-dev` and `libxext-dev` on Debian/Ubuntu).
+- Linux: GCC, G++, binutils. SDL's X11 backend requires X11 and Xext development headers (`libx11-dev` and `libxext-dev` on Debian/Ubuntu). The default build uses bundled dependencies. To link against system SDL2, FreeType, and FFmpeg instead, install their development packages and configure with `-DANYPS5_USE_SYSTEM_DEPENDENCIES=ON`. On Debian/Ubuntu, the packages are `libsdl2-dev`, `libfreetype-dev`, `libavcodec-dev`, `libavformat-dev`, `libavutil-dev`, `libavfilter-dev`, `libswscale-dev`, `libswresample-dev`, and `pkg-config`.
 - Windows: only MinGW-w64 GCC 15.2.0 (WinLibs `x86_64-ucrt-posix-seh`, release `15.2.0posix-14.0.0-ucrt-r7`) is currently supported. Add its `mingw64/bin` directory to `PATH` before configuring.
 - FFmpeg binaries are downloaded during configuration unless `FFMPEG_PREBUILT_DIR` is set. With the WinLibs CMake, the download fails with status 60 (`SSL peer certificate or SSH remote key was not OK`) unless `SSL_CERT_FILE` names a CA bundle, for example `C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt` from Git for Windows, as in CI.
 
@@ -37,6 +37,7 @@ Project switches accept `ON` or `OFF`:
 | `-DAPS5_ENABLE_TIMING_LOG=ON`    | `OFF`   | Compile frame timing logging.                    |
 | `-DAPS5_AGC_CREATE_LOG=OFF`      | `ON`    | Disable successful `sceAgcCreateShader` logging. |
 | `-DAGC_BUILD_VISUAL_TEST=ON`     | `OFF`   | Build the standalone AGC SPIR-V visual test.     |
+| `-DANYPS5_USE_SYSTEM_DEPENDENCIES=ON` | `OFF` | On Linux, use system SDL2, FreeType, and FFmpeg packages instead of the bundled copies. |
 
 Build configuration parameters:
 
@@ -49,7 +50,7 @@ Build configuration parameters:
 | `-DCMAKE_CXX_COMPILER_LAUNCHER=ccache` | Optional C++ compiler cache; requires `ccache`.                    |
 | `-DFFMPEG_PREBUILT_DIR=<path>`         | Unpacked FFmpeg package for the target platform; empty by default. |
 
-SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
+The system dependency option requires pkg-config metadata for SDL2 and all six FFmpeg libraries used by the project, plus a CMake FreeType package. With this option enabled, the linked executables use the system libraries at runtime, so those libraries must remain installed on the target system. Windows continues to use the bundled dependencies.
 
 ## Pipeline statistics
 
