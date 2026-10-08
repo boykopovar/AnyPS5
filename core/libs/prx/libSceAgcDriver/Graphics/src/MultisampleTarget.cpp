@@ -16,11 +16,6 @@
 namespace AgcDriver::Graphics {
 namespace {
 
-std::uint64_t cmaskBytes(VkExtent2D extent) {
-    const auto tiles = static_cast<std::uint64_t>((extent.width + 7u) / 8u) * ((extent.height + 7u) / 8u);
-    return (tiles + 1u) / 2u;
-}
-
 bool sameTarget(const ColorTarget& a, const ColorTarget& b) {
     return a.surfaceAddress == b.surfaceAddress && a.format == b.format && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.samples == b.samples;
 }
@@ -47,7 +42,7 @@ void recordCommands(const Context& context, Record&& record) {
 
 class MultisampleTarget {
 public:
-    MultisampleTarget(const Context& context, const ColorTarget& target) : context(context), target(target) {
+    MultisampleTarget(const Context& context, const ColorTarget& target) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes) {
         this->context.bufferPool.reset();
         const auto samples = static_cast<VkSampleCountFlagBits>(target.samples);
         Require((context.limits.framebufferColorSampleCounts & samples) != 0, "the device cannot render color with the target's sample count");
@@ -109,8 +104,7 @@ public:
     MultisampleTarget& operator=(const MultisampleTarget&) = delete;
 
     void ApplyFastClear(const ColorTarget& use) {
-        if (!fastCleared) return;
-        fastCleared = false;
+        if (!cmask.TakeClear()) return;
         const auto clear = fastClearColor(use);
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -160,7 +154,7 @@ public:
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkRenderPass resolvePass = VK_NULL_HANDLE;
-    bool fastCleared = false;
+    MultisampledCmask cmask;
 
 private:
     void release() noexcept {
@@ -169,11 +163,6 @@ private:
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
         if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
     }
-};
-
-struct CmaskFill {
-    std::uint64_t address;
-    std::uint64_t bytes;
 };
 
 std::mutex& targetsMutex() {
@@ -186,29 +175,64 @@ std::vector<std::unique_ptr<MultisampleTarget>>& targets() {
     return list;
 }
 
-std::vector<CmaskFill>& earlyFills() {
-    static std::vector<CmaskFill> fills;
-    return fills;
-}
-
-bool coversCmask(std::uint64_t address, std::uint64_t bytes, const ColorTarget& target) {
-    return target.cmaskAddress != 0 && target.cmaskAddress >= address && target.cmaskAddress + cmaskBytes(target.extent) <= address + bytes;
-}
-
 MultisampleTarget& acquire(const Context& context, const ColorTarget& use) {
     for (const auto& target : targets()) {
         if (target->context.device != context.device || !sameTarget(target->target, use)) continue;
+        target->cmask.CheckAddress(use.cmaskAddress);
         target->ApplyFastClear(use);
         return *target;
     }
     targets().push_back(std::make_unique<MultisampleTarget>(context, use));
     auto& created = *targets().back();
-    auto& fills = earlyFills();
-    created.fastCleared = std::any_of(fills.begin(), fills.end(), [&](const CmaskFill& fill) { return coversCmask(fill.address, fill.bytes, use); });
+    if (use.cmaskFastClear) created.cmask.SeedKeys(CurrentDccKeys(use.cmaskAddress, static_cast<std::uint64_t>(use.cmaskBytes) * 256u));
     created.ApplyFastClear(use);
     return created;
 }
 
+}
+
+void MultisampledCmask::NoteFill(std::uint64_t fillAddress, std::size_t fillBytes, std::uint32_t pattern) {
+    if (address == 0 || fillAddress >= address + bytes || address >= fillAddress + fillBytes) return;
+    if (fillAddress > address || fillAddress + fillBytes < address + bytes) {
+        char text[192];
+        std::snprintf(text, sizeof(text), "a fill of 0x%llx+0x%zx partly covers the CMASK 0x%llx+0x%llx of a multisampled color target, leaving its tiles mixed", static_cast<unsigned long long>(fillAddress), fillBytes, static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
+        refusal = text;
+        return;
+    }
+    refusal.clear();
+    if (pattern == 0) {
+        keys = DccKeys::Clear0000;
+    } else if (pattern == 0xffffffffu) {
+        keys = DccKeys::Uncompressed;
+    } else {
+        char text[192];
+        std::snprintf(text, sizeof(text), "a fill of the CMASK 0x%llx+0x%llx of a multisampled color target with 0x%08x leaves its tiles mixed (neither fast-cleared 0 nor expanded 0xffffffff)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), pattern);
+        refusal = text;
+    }
+}
+
+void MultisampledCmask::SeedKeys(DccKeys seeded) {
+    if (seeded == DccKeys::Clear0000 || seeded == DccKeys::Uncompressed) {
+        keys = seeded;
+        return;
+    }
+    char text[192];
+    std::snprintf(text, sizeof(text), "the CMASK 0x%llx of a multisampled color target reads as %s, which is not modeled", static_cast<unsigned long long>(address), DccKeysName(seeded));
+    refusal = text;
+}
+
+void MultisampledCmask::CheckAddress(std::uint64_t cmaskAddress) const {
+    if (cmaskAddress == address) return;
+    char text[192];
+    std::snprintf(text, sizeof(text), "a multisampled color target used CMASK 0x%llx after its first use with CMASK 0x%llx, which is not modeled", static_cast<unsigned long long>(cmaskAddress), static_cast<unsigned long long>(address));
+    Require(false, std::string(text));
+}
+
+bool MultisampledCmask::TakeClear() {
+    Require(refusal.empty(), refusal);
+    if (keys != DccKeys::Clear0000) return false;
+    keys = DccKeys::Uncompressed;
+    return true;
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target) {
@@ -240,18 +264,13 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
 
 void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
     std::lock_guard lock(targetsMutex());
-    auto& fills = earlyFills();
-    std::erase_if(fills, [&](const CmaskFill& fill) { return fill.address < address + bytes && address < fill.address + fill.bytes; });
-    bool covered = false;
     for (const auto& target : targets()) {
-        if (!coversCmask(address, bytes, target->target)) continue;
-        covered = true;
+        const auto before = target->cmask.Keys();
+        target->cmask.NoteFill(address, bytes, pattern);
+        if (before == DccKeys::Clear0000 || target->cmask.Keys() != DccKeys::Clear0000) continue;
         static std::atomic<int> reports{0};
-        if (pattern == 0 && !target->fastCleared && reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] multisampled color target 0x%llx fast-cleared through its CMASK 0x%llx (fill 0x%llx+0x%zx)\n", static_cast<unsigned long long>(target->target.surfaceAddress), static_cast<unsigned long long>(target->target.cmaskAddress), static_cast<unsigned long long>(address), bytes);
-        target->fastCleared = pattern == 0;
+        if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] multisampled color target 0x%llx fast-cleared through its CMASK 0x%llx (fill 0x%llx+0x%zx)\n", static_cast<unsigned long long>(target->target.surfaceAddress), static_cast<unsigned long long>(target->target.cmaskAddress), static_cast<unsigned long long>(address), bytes);
     }
-    constexpr std::size_t remembered = 64;
-    if (pattern == 0 && !covered && fills.size() < remembered) fills.push_back({address, bytes});
 }
 
 void ClearMultisampleTargets(VkDevice device) {
