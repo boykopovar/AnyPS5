@@ -79,6 +79,9 @@ def pe_exports(path, data):
     directory = PE_DIRECTORY_OFFSET[magic]
     if optional_size < directory + 8:
         raise AuditError(f"{path}: PE optional header of {optional_size} bytes has no export directory")
+    take(data, optional, optional_size, path, "PE optional header")
+    if not unpack("<I", data, optional + directory - 4, path, "data directory count")[0]:
+        raise AuditError(f"{path}: PE optional header declares no export directory")
     rva, size = unpack("<II", data, optional + directory, path, "export data directory")
     if not rva or size < 40:
         raise AuditError(f"{path}: PE file has no export table")
@@ -93,19 +96,28 @@ def pe_exports(path, data):
             if relative >= raw_size or length > raw_size - relative:
                 continue
             take(data, raw_offset + relative, length, path, f"data at RVA 0x{address:x}")
-            return raw_offset + relative
+            return raw_offset + relative, min(raw_offset + raw_size, len(data))
         raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
 
-    table = unpack("<IIHHIIIIIII", data, to_offset(rva, 40), path, "export directory")
-    name_count, names_rva = table[7], table[9]
+    table_offset, _ = to_offset(rva, 40)
+    table = unpack("<IIHHIIIIIII", data, table_offset, path, "export directory")
+    address_count, name_count, addresses_rva, names_rva, ordinals_rva = table[6:11]
     names = set()
     if not name_count:
         return names
-    names_offset = to_offset(names_rva, name_count * 4)
+    names_offset, _ = to_offset(names_rva, name_count * 4)
+    ordinals_offset, _ = to_offset(ordinals_rva, name_count * 2)
+    addresses_offset, _ = to_offset(addresses_rva, address_count * 4)
     for index in range(name_count):
+        ordinal = unpack("<H", data, ordinals_offset + index * 2, path, "export ordinal")[0]
+        if ordinal >= address_count:
+            raise AuditError(f"{path}: export ordinal {ordinal} for name {index} is outside the address table ({address_count} entries)")
+        address = unpack("<I", data, addresses_offset + ordinal * 4, path, "export address")[0]
+        if not address:
+            continue
         name_rva = unpack("<I", data, names_offset + index * 4, path, "export name RVA")[0]
-        offset = to_offset(name_rva, 1)
-        names.add(cstring(data, offset, len(data), path, "export name"))
+        offset, limit = to_offset(name_rva, 1)
+        names.add(cstring(data, offset, limit, path, "export name"))
     return names
 
 

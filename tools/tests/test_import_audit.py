@@ -44,23 +44,30 @@ def exporting(*names):
     return build_elf([(name, 1, GLOBAL_FUNCTION) for name in names])
 
 
-def build_pe(names):
+def build_pe(names, magic=0x20b):
     section_rva, raw_offset = 0x1000, 0x200
     strings, rvas = b"", []
-    start = 40 + 4 * len(names)
+    start = 40 + 10 * len(names)
     for name in names:
         rvas.append(section_rva + start + len(strings))
         strings += name.encode() + b"\0"
-    raw = struct.pack("<IIHHIIIIIII", 0, 0, 0, 0, 0, 1, len(names), len(names), 0, section_rva + 40, 0)
-    raw += b"".join(struct.pack("<I", rva) for rva in rvas) + strings
+    export_size = start + len(strings)
+    raw = struct.pack("<IIHHIIIIIII", 0, 0, 0, 0, 0, 1, len(names), len(names),
+                      section_rva + 40, section_rva + 40 + 4 * len(names), section_rva + 40 + 8 * len(names))
+    raw += b"".join(struct.pack("<I", section_rva + export_size + index) for index in range(len(names)))
+    raw += b"".join(struct.pack("<I", rva) for rva in rvas)
+    raw += b"".join(struct.pack("<H", index) for index in range(len(names))) + strings + b"X" * len(names)
+    directory = 112 if magic == 0x20b else 96
+    optional_size = directory + 16 * 8
     image = bytearray(raw_offset)
     image[0:2] = b"MZ"
     image[0x3c:0x40] = struct.pack("<I", 0x40)
     image[0x40:0x44] = b"PE\0\0"
-    image[0x44:0x58] = struct.pack("<HHIIIHH", 0x8664, 1, 0, 0, 0, 240, 0x2022)
-    image[0x58:0x5a] = struct.pack("<H", 0x20b)
-    image[0x58 + 112:0x58 + 120] = struct.pack("<II", section_rva, len(raw))
-    image[0x58 + 240:0x58 + 280] = struct.pack("<8sIIIIIIHHI", b".edata", len(raw), section_rva, len(raw), raw_offset, 0, 0, 0, 0, 0x40000040)
+    image[0x44:0x58] = struct.pack("<HHIIIHH", 0x8664 if magic == 0x20b else 0x14c, 1, 0, 0, 0, optional_size, 0x2022)
+    image[0x58:0x5a] = struct.pack("<H", magic)
+    struct.pack_into("<I", image, 0x58 + directory - 4, 16)
+    struct.pack_into("<II", image, 0x58 + directory, section_rva, export_size)
+    struct.pack_into("<8sIIIIIIHHI", image, 0x58 + optional_size, b".edata", len(raw), section_rva, len(raw), raw_offset, 0, 0, 0, 0, 0x40000040)
     return bytes(image) + raw
 
 
@@ -197,12 +204,108 @@ class ImportAuditTests(unittest.TestCase):
 
     def test_pe_reader(self):
         path = Path("lib.prx")
-        self.assertEqual(import_audit.pe_exports(path, build_pe(["alpha", "beta"])), {"alpha", "beta"})
-        self.assertEqual(import_audit.pe_exports(path, build_pe([])), set())
+        for magic in (0x10b, 0x20b):
+            with self.subTest(magic=magic):
+                self.assertEqual(import_audit.pe_exports(path, build_pe(["alpha", "beta"], magic)), {"alpha", "beta"})
+                self.assertEqual(import_audit.pe_exports(path, build_pe([], magic)), set())
         image = build_pe(["alpha"])
         for cut in (0x3c, 0x60, 0x210):
             with self.assertRaisesRegex(import_audit.AuditError, "lib.prx"):
                 import_audit.pe_exports(path, image[:cut])
+
+    def test_pe_names_follow_ordinals_and_skip_empty_addresses(self):
+        image = bytearray(build_pe(["alpha", "beta"]))
+        struct.pack_into("<I", image, 0x200 + 16, 17)
+        struct.pack_into("<I", image, 0x200 + 44, 0)
+        struct.pack_into("<HH", image, 0x200 + 56, 1, 0)
+        self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"beta"})
+
+    def test_pe_names_can_share_an_export_address(self):
+        image = bytearray(build_pe(["alpha", "beta"]))
+        struct.pack_into("<I", image, 0x200 + 20, 1)
+        struct.pack_into("<HH", image, 0x200 + 56, 0, 0)
+        self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha", "beta"})
+
+    def test_pe_ordinal_only_exports_have_no_names(self):
+        image = bytearray(build_pe(["alpha"]))
+        struct.pack_into("<I", image, 0x200 + 24, 0)
+        self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), set())
+
+    def test_pe_forwarded_exports_are_visible(self):
+        image = bytearray(build_pe(["alpha"]))
+        forwarder = len(image) - 0x200
+        image += b"other.alpha\0"
+        size = len(image) - 0x200
+        struct.pack_into("<I", image, 0x200 + 40, 0x1000 + forwarder)
+        struct.pack_into("<I", image, 0x58 + 116, size)
+        for field in (8, 16):
+            struct.pack_into("<I", image, 0x58 + 240 + field, size)
+        self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+
+    def test_pe_export_names_can_be_in_another_section(self):
+        image = bytearray(build_pe(["alpha"]))
+        struct.pack_into("<H", image, 0x46, 2)
+        struct.pack_into("<I", image, 0x200 + 44, 0x2000)
+        struct.pack_into("<8sIIIIIIHHI", image, 0x58 + 240 + 40, b".names", 5, 0x2000, 5, 0x400, 0, 0, 0, 0, 0x40000040)
+        image += bytes(0x400 - len(image)) + b"beta\0"
+        self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"beta"})
+
+    def test_pe_rejects_invalid_export_ordinals(self):
+        for ordinal in (1, 0xffff):
+            with self.subTest(ordinal=ordinal):
+                image = bytearray(build_pe(["alpha"]))
+                struct.pack_into("<H", image, 0x200 + 48, ordinal)
+                with self.assertRaisesRegex(import_audit.AuditError, rf"lib.prx:.*ordinal {ordinal}"):
+                    import_audit.pe_exports(Path("lib.prx"), image)
+
+    def test_pe_rejects_export_tables_outside_sections(self):
+        for field in (28, 32, 36):
+            with self.subTest(field=field):
+                image = bytearray(build_pe(["alpha"]))
+                struct.pack_into("<I", image, 0x200 + field, 0x12345)
+                with self.assertRaisesRegex(import_audit.AuditError, "lib.prx:.*RVA 0x12345"):
+                    import_audit.pe_exports(Path("lib.prx"), image)
+
+    def test_pe_export_name_must_end_inside_its_section(self):
+        image = bytearray(build_pe(["alpha"]))
+        image[-2:] = b"xx"
+        image += b"\0"
+        with self.assertRaisesRegex(import_audit.AuditError, "lib.prx: export name.*NUL-terminated"):
+            import_audit.pe_exports(Path("lib.prx"), image)
+
+    def test_pe_rejects_undeclared_export_directory(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            with self.subTest(magic=magic):
+                image = bytearray(build_pe(["alpha"], magic))
+                struct.pack_into("<I", image, 0x58 + directory - 4, 0)
+                with self.assertRaisesRegex(import_audit.AuditError, "lib.prx:.*no export directory"):
+                    import_audit.pe_exports(Path("lib.prx"), image)
+
+    def test_empty_pe_export_slot_is_classified_absent(self):
+        work = self.work
+        image = bytearray(build_pe(["AAAAAAAAAAA"]))
+        struct.pack_into("<I", image, 0x200 + 40, 0)
+        (work.libs / "libSceA.prx").write_bytes(image)
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        result = work.root / "audit.json"
+        code, _, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["imports"][0]["class"], "absent")
+        self.assertEqual(data["imports"][0]["providers"], [])
+
+    def test_invalid_pe_export_ordinal_exits_two(self):
+        work = self.work
+        image = bytearray(build_pe(["AAAAAAAAAAA"]))
+        struct.pack_into("<H", image, 0x200 + 48, 1)
+        (work.libs / "libSceA.prx").write_bytes(image)
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        code, out, err = work.run(registry)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("libSceA.prx:", err)
+        self.assertIn("ordinal 1", err)
 
     def test_library_directories(self):
         work = self.work
