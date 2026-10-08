@@ -3,13 +3,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 // Guest virtual memory is placed inside one reserved arena below the PS5 application map limit
 // absolute address and breaks on host addresses outside that range.
 namespace GuestArena {
 
 #ifndef _WIN32
-using SharedBackingResolver = bool (*)(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
+struct SharedBackingSlice {
+    int file;
+    std::uint64_t offset;
+    std::size_t bytes;
+};
+using SharedBackingResolver = bool (*)(std::uintptr_t address, std::size_t bytes, std::vector<SharedBackingSlice>& slices);
 #endif
 
 extern "C" {
@@ -39,6 +45,7 @@ void GuestArenaUnmapAlias_nid_postfix(void* alias);
 #else
 void GuestArenaSetSharedBacking_nid_postfix(SharedBackingResolver resolver);
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
+bool GuestArenaSharedBackings_nid_no_patch(std::uintptr_t address, std::size_t bytes, std::vector<SharedBackingSlice>& slices);
 #endif
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes);
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes);

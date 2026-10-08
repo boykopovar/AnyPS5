@@ -31,6 +31,8 @@ struct HostImport {
     // Identity for the life of this import (see HostImportSerial); 0 until first asked for.
     std::uint64_t serial = 0;
     bool unwatched = false;
+    bool shadowAllowed = true;
+    std::vector<std::weak_ptr<const GuestAllocations::Range>> ranges;
     bool dmaBuf = false;
 };
 
@@ -53,7 +55,8 @@ void SetImportWatch(const Context& context, ImportWatch watch);
 // The host import of the registered allocation containing [address, address + bytes), made on demand
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in
 // the import's buffer.
-const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+std::shared_ptr<HostImport> HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+void ClearHostImports(VkDevice device);
 // Whether an existing import covers [address, address + bytes), without reconciling the imports
 // with the registry or making one (HostImportFor may take a registry lease): a hint for choices
 // made outside the device lock (a sampled texture's path, a dispatch's pre-sync); the path taken
@@ -262,7 +265,7 @@ private:
         // Registered allocation that is imported: its bytes are read from live guest memory, not a snapshot.
         bool hostBacked = false;
         // Set when the region is served by an imported allocation; nothing is copied or written back.
-        const HostImport* direct = nullptr;
+        std::shared_ptr<HostImport> direct = nullptr;
         // Set when the region covers uncommitted pages: only the `backed` parts (possibly none) are guest
         // memory; the rest reads as zeros and is never stored.
         bool sparse = false;
@@ -285,6 +288,7 @@ private:
         bool gpuCopy = false;
         VkBuffer copySource = VK_NULL_HANDLE;
         std::uint64_t copySourceBase = 0;
+        std::shared_ptr<HostImport> copyImport;
         bool copiedBack = false;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;

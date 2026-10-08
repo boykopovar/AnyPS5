@@ -364,27 +364,35 @@ void WatchMapping(std::uintptr_t address, std::size_t len) {
 #endif
 
 #if defined(__linux__)
-bool SharedBacking(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
+bool SharedBacking(std::uintptr_t address, std::size_t bytes, std::vector<GuestArena::SharedBackingSlice>& slices) {
     std::lock_guard lock(g_directLock);
     const auto next = g_directMappings.upper_bound(address);
     if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address || next == g_directMappings.begin()) return false;
     auto it = std::prev(next);
-    if (address >= it->second.end) return false;
-    const auto backing = it->second.backing;
-    const auto phys = it->second.phys + (address - it->first);
-    const auto page = g_physPages.find(phys - phys % PS5_PAGE_SIZE);
-    if (page == g_physPages.end() || page->second.backing != backing) return false;
+    std::vector<GuestArena::SharedBackingSlice> pending;
     const auto end = address + bytes;
-    for (auto covered = it->second.end; covered < end;) {
-        const auto following = std::next(it);
-        if (following == g_directMappings.end() || following->first != covered || following->second.backing != backing || following->second.phys != it->second.phys + (it->second.end - it->first)) return false;
-        it = following;
-        covered = it->second.end;
+    for (auto cursor = address; cursor < end; ++it) {
+        if (it == g_directMappings.end() || it->first > cursor || cursor >= it->second.end) return false;
+        const auto phys = it->second.phys + (cursor - it->first);
+        const auto page = g_physPages.find(phys - phys % PS5_PAGE_SIZE);
+        if (page == g_physPages.end() || page->second.backing != it->second.backing) return false;
+        const auto offset = page->second.offset + phys % PS5_PAGE_SIZE;
+        const auto length = std::min(end, it->second.end) - cursor;
+        const auto file = it->second.backing->File();
+        if (!pending.empty() && pending.back().file == file && pending.back().offset + pending.back().bytes == offset) pending.back().bytes += length;
+        else pending.push_back({file, offset, length});
+        cursor += length;
     }
-    const int duplicate = fcntl(backing->File(), F_DUPFD_CLOEXEC, 0);
-    if (duplicate < 0) throw std::system_error(errno, std::generic_category(), "duplicate direct memory backing");
-    *file = duplicate;
-    *offset = page->second.offset + phys % PS5_PAGE_SIZE;
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const int duplicate = fcntl(pending[i].file, F_DUPFD_CLOEXEC, 0);
+        if (duplicate < 0) {
+            const auto error = errno;
+            for (std::size_t j = 0; j < i; ++j) close(pending[j].file);
+            throw std::system_error(error, std::generic_category(), "duplicate direct memory backing");
+        }
+        pending[i].file = duplicate;
+    }
+    slices = std::move(pending);
     return true;
 }
 #endif

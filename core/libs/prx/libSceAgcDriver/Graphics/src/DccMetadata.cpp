@@ -217,7 +217,7 @@ void TraceKeyStore(const char* path, std::uint64_t begin, std::size_t count) {
 // buffer of 0xff instead. Under GuestMemory::GpuMutex (it records). False when the keys cannot be
 // stored this way (memory the GPU has no view of): the caller stores them on the CPU.
 bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uint64_t begin, std::size_t count) {
-    const auto* import = HostImportFor(context, begin, count);
+    const auto import = HostImportFor(context, begin, count);
     if (import == nullptr) return false;
     const VkDeviceSize first = begin - import->base;
     const VkDeviceSize last = first + count;
@@ -238,6 +238,7 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
     // Queued on the open batch and recorded with the batch's other key stores as one run (or before
     // a later command writing the keys; see Recorder::QueueKeyStore).
     recorder.QueueKeyStore(import->buffer, first, last, std::move(seed), begin, begin + count);
+    if (ShadowVerify()) recorder.Keep(import);
     recorder.NotePendingFill(begin, count, 0xff);
     GuestMemory::MarkWritten(begin, count);
     // After the note: an unlocked memo lookup drops an entry the snapshot does not cover yet. The

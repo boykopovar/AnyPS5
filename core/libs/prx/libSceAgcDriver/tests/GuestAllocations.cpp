@@ -6,6 +6,7 @@
 #include <cstring>
 #include <array>
 #include <algorithm>
+#include <limits>
 #include <utility>
 #include <vector>
 #if defined(__linux__)
@@ -24,9 +25,115 @@ void reject(TAction action) {
     throw std::runtime_error("expected guest allocation ownership rejection");
 }
 
+void targetedLeaseTests() {
+    std::array<std::byte, 320> memory{};
+    const auto base = reinterpret_cast<std::uintptr_t>(memory.data());
+    using GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch;
+    using GuestAllocations::GuestAllocationsAcquireSpan_nid_no_patch;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory.data(), 64, true, true);
+        mutation.Add(memory.data() + 64, 64, true, false);
+        mutation.Add(memory.data() + 128, 64, false, false);
+        mutation.Add(memory.data() + 256, 64, true, true);
+    }
+    Require(GuestAllocationsAcquireRange_nid_no_patch(0, 1).empty(), "a null address acquired a lease");
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base, 0).empty(), "an empty range acquired a lease");
+    Require(GuestAllocationsAcquireRange_nid_no_patch(std::numeric_limits<std::uintptr_t>::max() - 1, 4).empty(), "an overflowing range acquired a lease");
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base - 1, 2).empty(), "a range before the allocation acquired a lease");
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base + 16, 49).empty(), "a lease crossed an allocation boundary");
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base + 128, 1).empty(), "unreadable memory acquired a lease");
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base + 192, 1).empty(), "an allocation gap acquired a lease");
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base + 320, 1).empty(), "a range past the allocation acquired a lease");
+    Require(GuestAllocationsAcquireSpan_nid_no_patch(0, 1).empty() && GuestAllocationsAcquireSpan_nid_no_patch(base, 0).empty(), "an empty span acquired a lease");
+    Require(GuestAllocationsAcquireSpan_nid_no_patch(std::numeric_limits<std::uintptr_t>::max() - 1, 4).empty(), "an overflowing span acquired a lease");
+    Require(GuestAllocationsAcquireSpan_nid_no_patch(base + 16, 113).empty(), "a span crossed into unreadable memory");
+    Require(GuestAllocationsAcquireSpan_nid_no_patch(base + 192, 65).empty(), "a span skipped an allocation gap");
+    {
+        const auto span = GuestAllocationsAcquireSpan_nid_no_patch(base + 16, 112);
+        Require(span.size() == 2 && span[0]->address == base && span[1]->address == base + 64 && !span[1]->writable, "a span lost one of its adjacent allocations");
+        GuestAllocations::Mutation mutation;
+        reject([&] { mutation.Remove(memory.data()); });
+        reject([&] { mutation.Remove(memory.data() + 64); });
+    }
+    {
+        const auto readOnly = GuestAllocationsAcquireRange_nid_no_patch(base + 64, 64);
+        Require(readOnly.size() == 1 && !readOnly.front()->writable, "a read-only lease lost its protection");
+        const auto lease = GuestAllocationsAcquireRange_nid_no_patch(base + 16, 48);
+        Require(lease.size() == 1 && lease.front()->address == base && lease.front()->bytes == 64, "a subrange lease did not retain its containing allocation");
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(memory.data() + 256);
+        reject([&] { mutation.Remove(memory.data()); });
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(memory.data(), 64, false, false, [] {});
+    }
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base, 1).empty(), "a protection change left a readable lease");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(memory.data());
+        mutation.Add(memory.data(), 32, true, true);
+    }
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base, 32).size() == 1 && GuestAllocationsAcquireRange_nid_no_patch(base, 33).empty(), "address reuse retained the previous allocation extent");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(memory.data());
+        mutation.Remove(memory.data() + 64);
+        mutation.Remove(memory.data() + 128);
+    }
+    Require(GuestAllocationsAcquireRange_nid_no_patch(base, 1).empty(), "a removed allocation acquired a lease");
+}
+
+void rangeMutationTests() {
+    std::array<std::byte, 320> memory{};
+    const auto base = reinterpret_cast<std::uintptr_t>(memory.data());
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory.data(), 128, true, true);
+        mutation.Add(memory.data() + 192, 128, true, true);
+        mutation.RequireAvailable(memory.data() + 128, 64);
+        reject([&] { mutation.RequireAvailable(memory.data() + 127, 2); });
+        reject([&] { mutation.RequireAvailable(memory.data() + 191, 2); });
+        Require(mutation.Covers(memory.data() + 96, 32), "a covered suffix was missed");
+        Require(!mutation.Covers(memory.data() + 96, 97), "coverage skipped a hole");
+        bool applied = false;
+        reject([&] { mutation.Protect(memory.data() + 96, 97, true, false, [&] { applied = true; }); });
+        Require(!applied, "protection with a hole reached the host");
+        reject([&] { mutation.Protect(memory.data() + 32, 32, true, false, [] { throw std::runtime_error("host protection failure"); }); });
+        reject([&] { mutation.Unmap(memory.data() + 32, 32, [](const void*, std::size_t, const void*, bool) { throw std::runtime_error("host unmap failure"); }); });
+    }
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        Require(lease.size() == 2 && lease[0]->bytes == 128 && lease[0]->writable && lease[1]->bytes == 128,
+            "a failed host operation changed allocation ranges");
+    }
+    {
+        const auto unrelated = GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch(base + 192, 128);
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(memory.data() + 32, 32, true, false, [] {});
+        Require(mutation.Covers(memory.data(), 128), "coverage did not cross protection fragments");
+        mutation.Unmap(memory.data(), 128, [&](const void* pointer, std::size_t bytes, const void* allocation, bool last) {
+            Require(pointer == memory.data() && bytes == 128 && allocation == memory.data() && last,
+                "unmapping a split allocation did not release its last fragment");
+        });
+        Require(unrelated.size() == 1 && unrelated[0]->address == base + 192 && unrelated[0]->bytes == 128,
+            "a neighboring mutation changed an unrelated lease");
+        mutation.RequireAvailable(memory.data(), 192);
+        mutation.Add(memory.data(), 128, true, true);
+        mutation.Remove(memory.data());
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(memory.data() + 192);
+    }
+}
+
 }
 
 void RunGuestAllocationTests() {
+    targetedLeaseTests();
+    rangeMutationTests();
     void* pointer = GuestHeap::GuestHeapAllocate_nid_postfix(32);
     Require(reinterpret_cast<std::uintptr_t>(pointer) % alignof(std::max_align_t) == 0, "guest malloc is not suitably aligned");
     std::memset(pointer, 0x55, 32);

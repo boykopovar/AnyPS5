@@ -516,7 +516,7 @@ VkDeviceSize SlabOffset(const HostImport& import, const ShadowSlab& slab, std::u
 }
 
 std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, const HostImport& import, std::uint64_t begin, std::uint64_t end) {
-    if (!UnitShadowEnabled() || end <= begin || begin < import.base || end > import.base + import.bytes) return std::nullopt;
+    if (!UnitShadowEnabled() || !import.shadowAllowed || end <= begin || begin < import.base || end > import.base + import.bytes) return std::nullopt;
     if (!GuestMemory::Watched(begin, static_cast<std::size_t>(end - begin))) return std::nullopt;
     auto& registry = Registry();
     std::shared_ptr<UnitShadow> shadow;

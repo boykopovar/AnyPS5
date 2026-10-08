@@ -14,6 +14,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace GuestArena {
@@ -280,8 +282,21 @@ void GuestArenaSetSharedBacking_nid_postfix(SharedBackingResolver resolver) {
 }
 
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
+    std::vector<SharedBackingSlice> slices;
+    if (!GuestArenaSharedBackings_nid_no_patch(address, bytes, slices)) return false;
+    if (slices.size() != 1) {
+        for (const auto& slice : slices) close(slice.file);
+        return false;
+    }
+    *file = slices.front().file;
+    *offset = slices.front().offset;
+    return true;
+}
+
+bool GuestArenaSharedBackings_nid_no_patch(std::uintptr_t address, std::size_t bytes, std::vector<SharedBackingSlice>& slices) {
+    if (!slices.empty()) throw std::invalid_argument("shared backing result is not empty");
     const auto resolver = sharedBackingResolver.load(std::memory_order_acquire);
-    return resolver != nullptr && resolver(address, bytes, file, offset);
+    return resolver != nullptr && resolver(address, bytes, slices);
 }
 #endif
 

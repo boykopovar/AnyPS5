@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestAllocations.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -8,6 +9,7 @@
 #include <limits>
 #include <iterator>
 #include <map>
+#include <span>
 #include <stdexcept>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -36,6 +38,36 @@ Registry& registry() {
 std::atomic<std::uint64_t> generation{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> invalidator{nullptr};
 std::atomic<bool (*)()> pinWaiter{nullptr};
+
+struct MappingHistory {
+    struct Change {
+        std::uint64_t generation = 0;
+        std::uintptr_t address = 0;
+        std::size_t bytes = 0;
+    };
+    std::mutex mutex;
+    std::array<Change, 1024> changes{};
+    std::size_t next = 0;
+    std::uint64_t discardedThrough = 0;
+};
+
+MappingHistory& mappingHistory() {
+    static MappingHistory history;
+    return history;
+}
+
+void publishChanges(std::span<const std::pair<std::uintptr_t, std::size_t>> ranges) {
+    auto& history = mappingHistory();
+    std::lock_guard lock(history.mutex);
+    const auto nextGeneration = generation.load(std::memory_order_relaxed) + 1;
+    for (const auto& [address, bytes] : ranges) {
+        auto& change = history.changes[history.next];
+        history.discardedThrough = change.generation;
+        change = {nextGeneration, address, bytes};
+        history.next = (history.next + 1) % history.changes.size();
+    }
+    generation.store(nextGeneration, std::memory_order_release);
+}
 
 std::chrono::milliseconds pinWait() {
     static const std::chrono::milliseconds value{[] {
@@ -69,7 +101,7 @@ void* GuestAllocationsBegin_nid_postfix() {
 
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept {
     auto* state = static_cast<MutationState*>(mutation);
-    generation.fetch_add(1, std::memory_order_release);
+    publishChanges(state->changed);
     if (const auto callback = invalidator.load(std::memory_order_acquire)) {
         for (const auto& [address, bytes] : state->changed) callback(address, bytes);
     }
@@ -80,12 +112,32 @@ std::uint64_t GuestAllocationsGeneration_nid_postfix() {
     return generation.load(std::memory_order_acquire);
 }
 
+std::uint64_t GuestAllocationsValidateMapping_nid_no_patch(std::uintptr_t address, std::size_t bytes, std::uint64_t since) {
+    if (since == 0 || bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return 0;
+    auto current = generation.load(std::memory_order_acquire);
+    if (since == current) return current;
+    auto& history = mappingHistory();
+    std::lock_guard lock(history.mutex);
+    current = generation.load(std::memory_order_relaxed);
+    if (since > current || since < history.discardedThrough) return 0;
+    const auto end = address + bytes;
+    auto index = history.next;
+    for (std::size_t count = 0; count < history.changes.size(); ++count) {
+        index = (index + history.changes.size() - 1) % history.changes.size();
+        const auto& change = history.changes[index];
+        if (change.generation <= since) break;
+        if (change.bytes > std::numeric_limits<std::uintptr_t>::max() - change.address || (change.address < end && address < change.address + change.bytes)) return 0;
+    }
+    return current;
+}
+
 void GuestAllocationsSetInvalidator_nid_postfix(void (*callback)(std::uintptr_t, std::size_t)) {
     invalidator.store(callback, std::memory_order_release);
 }
 
 void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t bytes) {
-    generation.fetch_add(1, std::memory_order_release);
+    const std::pair range{address, bytes};
+    publishChanges(std::span(&range, 1));
     if (const auto callback = invalidator.load(std::memory_order_acquire)) callback(address, bytes);
 }
 
@@ -94,7 +146,7 @@ void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)()) {
 }
 
 #ifdef _WIN32
-void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
+void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     auto& state = registry();
     if (state.mainImageRegistered) return;
     const auto image = GetModuleHandleW(nullptr);
@@ -121,6 +173,7 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
                 require(previous.address + previous.bytes <= cursor, "guest image overlaps a registered allocation");
             }
             replacement.emplace(cursor, std::make_shared<const Range>(Range{cursor, memory.RegionSize, readable, writable, cursor, memory.RegionSize, false}));
+            recordChange(mutation, reinterpret_cast<const void*>(cursor), memory.RegionSize);
             registered = true;
         }
         cursor += memory.RegionSize;
@@ -130,7 +183,7 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
     state.mainImageRegistered = true;
 }
 #else
-void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
+void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     auto& state = registry();
     if (state.mainImageRegistered) return;
     struct Page {
@@ -169,6 +222,7 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
             require(previous.address + previous.bytes <= address, "guest image overlaps a registered allocation");
         }
         replacement.emplace(address, std::make_shared<const Range>(Range{address, bytes, page->second.readable, page->second.writable, address, bytes, false}));
+        recordChange(mutation, reinterpret_cast<const void*>(address), bytes);
         page = std::next(last);
     }
     state.ranges.swap(replacement);
@@ -247,7 +301,11 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
 void GuestAllocationsRequireAvailable_nid_postfix(void*, const void* pointer, std::size_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(address != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid fixed guest mapping");
-    for (const auto& [base, range] : registry().ranges) {
+    const auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end(); ++it) {
+        const auto& [base, range] = *it;
         if (base >= address + bytes) break;
         if (base + range->bytes > address) {
             char message[160];
@@ -272,7 +330,11 @@ bool GuestAllocationsCovers_nid_postfix(void*, const void* pointer, std::size_t 
     require(address != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest allocation range");
     const auto end = address + bytes;
     auto cursor = address;
-    for (const auto& [base, range] : registry().ranges) {
+    const auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end(); ++it) {
+        const auto& [base, range] = *it;
         const auto finish = base + range->bytes;
         if (finish <= cursor) continue;
         if (base > cursor || !range->releasable) return false;
@@ -314,22 +376,37 @@ void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer) {
 
 namespace {
 
-std::map<std::uint64_t, std::shared_ptr<const Range>> replaceRange(const void* pointer, std::size_t bytes, bool remove, bool readable, bool writable) {
+using RangeMap = std::map<std::uint64_t, std::shared_ptr<const Range>>;
+
+struct RangeReplacement {
+    RangeMap::iterator first;
+    RangeMap::iterator last;
+    RangeMap fragments;
+
+    void Commit() {
+        auto& ranges = registry().ranges;
+        ranges.erase(first, last);
+        ranges.merge(fragments);
+    }
+};
+
+RangeReplacement replaceRange(const void* pointer, std::size_t bytes, bool remove, bool readable, bool writable) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest protection or unmap range");
     require(!writable || readable, "writable guest allocation must be readable");
     const auto end = address + bytes;
-    auto replacement = registry().ranges;
+    auto& ranges = registry().ranges;
+    auto first = ranges.upper_bound(address);
+    if (first != ranges.begin() && std::prev(first)->first + std::prev(first)->second->bytes > address) --first;
+    RangeReplacement replacement{first, ranges.lower_bound(end), {}};
     auto cursor = address;
-    for (const auto& [base, entry] : registry().ranges) {
+    for (auto it = replacement.first; it != replacement.last; ++it) {
+        const auto& [base, entry] = *it;
         const auto& range = *entry;
         const auto finish = base + range.bytes;
-        if (finish <= address) continue;
-        if (base >= end) break;
         require(base <= cursor, "guest protection or unmap range has a hole");
-        replacement.erase(base);
         const auto insert = [&](std::uint64_t first, std::uint64_t last, bool canRead, bool canWrite) {
-            if (first < last) replacement.emplace(first, std::make_shared<const Range>(Range{first, static_cast<std::size_t>(last - first), canRead, canWrite, range.allocationAddress, range.allocationBytes, range.releasable}));
+            if (first < last) replacement.fragments.emplace(first, std::make_shared<const Range>(Range{first, static_cast<std::size_t>(last - first), canRead, canWrite, range.allocationAddress, range.allocationBytes, range.releasable}));
         };
         insert(base, std::max(base, address), range.readable, range.writable);
         if (!remove) insert(std::max(base, address), std::min(finish, end), readable, writable);
@@ -347,7 +424,7 @@ void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, st
     recordChange(mutation, pointer, bytes);
     auto replacement = replaceRange(pointer, bytes, false, readable, writable);
     apply();
-    registry().ranges.swap(replacement);
+    replacement.Commit();
 }
 
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply) {
@@ -373,11 +450,17 @@ void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std:
         const auto pieceEnd = std::min<std::uint64_t>(end, range.allocationAddress + range.allocationBytes);
         auto replacement = replaceRange(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, true, false, false);
         bool last = true;
-        for (const auto& [base, entry] : replacement) {
-            if (entry->allocationAddress == range.allocationAddress) last = false;
+        const auto& ranges = registry().ranges;
+        const auto allocationEnd = range.allocationAddress + range.allocationBytes;
+        for (auto it = ranges.lower_bound(range.allocationAddress); it != ranges.end() && it->first < allocationEnd; ++it) {
+            const auto& [base, entry] = *it;
+            if (entry->allocationAddress == range.allocationAddress && (base < cursor || base + entry->bytes > pieceEnd)) {
+                last = false;
+                break;
+            }
         }
         apply(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, reinterpret_cast<const void*>(range.allocationAddress), last);
-        registry().ranges.swap(replacement);
+        replacement.Commit();
         any = true;
         cursor = pieceEnd;
     }
@@ -389,6 +472,36 @@ Lease GuestAllocationsAcquire_nid_postfix() {
     Lease result;
     for (const auto& [address, range] : registry().ranges) {
         if (range->readable && range->bytes != 0) result.push_back(range);
+    }
+    return result;
+}
+
+Lease GuestAllocationsAcquireRange_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    if (address == 0 || bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return {};
+    std::lock_guard lock(registry().mutex);
+    const auto& ranges = registry().ranges;
+    const auto next = ranges.upper_bound(address);
+    if (next == ranges.begin()) return {};
+    const auto& range = std::prev(next)->second;
+    if (!range->readable || address - range->address >= range->bytes || bytes > range->bytes - (address - range->address)) return {};
+    return {range};
+}
+
+Lease GuestAllocationsAcquireSpan_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    if (address == 0 || bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return {};
+    std::lock_guard lock(registry().mutex);
+    const auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it == ranges.begin()) return {};
+    --it;
+    Lease result;
+    const auto end = address + bytes;
+    for (auto cursor = address; cursor < end; ++it) {
+        if (it == ranges.end() || it->first > cursor) return {};
+        const auto& range = it->second;
+        if (!range->readable || cursor - range->address >= range->bytes) return {};
+        result.push_back(range);
+        cursor = range->address + range->bytes;
     }
     return result;
 }
