@@ -58,6 +58,8 @@ public:
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot, ResourceSpecialization& specialization) const;
     // APS5_PROFILE_DRAW: the time Materialize spent building specializations, over every call.
     static std::uint64_t SpecializationNanoseconds();
+    static std::uint64_t EvaluateNanoseconds();
+    static std::uint64_t MaterializeNanoseconds();
     // The slots every bindless image table binds (APS5_BINDLESS_SLOTS, default 16, 1..48).
     static std::uint32_t BindlessSlots();
     static void CountBindlessRejection(BindlessRejection reason);

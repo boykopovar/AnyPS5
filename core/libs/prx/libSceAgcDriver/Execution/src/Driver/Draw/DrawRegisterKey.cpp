@@ -6,23 +6,32 @@
 
 namespace AgcDriver::DriverDetail {
 
-std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial) {
+std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial, std::uint64_t* shape) {
     static const bool allUserWords = std::getenv("APS5_DRAW_KEY_ALL_USER_WORDS") != nullptr;
     std::uint64_t key = 0xcbf29ce484222325ull;
-    const auto mix = [&](std::uint64_t value) {
+    std::uint64_t shapeKey = 0xcbf29ce484222325ull;
+    const auto mixKey = [&](std::uint64_t value) {
         key ^= value;
         key *= 0x100000001b3ull;
     };
+    const auto mix = [&](std::uint64_t value) {
+        mixKey(value);
+        shapeKey ^= value;
+        shapeKey *= 0x100000001b3ull;
+    };
     const auto userEnd = [&](std::uint32_t base) {
-        if (allUserWords) return base + 32u;
         const auto resources = queue.shader.find(base - 1);
+        if (allUserWords) return base + 32u;
         if (resources == queue.shader.end()) return base;
         const auto count = ((resources->second >> 1u) & 0x1fu) | (((resources->second >> 27u) & 1u) << 5u);
         return base + std::min(count, 32u);
     };
     const std::array<std::pair<std::uint32_t, std::uint32_t>, 3> users{{{0x00cu, userEnd(0x00cu)}, {0x08cu, userEnd(0x08cu)}, {0x10cu, userEnd(0x10cu)}}};
-    const auto unread = [&](std::uint32_t offset) {
-        return std::any_of(users.begin(), users.end(), [&](const auto& user) { return offset >= user.second && offset < user.first + 32u; });
+    const auto skipped = [&](std::uint32_t offset) {
+        for (const auto& [first, end] : users) {
+            if (offset >= first && offset < first + 32u) return offset >= end ? 2 : 1;
+        }
+        return offset == 0x082u || offset == 0x083u || offset == 0x102u || offset == 0x103u ? 1 : 0;
     };
     mix(deviceSerial);
     for (const auto& range : Graphics::DrawKeyRegisters) {
@@ -31,7 +40,13 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
         const auto end = range.first + range.count;
         const bool shader = range.bank == Graphics::RegisterBank::Shader;
         for (auto it = bank.lower_bound(range.first); it != bank.end() && it->first < end; ++it) {
-            if (shader && unread(it->first)) continue;
+            const auto skip = shader ? skipped(it->first) : 0;
+            if (skip == 2) continue;
+            if (skip == 1) {
+                mixKey(it->first);
+                mixKey(it->second);
+                continue;
+            }
             mix(it->first);
             mix(it->second);
         }
@@ -53,6 +68,7 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
         mix(reinterpret_cast<std::uintptr_t>(it->second.get()));
         mix(address - it->second->codeAddress);
     }
+    if (shape != nullptr) *shape = shapeKey;
     return key;
 }
 

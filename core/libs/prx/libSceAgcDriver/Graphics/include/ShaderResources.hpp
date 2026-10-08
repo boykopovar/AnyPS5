@@ -62,6 +62,8 @@ public:
     };
     SetAllocation Allocate(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes);
     void Free(const SetAllocation& allocation) noexcept;
+    SetAllocation AllocateRewritten(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes);
+    void Recycle(VkDescriptorSetLayout layout, const SetAllocation& allocation) noexcept;
     // APS5_PROFILE_DRAW counters: layouts served from the map / created, sets allocated, pools opened.
     struct Stats {
         std::uint64_t layoutHits = 0;
@@ -81,6 +83,7 @@ private:
     std::map<std::vector<std::uint32_t>, VkDescriptorSetLayout> layouts;
     std::vector<VkDescriptorPool> pools;
     std::vector<VkDescriptorPool> dedicated;
+    std::unordered_map<VkDescriptorSetLayout, std::vector<SetAllocation>> recycled;
     Stats stats;
 };
 
@@ -111,6 +114,7 @@ public:
             std::shared_ptr<Buffer> buffer;
         };
         DescriptorCache* cache = nullptr;
+        VkDescriptorSetLayout layout = VK_NULL_HANDLE;
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
         ~DrawBindings();

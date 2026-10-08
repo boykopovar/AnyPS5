@@ -2201,6 +2201,32 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     return {set, pool};
 }
 
+DescriptorCache::SetAllocation DescriptorCache::AllocateRewritten(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes) {
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = recycled.find(layout); found != recycled.end() && !found->second.empty()) {
+            const auto allocation = found->second.back();
+            found->second.pop_back();
+            return allocation;
+        }
+    }
+    return Allocate(layout, sizes);
+}
+
+void DescriptorCache::Recycle(VkDescriptorSetLayout layout, const SetAllocation& allocation) noexcept {
+    if (allocation.set == VK_NULL_HANDLE || allocation.pool == VK_NULL_HANDLE) return;
+    std::lock_guard lock(mutex);
+    try {
+        auto& list = recycled[layout];
+        if (list.size() < 4096) {
+            list.push_back(allocation);
+            return;
+        }
+    } catch (...) {
+    }
+    static_cast<void>(freeSets(context.device, allocation.pool, 1, &allocation.set));
+}
+
 void DescriptorCache::Free(const SetAllocation& allocation) noexcept {
     if (allocation.set == VK_NULL_HANDLE || allocation.pool == VK_NULL_HANDLE) return;
     std::lock_guard lock(mutex);
@@ -2721,7 +2747,9 @@ VkDescriptorSetLayout ShaderResources::Layout() const {
 }
 
 ShaderResources::DrawBindings::~DrawBindings() {
-    if (cache != nullptr && allocation.set != VK_NULL_HANDLE) cache->Free(allocation);
+    if (cache == nullptr || allocation.set == VK_NULL_HANDLE) return;
+    if (layout != VK_NULL_HANDLE) cache->Recycle(layout, allocation);
+    else cache->Free(allocation);
 }
 
 std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const {
@@ -2776,7 +2804,9 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     if (_set == VK_NULL_HANDLE || usesBda) return {};
     const auto reads = guestMemory.InPlaceReads();
     auto result = std::make_shared<DrawBindings>();
-    std::vector<std::size_t> selected;
+    thread_local std::vector<std::size_t>* selectedSlot = nullptr;
+    auto& selected = ShaderRecompiler::ThreadOwned(selectedSlot);
+    selected.clear();
     for (std::size_t index = 0; index < allocations.size(); ++index) {
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
@@ -2816,14 +2846,22 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     }
     if (selected.empty()) return {};
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
-    std::map<VkDescriptorType, std::uint32_t> counts;
-    for (const auto& binding : bindings) counts[binding.layout.descriptorType] += binding.layout.descriptorCount;
-    std::vector<VkDescriptorPoolSize> sizes;
-    for (const auto& [type, count] : counts) sizes.push_back({type, count});
+    thread_local std::vector<VkDescriptorPoolSize>* sizesSlot = nullptr;
+    auto& sizes = ShaderRecompiler::ThreadOwned(sizesSlot);
+    sizes.clear();
+    for (const auto& binding : bindings) {
+        const auto type = binding.layout.descriptorType;
+        const auto found = std::find_if(sizes.begin(), sizes.end(), [type](const VkDescriptorPoolSize& size) { return size.type == type; });
+        if (found != sizes.end()) found->descriptorCount += binding.layout.descriptorCount;
+        else sizes.push_back({type, binding.layout.descriptorCount});
+    }
     result->cache = context.descriptorCache;
-    result->allocation = result->cache->Allocate(_layout, sizes);
+    result->allocation = result->cache->AllocateRewritten(_layout, sizes);
+    result->layout = _layout;
     Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
-    std::vector<VkCopyDescriptorSet> copies;
+    thread_local std::vector<VkCopyDescriptorSet>* copiesSlot = nullptr;
+    auto& copies = ShaderRecompiler::ThreadOwned(copiesSlot);
+    copies.clear();
     for (const auto& binding : bindings) {
         VkCopyDescriptorSet copy{VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET};
         copy.srcSet = _set;
@@ -2835,10 +2873,14 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     }
     const auto update = context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets");
     update(context.device, 0, nullptr, static_cast<std::uint32_t>(copies.size()), copies.data());
-    std::vector<VkDescriptorBufferInfo> infos;
+    thread_local std::vector<VkDescriptorBufferInfo>* infosSlot = nullptr;
+    auto& infos = ShaderRecompiler::ThreadOwned(infosSlot);
+    infos.clear();
     infos.reserve(selected.size());
     for (const auto& snapshot : result->snapshots) infos.push_back({snapshot.buffer->Handle(), 0, snapshot.buffer->Bytes().size()});
-    std::vector<VkWriteDescriptorSet> writes;
+    thread_local std::vector<VkWriteDescriptorSet>* writesSlot = nullptr;
+    auto& writes = ShaderRecompiler::ThreadOwned(writesSlot);
+    writes.clear();
     for (const auto& binding : bindings) {
         for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
             const auto found = std::find(selected.begin(), selected.end(), binding.allocations[element]);

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -801,7 +802,7 @@ private:
 
 // Storage images whose results have not reached guest memory yet.
 struct PendingWrites {
-    std::mutex mutex;
+    SlimMutex mutex;
     PendingList textures;
     // Images taken out of `textures` by a FlushPending still storing them (see adjacentPendingUnchanged).
     std::vector<StorageTexture*> flushing;
@@ -2623,9 +2624,11 @@ bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
         query.found = nullptr;
         if (query.end <= query.begin) continue;
         const auto bytes = static_cast<std::size_t>(query.end - query.begin);
-        for (const auto* texture : pending.textures) {
-            if (query.found == nullptr && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes) query.found = texture;
-            if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;
+        if (pending.textures.MayOverlap(query.begin, bytes)) {
+            for (const auto* texture : pending.textures) {
+                if (query.found == nullptr && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= bytes) query.found = texture;
+                if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;
+            }
         }
         for (const auto* texture : pending.flushing) {
             if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;

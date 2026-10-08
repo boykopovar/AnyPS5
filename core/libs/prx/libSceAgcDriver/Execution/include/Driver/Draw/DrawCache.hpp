@@ -23,6 +23,11 @@ struct DrawProgram {
 
     std::shared_ptr<const ShaderSnapshot> snapshot;
     std::size_t codeOffset = 0;
+    std::uint32_t resourceRegister = 0;
+    bool nullPixel = false;
+    bool merged = false;
+    bool mergedPointerRequired = false;
+    std::uint32_t mergedPointer = 0;
 };
 
 struct DrawDecode {
@@ -48,7 +53,10 @@ struct DrawEntry {
     std::atomic<std::shared_ptr<const std::vector<DrawRecipeRecord>>> recipes;
     std::uint64_t touched = 0;
     std::list<std::uint64_t>::iterator order;
+    std::uint64_t shape = 0;
 };
+
+using DrawDataCandidates = std::vector<std::vector<std::pair<std::shared_ptr<DispatchVariant>, std::vector<ShaderRecompiler::MemoryRegion>>>>;
 
 enum class DrawMiss : std::size_t { FrontDiffering, FragmentDiffering, OtherDiffering, Layout, Gate, Stages, Count };
 
@@ -60,6 +68,9 @@ struct DrawEntryCounters {
 
     std::uint64_t registerKeyLookups = 0, registerKeyHits = 0, decodeSkipped = 0, decodePartial = 0, facadeMismatches = 0, verifyDecodes = 0, verifyDecodeMismatches = 0;
     double keyUs = 0;
+    std::uint64_t absentNewRegisters = 0, absentUserWords = 0, absentEvicted = 0, absentNeverInserted = 0, evictions = 0;
+    std::uint64_t differingSameRuns = 0, differingWords = 0, differingRunsChanged = 0;
+    std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
