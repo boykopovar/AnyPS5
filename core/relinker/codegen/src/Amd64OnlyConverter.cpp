@@ -140,7 +140,10 @@ void Amd64OnlyConverter::_convertSegment(
                         const auto& following = matches[next];
                         const std::span<const std::uint8_t> bytes(seg.data() + following.Offset, following.Length);
                         const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
-                        const bool amdOnly = _matcher->Match(bytes.data(), bytes.size()).has_value();
+                        const auto followerMatch = _matcher->Match(bytes.data(), bytes.size());
+                        const bool amdOnly = followerMatch.has_value();
+                        if (followerMatch && followerMatch->Lowering == Amd64OnlyLowering::Unsupported)
+                            throw CodegenException("AMD-only instruction without Intel lowering: " + std::string(followerMatch->InstructionName), ph.Offset + following.Offset);
                         if (amdOnly && trailingBytes == 0) {
                             sequence.push_back(bytes);
                             taken.push_back(next);

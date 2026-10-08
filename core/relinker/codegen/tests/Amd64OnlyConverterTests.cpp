@@ -7,6 +7,8 @@
 #include <codegen/x86/Sha1Operands.hpp>
 #include <codegen/x86/ClzeroOperands.hpp>
 #include <codegen/x86/ClzeroLowering.hpp>
+#include <codegen/x86/RdpruLowering.hpp>
+#include <codegen/x86/McommitLowering.hpp>
 #include <codegen/x86/ReciprocalOperands.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
@@ -21,6 +23,7 @@
 #include <io/ByteWriter.hpp>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <cstdint>
 #ifdef __linux__
@@ -115,6 +118,14 @@ const Bytes kClzeroBody = {
     0x41, 0x20, 0x66, 0x0F, 0xE7, 0x41, 0x30, 0x59, 0xF3, 0x0F, 0x6F, 0x04, 0x24, 0x48, 0x8D, 0xA4,
     0x24, 0x90, 0x00, 0x00, 0x00, 0xE9, 0x00, 0x00, 0x00, 0x00, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
     0xC0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+const Bytes kRdpruBody = {
+    0x48, 0x8D, 0xA4, 0x24, 0x70, 0xFF, 0xFF, 0xFF, 0x9C, 0x83, 0xF9, 0x01, 0x77, 0x04, 0x0F, 0x31,
+    0xEB, 0x04, 0x31, 0xC0, 0x31, 0xD2, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x90, 0x00, 0x00, 0x00, 0xE9,
+    0x00, 0x00, 0x00, 0x00};
+const Bytes kMcommitBody = {
+    0x48, 0x8D, 0xA4, 0x24, 0x70, 0xFF, 0xFF, 0xFF, 0x0F, 0xAE, 0xF8, 0x9C, 0x81, 0x24, 0x24, 0x2A,
+    0xF7, 0xFF, 0xFF, 0x83, 0x0C, 0x24, 0x01, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x90, 0x00, 0x00, 0x00,
+    0xE9, 0x00, 0x00, 0x00, 0x00};
 
 void decoderLengths() {
     const Codegen::X64InstructionDecoder decoder;
@@ -123,7 +134,8 @@ void decoderLengths() {
         {0x66, 0x0F, 0x79, 0xCA}, {0xF2, 0x0F, 0x79, 0xCA}, {0x66, 0x45, 0x0F, 0x79, 0xCA},
         {0xF3, 0x0F, 0xB8, 0xC0}, {0xCD, 0x41}, {0x0F, 0x0D, 0x08}, {0x0F, 0xC0, 0xC1}, {0x0F, 0xC3, 0x07},
         {0x66, 0x0F, 0xC4, 0xC0, 0x01}, {0xC2, 0x08, 0x00}, {0xC8, 0x10, 0x00, 0x00}, {0xF3, 0x0F, 0x2B, 0x07},
-        {0xF2, 0x44, 0x0F, 0x2B, 0x4C, 0x24, 0x10}, {0x0F, 0x01, 0xFA}, {0x0F, 0xB9, 0x00},
+        {0xF2, 0x44, 0x0F, 0x2B, 0x4C, 0x24, 0x10}, {0x0F, 0x01, 0xFA}, {0x0F, 0x01, 0xFD}, {0x48, 0x0F, 0x01, 0xFD},
+        {0xF3, 0x0F, 0x01, 0xFA}, {0x48, 0xF3, 0x0F, 0x01, 0xFA}, {0xF3, 0x48, 0x0F, 0x01, 0xFA}, {0x0F, 0xB9, 0x00},
         {0x41, 0x0F, 0xBB, 0xF7}, {0x0F, 0xBB, 0x47, 0x08},
         {0xA0, 1, 2, 3, 4, 5, 6, 7, 8}, {0x48, 0xA1, 1, 2, 3, 4, 5, 6, 7, 8}, {0xA2, 1, 2, 3, 4, 5, 6, 7, 8},
         {0x64, 0x48, 0xA3, 1, 2, 3, 4, 5, 6, 7, 8}, {0x67, 0xA1, 1, 2, 3, 4}, {0x48, 0x67, 0xA3, 1, 2, 3, 4},
@@ -344,7 +356,27 @@ void matcherSubstitutions() {
         require(prefixedClzero && prefixedClzero->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "CLZERO with a 66, F2 or F3 prefix was not reported as unsupported");
     }
     const auto rdpru = match({0x0F, 0x01, 0xFD});
-    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Unsupported && rdpru->InstructionName == "RDPRU", "RDPRU was not reported as unsupported");
+    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Trampoline && rdpru->InstructionName == "RDPRU", "RDPRU was not lowered through a stub");
+    const auto rdpruRex = match({0x48, 0x0F, 0x01, 0xFD});
+    require(rdpruRex && rdpruRex->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "REX-prefixed RDPRU was not lowered through a stub");
+    const auto unsupported = [](const std::optional<Codegen::Amd64OnlyMatch>& found, const char* message) {
+        require(found.has_value() && found->Lowering == Codegen::Amd64OnlyLowering::Unsupported, message);
+    };
+    unsupported(match({0xF0, 0x0F, 0x01, 0xFD}), "LOCK RDPRU was lowered instead of failing");
+    Bytes overlongRdpru(13, 0x2E);
+    overlongRdpru.insert(overlongRdpru.end(), {0x0F, 0x01, 0xFD});
+    unsupported(match(overlongRdpru), "RDPRU longer than 15 bytes was replaced instead of failing");
+    const auto mcommit = match({0xF3, 0x0F, 0x01, 0xFA});
+    require(mcommit && mcommit->Lowering == Codegen::Amd64OnlyLowering::Trampoline && mcommit->InstructionName == "MCOMMIT", "MCOMMIT was not lowered through a stub");
+    const auto mcommitRexLow = match({0x48, 0xF3, 0x0F, 0x01, 0xFA});
+    const auto mcommitRexHigh = match({0xF3, 0x48, 0x0F, 0x01, 0xFA});
+    require(mcommitRexLow && mcommitRexLow->Lowering == Codegen::Amd64OnlyLowering::Trampoline && mcommitRexHigh && mcommitRexHigh->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "REX-prefixed MCOMMIT was not lowered through a stub");
+    unsupported(match({0xF0, 0xF3, 0x0F, 0x01, 0xFA}), "LOCK MCOMMIT was lowered instead of failing");
+    for (const std::uint8_t prefix : {std::uint8_t{0x66}, std::uint8_t{0xF2}, std::uint8_t{0xF3}}) {
+        unsupported(match({prefix, 0x0F, 0x01, 0xFD}), "Prefixed RDPRU was matched");
+    }
+    unsupported(match({0x66, 0xF3, 0x0F, 0x01, 0xFA}), "66-prefixed MCOMMIT was matched");
+    require(match({0xF2, 0x0F, 0x01, 0xFA}) && match({0xF2, 0x0F, 0x01, 0xFA})->InstructionName == std::string("MONITORX"), "F2-prefixed 0F 01 FA was not reported as MONITORX");
     const auto registerForm = match({0x66, 0x0F, 0x79, 0xCA});
     require(registerForm && registerForm->Lowering == Codegen::Amd64OnlyLowering::Trampoline && registerForm->InstructionName == "EXTRQ register form", "EXTRQ register form was not lowered through a stub");
     const auto insertqRegisterForm = match({0xF2, 0x0F, 0x79, 0xCA});
@@ -399,6 +431,10 @@ void goldenBodies() {
     const Bytes clzeroSite = {0x0F, 0x01, 0xFC};
     const auto clzero = Codegen::ClzeroLowering{}.LowerOutOfLine(Codegen::DecodeClzero(clzeroSite.data(), clzeroSite.size()));
     require(clzero.Bytes == kClzeroBody && clzero.ReturnBranchOffset == 69, "CLZERO stub differs from the golden encoding");
+    const auto rdpruBody = Codegen::RdpruLowering{}.LowerOutOfLine();
+    require(rdpruBody.Bytes == kRdpruBody && rdpruBody.ReturnBranchOffset == 31, "RDPRU stub differs from the golden encoding");
+    const auto mcommitBody = Codegen::McommitLowering{}.LowerOutOfLine();
+    require(mcommitBody.Bytes == kMcommitBody && mcommitBody.ReturnBranchOffset == 32, "MCOMMIT stub differs from the golden encoding");
     const auto highRegisters = Codegen::DecodeSse4a(kInsertqHighSite.data(), kInsertqHighSite.size());
     const auto generic = lowering.LowerOutOfLine(Codegen::Sse4aOperands{true, false, 9, 4, 5, 3});
     require(generic.Bytes[0] == 0x48 && generic.Bytes.size() % 16 == 0 && generic.ReturnBranchOffset < generic.Bytes.size(), "Generic INSERTQ body does not start with the red-zone skip");
@@ -485,11 +521,15 @@ void converterSegment() {
     branchInside[0x207] = 0x02;
     requireFailure([&] { (void)converter->Convert(branchInside, {segmentHeader(20)}); }, "Branch into an AMD-only instruction was accepted");
     auto rdpru = file;
-    rdpru[0x20F] = 0x0F;
-    rdpru[0x210] = 0x01;
-    rdpru[0x211] = 0xFD;
-    rdpru[0x212] = 0x90;
-    requireFailure([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was silently kept");
+    const Bytes rdpruSite = {0x0F, 0x01, 0xFD, 0x90, 0x90};
+    std::copy(rdpruSite.begin(), rdpruSite.end(), rdpru.begin() + 0x20F);
+    const auto lowered = converter->Convert(rdpru, {segmentHeader(20)});
+    require(lowered.Trampolines.size() == 2, "RDPRU was not lowered through a stub");
+    const auto& rdpruRecord = lowered.Trampolines[1];
+    require(rdpruRecord.Offset == 0x20F && rdpruRecord.Length == 5 && rdpruRecord.OriginalBytes == rdpruSite && rdpruRecord.ReturnBranchOffset == 33, "RDPRU site did not absorb the following instructions");
+    require(Bytes(rdpruRecord.Body.begin(), rdpruRecord.Body.begin() + 31) == Bytes(kRdpruBody.begin(), kRdpruBody.begin() + 31), "RDPRU stub body differs from the golden encoding");
+    require(rdpruRecord.Body[rdpruRecord.ReturnBranchOffset - 1] == 0x90 && rdpruRecord.Body[rdpruRecord.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
+    require(rdpruRecord.Body.size() == 38, "RDPRU site body has the wrong size");
     auto registerForm = file;
     const Bytes extrqRegister = {0x66, 0x0F, 0x79, 0xCA};
     std::copy(extrqRegister.begin(), extrqRegister.end(), registerForm.begin() + 0x20F);
@@ -502,6 +542,31 @@ void converterSegment() {
     require(shortSite.Offset == 0x20F && shortSite.Length == 5 && shortSite.OriginalBytes == shortOriginal, "Short EXTRQ site did not absorb the following instruction");
     require(shortSite.Body[shortSite.ReturnBranchOffset - 1] == 0x90 && shortSite.Body[shortSite.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     requireFailure([&] { (void)converter->Convert(file, {segmentHeader(0x200)}); }, "Segment exceeding the file was accepted");
+}
+
+void converterSystemInstructions() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    Bytes file(0x300, 0x90);
+    const Bytes text = {
+        0x0F, 0x01, 0xFD,
+        0xF3, 0x0F, 0x01, 0xFA,
+        0xC3};
+    std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    const auto result = converter->Convert(file, {segmentHeader(text.size())});
+    require(result.Trampolines.size() == 1 && result.Reports.size() == 1, "RDPRU and MCOMMIT were not lowered through one stub");
+    const auto& site = result.Trampolines[0];
+    require(site.Offset == 0x200 && site.Length == 7 && site.Body.size() == 68 && site.ReturnBranchOffset == 63, "RDPRU/MCOMMIT site was recorded incorrectly");
+    require(Bytes(site.Body.begin(), site.Body.begin() + 31) == Bytes(kRdpruBody.begin(), kRdpruBody.begin() + 31), "RDPRU stub body differs from the golden encoding");
+    require(Bytes(site.Body.begin() + 31, site.Body.begin() + 63) == Bytes(kMcommitBody.begin(), kMcommitBody.begin() + 32), "MCOMMIT stub body differs from the golden encoding");
+    auto locked = file;
+    const Bytes lockedMcommit = {0xF0, 0xF3, 0x0F, 0x01, 0xFA};
+    std::copy(lockedMcommit.begin(), lockedMcommit.end(), locked.begin() + 0x203);
+    try {
+        (void)converter->Convert(locked, {segmentHeader(text.size())});
+        throw std::runtime_error("LOCK MCOMMIT was accepted");
+    } catch (const Codegen::CodegenException& error) {
+        require(error.FailureOffset == 0x203 && std::string(error.what()).find("MCOMMIT") != std::string::npos, "LOCK MCOMMIT failure does not carry the file offset and instruction name");
+    }
 }
 
 void converterRipRelativeFollower() {
@@ -752,10 +817,10 @@ void converterFailureOffsets() {
     auto movntsRegister = file;
     movntsRegister[0x212] = 0xC1;
     require(failureOffset([&] { (void)converter->Convert(movntsRegister, {segmentHeader(20)}); }, "MOVNTSS register form was accepted") == 0x20F, "MOVNTSS failure does not carry the file offset");
-    auto rdpru = file;
-    const Bytes rdpruBytes = {0x0F, 0x01, 0xFD, 0x90};
-    std::copy(rdpruBytes.begin(), rdpruBytes.end(), rdpru.begin() + 0x20F);
-    require(failureOffset([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
+    auto unsupported = file;
+    const Bytes prefixedClzero = {0x66, 0x0F, 0x01, 0xFC, 0x90};
+    std::copy(prefixedClzero.begin(), prefixedClzero.end(), unsupported.begin() + 0x20F);
+    require(failureOffset([&] { (void)converter->Convert(unsupported, {segmentHeader(20)}); }, "Prefixed CLZERO was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
 }
 
 Bytes elfFixture(const Bytes& text) {
@@ -1168,6 +1233,140 @@ void clzeroExecution() {
     }
 }
 
+const std::uint64_t kSystemSeedLow = 0xDEADBEEFCAFEBABEull;
+const std::uint64_t kSystemSeedHigh = 0x0123456789ABCDEFull;
+
+struct SystemRun {
+    std::uint64_t Rax;
+    std::uint64_t Rdx;
+    std::uint64_t Rcx;
+    std::uint64_t Flags;
+    bool RedZoneOk;
+    std::uint64_t Xmm[16][2];
+};
+
+static_assert(offsetof(SystemRun, Rax) == 0 && offsetof(SystemRun, Rdx) == 8 && offsetof(SystemRun, Rcx) == 16 && offsetof(SystemRun, Flags) == 24 && offsetof(SystemRun, RedZoneOk) == 32 && offsetof(SystemRun, Xmm) == 40);
+
+SystemRun runSystemStub(const Codegen::Amd64OnlyMatch& match, const std::uint64_t rcx, const std::uint64_t flags, const std::uint64_t (&xmmIn)[16][2]) {
+    require(match.Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Stub was not produced");
+    auto body = match.StubBody;
+    const auto ret = body.size();
+    body.push_back(0xC3);
+    const auto displacement = static_cast<std::int32_t>(ret - (match.ReturnBranchOffset + 5));
+    std::memcpy(body.data() + match.ReturnBranchOffset + 1, &displacement, sizeof(displacement));
+    auto* code = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    SystemRun run{};
+    run.Rcx = rcx;
+    run.Flags = flags;
+    run.RedZoneOk = false;
+    std::memcpy(code, body.data(), body.size());
+    asm volatile(
+        "movdqu 0x00(%[xmmIn]), %%xmm0\n\t"
+        "movdqu 0x10(%[xmmIn]), %%xmm1\n\t"
+        "movdqu 0x20(%[xmmIn]), %%xmm2\n\t"
+        "movdqu 0x30(%[xmmIn]), %%xmm3\n\t"
+        "movdqu 0x40(%[xmmIn]), %%xmm4\n\t"
+        "movdqu 0x50(%[xmmIn]), %%xmm5\n\t"
+        "movdqu 0x60(%[xmmIn]), %%xmm6\n\t"
+        "movdqu 0x70(%[xmmIn]), %%xmm7\n\t"
+        "movdqu 0x80(%[xmmIn]), %%xmm8\n\t"
+        "movdqu 0x90(%[xmmIn]), %%xmm9\n\t"
+        "movdqu 0xa0(%[xmmIn]), %%xmm10\n\t"
+        "movdqu 0xb0(%[xmmIn]), %%xmm11\n\t"
+        "movdqu 0xc0(%[xmmIn]), %%xmm12\n\t"
+        "movdqu 0xd0(%[xmmIn]), %%xmm13\n\t"
+        "movdqu 0xe0(%[xmmIn]), %%xmm14\n\t"
+        "movdqu 0xf0(%[xmmIn]), %%xmm15\n\t"
+        "mov 16(%[run]), %%rcx\n\t"
+        "mov %[raxIn], %%rax\n\t"
+        "mov %[rdxIn], %%rdx\n\t"
+        "sub $128, %%rsp\n\t"
+        "movl $0x5A5A5A5A, -16(%%rsp)\n\t"
+        "movl $0xA5A5A5A5, -24(%%rsp)\n\t"
+        "pushq 24(%[run])\n\t"
+        "popfq\n\t"
+        "call *%[code]\n\t"
+        "pushfq\n\t"
+        "popq 24(%[run])\n\t"
+        "cmpl $0x5A5A5A5A, -16(%%rsp)\n\t"
+        "sete %%r8b\n\t"
+        "cmpl $0xA5A5A5A5, -24(%%rsp)\n\t"
+        "sete %%r9b\n\t"
+        "andb %%r9b, %%r8b\n\t"
+        "movb %%r8b, 32(%[run])\n\t"
+        "add $128, %%rsp\n\t"
+        "mov %%rax, 0(%[run])\n\t"
+        "mov %%rdx, 8(%[run])\n\t"
+        "mov %%rcx, 16(%[run])\n\t"
+        "movdqu %%xmm0, 40(%[run])\n\t"
+        "movdqu %%xmm1, 56(%[run])\n\t"
+        "movdqu %%xmm2, 72(%[run])\n\t"
+        "movdqu %%xmm3, 88(%[run])\n\t"
+        "movdqu %%xmm4, 104(%[run])\n\t"
+        "movdqu %%xmm5, 120(%[run])\n\t"
+        "movdqu %%xmm6, 136(%[run])\n\t"
+        "movdqu %%xmm7, 152(%[run])\n\t"
+        "movdqu %%xmm8, 168(%[run])\n\t"
+        "movdqu %%xmm9, 184(%[run])\n\t"
+        "movdqu %%xmm10, 200(%[run])\n\t"
+        "movdqu %%xmm11, 216(%[run])\n\t"
+        "movdqu %%xmm12, 232(%[run])\n\t"
+        "movdqu %%xmm13, 248(%[run])\n\t"
+        "movdqu %%xmm14, 264(%[run])\n\t"
+        "movdqu %%xmm15, 280(%[run])\n\t"
+        : : [run] "r"(&run), [xmmIn] "r"(xmmIn), [raxIn] "r"(kSystemSeedLow), [rdxIn] "r"(kSystemSeedHigh), [code] "r"(code)
+        : "rax", "rcx", "rdx", "r8", "r9", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
+    munmap(code, 4096);
+    return run;
+}
+
+void systemExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const Bytes rdpru = {0x0F, 0x01, 0xFD};
+    const Bytes rdpruRex = {0x48, 0x0F, 0x01, 0xFD};
+    const Bytes mcommit = {0xF3, 0x0F, 0x01, 0xFA};
+    std::uint64_t xmmIn[16][2];
+    for (unsigned reg = 0; reg < 16; ++reg) {
+        xmmIn[reg][0] = 0x0101010101010101ull * (reg + 1);
+        xmmIn[reg][1] = ~xmmIn[reg][0];
+    }
+    for (const auto& site : {rdpru, rdpruRex}) {
+        const auto match = matcher->Match(site.data(), site.size());
+        require(match.has_value() && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDPRU stub was not produced");
+        const auto mperf = runSystemStub(*match, 0, 0xAD7, xmmIn);
+        require((mperf.Rax != kSystemSeedLow || mperf.Rdx != kSystemSeedHigh) && (mperf.Rax != 0 || mperf.Rdx != 0), "RDPRU stub did not write EDX:EAX");
+        require((mperf.Rax >> 32) == 0 && (mperf.Rdx >> 32) == 0, "RDPRU stub did not zero the upper halves of RAX and RDX");
+        require(mperf.Rcx == 0 && mperf.Flags == 0xAD7, "RDPRU stub changed ECX or RFLAGS");
+        const auto aperf = runSystemStub(*match, 1, 0xAD7, xmmIn);
+        require((aperf.Rax != kSystemSeedLow || aperf.Rdx != kSystemSeedHigh) && (aperf.Rax != 0 || aperf.Rdx != 0), "RDPRU stub did not write EDX:EAX for APERF");
+        require((aperf.Rax >> 32) == 0 && (aperf.Rdx >> 32) == 0, "RDPRU stub did not zero the upper halves of RAX and RDX for APERF");
+        require(aperf.Rcx == 1 && aperf.Flags == 0xAD7, "RDPRU stub changed ECX or RFLAGS for APERF");
+        for (const std::uint64_t unsupportedEcx : {std::uint64_t{2}, std::uint64_t{3}, std::uint64_t{0x80000000}, std::uint64_t{0x100000002}}) {
+            const auto unsupported = runSystemStub(*match, unsupportedEcx, 0xAD7, xmmIn);
+            require(unsupported.Rax == 0 && unsupported.Rdx == 0, "RDPRU stub did not return zero for an unsupported ECX");
+            require(unsupported.Rcx == unsupportedEcx && unsupported.Flags == 0xAD7, "RDPRU stub changed ECX or RFLAGS for an unsupported ECX");
+        }
+        const auto upperIgnored = runSystemStub(*match, 0x100000000ull, 0xAD7, xmmIn);
+        require(upperIgnored.Rax != 0 || upperIgnored.Rdx != 0, "RDPRU stub did not ignore the upper ECX bits");
+        require((upperIgnored.Rax >> 32) == 0 && (upperIgnored.Rdx >> 32) == 0, "RDPRU stub did not zero the upper halves of RAX and RDX for the upper ECX bits");
+        for (unsigned reg = 0; reg < 16; ++reg)
+            require(upperIgnored.Xmm[reg][0] == xmmIn[reg][0] && upperIgnored.Xmm[reg][1] == xmmIn[reg][1], "RDPRU stub clobbered an xmm register");
+        require(mperf.RedZoneOk, "RDPRU stub wrote below the guest stack pointer");
+    }
+    for (const auto& site : {mcommit}) {
+        const auto match = matcher->Match(site.data(), site.size());
+        require(match.has_value() && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "MCOMMIT stub was not produced");
+        const auto run = runSystemStub(*match, 0x1122334455667788ull, 0xAD7, xmmIn);
+        require((run.Flags & 0x8D5) == 1, "MCOMMIT stub did not report an error-free commit in RFLAGS.CF");
+        require((run.Flags & ~0x8D5ull) == (0xAD7 & ~0x8D5ull), "MCOMMIT stub changed the RFLAGS outside the arithmetic flags");
+        require(run.Rax == kSystemSeedLow && run.Rdx == kSystemSeedHigh && run.Rcx == 0x1122334455667788ull, "MCOMMIT stub changed a general register");
+        require(run.RedZoneOk, "MCOMMIT stub wrote below the guest stack pointer");
+        for (unsigned reg = 0; reg < 16; ++reg)
+            require(run.Xmm[reg][0] == xmmIn[reg][0] && run.Xmm[reg][1] == xmmIn[reg][1], "MCOMMIT stub clobbered an xmm register");
+    }
+}
+
 std::uint32_t rotl(const std::uint32_t value, const unsigned count) {
     return (value << count) | (value >> (32 - count));
 }
@@ -1297,6 +1496,7 @@ void registerFormExecution() {}
 void sha1Execution() {}
 void sha256Execution() {}
 void clzeroExecution() {}
+void systemExecution() {}
 void immediateFormExecution() {}
 void ripRelativeExecution() {}
 #endif
@@ -1328,6 +1528,7 @@ int main() {
         sha256Execution();
         sha1Execution();
         clzeroExecution();
+        systemExecution();
         reciprocalExecution();
         ripRelativeExecution();
         converterSegment();
@@ -1336,6 +1537,7 @@ int main() {
         converterSha1();
         converterMonitorWait();
         converterClzero();
+        converterSystemInstructions();
         converterReciprocal();
         converterStrayRex();
         rewriterStrayRex();

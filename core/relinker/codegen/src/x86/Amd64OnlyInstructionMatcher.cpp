@@ -11,6 +11,8 @@
 #include <codegen/x86/Sha256Operands.hpp>
 #include <codegen/x86/Sha1Lowering.hpp>
 #include <codegen/x86/Sha1Operands.hpp>
+#include <codegen/x86/RdpruLowering.hpp>
+#include <codegen/x86/McommitLowering.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
@@ -107,7 +109,22 @@ bool _isClzeroOpcode(const DecodedInstruction& instr) {
     return pos + 2 < instr.Length && instr.Data[pos] == X64OpcodeConstants::TwoByteOpcodeEscape && instr.Data[pos + 1] == X64OpcodeConstants::TwoByteGrp7 && instr.Data[pos + 2] == 0xFC;
 }
 
-bool _validWait(const DecodedInstruction& instr) {
+bool _isRdpruOpcode(const DecodedInstruction& instr) {
+    const auto pos = instr.OpcodeOffset();
+    return pos + 2 < instr.Length && instr.Data[pos] == X64OpcodeConstants::TwoByteOpcodeEscape && instr.Data[pos + 1] == X64OpcodeConstants::TwoByteGrp7 && instr.Data[pos + 2] == 0xFD;
+}
+
+bool _isMcommitOpcode(const DecodedInstruction& instr) {
+    const auto pos = instr.OpcodeOffset();
+    return pos + 2 < instr.Length && instr.Data[pos] == X64OpcodeConstants::TwoByteOpcodeEscape && instr.Data[pos + 1] == X64OpcodeConstants::TwoByteGrp7 && instr.Data[pos + 2] == 0xFA && std::find(instr.Data, instr.Data + pos, 0xF3) != instr.Data + pos;
+}
+
+bool _isMonitorxOpcode(const DecodedInstruction& instr) {
+    const auto pos = instr.OpcodeOffset();
+    return pos + 2 < instr.Length && instr.Data[pos] == X64OpcodeConstants::TwoByteOpcodeEscape && instr.Data[pos + 1] == X64OpcodeConstants::TwoByteGrp7 && instr.Data[pos + 2] == 0xFA;
+}
+
+bool _validPlain(const DecodedInstruction& instr) {
     const auto opcode = instr.Data + instr.OpcodeOffset();
     return instr.Length <= kMaxInstructionLength && std::find(instr.Data, opcode, X64OpcodeConstants::PrefixLock) == opcode;
 }
@@ -131,6 +148,8 @@ private:
     Sha1Lowering _sha1Lowering;
     ClzeroLowering _clzeroLowering;
     ReciprocalLowering _reciprocalLowering;
+    RdpruLowering _rdpruLowering;
+    McommitLowering _mcommitLowering;
 
     [[nodiscard]] Amd64OnlyMatch _matchMovnts(const DecodedInstruction& instr, const Entry& entry) const;
     [[nodiscard]] Amd64OnlyMatch _matchSse4a(const DecodedInstruction& instr, const Entry& entry, const Entry& registerFormEntry, std::span<const std::uint8_t> trailing) const;
@@ -207,6 +226,18 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
             if (name == nullptr)
                 name = kClzero.Name;
             _clzeroLowering.EmitOutOfLine(body, operands);
+        } else if (instr.IsRdpru()) {
+            if (!_validPlain(instr))
+                return std::nullopt;
+            if (name == nullptr)
+                name = kRdpru.Name;
+            _rdpruLowering.EmitOutOfLine(body);
+        } else if (instr.IsMcommit()) {
+            if (!_validPlain(instr))
+                return std::nullopt;
+            if (name == nullptr)
+                name = kMcommit.Name;
+            _mcommitLowering.EmitOutOfLine(body);
         } else if (const auto reciprocal = DecodeVexReciprocal(instr.Data, instr.Length)) {
             if (name == nullptr)
                 name = _reciprocalEntry(*reciprocal).Name;
@@ -247,10 +278,10 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
         return _matchSha1(instr, trailing);
 
     if (instr.IsMonitorx())
-        return _validWait(instr) ? _inPlace(kMonitorx, length, {}) : _unsupported(kMonitorx, length);
+        return _validPlain(instr) ? _inPlace(kMonitorx, length, {}) : _unsupported(kMonitorx, length);
 
     if (instr.IsMwaitx())
-        return _validWait(instr) ? _inPlace(kMwaitx, length, std::vector<std::uint8_t>(kPause.Bytes, kPause.Bytes + kPause.Size)) : _unsupported(kMwaitx, length);
+        return _validPlain(instr) ? _inPlace(kMwaitx, length, std::vector<std::uint8_t>(kPause.Bytes, kPause.Bytes + kPause.Size)) : _unsupported(kMwaitx, length);
 
     if (const auto reciprocal = DecodeVexReciprocal(data, length)) {
         return _trampoline(_reciprocalEntry(*reciprocal).Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { _reciprocalLowering.EmitOutOfLine(body, *reciprocal); }), true);
@@ -263,10 +294,19 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
         return _unsupported(kClzero, length);
 
     if (instr.IsRdpru())
-        return _unsupported(kRdpru, length);
+        return _validPlain(instr) ? _trampoline(kRdpru.Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { _rdpruLowering.EmitOutOfLine(body); })) : _unsupported(kRdpru, length);
 
     if (instr.IsMcommit())
+        return _validPlain(instr) ? _trampoline(kMcommit.Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { _mcommitLowering.EmitOutOfLine(body); })) : _unsupported(kMcommit, length);
+
+    if (_isRdpruOpcode(instr))
+        return _unsupported(kRdpru, length);
+
+    if (_isMcommitOpcode(instr))
         return _unsupported(kMcommit, length);
+
+    if (_isMonitorxOpcode(instr))
+        return _unsupported(kMonitorx, length);
 
     return std::nullopt;
 }
