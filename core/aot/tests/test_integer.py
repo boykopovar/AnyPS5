@@ -36,7 +36,8 @@ class Harness(Function):
         self.lines = ['declare void @llvm.trap()', 'declare i8 @llvm.ctpop.i8(i8)',
                       'define void @probe(i64 %input_rax, i64 %input_rdx, i64 %input_rcx, i64 %input_rdi, i64 %input_rsi, i64 %input_flags, ptr %output) {', 'entry:']
         known = {register: MASK64 for register in REGISTERS}
-        self.states = {instruction.address: {'known': known, 'flags': set(flags), 'pointers': {}, 'saved': {}, 'rsp': 0, 'rbp': None}}
+        self.states = {instruction.address: {'known': known, 'flags': set(flags), 'pointers': {}, 'saved': {}, 'rsp': 0, 'rbp': None,
+                                            'native_pointers': set(), 'stack_pointers': {}, 'image_pointers': {}}}
         for register in REGISTERS:
             self.lines.append(f'  %{register} = alloca i64, align 8')
             initial = '%input_' + register if register in ('rax', 'rdx', 'rcx', 'rdi', 'rsi') else '0'
