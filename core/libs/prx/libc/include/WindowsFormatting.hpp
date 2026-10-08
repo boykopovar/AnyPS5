@@ -200,7 +200,8 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 if (length == "h") value = static_cast<unsigned short>(value);
                 if (length == "hh") value = static_cast<unsigned char>(value);
             } else value = args.Next<unsigned long long>();
-            output.Value(spec + "ll" + conversion, value);
+            const bool alternateZeroOctal = conversion == 'o' && value == 0 && precisionLimit == 0 && flags.find('#') != std::string::npos;
+            output.Value((alternateZeroOctal ? "%" + flags + width + ".1" : spec) + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             if (length == "L") {
                 static_assert(sizeof(long double) == 16);
