@@ -98,6 +98,7 @@ struct State {
     VkFrontFace frontFace;
     VkPipelineColorBlendAttachmentState blend;
     std::array<float, 4> blendConstants;
+    std::uint32_t paClVsOutCntl = 0;
 };
 
 ShaderStages DecodeShaderStages(const QueueState& queue);
