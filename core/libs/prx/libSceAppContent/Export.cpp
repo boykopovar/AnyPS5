@@ -3,7 +3,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/AppMetadata/include/Addcont.hpp"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
@@ -15,6 +17,10 @@ static constexpr int SCE_APP_CONTENT_ERROR_BUSY = static_cast<int>(0x80D90003);
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_MOUNTED = static_cast<int>(0x80D90004);
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_FOUND = static_cast<int>(0x80D90005);
 static constexpr int SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT = static_cast<int>(0x80D90007);
+static constexpr int SCE_APP_CONTENT_ERROR_MOUNT_FULL = static_cast<int>(0x80D90006);
+static constexpr uint32_t ADDCONT_DOWNLOAD_STATUS_NO_EXTRA_DATA = 0;
+static constexpr uint32_t ADDCONT_DOWNLOAD_STATUS_INSTALLED = 4;
+static constexpr std::size_t ADDCONT_MOUNT_MAXNUM = 64;
 static constexpr uint32_t APPPARAM_ID_SKU_FLAG = 0;
 static constexpr int32_t SKU_FLAG_FULL = 3;
 
@@ -53,29 +59,95 @@ static void ClearDirectory(const std::filesystem::path& directory) {
     RecordWrittenPath_nid_no_patch(directory);
 }
 
+namespace {
+
+std::string AddcontMountPoint(std::size_t slot) {
+    return "/addcont" + std::to_string(slot);
+}
+
+struct AddcontMounts {
+    std::mutex mutex;
+    std::array<const AddcontEntry*, ADDCONT_MOUNT_MAXNUM> slots{};
+
+    AddcontMounts() {
+        for (std::size_t slot = 0; slot < slots.size(); ++slot) BlockPathAlias_nid_no_patch(AddcontMountPoint(slot).c_str());
+    }
+};
+
+AddcontMounts& Mounts() {
+    static AddcontMounts mounts;
+    return mounts;
+}
+
+const AddcontEntry* FindAddcont(const NpUnifiedEntitlementLabel* label) {
+    for (const auto& entry : AddcontEntries_nid_no_patch()) {
+        if (std::strncmp(entry.label, label->data, sizeof(label->data)) == 0) return &entry;
+    }
+    return nullptr;
+}
+
+void FillAddcontInfo(const AddcontEntry& entry, AppContentAddcontInfo* info) {
+    std::memset(info, 0, sizeof(*info));
+    std::memcpy(info->entitlement_label.data, entry.label, sizeof(entry.label));
+    info->status = entry.hasData ? ADDCONT_DOWNLOAD_STATUS_INSTALLED : ADDCONT_DOWNLOAD_STATUS_NO_EXTRA_DATA;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI sceAppContentAddcontMount(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentMountPoint* mount_point) {
- (void)service_label;
- if (!entitlement_label || !mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
- return SCE_APP_CONTENT_ERROR_NOT_FOUND;
+    (void)service_label;
+    if (!entitlement_label || !mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const AddcontEntry* entry = FindAddcont(entitlement_label);
+    if (!entry || !entry->hasData) return SCE_APP_CONTENT_ERROR_NOT_FOUND;
+    auto& mounts = Mounts();
+    std::lock_guard lock(mounts.mutex);
+    if (std::find(mounts.slots.begin(), mounts.slots.end(), entry) != mounts.slots.end()) return SCE_APP_CONTENT_ERROR_BUSY;
+    const auto slot = std::find(mounts.slots.begin(), mounts.slots.end(), nullptr);
+    if (slot == mounts.slots.end()) return SCE_APP_CONTENT_ERROR_MOUNT_FULL;
+    const auto name = AddcontMountPoint(static_cast<std::size_t>(slot - mounts.slots.begin()));
+    AddPathAlias_nid_no_patch(name.c_str(), entry->directory.string().c_str());
+    *slot = entry;
+    std::memset(mount_point->data, 0, sizeof(mount_point->data));
+    std::memcpy(mount_point->data, name.data(), name.size());
+    return 0;
 }
 
 int APS5_VABI sceAppContentAddcontUnmount(const AppContentMountPoint* mount_point) {
- if (!mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
- return SCE_APP_CONTENT_ERROR_NOT_FOUND;
+    if (!mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    auto& mounts = Mounts();
+    std::lock_guard lock(mounts.mutex);
+    for (std::size_t slot = 0; slot < mounts.slots.size(); ++slot) {
+        const auto name = AddcontMountPoint(slot);
+        if (!mounts.slots[slot] || std::strncmp(mount_point->data, name.c_str(), sizeof(mount_point->data)) != 0) continue;
+        BlockPathAlias_nid_no_patch(name.c_str());
+        mounts.slots[slot] = nullptr;
+        return 0;
+    }
+    return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
 }
 
 int APS5_VABI sceAppContentGetAddcontInfo(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentAddcontInfo* info) {
     (void)service_label;
     if (!entitlement_label || !info) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
+    const AddcontEntry* entry = FindAddcont(entitlement_label);
+    if (!entry) return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
+    FillAddcontInfo(*entry, info);
+    return 0;
 }
 
 int APS5_VABI sceAppContentGetAddcontInfoList(uint32_t service_label, AppContentAddcontInfo* list, uint32_t list_num, uint32_t* hit_num) {
     (void)service_label;
     if ((!list || list_num == 0) && !hit_num) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (hit_num) *hit_num = 0;
+    const auto& entries = AddcontEntries_nid_no_patch();
+    if (!list || list_num == 0) {
+        *hit_num = static_cast<uint32_t>(entries.size());
+        return 0;
+    }
+    const auto count = std::min<std::size_t>(list_num, entries.size());
+    for (std::size_t index = 0; index < count; ++index) FillAddcontInfo(entries[index], &list[index]);
+    if (hit_num) *hit_num = static_cast<uint32_t>(count);
     return 0;
 }
 
@@ -116,6 +188,7 @@ int APS5_VABI sceAppContentInitialize(const AppContentInitParam* init_param, App
     (void)init_param;
     if (!boot_param) return SCE_APP_CONTENT_ERROR_PARAMETER;
     Temporary();
+    Mounts();
     std::memset(boot_param, 0, sizeof(*boot_param));
     return 0;
 }

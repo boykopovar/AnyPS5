@@ -95,6 +95,20 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 
 The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.
 
+### Additional content
+
+Add-ons with data go in an `anyps5-addcont/` directory beside the output executable; set `ANYPS5_ADDCONT` to use another directory. Each subdirectory is one add-on, named by its entitlement label (`ADDCONT000000001`) or by its content ID (`UP0000-PPSA00000_00-ADDCONT000000001`), and holds the files the game reads from the add-on's mount point. Add-ons without data are listed one entitlement label per line in `anyps5-entitlements.ini` beside the output executable (`ANYPS5_ENTITLEMENTS` for another path); `#` and `;` start a comment.
+
+```text
+app.elf (Linux) or app.exe (Windows)
+anyps5-addcont/
+    ADDCONT000000001/
+        <add-on files>
+anyps5-entitlements.ini
+```
+
+A directory whose name is neither a label nor a content ID, two directories with the same label, a missing directory or file named by the environment variable, and an unreadable `anyps5-entitlements.ini` stop the game with an error.
+
 ## Exit codes
 
 `0`: conversion succeeded. `1`: invalid arguments. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.

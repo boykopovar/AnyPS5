@@ -2,57 +2,29 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/AppMetadata/include/Addcont.hpp"
 #include <algorithm>
-#include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <stdexcept>
-#include <string>
 #include <vector>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER = static_cast<int>(0x80558003);
 static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND = static_cast<int>(0x80558007);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr uint32_t SKU_FLAG_FULL = 3;
+static constexpr uint32_t PACKAGE_TYPE_PSAC = 2;
+static constexpr uint32_t PACKAGE_TYPE_PSAL = 3;
+static constexpr uint32_t DOWNLOAD_STATUS_INSTALLED = 4;
 
 namespace {
-
-std::filesystem::path EntitlementsPath() {
-    if (const char* configured = std::getenv("ANYPS5_ENTITLEMENTS"); configured != nullptr && configured[0] != '\0') return configured;
-#ifdef _WIN32
-    wchar_t module[MAX_PATH];
-    const auto length = GetModuleFileNameW(nullptr, module, MAX_PATH);
-    if (length == 0 || length == MAX_PATH) throw std::runtime_error("NpEntitlementAccess: cannot locate the executable");
-    return std::filesystem::path(module).parent_path() / "anyps5-entitlements.ini";
-#else
-    return std::filesystem::read_symlink("/proc/self/exe").parent_path() / "anyps5-entitlements.ini";
-#endif
-}
 
 const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
     static const auto owned = [] {
         std::vector<NpEntitlementAccessAddcontEntitlementInfo> addons;
-        const auto path = EntitlementsPath();
-        std::ifstream file(path);
-        if (!file) {
-            if (std::getenv("ANYPS5_ENTITLEMENTS") != nullptr || std::filesystem::exists(path)) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
-            return addons;
-        }
-        std::string line;
-        while (std::getline(file, line)) {
-            line.erase(std::min(line.find_first_of("#;"), line.size()));
-            const auto first = line.find_first_not_of(" \t\r");
-            if (first == std::string::npos) continue;
-            const auto label = line.substr(first, line.find_last_not_of(" \t\r") + 1 - first);
+        for (const auto& entry : AddcontEntries_nid_no_patch()) {
             NpEntitlementAccessAddcontEntitlementInfo info{};
-            if (label.size() >= sizeof(info.entitlement_label.data)) throw std::runtime_error("NpEntitlementAccess: entitlement label '" + label + "' in " + path.string() + " is longer than 16 characters");
-            std::memcpy(info.entitlement_label.data, label.data(), label.size());
-            info.package_type = 3;
-            info.download_status = 4;
+            std::memcpy(info.entitlement_label.data, entry.label, sizeof(entry.label));
+            info.package_type = entry.hasData ? PACKAGE_TYPE_PSAC : PACKAGE_TYPE_PSAL;
+            info.download_status = DOWNLOAD_STATUS_INSTALLED;
             addons.push_back(info);
         }
         return addons;

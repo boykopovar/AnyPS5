@@ -69,7 +69,7 @@ int main() {
     Require(sceAppContentAddcontMount(0, nullptr, &mountPoint) == ErrorParameter);
     Require(sceAppContentAddcontMount(0, &label, nullptr) == ErrorParameter);
     std::memcpy(mountPoint.data, "/addcont0", 10);
-    Require(sceAppContentAddcontUnmount(&mountPoint) == ErrorNotFound);
+    Require(sceAppContentAddcontUnmount(&mountPoint) == ErrorNotMounted);
     Require(sceAppContentAddcontUnmount(nullptr) == ErrorParameter);
 
     std::filesystem::create_directory(directory / "temp0");
