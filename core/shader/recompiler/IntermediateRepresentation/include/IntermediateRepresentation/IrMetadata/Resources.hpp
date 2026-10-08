@@ -63,6 +63,7 @@ inline constexpr std::uint32_t SingleLevel = 1u << 8u;
 inline constexpr std::uint32_t MipShift = 9u;
 inline constexpr std::uint32_t BorderShift = 11u;
 inline constexpr std::uint32_t Unnormalized = 1u << 13u;
+inline constexpr std::uint32_t ClampZShift = 14u;
 inline constexpr std::uint32_t AddressWrap = 0u;
 inline constexpr std::uint32_t AddressEdge = 1u;
 inline constexpr std::uint32_t AddressMirror = 2u;
@@ -77,6 +78,7 @@ inline constexpr std::uint32_t BorderOpaqueWhite = 2u;
 [[nodiscard]] inline std::uint32_t Mip(std::uint32_t state) { return (state >> MipShift) & 0x3u; }
 [[nodiscard]] inline std::uint32_t AddressX(std::uint32_t state) { return (state >> ClampXShift) & 0x7u; }
 [[nodiscard]] inline std::uint32_t AddressY(std::uint32_t state) { return (state >> ClampYShift) & 0x7u; }
+[[nodiscard]] inline std::uint32_t AddressZ(std::uint32_t state) { return (state >> ClampZShift) & 0x7u; }
 [[nodiscard]] inline std::uint32_t Border(std::uint32_t state) { return (state >> BorderShift) & 0x3u; }
 }
 
