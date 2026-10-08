@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -50,8 +51,10 @@ std::uint32_t low(const void* pointer) { return static_cast<std::uint32_t>(reint
 std::uint32_t high(const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer) >> 32u); }
 
 void execute(AgcDriver::QueueState& state, const std::vector<std::uint32_t>& packet) {
+    AgcDriver::DriverDetail::RegisterStateKey(state);
     AgcDriver::Pm4::Validate(packet, 0);
     AgcDriver::Pm4::Execute(packet, state);
+    check(AgcDriver::DriverDetail::RegisterStateKey(state) == AgcDriver::DriverDetail::RegisterStateKey(state, false, false), "PM4 changed registers without updating their fingerprint");
 }
 
 void testCatalog() {

@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <utility>
 #include <map>
+#include <memory>
 #include <array>
 #include <optional>
 #include <string>
@@ -21,6 +22,28 @@ public:
     using key_type = std::uint32_t;
     using mapped_type = std::uint32_t;
     using value_type = std::pair<const std::uint32_t, std::uint32_t>;
+
+    class Mask {
+    public:
+        explicit Mask(std::vector<std::uint64_t> bits) : bits(std::move(bits)) {}
+        bool Contains(std::uint32_t offset) const { return offset / 64 < bits.size() && ((bits[offset / 64] >> (offset % 64)) & 1u) != 0; }
+    private:
+        std::vector<std::uint64_t> bits;
+    };
+
+    class Reference {
+    public:
+        Reference(Registers& owner, std::uint32_t offset) : owner(owner), offset(offset) {}
+        operator std::uint32_t() const { return owner.values[offset]; }
+        Reference& operator=(std::uint32_t value) { owner.insert_or_assign(offset, value); return *this; }
+        Reference& operator=(const Reference& other) { return *this = static_cast<std::uint32_t>(other); }
+        Reference& operator|=(std::uint32_t value) { return *this = static_cast<std::uint32_t>(*this) | value; }
+        Reference& operator&=(std::uint32_t value) { return *this = static_cast<std::uint32_t>(*this) & value; }
+        Reference& operator^=(std::uint32_t value) { return *this = static_cast<std::uint32_t>(*this) ^ value; }
+    private:
+        Registers& owner;
+        std::uint32_t offset;
+    };
 
     class const_iterator {
     public:
@@ -56,6 +79,18 @@ public:
     using iterator = const_iterator;
 
     Registers() = default;
+    Registers(const Registers&) = default;
+    Registers& operator=(const Registers&) = default;
+    Registers(Registers&& other) noexcept : values(std::move(other.values)), present(std::move(other.present)), entries(std::exchange(other.entries, 0)), mask(std::move(other.mask)), fingerprint(std::exchange(other.fingerprint, 0)) {}
+    Registers& operator=(Registers&& other) noexcept {
+        if (this == &other) return *this;
+        values = std::move(other.values);
+        present = std::move(other.present);
+        entries = std::exchange(other.entries, 0);
+        mask = std::move(other.mask);
+        fingerprint = std::exchange(other.fingerprint, 0);
+        return *this;
+    }
     Registers(std::initializer_list<std::pair<std::uint32_t, std::uint32_t>> entries) {
         for (const auto& [offset, value] : entries) emplace(offset, value);
     }
@@ -73,27 +108,33 @@ public:
         values.clear();
         present.clear();
         entries = 0;
+        fingerprint = 0;
     }
     std::pair<const_iterator, bool> emplace(std::uint32_t offset, std::uint32_t value) {
         if (contains(offset)) return {const_iterator{this, offset}, false};
         mark(offset) = value;
+        changeFingerprint(offset, value);
         return {const_iterator{this, offset}, true};
     }
     std::pair<const_iterator, bool> insert_or_assign(std::uint32_t offset, std::uint32_t value) {
         if (contains(offset)) {
+            if (values[offset] == value) return {const_iterator{this, offset}, false};
+            changeFingerprint(offset, values[offset]);
             values[offset] = value;
+            changeFingerprint(offset, value);
             return {const_iterator{this, offset}, false};
         }
         mark(offset) = value;
+        changeFingerprint(offset, value);
         return {const_iterator{this, offset}, true};
     }
-    std::uint32_t& operator[](std::uint32_t offset) {
-        if (contains(offset)) return values[offset];
-        return mark(offset) = 0;
+    Reference operator[](std::uint32_t offset) {
+        if (!contains(offset)) emplace(offset, 0);
+        return {*this, offset};
     }
-    std::uint32_t& at(std::uint32_t offset) {
+    Reference at(std::uint32_t offset) {
         if (!contains(offset)) throw std::out_of_range("register is not set");
-        return values[offset];
+        return {*this, offset};
     }
     const std::uint32_t& at(std::uint32_t offset) const {
         if (!contains(offset)) throw std::out_of_range("register is not set");
@@ -101,6 +142,7 @@ public:
     }
     std::size_t erase(std::uint32_t offset) {
         if (!contains(offset)) return 0;
+        changeFingerprint(offset, values[offset]);
         present[offset / 64] &= ~(std::uint64_t{1} << (offset % 64));
         --entries;
         return 1;
@@ -113,8 +155,31 @@ public:
         }
         return a == end() && b == other.end();
     }
+    std::uint64_t Fingerprint(const std::shared_ptr<const Mask>& selected) const {
+        if (mask != selected) {
+            fingerprint = RecomputeFingerprint(*selected);
+            mask = selected;
+        }
+        return fingerprint;
+    }
+    std::uint64_t RecomputeFingerprint(const Mask& selected) const {
+        std::uint64_t result = 0;
+        for (const auto [offset, value] : *this) {
+            if (selected.Contains(offset)) result ^= contribution(offset, value);
+        }
+        return result;
+    }
 
 private:
+    static std::uint64_t contribution(std::uint32_t offset, std::uint32_t value) {
+        auto hash = ((static_cast<std::uint64_t>(offset) << 32u) | value) + 0x9e3779b97f4a7c15ull;
+        hash = (hash ^ (hash >> 30u)) * 0xbf58476d1ce4e5b9ull;
+        hash = (hash ^ (hash >> 27u)) * 0x94d049bb133111ebull;
+        return hash ^ (hash >> 31u);
+    }
+    void changeFingerprint(std::uint32_t offset, std::uint32_t value) {
+        if (mask != nullptr && mask->Contains(offset)) fingerprint ^= contribution(offset, value);
+    }
     static constexpr std::size_t End = ~std::size_t{0};
     std::uint32_t& mark(std::uint32_t offset) {
         if (offset >= values.size()) {
@@ -137,6 +202,8 @@ private:
     std::vector<std::uint32_t> values;
     std::vector<std::uint64_t> present;
     std::size_t entries = 0;
+    mutable std::shared_ptr<const Mask> mask;
+    mutable std::uint64_t fingerprint = 0;
 };
 
 inline Registers InitialContextRegisters() {
