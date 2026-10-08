@@ -33,6 +33,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/RealPath.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
 )
@@ -158,6 +159,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_working_directory COMMAND guest_working_directory_tests)
     if(WIN32)
         set_tests_properties(guest_working_directory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_realpath_tests ${LIBS_INCLUDE_DIR}/tests/GuestRealpath.cpp)
+    target_include_directories(guest_realpath_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_realpath_tests PRIVATE libc)
+    configure_windows_unwind(guest_realpath_tests)
+    add_test(NAME guest_realpath COMMAND guest_realpath_tests)
+    set_tests_properties(guest_realpath PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_realpath PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_path_case_tests ${LIBS_INCLUDE_DIR}/tests/GuestPathCase.cpp)
