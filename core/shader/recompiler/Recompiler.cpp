@@ -6,6 +6,7 @@
 #include <cstdio>
 #include "CacheKey.hpp"
 #include "CompiledVariant.hpp"
+#include "ResultMemoAdmission.hpp"
 #include "ShaderDiskCache.hpp"
 #include <list>
 #include <mutex>
@@ -209,6 +210,7 @@ struct SourceEntry {
     // The result memo, most recently used first, at most ResultMemoEntries (under mutex).
     std::list<ResultMemoEntry> memo;
     std::unordered_map<std::uint64_t, std::list<ResultMemoEntry>::iterator> memoIndex;
+    Detail::ResultMemoAdmission memoAdmission;
 };
 
 namespace {
@@ -558,11 +560,12 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
     bool cacheHit = false;
     const auto hash = snapshotHash(request, snapshot);
     std::uint64_t index = 0;
+    bool admit = false;
     auto& counters = resultMemoCounters();
     {
         std::lock_guard lock(source.mutex);
         variant = findOrCompileVariant(source, request, snapshot, specialization, cacheHit);
-        index = (variant->result.variantId * 0x9e3779b97f4a7c15ull) ^ hash;
+        index = Detail::ResultMemoIndex(variant->result.variantId, hash);
         const auto found = source.memoIndex.find(index);
         if (found != source.memoIndex.end() && found->second->variantId == variant->result.variantId && found->second->hash == hash) {
             source.memo.splice(source.memo.begin(), source.memo, found->second);
@@ -571,6 +574,7 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
             reportResultMemo();
             return found->second->result;
         }
+        admit = source.memoAdmission.Observe(variant->result.variantId, hash);
     }
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     auto result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot));
@@ -578,6 +582,10 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
     if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     counters.misses.fetch_add(1, std::memory_order_relaxed);
     std::shared_ptr<const RecompileResult> shared = std::move(result);
+    if (!admit) {
+        reportResultMemo();
+        return shared;
+    }
     {
         std::lock_guard lock(source.mutex);
         const auto found = source.memoIndex.find(index);
@@ -595,7 +603,7 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
             source.memoIndex.emplace(index, source.memo.begin());
             while (source.memo.size() > ResultMemoEntries) {
                 const auto& last = source.memo.back();
-                source.memoIndex.erase((last.variantId * 0x9e3779b97f4a7c15ull) ^ last.hash);
+                source.memoIndex.erase(Detail::ResultMemoIndex(last.variantId, last.hash));
                 source.memo.pop_back();
                 counters.evictions.fetch_add(1, std::memory_order_relaxed);
             }
