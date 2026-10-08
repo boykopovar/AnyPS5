@@ -6,10 +6,10 @@
 namespace AgcDriver::DriverDetail {
 
 std::uint32_t Driver::drawUserWord(const DrawProgram& program, std::int32_t sgpr) {
-    require(sgpr >= 0 && static_cast<std::uint32_t>(sgpr) >= program.firstUserSgpr, "invalid draw offset SGPR");
-    const auto index = static_cast<std::uint32_t>(sgpr) - program.firstUserSgpr;
-    require(index < program.userData.size(), "draw offset SGPR exceeds user data");
-    return program.userData[index];
+    require(sgpr >= 0 && static_cast<std::uint32_t>(sgpr) >= program.plan->firstUserSgpr, "invalid draw offset SGPR");
+    const auto index = static_cast<std::uint32_t>(sgpr) - program.plan->firstUserSgpr;
+    require(index < program.UserData().size(), "draw offset SGPR exceeds user data");
+    return program.UserData()[index];
 }
 
 std::optional<Graphics::IndirectDrawPath> Driver::classifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect) {
