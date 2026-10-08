@@ -205,7 +205,7 @@ void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* na
 
 bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
     return std::any_of(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) {
-        return std::any_of(binding.imageDepthCompare.begin(), binding.imageDepthCompare.end(), [](bool compare) { return compare; });
+        return std::any_of(binding.Usage().imageDepthCompare.begin(), binding.Usage().imageDepthCompare.end(), [](bool compare) { return compare; });
     });
 }
 

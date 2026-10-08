@@ -8,14 +8,14 @@ void Driver::forEachWrittenBuffer(const ShaderRecompiler::RecompileResult& compi
     for (const auto& binding : compiled.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
-            const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+            const bool written = element >= binding.Usage().bufferWritten.size() || binding.Usage().bufferWritten[element];
             if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 4) continue;
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4);
             const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
             const auto base = descriptor.Base48();
             const auto size = descriptor.GetSize();
             if (base == 0 || size == 0) continue;
-            visit(element, base, base + size, element < binding.bufferAtomic.size() && binding.bufferAtomic[element]);
+            visit(element, base, base + size, element < binding.Usage().bufferAtomic.size() && binding.Usage().bufferAtomic[element]);
         }
     }
 }

@@ -64,7 +64,8 @@ namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(RecompileResult) == 176, "RecompileResult changed: update EncodeResult and DecodeResult");
-static_assert(sizeof(DescriptorBinding) == 448, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 160, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBindingUsage) == 304, "DescriptorBindingUsage changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 28, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(FragmentParameter) == 12, "FragmentParameter changed: update the parameter encoder");
 static_assert(sizeof(CompiledShaderInfo) == 304, "CompiledShaderInfo changed: update the info encoder");
@@ -245,16 +246,16 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Value(binding.readOnly);
     writer.Value(binding.imageShape.has_value());
     writer.Value(binding.imageShape.value_or(DescriptorImageShape::Image1D));
-    writer.Flags(binding.samplerDepthCompare);
-    writer.Flags(binding.imageWritten);
-    writer.Flags(binding.imageDepthCompare);
-    writer.Flags(binding.imageAtomic);
-    writer.Flags(binding.imageAtomic64);
-    writer.Flags(binding.bufferAtomic);
-    writer.Flags(binding.bufferWritten);
+    writer.Flags(binding.Usage().samplerDepthCompare);
+    writer.Flags(binding.Usage().imageWritten);
+    writer.Flags(binding.Usage().imageDepthCompare);
+    writer.Flags(binding.Usage().imageAtomic);
+    writer.Flags(binding.Usage().imageAtomic64);
+    writer.Flags(binding.Usage().bufferAtomic);
+    writer.Flags(binding.Usage().bufferWritten);
     writer.Flags(binding.samplerUnnormalized);
     writer.Flags(binding.imageUnnormalized);
-    writer.Values(std::span<const std::uint32_t>(binding.imageSamplers));
+    writer.Values(std::span<const std::uint32_t>(binding.Usage().imageSamplers));
 }
 
 void decodeBinding(Reader& reader, DescriptorBinding& binding) {
@@ -268,16 +269,18 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     const bool hasShape = reader.Get<bool>();
     const auto shape = reader.Get<DescriptorImageShape>();
     binding.imageShape = hasShape ? std::optional(shape) : std::nullopt;
-    reader.Flags(binding.samplerDepthCompare);
-    reader.Flags(binding.imageWritten);
-    reader.Flags(binding.imageDepthCompare);
-    reader.Flags(binding.imageAtomic);
-    reader.Flags(binding.imageAtomic64);
-    reader.Flags(binding.bufferAtomic);
-    reader.Flags(binding.bufferWritten);
+    DescriptorBindingUsage usage;
+    reader.Flags(usage.samplerDepthCompare);
+    reader.Flags(usage.imageWritten);
+    reader.Flags(usage.imageDepthCompare);
+    reader.Flags(usage.imageAtomic);
+    reader.Flags(usage.imageAtomic64);
+    reader.Flags(usage.bufferAtomic);
+    reader.Flags(usage.bufferWritten);
     reader.Flags(binding.samplerUnnormalized);
     reader.Flags(binding.imageUnnormalized);
-    reader.Values(binding.imageSamplers);
+    reader.Values(usage.imageSamplers);
+    binding.usage = std::make_shared<const DescriptorBindingUsage>(std::move(usage));
 }
 
 void encodeResult(Writer& writer, const RecompileResult& result) {

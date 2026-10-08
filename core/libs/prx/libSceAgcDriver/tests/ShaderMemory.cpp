@@ -41,7 +41,7 @@ void expectFailure(TAction action, const char* expected, const char* message) {
     try {
         action();
     } catch (const std::runtime_error& error) {
-        require(std::string(error.what()).find(expected) != std::string::npos, "unexpected failure reason");
+        if (std::string(error.what()).find(expected) == std::string::npos) throw std::runtime_error(std::string(message) + ": expected " + expected + ", got " + error.what());
         return;
     }
     throw std::runtime_error(message);
@@ -318,7 +318,7 @@ void verifyBindlessTable() {
         if (binding.kind != DescriptorKind::SampledImage) continue;
         sampled = true;
         require(binding.count == direct + slots - 1u && binding.guestDescriptor.size() == 8u * binding.count, "bindless: the sampled image binding does not hold the table slots");
-        require(std::none_of(binding.imageWritten.begin(), binding.imageWritten.end(), [](bool written) { return written; }), "bindless: a table slot is marked written");
+        require(std::none_of(binding.Usage().imageWritten.begin(), binding.Usage().imageWritten.end(), [](bool written) { return written; }), "bindless: a table slot is marked written");
     }
     require(sampled && flattened, "bindless: the bindings lack the image array or the flattened SRT");
     struct SpirvScan {

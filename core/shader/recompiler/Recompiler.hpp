@@ -306,15 +306,7 @@ enum class DescriptorRole {
     ShaderData
 };
 
-struct DescriptorBinding {
-    DescriptorKind kind;
-    DescriptorRole role;
-    std::uint32_t descriptorSet;
-    std::uint32_t binding;
-    std::uint32_t count;
-    std::vector<std::uint32_t> guestDescriptor;
-    bool readOnly = false;
-    std::optional<DescriptorImageShape> imageShape;
+struct DescriptorBindingUsage {
     std::vector<bool> samplerDepthCompare;
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
     std::vector<bool> imageWritten;
@@ -331,9 +323,27 @@ struct DescriptorBinding {
     // skip the write-back and the pending-write note for the element; an element beyond the vector
     // (a producer that does not fill it) must be treated as written.
     std::vector<bool> bufferWritten;
+    std::vector<std::uint32_t> imageSamplers;
+};
+
+struct DescriptorBinding {
+    DescriptorKind kind;
+    DescriptorRole role;
+    std::uint32_t descriptorSet;
+    std::uint32_t binding;
+    std::uint32_t count;
+    std::vector<std::uint32_t> guestDescriptor;
+    bool readOnly = false;
+    std::optional<DescriptorImageShape> imageShape;
+    std::shared_ptr<const DescriptorBindingUsage> usage;
     std::vector<bool> samplerUnnormalized;
     std::vector<bool> imageUnnormalized;
-    std::vector<std::uint32_t> imageSamplers;
+
+    [[nodiscard]] const DescriptorBindingUsage& Usage() const {
+        if (usage) return *usage;
+        static const DescriptorBindingUsage empty;
+        return empty;
+    }
 };
 
 struct VertexAttribute {

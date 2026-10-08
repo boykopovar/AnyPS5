@@ -237,7 +237,7 @@ std::uint32_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, st
     for (const auto& binding : result.bindings) {
         if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
-            if (((binding.guestDescriptor.at(element * 8u + 1u) >> 20u) & 0x1ffu) == format) return binding.imageSamplers.at(element);
+            if (((binding.guestDescriptor.at(element * 8u + 1u) >> 20u) & 0x1ffu) == format) return binding.Usage().imageSamplers.at(element);
         }
     }
     Require(false, "image sample reduction: no sampled image of format " + std::to_string(format));

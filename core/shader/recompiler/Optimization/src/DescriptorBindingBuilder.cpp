@@ -294,63 +294,104 @@ std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter
     return (filter & ~(0xffu << 20u)) | (1u << 24u) | (mipmapped ? 1u << 26u : 0u);
 }
 
+void DescriptorBindingBuilder::ValidateSamplers(const ShaderInfo& info, const ResourceSnapshot& snapshot) const {
+    static_cast<void>(ProveUnnormalized(info, snapshot));
+}
+
 void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const {
     Populate(allocation, program.Info(), program.Resources().stage, program.Resources().userDataBase, snapshot, partialThreads);
 }
 
 void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const {
-    const IrBindingLayout& layout = allocation.layout;
-    const std::vector<std::uint32_t> shaderData = ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads);
-    const UnnormalizedProof unnormalized = ProveUnnormalized(info, snapshot);
-    const std::vector<std::uint32_t> samplerElements = SamplerElements(layout, info);
+    Prepare(allocation, info, stage);
+    auto result = Materialize(allocation, info, userDataBase, snapshot, partialThreads);
+    allocation.bindings = std::move(result.bindings);
+    allocation.pushConstants = std::move(result.pushConstants);
+}
 
+void DescriptorBindingBuilder::Prepare(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage) const {
+    const auto samplerElements = SamplerElements(allocation.layout, info);
     std::vector<DescriptorBinding> bindings;
-    bindings.reserve(layout.descriptors.size());
-    std::size_t writtenHere = 0;
-    std::size_t readOnlyHere = 0;
-    for (const IrDescriptorBinding& logical : layout.descriptors) {
+    bindings.reserve(allocation.layout.descriptors.size());
+    for (const IrDescriptorBinding& logical : allocation.layout.descriptors) {
         DescriptorBinding physical;
         physical.descriptorSet = 0u;
         physical.binding = NativeBinding(stage, logical.kind);
         physical.count = logical.resources.empty() ? 1u : static_cast<std::uint32_t>(logical.resources.size());
         physical.kind = PhysicalKindFor(logical.kind);
         physical.role = RoleFor(logical.kind);
-        physical.readOnly = false;
-
+        DescriptorBindingUsage usage;
         switch (physical.role) {
         case DescriptorRole::GuestBuffers:
-            physical.guestDescriptor = GuestBuffersDescriptor(logical.resources, snapshot);
             for (const std::uint32_t resource : logical.resources) {
                 const auto& buffer = info.buffers.at(resource);
-                physical.bufferAtomic.push_back(buffer.atomic);
-                // The tracker merges every buffer access of a source into its resource
-                // (ResourceTracker::Merge), so an element without a store or atomic is read-only
-                // over its whole extent; stores through pointers (BDA) never bind a V#.
-                physical.bufferWritten.push_back(buffer.written || buffer.atomic);
-                if (buffer.written || buffer.atomic) ++writtenHere;
-                else ++readOnlyHere;
+                usage.bufferAtomic.push_back(buffer.atomic);
+                usage.bufferWritten.push_back(buffer.written || buffer.atomic);
             }
             break;
         case DescriptorRole::GuestImages:
-            physical.guestDescriptor = GuestImagesDescriptor(logical.resources, snapshot);
             physical.imageShape = ImageShapeFor(info.images, logical.resources);
             for (const std::uint32_t resource : logical.resources) {
                 const auto& image = info.images.at(resource);
-                physical.imageWritten.push_back(image.written || image.atomic);
-                physical.imageDepthCompare.push_back(image.depthCompare);
-                physical.imageAtomic.push_back(image.atomic);
-                physical.imageAtomic64.push_back(image.atomic64);
-                physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
-                physical.imageSamplers.push_back(ImageSamplerMask(info, samplerElements, resource));
+                usage.imageWritten.push_back(image.written || image.atomic);
+                usage.imageDepthCompare.push_back(image.depthCompare);
+                usage.imageAtomic.push_back(image.atomic);
+                usage.imageAtomic64.push_back(image.atomic64);
+                usage.imageSamplers.push_back(ImageSamplerMask(info, samplerElements, resource));
             }
+            break;
+        case DescriptorRole::GuestSamplers:
+            for (const std::uint32_t resource : logical.resources) {
+                usage.samplerDepthCompare.push_back(info.samplers.at(resource).depthCompare);
+            }
+            break;
+        case DescriptorRole::ShaderData:
+            if (allocation.layout.UsesPushData()) {
+                fail("DescriptorBindingBuilder::Prepare shader-data binding must not exist when push data is used");
+            }
+            break;
+        case DescriptorRole::FlattenedSrt:
+        case DescriptorRole::Gds:
+        case DescriptorRole::BdaPagetable:
+        case DescriptorRole::FaultBuffer:
+            break;
+        }
+        if (physical.role == DescriptorRole::GuestBuffers || physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
+            physical.usage = std::make_shared<const DescriptorBindingUsage>(std::move(usage));
+        }
+        bindings.push_back(std::move(physical));
+    }
+    allocation.bindings = std::move(bindings);
+    allocation.pushConstants.clear();
+}
+
+MaterializedBindings DescriptorBindingBuilder::Materialize(const BindingAllocationResult& allocation, const ShaderInfo& info, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const {
+    const IrBindingLayout& layout = allocation.layout;
+    if (allocation.bindings.size() != layout.descriptors.size()) {
+        fail("DescriptorBindingBuilder::Materialize binding reflection does not match the layout");
+    }
+    const std::vector<std::uint32_t> shaderData = ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads);
+    const auto unnormalized = ProveUnnormalized(info, snapshot);
+    MaterializedBindings result;
+    result.bindings = allocation.bindings;
+    for (std::size_t i = 0; i < result.bindings.size(); ++i) {
+        const auto& logical = layout.descriptors[i];
+        auto& physical = result.bindings[i];
+        physical.samplerUnnormalized.clear();
+        physical.imageUnnormalized.clear();
+        switch (physical.role) {
+        case DescriptorRole::GuestBuffers:
+            physical.guestDescriptor = GuestBuffersDescriptor(logical.resources, snapshot);
+            break;
+        case DescriptorRole::GuestImages:
+            physical.guestDescriptor = GuestImagesDescriptor(logical.resources, snapshot);
+            for (const auto resource : logical.resources) physical.imageUnnormalized.push_back(unnormalized.images.at(resource));
             break;
         case DescriptorRole::GuestSamplers:
             physical.guestDescriptor = GuestSamplersDescriptor(logical.resources, snapshot);
             for (std::size_t element = 0; element < logical.resources.size(); ++element) {
-                const auto& sampler = info.samplers.at(logical.resources[element]);
-                physical.samplerDepthCompare.push_back(sampler.depthCompare);
                 physical.samplerUnnormalized.push_back(unnormalized.samplers.at(logical.resources[element]));
-                if (sampler.forcePointFiltering) {
+                if (info.samplers.at(logical.resources[element]).forcePointFiltering) {
                     auto& filter = physical.guestDescriptor.at(element * 4u + 2u);
                     filter = PointFilteredSamplerWord(physical.guestDescriptor.at(element * 4u), filter);
                 }
@@ -358,14 +399,11 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             break;
         case DescriptorRole::FlattenedSrt:
             if (snapshot.flattenedSrt.empty()) {
-                fail("DescriptorBindingBuilder::Populate flattened SRT snapshot is empty");
+                fail("DescriptorBindingBuilder::Materialize flattened SRT snapshot is empty");
             }
             physical.guestDescriptor = snapshot.flattenedSrt;
             break;
         case DescriptorRole::ShaderData:
-            if (layout.UsesPushData()) {
-                fail("DescriptorBindingBuilder::Populate shader-data binding must not exist when push data is used");
-            }
             physical.guestDescriptor = shaderData;
             break;
         case DescriptorRole::Gds:
@@ -373,29 +411,30 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         case DescriptorRole::FaultBuffer:
             break;
         }
-
         if (physical.role == DescriptorRole::GuestBuffers || physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
             if (physical.count == 0u || physical.guestDescriptor.size() % physical.count != 0u) {
-                fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
+                fail("DescriptorBindingBuilder::Materialize guest descriptor size is not a multiple of the binding count");
             }
         }
-
-        bindings.push_back(std::move(physical));
     }
-
     if (bufferWrittenTraceEnabled()) {
-        // Cumulative counts include every Populate of the process (the replay tool populates
-        // each program twice), so the per-call counts are the ones to sum per program.
+        std::size_t writtenHere = 0;
+        std::size_t readOnlyHere = 0;
+        for (const auto& binding : result.bindings) {
+            for (bool written : binding.Usage().bufferWritten) {
+                if (written) ++writtenHere;
+                else ++readOnlyHere;
+            }
+        }
         const auto written = bufferWrittenCounts.written.fetch_add(writtenHere) + writtenHere;
         const auto readOnly = bufferWrittenCounts.readOnly.fetch_add(readOnlyHere) + readOnlyHere;
         std::fprintf(stderr, "[bindings] guest buffer elements: %zu written, %zu read-only (total so far: %llu / %llu)\n", writtenHere, readOnlyHere, written, readOnly);
     }
-    allocation.bindings = std::move(bindings);
-    allocation.pushConstants.clear();
     if (layout.UsesPushData()) {
-        allocation.pushConstants.resize(static_cast<std::size_t>(shaderData.size()) * sizeof(std::uint32_t));
-        std::memcpy(allocation.pushConstants.data(), shaderData.data(), allocation.pushConstants.size());
+        result.pushConstants.resize(static_cast<std::size_t>(shaderData.size()) * sizeof(std::uint32_t));
+        std::memcpy(result.pushConstants.data(), shaderData.data(), result.pushConstants.size());
     }
+    return result;
 }
 
 }

@@ -320,7 +320,8 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     auto bindings = bindingAllocator.Allocate(program, request.layout);
 
     constexpr DescriptorBindingBuilder descriptorBindingBuilder;
-    descriptorBindingBuilder.Populate(bindings, program, resourceSnapshot, partialThreads(request));
+    descriptorBindingBuilder.ValidateSamplers(program.Info(), resourceSnapshot);
+    descriptorBindingBuilder.Prepare(bindings, program.Info(), program.Resources().stage);
 
     SpirvTargetOptions targetOptions {};
     targetOptions.vulkanVersion = request.target.vulkanVersion;
@@ -371,18 +372,13 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     result.bindings.clear();
     result.pushConstants.clear();
     for (auto& attribute : result.vertexAttributes) attribute.resource = {};
-    bindings.bindings.clear();
     bindings.pushConstants.clear();
     return {resourceSpecialization, request.layout, std::move(program).TakeCompiledInfo(), std::move(bindings), std::move(result)};
 }
 
 RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot) {
     auto result = variant.result;
-    BindingAllocationResult bindings;
-    bindings.layout = variant.bindings.layout;
-    bindings.pushConstantOffsetBytes = variant.bindings.pushConstantOffsetBytes;
-    bindings.pushConstantSizeBytes = variant.bindings.pushConstantSizeBytes;
-    DescriptorBindingBuilder{}.Populate(bindings, variant.info.info, variant.info.stage, variant.info.userDataBase, snapshot, partialThreads(request));
+    auto bindings = DescriptorBindingBuilder{}.Materialize(variant.bindings, variant.info.info, variant.info.userDataBase, snapshot, partialThreads(request));
     result.bindings = std::move(bindings.bindings);
     result.pushConstants = std::move(bindings.pushConstants);
     for (auto& attribute : result.vertexAttributes) {

@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SHADERRESOURCES_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindingPlan.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
@@ -73,6 +74,7 @@ public:
         std::uint64_t pools = 0;
     };
     Stats Counters() const;
+    std::shared_ptr<const BindingPlan> Plan(std::span<const CompiledShader> shaders) { return plans.Get(shaders); }
 
 private:
     Context context;
@@ -83,6 +85,7 @@ private:
     std::map<std::vector<std::uint32_t>, VkDescriptorSetLayout> layouts;
     std::vector<VkDescriptorPool> pools;
     Stats stats;
+    BindingPlanCache plans;
 };
 
 class ShaderResources {
@@ -149,7 +152,8 @@ public:
     // a draw for which neither holds (Draw.cpp).
     bool WritesMemory() const;
     bool ReadsImage(const StorageTexture* image) const;
-    const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
+    const std::vector<std::uint32_t>& LayoutKey() const { return bindingPlan->layoutKey; }
+    const BindingPlan& Plan() const { return *bindingPlan; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
     std::string Describe() const;
 
@@ -261,11 +265,7 @@ private:
     };
     void writeDataWords(VkCommandBuffer commands, std::size_t allocation, std::span<const std::uint32_t> words) const;
 
-    struct Binding {
-        VkDescriptorSetLayoutBinding layout;
-        std::vector<std::size_t> allocations;
-        std::vector<std::size_t> imageAllocations;
-    };
+    using Binding = BindingPlan::Binding;
 
     // A host-imported buffer region the set reads in place, with its import's identity at build time.
     struct DirectRegion {
@@ -292,7 +292,7 @@ private:
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
-    void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
+    void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, std::size_t index);
     // Stage A: one record per planned image element (ImageRecord), in plan order: the decoded
     // descriptor and its surface size (computed once for the build), the write watch walked so stage
     // B's collects are memo hits (APS5_NO_PRECOLLECT=1 skips the pass entirely), and for a sampled
@@ -326,7 +326,7 @@ private:
     // Stage B: the record's texture when the fastRevalidate predicate proves it current under the
     // lock and the cache still holds it; null sends the element to cachedTexture.
     std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
-    void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
+    void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
@@ -387,7 +387,7 @@ private:
     // Today's per-element walk (APS5_NO_EPOCH_REVALIDATE=1).
     bool fastRevalidateEach();
     Context context;
-    std::vector<std::uint32_t> layoutKey;
+    std::shared_ptr<const BindingPlan> bindingPlan;
     GuestBufferMemory guestMemory;
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
@@ -433,17 +433,12 @@ private:
     // Build state carried from stage A to stage B: the bindings in plan order, the image bindings
     // still to look up (index into `bindings`; the DescriptorBinding lives in the compiled shader),
     // the descriptor counts the set was sized for, and the compute stage of a deferred build.
-    std::vector<Binding> bindings;
+    std::span<const Binding> bindings;
     struct DeferredImages {
         const ShaderRecompiler::DescriptorBinding* binding;
         std::size_t index;
-        std::size_t firstSampler = 0;
-        std::size_t samplerCount = 0;
     };
     std::vector<DeferredImages> deferredImages;
-    std::uint64_t storageBuffers = 0;
-    std::uint32_t plannedSampledImages = 0;
-    std::uint32_t plannedStorageImages = 0;
     // The compute constructor's shader and captured regions: the caller's objects, valid only until
     // the build (Complete() for a deferred one) is done, and reset then (forgetDeferredInputs).
     CompiledShader deferredCompute{};
