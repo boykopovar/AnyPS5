@@ -70,6 +70,7 @@ bool IsRuntimeUniformOp(IrOpcode opcode) {
         case IrOpcode::ISub64:
         case IrOpcode::IMul32:
         case IrOpcode::IMul64:
+        case IrOpcode::SMin32:
         case IrOpcode::UMin32:
         case IrOpcode::ShiftLeftLogical32:
         case IrOpcode::ShiftLeftLogical64:

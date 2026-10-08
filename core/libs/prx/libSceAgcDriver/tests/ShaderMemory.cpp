@@ -7,6 +7,7 @@
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
+#include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -358,6 +359,28 @@ void verifyRegisterSources() {
     secondVector.SetRegister({RegisterBank::Vector, 1});
     require(!EquivalentValue(plan, &firstVector, &secondVector), "different vector registers were merged");
     require(!EquivalentValue(plan, &samplerRegister, &firstVector), "different register types were merged");
+}
+
+void verifySignedMinimum() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    IrValue reg(IrOpcode::Void, IrType::ScalarReg, 0);
+    reg.SetRegister({RegisterBank::Scalar, 0});
+    IrValue input(IrOpcode::GetUserData, IrType::U32, 1);
+    input.AddArgument(&reg);
+    IrValue limit(IrOpcode::Void, IrType::U32, 2);
+    limit.SetImmediateU32(8);
+    IrValue minimum(IrOpcode::SMin32, IrType::U32, 3);
+    minimum.AddArgument(&input);
+    minimum.AddArgument(&limit);
+    require(Detail::IsRuntimeUniformOp(IrOpcode::SMin32), "signed minimum must be a runtime uniform operation");
+    for (const auto& [value, expected] : std::array<std::pair<std::uint32_t, std::uint32_t>, 6>{{{0, 0}, {4, 4}, {20, 8}, {0x7fffffffu, 8}, {0xffffffffu, 0xffffffffu}, {0x80000000u, 0x80000000u}}}) {
+        std::array<std::uint32_t, 1> data{value};
+        SrtRuntime runtime{data};
+        Detail::Evaluator evaluator(plan, runtime);
+        std::uint32_t result = 0;
+        require(evaluator.Evaluate(&minimum, result) && result == expected, "SRT signed minimum used unsigned ordering or failed evaluation");
+    }
 }
 
 void verifyEvaluatedValues() {
@@ -2568,6 +2591,7 @@ int main(int argc, char** argv) {
         verifyEvaluatedValues();
         verifyFrontendPair();
         verifySignedSrtComparison();
+        verifySignedMinimum();
         verifyPureFlatSlots();
         verifyBindlessTable();
         verifyDescriptorPhis();

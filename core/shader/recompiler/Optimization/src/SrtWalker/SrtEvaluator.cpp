@@ -256,6 +256,12 @@ bool Evaluator::EvaluateInst(IrValue& inst, std::uint64_t& result) {
                 return true;
             }
             return false;
+        case IrOpcode::SMin32:
+            if (binary()) {
+                result = static_cast<std::uint32_t>(std::min(std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(a)), std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(b))));
+                return true;
+            }
+            return false;
         case IrOpcode::UMin32:
             if (binary()) {
                 result = std::min(static_cast<std::uint32_t>(a), static_cast<std::uint32_t>(b));
