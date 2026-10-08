@@ -295,6 +295,7 @@ private:
         // The device refused the shadow (memory or allocations exhausted): the region takes the
         // path it would take without staging, in both upload stages.
         bool unstaged = false;
+        std::size_t bufferOffset = 0;
     };
 
     // How [begin, end) lies against the space's base regions.

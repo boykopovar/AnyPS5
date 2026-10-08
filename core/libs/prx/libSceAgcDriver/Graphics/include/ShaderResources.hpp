@@ -110,6 +110,9 @@ public:
         struct Snapshot {
             std::uint64_t address;
             std::shared_ptr<Buffer> buffer;
+            std::size_t offset = 0;
+            std::size_t size = 0;
+            std::span<std::byte> Bytes() const { return buffer->Bytes().subspan(offset, size); }
         };
         DescriptorCache* cache = nullptr;
         DescriptorCache::SetAllocation allocation;
@@ -243,7 +246,7 @@ private:
         std::uint64_t address;
         std::size_t size;
         bool guest;
-        std::unique_ptr<Buffer> buffer;
+        std::shared_ptr<Buffer> buffer;
         ShaderRecompiler::DescriptorRole role = ShaderRecompiler::DescriptorRole::ShaderData;
         // Guest buffers: whether the shader may store to the range (see addGuestBuffer).
         bool written = true;
@@ -253,6 +256,9 @@ private:
         std::int32_t pushByte = -1;
         std::int64_t dataAllocation = -1;
         std::uint32_t dataByte = 0;
+        std::size_t bufferOffset = 0;
+        std::span<const std::uint32_t> pendingData;
+        std::span<std::byte> Bytes() const { return buffer->Bytes().subspan(bufferOffset, size); }
     };
     struct DataPatch {
         std::size_t allocation;
@@ -401,6 +407,10 @@ private:
     // The cache pool the set was allocated from, freed back to it on release.
     VkDescriptorPool cachePool = VK_NULL_HANDLE;
     std::vector<Allocation> allocations;
+    std::vector<VkDescriptorPoolSize> descriptorSizes;
+    std::vector<VkDescriptorBufferInfo> descriptorBuffers;
+    std::vector<VkDescriptorImageInfo> descriptorImages;
+    std::vector<VkWriteDescriptorSet> descriptorWrites;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
     std::size_t readOnlyBuffers = 0;

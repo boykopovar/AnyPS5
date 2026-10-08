@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RECORDER_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RECORDER_HPP
 
+#include "prx/libSceAgcDriver/Graphics/include/BufferCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <atomic>
 #include <chrono>
@@ -90,13 +91,16 @@ public:
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
     std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
-    enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32 };
-    static constexpr std::size_t DrawSnapshotBudget = std::size_t{256} << 20u;
-    static constexpr std::size_t DrawSnapshotEntries = 1024;
-    static constexpr std::size_t DrawInputBudget = std::size_t{1024} << 20u;
-    static constexpr std::size_t DrawInputEntries = 16384;
-    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr);
-    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
+    std::pair<std::shared_ptr<Buffer>, std::size_t> AllocateDrawUpload(std::size_t bytes);
+    using SnapshotUse = BufferCache::Use;
+    static constexpr auto DrawSnapshotBudget = BufferCache::StorageBudget;
+    static constexpr auto DrawSnapshotEntries = BufferCache::StorageEntries;
+    static constexpr auto DrawInputBudget = BufferCache::GeometryBudget;
+    static constexpr auto DrawInputEntries = BufferCache::GeometryEntries;
+    BufferCache::Slice ReadBuffer(std::uint64_t address, std::size_t bytes);
+    const BufferCache::Statistics& BufferCounters() const { return bufferCache.Counters(); }
+    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::size_t* offset = nullptr);
+    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0, std::size_t offset = 0);
     void OnComplete(std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
@@ -496,6 +500,8 @@ private:
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
+        std::shared_ptr<Buffer> drawUpload;
+        std::size_t drawUploadUsed = 0;
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
@@ -748,21 +754,7 @@ private:
     std::array<Completed, CompletedRingSize> completed;
     std::uint64_t newestSubmitted = 0;
     std::chrono::steady_clock::time_point newestSubmittedAt{};
-    using DrawSnapshotKey = std::tuple<std::uint64_t, SnapshotUse, std::size_t>;
-    struct DrawSnapshot {
-        std::uint64_t generation;
-        std::uint64_t registryGeneration;
-        std::list<DrawSnapshotKey>::iterator recent;
-        std::shared_ptr<Buffer> buffer;
-        std::uint32_t derived;
-    };
-    struct DrawSnapshotPool {
-        std::list<DrawSnapshotKey> recency;
-        std::size_t bytes = 0;
-    };
-    std::map<DrawSnapshotKey, DrawSnapshot> drawSnapshots;
-    std::array<DrawSnapshotPool, 2> drawSnapshotPools;
-    void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
+    BufferCache bufferCache;
 };
 
 }
