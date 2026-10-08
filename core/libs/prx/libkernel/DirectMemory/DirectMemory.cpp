@@ -11,9 +11,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwctype>
 #include <memory>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -777,6 +780,24 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment) {
     return 0;
 }
 
+#ifdef _WIN32
+static bool IsGuestModuleImage(const void* base) {
+    std::wstring path(MAX_PATH, L'\0');
+    for (;;) {
+        const auto length = GetModuleFileNameW(static_cast<HMODULE>(const_cast<void*>(base)), path.data(), static_cast<DWORD>(path.size()));
+        if (length == 0) return false;
+        if (length < path.size()) {
+            path.resize(length);
+            break;
+        }
+        path.resize(path.size() * 2);
+    }
+    constexpr std::wstring_view suffix = L".guest.prx";
+    if (path.size() < suffix.size()) return false;
+    return std::equal(suffix.begin(), suffix.end(), path.end() - static_cast<std::ptrdiff_t>(suffix.size()), [](wchar_t expected, wchar_t actual) { return std::towlower(actual) == expected; });
+}
+#endif
+
 int DoMprotect(const void* addr, size_t len, int prot) {
     Trace("protect %p+0x%zx prot=0x%x", addr, len, prot);
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
@@ -793,8 +814,9 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     MEMORY_BASIC_INFORMATION memory{};
     if (VirtualQuery(pointer, &memory, sizeof(memory)) != sizeof(memory)) throw std::runtime_error("Cannot query guest memory protection range");
     if (memory.Type == MEM_IMAGE) {
-        if (memory.AllocationBase != GetModuleHandleW(nullptr)) throw std::invalid_argument("Memory protection of a foreign image is not supported");
-        mutation.RegisterMainImage();
+        if (memory.AllocationBase == GetModuleHandleW(nullptr)) mutation.RegisterMainImage();
+        else if (IsGuestModuleImage(memory.AllocationBase)) mutation.RegisterImage(memory.AllocationBase);
+        else throw std::invalid_argument("Memory protection of a foreign image is not supported");
     }
 #else
     mutation.RegisterMainImage();

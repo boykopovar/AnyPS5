@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -532,6 +533,37 @@ static void CheckNoOverwriteRejectsHostOccupiedMapping() {
     Require(rejected);
     GuestArena::GuestArenaReset_nid_postfix(target, page);
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
+static DWORD ImageProtection(const void* pointer) {
+    MEMORY_BASIC_INFORMATION memory{};
+    Require(VirtualQuery(pointer, &memory, sizeof(memory)) == sizeof(memory));
+    return memory.Protect & 0xffu;
+}
+
+static void CheckGuestModuleImageProtection() {
+    constexpr std::size_t page = 0x4000;
+    const auto module = LoadLibraryA(GUEST_MEMORY_MODULE);
+    Require(module != nullptr);
+    auto* data = reinterpret_cast<unsigned char*>(GetProcAddress(module, "guestMemoryModuleData"));
+    Require(data != nullptr);
+    auto* target = reinterpret_cast<unsigned char*>((reinterpret_cast<std::uintptr_t>(data) + page - 1) & ~(page - 1));
+    Require(target + page <= data + 0x10000);
+    Require(sceKernelMprotect(target, page, 1) == 0);
+    Require(ImageProtection(target) == PAGE_READONLY);
+    Require(sceKernelMprotect(target, page, 3) == 0);
+    Require(ImageProtection(target) == PAGE_READWRITE || ImageProtection(target) == PAGE_WRITECOPY);
+    target[1] = 7;
+    Require(target[1] == 7);
+    Require(sceKernelMprotect(target, page, 1) == 0);
+    Require(ImageProtection(target) == PAGE_READONLY);
+    bool rejected = false;
+    try {
+        sceKernelMprotect(GetModuleHandleA("kernel32.dll"), page, 1);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
 }
 
 static void CheckFixedMappingsReachTheApplicationAreaEnd() {
@@ -1323,6 +1355,7 @@ int main() {
 #ifdef _WIN32
     CheckNoOverwriteRejectsHostOccupiedMapping();
     CheckFixedMappingsReachTheApplicationAreaEnd();
+    CheckGuestModuleImageProtection();
 #endif
     CheckSharedWriteTracking();
     CheckReadsIntoSharedWriteTracking();
