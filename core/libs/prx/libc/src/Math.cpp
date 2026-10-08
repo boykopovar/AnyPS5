@@ -93,6 +93,11 @@ struct alignas(16) LibcFloatConstant { std::uint32_t bits[4]; };
 LibcFloatConstant _FInf_nid_postfix {{0x7f800000u, 0, 0, 0}};
 LibcFloatConstant _FNan_nid_postfix {{0x7fc00000u, 0, 0, 0}};
 
+LibcFloatConstant _DInf_nid_postfix {{0x00000000u, 0x7ff00000u, 0, 0}};
+LibcFloatConstant _DNan_nid_postfix {{0x00000000u, 0x7ff80000u, 0, 0}};
+LibcFloatConstant _LInf_nid_postfix {{0x00000000u, 0x80000000u, 0x00007fffu, 0}};
+LibcFloatConstant _LNan_nid_postfix {{0x00000000u, 0xc0000000u, 0x00007fffu, 0}};
+
 short APS5_VABI _FDtest_nid_postfix(const float* value) {
     constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
     if (value == nullptr) throw std::invalid_argument("_FDtest: null value");
@@ -104,6 +109,34 @@ short APS5_VABI _FDtest_nid_postfix(const float* value) {
     if (exponent == 0) return fraction != 0 ? Denormal : Zero;
     return Finite;
 }
+
+short APS5_VABI _Dtest_nid_postfix(const double* value) {
+    constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
+    if (value == nullptr) throw std::invalid_argument("_Dtest: null value");
+    std::uint64_t bits;
+    std::memcpy(&bits, value, sizeof(bits));
+    const auto exponent = bits & 0x7ff0000000000000u;
+    const auto fraction = bits & 0x000fffffffffffffu;
+    if (exponent == 0x7ff0000000000000u) return fraction != 0 ? NotANumber : Infinite;
+    if (exponent == 0) return fraction != 0 ? Denormal : Zero;
+    return Finite;
+}
+
+short APS5_VABI _LDtest_nid_postfix(const long double* value) {
+    constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
+    if (value == nullptr) throw std::invalid_argument("_LDtest: null value");
+    static_assert(sizeof(long double) == 16);
+    std::uint64_t significand;
+    std::uint16_t exponentWord;
+    std::memcpy(&significand, value, sizeof(significand));
+    std::memcpy(&exponentWord, reinterpret_cast<const char*>(value) + 8, sizeof(exponentWord));
+    const auto exponent = exponentWord & 0x7fff;
+    const auto fraction = significand & 0x7fffffffffffffffu;
+    if (exponent == 0x7fff) return fraction != 0 ? NotANumber : Infinite;
+    if (exponent == 0) return significand != 0 ? Denormal : Zero;
+    return Finite;
+}
+
 int APS5_VABI __isnanf_nid_postfix(float x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI __signbitf_nid_postfix(float x) { return std::signbit(x) ? 1 : 0; }
 

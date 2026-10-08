@@ -19,7 +19,13 @@ int* APS5_VABI __error_nid_postfix();
 struct LibcFloatConstant { std::uint32_t bits[4]; };
 extern LibcFloatConstant _FInf_nid_postfix;
 extern LibcFloatConstant _FNan_nid_postfix;
+extern LibcFloatConstant _DInf_nid_postfix;
+extern LibcFloatConstant _DNan_nid_postfix;
+extern LibcFloatConstant _LInf_nid_postfix;
+extern LibcFloatConstant _LNan_nid_postfix;
 short APS5_VABI _FDtest_nid_postfix(const float*);
+short APS5_VABI _Dtest_nid_postfix(const double*);
+short APS5_VABI _LDtest_nid_postfix(const long double*);
 float APS5_VABI fmodf_nid_postfix(float, float);
 float APS5_VABI asinf_nid_postfix(float);
 float APS5_VABI acosf_nid_postfix(float);
@@ -158,6 +164,38 @@ static void CheckFloatClassification() {
     }
     Require(_FDtest_nid_postfix(reinterpret_cast<const float*>(&_FInf_nid_postfix)) == 1);
     Require(_FDtest_nid_postfix(reinterpret_cast<const float*>(&_FNan_nid_postfix)) == 2);
+
+    const struct { std::uint64_t bits; short code; } doubleCases[] = {
+        {0x0000000000000000u, 0}, {0x8000000000000000u, 0},
+        {0x0000000000000001u, -2}, {0x800fffffffffffffu, -2},
+        {0x0010000000000000u, -1}, {0xbff0000000000000u, -1}, {0x7fefffffffffffffu, -1},
+        {0x7ff0000000000000u, 1}, {0xfff0000000000000u, 1},
+        {0x7ff0000000000001u, 2}, {0x7ff8000000000000u, 2}, {0xfff8100000000000u, 2},
+    };
+    for (const auto& test : doubleCases) {
+        double value;
+        std::memcpy(&value, &test.bits, sizeof(value));
+        if (_Dtest_nid_postfix(&value) != test.code) {
+            std::fprintf(stderr, "Guest _Dtest failed for %016llx\n", static_cast<unsigned long long>(test.bits));
+            std::abort();
+        }
+    }
+    Require(_Dtest_nid_postfix(reinterpret_cast<const double*>(&_DInf_nid_postfix)) == 1);
+    Require(_Dtest_nid_postfix(reinterpret_cast<const double*>(&_DNan_nid_postfix)) == 2);
+    double zero = 0.0;
+    Require(_Dtest_nid_postfix(&zero) == 0);
+
+    static_assert(sizeof(long double) == 16);
+    const long double ldInf = *reinterpret_cast<const long double*>(&_LInf_nid_postfix);
+    const long double ldNan = *reinterpret_cast<const long double*>(&_LNan_nid_postfix);
+    Require(_LDtest_nid_postfix(&ldInf) == 1);
+    Require(_LDtest_nid_postfix(&ldNan) == 2);
+    long double ldZero = 0.0L;
+    Require(_LDtest_nid_postfix(&ldZero) == 0);
+    long double ldOne = 1.0L;
+    Require(_LDtest_nid_postfix(&ldOne) == -1);
+    long double ldDenorm = std::numeric_limits<long double>::denorm_min();
+    Require(_LDtest_nid_postfix(&ldDenorm) == -2);
 }
 
 int main() {
