@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +9,7 @@
 
 extern "C" int APS5_VABI vswprintf_nid_postfix(char16_t*, std::size_t, const char16_t*, VaList*);
 extern "C" int APS5_VABI snwprintf_s_nid_postfix(char16_t*, std::size_t, const char16_t*, ...);
+extern "C" int APS5_VABI swprintf_nid_postfix(char16_t*, std::size_t, const char16_t*, ...);
 
 static int APS5_VABI Format(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
 #ifdef _WIN32
@@ -111,9 +113,30 @@ static void CheckCount() {
     Require(Format(buffer, 16, u"a%n", nullCount) < 0, "vswprintf null %n argument");
 }
 
+static void CheckSwprintf() {
+    char16_t buffer[16];
+    std::fill(buffer, buffer + 16, u'x');
+    Require(swprintf_nid_postfix(buffer, 16, u"%d-%ls-%s", 42, u"ab", "\xc3\xa9") == 7, "swprintf output length");
+    Require(buffer == std::u16string(u"42-ab-é") && buffer[8] == u'x', "swprintf output");
+
+    Require(swprintf_nid_postfix(buffer, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
+    Require(buffer == std::u16string(u" wide|z  |€"), "swprintf padded output");
+
+    std::fill(buffer, buffer + 16, u'x');
+    Require(swprintf_nid_postfix(buffer, 5, u"%d-%ls", 42, u"abcd") < 0, "swprintf truncated result");
+    Require(buffer == std::u16string(u"42-a") && buffer[5] == u'x', "swprintf truncated output");
+
+    Require(swprintf_nid_postfix(buffer, 5, u"%ls", u"abcd") == 4 && buffer == std::u16string(u"abcd"), "swprintf exact fit");
+
+    buffer[0] = u'x';
+    Require(swprintf_nid_postfix(buffer, 0, u"a") < 0 && buffer[0] == u'x', "swprintf zero size");
+    Require(swprintf_nid_postfix(buffer, 16, u"%q") < 0 && buffer[0] == 0, "swprintf invalid conversion");
+}
+
 int main() {
     CheckBounded();
     CheckCount();
+    CheckSwprintf();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
     Check(u"%.1s", "\xc3\xa9\xc3\xa8", u"\u00e9");
     Check(u"%.0s", "\xc3\xa9", u"");
