@@ -17,6 +17,7 @@ int APS5_VABI rename_nid_postfix(const char*, const char*);
 int APS5_VABI sceKernelChmod_nid_postfix(const char*, unsigned short);
 int APS5_VABI sceKernelFchmod(int, unsigned short);
 int APS5_VABI fchmod_nid_postfix(int, int);
+int APS5_VABI chmod_nid_postfix(const char*, int);
 int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI sceKernelFsync(int);
@@ -54,6 +55,10 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 int main() {
+    Require(chmod_nid_postfix(nullptr, 0600) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelChmod_nid_postfix(nullptr, 0600) == static_cast<int>(0x8002000eu));
+    Require(chmod_nid_postfix("anyps5_missing_chmod_path", 0600) == -1 && *__error_nid_postfix() == 2);
+    Require(sceKernelChmod_nid_postfix("anyps5_missing_chmod_path", 0600) == static_cast<int>(0x80020002u));
     Require(sceKernelDebugOutText(-1, "text") == static_cast<int>(0x80020016u));
     std::uint64_t throttling[4] = {1, 2, 3, 4};
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);

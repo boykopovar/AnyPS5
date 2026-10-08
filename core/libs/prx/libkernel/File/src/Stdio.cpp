@@ -260,13 +260,9 @@ static int PathError(const char* path) {
 extern "C" {
 
 int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
-    if (path == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
-    auto native = ResolvePath_nid_no_patch(path);
-    if (NativeChmod(native, mode) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": chmod failed for " + native.string() + ", errno=" + std::to_string(errno));
-    }
+    if (const int error = PathError(path)) return PosixFailure(error);
+    const auto native = ResolvePath_nid_no_patch(path);
+    if (NativeChmod(native, mode & 07777) != 0) return PosixResult(SceErrorFromErrno(errno));
     return 0;
 }
 
@@ -733,7 +729,10 @@ int APS5_VABI rmdir_nid_postfix(const char* path) {
 extern "C" {
 
 int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
-    return chmod_nid_postfix(path, mode);
+    if (!path) return SceErrorFromErrno(GUEST_EFAULT);
+    const auto native = ResolvePath_nid_no_patch(path);
+    if (NativeChmod(native, mode & 07777) != 0) return SceErrorFromErrno(errno);
+    return 0;
 }
 
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
