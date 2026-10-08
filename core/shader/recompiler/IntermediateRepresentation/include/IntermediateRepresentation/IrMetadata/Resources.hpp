@@ -107,6 +107,7 @@ struct SamplerResource {
     std::uint32_t firstUsePc = 0;
     bool forcePointFiltering = false;
     bool depthCompare = false;
+    bool unnormalized = false;
     std::uint8_t uses = 0;
 
     bool operator==(const SamplerResource& other) const = default;
