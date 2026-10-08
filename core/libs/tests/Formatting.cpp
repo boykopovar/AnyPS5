@@ -92,6 +92,8 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(std::strcmp(buffer, expected) == 0);
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.*s", -1, "unlimited");
     Require(std::strcmp(buffer, "unlimited") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[% u|%+ lu|% #hu]", 7u, 8UL, 9) == 7);
+    Require(std::strcmp(buffer, "[7|8|9]") == 0);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "[%-012a|%0*A]", 1.0, -12, 1.0) == 27);
     Require(std::strcmp(buffer, "[0x1p+0      |0X1P+0      ]") == 0);
     buffer[5] = '!';

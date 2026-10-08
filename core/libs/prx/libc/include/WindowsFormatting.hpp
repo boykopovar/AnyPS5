@@ -179,6 +179,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
         if (flags.find('-') != std::string::npos) std::erase(flags, '0');
+        if (std::strchr("ouxX", conversion)) std::erase_if(flags, [](char flag) { return flag == ' ' || flag == '+'; });
         const std::string spec = "%" + flags + width + precision;
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
