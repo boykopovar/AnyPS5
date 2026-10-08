@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -32,6 +33,7 @@ int APS5_VABI sceNetEpollDestroy(int);
 extern const std::uint32_t sce_net_in6addr_any[4];
 int APS5_VABI sceNetResolverCreate(const char*, int, int);
 int APS5_VABI sceNetResolverStartNtoa(int, const char*, void*, int, int, int);
+int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverDestroy(int);
 int APS5_VABI sceNetResolverGetError(int, int*);
 int APS5_VABI sceNetCtlGetState(int*);
@@ -307,6 +309,49 @@ int main() {
     Require(ipv4[0] == 127);
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     Require(sceNetResolverGetError(resolver, nullptr) == static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    std::array<std::uint8_t, 448> records{};
+    const auto field = [&records](std::size_t offset) {
+        std::int32_t value = 0;
+        std::memcpy(&value, records.data() + offset, sizeof(value));
+        return value;
+    };
+    records.fill(0xa5);
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", records.data(), 0, 0, 0) == 0);
+    const std::int32_t record_count = field(320);
+    Require(record_count >= 1 && record_count <= 10 && field(324) == record_count && field(328) == 0 && field(332) == 0);
+    for (std::size_t offset = 336; offset < 384; ++offset) Require(records[offset] == 0);
+    for (std::size_t offset = 384; offset < records.size(); ++offset) Require(records[offset] == 0xa5);
+    for (std::int32_t index = 0; index < 10; ++index) {
+        const std::uint8_t* record = records.data() + index * 32;
+        if (index < record_count) {
+            Require(record[0] == 127 && field(index * 32 + 16) == 2);
+            for (std::int32_t other = 0; other < index; ++other) Require(std::memcmp(record, records.data() + other * 32, 4) != 0);
+            for (std::size_t offset = 4; offset < 16; ++offset) Require(record[offset] == 0);
+            for (std::size_t offset = 20; offset < 32; ++offset) Require(record[offset] == 0);
+        } else {
+            for (std::size_t offset = 0; offset < 32; ++offset) Require(record[offset] == 0);
+        }
+    }
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    records.fill(0xa5);
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "guest-sce-net.invalid", records.data(), 0, 0, 0) ==
+        static_cast<int>(0x804101E1));
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 &&
+        resolver_error == static_cast<int>(0x804101E1));
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, nullptr, records.data(), 0, 0, 0) == static_cast<int>(0x80410116) &&
+        *sceNetErrnoLoc() == 22);
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", nullptr, 0, 0, 0) == static_cast<int>(0x80410116) &&
+        *sceNetErrnoLoc() == 22);
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver + 1000, "localhost", records.data(), 0, 0, 0) ==
+        static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
+    Require(std::all_of(records.begin(), records.end(), [](std::uint8_t value) { return value == 0xa5; }));
+    bool flags_rejected = false;
+    try {
+        sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", records.data(), 0, 0, 0x2000000);
+    } catch (const std::runtime_error&) {
+        flags_rejected = true;
+    }
+    Require(flags_rejected);
     Require(sceNetResolverDestroy(resolver) == 0);
     resolver_error = -1;
     Require(sceNetResolverGetError(resolver, &resolver_error) == static_cast<int>(0x80410109) &&

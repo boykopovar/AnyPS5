@@ -292,6 +292,24 @@ struct NetMsghdr {
 static_assert(sizeof(NetMsghdr) == 48 && offsetof(NetMsghdr, iov) == 16 && offsetof(NetMsghdr, control) == 32 &&
     offsetof(NetMsghdr, flags) == 44);
 
+struct ResolverRecordEx {
+    std::uint8_t address[16];
+    std::int32_t family;
+    std::int32_t reserved[3];
+};
+
+struct ResolverInfoEx {
+    static constexpr int MaxRecords = 10;
+    ResolverRecordEx records[MaxRecords];
+    std::int32_t count;
+    std::int32_t ipv4Count;
+    std::int32_t ipv6Count;
+    std::int32_t ipv6Resolver;
+    std::int32_t reserved[12];
+};
+static_assert(sizeof(ResolverRecordEx) == 32 && offsetof(ResolverRecordEx, family) == 16);
+static_assert(sizeof(ResolverInfoEx) == 384 && offsetof(ResolverInfoEx, count) == 320 && offsetof(ResolverInfoEx, ipv4Count) == 324);
+
 std::int64_t message_length(const NetMsghdr* message) {
     if (!message) return fail(NET_EFAULT);
     if (message->iov_length < 0 || message->iov_length > NET_UIO_MAXIOV) return fail(NET_EMSGSIZE);
@@ -1142,6 +1160,45 @@ int APS5_VABI sceNetResolverAbort(void) {
 
 int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int rid, const char* hostname, ResolverInfoEx* info, int timeout, int retry, int flags) {
+    (void)timeout;
+    (void)retry;
+    if (flags != 0) throw std::runtime_error("sceNetResolverStartNtoaMultipleRecordsEx: flags are not supported");
+    if (!hostname || !info) return fail(NET_EINVAL);
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
+    }
+    if (!initialize_sockets()) return fail(5);
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo* results = nullptr;
+    const int result = ::getaddrinfo(hostname, nullptr, &hints, &results);
+    if (result != 0) {
+        *errno_slot() = result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT;
+        log_soft(__func__, "host DNS lookup failed");
+        set_resolver_error(rid, NET_ERROR_RESOLVER_ENODNS);
+        return NET_ERROR_RESOLVER_ENODNS;
+    }
+    std::memset(info, 0, sizeof(*info));
+    int count = 0;
+    for (const addrinfo* entry = results; entry && count < ResolverInfoEx::MaxRecords; entry = entry->ai_next) {
+        const auto& address = reinterpret_cast<const sockaddr_in*>(entry->ai_addr)->sin_addr;
+        const auto* begin = info->records;
+        const auto* end = info->records + count;
+        if (std::any_of(begin, end, [&](const ResolverRecordEx& record) { return std::memcmp(record.address, &address, sizeof(address)) == 0; })) continue;
+        std::memcpy(info->records[count].address, &address, sizeof(address));
+        info->records[count].family = NET_AF_INET;
+        ++count;
+    }
+    ::freeaddrinfo(results);
+    info->count = count;
+    info->ipv4Count = count;
+    set_resolver_error(rid, 0);
     return 0;
 }
 
