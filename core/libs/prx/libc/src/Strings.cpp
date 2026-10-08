@@ -178,6 +178,28 @@ char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, si
     return dest;
 }
 
+char16_t* APS5_VABI wcscat_nid_postfix(char16_t* dest, const char16_t* src) {
+    char16_t* end = dest;
+    while (*end != 0) ++end;
+    while (*src != 0) *end++ = *src++;
+    *end = 0;
+    return dest;
+}
+
+char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    char16_t* end = dest;
+    while (*end != 0) ++end;
+    for (size_t index = 0; index < n && src[index] != 0; ++index) *end++ = src[index];
+    *end = 0;
+    return dest;
+}
+
+size_t APS5_VABI wcscspn_nid_postfix(const char16_t* s, const char16_t* reject) {
+    size_t count = 0;
+    while (s[count] != 0 && !Contains(reject, s[count])) ++count;
+    return count;
+}
+
 }
 
 

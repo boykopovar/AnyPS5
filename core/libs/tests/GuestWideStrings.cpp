@@ -28,6 +28,9 @@ unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t* str, char16_t**
 unsigned long long APS5_VABI wcstoull_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second);
 std::size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, std::size_t count);
+char16_t* APS5_VABI wcscat_nid_postfix(char16_t* dest, const char16_t* src);
+char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, std::size_t n);
+std::size_t APS5_VABI wcscspn_nid_postfix(const char16_t* s, const char16_t* reject);
 }
 
 namespace {
@@ -142,5 +145,29 @@ int main() {
     require(wcsxfrm_nid_postfix(transformed, u"wide", 8) == 4 && same(transformed, u"wide", 5) && transformed[5] == 0xaaaa);
     require(wcsxfrm_nid_postfix(transformed, u"much too long", 4) == 13);
     require(wcsxfrm_nid_postfix(nullptr, u"abc", 0) == 3);
+
+    char16_t catbuf[16];
+    wmemset_nid_postfix(catbuf, 0xaaaa, 16);
+    wcscpy_nid_postfix(catbuf, u"hello");
+    require(wcscat_nid_postfix(catbuf, u" world") == catbuf);
+    require(wcscmp_nid_postfix(catbuf, u"hello world") == 0);
+    wcscat_nid_postfix(catbuf, u"");
+    require(wcscmp_nid_postfix(catbuf, u"hello world") == 0);
+
+    wmemset_nid_postfix(catbuf, 0xaaaa, 16);
+    wcscpy_nid_postfix(catbuf, u"abc");
+    require(wcsncat_nid_postfix(catbuf, u"defgh", 3) == catbuf);
+    require(wcscmp_nid_postfix(catbuf, u"abcdef") == 0);
+    wcsncat_nid_postfix(catbuf, u"xyz", 0);
+    require(wcscmp_nid_postfix(catbuf, u"abcdef") == 0);
+    wcsncat_nid_postfix(catbuf, u"GH", 10);
+    require(wcscmp_nid_postfix(catbuf, u"abcdefGH") == 0);
+
+    require(wcscspn_nid_postfix(u"abcdef", u"de") == 3);
+    require(wcscspn_nid_postfix(u"abcdef", u"xyz") == 6);
+    require(wcscspn_nid_postfix(u"abcdef", u"a") == 0);
+    require(wcscspn_nid_postfix(u"", u"abc") == 0);
+    require(wcscspn_nid_postfix(u"abc", u"") == 3);
+
     return 0;
 }
