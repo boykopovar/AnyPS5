@@ -57,7 +57,7 @@ def main():
             source.write_bytes(executable(request, symbol=symbol, module_name=module_name))
             output = case / ('output.exe' if windows else 'output.elf')
             result = subprocess.run([str(relinker), *(['--windows'] if windows else []),
-                                     '--rpath', str(case / 'custom-hosts'), str(source), str(output)],
+                                     '--rpath', '$ORIGIN/custom-hosts', str(source), str(output)],
                                     capture_output=True, text=True, timeout=30)
             return result, output
 
