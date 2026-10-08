@@ -3,11 +3,16 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <mutex>
+#include <unordered_set>
 
 // The PSN web API has no service behind it: handles can be created, but requests fail.
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80553402);
 static constexpr int SCE_NP_WEBAPI2_ERROR_UNAVAILABLE = static_cast<int>(0x80553406);
+static constexpr int SCE_NP_WEBAPI2_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80553406);
 static std::atomic<int> g_nextHandle{1};
+static std::mutex g_requestsMutex;
+static std::unordered_set<int64_t> g_requests;
 
 extern "C" {
 
@@ -33,7 +38,12 @@ int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_gro
     (void)method;
     (void)content_parameter;
     if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    *request_id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    const int64_t id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::lock_guard lock(g_requestsMutex);
+        g_requests.insert(id);
+    }
+    *request_id = id;
     return 0;
 }
 
@@ -44,7 +54,8 @@ int APS5_VABI sceNpWebApi2CreateUserContext(int lib_ctx_id, int user_id) {
 }
 
 int APS5_VABI sceNpWebApi2DeleteRequest(int64_t request_id) {
-    (void)request_id;
+    std::lock_guard lock(g_requestsMutex);
+    g_requests.erase(request_id);
     return 0;
 }
 
@@ -153,8 +164,10 @@ int APS5_VABI sceNpWebApi2PushEventUnregisterPushContextCallback() {
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2SetRequestTimeout() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApi2SetRequestTimeout(int64_t requestId, uint32_t timeout) {
+    (void)timeout;
+    std::lock_guard lock(g_requestsMutex);
+    if (!g_requests.contains(requestId)) return SCE_NP_WEBAPI2_ERROR_REQUEST_NOT_FOUND;
     return 0;
 }
 
