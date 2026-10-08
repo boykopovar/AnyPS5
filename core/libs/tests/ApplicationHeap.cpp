@@ -23,6 +23,8 @@ char* APS5_VABI strdup_nid_postfix(const char*);
 char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI atexit_nid_postfix(void (APS5_VABI*)());
+void* APS5_VABI scriptingGetMem(std::size_t, std::size_t);
+void APS5_VABI scriptingFreeMem(void*);
 }
 
 namespace {
@@ -268,4 +270,8 @@ int main(int argc, char** argv) {
     *__error_nid_postfix() = 0;
     require(strndup_nid_postfix(text, 5) == nullptr && *__error_nid_postfix() == 12);
     fail = false;
+    void* scriptMem = scriptingGetMem(64, 128);
+    require(scriptMem == storage.data() && lastSize == 128 && lastAlignment == 64);
+    scriptingFreeMem(scriptMem);
+    require(frees > 0);
 }

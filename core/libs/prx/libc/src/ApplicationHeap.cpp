@@ -1,6 +1,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -232,4 +233,18 @@ int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment
     if (reinterpret_cast<std::uintptr_t>(result) % alignment != 0) throw std::runtime_error("application heap: allocator returned a misaligned pointer");
     *pointer = result;
     return 0;
+}
+
+extern "C" {
+
+APS5_EXPORT("ayuoL6Vjz2k", scriptingGetMem);
+void* APS5_VABI scriptingGetMem(std::size_t alignment, std::size_t bytes) {
+    return ApplicationHeapAlign_nid_no_patch(alignment, bytes);
+}
+
+APS5_EXPORT("yV45DG6ei28", scriptingFreeMem);
+void APS5_VABI scriptingFreeMem(void* pointer) {
+    ApplicationHeapFree_nid_no_patch(pointer);
+}
+
 }
