@@ -15,6 +15,7 @@
 #include <limits>
 #include <stdexcept>
 #include <system_error>
+#include <tuple>
 #include <vector>
 
 #if defined(__linux__)
@@ -225,6 +226,7 @@ class PhysicalBacking {
 public:
     explicit PhysicalBacking(std::size_t bytes, int memoryType) : memoryType(memoryType) {
 #ifdef _WIN32
+        held.assign(bytes / PS5_PAGE_SIZE, false);
         const auto size = static_cast<std::uint64_t>(bytes);
         section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, static_cast<DWORD>(size >> 32), static_cast<DWORD>(size), nullptr);
         if (!section) {
@@ -266,18 +268,73 @@ public:
     PhysicalBacking(const PhysicalBacking&) = delete;
     PhysicalBacking& operator=(const PhysicalBacking&) = delete;
 
-    void Map(std::uintptr_t address, std::size_t bytes, std::uint64_t offset, int protection) const {
+    void Map(std::uintptr_t address, std::size_t bytes, std::uint64_t offset, int protection) {
 #ifdef _WIN32
-        GuestArena::GuestArenaMap_nid_postfix(reinterpret_cast<void*>(address), bytes, section, offset, WinProtFromPosix(protection));
+        MapView(address, bytes, offset, WinProtFromPosix(protection));
 #else
         if (::mmap(reinterpret_cast<void*>(address), bytes, protection, MAP_SHARED | MAP_FIXED, file, static_cast<off_t>(offset)) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map direct memory backing");
 #endif
     }
 
+#ifdef _WIN32
+    void MapView(std::uintptr_t address, std::size_t bytes, std::uint64_t offset, DWORD protection) {
+        GuestArena::GuestArenaMap_nid_postfix(reinterpret_cast<void*>(address), bytes, section, offset, protection);
+        std::fill(held.begin() + static_cast<std::ptrdiff_t>(offset / PS5_PAGE_SIZE), held.begin() + static_cast<std::ptrdiff_t>((offset + bytes) / PS5_PAGE_SIZE), true);
+    }
+
+    void MapPrivate(std::uintptr_t address, std::size_t bytes, std::uint64_t offset, int protection) {
+        auto* pointer = reinterpret_cast<void*>(address);
+        const auto first = held.begin() + static_cast<std::ptrdiff_t>(offset / PS5_PAGE_SIZE);
+        const bool copy = std::find(first, first + static_cast<std::ptrdiff_t>(bytes / PS5_PAGE_SIZE), true) != first + static_cast<std::ptrdiff_t>(bytes / PS5_PAGE_SIZE);
+        const auto target = WinProtFromPosix(protection);
+        GuestArena::GuestArenaReset_nid_postfix(pointer, bytes);
+        GuestArena::GuestArenaCommit_nid_postfix(pointer, bytes, copy ? PAGE_READWRITE : target, bytes);
+        if (!copy) return;
+        const Window window(section, offset, bytes);
+        std::memcpy(pointer, window.Bytes(), bytes);
+        if (target != PAGE_READWRITE) GuestArena::GuestArenaCommit_nid_postfix(pointer, bytes, target, bytes);
+    }
+
+    void SavePrivate(std::uintptr_t address, std::size_t bytes, std::uint64_t offset) {
+        for (auto cursor = address; cursor < address + bytes;) {
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "query private direct memory");
+            const auto stop = std::min(address + bytes, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) throw std::runtime_error("private direct memory is not committed private memory");
+            DWORD previous;
+            if (!VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, PAGE_READONLY, &previous)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "make private direct memory readable");
+            cursor = stop;
+        }
+        const Window window(section, offset, bytes);
+        std::memcpy(window.Bytes(), reinterpret_cast<const void*>(address), bytes);
+        std::fill(held.begin() + static_cast<std::ptrdiff_t>(offset / PS5_PAGE_SIZE), held.begin() + static_cast<std::ptrdiff_t>((offset + bytes) / PS5_PAGE_SIZE), true);
+    }
+#endif
+
 private:
     int memoryType;
 #ifdef _WIN32
+    class Window {
+    public:
+        Window(HANDLE section, std::uint64_t offset, std::size_t bytes) {
+            SYSTEM_INFO system{};
+            GetSystemInfo(&system);
+            lead = offset % system.dwAllocationGranularity;
+            const auto start = offset - lead;
+            view = MapViewOfFile(section, FILE_MAP_READ | FILE_MAP_WRITE, static_cast<DWORD>(start >> 32), static_cast<DWORD>(start), static_cast<SIZE_T>(lead + bytes));
+            if (view == nullptr) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "map direct memory backing for a copy");
+        }
+        ~Window() { UnmapViewOfFile(view); }
+        Window(const Window&) = delete;
+        Window& operator=(const Window&) = delete;
+        std::byte* Bytes() const { return static_cast<std::byte*>(view) + lead; }
+
+    private:
+        void* view = nullptr;
+        std::uint64_t lead = 0;
+    };
     HANDLE section = nullptr;
+    std::vector<bool> held;
 #else
     int file = -1;
 #endif
@@ -296,9 +353,16 @@ struct DirectMapping {
     std::uint64_t phys;
     int memoryType;
     std::shared_ptr<PhysicalBacking> backing;
+    bool privatePages = false;
 };
 
 std::map<std::uintptr_t, DirectMapping> g_directMappings;
+
+#ifdef _WIN32
+std::uint64_t BackingOffset(const DirectMapping& mapping) {
+    return g_physPages.at(mapping.phys).offset;
+}
+#endif
 
 void EraseMappings(std::uintptr_t start, std::uintptr_t end) {
     auto it = g_directMappings.lower_bound(start);
@@ -306,11 +370,53 @@ void EraseMappings(std::uintptr_t start, std::uintptr_t end) {
     while (it != g_directMappings.end() && it->first < end) {
         const auto base = it->first;
         const auto mapping = it->second;
+#ifdef _WIN32
+        if (mapping.privatePages) {
+            const auto low = std::max(base, start);
+            const auto high = std::min(mapping.end, end);
+            const auto page = g_physPages.find(mapping.phys);
+            if (page != g_physPages.end() && page->second.backing == mapping.backing) mapping.backing->SavePrivate(low, high - low, page->second.offset + (low - base));
+        }
+#endif
         it = g_directMappings.erase(it);
-        if (base < start) g_directMappings.emplace(base, DirectMapping{start, mapping.phys, mapping.memoryType, mapping.backing});
-        if (mapping.end > end) it = g_directMappings.emplace(end, DirectMapping{mapping.end, mapping.phys + end - base, mapping.memoryType, mapping.backing}).first;
+        if (base < start) g_directMappings.emplace(base, DirectMapping{start, mapping.phys, mapping.memoryType, mapping.backing, mapping.privatePages});
+        if (mapping.end > end) it = g_directMappings.emplace(end, DirectMapping{mapping.end, mapping.phys + end - base, mapping.memoryType, mapping.backing, mapping.privatePages}).first;
     }
 }
+
+#ifdef _WIN32
+bool ShareMappedPages(std::uint64_t phys, std::size_t bytes) {
+    bool mapped = false;
+    for (auto& [base, mapping] : g_directMappings) {
+        const auto mappingLast = mapping.phys + (mapping.end - base);
+        if (mapping.phys >= phys + bytes || mappingLast <= phys) continue;
+        mapped = true;
+        if (!mapping.privatePages) continue;
+        const auto length = static_cast<std::size_t>(mapping.end - base);
+        std::vector<std::tuple<std::uintptr_t, std::size_t, DWORD>> regions;
+        for (auto cursor = base; cursor < mapping.end;) {
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "query private direct memory");
+            const auto stop = std::min(mapping.end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            regions.emplace_back(cursor, static_cast<std::size_t>(stop - cursor), memory.Protect);
+            cursor = stop;
+        }
+        const auto offset = BackingOffset(mapping);
+        GuestArena::GuestArenaBeginRetarget_nid_postfix(base, length);
+        try {
+            mapping.backing->SavePrivate(base, length, offset);
+            for (const auto& [start, size, protection] : regions) mapping.backing->MapView(start, size, offset + (start - base), protection);
+        } catch (...) {
+            GuestArena::GuestArenaEndRetarget_nid_postfix(base, length);
+            throw;
+        }
+        GuestArena::GuestArenaEndRetarget_nid_postfix(base, length);
+        mapping.privatePages = false;
+        Trace("shared %p+0x%zx phys=0x%llx (mapped again)", reinterpret_cast<void*>(base), length, static_cast<unsigned long long>(mapping.phys));
+    }
+    return mapped;
+}
+#endif
 
 void ErasePhysMappings(std::uint64_t first, std::uint64_t last) {
     for (auto it = g_directMappings.begin(); it != g_directMappings.end();) {
@@ -324,11 +430,11 @@ void ErasePhysMappings(std::uint64_t first, std::uint64_t last) {
         it = g_directMappings.erase(it);
         if (mapping.phys < first) {
             const auto keep = first - mapping.phys;
-            g_directMappings.emplace(base, DirectMapping{base + keep, mapping.phys, mapping.memoryType, mapping.backing});
+            g_directMappings.emplace(base, DirectMapping{base + keep, mapping.phys, mapping.memoryType, mapping.backing, mapping.privatePages});
         }
         if (mappingLast > last) {
             const auto skip = last - mapping.phys;
-            it = g_directMappings.emplace(base + skip, DirectMapping{mapping.end, last, mapping.memoryType, mapping.backing}).first;
+            it = g_directMappings.emplace(base + skip, DirectMapping{mapping.end, last, mapping.memoryType, mapping.backing, mapping.privatePages}).first;
         }
     }
 }
@@ -400,8 +506,15 @@ void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int
             if (next.backing != page.backing || next.offset != page.offset + bytes) break;
             bytes += PS5_PAGE_SIZE;
         }
+#ifdef _WIN32
+        const bool privatePages = !ShareMappedPages(phys + offset, bytes);
+        if (privatePages) page.backing->MapPrivate(address + offset, bytes, page.offset, nativeProt);
+        else page.backing->Map(address + offset, bytes, page.offset, nativeProt);
+#else
+        constexpr bool privatePages = false;
         page.backing->Map(address + offset, bytes, page.offset, nativeProt);
-        g_directMappings.emplace(address + offset, DirectMapping{address + offset + bytes, phys + offset, page.backing->MemoryType(), page.backing});
+#endif
+        g_directMappings.emplace(address + offset, DirectMapping{address + offset + bytes, phys + offset, page.backing->MemoryType(), page.backing, privatePages});
         offset += bytes;
     }
 #if defined(__linux__)
@@ -746,12 +859,12 @@ int DoMtypeprotect(const void* addr, size_t len, int type, int prot) {
             const auto base = it->first;
             const auto mapping = it->second;
             it = g_directMappings.erase(it);
-            if (base < first) g_directMappings.emplace(base, DirectMapping{first, mapping.phys, mapping.memoryType, mapping.backing});
+            if (base < first) g_directMappings.emplace(base, DirectMapping{first, mapping.phys, mapping.memoryType, mapping.backing, mapping.privatePages});
             const auto low = std::max(base, first);
             const auto high = std::min(mapping.end, end);
-            g_directMappings.emplace(low, DirectMapping{high, mapping.phys + low - base, type, mapping.backing});
+            g_directMappings.emplace(low, DirectMapping{high, mapping.phys + low - base, type, mapping.backing, mapping.privatePages});
             physical.emplace_back(mapping.phys + low - base, high - low);
-            if (mapping.end > end) it = g_directMappings.emplace(end, DirectMapping{mapping.end, mapping.phys + end - base, mapping.memoryType, mapping.backing}).first;
+            if (mapping.end > end) it = g_directMappings.emplace(end, DirectMapping{mapping.end, mapping.phys + end - base, mapping.memoryType, mapping.backing, mapping.privatePages}).first;
         }
     }
     for (const auto& [phys, bytes] : physical) DirectMemoryRetype(static_cast<int64_t>(phys), bytes, type);
