@@ -1030,8 +1030,9 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         const auto commands = snapshotRecorder.Commands();
         RecordMemoryBarrier(snapshotContext, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         const auto copy = snapshotContext.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
-        VkBufferCopy region{0, 0, elementBytes};
+        VkBufferCopy region{first->snapshots[0].offset, 0, elementBytes};
         copy(commands, first->snapshots[0].buffer->Handle(), downloaded->Handle(), 1, &region);
+        region.srcOffset = second->snapshots[0].offset;
         region.dstOffset = elementBytes;
         copy(commands, second->snapshots[0].buffer->Handle(), downloaded->Handle(), 1, &region);
         RecordMemoryBarrier(snapshotContext, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
@@ -1129,9 +1130,9 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
         Require(push[0] == std::byte{0} && adjustment == offset % alignment, "the inner view's shader offset is not its distance from the binding");
         const auto bindings = resources.PrepareDrawBindings(snapshotRecorder);
         Require(bindings != nullptr && bindings->snapshots.size() == 2, "read-only draw inputs were not snapshotted");
-        const auto outerContents = bindings->snapshots[0].buffer->Bytes();
+        const auto outerContents = bindings->snapshots[0].Bytes();
         Require(outerContents.size() >= outerBytes && std::memcmp(outerContents.data(), guest + outer, outerBytes) == 0, "an aligned draw snapshot misses its view's bytes");
-        const auto contents = bindings->snapshots[1].buffer->Bytes();
+        const auto contents = bindings->snapshots[1].Bytes();
         Require(contents.size() >= adjustment + elementBytes, "a draw snapshot ends before the bytes the shader reads");
         Require(std::memcmp(contents.data() + adjustment, guest + offset, elementBytes) == 0, "the shader's offset into a draw snapshot misses the view's bytes");
         snapshotRecorder.Sync();
@@ -1199,12 +1200,20 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         const auto snapshot = [&](std::byte expected) {
             const auto bindings = resources.PrepareDrawBindings(snapshotRecorder);
             Require(bindings != nullptr && bindings->snapshots.size() == 1, "read-only draw input was not snapshotted");
-            const auto buffer = bindings->snapshots[0].buffer;
-            const auto contents = buffer->Bytes();
+            const auto& taken = bindings->snapshots[0];
+            const auto contents = taken.Bytes();
             Require(contents.size() == elementBytes && std::all_of(contents.begin(), contents.end(), [&](std::byte value) { return value == expected; }), "a draw snapshot does not hold the guest bytes of its draw");
-            return buffer;
+            return std::pair{taken.buffer, taken.offset};
         };
         const auto first = snapshot(std::byte{0x11});
+        const char* freshText = std::getenv("APS5_SNAPSHOT_FRESH_COPY");
+        const bool fresh = (freshText == nullptr || std::strcmp(freshText, "0") != 0) && Recorder::SnapshotRingEnabled();
+        if (fresh) {
+            std::memset(reinterpret_cast<void*>(element), 0x22, elementBytes);
+            static_cast<void>(snapshot(std::byte{0x22}));
+            snapshotRecorder.Sync();
+        }
+        if (!fresh) {
         Require(snapshot(std::byte{0x11}) == first, "an unchanged draw input was copied again");
         std::memset(reinterpret_cast<void*>(element), 0x22, elementBytes);
         const auto afterCpu = snapshot(std::byte{0x22});
@@ -1219,8 +1228,38 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         }
         Require(snapshot(std::byte{0x33}) != afterStore, "a draw snapshot outlived a registry mutation");
         snapshotRecorder.Sync();
+        }
     }
     recorder.Activate();
+}
+
+void snapshotRingTests(const Device& device) {
+    if (!Recorder::SnapshotRingEnabled()) return;
+    const auto& context = device.GetContext();
+    Recorder ring(context);
+    const auto alignment = std::max<VkDeviceSize>(16, context.limits.minStorageBufferOffsetAlignment);
+    auto first = ring.AllocateDrawSnapshot(100);
+    Require(first.buffer != nullptr && first.offset == 0, "snapshot ring: the first slice starts an arena");
+    const auto arenaBytes = first.buffer->Bytes().size();
+    auto second = ring.AllocateDrawSnapshot(100);
+    Require(second.buffer == first.buffer && second.offset >= first.offset + 100 && second.offset % alignment == 0, "snapshot ring: a second slice follows the first, aligned, in the same arena");
+    Require(ring.AllocateDrawSnapshot(arenaBytes / 4 + 1).buffer == nullptr, "snapshot ring: a slice over a quarter arena is refused");
+    auto last = second;
+    std::size_t slices = 2;
+    while (last.buffer == first.buffer) {
+        last = ring.AllocateDrawSnapshot(arenaBytes / 4);
+        Require(last.buffer != nullptr, "snapshot ring: a slice fits after the arena filled");
+        Require(last.buffer != first.buffer || last.offset + arenaBytes / 4 <= arenaBytes, "snapshot ring: a slice runs past its arena");
+        ++slices;
+        Require(slices < 16, "snapshot ring: the arena never filled");
+    }
+    Require(last.offset == 0, "snapshot ring: a full arena moves the next slice to a new one");
+    const std::weak_ptr<Buffer> filled = first.buffer;
+    first.buffer.reset();
+    Require(!filled.expired(), "snapshot ring: an arena went while a slice of it was held");
+    second.buffer.reset();
+    Require(filled.expired(), "snapshot ring: a filled arena outlived its slices");
+    std::cout << "snapshot ring: " << arenaBytes / 1024 << " KiB arenas, " << slices << " slices to fill one\n";
 }
 
 void drawSnapshotEvictionTests(const Device& device) {
@@ -1259,6 +1298,73 @@ void drawSnapshotEvictionTests(const Device& device) {
     std::memset(block, 0x5a, 16);
     CollectWrites(address, 16);
     Require(cache.ReusableDrawSnapshot(address, 16) == nullptr && cache.ReusableDrawSnapshot(address, 16) == nullptr, "a snapshot outlived a CPU store");
+}
+
+void drawInputMemoTests(const Device& device, Recorder& recorder) {
+    if (std::getenv("APS5_DRAW_INPUT_MEMO") == nullptr) return;
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    constexpr std::size_t bytes = 65536;
+    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: draw input memo not tested\n";
+        return;
+    }
+    const auto& context = device.GetContext();
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 5;
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    constexpr std::size_t size = 256;
+    std::exception_ptr failure;
+    GpuMutex().unlock();
+    std::thread worker([&] {
+        try {
+            std::lock_guard gpu(GpuMutex());
+            BumpCollectEpoch();
+            const auto hits = [] { return DrawInputMemoCounters().hits; };
+            const auto equalsGuest = [&](const DrawInputCopy& copy) { return std::memcmp(copy.buffer->Bytes().data(), block, size) == 0; };
+            const auto settle = [&](std::uint32_t derived) {
+                const auto copy = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
+                KeepDrawInput(&recorder, address, copy, Use::Index32, derived);
+                const auto reused = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
+                Require(reused.reused, "draw input memo: the kept copy was not reused");
+                return reused;
+            };
+            const auto first = settle(7);
+            auto before = hits();
+            const auto repeat = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
+            Require(hits() == before + 1 && repeat.reused && repeat.buffer == first.buffer && repeat.derived == 7, "draw input memo: a repeat within the epoch was not answered by the memo");
+            static_cast<void>(MarkWritten(address + 16, 4));
+            before = hits();
+            Require(!CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused && hits() == before, "draw input memo: a stamp over the range was not seen");
+            static_cast<void>(settle(8));
+            before = hits();
+            Require(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).derived == 8 && hits() == before + 1, "draw input memo: not taken again after the stamp");
+            words[1] = 0xfeed;
+            BumpCollectEpoch();
+            before = hits();
+            const auto stored = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
+            Require(!stored.reused && equalsGuest(stored) && hits() == before, "draw input memo: a CPU store was hidden after a new epoch");
+            KeepDrawInput(&recorder, address, stored, Use::Index32, 9);
+            static_cast<void>(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32));
+            StorageTexture::BumpPendingSerial();
+            before = hits();
+            Require(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused && hits() == before, "draw input memo: a pending registry change was not seen");
+            Require(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused && hits() == before + 1, "draw input memo: not taken again after the registry change");
+            recorder.NotePendingWrite(address, 16);
+            before = hits();
+            static_cast<void>(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32));
+            Require(hits() == before, "draw input memo: a recorded pending write was not seen");
+            recorder.Sync();
+            std::cout << "draw input memo: " << DrawInputMemoCounters().hits << " copies answered, " << DrawInputMemoCounters().misses << " full\n";
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    worker.join();
+    GpuMutex().lock();
+    ReleaseWatched(block, bytes);
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
@@ -1525,6 +1631,75 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(words[5 * unit] == 0x11 && words[5 * unit + unit - 1] == 0x11, "the retire published a unit whose memory is no longer registered");
     if (budgetMiB >= 16) Require(words[127 * unit] == 0x11 && words[128 * unit] == 0x11, "the retire published the second slab's units outside the registration");
     else Require(words[128 * unit] == 0x77, "the eviction before the retire did not publish unit 128");
+}
+
+void targetProofTests(const Device& device) {
+    if (const char* memo = std::getenv("APS5_TARGET_PROOF_MEMO"); memo != nullptr && std::strcmp(memo, "0") == 0) return;
+    using namespace AgcDriver::GuestMemory;
+    const auto& base = device.GetContext();
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    void* block = WriteWatched() ? AllocateWatched(surfaceBytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "no write watching: target proof memo not tested\n";
+        return;
+    }
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    std::memset(block, 0x55, surfaceBytes);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    std::exception_ptr failure;
+    GpuMutex().unlock();
+    std::thread worker([&] {
+        try {
+            std::lock_guard gpu(GpuMutex());
+            BumpCollectEpoch();
+            auto image = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+            static_cast<void>(image->Refresh());
+            Require(image->Refresh(), "target proof: an unchanged image is not current");
+            const auto hits = [] { return StorageTexture::TargetProofCounts().first; };
+            auto before = hits();
+            Require(image->Refresh() && hits() == before + 1, "target proof: a repeat within the epoch was not answered by the proof");
+            static_cast<void>(MarkWritten(address, 4));
+            before = hits();
+            Require(image->Refresh() && hits() == before, "target proof: a stamp over the surface was not seen");
+            Require(image->Refresh() && hits() == before + 1, "target proof: the proof was not taken again");
+            std::memset(block, 0x66, 64);
+            before = hits();
+            static_cast<void>(image->Refresh());
+            BumpCollectEpoch();
+            const auto afterHits = hits();
+            Require(!image->Refresh() && hits() == afterHits, "target proof: a CPU store was hidden by the proof after a new epoch");
+            Require(image->Refresh(), "target proof: the uploaded image is not current");
+            Require(image->Refresh() && hits() == afterHits + 1, "target proof: no proof after the upload");
+            auto other = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+            other->MarkDirty();
+            const auto beforeOther = hits();
+            static_cast<void>(image->Refresh());
+            Require(hits() == beforeOther, "target proof: a pending registry change was not seen");
+            other->Flush();
+            std::cout << "target proof memo: " << StorageTexture::TargetProofCounts().first << " refreshes answered, " << StorageTexture::TargetProofCounts().second << " full\n";
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    worker.join();
+    GpuMutex().lock();
+    ReleaseWatched(block, surfaceBytes);
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
@@ -2889,8 +3064,11 @@ int main(int argc, char** argv) {
         resourceReadTests(device, recorder);
         misalignedSnapshotTests(device, recorder);
         drawSnapshotReuseTests(device, recorder);
+        snapshotRingTests(device);
+        targetProofTests(device);
         drawSnapshotEvictionTests(device);
         drawInputReuseTests(device, recorder);
+        drawInputMemoTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         storeRunTests(device, recorder);
         remappedImportTests(device);

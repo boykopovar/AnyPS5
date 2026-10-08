@@ -161,6 +161,7 @@ public:
     // as it was, and one that finds it unchanged since an earlier read knows the registry is what
     // it was then.
     static std::uint64_t PendingSerial();
+    static std::pair<std::uint64_t, std::uint64_t> TargetProofCounts();
     // One registry scan for several ranges (the fast Revalidate): each query's `overlaps` receives
     // whether an image other than `except` has results pending, or is being stored right now, over
     // [begin, end), and `found` the image FindPending would return for the range (null: none);
@@ -435,6 +436,15 @@ private:
     };
     mutable std::array<ForeignKeyProof, 4> foreignKeyProofs{};
     mutable std::uint32_t nextForeignKeyProof = 0;
+    struct RefreshProof {
+        std::uint64_t epoch = 0;
+        std::uint64_t unwatched = 0;
+        std::uint64_t pendingSerial = 0;
+        std::uint64_t registryGeneration = 0;
+        std::uint64_t generation = 0;
+    };
+    RefreshProof refreshProof;
+    bool refreshProved() const;
     // Write generation `original` is known current at (the oldest of layerGeneration).
     std::uint64_t generation = 0;
     std::uint32_t trackedLayers = 1;

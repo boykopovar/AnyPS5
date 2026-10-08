@@ -1313,6 +1313,10 @@ std::uint64_t Recorder::ThreadHookWaits() {
     return hookRealWaits;
 }
 
+bool Recorder::QueuedLabelsOverlap(std::uint64_t address, std::size_t bytes) {
+    return !QueuedLabelRanges().empty() && QueuedLabelOverlaps(address, bytes);
+}
+
 bool Recorder::SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes) {
     return AgcDriver::Graphics::SnapshotOverlaps(address, bytes);
 }
@@ -2219,9 +2223,10 @@ void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterat
     drawSnapshots.erase(entry);
 }
 
-std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived) {
+std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, VkDeviceSize* offset) {
     auto found = use == SnapshotUse::Vertex ? drawSnapshots.lower_bound({address, use, bytes}) : drawSnapshots.find({address, use, bytes});
     if (found == drawSnapshots.end() || std::get<0>(found->first) != address || std::get<1>(found->first) != use) return {};
+    if (offset == nullptr && found->second.offset != 0) return {};
     if (found->second.registryGeneration != GuestAllocations::GuestAllocationsGeneration_nid_postfix() || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
         eraseDrawSnapshot(found);
         return {};
@@ -2229,10 +2234,11 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
     auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
     recency.splice(recency.end(), recency, found->second.recent);
     if (derived != nullptr) *derived = found->second.derived;
+    if (offset != nullptr) *offset = found->second.offset;
     return found->second.buffer;
 }
 
-void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived) {
+void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived, VkDeviceSize offset) {
     const bool storage = use == SnapshotUse::Storage;
     const auto budget = storage ? DrawSnapshotBudget : DrawInputBudget;
     const auto maxEntries = storage ? DrawSnapshotEntries : DrawInputEntries;
@@ -2247,12 +2253,58 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
     const DrawSnapshotKey key{address, use, bytes};
     pool.recency.push_back(key);
     try {
-        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived});
+        drawSnapshots.emplace(key, DrawSnapshot{generation, registryGeneration, std::prev(pool.recency.end()), std::move(buffer), derived, offset});
     } catch (...) {
         pool.recency.pop_back();
         throw;
     }
     pool.bytes += bytes;
+}
+
+namespace {
+
+std::size_t SnapshotArenaBytes() {
+    static const std::size_t bytes = [] {
+        const char* value = std::getenv("APS5_SNAPSHOT_RING_KIB");
+        const auto kib = value != nullptr ? std::strtoull(value, nullptr, 10) : 0ull;
+        return static_cast<std::size_t>(kib != 0 ? kib : 1024ull) << 10u;
+    }();
+    return bytes;
+}
+
+std::atomic<std::size_t>& SnapshotArenasHeld() {
+    static std::atomic<std::size_t> held{0};
+    return held;
+}
+
+constexpr std::size_t SnapshotArenaCap = std::size_t{256} << 20u;
+
+}
+
+bool Recorder::SnapshotRingEnabled() {
+    static const bool enabled = [] { const char* text = std::getenv("APS5_SNAPSHOT_RING"); return text == nullptr || std::strcmp(text, "0") != 0; }();
+    return enabled;
+}
+
+Recorder::SnapshotSlice Recorder::AllocateDrawSnapshot(std::size_t bytes) {
+    const auto arenaBytes = SnapshotArenaBytes();
+    if (bytes == 0 || bytes > arenaBytes / 4) return {};
+    const auto alignment = std::max<std::size_t>(16, static_cast<std::size_t>(context.limits.minStorageBufferOffsetAlignment));
+    auto cursor = (snapshotArenaCursor + alignment - 1) / alignment * alignment;
+    if (snapshotArena == nullptr || cursor + bytes > arenaBytes) {
+        snapshotArena.reset();
+        snapshotArenaCursor = 0;
+        if (SnapshotArenasHeld().load(std::memory_order_relaxed) + arenaBytes > SnapshotArenaCap) return {};
+        auto* arena = new Buffer(context, arenaBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        SnapshotArenasHeld().fetch_add(arenaBytes, std::memory_order_relaxed);
+        snapshotArena = std::shared_ptr<Buffer>(arena, [arenaBytes](Buffer* gone) {
+            delete gone;
+            SnapshotArenasHeld().fetch_sub(arenaBytes, std::memory_order_relaxed);
+        });
+        cursor = 0;
+    }
+    snapshotArenaCursor = cursor + bytes;
+    return {snapshotArena, static_cast<VkDeviceSize>(cursor)};
 }
 
 void Recorder::OnComplete(std::function<void()> action) {

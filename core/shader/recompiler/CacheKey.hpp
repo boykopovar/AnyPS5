@@ -20,7 +20,7 @@ public:
         static const bool hashedCode = std::getenv("APS5_NO_CODE_HASH_KEY") == nullptr;
         if (hashedCode) {
             append(key, request.shader.code.size());
-            append(key, HashCode(request.shader.code));
+            append(key, request.shader.codeHash != 0 ? request.shader.codeHash : HashCode(request.shader.code));
         } else {
             append(key, request.shader.code);
         }

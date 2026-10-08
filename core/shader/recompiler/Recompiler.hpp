@@ -35,6 +35,7 @@ struct ShaderBinary {
     std::span<const std::uint32_t> code;
     std::uint64_t headerAddress;
     std::span<const std::byte> header;
+    std::uint64_t codeHash = 0;
 };
 
 struct ShaderComputeStageInfo {

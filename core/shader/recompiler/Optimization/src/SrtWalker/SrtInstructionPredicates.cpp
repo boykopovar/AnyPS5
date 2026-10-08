@@ -3,11 +3,13 @@
 namespace ShaderRecompiler::Detail {
 
 bool IsRawRead(const IrResourcePlan& program, const IrValue& inst) {
-    const auto op = inst.Opcode();
+    return IsRawRead(program, inst.Opcode(), inst.Flags<MemoryFlags>().index);
+}
+
+bool IsRawRead(const IrResourcePlan& program, IrOpcode op, std::uint32_t index) {
     if (op != IrOpcode::LoadAddressU32 && op != IrOpcode::ReadConstBuffer) {
         return false;
     }
-    const auto index = inst.Flags<MemoryFlags>().index;
     if (index >= program.memoryInfo.size()) {
         return false;
     }

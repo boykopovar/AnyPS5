@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
@@ -42,7 +43,8 @@ std::uint32_t GuestFormatFor(VkFormat format, std::uint32_t elementBytes) {
 
 // The color buffer as a single-mip 2D surface descriptor (tile mode SW_64KB_R_X).
 GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
-    Require(color.tileMode != ColorTileMode::Linear, "linear color targets are not resident");
+    static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR_TARGETS") == nullptr;
+    Require(color.tileMode != ColorTileMode::Linear || residentLinear, "linear color targets are not resident (APS5_NO_RESIDENT_LINEAR_TARGETS)");
     const bool chain = color.mipCount > 1;
     GuestTextureResource surface{};
     surface.baseAddress = chain ? color.surfaceAddress : color.address;
@@ -734,16 +736,79 @@ void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResou
 
 }
 
+namespace {
+
+bool drawInputMemo() {
+    static const bool enabled = std::getenv("APS5_DRAW_INPUT_MEMO") != nullptr;
+    return enabled;
+}
+
+struct DrawInputMemoEntry {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    Recorder::SnapshotUse use = Recorder::SnapshotUse::Vertex;
+    std::uint64_t epoch = 0;
+    std::uint64_t unwatched = 0;
+    std::uint64_t pendingSerial = 0;
+    std::uint64_t registryGeneration = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t derived = 0;
+    const Recorder* recorder = nullptr;
+    std::weak_ptr<Buffer> buffer;
+};
+
+constexpr std::size_t DrawInputMemoSlots = 64;
+
+std::array<DrawInputMemoEntry, DrawInputMemoSlots>& DrawInputMemoTable() {
+    thread_local std::array<DrawInputMemoEntry, DrawInputMemoSlots> table;
+    return table;
+}
+
+DrawInputMemoEntry& drawInputMemoSlot(std::uint64_t address, std::size_t bytes, Recorder::SnapshotUse use) {
+    const auto hash = (address >> 4u) ^ (static_cast<std::uint64_t>(bytes) * 0x9e3779b97f4a7c15ull) ^ static_cast<std::uint64_t>(use);
+    return DrawInputMemoTable()[static_cast<std::size_t>((hash ^ (hash >> 29u)) % DrawInputMemoSlots)];
+}
+
+std::atomic<std::uint64_t> drawInputMemoHits{0};
+std::atomic<std::uint64_t> drawInputMemoMisses{0};
+
+}
+
+DrawInputMemoCounts DrawInputMemoCounters() {
+    return {drawInputMemoHits.load(std::memory_order_relaxed), drawInputMemoMisses.load(std::memory_order_relaxed)};
+}
+
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     DrawInputCopy copy;
     if (recorder != nullptr && bytes != 0) {
+        const bool memo = drawInputMemo();
+        const auto epoch = memo ? GuestMemory::ThreadCollectEpoch() : 0;
+        if (epoch != 0) {
+            auto& slot = drawInputMemoSlot(address, bytes, use);
+            if (slot.epoch == epoch && slot.address == address && slot.bytes == bytes && slot.use == use && slot.recorder == recorder && slot.unwatched == GuestMemory::UnwatchSerial() && slot.pendingSerial == StorageTexture::PendingSerial() && slot.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix() && GuestMemory::UnchangedSince(address, bytes, slot.generation) && !recorder->PendingWriteOverlaps(address, bytes) && !Recorder::QueuedLabelsOverlap(address, bytes)) {
+                if (auto buffer = slot.buffer.lock()) {
+                    drawInputMemoHits.fetch_add(1, std::memory_order_relaxed);
+                    copy.buffer = std::move(buffer);
+                    copy.reused = true;
+                    copy.derived = slot.derived;
+                    copy.generation = slot.generation;
+                    copy.registryGeneration = slot.registryGeneration;
+                    return copy;
+                }
+            }
+            drawInputMemoMisses.fetch_add(1, std::memory_order_relaxed);
+        }
         GuestMemory::FlushGpuWrites(address, bytes);
+        const auto pendingSerial = epoch != 0 ? StorageTexture::PendingSerial() : 0;
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived);
         if (copy.buffer != nullptr) {
             copy.reused = true;
+            if (epoch != 0 && GuestMemory::ThreadCollectEpoch() == epoch && StorageTexture::PendingSerial() == pendingSerial) {
+                drawInputMemoSlot(address, bytes, use) = {address, bytes, use, epoch, GuestMemory::UnwatchSerial(), pendingSerial, copy.registryGeneration, copy.generation, copy.derived, recorder, copy.buffer};
+            }
             return copy;
         }
     }
@@ -1276,15 +1341,15 @@ void captureInputs(const Context& context, Recorder& recorder, VkCommandBuffer c
     };
     if (bindings != nullptr) {
         for (const auto& snapshot : bindings->snapshots) {
-            const auto bytes = snapshot.buffer->Bytes();
-            addSample(snapshot.address, bytes.size(), snapshot.buffer->Handle(), 0, bytes.data());
+            const auto bytes = snapshot.Bytes();
+            addSample(snapshot.address, bytes.size(), snapshot.buffer->Handle(), snapshot.offset, bytes.data());
         }
     }
     for (const auto& [begin, end] : resources.InPlaceReads()) {
         Require(end >= begin, "invalid capture input range");
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (bytes == 0 || bytes > 512) continue;
-        if (bindings != nullptr && std::any_of(bindings->snapshots.begin(), bindings->snapshots.end(), [&](const auto& snapshot) { return snapshot.address < end && begin < snapshot.address + snapshot.buffer->Bytes().size(); })) continue;
+        if (bindings != nullptr && std::any_of(bindings->snapshots.begin(), bindings->snapshots.end(), [&](const auto& snapshot) { return snapshot.address < end && begin < snapshot.address + snapshot.bytes; })) continue;
         if (resources.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes)) {
             CaptureTrace::Log("input-skip draw=%llu batch=%llu address=%llx bytes=%zu reason=gpu-writer", draw, batch, static_cast<unsigned long long>(begin), bytes);
             continue;
@@ -1552,7 +1617,9 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         timer.phase(PhaseSetup);
         // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
         static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
-        if ((binding.gpuTiling || (color.tileMode != ColorTileMode::Linear && context.detiler != nullptr)) && residentTargets) {
+        static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR_TARGETS") == nullptr;
+        const bool linearResident = residentLinear && color.tileMode == ColorTileMode::Linear && RegisteredReadableCovers(color.address, static_cast<std::size_t>(color.bytes));
+        if ((binding.gpuTiling || ((color.tileMode != ColorTileMode::Linear || linearResident) && context.detiler != nullptr)) && residentTargets) {
             // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
             // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
             // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
@@ -1573,6 +1640,13 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             continue;
         }
         materializeCmaskClear(context, color, nullptr);
+        static const bool traceSyncTargets = std::getenv("APS5_TRACE_SYNC_TARGETS") != nullptr;
+        if (traceSyncTargets) {
+            static std::mutex traceMutex;
+            static std::set<std::uint64_t> traced;
+            std::lock_guard lock(traceMutex);
+            if (traced.insert(color.address).second) std::fprintf(stderr, "[sync-target] 0x%llx %ux%u tile %d format %d element %u bytes 0x%llx gpuTiling %d detiler %d\n", static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<int>(color.tileMode), static_cast<int>(color.format), color.elementBytes, static_cast<unsigned long long>(color.bytes), binding.gpuTiling ? 1 : 0, context.detiler != nullptr ? 1 : 0);
+        }
         Require(!color.mipTail, "rendering into a packed mip tail needs the resident image of its surface");
         Require(color.depth == 1, "rendering into a 3D color target needs the resident image of its surface");
         if (binding.gpuTiling) {
