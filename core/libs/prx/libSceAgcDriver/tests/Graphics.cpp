@@ -9,12 +9,14 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "CacheKey.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
 #include <iostream>
 #include <map>
@@ -25,6 +27,8 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
+
+extern "C" std::terminate_handler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(std::terminate_handler handler);
 
 namespace {
 
@@ -974,6 +978,16 @@ struct MockVulkan {
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
     std::vector<VkDescriptorPoolSize> poolSizes;
     std::uint32_t poolMaxSets = 0;
+    struct DescriptorPool {
+        VkDescriptorPoolCreateFlags flags;
+        std::uint32_t maxSets;
+        std::uint32_t allocated = 0;
+        std::uint32_t attempts = 0;
+        std::uint32_t resets = 0;
+    };
+    std::map<VkDescriptorPool, DescriptorPool> descriptorPools;
+    std::uint32_t descriptorPoolLimit = 1000000;
+    VkResult descriptorResetResult = VK_SUCCESS;
     std::vector<MockDescriptorWrite> writes;
     std::uint32_t boundSets = 0;
     std::uint32_t boundFirst = 0;
@@ -1056,17 +1070,33 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateDescriptorPool(VkDevice, const VkDescri
     *pool = makeHandle<VkDescriptorPool>();
     mock.poolSizes.assign(info->pPoolSizes, info->pPoolSizes + info->poolSizeCount);
     mock.poolMaxSets = info->maxSets;
+    mock.descriptorPools.emplace(*pool, MockVulkan::DescriptorPool{info->flags, std::min(info->maxSets, mock.descriptorPoolLimit)});
     ++mock.live;
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL mockDestroyDescriptorPool(VkDevice, VkDescriptorPool, const VkAllocationCallbacks*) {
+VKAPI_ATTR void VKAPI_CALL mockDestroyDescriptorPool(VkDevice, VkDescriptorPool pool, const VkAllocationCallbacks*) {
+    mock.descriptorPools.erase(pool);
     --mock.live;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateDescriptorSets(VkDevice, const VkDescriptorSetAllocateInfo* info, VkDescriptorSet* sets) {
     Require(info->descriptorSetCount == 1, "exactly one descriptor set must be allocated");
+    auto& pool = mock.descriptorPools.at(info->descriptorPool);
+    ++pool.attempts;
+    if (pool.allocated == pool.maxSets) return VK_ERROR_OUT_OF_POOL_MEMORY;
+    ++pool.allocated;
     sets[0] = makeHandle<VkDescriptorSet>();
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockResetDescriptorPool(VkDevice, VkDescriptorPool handle, VkDescriptorPoolResetFlags) {
+    auto& pool = mock.descriptorPools.at(handle);
+    const auto result = mock.descriptorResetResult;
+    mock.descriptorResetResult = VK_SUCCESS;
+    if (result != VK_SUCCESS) return result;
+    pool.allocated = 0;
+    ++pool.resets;
     return VK_SUCCESS;
 }
 
@@ -1167,6 +1197,7 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkCreateDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(mockCreateDescriptorPool)},
         {"vkDestroyDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyDescriptorPool)},
         {"vkAllocateDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(mockAllocateDescriptorSets)},
+        {"vkResetDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(mockResetDescriptorPool)},
         {"vkUpdateDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(mockUpdateDescriptorSets)},
         {"vkCmdBindDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBindDescriptorSets)},
         {"vkCreatePipelineLayout", reinterpret_cast<PFN_vkVoidFunction>(mockCreatePipelineLayout)},
@@ -1272,6 +1303,60 @@ void expectSingleAccepted(const ShaderRecompiler::DescriptorBinding& binding, st
     const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
     { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }
     Require(mock.live == 0, std::string(what) + " leaked Vulkan objects");
+}
+
+void descriptorPoolTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    mock.descriptorPoolLimit = 2;
+    {
+        DescriptorCache cache(mockContext());
+        const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        const std::array<std::uint32_t, 4> key{binding.binding, binding.descriptorType, binding.descriptorCount, binding.stageFlags};
+        const auto layout = cache.Layout(key, std::span(&binding, 1));
+        const VkDescriptorPoolSize size{binding.descriptorType, binding.descriptorCount};
+        const auto allocate = [&] { return cache.Allocate(layout, std::span(&size, 1)); };
+        const auto first = allocate();
+        const auto second = allocate();
+        Require(first.pool == second.pool, "descriptor allocations did not share a pool");
+        Require(mock.descriptorPools.at(first.pool).flags == 0, "descriptor pools use the individually freed allocation path");
+        const auto third = allocate();
+        const auto fourth = allocate();
+        const auto fifth = allocate();
+        Require(third.pool == fourth.pool && third.pool != first.pool && fifth.pool != third.pool, "exhausted descriptor pools did not advance the chain");
+        Require(mock.descriptorPools.at(first.pool).attempts == 3, "an exhausted descriptor pool was retried before reset");
+        cache.Free(first);
+        Require(mock.descriptorPools.at(first.pool).resets == 0, "a descriptor pool reset while another set was live");
+        cache.Free(second);
+        Require(mock.descriptorPools.at(first.pool).resets == 1, "an empty descriptor pool was not reset");
+        const auto sixth = allocate();
+        const auto seventh = allocate();
+        Require(sixth.pool == fifth.pool && seventh.pool == first.pool && cache.Counters().pools == 3, "an empty descriptor pool was not recycled");
+        cache.Free(third);
+        cache.Free(fourth);
+        cache.Free(fifth);
+        cache.Free(sixth);
+        cache.Free(seventh);
+        Require(mock.descriptorPools.at(first.pool).resets == 2 && mock.descriptorPools.at(third.pool).resets == 1 && mock.descriptorPools.at(fifth.pool).resets == 1, "descriptor pool ownership was lost after recycling");
+    }
+    Require(mock.live == 0 && mock.descriptorPools.empty(), "descriptor pool cache leaked Vulkan objects");
+}
+
+void descriptorPoolResetFailureTest() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    DescriptorCache cache(mockContext());
+    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const std::array<std::uint32_t, 4> key{binding.binding, binding.descriptorType, binding.descriptorCount, binding.stageFlags};
+    const auto layout = cache.Layout(key, std::span(&binding, 1));
+    const VkDescriptorPoolSize size{binding.descriptorType, binding.descriptorCount};
+    const auto allocation = cache.Allocate(layout, std::span(&size, 1));
+    mock.descriptorResetResult = VK_ERROR_DEVICE_LOST;
+    const auto previous = _ZSt13set_terminatePFvvE_nid_postfix([] {
+        std::_Exit(mock.descriptorResetResult == VK_SUCCESS ? 0 : 1);
+    });
+    cache.Free(allocation);
+    _ZSt13set_terminatePFvvE_nid_postfix(previous);
 }
 
 void pushConstantTests() {
@@ -2220,13 +2305,18 @@ void vertexCopyTests() {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
 #else
     setenv("APS5_PIN_WAIT_MS", "200", 1);
 #endif
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--descriptor-pool-reset-failure") {
+            descriptorPoolResetFailureTest();
+            std::cerr << "descriptor pool reset failure did not terminate\n";
+            return 1;
+        }
         {
             const AgcDriver::Graphics::Context context{};
             const AgcDriver::Graphics::State state{};
@@ -2272,6 +2362,7 @@ int main() {
         ShaderStageTests();
         PixelInputLayoutTests();
         InitialContextTests();
+        descriptorPoolTests();
         pushConstantTests();
         resourceTests();
         misalignedShaderDataTests();

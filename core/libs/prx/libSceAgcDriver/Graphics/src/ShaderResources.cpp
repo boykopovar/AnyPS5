@@ -1000,7 +1000,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             if (context.descriptorCache != nullptr && !noPoolCache) {
                 const auto allocated = context.descriptorCache->Allocate(_layout, sizes);
                 _set = allocated.set;
-                cachePool = allocated.pool;
+                cacheAllocation = allocated;
             }
             if (_set == VK_NULL_HANDLE) {
                 VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -2097,10 +2097,10 @@ ResourceCache& SharedResourceCache() {
     return *cache;
 }
 
-DescriptorCache::DescriptorCache(const Context& context) : context(context), destroyLayout(context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")), destroyPool(context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")), freeSets(context.Function<PFN_vkFreeDescriptorSets>("vkFreeDescriptorSets")) {}
+DescriptorCache::DescriptorCache(const Context& context) : context(context), destroyLayout(context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")), destroyPool(context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")), resetPool(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")) {}
 
 DescriptorCache::~DescriptorCache() {
-    for (const auto pool : pools) destroyPool(context.device, pool, nullptr);
+    for (const auto& pool : pools) destroyPool(context.device, pool.handle, nullptr);
     for (const auto& [key, layout] : layouts) destroyLayout(context.device, layout, nullptr);
 }
 
@@ -2138,38 +2138,46 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocation.descriptorSetCount = 1;
     allocation.pSetLayouts = &layout;
-    // Newest pool first: it has the most room; a full or fragmented pool is left for its sets to
-    // drain and tried again later.
-    for (auto it = pools.rbegin(); it != pools.rend(); ++it) {
-        allocation.descriptorPool = *it;
+    for (std::size_t index = pools.size(); index != 0; --index) {
+        auto& pool = pools[index - 1];
+        if (pool.exhausted) continue;
+        allocation.descriptorPool = pool.handle;
         VkDescriptorSet set = VK_NULL_HANDLE;
         const auto result = allocate(context.device, &allocation, &set);
         if (result == VK_SUCCESS) {
             ++stats.sets;
-            return {set, *it};
+            ++pool.liveSets;
+            return {set, pool.handle, index - 1};
         }
         if (result != VK_ERROR_OUT_OF_POOL_MEMORY && result != VK_ERROR_FRAGMENTED_POOL) Check(result, "vkAllocateDescriptorSets");
+        pool.exhausted = true;
     }
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.maxSets = ChainPoolSets;
     poolInfo.poolSizeCount = static_cast<std::uint32_t>(ChainPoolCreateSizes.size());
     poolInfo.pPoolSizes = ChainPoolCreateSizes.data();
     VkDescriptorPool pool = VK_NULL_HANDLE;
     Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool), "vkCreateDescriptorPool");
-    pools.push_back(pool);
+    pools.push_back({pool});
     ++stats.pools;
     allocation.descriptorPool = pool;
     VkDescriptorSet set = VK_NULL_HANDLE;
     Check(allocate(context.device, &allocation, &set), "vkAllocateDescriptorSets");
+    pools.back().liveSets = 1;
     ++stats.sets;
-    return {set, pool};
+    return {set, pool, pools.size() - 1};
 }
 
 void DescriptorCache::Free(const SetAllocation& allocation) noexcept {
     if (allocation.set == VK_NULL_HANDLE || allocation.pool == VK_NULL_HANDLE) return;
     std::lock_guard lock(mutex);
-    static_cast<void>(freeSets(context.device, allocation.pool, 1, &allocation.set));
+    if (allocation.poolIndex >= pools.size()) std::terminate();
+    auto& pool = pools[allocation.poolIndex];
+    if (pool.handle != allocation.pool || pool.liveSets == 0) std::terminate();
+    if (--pool.liveSets != 0) return;
+    const auto result = resetPool(context.device, pool.handle, 0);
+    if (result != VK_SUCCESS) std::terminate();
+    pool.exhausted = false;
 }
 
 DescriptorCache::Stats DescriptorCache::Counters() const {
@@ -2667,10 +2675,10 @@ ShaderResources::~ShaderResources() {
 
 void ShaderResources::release() noexcept {
     // A set from the cache's pool chain goes back to it; a dedicated pool dies with its set.
-    if (cachePool && context.descriptorCache != nullptr) context.descriptorCache->Free({_set, cachePool});
+    if (cacheAllocation.pool && context.descriptorCache != nullptr) context.descriptorCache->Free(cacheAllocation);
     if (pool) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
     if (_layout && ownsLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, _layout, nullptr);
-    cachePool = VK_NULL_HANDLE;
+    cacheAllocation = {};
     pool = VK_NULL_HANDLE;
     _set = VK_NULL_HANDLE;
     _layout = VK_NULL_HANDLE;

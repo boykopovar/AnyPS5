@@ -2695,6 +2695,33 @@ void atomicViewTests(const Device& device, Recorder& recorder) {
     }
 }
 
+void descriptorPoolTests(const Device& device) {
+    DescriptorCache cache(device.GetContext());
+    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const std::array<std::uint32_t, 4> key{binding.binding, binding.descriptorType, binding.descriptorCount, binding.stageFlags};
+    const auto layout = cache.Layout(key, std::span(&binding, 1));
+    const VkDescriptorPoolSize size{binding.descriptorType, binding.descriptorCount};
+    const auto held = cache.Allocate(layout, std::span(&size, 1));
+    std::uint64_t initialPools = 0;
+    for (unsigned round = 0; round < 3; ++round) {
+        std::vector<DescriptorCache::SetAllocation> sets;
+        for (unsigned i = 0; i < 1100; ++i) {
+            const auto allocation = cache.Allocate(layout, std::span(&size, 1));
+            Require(allocation.set != VK_NULL_HANDLE, "descriptor pool rollover refused a valid layout");
+            sets.push_back(allocation);
+        }
+        const auto pools = cache.Counters().pools;
+        if (round == 0) {
+            initialPools = pools;
+        } else {
+            Require(pools <= initialPools + 1, "descriptor pool recycling grows behind one retained set");
+        }
+        for (const auto& allocation : sets) cache.Free(allocation);
+    }
+    cache.Free(held);
+    std::cout << "Descriptor pool recycling passed across 3,301 sets (" << initialPools << " initial pools, " << cache.Counters().pools << " final pools)\n";
+}
+
 void keysFillTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -2811,9 +2838,13 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         Device device;
+        if (argc == 2 && std::string_view(argv[1]) == "--descriptor-pool-only") {
+            descriptorPoolTests(device);
+            return 0;
+        }
         std::lock_guard gpu(GpuMutex());
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());

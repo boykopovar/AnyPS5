@@ -37,15 +37,6 @@ bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddres
 // a storage image other than `except` has results pending in [address, address + bytes).
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except);
 
-// Per-device descriptor objects shared by ShaderResources builds: set layouts by their binding list
-// (immutable; kept until the device is torn down, which Vulkan allows even for pipeline layouts made
-// from them) and a chain of descriptor pools that sets are freed back to, so a build creates and
-// destroys no layout or pool of its own. A set lives exactly as long as its ShaderResources, which
-// its batch keeps until the GPU completed. The cache locks itself: stage A of a dispatch build
-// (ShaderResources::buildPrepare, from VulkanDevice::PrepareDispatch) takes layouts and sets from it
-// without GuestMemory::GpuMutex, while other threads free and update sets of the same pools under
-// that lock (Vulkan synchronizes the pool for allocate/free and the set for update, so that is
-// legal). APS5_NO_LAYOUT_CACHE=1 / APS5_NO_POOL_CACHE=1 restore the per-build objects.
 class DescriptorCache {
 public:
     explicit DescriptorCache(const Context& context);
@@ -59,6 +50,7 @@ public:
     struct SetAllocation {
         VkDescriptorSet set = VK_NULL_HANDLE;
         VkDescriptorPool pool = VK_NULL_HANDLE;
+        std::size_t poolIndex = 0;
     };
     // A set of `layout` needing `sizes` descriptors from the pool chain, opening a pool when no pool
     // has room; a null set when the needs exceed what one chain pool holds (the caller then makes a
@@ -78,10 +70,15 @@ private:
     Context context;
     PFN_vkDestroyDescriptorSetLayout destroyLayout;
     PFN_vkDestroyDescriptorPool destroyPool;
-    PFN_vkFreeDescriptorSets freeSets;
+    PFN_vkResetDescriptorPool resetPool;
     mutable std::mutex mutex;
     std::map<std::vector<std::uint32_t>, VkDescriptorSetLayout> layouts;
-    std::vector<VkDescriptorPool> pools;
+    struct Pool {
+        VkDescriptorPool handle = VK_NULL_HANDLE;
+        std::size_t liveSets = 0;
+        bool exhausted = false;
+    };
+    std::vector<Pool> pools;
     Stats stats;
 };
 
@@ -399,7 +396,7 @@ private:
     // Dedicated pool of this object's set (no cache, or a set too large for a cache pool).
     VkDescriptorPool pool = VK_NULL_HANDLE;
     // The cache pool the set was allocated from, freed back to it on release.
-    VkDescriptorPool cachePool = VK_NULL_HANDLE;
+    DescriptorCache::SetAllocation cacheAllocation;
     std::vector<Allocation> allocations;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
