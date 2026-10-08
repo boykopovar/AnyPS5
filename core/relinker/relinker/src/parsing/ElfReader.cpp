@@ -110,9 +110,6 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
 
-    if (header.ProgramHeaderCount > 0 && header.ProgramHeaderEntrySize == 0)
-        throw RelinkerException("Invalid zero program header entry size");
-
     for (std::uint16_t i = 0; i < header.ProgramHeaderCount; ++i) {
         ProgramHeader ph{};
         ph.Type = _readU32At(offset);
