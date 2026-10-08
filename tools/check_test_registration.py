@@ -9,7 +9,6 @@ TEST_OUTPUT = r"tests[\\/]"
 KNOWN_UNRUN = {
     "agc_driver_mesh_tests",
     "agc_driver_recorder_tests",
-    "video_out_flip_tests",
 }
 if sys.platform != "win32":
     KNOWN_UNRUN.add("guest_formatting_tests")
