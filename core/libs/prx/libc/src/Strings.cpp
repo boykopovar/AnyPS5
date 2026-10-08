@@ -389,6 +389,39 @@ size_t APS5_VABI wcsspn_nid_postfix(const char16_t* s, const char16_t* accept) {
     return count;
 }
 
+size_t APS5_VABI wcscspn_nid_postfix(const char16_t* s, const char16_t* reject) {
+    size_t count = 0;
+    while (s[count] != 0 && !Contains(reject, s[count])) ++count;
+    return count;
+}
+
+char16_t* APS5_VABI wcscat_nid_postfix(char16_t* dest, const char16_t* src) {
+    wcscpy_nid_postfix(dest + Length(dest), src);
+    return dest;
+}
+
+char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    char16_t* end = dest + Length(dest);
+    size_t index = 0;
+    for (; index < n && src[index] != 0; ++index) end[index] = src[index];
+    end[index] = 0;
+    return dest;
+}
+
+char16_t* APS5_VABI wcstok_nid_postfix(char16_t* s, const char16_t* delim, char16_t** ptr) {
+    if (s == nullptr) s = *ptr;
+    if (s == nullptr) return nullptr;
+    s += wcsspn_nid_postfix(s, delim);
+    if (*s == 0) {
+        *ptr = s;
+        return nullptr;
+    }
+    char16_t* end = s + wcscspn_nid_postfix(s, delim);
+    if (*end != 0) *end++ = 0;
+    *ptr = end;
+    return s;
+}
+
 char16_t* APS5_VABI wmemset_nid_postfix(char16_t* s, char16_t c, size_t n) {
     for (size_t index = 0; index < n; ++index) s[index] = c;
     return s;
