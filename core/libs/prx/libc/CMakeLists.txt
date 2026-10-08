@@ -10,6 +10,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/WideConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Multibyte.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Network.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
@@ -42,7 +43,7 @@ target_include_directories(libc PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(libc PRIVATE advapi32)
+    target_link_libraries(libc PRIVATE advapi32 ws2_32)
 endif()
 
 if(BUILD_TESTING)
@@ -119,6 +120,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_math COMMAND guest_math_tests)
     if(WIN32)
         set_tests_properties(guest_math PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_inet_address_tests ${LIBS_INCLUDE_DIR}/tests/GuestInetAddress.cpp)
+    target_include_directories(guest_inet_address_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_inet_address_tests PRIVATE libc)
+    configure_windows_unwind(guest_inet_address_tests)
+    add_test(NAME guest_inet_address COMMAND guest_inet_address_tests)
+    if(WIN32)
+        set_tests_properties(guest_inet_address PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_execute_once_tests ${LIBS_INCLUDE_DIR}/tests/GuestExecuteOnce.cpp)
