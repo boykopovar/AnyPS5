@@ -59,6 +59,9 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounter_04_00(std::uint8_t
 int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject*, std::int16_t, const void*, std::uint32_t, const std::uint32_t*);
 int APS5_VABI sceAmprCommandBufferConstructMarker(Apr::CommandBufferObject*, std::uint32_t, const char*, const std::uint32_t*);
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char**, std::uint32_t, std::uint32_t*, std::uint32_t*);
+int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, std::uint32_t*);
+int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, int*);
+int* APS5_VABI __error_nid_postfix();
 int APS5_VABI sceAmprAprCommandBufferReadFile(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint32_t, void*, std::uint64_t, std::uint64_t);
 int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint64_t, std::uint64_t);
 int APS5_VABI sceAmprAprCommandBufferReadFileScatter(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, void*, std::uint64_t);
@@ -552,6 +555,23 @@ void TestZeroFilledBuffer() {
     std::remove(path);
 }
 
+void TestResolveFailures() {
+    const char* paths[]{"ampr_resolve_existing.bin", "ampr_resolve_missing.bin"};
+    { std::ofstream file(paths[0], std::ios::binary); file << "data"; }
+    std::uint32_t ids[]{123, 123};
+    std::uint64_t sizes[]{123, 123};
+    std::uint32_t failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
+    Require(sizes[0] == 4);
+    int results[]{123, 123};
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, results) == 1);
+    Require(results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    Require(ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
+    std::remove(paths[0]);
+}
+
 void TestGatherScatter() {
     const char* path = "ampr_gather_scatter.bin";
     {
@@ -988,6 +1008,7 @@ int main() {
     TestClearBuffer();
     TestConstructed();
     TestZeroFilledBuffer();
+    TestResolveFailures();
     TestGatherScatter();
     TestAmm();
     TestAmmRemapAndProtect();

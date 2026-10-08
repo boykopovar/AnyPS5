@@ -30,6 +30,8 @@
 #include <windows.h>
 #endif
 
+extern "C" int* APS5_VABI __error_nid_postfix();
+
 namespace {
 
 constexpr int GUEST_ENOENT = 2;
@@ -99,7 +101,7 @@ bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
 }
 
 int _fail(int guestErrno) {
-    errno = guestErrno;
+    *__error_nid_postfix() = guestErrno;
     return -1;
 }
 
@@ -131,6 +133,7 @@ constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
 
 int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, int* results) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);
+    std::uint32_t resolvedCount = 0;
     for (uint32_t index = 0; index < count; ++index) {
         const std::string path = prefix ? (paths[index] ? std::string(prefix) + paths[index] : std::string()) : (paths[index] ? std::string(paths[index]) : std::string());
         const bool resolved = !path.empty() && _resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr);
@@ -138,9 +141,10 @@ int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint
             ids[index] = INVALID_FILE_ID;
             if (sizes) sizes[index] = 0;
         }
+        if (resolved) ++resolvedCount;
         if (results) results[index] = resolved ? 0 : SCE_KERNEL_ERROR_ENOENT;
     }
-    return 0;
+    return static_cast<int>(resolvedCount);
 }
 
 void _readFile(const Apr::ReadFileCommand& command) {
@@ -657,6 +661,7 @@ int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t cou
     if (!paths || !ids) return _fail(GUEST_EINVAL);
     for (uint32_t index = 0; index < count; ++index) {
         if (!_resolve(paths[index], &ids[index], nullptr)) {
+            ids[index] = INVALID_FILE_ID;
             if (error_index) *error_index = index;
             return _fail(GUEST_ENOENT);
         }
@@ -668,6 +673,8 @@ int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char** paths, 
     if (!paths || !ids || !sizes) return _fail(GUEST_EINVAL);
     for (uint32_t index = 0; index < count; ++index) {
         if (!_resolve(paths[index], &ids[index], &sizes[index])) {
+            ids[index] = INVALID_FILE_ID;
+            if (sizes) sizes[index] = 0;
             if (error_index) *error_index = index;
             return _fail(GUEST_ENOENT);
         }
@@ -680,6 +687,8 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(const char
     for (uint32_t index = 0; index < count; ++index) {
         const std::string path = paths[index] ? std::string(prefix) + paths[index] : std::string();
         if (path.empty() || !_resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr)) {
+            ids[index] = INVALID_FILE_ID;
+            if (sizes) sizes[index] = 0;
             if (error_index) *error_index = index;
             return _fail(GUEST_ENOENT);
         }
