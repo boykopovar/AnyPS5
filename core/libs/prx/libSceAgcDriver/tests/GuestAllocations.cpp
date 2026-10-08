@@ -4,6 +4,9 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include <cstring>
+#include <atomic>
+#include <exception>
+#include <thread>
 #include <array>
 #include <algorithm>
 #include <utility>
@@ -24,9 +27,125 @@ void reject(TAction action) {
     throw std::runtime_error("expected guest allocation ownership rejection");
 }
 
+void registeredPageAccessTests() {
+#if defined(__linux__)
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* block = static_cast<std::byte*>(mmap(nullptr, 3 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(block != MAP_FAILED, "cannot map the registered access test pages");
+    const auto base = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, 2 * page, true, true);
+    }
+    const auto description = GuestAllocations::GuestAllocationsTryDescribeRange_nid_no_patch(base + page);
+    Require(description.address == base && description.bytes == 2 * page, "a mapping description lost its registered extent");
+    Require(GuestAllocations::GuestAllocationsTryDescribeRange_nid_no_patch(base + 2 * page).bytes == 0, "an unregistered address acquired a mapping description");
+    {
+        std::atomic<bool> held{false};
+        std::atomic<bool> release{false};
+        std::jthread allocator([&] {
+            GuestAllocations::Mutation mutation;
+            held.store(true);
+            held.notify_one();
+            release.wait(false);
+        });
+        held.wait(false);
+        bool declined = false;
+        bool accessible = false;
+        std::exception_ptr failure;
+        try {
+            declined = GuestAllocations::GuestAllocationsTryDescribeRange_nid_no_patch(base).bytes == 0;
+            accessible = GuestMemory::Accessible(block + 2 * page, page, true);
+        } catch (...) { failure = std::current_exception(); }
+        release.store(true);
+        release.notify_one();
+        allocator.join();
+        if (failure) std::rethrow_exception(failure);
+        Require(declined && accessible, "a busy allocation registry prevented querying host page access");
+    }
+    Require(GuestMemory::Accessible(block, 3 * page, true), "initial mapped pages are inaccessible");
+    Require(GuestMemory::DescribeCommitted(base, 3 * page, true).whole, "initial mapping is incomplete");
+    Require(mprotect(block + 2 * page, page, PROT_READ) == 0, "cannot protect the unregistered neighbor");
+    Require(!GuestMemory::Accessible(block + 2 * page, page, true), "a registered mapping hid its neighbor's protection change");
+    Require(!GuestMemory::DescribeCommitted(base, 3 * page, true).whole, "committed ranges ignored an unregistered neighbor's protection");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(block + page, page, true, false, [&] {
+            Require(mprotect(block + page, page, PROT_READ) == 0, "cannot protect a registered page");
+        });
+    }
+    Require(GuestMemory::Accessible(block, 2 * page) && !GuestMemory::Accessible(block, 2 * page, true), "partial protection retained stale write access");
+    Require(GuestMemory::CommittedRanges(base, 3 * page, true) == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{base, base + page}}, "partial protection retained stale committed ranges");
+    Require(mprotect(block, page, PROT_READ) == 0, "cannot change explicitly invalidated protection");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(base, page);
+    Require(!GuestMemory::Accessible(block, page, true), "explicit invalidation retained write access");
+    Require(mprotect(block, page, PROT_READ | PROT_WRITE) == 0, "cannot restore explicitly invalidated protection");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(base, page);
+    Require(GuestMemory::Accessible(block, page, true), "explicit invalidation retained read-only access");
+
+    std::atomic<int> phase{0};
+    bool initiallyWritable = false;
+    bool remainedReadable = false;
+    bool remainedWritable = true;
+    std::jthread reader([&] {
+        initiallyWritable = GuestMemory::Accessible(block, page, true);
+        phase.store(1);
+        phase.notify_one();
+        phase.wait(1);
+        remainedReadable = GuestMemory::Accessible(block, page);
+        remainedWritable = GuestMemory::Accessible(block, page, true);
+    });
+    phase.wait(0);
+    std::exception_ptr failure;
+    try {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(block, page, true, false, [&] {
+            Require(mprotect(block, page, PROT_READ) == 0, "cannot protect a page cached by another thread");
+        });
+    } catch (...) { failure = std::current_exception(); }
+    phase.store(2);
+    phase.notify_one();
+    reader.join();
+    if (failure) std::rethrow_exception(failure);
+    Require(initiallyWritable && remainedReadable && !remainedWritable, "another thread retained stale page permissions");
+
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(block + page, page, [&](const void* pointer, std::size_t bytes, const void*, bool) {
+            Require(munmap(const_cast<void*>(pointer), bytes) == 0, "cannot unmap a registered page");
+        });
+    }
+    Require(!GuestMemory::Accessible(block + page, page), "an unmapped page retained cached read access");
+    Require(!GuestMemory::DescribeCommitted(base, 3 * page).whole, "an unmapped page retained cached commitment");
+    {
+        GuestAllocations::Mutation mutation;
+        Require(mmap(block + page, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == block + page, "cannot reuse an unmapped address");
+        mutation.Add(block + page, page, false, false);
+    }
+    Require(!GuestMemory::Accessible(block + page, page), "address reuse retained a previous mapping's access");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(block + page, page, true, true, [&] {
+            Require(mprotect(block + page, page, PROT_READ | PROT_WRITE) == 0, "cannot enable access to a reused address");
+        });
+    }
+    Require(GuestMemory::Accessible(block + page, page, true), "address reuse retained an inaccessible mapping");
+    Require(GuestMemory::CommittedRanges(base, 3 * page, true) == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{base + page, base + 2 * page}}, "address reuse retained stale committed ranges");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(block, 2 * page, [&](const void* pointer, std::size_t bytes, const void*, bool) {
+            Require(munmap(const_cast<void*>(pointer), bytes) == 0, "cannot release registered test pages");
+        });
+    }
+    Require(munmap(block + 2 * page, page) == 0, "cannot release the unregistered neighbor");
+#endif
+}
+
 }
 
 void RunGuestAllocationTests() {
+    registeredPageAccessTests();
     void* pointer = GuestHeap::GuestHeapAllocate_nid_postfix(32);
     Require(reinterpret_cast<std::uintptr_t>(pointer) % alignof(std::max_align_t) == 0, "guest malloc is not suitably aligned");
     std::memset(pointer, 0x55, 32);
