@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -12,6 +13,7 @@
 #include <windows.h>
 #include <psapi.h>
 #else
+#include <dlfcn.h>
 #include <fstream>
 #endif
 
@@ -76,6 +78,43 @@ int APS5_VABI dlclose_nid_postfix(void* handle);
 
 namespace {
 constexpr int kRtldNow = 2;
+
+#ifndef _WIN32
+struct SegmentSearch {
+    std::uintptr_t address;
+    std::uint64_t segmentInfo[2];
+    bool found;
+};
+
+int FindModuleSegment(dl_phdr_info* image, std::size_t, void* data) {
+    auto& search = *static_cast<SegmentSearch*>(data);
+    bool contains = false;
+    for (std::uint16_t i = 0; i < image->dlpi_phnum; ++i) {
+        const Elf64_Phdr& header = image->dlpi_phdr[i];
+        if (header.p_type != PT_LOAD) continue;
+        const std::uintptr_t start = image->dlpi_addr + header.p_vaddr;
+        if (search.address >= start && search.address - start < header.p_memsz) {
+            contains = true;
+            break;
+        }
+    }
+    if (!contains) return 0;
+    std::uintptr_t low = std::numeric_limits<std::uintptr_t>::max();
+    std::uintptr_t high = 0;
+    for (std::uint16_t i = 0; i < image->dlpi_phnum; ++i) {
+        const Elf64_Phdr& header = image->dlpi_phdr[i];
+        if (header.p_type != PT_LOAD) continue;
+        const std::uintptr_t start = image->dlpi_addr + header.p_vaddr;
+        const std::uintptr_t end = start + header.p_memsz;
+        if (start < low) low = start;
+        if (end > high) high = end;
+    }
+    search.segmentInfo[0] = low;
+    search.segmentInfo[1] = high > low ? high - low : 0;
+    search.found = true;
+    return 1;
+}
+#endif
 }
 
 extern "C" {
@@ -177,9 +216,26 @@ int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info* phdrInfo, void* ad
 
 // unknown signature
 std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(void* result) {
-    (void)result;
-    NotImplemented_nid_no_patch(__func__);
+    if (result == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<const void*>(&sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix), &mbi, sizeof(mbi)))
+        return SCE_KERNEL_ERROR_ESRCH;
+    const auto module = reinterpret_cast<HMODULE>(mbi.AllocationBase);
+    MODULEINFO moduleInfo{};
+    if (!GetModuleInformation(GetCurrentProcess(), module, &moduleInfo, sizeof(moduleInfo)))
+        return SCE_KERNEL_ERROR_ESRCH;
+    const std::uint64_t segmentInfo[2]{
+        reinterpret_cast<std::uintptr_t>(moduleInfo.lpBaseOfDll), moduleInfo.SizeOfImage};
+    std::memcpy(result, segmentInfo, sizeof(segmentInfo));
     return 0;
+#else
+    SegmentSearch search{reinterpret_cast<std::uintptr_t>(&sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix), {}, false};
+    dl_iterate_phdr(FindModuleSegment, &search);
+    if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
+    std::memcpy(result, search.segmentInfo, sizeof(search.segmentInfo));
+    return 0;
+#endif
 }
 
 }

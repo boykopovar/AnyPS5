@@ -18,6 +18,7 @@
 #include <sstream>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/sysinfo.h>
 #endif
 #include <algorithm>
 #include <limits>
@@ -373,12 +374,25 @@ int APS5_VABI sceKernelClearVirtualRangeName(const void* addr, uint64_t len) {
 }
 
 int APS5_VABI sceKernelGetPageTableStats(int* cpu_total, int* cpu_available, int* gpu_total, int* gpu_available) {
- (void)cpu_total;
- (void)cpu_available;
- (void)gpu_total;
- (void)gpu_available;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (cpu_total == nullptr && cpu_available == nullptr && gpu_total == nullptr && gpu_available == nullptr)
+        return SCE_KERNEL_ERROR_EINVAL;
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (!GlobalMemoryStatusEx(&status)) return SCE_KERNEL_ERROR_EINVAL;
+    const auto ceiling = static_cast<int>(status.ullTotalPhys >> 20);
+    const auto available = static_cast<int>(status.ullAvailPhys >> 20);
+#else
+    struct sysinfo status{};
+    if (::sysinfo(&status) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    const auto ceiling = static_cast<int>(status.totalram >> 20);
+    const auto available = static_cast<int>((status.freeram + status.bufferram) >> 20);
+#endif
+    if (cpu_total != nullptr) *cpu_total = ceiling;
+    if (cpu_available != nullptr) *cpu_available = available;
+    if (gpu_total != nullptr) *gpu_total = ceiling;
+    if (gpu_available != nullptr) *gpu_available = available;
+    return 0;
 }
 
 int APS5_VABI sceKernelGetPrtAperture(int index, void** addr, size_t* len) {

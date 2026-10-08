@@ -28,6 +28,14 @@ struct FontState {
     FT_Face face = nullptr;
     float scaleW = 16.0f;
     float scaleH = 16.0f;
+    std::int32_t attribute = 0;
+    std::int32_t script = 0;
+    std::int32_t language = 0;
+    std::int32_t typographic = 0;
+    std::int32_t feature = 0;
+    bool hasAttribute = false;
+    bool hasScriptLanguage = false;
+    bool hasTypographic = false;
 
     FontState() = default;
     FontState(const FontState&) = delete;
@@ -49,6 +57,8 @@ struct GeneratedGlyph {
     std::vector<std::uint16_t> outlineContours;
     bool metricsInitialized = false;
     bool outlineInitialized = false;
+    std::int32_t attribute = 0;
+    bool hasAttribute = false;
 };
 
 struct SystemFontFile {

@@ -119,6 +119,93 @@ int RenderDirectional(FontHandle fontHandle, std::uint32_t code, FontRenderSurfa
     return rc;
 }
 
+int RenderCharGlyphImageBody(FontHandle fontHandle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) {
+        ClearRenderOutputs(metrics, result);
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    int preRc = SCE_FONT_OK;
+    StyleStateBlock frameState{};
+    const bool horizontal = static_cast<std::int16_t>(font->flags) >= 0;
+    float xUsed = x;
+    float yUsed = y;
+    if (horizontal) {
+        float baseline = 0.0f;
+        if (!SurfaceScaleFrame(surface, frameState, preRc)) {
+            preRc = CachedBaseline(fontHandle, font, baseline);
+        } else {
+            std::uint8_t layout[HORIZONTAL_LAYOUT_SIZE] = {};
+            if (preRc == SCE_FONT_OK) preRc = ComputeHorizontalLayout(fontHandle, &frameState, layout);
+            if (preRc == SCE_FONT_OK) {
+                baseline = LoadFloat(layout, HORIZONTAL_BASELINE);
+                SurfaceSystemUse(surface)->catchedScale = baseline;
+            }
+        }
+        yUsed = y + baseline;
+        CachedStyleSetDirectionWord(font->cached_style, 1);
+    } else {
+        float offset = 0.0f;
+        if (!SurfaceScaleFrame(surface, frameState, preRc)) {
+            preRc = CachedColumnOffset(fontHandle, font, offset);
+        } else {
+            std::uint8_t layout[VERTICAL_LAYOUT_SIZE] = {};
+            if (preRc == SCE_FONT_OK) preRc = ComputeVerticalLayout(fontHandle, &frameState, layout);
+            if (preRc == SCE_FONT_OK) {
+                offset = LoadFloat(layout, VERTICAL_BASELINE_OFFSET_X);
+                SurfaceSystemUse(surface)->catchedScale = offset;
+            } else {
+                preRc = CachedColumnOffset(fontHandle, font, offset);
+            }
+        }
+        xUsed = x + offset;
+        CachedStyleSetDirectionWord(font->cached_style, 2);
+    }
+    int rc;
+    if (code == 0) {
+        rc = SCE_FONT_ERROR_NO_SUPPORT_CODE;
+    } else if (!surface || !metrics || !result) {
+        rc = SCE_FONT_ERROR_INVALID_PARAMETER;
+    } else if (preRc != SCE_FONT_OK) {
+        rc = preRc;
+    } else {
+        rc = RenderCharGlyphImageCore(fontHandle, code, surface, xUsed, yUsed, metrics, result);
+    }
+    ReleaseFontLock(font, fontLock);
+    if (rc != SCE_FONT_OK) ClearRenderOutputs(metrics, result);
+    return rc;
+}
+
+int GlyphRenderImageBody(FontGlyph glyph, FontStyleFrame* styleFrame, FontRenderer fontRenderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result, std::uint16_t direction) {
+    ClearRenderOutputs(metrics, result);
+    if (!glyph || glyph->magic != GLYPH_MAGIC) return SCE_FONT_ERROR_INVALID_GLYPH;
+    GeneratedGlyph* generated = TryGetGeneratedGlyph(glyph);
+    if (!generated) return SCE_FONT_ERROR_INVALID_GLYPH;
+    if (!surface || !metrics || !result) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (styleFrame && styleFrame->magic != STYLE_FRAME_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* renderer = static_cast<RendererNative*>(fontRenderer);
+    if (!renderer || renderer->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
+    const std::uint8_t previousStyleFlag = surface->styleFlag;
+    const std::uint64_t previousFrame = surface->reserved_q[0];
+    const std::uint64_t previousScale = surface->reserved_q[1];
+    if (styleFrame) {
+        surface->styleFlag |= 0x1;
+        surface->reserved_q[0] = reinterpret_cast<std::uint64_t>(styleFrame);
+        surface->reserved_q[1] = 0;
+    }
+    int rc;
+    if (direction == 0) {
+        rc = RenderCharGlyphImageBody(generated->owner, generated->codepoint, surface, x, y, metrics, result);
+    } else {
+        rc = RenderDirectional(generated->owner, generated->codepoint, surface, x, y, metrics, result, direction);
+    }
+    surface->styleFlag = previousStyleFlag;
+    surface->reserved_q[0] = previousFrame;
+    surface->reserved_q[1] = previousScale;
+    return rc;
+}
+
 }
 
 #pragma GCC visibility push(default)
@@ -217,61 +304,7 @@ int APS5_VABI sceFontGetRenderScaledKerning(FontHandle fontHandle, std::uint32_t
 }
 
 int APS5_VABI sceFontRenderCharGlyphImage(FontHandle fontHandle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
-    auto* font = GetNativeFont(fontHandle);
-    std::uint32_t fontLock = 0;
-    if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) {
-        ClearRenderOutputs(metrics, result);
-        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
-    }
-    int preRc = SCE_FONT_OK;
-    StyleStateBlock frameState{};
-    const bool horizontal = static_cast<std::int16_t>(font->flags) >= 0;
-    float xUsed = x;
-    float yUsed = y;
-    if (horizontal) {
-        float baseline = 0.0f;
-        if (!SurfaceScaleFrame(surface, frameState, preRc)) {
-            preRc = CachedBaseline(fontHandle, font, baseline);
-        } else {
-            std::uint8_t layout[HORIZONTAL_LAYOUT_SIZE] = {};
-            if (preRc == SCE_FONT_OK) preRc = ComputeHorizontalLayout(fontHandle, &frameState, layout);
-            if (preRc == SCE_FONT_OK) {
-                baseline = LoadFloat(layout, HORIZONTAL_BASELINE);
-                SurfaceSystemUse(surface)->catchedScale = baseline;
-            }
-        }
-        yUsed = y + baseline;
-        CachedStyleSetDirectionWord(font->cached_style, 1);
-    } else {
-        float offset = 0.0f;
-        if (!SurfaceScaleFrame(surface, frameState, preRc)) {
-            preRc = CachedColumnOffset(fontHandle, font, offset);
-        } else {
-            std::uint8_t layout[VERTICAL_LAYOUT_SIZE] = {};
-            if (preRc == SCE_FONT_OK) preRc = ComputeVerticalLayout(fontHandle, &frameState, layout);
-            if (preRc == SCE_FONT_OK) {
-                offset = LoadFloat(layout, VERTICAL_BASELINE_OFFSET_X);
-                SurfaceSystemUse(surface)->catchedScale = offset;
-            } else {
-                preRc = CachedColumnOffset(fontHandle, font, offset);
-            }
-        }
-        xUsed = x + offset;
-        CachedStyleSetDirectionWord(font->cached_style, 2);
-    }
-    int rc;
-    if (code == 0) {
-        rc = SCE_FONT_ERROR_NO_SUPPORT_CODE;
-    } else if (!surface || !metrics || !result) {
-        rc = SCE_FONT_ERROR_INVALID_PARAMETER;
-    } else if (preRc != SCE_FONT_OK) {
-        rc = preRc;
-    } else {
-        rc = RenderCharGlyphImageCore(fontHandle, code, surface, xUsed, yUsed, metrics, result);
-    }
-    ReleaseFontLock(font, fontLock);
-    if (rc != SCE_FONT_OK) ClearRenderOutputs(metrics, result);
-    return rc;
+    return RenderCharGlyphImageBody(fontHandle, code, surface, x, y, metrics, result);
 }
 
 int APS5_VABI sceFontRenderCharGlyphImageHorizontal(FontHandle fontHandle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
@@ -280,6 +313,18 @@ int APS5_VABI sceFontRenderCharGlyphImageHorizontal(FontHandle fontHandle, std::
 
 int APS5_VABI sceFontRenderCharGlyphImageVertical(FontHandle fontHandle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
     return RenderDirectional(fontHandle, code, surface, x, y, metrics, result, 2);
+}
+
+int APS5_VABI sceFontGlyphRenderImage(FontGlyph fontGlyph, FontStyleFrame* fontStyleFrame, FontRenderer fontRenderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+    return GlyphRenderImageBody(fontGlyph, fontStyleFrame, fontRenderer, surface, x, y, metrics, result, 0);
+}
+
+int APS5_VABI sceFontGlyphRenderImageHorizontal(FontGlyph fontGlyph, FontStyleFrame* fontStyleFrame, FontRenderer fontRenderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+    return GlyphRenderImageBody(fontGlyph, fontStyleFrame, fontRenderer, surface, x, y, metrics, result, 1);
+}
+
+int APS5_VABI sceFontGlyphRenderImageVertical(FontGlyph fontGlyph, FontStyleFrame* fontStyleFrame, FontRenderer fontRenderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+    return GlyphRenderImageBody(fontGlyph, fontStyleFrame, fontRenderer, surface, x, y, metrics, result, 2);
 }
 
 void APS5_VABI sceFontRenderSurfaceInit(FontRenderSurface* renderSurface, void* buffer, int bufWidthByte, int pixelSizeByte, int widthPixel, int heightPixel) {

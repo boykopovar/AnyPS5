@@ -71,6 +71,29 @@ float ClampWeightDelta(float scale) {
     return std::clamp(scale - 1.0f, -0.04f, 0.04f);
 }
 
+using namespace Font;
+
+template<typename Setter>
+int UpdateFontState(FontHandle fontHandle, Setter&& setter) {
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    FontState* state = TryGetState(fontHandle);
+    const int rc = state ? setter(*state) : SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    ReleaseFontLock(font, fontLock);
+    return rc;
+}
+
+template<typename Getter>
+int ReadFontState(FontHandle fontHandle, Getter&& getter) {
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    const FontState* state = TryGetState(fontHandle);
+    const int rc = state ? getter(*state) : SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    ReleaseFontLock(font, fontLock);
+    return rc;
+}
 }
 
 #pragma GCC visibility push(default)
@@ -314,6 +337,77 @@ int APS5_VABI sceFontStyleFrameGetEffectWeight(const FontStyleFrame* styleFrame,
     return SCE_FONT_OK;
 }
 
+int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* oldAttribute) {
+    if (oldAttribute) *oldAttribute = 0;
+    return UpdateFontState(fontHandle, [&](FontState& state) {
+        if (oldAttribute) *oldAttribute = state.hasAttribute ? state.attribute : 0;
+        state.hasAttribute = true;
+        state.attribute = attribute;
+        return SCE_FONT_OK;
+    });
+}
+
+int APS5_VABI sceFontGetAttribute(FontHandle fontHandle, int attribute, int* nowAttribute) {
+    (void)attribute;
+    if (!nowAttribute) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *nowAttribute = 0;
+    return ReadFontState(fontHandle, [&](const FontState& state) {
+        if (!state.hasAttribute) return SCE_FONT_ERROR_UNSET_PARAMETER;
+        *nowAttribute = state.attribute;
+        return SCE_FONT_OK;
+    });
+}
+
+int APS5_VABI sceFontGlyphGetAttribute(FontGlyph glyph, int attribute, int* nowAttribute) {
+    (void)attribute;
+    if (!nowAttribute) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *nowAttribute = 0;
+    const GeneratedGlyph* generated = TryGetGeneratedGlyph(glyph);
+    if (!generated) return SCE_FONT_ERROR_INVALID_GLYPH;
+    if (!generated->hasAttribute) return SCE_FONT_ERROR_UNSET_PARAMETER;
+    *nowAttribute = generated->attribute;
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontSetScriptLanguage(FontHandle fontHandle, int fontScript, int fontLanguage) {
+    return UpdateFontState(fontHandle, [&](FontState& state) {
+        state.hasScriptLanguage = true;
+        state.script = fontScript;
+        state.language = fontLanguage;
+        return SCE_FONT_OK;
+    });
+}
+
+int APS5_VABI sceFontGetScriptLanguage(FontHandle fontHandle, int fontScript, int* fontLanguage) {
+    if (!fontLanguage) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *fontLanguage = 0;
+    return ReadFontState(fontHandle, [&](const FontState& state) {
+        if (!state.hasScriptLanguage) return SCE_FONT_ERROR_UNSET_PARAMETER;
+        if (state.script != fontScript) return SCE_FONT_ERROR_NO_SUPPORT_SCRIPT;
+        *fontLanguage = state.language;
+        return SCE_FONT_OK;
+    });
+}
+
+int APS5_VABI sceFontSetTypographicDesign(FontHandle fontHandle, int typographic, int feature) {
+    return UpdateFontState(fontHandle, [&](FontState& state) {
+        state.hasTypographic = true;
+        state.typographic = typographic;
+        state.feature = feature;
+        return SCE_FONT_OK;
+    });
+}
+
+int APS5_VABI sceFontGetTypographicDesign(FontHandle fontHandle, int typographic, int* feature) {
+    if (!feature) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *feature = 0;
+    return ReadFontState(fontHandle, [&](const FontState& state) {
+        if (!state.hasTypographic) return SCE_FONT_ERROR_UNSET_PARAMETER;
+        if (state.typographic != typographic) return SCE_FONT_ERROR_NO_SUPPORT_TYPOGRAPHY;
+        *feature = state.feature;
+        return SCE_FONT_OK;
+    });
+}
 }
 
 #pragma GCC visibility pop

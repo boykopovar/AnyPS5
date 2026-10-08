@@ -10,6 +10,13 @@
 
 #include "prx/libSceFont/include/FontInternal.hpp"
 
+struct FontWordsOpaque {
+    std::uint16_t magic;
+    std::uint16_t reserved0;
+    const FontMemory* memory;
+    FontTextSource* source;
+};
+
 namespace {
 
 using namespace Font;
@@ -27,6 +34,8 @@ constexpr std::size_t MAX_PARSED_CHARACTERS = 4096;
 constexpr std::int32_t WRITING_MASK_NONE = 0;
 constexpr std::int32_t WRITING_MASK_FORMAT_CHARACTERS = 1;
 constexpr std::uint64_t CHARACTER_FLAG_FORMAT = 1ull << 42;
+constexpr std::uint16_t FONT_WORDS_MAGIC = 0x0F0A;
+constexpr std::uint64_t WHITESPACE_FLAG_MASK = 0x0Eull << 8;
 
 struct CharacterStorage {
     std::atomic<std::uint32_t> refCount{1};
@@ -206,6 +215,15 @@ void AccumulateWritingMetrics(FontWritingData& writing) {
     writing.metrics.Extent.bottom = std::max(previous.Extent.bottom, bottom);
 }
 
+using namespace Font;
+
+FontWordsOpaque* GetWordsData(FontWordsOpaque* fontWords) {
+    return fontWords && fontWords->magic == FONT_WORDS_MAGIC ? fontWords : nullptr;
+}
+
+bool CharacterIsWhitespace(const FontTextCharacter* character) {
+    return character && (character->flags & WHITESPACE_FLAG_MASK) == WHITESPACE_FLAG_MASK;
+}
 }
 
 #pragma GCC visibility push(default)
@@ -539,6 +557,43 @@ FontTextCharacter* APS5_VABI sceFontCharacterRefersTextNext(const FontTextCharac
     return nullptr;
 }
 
+int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter* textCharacter, int* syllableStringState) {
+    if (syllableStringState) *syllableStringState = 0;
+    if (!textCharacter || !syllableStringState) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
+}
+
+FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(FontTextCharacter* textCharacter, FontTextCharacter* termCharacter, FontTextCodes* textCodes) {
+    if (!textCodes) return nullptr;
+    if (!textCharacter) return textCodes;
+    std::memset(textCodes, 0, sizeof(*textCodes));
+    textCodes->order = textCharacter->textOrder;
+    textCodes->code = textCharacter->characterCode;
+    textCodes->current = textCharacter;
+    textCodes->term = termCharacter;
+    return textCodes;
+}
+
+FontTextCodes* APS5_VABI sceFontTextCodesStepNext(FontTextCodes* textCodesStep) {
+    if (!textCodesStep || !textCodesStep->current) return nullptr;
+    FontTextCharacter* next = textCodesStep->current->next;
+    if (!next || next == textCodesStep->term) return nullptr;
+    textCodesStep->order = next->textOrder;
+    textCodesStep->code = next->characterCode;
+    textCodesStep->current = next;
+    return textCodesStep;
+}
+
+FontTextCodes* APS5_VABI sceFontTextCodesStepBack(FontTextCodes* textCodesStep) {
+    if (!textCodesStep || !textCodesStep->current) return nullptr;
+    FontTextCharacter* previous = textCodesStep->current->prev;
+    if (!previous) return nullptr;
+    textCodesStep->order = previous->textOrder;
+    textCodesStep->code = previous->characterCode;
+    textCodesStep->current = previous;
+    return textCodesStep;
+}
+
 int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString, const FontTextCharacter* fontCharacter) {
     if (!fontWriting || !fontString || !fontCharacter) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* data = GetStringData(fontString);
@@ -628,6 +683,53 @@ int APS5_VABI sceFontWritingSetMaskInvisible(FontWriting* fontWriting, std::int3
     return SCE_FONT_ERROR_INVALID_PARAMETER;
 }
 
+int APS5_VABI sceFontCreateWords(const FontMemory* fontMemory, FontTextSource* textSource, const void* detail, FontWordsOpaque** pFontWords) {
+    (void)detail;
+    if (!fontMemory || !textSource || !pFontWords) {
+        if (pFontWords) *pFontWords = nullptr;
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    *pFontWords = nullptr;
+    if (static_cast<std::uint16_t>(textSource->systemUse0 & 0xFFFFu) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
+    if (fontMemory->mem_kind != MEMORY_MAGIC || !fontMemory->iface || !fontMemory->iface->alloc || !fontMemory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
+    void* raw = fontMemory->iface->alloc(fontMemory->mspace_handle, sizeof(FontWordsOpaque));
+    if (!raw) return SCE_FONT_ERROR_ALLOCATION_FAILED;
+    auto* words = new (raw) FontWordsOpaque{};
+    words->memory = fontMemory;
+    words->source = textSource;
+    *pFontWords = words;
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontDestroyWords(FontWordsOpaque** pFontWords) {
+    if (!pFontWords) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    FontWordsOpaque* words = GetWordsData(*pFontWords);
+    if (!words) {
+        *pFontWords = nullptr;
+        return SCE_FONT_ERROR_INVALID_WORDS;
+    }
+    const FontMemory* memory = words->memory;
+    memory->iface->dealloc(memory->mspace_handle, words);
+    *pFontWords = nullptr;
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontWordsFindWordCharacters(FontWordsOpaque* fontWords, FontTextCharacter* startCharacter, FontTextCharacter* termCharacter, FontTextCharacter** pLastCharacter, FontTextCharacter** pNextCharacter) {
+    if (pLastCharacter) *pLastCharacter = nullptr;
+    if (pNextCharacter) *pNextCharacter = nullptr;
+    if (!pLastCharacter || !pNextCharacter || !startCharacter) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!GetWordsData(fontWords)) return SCE_FONT_ERROR_INVALID_WORDS;
+    FontTextCharacter* wordStart = startCharacter;
+    while (wordStart && wordStart != termCharacter && CharacterIsWhitespace(wordStart)) wordStart = wordStart->next;
+    if (!wordStart || wordStart == termCharacter) return SCE_FONT_OK;
+    FontTextCharacter* last = wordStart;
+    while (last->next && last->next != termCharacter && !CharacterIsWhitespace(last->next)) last = last->next;
+    FontTextCharacter* next = last->next;
+    while (next && next != termCharacter && CharacterIsWhitespace(next)) next = next->next;
+    *pLastCharacter = last;
+    *pNextCharacter = next;
+    return SCE_FONT_OK;
+}
 }
 
 #pragma GCC visibility pop

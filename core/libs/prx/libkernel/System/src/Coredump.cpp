@@ -30,36 +30,35 @@ int APS5_VABI sceKernelDebugWriteCppExceptionInfo(const void* exception, uint64_
     return 0;
 }
 
-
 int APS5_VABI sceCoredumpAttachUserFile(void) {
-    NotImplemented_nid_no_patch("5nc2gdLNsok");
-    return 0;
+ NotImplemented_nid_no_patch("5nc2gdLNsok");
+ return 0;
 }
 
 APS5_EXPORT("Jrs7UUkGOFo", sceCoredumpUnknown01);
 int APS5_VABI sceCoredumpUnknown01(void) {
-    NotImplemented_nid_no_patch("Jrs7UUkGOFo");
-    return 0;
+ NotImplemented_nid_no_patch("Jrs7UUkGOFo");
+ return 0;
 }
 
 int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(void) {
-    NotImplemented_nid_no_patch("MEJ7tc7ThwM");
-    return 0;
+ NotImplemented_nid_no_patch("MEJ7tc7ThwM");
+ return 0;
 }
 
 int APS5_VABI sceCoredumpSetUserDataType(void) {
-    NotImplemented_nid_no_patch("Uxqkdta7wEg");
-    return 0;
+ NotImplemented_nid_no_patch("Uxqkdta7wEg");
+ return 0;
 }
 
-int APS5_VABI sceCoredumpDebugTextOut(void) {
-    NotImplemented_nid_no_patch("dei8oUx6DbU");
+int APS5_VABI sceCoredumpDebugTextOut(const char* text, int length) {
+    if (text != nullptr && length > 0) std::fwrite(text, 1, static_cast<std::size_t>(length), stderr);
     return 0;
 }
 
 int APS5_VABI sceCoredumpGetStopInfoCpu(void) {
-    NotImplemented_nid_no_patch("kK0DUW1Ukgc");
-    return 0;
+ NotImplemented_nid_no_patch("kK0DUW1Ukgc");
+ return 0;
 }
 
 int APS5_VABI sceCoredumpWriteUserString() {

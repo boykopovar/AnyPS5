@@ -8,7 +8,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#else
 #include <dlfcn.h>
 #include <link.h>
 #include <unistd.h>
@@ -154,6 +157,46 @@ int FindImage(dl_phdr_info* image, std::size_t, void* data) {
 }
 #endif
 
+#ifdef _WIN32
+constexpr std::int32_t WinProtRead = 1;
+constexpr std::int32_t WinProtWrite = 2;
+constexpr std::int32_t WinProtExecute = 4;
+
+bool FillWindows(std::uint64_t address, ModuleInfoEx& info) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<LPCVOID>(address), &mbi, sizeof(mbi))) return false;
+    const auto module = reinterpret_cast<HMODULE>(mbi.AllocationBase);
+    MODULEINFO moduleInfo{};
+    if (!GetModuleInformation(GetCurrentProcess(), module, &moduleInfo, sizeof(moduleInfo))) return false;
+    char path[4096];
+    const auto length = GetModuleFileNameA(module, path, sizeof(path));
+    std::string name = length > 0 ? std::string(path, static_cast<std::size_t>(length)) : "";
+    const auto separator = name.find_last_of('\\');
+    if (separator != std::string::npos) name = name.substr(separator + 1);
+    if (name.size() >= sizeof(info.name)) return false;
+    std::memcpy(info.name, name.c_str(), name.size() + 1);
+    info.tls_index = 0;
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(moduleInfo.lpBaseOfDll);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(bytes);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(bytes + dos->e_lfanew);
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    const std::size_t sectionCount = nt->FileHeader.NumberOfSections < std::size(info.segments) ? nt->FileHeader.NumberOfSections : std::size(info.segments);
+    for (std::size_t index = 0; index < sectionCount; ++index) {
+        auto& segment = info.segments[index];
+        segment.address = reinterpret_cast<std::uintptr_t>(bytes + sections[index].VirtualAddress);
+        segment.size = sections[index].Misc.VirtualSize != 0 ? sections[index].Misc.VirtualSize : sections[index].SizeOfRawData;
+        const auto characteristics = sections[index].Characteristics;
+        segment.prot = ((characteristics & IMAGE_SCN_MEM_READ) ? WinProtRead : 0)
+                     | ((characteristics & IMAGE_SCN_MEM_WRITE) ? WinProtWrite : 0)
+                     | ((characteristics & IMAGE_SCN_MEM_EXECUTE) ? WinProtExecute : 0);
+        ++info.segment_count;
+    }
+    info.ref_count = 1;
+    info.id = ModuleIdForImage_nid_no_patch(module);
+    return true;
+}
+#endif
+
 }
 
 extern "C" {
@@ -164,8 +207,10 @@ int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, M
     if (info->st_size != sizeof(ModuleInfoEx))
         throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported st_size " + std::to_string(info->st_size));
 #ifdef _WIN32
-    (void)address;
-    NotImplemented_nid_no_patch(__func__);
+    ModuleInfoEx result{};
+    result.st_size = sizeof(ModuleInfoEx);
+    if (!FillWindows(address, result)) return SCE_KERNEL_ERROR_ESRCH;
+    *info = result;
     return 0;
 #else
     Dl_info symbol{};

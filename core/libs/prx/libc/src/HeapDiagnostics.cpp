@@ -3,7 +3,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <memory>
 #include <stdexcept>
+#ifndef _WIN32
+#include <execinfo.h>
+#endif
 
 namespace {
 
@@ -28,18 +33,24 @@ void LibcHeapTraceInfo_nid_no_patch(LibcHeapInfo* info) {
     info->mstate_table = mstateTable.data();
 }
 
-// unknown signature
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName) {
-    (void)heapName;
-    NotImplemented_nid_no_patch(__func__);
+#ifndef _WIN32
+    void* frames[64];
+    const auto count = backtrace(frames, 64);
+    std::fprintf(stderr, "[libc] backtrace for heap '%s':\n", heapName != nullptr ? heapName : "(null)");
+    backtrace_symbols_fd(frames, static_cast<int>(count), 2);
+#else
+    std::fprintf(stderr, "[libc] backtrace for heap '%s' requested\n", heapName != nullptr ? heapName : "(null)");
+#endif
 }
 
-// unknown signature
 void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error) {
-    (void)heap;
-    (void)block;
-    (void)error;
-    NotImplemented_nid_no_patch(__func__);
+    std::fprintf(stderr, "[libc] heap error report: heap=%p block=%p error=%u\n", heap, block, error);
+}
+
+APS5_EXPORT("BnMAMrsfVWo", sceLibcUnknown_BnMAMrsfVWo);
+void APS5_VABI sceLibcUnknown_BnMAMrsfVWo() {
+    throw std::bad_weak_ptr();
 }
 
 }
