@@ -93,6 +93,10 @@ unsigned int APS5_VABI _Atomic_load_4_nid_postfix(volatile unsigned int* target,
     return GccAtomicLoad(target);
 }
 
+[[noreturn]] void APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix(const char* expression, const char* file) {
+    throw std::runtime_error(std::string("std::_Atomic_assert: ") + (expression ? expression : "(null)") + ", " + (file ? file : "(null)"));
+}
+
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char* str, char** endptr, int base) {
     return std::strtoimax(str, endptr, base);
 }
