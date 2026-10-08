@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
@@ -585,7 +586,7 @@ void _execute(const Apr::CommandBufferObject& buffer) {
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
             };
             const std::uint64_t reference = (command.reference & command.mask) << unused;
-            while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) std::this_thread::sleep_for(std::chrono::microseconds(50));
+            while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) PreciseSleepUs(50);
             break;
         }
         case Apr::Opcode::WriteKernelEventQueue: {
