@@ -3,8 +3,10 @@
 #include <cstring>
 #include <cwchar>
 #include <climits>
+#include <clocale>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -21,6 +23,7 @@ const short* APS5_VABI _Getptolower_nid_postfix();
 const short* APS5_VABI _Getptoupper_nid_postfix();
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, std::mbstate_t* st);
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, std::mbstate_t* st);
+int* APS5_VABI __error_nid_postfix();
 void APS5_VABI _Locksyslock_nid_postfix();
 void APS5_VABI _Unlocksyslock_nid_postfix();
 
@@ -105,18 +108,35 @@ static void CheckCharacterTables() {
 
 static void CheckCharacterConversions() {
     const auto* classification = _Getpctype_nid_postfix();
-    for (std::uint16_t value = 0; value < 128; ++value) {
+    for (std::uint16_t value = 0; value < 256; ++value) {
         std::array<char, MB_LEN_MAX + 1> bytes{};
         bytes.fill('!');
         std::mbstate_t encodeState{};
+        *__error_nid_postfix() = 7;
         Require(_Wctombx_nid_postfix(bytes.data(), value, &encodeState) == 1);
         Require(bytes[0] == static_cast<char>(value) && bytes[1] == '!');
+        Require(*__error_nid_postfix() == 7);
         std::array<std::uint16_t, 2> wide{0xffff, 0x1234};
         std::mbstate_t decodeState{};
         Require(_Mbtowcx_nid_postfix(wide.data(), bytes.data(), 2, &decodeState) == (value == 0 ? 0 : 1));
         Require(wide[0] == value && wide[1] == 0x1234);
+        Require(*__error_nid_postfix() == 7);
         const bool alnum = (value >= '0' && value <= '9') || (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z');
         Require(((classification[static_cast<unsigned char>(bytes[0])] & 0x232) != 0) == alnum);
+    }
+    const char sequence[] = {'\xc3', '\xa9'};
+    std::mbstate_t sequenceState{};
+    std::uint16_t unit{};
+    Require(_Mbtowcx_nid_postfix(&unit, sequence, sizeof(sequence), &sequenceState) == 1 && unit == 0xc3);
+    Require(_Mbtowcx_nid_postfix(&unit, sequence + 1, 1, &sequenceState) == 1 && unit == 0xa9);
+    for (const std::uint16_t invalid : {0x100, 0xd800, 0xdfff, 0xffff}) {
+        std::array<char, MB_LEN_MAX + 1> output;
+        output.fill('!');
+        std::mbstate_t invalidState{};
+        *__error_nid_postfix() = 7;
+        RequireException([&] { _Wctombx_nid_postfix(output.data(), invalid, &invalidState); });
+        Require(*__error_nid_postfix() == 86);
+        for (const char byte : output) Require(byte == '!');
     }
     std::mbstate_t state{};
     char byte{};
@@ -127,6 +147,22 @@ static void CheckCharacterConversions() {
     RequireException([&] { _Mbtowcx_nid_postfix(&wide, "]", 1, nullptr); });
     RequireException([&] { _Wctombx_nid_postfix(nullptr, ']', &state); });
     RequireException([&] { _Wctombx_nid_postfix(&byte, ']', nullptr); });
+}
+
+static void CheckHostLocaleConversions() {
+    const auto* current = std::setlocale(LC_CTYPE, nullptr);
+    Require(current != nullptr);
+    const std::string saved(current);
+    Require(std::setlocale(LC_CTYPE, "C") != nullptr);
+    std::cout << "Guest conversions with host C locale" << std::endl;
+    CheckCharacterConversions();
+    if (std::setlocale(LC_CTYPE, "C.UTF-8") || std::setlocale(LC_CTYPE, ".UTF8")) {
+        std::cout << "Guest conversions with host UTF-8 locale" << std::endl;
+        CheckCharacterConversions();
+    } else {
+        std::cout << "Host UTF-8 locale unavailable" << std::endl;
+    }
+    Require(std::setlocale(LC_CTYPE, saved.c_str()) != nullptr);
 }
 
 static void CheckStreamDestruction() {
@@ -148,7 +184,7 @@ int main() {
     CheckGuestCalls();
     CheckLocinfoAlignment();
     CheckCharacterTables();
-    CheckCharacterConversions();
+    CheckHostLocaleConversions();
     CheckStreamDestruction();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
