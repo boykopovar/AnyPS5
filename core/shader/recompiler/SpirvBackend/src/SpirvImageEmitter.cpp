@@ -1069,6 +1069,11 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
     if (!HasFlag(mem, RdnaImageSampleFlagLevelZero) && (compare & EmulatedCompare::SingleLevel) == 0u) ctx.Fail(access.inst, "compares against a color texture across mip levels, which is not implemented");
     const bool arrayed = image.dimension == RdnaImageDimension::Dim2DArray;
     if (image.dimension != RdnaImageDimension::Dim2D && !arrayed) ctx.Fail(access.inst, "compares against a color texture that is not a 2D or 2D array view, which is not implemented");
+    if (EmulatedCompare::Result(compare) != EmulatedCompare::ResultCompared) {
+        const auto constant = ConstantF32(state, EmulatedCompare::Result(compare) == EmulatedCompare::ResultOne ? 0x3f800000u : 0u);
+        ctx.Define(access.inst, TableResult(ctx, access, ResultVector(ctx, access, constant, setup.numericClass, true, false)));
+        return;
+    }
     const auto f32 = TypeF32(state);
     const auto i32 = TypeI32(state);
     const auto u32 = TypeU32(state);

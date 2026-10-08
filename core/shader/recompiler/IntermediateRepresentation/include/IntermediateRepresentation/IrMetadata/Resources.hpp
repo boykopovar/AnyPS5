@@ -42,6 +42,10 @@ inline constexpr std::uint32_t ClampYShift = 7u;
 inline constexpr std::uint32_t ReferenceShift = 9u;
 inline constexpr std::uint32_t SingleLevel = 1u << 11u;
 inline constexpr std::uint32_t BorderWhite = 1u << 12u;
+inline constexpr std::uint32_t ResultShift = 13u;
+inline constexpr std::uint32_t ResultCompared = 0u;
+inline constexpr std::uint32_t ResultZero = 1u;
+inline constexpr std::uint32_t ResultOne = 2u;
 inline constexpr std::uint32_t AddressWrap = 0u;
 inline constexpr std::uint32_t AddressEdge = 1u;
 inline constexpr std::uint32_t AddressBorder = 2u;
@@ -52,6 +56,7 @@ inline constexpr std::uint32_t ReferenceSnorm = 2u;
 [[nodiscard]] inline std::uint32_t AddressX(std::uint32_t state) { return (state >> ClampXShift) & 0x3u; }
 [[nodiscard]] inline std::uint32_t AddressY(std::uint32_t state) { return (state >> ClampYShift) & 0x3u; }
 [[nodiscard]] inline std::uint32_t Reference(std::uint32_t state) { return (state >> ReferenceShift) & 0x3u; }
+[[nodiscard]] inline std::uint32_t Result(std::uint32_t state) { return (state >> ResultShift) & 0x3u; }
 }
 
 struct ImageResource {
