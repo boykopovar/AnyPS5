@@ -1294,6 +1294,12 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state)) {
         if (const auto* entry = findImport(state, address, address + bytes)) return entry;
+        const auto lease = GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch(address, bytes);
+        if (!importsStale(context, state)) {
+            if (lease.empty()) return nullptr;
+            const auto& range = *lease.front();
+            return importAllocation(context, state, range.address, range.bytes, lease);
+        }
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
@@ -1302,9 +1308,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
 }
 
 bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
-    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    return containingRange(lease, address, address + bytes) != nullptr;
+    return !GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch(address, bytes).empty();
 }
 
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -2054,6 +2058,10 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             region.pending = true;
             continue;
         }
+        if (!addressable && !region.sparse && Recorder::Active() != nullptr) {
+            region.pending = true;
+            continue;
+        }
         copyRegion(region, addressable);
     }
 }
@@ -2143,7 +2151,14 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             region.direct = nullptr;
             if (entry == nullptr) entry = findImport(state, region.begin, region.end);
             if (entry == nullptr) {
-                if (const auto* range = containingRange(importRanges(), region.begin, region.end)) entry = importAllocation(context, state, range->address, range->bytes, importRanges());
+                GuestAllocations::Lease targeted;
+                const bool haveLease = !lease.empty() || space != nullptr || !acquired.empty();
+                if (!haveLease) targeted = GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch(region.begin, bytes);
+                const bool stale = importsStale(context, state);
+                const auto& available = haveLease || stale ? importRanges() : targeted;
+                if (stale) refreshImports(context, state, available);
+                if (const auto* range = containingRange(available, region.begin, region.end))
+                    entry = importAllocation(context, state, range->address, range->bytes, available);
             }
             // A staged region (see stagingEligible) is copied out of the import even when aligned;
             // without a recorder to record the copies it binds in place like any other.
@@ -2232,6 +2247,16 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
 void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto bytes = region.end - region.begin;
+    if (!addressable && !region.sparse && bytes <= context.limits.maxStorageBufferRange && (region.hostBacked || region.writable) && !WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) {
+        if (auto* recorder = Recorder::Active()) {
+            const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::BufferUpload);
+            const auto slice = recorder->ReadBuffer(region.begin, static_cast<std::size_t>(bytes));
+            region.buffer = slice.buffer;
+            region.bufferOffset = slice.offset;
+            region.snapshot.clear();
+            return;
+        }
+    }
     const auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (addressable ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     if (profile) {
         // Why the region is copied rather than bound in place, totalled every 1000 uploads (under a
@@ -2470,7 +2495,7 @@ VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std:
     Require(adjustment % 4 == 0, "guest buffer view off the storage buffer offset alignment is not DWORD aligned");
     Require(bytes + adjustment <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? region.mirror->buffer->Handle() : region.buffer->Handle();
-    return {handle, offset - adjustment, bytes + adjustment};
+    return {handle, offset - adjustment + (region.direct == nullptr && region.mirror == nullptr ? region.bufferOffset : 0), bytes + adjustment};
 }
 
 ShaderRecompiler::BdaAbi::Range GuestBufferMemory::addressRange(const Region& region) {

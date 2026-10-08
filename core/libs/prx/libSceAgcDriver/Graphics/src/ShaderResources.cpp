@@ -994,7 +994,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         if (!bindings.empty()) {
             // The set is sized from the plan: every image element becomes exactly one descriptor
             // when stage B looks it up.
-            std::vector<VkDescriptorPoolSize> sizes;
+            auto& sizes = descriptorSizes;
             if (storageBuffers != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<std::uint32_t>(storageBuffers)});
             if (plannedSampledImages != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, plannedSampledImages});
             if (plannedStorageImages != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, plannedStorageImages});
@@ -1049,6 +1049,17 @@ void ShaderResources::buildComplete() {
         if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory);
         else if (usesFaultBuffer) bda = std::make_unique<BdaResources>(context);
         phase(BuildPhase::Bda);
+        for (auto& allocation : allocations) {
+            if (allocation.pendingData.empty()) continue;
+            if (auto* recorder = Recorder::Active()) {
+                std::tie(allocation.buffer, allocation.bufferOffset) = recorder->AllocateDrawUpload(allocation.size);
+            } else {
+                const bool refreshable = !allocation.dataWords.empty();
+                allocation.buffer = std::make_shared<Buffer>(context, allocation.size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (refreshable ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : 0u));
+            }
+            std::memcpy(allocation.Bytes().data(), allocation.pendingData.data(), allocation.size);
+            allocation.pendingData = {};
+        }
         if (_set != VK_NULL_HANDLE) {
             // One update call for the whole set: the info arrays are sized up front so every write's
             // pointer into them stays valid until the call.
@@ -1058,11 +1069,11 @@ void ShaderResources::buildComplete() {
                 bufferCount += binding.allocations.size();
                 imageCount += binding.imageAllocations.size();
             }
-            std::vector<VkDescriptorBufferInfo> buffers;
-            std::vector<VkDescriptorImageInfo> images;
+            auto& buffers = descriptorBuffers;
+            auto& images = descriptorImages;
             buffers.reserve(bufferCount);
             images.reserve(imageCount);
-            std::vector<VkWriteDescriptorSet> writes;
+            auto& writes = descriptorWrites;
             writes.reserve(bindings.size());
             for (const auto& binding : bindings) {
                 VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -1102,7 +1113,7 @@ void ShaderResources::buildComplete() {
             Require(allocation.dataAllocation >= 0, "a guest buffer off the storage buffer offset alignment in a shader without shader data is not implemented");
             auto& data = allocations[static_cast<std::size_t>(allocation.dataAllocation)];
             Require(data.buffer != nullptr && allocation.dataByte < data.size, "guest buffer offset lies outside the shader's data buffer");
-            data.buffer->Bytes()[allocation.dataByte] = static_cast<std::byte>(allocation.adjustment);
+            data.Bytes()[allocation.dataByte] = static_cast<std::byte>(allocation.adjustment);
             dataPatches.push_back({static_cast<std::size_t>(allocation.dataAllocation), allocation.dataByte, allocation.adjustment});
         }
         timing.descriptorsMs += phase(BuildPhase::Descriptors);
@@ -1187,6 +1198,11 @@ void ShaderResources::reportDescriptorCaches() const {
     const auto samplerHits = context.samplerCache != nullptr ? context.samplerCache->Hits() : 0;
     const auto samplerMisses = context.samplerCache != nullptr ? context.samplerCache->Misses() : 0;
     AgcDriver::ProfilePrint_nid_no_patch("[descriptors] layouts %llu hits / %llu created, sets %llu from %llu pools, samplers %llu hits / %llu created\n", static_cast<unsigned long long>(descriptors.layoutHits), static_cast<unsigned long long>(descriptors.layoutMisses), static_cast<unsigned long long>(descriptors.sets), static_cast<unsigned long long>(descriptors.pools), static_cast<unsigned long long>(samplerHits), static_cast<unsigned long long>(samplerMisses));
+    if (const auto* recorder = Recorder::Active()) {
+        const auto& buffers = recorder->BufferCounters();
+        AgcDriver::ProfilePrint_nid_no_patch("[buffer-cache] %llu lookups, %llu hits, %llu invalidations (%llu mappings), %llu evictions; %llu read-only uploads, %.1f MiB streamed\n", static_cast<unsigned long long>(buffers.lookups), static_cast<unsigned long long>(buffers.hits), static_cast<unsigned long long>(buffers.invalidations), static_cast<unsigned long long>(buffers.mappingInvalidations), static_cast<unsigned long long>(buffers.evictions), static_cast<unsigned long long>(buffers.uploads), buffers.uploadedBytes / 1048576.0);
+    }
+
 }
 
 std::vector<std::uint32_t> ShaderResources::ContentKey(const CompiledShader& shader, bool dataWords, bool movableBuffers) {
@@ -2262,7 +2278,7 @@ std::string ShaderResources::Describe() const {
             text += line;
             if (GuestMemory::Accessible(reinterpret_cast<const void*>(allocation.address), allocation.size)) appendWords(reinterpret_cast<const std::uint32_t*>(allocation.address), allocation.size);
         } else if (allocation.buffer) {
-            const auto bytes = allocation.buffer->Bytes();
+            const auto bytes = allocation.Bytes();
             std::snprintf(line, sizeof(line), " data+0x%zx nz=%.2f", allocation.size, sample(reinterpret_cast<std::uint64_t>(bytes.data()), allocation.size));
             text += line;
             appendWords(reinterpret_cast<const std::uint32_t*>(bytes.data()), allocation.size);
@@ -2275,9 +2291,13 @@ std::size_t ShaderResources::addDataBuffer(std::span<const std::uint32_t> words)
     const auto size = words.size() * sizeof(std::uint32_t);
     Require(size <= context.limits.maxStorageBufferRange, "shader data buffer exceeds descriptor range limit");
     const bool refreshable = TemplateDataRefresh() && size <= MaxRefreshBytes;
-    auto buffer = std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (refreshable ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : 0u));
-    std::memcpy(buffer->Bytes().data(), words.data(), size);
-    Allocation allocation{0, size, false, std::move(buffer)};
+    Allocation allocation{0, size, false, nullptr};
+    if (size <= 4096) {
+        allocation.pendingData = words;
+    } else {
+        allocation.buffer = std::make_shared<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (refreshable ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : 0u));
+        std::memcpy(allocation.Bytes().data(), words.data(), size);
+    }
     if (refreshable) allocation.dataWords.assign(words.begin(), words.end());
     allocations.push_back(std::move(allocation));
     mixDataWords(dataWordsHash, allocations.back().dataWords);
@@ -2345,10 +2365,11 @@ bool ShaderResources::RefreshData(VkCommandBuffer commands, const CompiledShader
 }
 
 void ShaderResources::writeDataWords(VkCommandBuffer commands, std::size_t allocation, std::span<const std::uint32_t> words) const {
-    const auto& buffer = *allocations[allocation].buffer;
+    const auto& item = allocations[allocation];
+    const auto& buffer = *item.buffer;
     const auto size = words.size() * sizeof(std::uint32_t);
     if (std::none_of(dataPatches.begin(), dataPatches.end(), [&](const DataPatch& patch) { return patch.allocation == allocation; })) {
-        context.Resolved(&DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, buffer.Handle(), 0, size, words.data());
+        context.Resolved(&DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, buffer.Handle(), item.bufferOffset, size, words.data());
         return;
     }
     std::vector<std::uint32_t> patched(words.begin(), words.end());
@@ -2356,7 +2377,7 @@ void ShaderResources::writeDataWords(VkCommandBuffer commands, std::size_t alloc
     for (const auto& patch : dataPatches) {
         if (patch.allocation == allocation && patch.byte < size) bytes[patch.byte] = static_cast<std::byte>(patch.adjustment);
     }
-    context.Resolved(&DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, buffer.Handle(), 0, size, patched.data());
+    context.Resolved(&DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, buffer.Handle(), item.bufferOffset, size, patched.data());
 }
 
 void ShaderResources::PrecollectSurfaces() const {
@@ -2699,7 +2720,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto& item = allocations[index];
                 if (item.guest || item.buffer == nullptr || item.size != binding.guestDescriptor.size() * sizeof(std::uint32_t)) return std::nullopt;
                 const bool patched = std::any_of(dataPatches.begin(), dataPatches.end(), [&](const DataPatch& patch) { return patch.allocation == index; });
-                const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : !patched && std::memcmp(item.buffer->Bytes().data(), binding.guestDescriptor.data(), item.size) == 0;
+                const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : !patched && std::memcmp(item.Bytes().data(), binding.guestDescriptor.data(), item.size) == 0;
                 if (same) continue;
                 if (item.dataWords.empty() && patched) return std::nullopt;
                 moved.push_back({index, 0, item.size, binding.guestDescriptor});
@@ -2737,19 +2758,21 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved) const {
     if (_set == VK_NULL_HANDLE || usesBda) return {};
     const auto reads = guestMemory.InPlaceReads();
+    if (reads.empty() && moved.empty()) return {};
     auto result = std::make_shared<DrawBindings>();
     std::vector<std::size_t> selected;
     for (std::size_t index = 0; index < allocations.size(); ++index) {
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         if (override != moved.end() && !override->words.empty()) {
-            auto buffer = std::make_shared<Buffer>(context, override->size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            std::memcpy(buffer->Bytes().data(), override->words.data(), override->size);
+            auto [buffer, offset] = recorder.AllocateDrawUpload(override->size);
+            auto bytes = buffer->Bytes().subspan(offset, override->size);
+            std::memcpy(bytes.data(), override->words.data(), override->size);
             for (const auto& patch : dataPatches) {
-                if (patch.allocation == index && patch.byte < override->size) buffer->Bytes()[patch.byte] = static_cast<std::byte>(patch.adjustment);
+                if (patch.allocation == index && patch.byte < override->size) bytes[patch.byte] = static_cast<std::byte>(patch.adjustment);
             }
             selected.push_back(index);
-            result->snapshots.push_back({0, std::move(buffer)});
+            result->snapshots.push_back({0, std::move(buffer), offset, override->size});
             continue;
         }
         std::uint64_t address = item.address;
@@ -2766,56 +2789,39 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         const auto bytes = size + item.adjustment;
         const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         const auto generation = GuestMemory::CollectWrites(begin, bytes);
-        auto buffer = recorder.ReusableDrawSnapshot(begin, bytes);
+        std::size_t offset = 0;
+        auto buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, &offset);
         if (buffer == nullptr) {
-            buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-            std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
-            recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+            std::tie(buffer, offset) = recorder.AllocateDrawUpload(bytes);
+            std::memcpy(buffer->Bytes().data() + offset, reinterpret_cast<const void*>(begin), bytes);
+            recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer, Recorder::SnapshotUse::Storage, 0, offset);
         }
         selected.push_back(index);
-        result->snapshots.push_back({begin, std::move(buffer)});
+        result->snapshots.push_back({begin, std::move(buffer), offset, bytes});
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
     if (selected.empty()) return {};
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
-    std::map<VkDescriptorType, std::uint32_t> counts;
-    for (const auto& binding : bindings) counts[binding.layout.descriptorType] += binding.layout.descriptorCount;
-    std::vector<VkDescriptorPoolSize> sizes;
-    for (const auto& [type, count] : counts) sizes.push_back({type, count});
     result->cache = context.descriptorCache;
-    result->allocation = result->cache->Allocate(_layout, sizes);
+    result->allocation = result->cache->Allocate(_layout, descriptorSizes);
     Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
-    std::vector<VkCopyDescriptorSet> copies;
-    for (const auto& binding : bindings) {
-        VkCopyDescriptorSet copy{VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET};
-        copy.srcSet = _set;
-        copy.srcBinding = binding.layout.binding;
-        copy.dstSet = result->allocation.set;
-        copy.dstBinding = binding.layout.binding;
-        copy.descriptorCount = binding.layout.descriptorCount;
-        copies.push_back(copy);
-    }
-    const auto update = context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets");
-    update(context.device, 0, nullptr, static_cast<std::uint32_t>(copies.size()), copies.data());
-    std::vector<VkDescriptorBufferInfo> infos;
-    infos.reserve(selected.size());
-    for (const auto& snapshot : result->snapshots) infos.push_back({snapshot.buffer->Handle(), 0, snapshot.buffer->Bytes().size()});
-    std::vector<VkWriteDescriptorSet> writes;
-    for (const auto& binding : bindings) {
+    auto buffers = descriptorBuffers;
+    auto writes = descriptorWrites;
+    for (std::size_t index = 0; index < bindings.size(); ++index) {
+        const auto& binding = bindings[index];
+        auto& write = writes[index];
+        write.dstSet = result->allocation.set;
+        if (binding.allocations.empty()) continue;
+        const auto offset = static_cast<std::size_t>(write.pBufferInfo - descriptorBuffers.data());
+        write.pBufferInfo = buffers.data() + offset;
         for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
             const auto found = std::find(selected.begin(), selected.end(), binding.allocations[element]);
             if (found == selected.end()) continue;
-            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            write.dstSet = result->allocation.set;
-            write.dstBinding = binding.layout.binding;
-            write.dstArrayElement = static_cast<std::uint32_t>(element);
-            write.descriptorCount = 1;
-            write.descriptorType = binding.layout.descriptorType;
-            write.pBufferInfo = &infos[static_cast<std::size_t>(found - selected.begin())];
-            writes.push_back(write);
+            const auto& snapshot = result->snapshots[static_cast<std::size_t>(found - selected.begin())];
+            buffers[offset + element] = {snapshot.buffer->Handle(), snapshot.offset, snapshot.size};
         }
     }
-    update(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     recorder.Keep(result);
     return result;
 }

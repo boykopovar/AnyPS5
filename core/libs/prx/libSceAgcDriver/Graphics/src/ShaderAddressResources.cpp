@@ -43,7 +43,7 @@ VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
         return allocation.role == ShaderRecompiler::DescriptorRole::BdaPagetable ? bda->Table() : bda->Fault();
     }
     Require(allocation.buffer != nullptr, "shader data has no buffer owner");
-    return {allocation.buffer->Handle(), 0, allocation.size};
+    return {allocation.buffer->Handle(), allocation.bufferOffset, allocation.size};
 }
 
 }
