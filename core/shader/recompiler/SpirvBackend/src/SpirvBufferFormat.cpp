@@ -222,6 +222,22 @@ SpirvFormattedSource ResolveFormattedSource(const SpirvBufferFormatInfo& info, s
     return {SpirvFormattedSourceKind::Memory, (selector - 4u) % info.componentCount};
 }
 
+SpirvFormattedSource ResolveGpuSelectedSource(const SpirvBufferFormatInfo& info, std::uint32_t outputComponent, std::uint32_t selector) {
+    if (selector == 2u || selector == 3u) {
+        if (info.componentCount == 0u) {
+            throw std::runtime_error("ResolveGpuSelectedSource: format has no components");
+        }
+        if (selector == 2u) {
+            return {SpirvFormattedSourceKind::Memory, outputComponent % info.componentCount};
+        }
+        if (info.componentCount == 1u) {
+            return {SpirvFormattedSourceKind::Memory, 0u};
+        }
+        return {SpirvFormattedSourceKind::Zero, 0u};
+    }
+    return ResolveFormattedSource(info, selector);
+}
+
 std::uint32_t FormattedConstantBits(const SpirvBufferFormatInfo& info, SpirvFormattedSourceKind kind) {
     switch (kind) {
         case SpirvFormattedSourceKind::Zero:
