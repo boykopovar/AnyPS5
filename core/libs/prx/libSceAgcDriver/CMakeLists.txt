@@ -298,6 +298,26 @@ if(BUILD_TESTING)
     add_test(NAME agc_subgroup_clock COMMAND agc_subgroup_clock_tests)
 endif()
 
+if(ANYPS5_ENABLE_SPIRV_TOOLS)
+    add_test_executable(agc_spirv_version_tests EXCLUDE_FROM_ALL tests/SpirvVersion.cpp)
+    target_link_libraries(agc_spirv_version_tests PRIVATE shader_recompiler_agc_driver libc SPIRV-Tools-static)
+    set_target_properties(agc_spirv_version_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(agc_spirv_version_tests)
+    if(BUILD_TESTING)
+        set_target_properties(agc_spirv_version_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+        add_test(NAME agc_spirv_version COMMAND ${CMAKE_COMMAND} -E env
+                --unset=APS5_SPIRV_OPT "$<TARGET_FILE:agc_spirv_version_tests>")
+        add_test(NAME agc_spirv_version_full COMMAND ${CMAKE_COMMAND} -E env
+                APS5_SPIRV_OPT=full "$<TARGET_FILE:agc_spirv_version_tests>")
+        add_test(NAME agc_spirv_version_none COMMAND ${CMAKE_COMMAND} -E env
+                APS5_SPIRV_OPT=none "$<TARGET_FILE:agc_spirv_version_tests>")
+        if(WIN32)
+            set_tests_properties(agc_spirv_version agc_spirv_version_full agc_spirv_version_none PROPERTIES
+                    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+endif()
+
 add_test_executable(agc_spirv_module_tests EXCLUDE_FROM_ALL tests/SpirvModule.cpp)
 target_link_libraries(agc_spirv_module_tests PRIVATE shader_recompiler_agc_driver libc)
 set_target_properties(agc_spirv_module_tests PROPERTIES CXX_EXTENSIONS OFF)

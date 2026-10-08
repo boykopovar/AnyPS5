@@ -71,8 +71,15 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
     if (spirvVersion < 0x00010000u || spirvVersion > maxSpirvVersion || (spirvVersion & 0xffu) != 0) {
         throw std::runtime_error("SPIRV-Tools: unsupported Vulkan/SPIR-V target");
     }
-    if (spirv.size() >= 5 && spirv[1] > spirvVersion) {
-        throw std::runtime_error("SPIRV-Tools: module version exceeds requested SPIR-V target");
+    if (spirv.size() >= 5) {
+        auto moduleVersion = spirv[1];
+        if (spirv[0] == 0x03022307u) {
+            moduleVersion = ((moduleVersion & 0xffu) << 24) | ((moduleVersion & 0xff00u) << 8)
+                | ((moduleVersion & 0xff0000u) >> 8) | (moduleVersion >> 24);
+        }
+        if (moduleVersion > spirvVersion) {
+            throw std::runtime_error("SPIRV-Tools: module version exceeds requested SPIR-V target");
+        }
     }
     std::string diagnostics;
     const auto consumer = [&diagnostics](spv_message_level_t level, const char* source, const spv_position_t& position, const char* message) {
