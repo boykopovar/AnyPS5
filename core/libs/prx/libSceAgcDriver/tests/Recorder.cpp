@@ -1448,6 +1448,7 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
         Require(sources.size() == 1 && sources[0].shadow, "a published unit does not read from the slab");
     }
     // Partial-unit scope over unit 3 (partly, fresh again) and unit 4 (wholly, fresh): unit 3 only.
+    CollectWritesUncached(address, bytes);
     retile(*whole, unit3, unit, 0x33, false);
     auto four = ShadowDestinationFor(context, *import, unit4, unit5);
     Require(four.has_value() && four->seedUnits.empty() && four->slab == half->slab, "unit 4's destination is not in the same slab");
