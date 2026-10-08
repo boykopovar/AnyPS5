@@ -62,6 +62,7 @@ struct DepthTarget {
     VkFormat format;
     float clearDepth;
     std::uint8_t clearStencil;
+    bool stencilUncompressed = false;
 };
 
 struct State {

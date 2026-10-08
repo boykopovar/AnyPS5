@@ -1,0 +1,34 @@
+#version 450
+#ifdef ANYPS5_FORMATLESS
+#extension GL_EXT_shader_image_load_formatted : require
+#endif
+layout(local_size_x = 1, local_size_y = 1) in;
+#ifdef ANYPS5_ARRAY
+#define ANYPS5_STORAGE_TYPE uimage2DArray
+#else
+#define ANYPS5_STORAGE_TYPE uimage2D
+#endif
+#ifdef ANYPS5_FORMATLESS
+layout(binding = 0) uniform ANYPS5_STORAGE_TYPE storageStencil;
+#else
+layout(binding = 0, r8ui) uniform ANYPS5_STORAGE_TYPE storageStencil;
+#endif
+layout(binding = 1) uniform usampler2D sampledStencil;
+layout(binding = 2) uniform sampler2D sampledDepth;
+layout(binding = 3, std430) buffer Results { uvec2 pixels[]; };
+layout(push_constant) uniform Mode { uint mode; };
+void main() {
+    ivec2 at = ivec2(gl_GlobalInvocationID.xy);
+#ifdef ANYPS5_ARRAY
+    ivec3 storageAt = ivec3(at, 0);
+#else
+    ivec2 storageAt = at;
+#endif
+    uint index = gl_GlobalInvocationID.y * 4 + gl_GlobalInvocationID.x;
+    if (mode == 0) {
+        imageStore(storageStencil, storageAt, imageLoad(storageStencil, storageAt) | uvec4(4, 0, 0, 0));
+    } else {
+        uint stencil = mode == 1 ? texelFetch(sampledStencil, at, 0).r : imageLoad(storageStencil, storageAt).r;
+        pixels[index] = uvec2(stencil, floatBitsToUint(texelFetch(sampledDepth, at, 0).r));
+    }
+}
