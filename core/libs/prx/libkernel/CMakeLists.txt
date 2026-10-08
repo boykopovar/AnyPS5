@@ -48,6 +48,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SystemConfiguration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Signals.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Notification.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/UserContext.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/AppMetadata.cpp
@@ -278,6 +279,18 @@ if(BUILD_TESTING)
     set_tests_properties(guest_pthread_key PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_pthread_key PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_user_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserContext.cpp)
+    target_include_directories(guest_user_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_context_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_user_context_tests)
+    add_test(NAME guest_user_context COMMAND guest_user_context_tests)
+    add_test(NAME guest_user_context_exit COMMAND guest_user_context_tests exit-on-return)
+    set_tests_properties(guest_user_context guest_user_context_exit PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        target_compile_definitions(guest_user_context_tests PRIVATE _WIN32_WINNT=0x0602)
+        set_tests_properties(guest_user_context guest_user_context_exit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_signal_tests ${LIBS_INCLUDE_DIR}/tests/GuestSignals.cpp)

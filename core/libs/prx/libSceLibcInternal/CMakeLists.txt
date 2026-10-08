@@ -1,4 +1,4 @@
-add_library(libSceLibcInternal SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceLibcInternal SHARED EXCLUDE_FROM_ALL Export.cpp UserContext.cpp)
 target_include_directories(libSceLibcInternal PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibcInternal PRIVATE ${CMAKE_DL_LIBS})
 configure_windows_unwind(libSceLibcInternal)
