@@ -311,6 +311,9 @@ std::int64_t message_length(const NetMsghdr* message) {
 extern "C" {
 
 extern const std::uint32_t sce_net_in6addr_any[4] = {};
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_linklocal_allnodes[16] = {
+    0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+};
 
 int* APS5_VABI sceNetErrnoLoc(void) {
     return errno_slot();

@@ -30,6 +30,7 @@ int APS5_VABI sceNetEpollControl(int, int, int, const NetEpollEvent*);
 int APS5_VABI sceNetEpollWait(int, NetEpollEvent*, int, int);
 int APS5_VABI sceNetEpollDestroy(int);
 extern const std::uint32_t sce_net_in6addr_any[4];
+extern const std::uint8_t sce_net_in6addr_linklocal_allnodes[16];
 int APS5_VABI sceNetResolverCreate(const char*, int, int);
 int APS5_VABI sceNetResolverStartNtoa(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverDestroy(int);
@@ -147,6 +148,19 @@ static void CheckAddressText(int family, const char* text) {
     Require(sceNetInetNtop(family, address.data(), nullptr, output.size()) == nullptr && *sceNetErrnoLoc() == 22);
 }
 
+static void CheckLinkLocalAllNodesIpv6() {
+    std::array<std::uint8_t, 16> address{};
+    Require(sceNetInetPton(28, "ff02::1", address.data()) == 1);
+    Require(std::memcmp(sce_net_in6addr_linklocal_allnodes, address.data(), address.size()) == 0);
+    std::array<char, 9> text;
+    text.fill('x');
+    Require(sceNetInetNtop(28, sce_net_in6addr_linklocal_allnodes, text.data(), 8) == text.data());
+    Require(std::strcmp(text.data(), "ff02::1") == 0 && text[8] == 'x');
+    address.fill(0xa5);
+    Require(sceNetInetPton(28, text.data(), address.data()) == 1);
+    Require(std::memcmp(sce_net_in6addr_linklocal_allnodes, address.data(), address.size()) == 0);
+}
+
 static void CheckUnspecifiedIpv6() {
     std::array<std::uint8_t, 16> unspecified{};
     Require(sceNetInetPton(28, "::", unspecified.data()) == 1);
@@ -192,6 +206,7 @@ int main() {
     CheckAddressText(28, "::1");
     CheckAddressText(28, "1234:5678:9abc:def0:1234:5678:9abc:def0");
     CheckUnspecifiedIpv6();
+    CheckLinkLocalAllNodesIpv6();
 
     const int listener = sceNetSocket(nullptr, 2, 1, 6);
     Require(listener >= 0);
