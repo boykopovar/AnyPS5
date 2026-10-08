@@ -2,6 +2,7 @@
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -16,6 +17,32 @@ constexpr int sceDeadlock = static_cast<int>(0x8002000bu);
 constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 std::mutex initializationMutex;
+
+template<typename TNative>
+bool lockInterruptibly(TNative& native) {
+    TimedWait::AcquireInterruptibly([&] { return native.try_lock(); }, [&](std::uint64_t micros) { return native.try_lock_for(std::chrono::microseconds(micros)); });
+    return true;
+}
+
+template<typename TNative>
+bool lockInterruptiblyUntilNanos(TNative& native, std::uint64_t deadlineNanos) {
+    return TimedWait::AcquireInterruptiblyUntil(deadlineNanos, [&] { return native.try_lock(); }, [&](std::uint64_t micros) { return native.try_lock_for(std::chrono::microseconds(micros)); });
+}
+
+template<typename TNative>
+bool lockInterruptiblyUntilTime(TNative& native, std::chrono::system_clock::time_point deadline) {
+    if (native.try_lock())
+        return true;
+    TimedWait::InterruptibleScope scope;
+    for (;;) {
+        const auto step = std::chrono::time_point_cast<std::chrono::system_clock::duration>(std::chrono::system_clock::now() + std::chrono::microseconds(TimedWait::INTERRUPT_SLICE_MICROS));
+        if (native.try_lock_until(std::min(deadline, step)))
+            return true;
+        if (std::chrono::system_clock::now() >= deadline)
+            return false;
+        scope.Poll();
+    }
+}
 
 PthreadMutex destroyedMutex() {
     return reinterpret_cast<PthreadMutex>(std::uintptr_t{2});
@@ -87,7 +114,7 @@ int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstim
     if (std::chrono::duration<long double>(duration) >= std::chrono::duration<long double>(std::chrono::system_clock::duration::max()))
         throw std::overflow_error("Absolute mutex timeout exceeds the host clock range");
     const auto deadline = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(duration));
-    return acquireMutex(resolveMutex(mutex, true), [&](auto& native) { return native.try_lock_until(deadline); }, sceTimedOut, false);
+    return acquireMutex(resolveMutex(mutex, true), [&](auto& native) { return lockInterruptiblyUntilTime(native, deadline); }, sceTimedOut, false);
 }
 
 extern "C" {
@@ -161,7 +188,7 @@ int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
 }
 
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) {
-    return acquireMutex(resolveMutex(mutex, true), [](auto& native) { native.lock(); return true; }, 0, false);
+    return acquireMutex(resolveMutex(mutex, true), [](auto& native) { return lockInterruptibly(native); }, 0, false);
 }
 
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {
@@ -181,9 +208,7 @@ int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {
 
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) {
     const auto deadline = TimedWait::DeadlineNanos(usec);
-    return acquireMutex(resolveMutex(mutex, true), [=](auto& native) {
-        return TimedWait::AcquireUntil(deadline, [&] { return native.try_lock(); }, [&](std::uint64_t micros) { return native.try_lock_for(std::chrono::microseconds(micros)); });
-    }, sceTimedOut, false);
+    return acquireMutex(resolveMutex(mutex, true), [=](auto& native) { return lockInterruptiblyUntilNanos(native, deadline); }, sceTimedOut, false);
 }
 
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) {

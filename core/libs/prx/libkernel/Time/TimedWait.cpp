@@ -241,6 +241,32 @@ void BindThreadWaitState(std::atomic<int>* state) {
     waitState = state != nullptr ? state : &ownWaitState;
 }
 
+#ifdef _WIN32
+
+InterruptibleScope::InterruptibleScope() {
+    waitState->fetch_add(1, std::memory_order_seq_cst);
+}
+
+InterruptibleScope::~InterruptibleScope() {
+    waitState->fetch_sub(1, std::memory_order_seq_cst);
+    DrainApcs();
+}
+
+void InterruptibleScope::Poll() {
+    DrainApcs();
+}
+
+#else
+
+InterruptibleScope::InterruptibleScope() = default;
+
+InterruptibleScope::~InterruptibleScope() = default;
+
+void InterruptibleScope::Poll() {
+}
+
+#endif
+
 bool Coarse() {
 #ifdef _WIN32
     static const bool coarse = std::getenv("APS5_COARSE_TIMED_WAITS") != nullptr;

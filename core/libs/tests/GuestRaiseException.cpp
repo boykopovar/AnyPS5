@@ -19,6 +19,15 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
 int APS5_VABI sceKernelDeleteSema(KernelSema sem);
 int APS5_VABI sceKernelSignalSema(KernelSema sem, int count);
 int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time);
+int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
+int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec);
+int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
+int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name);
+int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
+int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
+int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
 int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
 }
 
@@ -262,6 +271,60 @@ static void ExpectDelivery(int before, std::thread::id thread) {
     Require(handlerRsp.load() != 0 && handlerFrame.load() < handlerRsp.load());
 }
 
+static constexpr int LockRounds = 10;
+static PthreadMutex guestMutex = nullptr;
+static PthreadRwlock guestRwlock = nullptr;
+
+static int LockMutex() { return scePthreadMutexLock(&guestMutex); }
+static int TimedLockMutex() { return scePthreadMutexTimedlock(&guestMutex, 10000000); }
+static int UnlockMutex() { return scePthreadMutexUnlock(&guestMutex); }
+static int LockRwlock() { return scePthreadRwlockWrlock(&guestRwlock); }
+static int UnlockRwlock() { return scePthreadRwlockUnlock(&guestRwlock); }
+
+struct LockWorker {
+    int (*lock)() = nullptr;
+    int (*unlock)() = nullptr;
+    std::atomic<int> blocking{0};
+    std::atomic<int> acquired{0};
+    std::atomic<int> released{0};
+    std::thread::id id;
+};
+
+static void* APS5_VABI LockBlocked(void* arg) {
+    auto& worker = *static_cast<LockWorker*>(arg);
+    worker.id = std::this_thread::get_id();
+    for (int round = 1; round <= LockRounds; ++round) {
+        while (worker.released.load() != round - 1) std::this_thread::yield();
+        worker.blocking.store(round);
+        Require(worker.lock() == 0);
+        worker.acquired.store(round);
+        Require(worker.unlock() == 0);
+    }
+    return nullptr;
+}
+
+static void ExpectDeliveryWhileLockHeld(int (*lock)(), int (*unlock)(), int before) {
+    LockWorker worker;
+    worker.lock = lock;
+    worker.unlock = unlock;
+    Require(lock() == 0);
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, LockBlocked, &worker, "lock blocked") == 0);
+    for (int round = 1; round <= LockRounds; ++round) {
+        while (worker.blocking.load() != round) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require(sceKernelRaiseException(thread, SIGUSR1) == 0);
+        ExpectDelivery(before + round - 1, worker.id);
+        Require(worker.acquired.load() == round - 1);
+        Require(unlock() == 0);
+        while (worker.acquired.load() != round) std::this_thread::yield();
+        Require(lock() == 0);
+        worker.released.store(round);
+    }
+    Require(unlock() == 0);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+}
+
 int main() {
     Require(sceKernelRaiseException(scePthreadSelf(), 11) == SCE_KERNEL_ERROR_EINVAL);
     bool rejected = false;
@@ -354,6 +417,15 @@ int main() {
         Require(scePthreadJoin(vectorsThread, nullptr) == 0);
         Require(std::memcmp(vectorPattern, vectorResult, VectorBytes) == 0);
     }
+
+    const int beforeLocks = calls.load();
+    Require(scePthreadMutexInit(&guestMutex, nullptr, "raise") == 0);
+    ExpectDeliveryWhileLockHeld(LockMutex, UnlockMutex, beforeLocks);
+    ExpectDeliveryWhileLockHeld(TimedLockMutex, UnlockMutex, beforeLocks + LockRounds);
+    Require(scePthreadMutexDestroy(&guestMutex) == 0);
+    Require(scePthreadRwlockInit(&guestRwlock, nullptr, "raise") == 0);
+    ExpectDeliveryWhileLockHeld(LockRwlock, UnlockRwlock, beforeLocks + 2 * LockRounds);
+    Require(scePthreadRwlockDestroy(&guestRwlock) == 0);
 
     Pthread finishedThread = nullptr;
     Require(scePthreadCreate(&finishedThread, nullptr, Finished, nullptr, "finished") == 0);
