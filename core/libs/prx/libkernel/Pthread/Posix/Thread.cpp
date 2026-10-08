@@ -101,9 +101,6 @@ int APS5_VABI sched_yield_nid_postfix(void) {
     return 0;
 }
 
-// Canonical lib is libScePosix (dead import of Cyberpunk 2077): 35 of its
-// 36 sibling imports resolve to libkernel, and libScePosix is not in the
-// game's NEEDED list so only a NEEDED module can satisfy the loader here.
 int APS5_VABI pthread_cancel_nid_postfix(Pthread thread) {
     return PosixThread::ToErrno(scePthreadCancel(thread));
 }
