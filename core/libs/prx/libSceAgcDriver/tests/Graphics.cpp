@@ -1873,8 +1873,13 @@ void validationTests() {
         attribute.resource.fields[1] = 0;
         attribute.resource.fields[2] = 16;
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 100, 2) == 16, "zero stride must repeat one value");
+        Require(!AgcDriver::Graphics::ShortRawVertexBufferBytes(attribute).has_value(), "a zero-stride buffer holding a whole element was treated as short");
         attribute.resource.fields[2] = 8;
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "byte range");
+        Require(AgcDriver::Graphics::ShortRawVertexBufferBytes(attribute) == std::optional<std::size_t>{8}, "a zero-stride buffer shorter than its element did not keep its in-range dwords");
+        attribute.resource.fields[2] = 1;
+        Require(AgcDriver::Graphics::ShortRawVertexBufferBytes(attribute) == std::optional<std::size_t>{0}, "a dword past a one-byte zero-stride buffer was read");
+        attribute.resource.fields[2] = 8;
         attribute.resource.fields[3] = 113u << 12u;
         expectFailure([&] { AgcDriver::Graphics::DecodeVertexFormat(attribute); }, "unsupported vertex format");
         attribute.resource.fields[3] = 50u << 12u;

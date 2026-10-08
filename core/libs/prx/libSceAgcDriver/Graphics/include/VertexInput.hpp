@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <set>
 #include <span>
 #include <utility>
@@ -130,6 +131,13 @@ inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& a
     const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
     Require(address != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid vertex buffer address range");
     return static_cast<std::size_t>(bytes);
+}
+
+inline std::optional<std::size_t> ShortRawVertexBufferBytes(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
+    const auto records = attribute.resource.fields[2];
+    if (stride != 0 || records >= DecodeVertexFormat(attribute).bytes) return std::nullopt;
+    return static_cast<std::size_t>(records & ~3u);
 }
 
 inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute& attribute, std::uint32_t maxIndex, std::uint32_t instances, std::uint32_t firstInstance = 0) {
