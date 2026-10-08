@@ -1,4 +1,4 @@
-add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp LoadExec.cpp)
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceSystemService)
 
@@ -12,12 +12,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_quick_exit COMMAND guest_system_exit_tests --quick-exit)
     add_test(NAME guest_immediate_exit COMMAND guest_system_exit_tests --immediate)
     add_test(NAME guest_return_from_main COMMAND guest_system_exit_tests --return-from-main)
+    add_test(NAME guest_load_exec_restart COMMAND guest_system_exit_tests --load-exec)
     set_tests_properties(guest_system_exit PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest shutdown and atexit completed")
     set_tests_properties(guest_quick_exit PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest quick_exit handlers completed")
+    set_tests_properties(guest_load_exec_restart PROPERTIES
+        PASS_REGULAR_EXPRESSION "Guest shut down before the restart[\r\n]+Guest restarted with its arguments")
     if(WIN32)
-        set_tests_properties(guest_system_exit guest_system_exit_parameters guest_immediate_exit guest_return_from_main guest_quick_exit PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_system_exit guest_system_exit_parameters guest_immediate_exit guest_return_from_main guest_quick_exit guest_load_exec_restart PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemService.cpp)

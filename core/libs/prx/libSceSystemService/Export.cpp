@@ -6,17 +6,24 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/LoadExec.hpp"
+#include <string>
+#include <vector>
 
 extern "C" {
 
 int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
     if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
-    if (std::strcmp(path, "exit") != 0) {
-        NotImplemented_nid_no_patch("sceSystemServiceLoadExec: executable replacement");
+    if (std::strcmp(path, "exit") == 0) {
+        LibcRunShutdown_nid_postfix();
+        std::exit(0);
     }
-    (void)arguments;
-    LibcRunShutdown_nid_postfix();
-    std::exit(0);
+    if (std::strcmp(path, "/app0/eboot.bin") != 0) {
+        NotImplemented_nid_no_patch("sceSystemServiceLoadExec: executable other than the running title");
+    }
+    std::vector<std::string> list;
+    for (auto argument = arguments; argument != nullptr && *argument != nullptr; ++argument) list.emplace_back(*argument);
+    SystemService::RestartProcess(list);
 }
 
 int APS5_VABI sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void) {
