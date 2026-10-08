@@ -547,6 +547,7 @@ std::uint32_t emulatedCompareState(const IrResourcePlan& plan, const ResourceSna
         const auto function = (words[0] >> 12u) & 0x7u;
         const bool unnormalized = ((words[0] >> 15u) & 0x1u) != 0u;
         if (((words[0] >> 29u) & 0x3u) != 0u) throw std::runtime_error("comparison sampling of a color texture through a min or max reduction sampler is not implemented");
+        const bool truncate = ((words[0] >> 27u) & 0x1u) != 0u;
         const auto magFilter = (words[2] >> 20u) & 0x3u;
         const auto minFilter = (words[2] >> 22u) & 0x3u;
         const auto addressMode = [](std::uint32_t clamp) {
@@ -562,6 +563,7 @@ std::uint32_t emulatedCompareState(const IrResourcePlan& plan, const ResourceSna
         if (border && borderType == 3u) throw std::runtime_error("comparison sampling of a color texture with a border color table is not implemented");
         if (magFilter != minFilter || magFilter > 1u) throw std::runtime_error("comparison sampling of a color texture is implemented only with equal point or bilinear minification and magnification filters");
         if (unnormalized) throw std::runtime_error("comparison sampling of a color texture does not implement unnormalized coordinates");
+        if (truncate && magFilter == 0u) throw std::runtime_error("comparison sampling of a color texture does not implement TRUNC_COORD for point sampling");
         const auto state = EmulatedCompare::Enabled | (function << EmulatedCompare::FunctionShift) | (magFilter == 1u ? EmulatedCompare::Linear : 0u)
             | (addressX << EmulatedCompare::ClampXShift) | (addressY << EmulatedCompare::ClampYShift) | (border && borderType == 2u ? EmulatedCompare::BorderWhite : 0u);
         if (samplerState.has_value() && *samplerState != state) throw std::runtime_error("comparison sampling of a color texture through samplers that disagree is not implemented");
