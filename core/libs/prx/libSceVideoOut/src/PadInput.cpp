@@ -26,6 +26,7 @@ void PadInput::openFirstAvailableController() {
     if (controller != nullptr) return;
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+    SDL_SetHint(SDL_HINT_DIRECTINPUT_ENABLED, "0");
     if ((SDL_WasInit(SDL_INIT_GAMECONTROLLER) & SDL_INIT_GAMECONTROLLER) == 0) {
         if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
             APS5_LOG_ERR("Pad: SDL game controller init failed: %s", SDL_GetError());

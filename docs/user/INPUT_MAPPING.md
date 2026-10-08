@@ -12,7 +12,7 @@ Supported input sources are:
 - `MOUSE:Left`, `MOUSE:Middle`, `MOUSE:Right`, `MOUSE:X1`, or `MOUSE:X2`.
 - `WHEEL:Up` or `WHEEL:Down` for pad buttons.
 
-Game-controller bindings are enabled automatically and are not affected by keyboard or mouse overrides in this file.
+Game-controller bindings are enabled automatically and are not affected by keyboard or mouse overrides in this file. On Windows, controllers are driven through XInput and HIDAPI; DirectInput enumeration is disabled by default to avoid hangs on virtual and composite HID devices.
 
 Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `ToggleMouse`, and `ToggleFullscreen`.
 
