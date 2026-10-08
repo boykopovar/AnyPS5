@@ -12,11 +12,14 @@
 #include <codegen/x86/Sha1Lowering.hpp>
 #include <codegen/x86/Sha1Operands.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace Codegen {
@@ -65,6 +68,30 @@ const Entry& _sha1Entry(const Sha1Operands& operands) {
         return kSha1msg2;
     }
     return kSha1rnds4;
+}
+
+Amd64OnlyMatch _trampoline(std::string name, const std::size_t length, LoweredBody body, const bool optional = false) {
+    return Amd64OnlyMatch{std::move(name), length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset, optional, std::move(body.Relocations)};
+}
+
+void _moveTrailing(StubBodyBuilder& body, std::span<const std::uint8_t> trailing) {
+    const X64InstructionDecoder decoder;
+    while (!trailing.empty()) {
+        const auto info = decoder.DecodeInstruction(trailing.data(), trailing.size());
+        if (info.Length == 0 || info.Length > trailing.size())
+            throw CodegenException("Trailing bytes do not split into whole instructions");
+        body.Move(trailing.first(info.Length), info.HasRipRelativeDisp ? std::optional<std::size_t>(info.RipRelativeDispOffset) : std::nullopt);
+        trailing = trailing.subspan(info.Length);
+    }
+}
+
+template<typename TEmit>
+LoweredBody _outOfLine(const std::size_t length, const std::span<const std::uint8_t> trailing, const TEmit& emit) {
+    StubBodyBuilder body;
+    emit(body);
+    body.Advance(length);
+    _moveTrailing(body, trailing);
+    return body.Finish();
 }
 
 Amd64OnlyMatch _inPlace(const Entry& entry, const std::size_t length, std::vector<std::uint8_t> replacement) {
@@ -131,26 +158,23 @@ Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchSse4a(const DecodedInstruction
         if (auto inPlace = _lowering.LowerInPlace(operands, instr.Length))
             return Amd64OnlyMatch{entry.Name, instr.Length, Amd64OnlyLowering::InPlace, std::move(*inPlace), {}, 0};
     }
-    auto body = _lowering.LowerOutOfLine(operands, trailing);
     const auto& name = operands.RegisterForm ? registerFormEntry.Name : entry.Name;
-    return Amd64OnlyMatch{name, instr.Length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset};
+    return _trampoline(name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _lowering.EmitOutOfLine(body, operands); }));
 }
 
 Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchSha256(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const {
     const auto operands = DecodeSha256(instr.Data, instr.Length);
-    auto body = _sha256Lowering.LowerOutOfLine(operands, trailing);
-    return Amd64OnlyMatch{_sha256Entry(operands).Name, instr.Length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset};
+    return _trampoline(_sha256Entry(operands).Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _sha256Lowering.EmitOutOfLine(body, operands); }));
 }
 
 Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchSha1(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const {
     const auto operands = DecodeSha1(instr.Data, instr.Length);
-    auto body = _sha1Lowering.LowerOutOfLine(operands, trailing);
-    return Amd64OnlyMatch{_sha1Entry(operands).Name, instr.Length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset};
+    return _trampoline(_sha1Entry(operands).Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _sha1Lowering.EmitOutOfLine(body, operands); }));
 }
 
 Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchClzero(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const {
-    auto body = _clzeroLowering.LowerOutOfLine(DecodeClzero(instr.Data, instr.Length), trailing);
-    return Amd64OnlyMatch{kClzero.Name, instr.Length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset};
+    const auto operands = DecodeClzero(instr.Data, instr.Length);
+    return _trampoline(kClzero.Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _clzeroLowering.EmitOutOfLine(body, operands); }));
 }
 
 std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
@@ -190,11 +214,11 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
         } else {
             return std::nullopt;
         }
+        body.Advance(instr.Length);
     }
-    body.Raw(trailing);
-    auto lowered = body.Finish();
+    _moveTrailing(body, trailing);
     const bool optional = DecodeVexReciprocal(instructions.front().data(), instructions.front().size()).has_value();
-    return Amd64OnlyMatch{name, instructions.front().size(), Amd64OnlyLowering::Trampoline, {}, std::move(lowered.Bytes), lowered.ReturnBranchOffset, optional};
+    return _trampoline(name, instructions.front().size(), body.Finish(), optional);
 }
 
 std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
@@ -229,8 +253,7 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
         return _validWait(instr) ? _inPlace(kMwaitx, length, std::vector<std::uint8_t>(kPause.Bytes, kPause.Bytes + kPause.Size)) : _unsupported(kMwaitx, length);
 
     if (const auto reciprocal = DecodeVexReciprocal(data, length)) {
-        auto body = _reciprocalLowering.LowerOutOfLine(*reciprocal, trailing);
-        return Amd64OnlyMatch{_reciprocalEntry(*reciprocal).Name, length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset, true};
+        return _trampoline(_reciprocalEntry(*reciprocal).Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { _reciprocalLowering.EmitOutOfLine(body, *reciprocal); }), true);
     }
 
     if (instr.IsClzero())

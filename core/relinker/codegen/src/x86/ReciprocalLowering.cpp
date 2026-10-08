@@ -55,10 +55,9 @@ void ReciprocalLowering::EmitOutOfLine(StubBodyBuilder& body, const ReciprocalOp
     body.Restore(scratch);
 }
 
-LoweredBody ReciprocalLowering::LowerOutOfLine(const ReciprocalOperands& operands, std::span<const std::uint8_t> trailing) const {
+LoweredBody ReciprocalLowering::LowerOutOfLine(const ReciprocalOperands& operands) const {
     StubBodyBuilder body;
     EmitOutOfLine(body, operands);
-    body.Raw(trailing);
     return body.Finish();
 }
 

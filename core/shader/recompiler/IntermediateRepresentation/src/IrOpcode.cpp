@@ -485,6 +485,17 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("ImageAtomicFCmpSwap32", U32, ImageResource, ImageAddress, U32, U32, U1),
     makeMeta("ImageAtomicFMin32", U32, ImageResource, ImageAddress, U32, U1),
     makeMeta("ImageAtomicFMax32", U32, ImageResource, ImageAddress, U32, U1),
+    makeMeta("ImageAtomicSwap64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicIAdd64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicISub64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicUMin64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicUMax64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicSMin64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicSMax64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicAnd64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicOr64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicXor64", U64, ImageResource, ImageAddress, U64, U1),
+    makeMeta("ImageAtomicCmpSwap64", U64, ImageResource, ImageAddress, U64, U64, U1),
     makeMeta("GetAttribute", U32, U32, U32),
     makeMeta("GetInterpolationParameter", U32, U32, U32, U32),
     makeMeta("SetAttribute", Void, U32x4, U1),
@@ -804,10 +815,25 @@ ImageOpcodeInfo ImageOpcodeInfoOf(IrOpcode opcode) {
         case IrOpcode::ImageAtomicFCmpSwap32:
         case IrOpcode::ImageAtomicFMin32:
         case IrOpcode::ImageAtomicFMax32:
+        case IrOpcode::ImageAtomicSwap64:
+        case IrOpcode::ImageAtomicIAdd64:
+        case IrOpcode::ImageAtomicISub64:
+        case IrOpcode::ImageAtomicUMin64:
+        case IrOpcode::ImageAtomicUMax64:
+        case IrOpcode::ImageAtomicSMin64:
+        case IrOpcode::ImageAtomicSMax64:
+        case IrOpcode::ImageAtomicAnd64:
+        case IrOpcode::ImageAtomicOr64:
+        case IrOpcode::ImageAtomicXor64:
+        case IrOpcode::ImageAtomicCmpSwap64:
             return {ImageAccess::Atomic, ImageResourceClass::Storage, false};
         default:
             return {};
     }
+}
+
+bool IsImageAtomic64Opcode(IrOpcode opcode) {
+    return opcode >= IrOpcode::ImageAtomicSwap64 && opcode <= IrOpcode::ImageAtomicCmpSwap64;
 }
 
 bool IsFloat64Opcode(IrOpcode opcode) {

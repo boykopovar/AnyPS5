@@ -50,7 +50,7 @@ alignas(256) constexpr std::array<std::uint32_t, 99> SampleCode{
     0x5a7a000d, 0x7e1c02ff, 0x5a7a000e, 0x7e1e02ff, 0x5a7a000f, 0x7e2002ff, 0x5a7a0010, 0x7e2202ff,
     0x5a7a0011, 0x7e2402ff, 0x5a7a0012, 0x7e2602ff, 0x5a7a0013, 0x7e2802ff, 0x5a7a0014, 0x7e2a02ff,
     0x5a7a0015, 0x7e2c02ff, 0x5a7a0016, 0x7e2e02ff, 0x5a7a0017, 0x7e3002ff, 0x5a7a0018, 0x7e3202ff,
-    0x5a7a0019, 0xf0810108, 0x00820a04, 0xf1010108, 0x00820c04, 0x7e540280, 0xf03b0308, 0x0002112a,
+    0x5a7a0019, 0xf0830108, 0x00820a04, 0xf1030108, 0x00820c04, 0x7e540280, 0xf03b0308, 0x0002112a,
     0xf0910108, 0x00821404, 0x34500081, 0x7e520281, 0xf0030108, 0x00021628, 0x7e300280, 0xf0010108,
     0x80021828, 0xbf8c3f70, 0xe0701200, 0x80000a03, 0xe0701204, 0x80000b03, 0xe0701208, 0x80000c03,
     0xe070120c, 0x80000d03, 0xe0701210, 0x80000e03, 0xe0701214, 0x80000f03, 0xe0701218, 0x80001003,
@@ -59,9 +59,7 @@ alignas(256) constexpr std::array<std::uint32_t, 99> SampleCode{
     0xe070123c, 0x80001903, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::array<std::uint32_t, 3>, 5> RefusedCode{{
-    {0xf0820108u, 0x00820a04u, 0xbf810000u},
-    {0xf1020108u, 0x00820a04u, 0xbf810000u},
+alignas(256) constexpr std::array<std::array<std::uint32_t, 3>, 3> RefusedCode{{
     {0xf1820308u, 0x00820a04u, 0xbf810000u},
     {0xf0452108u, 0x00020a08u, 0xbf810000u},
     {0xf0010108u, 0x0002ff08u, 0xbf810000u},
@@ -209,7 +207,7 @@ constexpr std::array<std::array<std::uint32_t, SampleResults>, Threads> SampleEx
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format, std::uint32_t width, std::uint32_t height) {
@@ -282,7 +280,7 @@ void RunSample(AgcDriver::VulkanDevice& device) {
 }
 
 void CheckRefused(AgcDriver::VulkanDevice& device) {
-    constexpr std::array<const char*, 5> names{"image_sample lwe", "image_gather4 lwe", "image_get_lod lwe", "image_atomic_add tfe", "image_load tfe status past v255"};
+    constexpr std::array<const char*, 3> names{"image_get_lod lwe", "image_atomic_add tfe", "image_load tfe status past v255"};
     std::vector<std::uint32_t> userData(16, 0u);
     for (std::uint32_t i = 0; i < RefusedCode.size(); ++i) {
         const std::span<const std::uint32_t> code(RefusedCode[i]);
@@ -321,7 +319,7 @@ void CheckStorage() {
 }
 
 void CheckSample() {
-    constexpr std::array<const char*, SampleResults> names{"image_sample tfe", "image_sample tfe status", "image_gather4 tfe x", "image_gather4 tfe y", "image_gather4 tfe z", "image_gather4 tfe w", "image_gather4 tfe status", "image_get_resinfo tfe lwe width", "image_get_resinfo tfe lwe height", "image_get_resinfo tfe lwe status", "image_sample_l tfe", "image_sample_l tfe status", "image_load tfe lwe", "image_load tfe lwe status", "image_load tfe d16", "image_load tfe d16 status"};
+    constexpr std::array<const char*, SampleResults> names{"image_sample tfe lwe", "image_sample tfe lwe status", "image_gather4 tfe lwe x", "image_gather4 tfe lwe y", "image_gather4 tfe lwe z", "image_gather4 tfe lwe w", "image_gather4 tfe lwe status", "image_get_resinfo tfe lwe width", "image_get_resinfo tfe lwe height", "image_get_resinfo tfe lwe status", "image_sample_l tfe", "image_sample_l tfe status", "image_load tfe lwe", "image_load tfe lwe status", "image_load tfe d16", "image_load tfe d16 status"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t j = 0; j < SampleResults; ++j) {
             Expect(names[j], tid, Buffer[Threads * Inputs + tid * Results + j], SampleExpected[tid][j]);

@@ -14,18 +14,6 @@ static void AjmStub(const char* name) {
 
 extern "C" {
 
-int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* sideband_input, size_t sideband_input_size, void* sideband_output, size_t sideband_output_size) {
- (void)info;
- (void)instance;
- (void)flags;
- (void)sideband_input;
- (void)sideband_input_size;
- (void)sideband_output;
- (void)sideband_output_size;
- AjmStub(__func__);
- return 0;
-}
-
 int APS5_VABI sceAjmBatchJobDecodeSplit(AjmBatchInfo* info, uint32_t instance, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* result) {
  (void)info;
  (void)instance;
@@ -50,32 +38,6 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
  return 0;
 }
 
-int APS5_VABI sceAjmBatchJobGetInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
- (void)info;
- (void)instance;
- (void)result;
- AjmStub(__func__);
- return 0;
-}
-
-int APS5_VABI sceAjmBatchJobGetResampleInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
- (void)info;
- (void)instance;
- (void)result;
- AjmStub(__func__);
- return 0;
-}
-
-int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t instance, float ratio, uint32_t flags, void* result) {
- (void)info;
- (void)instance;
- (void)ratio;
- (void)flags;
- (void)result;
- AjmStub(__func__);
- return 0;
-}
-
 int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t instance, float ratio_start, float ratio_change_per_sample, uint32_t flags, void* result) {
  (void)info;
  (void)instance;
@@ -91,6 +53,16 @@ const char* APS5_VABI sceAjmStrError(int error) {
  (void)error;
  AjmStub(__func__);
  return nullptr;
+}
+
+int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAjmDecWVorbisCreateSetupPacket(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

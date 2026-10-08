@@ -190,7 +190,7 @@ void RemapDynamicNeededOffsets(
         for (std::size_t d = 0u; d < dynCount; ++d) {
             const std::size_t entryOffset = dynOffset + d * sizeof(Elf64_Dyn);
             const auto dyn = Read<Elf64_Dyn>(elf, entryOffset);
-            if (dyn.d_tag != kDtNeeded && dyn.d_tag != kDtSoname) continue;
+            if (!IsDynamicNameTag(dyn.d_tag)) continue;
 
             const auto oldNameOffset = static_cast<std::uint32_t>(dyn.d_val);
             const auto mapped = std::find_if(
@@ -266,7 +266,7 @@ std::vector<std::uint32_t> CollectDynamicNameOffsets(const std::vector<std::uint
         for (std::size_t d = 0u; d < dynCount; ++d) {
             const auto dyn = Read<Elf64_Dyn>(elf, dynOffset + d * sizeof(Elf64_Dyn));
             if (dyn.d_tag == kDtNull) break;
-            if (dyn.d_tag != kDtNeeded && dyn.d_tag != kDtSoname) continue;
+            if (!IsDynamicNameTag(dyn.d_tag)) continue;
             offsets.push_back(static_cast<std::uint32_t>(dyn.d_val));
         }
     }
@@ -337,6 +337,8 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         }
         if (shdr.sh_type == kShtGnuVersym)
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);
+        if (shdr.sh_type == kShtGnuVerdef)
+            throw std::runtime_error("unsupported .gnu.version_d section: symbol version definitions cannot be preserved");
     }
 
     if (dynSymOffset == 0u) throw std::runtime_error("no .dynsym section");

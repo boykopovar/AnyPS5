@@ -130,6 +130,39 @@ void RunBdaExecutionTests(const Context& context) {
     run(guest, 8, 0, Abi::FaultReason::InvalidTable, 3);
     run(std::numeric_limits<std::uint64_t>::max() - 2, 8, 0, Abi::FaultReason::Overflow, 2, 1, 4);
     run(1, 8, 0, Abi::FaultReason::Overflow, 2, 1, -4);
+    Buffer words(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const auto read = [&](std::uint64_t address, std::uint32_t dwords, bool coherent, bool stops, std::uint32_t value, bool faults) {
+        const Abi::Header header{Abi::Version, 2, sizeof(Abi::Range), 0};
+        std::memcpy(table.Bytes().data(), &header, sizeof(header));
+        std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        const std::array<std::uint32_t, 4> sentinel{0xdeadbeef, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
+        std::memcpy(words.Bytes().data(), sentinel.data(), sizeof(sentinel));
+        Pipeline pipeline(context, MakeBdaDwordReadTestShader(address, dwords, coherent, stops), {&table, &fault, &words});
+        pipeline.Run(1);
+        Abi::Fault report{};
+        std::array<std::uint32_t, 4> result{};
+        std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+        std::memcpy(result.data(), words.Bytes().data(), sizeof(result));
+        auto expected = sentinel;
+        if (!faults || !stops) {
+            expected[0] = value;
+            for (std::uint32_t dword = 1; dword < dwords; ++dword) expected[dword] = 0;
+        }
+        if (faults) {
+            Require(report.state == Abi::FaultState::Ready && report.reason == Abi::FaultReason::Unmapped && report.address == guest + 5 && report.bytes == 1 && report.instruction == 0x1234, "BDA dword read did not publish its first fault");
+        } else {
+            Require(report.state == Abi::FaultState::Empty, "mapped BDA dword read published a fault");
+        }
+        Require(result == expected, faults && stops ? "faulting BDA dword read continued to output a substitute value" : "BDA dword read produced incorrect data");
+    };
+    for (const bool stops : {true, false}) {
+        for (const bool coherent : {false, true}) {
+            read(guest + 1, 1, coherent, stops, 0x55443322, false);
+            read(guest + 3, 1, coherent, stops, 0x5544, true);
+            read(guest + 1, 4, coherent, stops, 0x55443322, true);
+        }
+    }
     ranges[0].permissions = 0;
     run(guest, 8, 0, Abi::FaultReason::Permission);
 }

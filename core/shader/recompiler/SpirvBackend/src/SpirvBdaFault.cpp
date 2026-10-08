@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include <stdexcept>
 
 namespace ShaderRecompiler {
 
@@ -26,7 +27,21 @@ std::uint32_t BdaLoadAddress(SpirvEmitterState& state, std::uint32_t index) {
     return Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), low, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), high, BdaConstant(state, 32u)));
 }
 
-void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason) {
+void DefineBdaFaultFunction(SpirvEmitterState& state) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    state.bdaFaultFunction = state.module.AllocateId();
+    state.module.AddName(state.bdaFaultFunction, "record_bda_fault");
+    state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.bdaFaultFunction, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, TypeVoid(state), u32, u64, u32, u32));
+    const auto reason = state.module.AllocateId();
+    const auto address = state.module.AllocateId();
+    const auto bytes = state.module.AllocateId();
+    const auto instruction = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, u32, reason);
+    state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+    state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
+    state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
+    EmitLabel(state, state.module.AllocateId());
     const auto pointer = BdaWord(state, state.faultBufferVariable, ConstantU32(state, 0u));
     const auto previous = state.module.AllocateId();
     const auto scope = ConstantU32(state, spv::ScopeDevice);
@@ -37,7 +52,7 @@ void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32
         const auto store = [&](std::uint32_t index, std::uint32_t value) {
             state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
         };
-        store(1, ConstantU32(state, static_cast<std::uint32_t>(reason)));
+        store(1, reason);
         store(2, Unary(state, spv::OpUConvert, TypeU32(state), address));
         store(3, Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u))));
         store(4, bytes);
@@ -47,6 +62,13 @@ void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32
         const auto release = ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask);
         state.module.AddFunction(spv::OpAtomicStore, pointer, scope, release, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
     });
+    state.module.AddFunction(spv::OpReturn);
+    state.module.AddFunction(spv::OpFunctionEnd);
+}
+
+void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason) {
+    if (state.bdaFaultFunction == 0) throw std::runtime_error("BDA fault function is missing");
+    state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.bdaFaultFunction, ConstantU32(state, static_cast<std::uint32_t>(reason)), address, bytes, instruction);
 }
 
 void ReturnBdaFailureIf(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason) {
@@ -67,7 +89,14 @@ void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition) {
     state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, condition, failed, next);
     EmitLabel(state, failed);
-    state.module.AddFunction(state.program.Resources().stage == IrShaderStage::Pixel ? spv::OpKill : spv::OpReturn);
+    if (state.bdaStopValue != 0) {
+        state.module.AddFunction(spv::OpReturnValue, state.bdaStopValue);
+    } else {
+        if (OrderedPixelShader(state)) {
+            state.module.AddFunction(spv::OpEndInvocationInterlockEXT);
+        }
+        state.module.AddFunction(state.program.Resources().stage == IrShaderStage::Pixel ? spv::OpKill : spv::OpReturn);
+    }
     EmitLabel(state, next);
 }
 

@@ -12,6 +12,8 @@ void require(bool condition, const char* reason);
 
 std::uint32_t readRegister(const Registers& registers, std::uint32_t offset);
 
+std::uint32_t readUserData(const Registers& shader, std::uint32_t offset);
+
 }
 
 #endif

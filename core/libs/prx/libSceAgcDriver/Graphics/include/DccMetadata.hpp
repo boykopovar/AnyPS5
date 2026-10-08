@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace AgcDriver::Graphics {
@@ -22,6 +23,8 @@ enum class DccKeys { Uncompressed, Clear0000, Clear0001, Clear1110, Clear1111, C
 
 const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);
+std::size_t DccKeyCount(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t width, std::uint32_t height, std::uint64_t surfaceBytes);
+std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfaceBytes);
 
 template<typename ReadFollowed, typename ReadNamed>
 bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys filled, std::uint64_t namedDcc, ReadFollowed&& readFollowed, ReadNamed&& readNamed) {
@@ -34,15 +37,18 @@ bool KeysServeSurface(std::uint64_t followedDcc, DccKeys uploaded, DccKeys fille
 DccKeys ReadDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 bool IsDccClear(DccKeys keys);
 DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
+DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
 // Stores "uncompressed" keys over the surface's metadata on the CPU (a guest memory write: it waits
 // for recorded GPU work that writes the keys first).
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
+void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
 // The same after a write-back recorded under GuestMemory::GpuMutex: when the keys are in host-imported
 // memory and a recorder is active, the store is a fill recorded into the open batch (ordered behind
 // the title's key-writing kernels like the write-back itself, nothing waits on the CPU) and the range
 // reads as uncompressed from ReadDccKeys while that batch is pending; otherwise the CPU store above.
 // APS5_CPU_DCC_KEYS=1 always stores on the CPU.
 void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std::uint64_t surfaceBytes);
+void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
 // Fills `bytes` with the texel a 0000/0001/1110/1111 clear code stands for ("1" is 1.0 or the integer
 // maximum; the alpha channel is the last one in memory when alphaOnMsb, else the first, and 3-channel
 // formats have none). False when the format has no encoding here.
@@ -82,6 +88,7 @@ DccKeyProofCounts KeyProofCounts();
 // A surface's texels as a read sees them: the guest bytes, or the clear value of fast-cleared keys.
 void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std::span<std::byte> bytes);
 void NoteKeysFillOnGpu(std::uint64_t begin, std::size_t count, DccKeys keys);
+std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, std::uint64_t guestBytes);
 
 }
 

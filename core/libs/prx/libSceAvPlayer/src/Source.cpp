@@ -494,7 +494,7 @@ private:
     }
 
     bool takeVideo(AvPlayerFrameInfoEx& info) {
-        if (!started || paused || video.stream < 0 || speed < 0) return false;
+        if (!started || video.stream < 0 || speed < 0) return false;
         if (speed != NormalSpeed) dropLateAudio();
         auto& frames = video.frames;
         const bool synced = syncMode == SyncModeDefault;
@@ -502,6 +502,7 @@ private:
         while (!frames.empty() && frames.front().epoch < stale) recycleFront(video);
         if (frames.empty()) return false;
         const auto& front = frames.front();
+        if (paused && front.epoch <= clockEpoch) return false;
         if (front.epoch > clockEpoch) {
             if (synced && audioDriving && speed == NormalSpeed) return false;
             if (synced && front.seamless && presented && presentationClock.Now() < static_cast<double>(lastPresented + frameDuration())) return false;

@@ -49,7 +49,8 @@ int toSubsampling(Sampling sampling) {
 }  // namespace
 
 std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width, std::uint32_t height,
-                                 std::uint32_t channels, int quality, Sampling sampling) {
+                                 std::uint32_t channels, int quality, Sampling sampling, std::uint32_t restartBlocks,
+                                 std::uint32_t restartRows) {
     if (width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
         throw std::invalid_argument("Jpeg::Encode: unsupported image size");
     }
@@ -58,9 +59,16 @@ std::vector<std::uint8_t> Encode(std::span<const std::uint8_t> pixels, std::uint
     if (pixels.size() < static_cast<std::size_t>(width) * height * channels) {
         throw std::invalid_argument("Jpeg::Encode: pixel buffer is too small");
     }
+    if (restartBlocks > MAX_DIMENSION || restartRows > MAX_DIMENSION || (restartBlocks != 0 && restartRows != 0)) {
+        throw std::invalid_argument("Jpeg::Encode: invalid restart interval");
+    }
     const int subsampling = toSubsampling(sampling);
     Handle handle;
     if (tj3Set(handle, TJPARAM_QUALITY, quality) < 0 || tj3Set(handle, TJPARAM_SUBSAMP, channels == 1 ? TJSAMP_GRAY : subsampling) < 0) {
+        throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
+    }
+    if ((restartBlocks != 0 && tj3Set(handle, TJPARAM_RESTARTBLOCKS, static_cast<int>(restartBlocks)) < 0) ||
+        (restartRows != 0 && tj3Set(handle, TJPARAM_RESTARTROWS, static_cast<int>(restartRows)) < 0)) {
         throw std::runtime_error("Jpeg::Encode: encoder configuration failed");
     }
     Buffer buffer;

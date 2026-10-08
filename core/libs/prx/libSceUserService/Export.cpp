@@ -156,4 +156,39 @@ int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* valu
     return 0;
 }
 
+int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
+ if (user_id == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ *user_id = USER_SERVICE_INITIAL_USER_ID;
+ return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* user_id_list) {
+ if (user_id_list == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ user_id_list->user_id[0] = USER_SERVICE_INITIAL_USER_ID;
+ for (int i = 1; i < 16; ++i) {
+  user_id_list->user_id[i] = USER_SERVICE_USER_ID_INVALID;
+ }
+ return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color) {
+ if (color == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ *color = 0;
+ return USER_SERVICE_OK;
+}
+
+int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
+ if (account_id == nullptr || user_id != USER_SERVICE_INITIAL_USER_ID) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ *account_id = 0;
+ return USER_SERVICE_OK;
+}
+
 }

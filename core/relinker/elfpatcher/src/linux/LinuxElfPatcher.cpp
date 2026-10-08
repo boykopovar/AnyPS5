@@ -3,8 +3,10 @@
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <algorithm>
 #include <limits>
+#include <span>
 #include <string>
 
 namespace Elfpatcher::Linux {
@@ -47,6 +49,7 @@ void LinuxElfPatcher::_appendTrampoline(
     const auto bodyVaddr = vaddrOfExtraBlockOffset(bodyOff);
     for (const std::uint8_t b : site.Body)
         buf.push_back(b);
+    Codegen::ApplyStubRelocations(std::span<std::uint8_t>(buf.data() + bodyOff, site.ReturnBranchOffset), site.Relocations, site.Address, bodyVaddr, site.Offset);
 
     const auto inRange = [](const std::int64_t displacement) {
         return displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max();
@@ -101,6 +104,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (char c : runPath)
         buf.push_back(static_cast<std::uint8_t>(c));
     buf.push_back(0);
+    const std::uint64_t dynStrSize = static_cast<std::uint64_t>(buf.size()) - dynStrOff;
     alignBuf(buf, kDynStrAlignment);
 
     const auto dynSymOff = static_cast<std::uint64_t>(buf.size());
@@ -131,7 +135,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (std::uint8_t b : dynSection.DynamicSegmentData)
         dynSegBuf.push_back(b);
     _appendDynEntry(dynSegBuf, DT_STRTAB, vaddrOfExtraBlockOffset(dynStrOff));
-    _appendDynEntry(dynSegBuf, DT_STRSZ, dynSection.DynStrData.size());
+    _appendDynEntry(dynSegBuf, DT_STRSZ, dynStrSize);
     _appendDynEntry(dynSegBuf, DT_SYMTAB, vaddrOfExtraBlockOffset(dynSymOff));
     _appendDynEntry(dynSegBuf, DT_SYMENT, kSymEntrySize);
     if (!dynSection.RelaData.empty()) {
@@ -191,7 +195,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 
     SectionHeaderTableRequest sectionRequest{};
     sectionRequest.DynStrOffset = dynStrOff;
-    sectionRequest.DynStrSize = dynSection.DynStrData.size();
+    sectionRequest.DynStrSize = dynStrSize;
     sectionRequest.DynSymOffset = dynSymOff;
     sectionRequest.DynSymSize = dynSection.DynSymData.size();
     sectionRequest.DynamicSegmentOffset = dynSegOff;

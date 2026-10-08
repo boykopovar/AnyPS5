@@ -45,6 +45,8 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             image.RequireWritable(target, 8);
             image.WritePointer(target, 0);
             result.Imports.push_back({name, rva, addend});
+            if (const auto module = dynamicSection.ImportModules.find(target); module != dynamicSection.ImportModules.end())
+                result.Imports.back().Library = module->second;
         }
     };
     applyTable(dynamicSection.RelaData, false);

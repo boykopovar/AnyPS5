@@ -1,5 +1,6 @@
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -58,6 +59,11 @@ struct Module {
         if (op == spv::OpTypeInt && type.size() == 4 && type[2] == 32 && type[3] <= 1) return type[3] != 0 ? "i32" : "u32";
         if (op == spv::OpTypeBool && type.size() == 2) return "bool";
         if (op == spv::OpTypeVector && type.size() == 4 && type[3] >= 2 && type[3] <= 4) return Signature(type[2], depth + 1) + "x" + std::to_string(type[3]);
+        if (op == spv::OpTypeArray && type.size() == 4) {
+            const auto length = constants.find(type[3]);
+            Require(length != constants.end(), "SPIR-V interface array length is not a constant");
+            return Signature(type[2], depth + 1) + "[" + std::to_string(length->second) + "]";
+        }
         throw std::runtime_error("AGC graphics: unsupported SPIR-V interface type");
     }
 
@@ -118,15 +124,16 @@ struct Module {
             Require(value == spv::BuiltInPosition && signature == "f32x4" && !position, "unsupported or duplicate vertex built-in output");
             position = true;
         } else {
-            Require(storage == spv::StorageClassInput && ((value == spv::BuiltInFragCoord && signature == "f32x4") || ((value == spv::BuiltInFrontFacing || value == spv::BuiltInHelperInvocation) && signature == "bool")), "unsupported fragment built-in");
+            Require((storage == spv::StorageClassInput && ((value == spv::BuiltInFragCoord && signature == "f32x4") || ((value == spv::BuiltInFrontFacing || value == spv::BuiltInHelperInvocation) && signature == "bool") || ((value == spv::BuiltInSampleId || value == spv::BuiltInLayer) && signature == "i32"))) || (storage == spv::StorageClassOutput && ((value == spv::BuiltInFragDepth && signature == "f32") || (value == spv::BuiltInSampleMask && (signature == "i32[1]" || signature == "u32[1]")))), "unsupported fragment built-in");
         }
     }
 };
 
-Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing) {
+Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading) {
     using Stage = ShaderRecompiler::ShaderStage;
     Require(compiled.program != nullptr, "missing compiled shader");
     const auto& shader = *compiled.program;
+    PipelineSpecialization::Validate(shader);
     const auto stage = compiled.stage;
     const bool vertex = stage == Stage::Vertex || stage == Stage::Local;
     const bool fragment = stage == Stage::Fragment;
@@ -176,6 +183,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     case spv::CapabilityGroupNonUniform: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT; break;
                     case spv::CapabilityGroupNonUniformBallot: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT; break;
                     case spv::CapabilityGroupNonUniformShuffle: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT; break;
+                    case spv::CapabilityGroupNonUniformArithmetic: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT; break;
                     default: break;
                 }
                 const bool isSubgroupCapability = subgroupOperations != 0;
@@ -202,12 +210,20 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     mesh &&
                     capability == spv::CapabilityMeshShadingEXT;
 
+                const bool isInterlockCapability =
+                    fragment &&
+                    capability == spv::CapabilityFragmentShaderPixelInterlockEXT;
+
                 // Enabled unconditionally or by the device setup in VulkanDevice.
                 const bool isFeatureCapability =
                     capability == spv::CapabilitySampled1D ||
                     capability == spv::CapabilityImage1D ||
                     capability == spv::CapabilityImageGatherExtended ||
                     capability == spv::CapabilityImageQuery ||
+                    (fragment && geometryShader && capability == spv::CapabilityGeometry) ||
+                    (fragment && sampleRateShading && capability == spv::CapabilitySampleRateShading) ||
+                    capability == spv::CapabilityImageMSArray ||
+                    capability == spv::CapabilityStorageImageMultisample ||
                     capability == spv::CapabilityStorageImageWriteWithoutFormat ||
                     capability == spv::CapabilityStorageImageReadWithoutFormat ||
                     capability == spv::CapabilityInt64 ||
@@ -234,8 +250,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     isBdaCapability ||
                     isTessellationCapability ||
                     isMeshCapability ||
+                    isInterlockCapability ||
                     isFeatureCapability ||
-                    isDescriptorIndexingCapability,
+                    isDescriptorIndexingCapability ||
+                    (imageInt64Atomics && (capability == spv::CapabilityInt64Atomics || capability == spv::CapabilityInt64ImageEXT)),
                     std::string("SPIR-V requires unsupported device capability ") +
                         std::to_string(static_cast<std::uint32_t>(capability)));
 
@@ -248,18 +266,21 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 const auto end = std::find(text, text + bytes.size(), '\0');
                 Require(end != text + bytes.size(), "unterminated SPIR-V extension");
                 const std::string_view extension(text, static_cast<std::size_t>(end - text));
+                if (extension == "SPV_EXT_fragment_shader_interlock") {
+                    Require(fragment, "SPV_EXT_fragment_shader_interlock requires a fragment shader");
+                    break;
+                }
                 if (extension == "SPV_KHR_fragment_shader_barycentric") {
                     Require(fragment && fragmentShaderBarycentric, "SPV_KHR_fragment_shader_barycentric requires enabled fragmentShaderBarycentric in a fragment shader");
                     break;
                 }
-                Require(extension == "SPV_KHR_float_controls" || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (descriptorIndexing && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
+                Require(extension == "SPV_KHR_float_controls" || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (descriptorIndexing && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
                 break;
             }
             case spv::OpDecorateId:
             case spv::OpDecorationGroup:
             case spv::OpGroupDecorate:
             case spv::OpGroupMemberDecorate:
-            case spv::OpSpecConstant:
             case spv::OpSpecConstantTrue:
             case spv::OpSpecConstantFalse:
             case spv::OpSpecConstantComposite:
@@ -337,6 +358,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             case spv::OpConstant:
                 if (count == 4) module.constants.emplace(instruction[2], instruction[3]);
                 break;
+            case spv::OpSpecConstant:
+                break;
             default: break;
         }
         cursor += count;
@@ -368,7 +391,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         mode(spv::ExecutionModeVertexOrderCw, {});
         Require(module.modes.size() == 3, "unsupported tessellation-evaluation execution mode");
     } else if (fragment) {
-        for (const auto& [name, operands] : module.modes) Require(operands.empty() && (name == spv::ExecutionModeOriginUpperLeft || name == spv::ExecutionModeEarlyFragmentTests || name == spv::ExecutionModeDepthLess || name == spv::ExecutionModeDepthGreater), "unsupported fragment execution mode");
+        for (const auto& [name, operands] : module.modes) Require(operands.empty() && (name == spv::ExecutionModeOriginUpperLeft || name == spv::ExecutionModeEarlyFragmentTests || name == spv::ExecutionModeDepthReplacing || name == spv::ExecutionModeDepthLess || name == spv::ExecutionModeDepthGreater || name == spv::ExecutionModePixelInterlockOrderedEXT), "unsupported fragment execution mode");
     } else Require(module.modes.empty(), "unsupported vertex execution mode");
     std::set<std::pair<std::uint32_t, std::uint32_t>> descriptors;
     bool push = false;
@@ -443,6 +466,11 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
             Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
             Require(binding->kind == ShaderRecompiler::DescriptorKind::Sampler || binding->kind == ShaderRecompiler::DescriptorKind::SampledImage || binding->kind == ShaderRecompiler::DescriptorKind::StorageImage, "SPIR-V descriptor type disagrees with recompiler binding metadata");
+            Require(type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray, "typed heap must be declared as a descriptor array");
+            const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding->binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
+            const auto capacity = ShaderRecompiler::RuntimeAbi::HeapCapacity(heap);
+            const auto count = module.constants.find(type[3]);
+            Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
@@ -452,7 +480,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(binding->kind == ShaderRecompiler::DescriptorKind::StorageBuffer, "SPIR-V descriptor type disagrees with recompiler binding metadata");
             Require(!binding->readOnly, "read-only descriptor metadata is unsupported because the recompiler emits no NonWritable decoration");
             const bool array = binding->role == ShaderRecompiler::DescriptorRole::GuestBuffers;
-            Require(array || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (binding->role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding->role == ShaderRecompiler::DescriptorRole::FaultBuffer)) || binding->role == ShaderRecompiler::DescriptorRole::ShaderData || binding->role == ShaderRecompiler::DescriptorRole::FlattenedSrt, "SPIR-V descriptor role is unsupported");
+            Require(array || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (binding->role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding->role == ShaderRecompiler::DescriptorRole::FaultBuffer)) || binding->role == ShaderRecompiler::DescriptorRole::ShaderData || binding->role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding->role == ShaderRecompiler::DescriptorRole::Gds, "SPIR-V descriptor role is unsupported");
             auto blockId = typeId;
             if (array) {
                 Require(type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray, "guest buffer descriptors must be declared as a descriptor array");
@@ -491,7 +519,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
 
 }
 
-std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing) {
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading) {
     using Stage = ShaderRecompiler::ShaderStage;
     const bool tessellation = state.stages.path == ShaderPath::Tessellation;
     const bool mesh = state.stages.path == ShaderPath::Geometry;
@@ -507,11 +535,16 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         Require(shaders[i].program != nullptr, "missing compiled shader");
         Require(shaders[i].stage == expected, "graphics stage order disagrees");
         for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == 0, "graphics resource uses a descriptor set other than zero");
-        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing);
+        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading);
         if (i != 0) {
             for (const auto& [location, signature] : current.inputs) {
                 const auto output = previous.outputs.find(location);
-                Require(output != previous.outputs.end() && output->second == signature, "graphics interfaces disagree at location " + std::to_string(location));
+                if (output == previous.outputs.end() || output->second != signature) {
+                    Require(false, "graphics interfaces disagree at location " + std::to_string(location) +
+                        " (stage " + std::to_string(i - 1) + " output " +
+                        (output == previous.outputs.end() ? "missing" : output->second) +
+                        ", stage " + std::to_string(i) + " input " + signature + ")");
+                }
             }
         }
         previous = current;

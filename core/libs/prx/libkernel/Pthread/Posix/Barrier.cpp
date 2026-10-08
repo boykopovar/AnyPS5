@@ -54,8 +54,7 @@ int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPriva
 
 int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPrivate** attr, int pshared) {
     if (!attr || !*attr) return 22;
-    if (pshared == PROCESS_SHARED) NotImplemented_nid_no_patch("pthread_barrierattr_setpshared: PTHREAD_PROCESS_SHARED");
-    if (pshared != PROCESS_PRIVATE) return 22;
+    if (pshared != PROCESS_PRIVATE && pshared != PROCESS_SHARED) return 22;
     (*attr)->pshared = pshared;
     return 0;
 }

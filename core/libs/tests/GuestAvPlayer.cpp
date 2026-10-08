@@ -756,6 +756,13 @@ void TestPlayback() {
     Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered while paused");
     Check(sceAvPlayerCurrentTime(player) == paused, "clock moved while paused");
     Check(sceAvPlayerIsActive(player), "inactive while paused");
+    Check(sceAvPlayerJumpToTime(player, 300) == 0, "jump while paused failed");
+    Check(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "jump completion missing while paused");
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame at a jump while paused");
+    CheckVideoFrame(frame);
+    Check(frame.timestamp >= 300 && frame.timestamp <= 367, "paused jump landed at " + std::to_string(frame.timestamp));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered after the frame at a paused jump");
     events.Clear();
     Check(sceAvPlayerResume(player) == 0, "resume failed");
     Check(sceAvPlayerResume(player) == OperationFailed, "resume accepted while playing");

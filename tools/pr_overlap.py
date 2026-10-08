@@ -8,7 +8,7 @@ from pathlib import Path
 
 PARENT = 'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end'
 EXPORT = re.compile(r"^\+.*\bAPS5_VABI\s+(\w+)\s*\(")
-DEPENDS = re.compile(r"Depends on:(.*)")
+DEPENDS = re.compile(r'Depends on:([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]*#\d+[^\r\n]*)*)')
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 
@@ -48,13 +48,20 @@ def merge(*args):
     result = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", *args],
                             capture_output=True, text=True)
     lines = result.stdout.splitlines()
+    if result.returncode not in (0, 1) or not lines:
+        raise RuntimeError(f"git merge-tree {' '.join(args)} failed: {result.stderr.strip()}")
     return lines[0], set(lines[1:]) if result.returncode else set()
+
+
+def commit(tree):
+    return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
+               "-p", "refs/pr/base", "-m", "pr_overlap").strip()
 
 
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
-    pr["tree"] = None if conflicted else tree
-    old, new = (git("merge-base", "refs/pr/base", pr["ref"]).strip(), pr["ref"]) if conflicted else ("refs/pr/base", tree)
+    pr["tree"] = None if conflicted else commit(tree)
+    old, new = (git("merge-base", "refs/pr/base", pr["ref"]).strip(), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     for line in git("diff", "--name-status", "--no-renames", old, new).splitlines():
         status, path = line.split("\t", 1)

@@ -88,8 +88,8 @@ struct Port {
     int channels = 0;
     int volume[8] = {};
     int mixLevel = DEFAULT_VOLUME;
-    std::uint64_t lastOutputTime = 0;
     std::uint64_t lastDataOutputTime = 0;
+    std::uint64_t virtualQueueEnd = 0;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
 };
@@ -191,10 +191,6 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
 }
 
 static void queueAudio(Port& port, const void* data) {
-    // Without an SDL device there is nothing to queue: the callers already sleep for the block's
-    // duration so the game's timing holds. A null pointer is the documented way to wait until the
-    // port's queued audio has been output (sceAudioOutOutput(handle, NULL)); it queues nothing.
-    if (port.device == 0) return;
     if (data == nullptr) {
         const std::uint64_t waitStart = sceKernelGetProcessTime();
         while (SDL_GetQueuedAudioSize(port.device) > 0) {
@@ -267,6 +263,25 @@ static void queueAudio(Port& port, const void* data) {
     // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize, SDL_GetQueuedAudioSize(port.device));
 }
 
+static void sleepUs(std::uint64_t us) {
+    struct timespec req{};
+    req.tv_sec = static_cast<time_t>(us / 1000000ULL);
+    req.tv_nsec = static_cast<long>((us % 1000000ULL) * 1000ULL);
+    nanosleep(&req, nullptr);
+}
+
+static void paceVirtualPort(Port& port, bool hasData) {
+    const std::uint64_t now = sceKernelGetProcessTime();
+    const auto queued = static_cast<std::int64_t>(port.virtualQueueEnd - now);
+    if (queued <= 0) port.virtualQueueEnd = now;
+    if (!hasData) {
+        if (queued > 0) sleepUs(static_cast<std::uint64_t>(queued));
+        return;
+    }
+    if (queued > static_cast<std::int64_t>(TARGET_LATENCY_US)) sleepUs(static_cast<std::uint64_t>(queued) - TARGET_LATENCY_US);
+    port.virtualQueueEnd += (1000000ULL * port.samplesNum) / port.freq;
+}
+
 static bool portTypeValid(int type) {
     return (type >= PORT_TYPE_MAIN && type <= PORT_TYPE_PADSPK) ||
            type == PORT_TYPE_VIBRATION ||
@@ -328,8 +343,8 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
             port.freq = freq;
             port.format = format;
             port.channels = channelsForFormat(format);
-            port.lastOutputTime = 0;
             port.lastDataOutputTime = 0;
+            port.virtualQueueEnd = sceKernelGetProcessTime();
             port.mixLevel = type == PORT_TYPE_PADSPK ? DEFAULT_PADSPK_MIX_LEVEL : DEFAULT_VOLUME;
             for (int c = 0; c < port.channels; c++) {
                 port.volume[c] = DEFAULT_VOLUME;
@@ -363,20 +378,12 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) {
         return -2144993277;
     }
 
-    const std::uint64_t blockUs = (1000000ULL * port->samplesNum) / port->freq;
-    const std::uint64_t now = sceKernelGetProcessTime();
-    const std::uint64_t next = port->lastOutputTime + blockUs;
-    if (next > now && port->device == 0) {
-        const std::uint64_t waitUs = next - now;
-        struct timespec req{};
-        req.tv_sec = static_cast<time_t>(waitUs / 1000000ULL);
-        req.tv_nsec = static_cast<long>((waitUs % 1000000ULL) * 1000ULL);
-        nanosleep(&req, nullptr);
+    if (port->device == 0) {
+        paceVirtualPort(*port, ptr != nullptr);
+    } else {
+        queueAudio(*port, ptr);
     }
-
-    queueAudio(*port, ptr);
-    port->lastOutputTime = sceKernelGetProcessTime();
-    if (ptr != nullptr) port->lastDataOutputTime = port->lastOutputTime;
+    if (ptr != nullptr) port->lastDataOutputTime = sceKernelGetProcessTime();
     return static_cast<int>(port->samplesNum);
 }
 
@@ -394,44 +401,18 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     }
 
     Port& first = *getPort(param[0].handle);
-    const std::uint64_t blockUs = (1000000ULL * first.samplesNum) / first.freq;
-    const std::uint64_t now = sceKernelGetProcessTime();
-
-    std::uint64_t maxWait = 0;
     for (std::uint32_t i = 0; i < num; i++) {
-        Port& p = *getPort(param[i].handle);
-        const std::uint64_t next = p.lastOutputTime + blockUs;
-        const std::uint64_t wait = next > now ? next - now : 0;
-        if (wait > maxWait) {
-            maxWait = wait;
+        Port& port = *getPort(param[i].handle);
+        if (port.device == 0) {
+            paceVirtualPort(port, param[i].ptr != nullptr);
+        } else {
+            queueAudio(port, param[i].ptr);
         }
-    }
-
-    bool anyDevice = false;
-    for (std::uint32_t i = 0; i < num; i++) {
-        if (getPort(param[i].handle)->device != 0) {
-            anyDevice = true;
-            break;
-        }
-    }
-
-    if (maxWait != 0 && !anyDevice) {
-        struct timespec req{};
-        req.tv_sec = static_cast<time_t>(maxWait / 1000000ULL);
-        req.tv_nsec = static_cast<long>((maxWait % 1000000ULL) * 1000ULL);
-        nanosleep(&req, nullptr);
-    }
-
-    for (std::uint32_t i = 0; i < num; i++) {
-        if (auto* port = getPort(param[i].handle)) queueAudio(*port, param[i].ptr);
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
     for (std::uint32_t i = 0; i < num; i++) {
-        if (auto* port = getPort(param[i].handle)) {
-            port->lastOutputTime = done;
-            if (param[i].ptr != nullptr) port->lastDataOutputTime = done;
-        }
+        if (param[i].ptr != nullptr) getPort(param[i].handle)->lastDataOutputTime = done;
     }
 
     return static_cast<int>(first.samplesNum);

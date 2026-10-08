@@ -18,6 +18,7 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t Float64Capability = 10;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 16;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
@@ -101,7 +102,7 @@ void Fill(std::uint32_t tid, std::uint32_t* words) { std::copy(std::begin(Rows[t
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -153,6 +154,11 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        const auto capabilities = device->Target().supportedCapabilities;
+        if (std::find(capabilities.begin(), capabilities.end(), Float64Capability) == capabilities.end()) {
+            std::puts("skipped, the device has no shaderFloat64");
+            return VulkanTestSkipped;
+        }
         Run(*device);
         Check();
         std::puts("f64 nan conversions tests passed");

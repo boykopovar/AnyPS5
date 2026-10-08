@@ -5,8 +5,8 @@
 #include "RdnaDecoder/RdnaProgram.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
-#include "Translation/EmbeddedVertexFetch.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include "Translation/EmbeddedVertexFetch.hpp"
 #include <cstdint>
 
 namespace ShaderRecompiler {

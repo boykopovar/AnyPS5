@@ -122,12 +122,8 @@ def main():
                 (case / name).mkdir(parents=True)
                 (case / name / f"{name}.prx").write_bytes(module_with_symbol(True))
             result, output = convert(case, windows)
-            if windows:
-                assert result.returncode == 2 and "Duplicate guest export" in result.stderr, result.stderr
-                assert not output.exists() and not (case / "app0").exists(), output
-            else:
-                assert result.returncode == 0 and output.exists(), result.stderr
-                assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"sce_module.prx.guest.prx", "prx.prx.guest.prx"}
+            assert result.returncode == 0 and output.exists(), result.stderr
+            assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"sce_module.prx.guest.prx", "prx.prx.guest.prx"}
 
             case = work / f"{windows}-ambiguous-import"
             for name in ("sce_module", "prx"):
@@ -135,8 +131,7 @@ def main():
                 (case / name / f"{name}.prx").write_bytes(module_with_symbol(True))
             (case / "prx" / "consumer.prx").write_bytes(module_with_symbol(False))
             result, output = convert(case, windows)
-            expected = "Duplicate guest export" if windows else "Ambiguous guest import shared"
-            assert result.returncode == 2 and expected in result.stderr, result.stderr
+            assert result.returncode == 2 and "Ambiguous guest import" in result.stderr and "shared" in result.stderr, result.stderr
             assert not output.exists() and not (case / "app0").exists(), output
     print("Guest module directory integration tests passed")
 

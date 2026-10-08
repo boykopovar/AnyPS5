@@ -2,6 +2,10 @@ name: Progress report
 
 on:
   pull_request:
+    paths:
+      - 'core/libs/prx/**'
+      - 'tools/progress.py'
+      - '.github/workflows/progress-report.yml'
 
 permissions:
   contents: read

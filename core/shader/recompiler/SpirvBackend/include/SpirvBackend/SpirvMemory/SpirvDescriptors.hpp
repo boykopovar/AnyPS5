@@ -13,12 +13,11 @@ std::uint32_t ImageScalarType(SpirvEmitterState& state, IrTextureNumericClass nu
 std::uint32_t ImageVectorType(SpirvEmitterState& state, IrTextureNumericClass numericClass, std::uint32_t components);
 std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image);
 std::uint32_t ImageViewSizeType(SpirvEmitterState& state, RdnaImageDimension dimension);
-// `slotId` (a SPIR-V id, 0 for none) selects a bindless table's slot at runtime: element(resource) + slot.
 std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t slotId);
 std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t sampler);
 std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t sampler, std::uint32_t slotId);
 std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint32_t resource);
-void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t mipLod, std::uint32_t coord, std::uint32_t texel);
+void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t mipLod, std::uint32_t coord, std::uint32_t texel, std::uint32_t sample);
 const RdnaImageDimensionInfo& RdnaImageDimensionInfoFor(RdnaImageDimension dimension);
 [[noreturn]] void ExitDescriptorBindingFailure(const SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, const char* reason);
 

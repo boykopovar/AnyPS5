@@ -14,9 +14,11 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
+static constexpr int16_t EVFILT_TIMER = -7;
 static constexpr int16_t EVFILT_USER = -11;
 static constexpr int16_t EVFILT_VIDEO_OUT = -13;
 static constexpr int16_t EVFILT_HRTIMER = -15;
+static constexpr int16_t EVFILT_AMPR = -25;
 
 static constexpr uint16_t EV_ADD = 0x0001;
 static constexpr uint16_t EV_ONESHOT = 0x0010;
@@ -42,6 +44,7 @@ struct KernelFilter {
 struct KernelEqueueEvent {
     bool triggered = false;
     uint64_t deadlineNs = 0;
+    uint64_t intervalNs = 0;
     KernelEvent event;
     KernelFilter filter;
     std::deque<KernelEvent> pendingEvents;
@@ -64,9 +67,9 @@ public:
     int GetTriggeredEvents(KernelEvent* ev, int num);
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     void Close();
+    static uint64_t MonotonicNs();
 
 private:
-    static uint64_t MonotonicNs();
     void TriggerExpiredTimers(uint64_t nowNs);
     bool NextTimerWaitMicros(uint64_t nowNs, uint32_t* out) const;
 

@@ -37,10 +37,11 @@ int APS5_VABI sceVideoRecordingGetStatus(void) {
  return 0;
 }
 
-int APS5_VABI sceVideoRecordingOpen(void* buffer, size_t size, const void* param) {
- (void)buffer;
- (void)size;
+int APS5_VABI sceVideoRecordingOpen(const char* path, const void* param, void* heap, int heapSize) {
+ (void)path;
  (void)param;
+ (void)heap;
+ (void)heapSize;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

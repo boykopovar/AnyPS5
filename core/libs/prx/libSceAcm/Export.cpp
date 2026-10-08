@@ -53,4 +53,14 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(void) {
     return 0;
 }
 
+int APS5_VABI sceAcm_FFT() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAcm_Panner() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

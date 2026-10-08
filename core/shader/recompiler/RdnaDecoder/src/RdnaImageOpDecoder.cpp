@@ -315,7 +315,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
     const auto& info = lookupOpcode(opcode);
     const bool samplerOp = info.sample || info.gather || opcode == 0x60u;
-    const auto texelStatusBits = samplerOp ? 0x00010000u : opcode <= 0x0eu ? 0x00030000u : 0u;
+    const auto texelStatusBits = info.sample || info.gather || opcode <= 0x0eu ? 0x00030000u : samplerOp ? 0x00010000u : 0u;
     const auto reservedWord0 = (info.sample || info.gather ? 0x00035040u : info.atomic ? 0x000340C0u : 0x00034040u) & ~texelStatusBits;
     if ((word0 & reservedWord0) != 0u || (word1 & 0x3C000000u) != 0u) {
         char message[96];
@@ -348,7 +348,9 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     validateFlags(flags);
     const auto dmask = (word0 >> 8u) & 15u;
     const bool compareSwap = info.opcode == RdnaOpcode::ImageAtomicCmpswap || info.opcode == RdnaOpcode::ImageAtomicFcmpswap;
-    if (dmask == 0u || (compareSwap ? dmask != 3u : (info.gather || info.atomic || msaaLoad) && !std::has_single_bit(dmask))) {
+    const bool floatAtomic = info.opcode == RdnaOpcode::ImageAtomicFcmpswap || info.opcode == RdnaOpcode::ImageAtomicFmin || info.opcode == RdnaOpcode::ImageAtomicFmax;
+    const bool atomic64 = info.atomic && !floatAtomic && !d16 && dmask == (compareSwap ? 15u : 3u);
+    if (dmask == 0u || (!atomic64 && (compareSwap ? dmask != 3u : (info.gather || info.atomic || msaaLoad) && !std::has_single_bit(dmask)))) {
         throw std::runtime_error("invalid MIMG data mask");
     }
     if (d16 && !(info.sample || info.gather || opcode == 0u || opcode == 1u || opcode == 8u || opcode == 9u)) {
@@ -397,7 +399,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     instruction.imageOpcodeId = opcode;
     instruction.imageDmask = dmask;
     instruction.dataComponents = dataComponents;
-    instruction.dataBits = d16 ? 16u : 32u;
+    instruction.dataBits = atomic64 ? 64u : d16 ? 16u : 32u;
     instruction.dataDwordCount = dataDwords;
     instruction.glc = (word0 & 0x2000u) != 0u;
     instruction.slc = (word0 & 0x02000000u) != 0u;

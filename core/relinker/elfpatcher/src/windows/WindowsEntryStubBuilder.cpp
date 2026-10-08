@@ -5,6 +5,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <optional>
+#include <filesystem>
 
 namespace Elfpatcher::Windows {
 
@@ -85,6 +86,42 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     for (const auto& import : imports)
         symbolNames.push_back(addString(import.Name));
 
+    std::vector<std::uint32_t> searchTables;
+    std::vector<std::uint32_t> searchCounts;
+    std::vector<bool> platformTlsResolvers;
+    for (const auto& import : imports) {
+        std::vector<std::uint32_t> order;
+        for (std::size_t index = 0; index < libraries.size(); ++index) {
+            auto name = std::filesystem::path(libraries[index]).filename().string();
+            if (name.ends_with(".guest.prx")) name.resize(name.size() - 10);
+            const bool guestName = index < guestModules.size() &&
+                std::find(guestModules[index].Names.begin(), guestModules[index].Names.end(), import.Library) != guestModules[index].Names.end();
+            if (import.Library.empty() || name == import.Library || guestName) order.push_back(CheckedRva(index));
+        }
+        if (order.empty()) throw Domain::RelinkerException("Import module is not a dependency: " + import.Library);
+        const bool hostModule = !import.Library.empty() &&
+            std::any_of(order.begin(), order.end(), [&](auto index) { return index >= guestModules.size(); });
+        if (hostModule) {
+            for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
+                if (libraries[index] == "libc.prx" && import.Library != "libc.prx") order.push_back(CheckedRva(index));
+            }
+            if (import.Library == "libSceLibcInternal.prx") {
+                for (std::size_t index = 0; index < guestModules.size(); ++index) {
+                    const auto& names = guestModules[index].Names;
+                    if (std::find(names.begin(), names.end(), "libc.prx") != names.end())
+                        order.push_back(CheckedRva(index));
+                }
+            }
+        }
+        Io::AlignBuffer(data, 4);
+        platformTlsResolvers.push_back(std::none_of(order.begin(), order.end(), [&](auto index) {
+            return index < guestModules.size() && !guestModules[index].UsePlatformTlsResolver;
+        }));
+        searchTables.push_back(CheckedRva(dataRva + data.size()));
+        searchCounts.push_back(CheckedRva(order.size()));
+        for (const auto index : order) Io::AppendU32(data, index);
+    }
+
     const auto lastError = reserve(4);
     const auto errorDigits = reserve(11);
     const auto errorMessage = reserve(ErrorMessageCapacity);
@@ -105,7 +142,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto diagnosticsOffset = data.size();
     std::vector<std::string> errors = {"FAIL: cannot obtain executable path\n", "FAIL: executable or library path is too long\n", "FAIL: executable path has no directory\n"};
     for (const auto& import : imports)
-        errors.push_back("FAIL: unresolved ELF import " + import.Name + "\n");
+        errors.push_back("FAIL: unresolved ELF import " + import.Name +
+            (import.Library.empty() ? std::string{} : " from " + import.Library) + "\n");
     const auto argumentError = errors.size();
     errors.push_back("FAIL: cannot prepare command-line arguments\n");
     std::vector<std::uint32_t> errorRvas;
@@ -131,33 +169,32 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x0f, 0x0b});
     };
 
-    const auto requireDiagnosticSuccess = [&] {
-        code.Emit({0x48, 0x85, 0xc0});
-        const auto success = code.Branch({0x0f, 0x85});
-        raise(0xc0000001u);
-        code.PatchBranch(success, code.GetRva());
-    };
-
     const auto writeString = [&](const std::uint32_t stringRva, const bool isError = false) {
         code.Rip({0x48, 0x8d, 0x0d}, stringRva);
         call("lstrlenA");
+        code.Emit({0x48, 0x85, 0xc0});
+        const auto empty = code.Branch({0x0f, 0x84});
         code.Emit({0x89, 0x44, 0x24, 0x3c, 0xb9});
         code.U32(isError ? 0xfffffff4u : 0xfffffff5u);
         call("GetStdHandle");
-        requireDiagnosticSuccess();
+        code.Emit({0x48, 0x85, 0xc0});
+        const auto noHandle = code.Branch({0x0f, 0x84});
         code.Emit({0x48, 0x83, 0xf8, 0xff});
-        const auto validHandle = code.Branch({0x0f, 0x85});
-        raise(0xc0000001u);
-        code.PatchBranch(validHandle, code.GetRva());
+        const auto invalidHandle = code.Branch({0x0f, 0x84});
         code.Emit({0x48, 0x89, 0xc1});
         code.Rip({0x48, 0x8d, 0x15}, stringRva);
         code.Emit({0x44, 0x8b, 0x44, 0x24, 0x3c, 0x4c, 0x8d, 0x4c, 0x24, 0x38, 0x48, 0xc7, 0x44, 0x24, 0x20, 0, 0, 0, 0});
         call("WriteFile");
-        requireDiagnosticSuccess();
+        code.Emit({0x48, 0x85, 0xc0});
+        const auto failedWrite = code.Branch({0x0f, 0x84});
         code.Emit({0x8b, 0x44, 0x24, 0x38, 0x3b, 0x44, 0x24, 0x3c});
-        const auto complete = code.Branch({0x0f, 0x84});
-        raise(0xc0000001u);
-        code.PatchBranch(complete, code.GetRva());
+        const auto incompleteWrite = code.Branch({0x0f, 0x85});
+        const auto done = code.GetRva();
+        code.PatchBranch(empty, done);
+        code.PatchBranch(noHandle, done);
+        code.PatchBranch(invalidHandle, done);
+        code.PatchBranch(failedWrite, done);
+        code.PatchBranch(incompleteWrite, done);
     };
 
     const auto writeLastError = [&] {
@@ -183,8 +220,10 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.U32(ErrorMessageCapacity);
         code.Emit({0x48, 0xc7, 0x44, 0x24, 0x30, 0, 0, 0, 0});
         call("FormatMessageA");
-        requireDiagnosticSuccess();
+        code.Emit({0x48, 0x85, 0xc0});
+        const auto noMessage = code.Branch({0x0f, 0x84});
         writeString(errorMessage, true);
+        code.PatchBranch(noMessage, code.GetRva());
     };
 
     const auto captureLastError = [&] {
@@ -291,7 +330,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     std::vector<std::size_t> lazyUnresolvedImports;
     std::vector<std::size_t> tlsResolverAddresses;
     for (std::size_t index = 0; index < imports.size(); ++index) {
-        if (!guestModules.empty() && guestModules.front().UsePlatformTlsResolver && imports[index].Name == "vNe1w4diLCs") {
+        if (!guestModules.empty() && platformTlsResolvers[index] && imports[index].Name == "vNe1w4diLCs") {
             if (imports[index].Addend != 0) throw Domain::RelinkerException("TLS resolver import has an addend");
             tlsResolverAddresses.push_back(code.Branch({0x48, 0x8d, 0x05}));
             guestStartup.WriteImport(code, imports[index], handles);
@@ -299,14 +338,15 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         }
         code.Rip({0x48, 0x8d, 0x1d}, handles);
         code.Rip({0x48, 0x8d, 0x35}, symbolNames[index]);
+        code.Rip({0x48, 0x8d, 0x3d}, searchTables[index]);
         code.Emit({0xbd});
-        code.U32(CheckedRva(libraries.size()));
+        code.U32(searchCounts[index]);
         const auto search = code.GetRva();
-        code.Emit({0x48, 0x8b, 0x0b, 0x48, 0x89, 0xf2});
+        code.Emit({0x8b, 0x0f, 0x48, 0x8b, 0x0c, 0xcb, 0x48, 0x89, 0xf2});
         call("GetProcAddress");
         code.Emit({0x48, 0x85, 0xc0});
         const auto resolved = code.Branch({0x0f, 0x85});
-        code.Emit({0x48, 0x83, 0xc3, 8, 0xff, 0xcd});
+        code.Emit({0x48, 0x83, 0xc7, 4, 0xff, 0xcd});
         code.Rip({0x0f, 0x85}, search);
         if (lazyBinding) {
             lazyUnresolvedImports.push_back(index);

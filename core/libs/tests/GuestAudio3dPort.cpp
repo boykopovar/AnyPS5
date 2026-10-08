@@ -9,21 +9,26 @@
 extern "C" {
 void APS5_VABI sceAudio3dGetDefaultOpenParameters(Audio3dOpenParameters* parameters);
 int APS5_VABI sceAudio3dInitialize(std::int64_t reserved);
+int APS5_VABI sceAudio3dTerminate();
 int APS5_VABI sceAudio3dPortOpen(int user_id, const Audio3dOpenParameters* parameters, std::uint32_t* id);
 int APS5_VABI sceAudio3dPortClose(std::uint32_t port_id);
 int APS5_VABI sceAudio3dPortSetAttribute(std::uint32_t port_id, std::uint32_t attribute_id, const void* attribute, std::size_t attribute_size);
 int APS5_VABI sceAudio3dPortGetQueueLevel(std::uint32_t port_id, std::uint32_t* queue_level, std::uint32_t* queue_available);
 int APS5_VABI sceAudio3dPortAdvance(std::uint32_t port_id);
 int APS5_VABI sceAudio3dPortPush(std::uint32_t port_id, std::uint32_t blocking);
+int APS5_VABI sceAudio3dObjectReserve(std::uint32_t port_id, std::uint32_t* object_id);
+int APS5_VABI sceAudio3dObjectUnreserve(std::uint32_t port_id, std::uint32_t object_id);
 }
 
 namespace {
 
 constexpr int INVALID_PORT = static_cast<int>(0x80EA0002);
+constexpr int INVALID_OBJECT = static_cast<int>(0x80EA0003);
 constexpr int INVALID_PARAMETER = static_cast<int>(0x80EA0004);
 constexpr int OUT_OF_RESOURCES = static_cast<int>(0x80EA0006);
 constexpr int NOT_READY = static_cast<int>(0x80EA0007);
 constexpr int SYSTEM_USER = 0xFF;
+constexpr std::uint32_t OBJECT_INVALID = 0xFFFFFFFF;
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -62,6 +67,7 @@ void RequireLevel(std::uint32_t level, std::uint32_t available, const char* mess
 void CheckBeforeInitialize() {
     std::uint32_t id = 7;
     Audio3dOpenParameters parameters = Defaults();
+    Require(sceAudio3dTerminate() == NOT_READY, "terminate before initialize must be NOT_READY");
     Require(sceAudio3dInitialize(1) == INVALID_PARAMETER, "non-zero reserved must be rejected");
     Require(Open(parameters, &id) == NOT_READY, "open before initialize must be NOT_READY");
     Require(id == 7, "a failed open must not write the port id");
@@ -138,6 +144,35 @@ void CheckAttributes() {
     RequireThrows([&] { sceAudio3dPortSetAttribute(0, 0x10001, &value, 8); }, "wrong attribute size must throw");
 }
 
+void CheckObjects() {
+    std::uint32_t object = 7;
+    Require(sceAudio3dObjectReserve(0, nullptr) == INVALID_PARAMETER, "null object id");
+    Require(sceAudio3dObjectReserve(0, &object) == INVALID_PORT && object == OBJECT_INVALID, "reserve needs an open port");
+    Require(sceAudio3dObjectUnreserve(0, 1) == INVALID_PORT, "unreserve needs an open port");
+    Audio3dOpenParameters parameters = Defaults();
+    parameters.max_objects = 2;
+    std::uint32_t id = 7;
+    Require(Open(parameters, &id) == 0 && id == 0, "open");
+    object = 7;
+    Require(sceAudio3dObjectReserve(1, &object) == INVALID_PORT && object == OBJECT_INVALID, "reserve on port 1");
+    Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "first object is 1");
+    Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 2, "second object is 2");
+    Require(sceAudio3dObjectReserve(0, &object) == OUT_OF_RESOURCES && object == OBJECT_INVALID, "max_objects is the limit");
+    Require(sceAudio3dObjectUnreserve(1, 1) == INVALID_PORT, "unreserve on port 1");
+    Require(sceAudio3dObjectUnreserve(0, 3) == INVALID_OBJECT, "unreserve of an unknown object");
+    Require(sceAudio3dObjectUnreserve(0, OBJECT_INVALID) == INVALID_OBJECT, "unreserve of the invalid object");
+    Require(sceAudio3dObjectUnreserve(0, 1) == 0, "unreserve");
+    Require(sceAudio3dObjectUnreserve(0, 1) == INVALID_OBJECT, "double unreserve");
+    Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 3, "ids are not reused while the port is open");
+    Require(sceAudio3dObjectReserve(0, &object) == OUT_OF_RESOURCES, "full again");
+    Require(sceAudio3dPortClose(0) == 0, "close");
+    Require(Open(parameters, &id) == 0 && id == 0, "reopen");
+    Require(sceAudio3dObjectUnreserve(0, 2) == INVALID_OBJECT, "close drops the objects");
+    Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "ids restart on a new port");
+    Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 2, "a new port has the full limit");
+    Require(sceAudio3dPortClose(0) == 0, "close");
+}
+
 void CheckQueue() {
     using namespace std::chrono;
     constexpr std::uint32_t granularity = 0x1800;
@@ -177,11 +212,29 @@ void CheckQueue() {
     Require(sceAudio3dPortClose(0) == 0, "close");
 }
 
+void CheckTerminate() {
+    std::uint32_t id = 7;
+    const Audio3dOpenParameters parameters = Defaults();
+    Require(Open(parameters, &id) == 0 && id == 0, "open before terminate");
+    Require(sceAudio3dTerminate() == NOT_READY, "terminate with an open port must be NOT_READY");
+    Require(sceAudio3dPortClose(0) == 0, "close before terminate");
+    Require(sceAudio3dTerminate() == 0, "terminate");
+    Require(sceAudio3dTerminate() == NOT_READY, "double terminate must be NOT_READY");
+    id = 7;
+    Require(Open(parameters, &id) == NOT_READY && id == 7, "open after terminate must be NOT_READY");
+    Require(sceAudio3dInitialize(0) == 0, "initialize after terminate");
+    Require(Open(parameters, &id) == 0 && id == 0, "open after reinitialize");
+    Require(sceAudio3dPortClose(0) == 0, "close after reinitialize");
+    Require(sceAudio3dTerminate() == 0, "terminate after reinitialize");
+}
+
 }
 
 int main() {
     CheckBeforeInitialize();
     CheckOpenParameters();
     CheckOpenClose();
+    CheckObjects();
     CheckQueue();
+    CheckTerminate();
 }

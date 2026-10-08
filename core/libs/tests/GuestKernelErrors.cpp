@@ -28,6 +28,7 @@ int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* a
 int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
 }
 
 static constexpr int SCE_OK = 0;
@@ -36,6 +37,7 @@ static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
 static constexpr int SCE_KERNEL_ERROR_EDEADLK = static_cast<int>(0x8002000B);
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
+static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 static constexpr int MUTEX_TYPE_ERRORCHECK = 1;
 static constexpr int PRIO_NONE = 0;
@@ -81,6 +83,8 @@ int main() {
     PthreadMutexattr attr = nullptr;
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
     Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_ERRORCHECK) == SCE_OK);
+    Require(scePthreadMutexattrSettype(&attr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSettype(&attr, 5) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSetprotocol(&attr, PRIO_NONE) == SCE_OK);
     Require(scePthreadMutexattrSetprotocol(&attr, PRIO_INHERIT) == SCE_OK);
     bool protectionRejected = false;
@@ -107,6 +111,21 @@ int main() {
     Require(scePthreadMutexLock(&adaptive) == SCE_KERNEL_ERROR_EDEADLK);
     Require(scePthreadMutexUnlock(&adaptive) == SCE_OK);
     Require(scePthreadMutexDestroy(&adaptive) == SCE_OK);
+
+    PthreadMutex adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+    Require(scePthreadMutexLock(&adaptiveStatic) == SCE_OK);
+    Require(adaptiveStatic != reinterpret_cast<PthreadMutex>(std::uintptr_t{1}));
+    Require(scePthreadMutexLock(&adaptiveStatic) == SCE_KERNEL_ERROR_EDEADLK);
+    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadMutexUnlock(&adaptiveStatic) == SCE_OK);
+    Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
+    adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_OK);
+    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadMutexUnlock(&adaptiveStatic) == SCE_OK);
+    Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
+    adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+    Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
 
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
     PthreadMutex defaulted = nullptr;

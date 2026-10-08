@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <map>
+#include <utility>
 #include <string>
 #include <future>
 #include <memory>
@@ -42,26 +44,80 @@ static std::atomic<get_thread_atexit_count_func_t> threadAtexitCount{nullptr};
 static std::atomic<thread_atexit_report_func_t> threadAtexitReport{nullptr};
 static thread_local PthreadPrivate* currentThread = nullptr;
 static thread_local bool threadFinishing = false;
+static std::mutex stackLock;
+static std::map<PthreadPrivate*, std::pair<std::uintptr_t, std::uintptr_t>> liveStacks;
 
-static void SetStackFromHost(PthreadPrivate* thread) {
+static bool HostStackLimits(std::uintptr_t* low, std::uintptr_t* high) {
 #ifdef _WIN32
-    ULONG_PTR low = 0;
-    ULONG_PTR high = 0;
-    GetCurrentThreadStackLimits(&low, &high);
-    if (high <= low) throw std::runtime_error("Cannot query the host thread stack");
-    thread->stackAddress = reinterpret_cast<void*>(low);
-    thread->stackSize = static_cast<std::size_t>(high - low);
+    ULONG_PTR lowLimit = 0;
+    ULONG_PTR highLimit = 0;
+    GetCurrentThreadStackLimits(&lowLimit, &highLimit);
+    *low = lowLimit;
+    *high = highLimit;
 #else
     pthread_attr_t attr;
-    if (pthread_getattr_np(pthread_self(), &attr) != 0) throw std::runtime_error("Cannot query the host thread stack");
+    if (pthread_getattr_np(pthread_self(), &attr) != 0)
+        return false;
     void* address = nullptr;
     std::size_t size = 0;
-    const int result = pthread_attr_getstack(&attr, &address, &size);
+    const bool queried = pthread_attr_getstack(&attr, &address, &size) == 0;
     pthread_attr_destroy(&attr);
-    if (result != 0 || size == 0) throw std::runtime_error("Cannot query the host thread stack");
-    thread->stackAddress = address;
-    thread->stackSize = size;
+    if (!queried)
+        return false;
+    *low = reinterpret_cast<std::uintptr_t>(address);
+    *high = *low + size;
 #endif
+    return *high > *low;
+}
+
+static void SetStackFromHost(PthreadPrivate* thread) {
+    std::uintptr_t low = 0;
+    std::uintptr_t high = 0;
+    if (!HostStackLimits(&low, &high)) throw std::runtime_error("Cannot query the host thread stack");
+    thread->stackAddress = reinterpret_cast<void*>(low);
+    thread->stackSize = static_cast<std::size_t>(high - low);
+}
+
+static bool CurrentStack(std::uintptr_t* low, std::uintptr_t* high) {
+    if (currentThread && currentThread->stackAddress) {
+        *low = reinterpret_cast<std::uintptr_t>(currentThread->stackAddress);
+        *high = *low + currentThread->stackSize;
+        return true;
+    }
+    return HostStackLimits(low, high);
+}
+
+static void RegisterStack(PthreadPrivate* self) {
+    std::uintptr_t low = 0;
+    std::uintptr_t high = 0;
+    if (!CurrentStack(&low, &high))
+        throw std::runtime_error("Cannot query guest thread stack");
+    std::lock_guard lock(stackLock);
+    liveStacks[self] = {low, high};
+}
+
+static void UnregisterStack(PthreadPrivate* self) {
+    std::lock_guard lock(stackLock);
+    liveStacks.erase(self);
+}
+
+bool GuestThreadStack(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end) {
+    std::uintptr_t low = 0;
+    std::uintptr_t high = 0;
+    if (CurrentStack(&low, &high) && address >= low && address < high) {
+        *start = low;
+        *end = high;
+        return true;
+    }
+    std::lock_guard lock(stackLock);
+    for (const auto& [thread, range] : liveStacks) {
+        if (address >= range.first && address < range.second) {
+            *start = range.first;
+            *end = range.second;
+            return true;
+        }
+    }
+    return false;
 }
 #ifndef _WIN32
 static thread_local std::unique_ptr<PthreadPrivate> adoptedThread;
@@ -102,6 +158,7 @@ static void finishThread(PthreadPrivate* self, void* retval) {
     if (threadFinishing)
         throw std::runtime_error("Guest thread is already finishing");
     threadFinishing = true;
+    UnregisterStack(self);
     if (const auto callback = threadDtors.load())
         callback();
     {
@@ -117,8 +174,10 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     const auto entry = args->entry;
     void* arg = args->arg;
     PthreadPrivate* self = args->self;
+    TimedWait::BindThreadWaitState(&self->waitCount);
     if (!self->stackAddress) SetStackFromHost(self);
     currentThread = self;
+    RegisterStack(self);
     args.reset();
     finishThread(self, entry(arg));
     currentThread = nullptr;
@@ -349,6 +408,7 @@ Pthread APS5_VABI scePthreadSelf() {
         adopted->threadId = std::this_thread::get_id();
         adopted->_detached = true;
         adopted->references.store(1, std::memory_order_relaxed);
+        TimedWait::BindThreadWaitState(&adopted->waitCount);
         SetStackFromHost(adopted.get());
         currentThread = adopted.release();
     }
@@ -442,6 +502,9 @@ int APS5_VABI scePthreadSetcanceltype(int type, int* old_type) {
     if (old_type) *old_type = cancelType;
     cancelType = type;
     return SCE_OK;
+}
+
+void APS5_VABI scePthreadTestcancel() {
 }
 
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {

@@ -4,10 +4,12 @@
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <span>
 
 extern "C" int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 extern "C" int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps);
@@ -15,6 +17,10 @@ extern "C" int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* r
 namespace {
 
 using Registers = std::array<ShaderRegister, 32>;
+const Shader* mappedPixel = nullptr;
+Registers preparedMapping{};
+unsigned mappings = 0;
+unsigned links = 0;
 
 void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -82,6 +88,7 @@ void testMapping() {
 
     auto split = filled();
     check(sceAgcUnknownCreateInterpolantMapping(split.data(), &gs, &ps) == 0, "split f16 mapping failed");
+    check(std::memcmp(split.data(), preparedMapping.data(), sizeof(split)) == 0, "prepared split mapping differs from published registers");
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
         check(split[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "interpolant register offset changed");
     }
@@ -94,6 +101,7 @@ void testMapping() {
 
     auto regular = filled();
     check(sceAgcCreateInterpolantMapping(regular.data(), &gs, &ps) == 0, "mapping failed");
+    check(std::memcmp(regular.data(), preparedMapping.data(), sizeof(regular)) == 0, "prepared mapping differs from published registers");
     check(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
     checkIdentity(regular, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 }
@@ -117,11 +125,24 @@ void testRejections() {
 
 }
 
+extern "C" void AgcDriverResolveShaderAbi_nid_postfix(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
+    check(shader != nullptr && context.size() == preparedMapping.size() && primitive.empty(), "invalid mapping preparation call");
+    mappedPixel = shader;
+    std::copy(context.begin(), context.end(), preparedMapping.begin());
+    ++mappings;
+}
+
+extern "C" void AgcDriverResolveGraphicsAbi_nid_postfix(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
+    check(vertex != nullptr && pixel == mappedPixel && primitiveType == 0u, "invalid mapping link call");
+    ++links;
+}
+
 int main() {
     try {
         testIdentity();
         testMapping();
         testRejections();
+        check(mappings == 3u && links == 2u, "mapping preparation call count changed");
         LibcRunShutdown_nid_postfix();
         std::puts("AGC interpolant mapping tests passed");
         return 0;

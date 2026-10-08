@@ -1,11 +1,15 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <sstream>
 #include <iostream>
 #include <cstring>
+#include <domain/ImportModule.hpp>
 
 namespace Relinker {
+
+using namespace Elfpatcher;
 
 RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel)
     : _elfReader(std::move(elfReader))
@@ -141,6 +145,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     constexpr std::size_t relaEntSize = 24;
     if (readAsSize(DT_OS_RELAENT, DT_RELAENT, "DT_RELAENT") != relaEntSize)
         throw RelinkerException("Unsupported DT_RELAENT value");
+    if (dynRelaSize % relaEntSize != 0)
+        throw RelinkerException("Invalid DT_RELASZ value");
 
     std::vector<std::pair<std::uint64_t, std::string>> neededLibraryNamesByStrOffset;
     for (const auto& tag : dynTags)
@@ -155,6 +161,9 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     if (dynStrTabOffset > raw.size() || dynStrTabSize > raw.size() - dynStrTabOffset)
         throw RelinkerException("Dynamic string table is out of bounds", dynStrTabOffset);
+
+    if (hasPltRelocations && (dynJmpRelOffset > raw.size() || dynJmpRelSize > raw.size() - dynJmpRelOffset))
+        throw RelinkerException("Jump relocation table is out of bounds", dynJmpRelOffset);
 
     auto readCStr = [&](FileByteOffset strOff) -> std::string {
         if (strOff >= dynStrTabSize)
@@ -175,11 +184,21 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         if (policy) policy->RegisterLibraryImport(snd);
     }
 
+    std::map<std::uint64_t, std::string> importModules;
+    for (const auto& tag : dynTags) {
+        if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
+            throw RelinkerException("Duplicate import module ID");
+    }
+
+    auto relaEntryPos = [&](const FileByteOffset relaOff, const ByteCount off) -> FileByteOffset {
+        if (relaOff > raw.size() || off > raw.size() - relaOff || relaEntSize > raw.size() - relaOff - off)
+            throw RelinkerException("Relocation entry out of bounds", relaOff);
+        return relaOff + off;
+    };
+
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
-        for (ByteCount off = 0; off + relaEntSize <= relaSize; off += relaEntSize) {
-            const FileByteOffset pos = relaOff + off;
-            if (pos + relaEntSize > raw.size())
-                throw RelinkerException("Relocation entry out of bounds", pos);
+        for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
+            const FileByteOffset pos = relaEntryPos(relaOff, off);
 
             std::uint64_t rOffset = 0, rInfo = 0;
             std::int64_t rAddend = 0;
@@ -203,7 +222,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             std::uint32_t nameOff = 0;
             std::memcpy(&nameOff, raw.data() + symOff, 4);
 
-            nidRefs.push_back({readCStr(nameOff), {}, relType, pos, rOffset, rAddend});
+            const auto name = readCStr(nameOff);
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend});
         }
     };
 
@@ -217,8 +237,6 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         _syscallScanner->ScanCodeSectionForSyscalls(segment, segmentVAddr, segment.size());
 
     _validationPolicy->ValidateSyscallAbsence();
-
-    static constexpr std::uint32_t R_X86_64_JUMP_SLOT = 7;
 
     const std::size_t originalNidCount = nidRefs.size();
     const auto originalNidRefs = nidRefs;
@@ -273,8 +291,6 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     }
     auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
 
-    static constexpr std::uint32_t R_X86_64_RELATIVE = 8;
-
     auto appendRela = [&](std::vector<std::uint8_t>& buf, std::uint64_t offset, std::uint64_t info, std::int64_t addend) {
         std::size_t pos = buf.size();
         buf.resize(pos + 24);
@@ -284,8 +300,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     };
 
     auto extractRelative = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
-        for (ByteCount off = 0; off + relaEntSize <= relaSize; off += relaEntSize) {
-            const FileByteOffset pos = relaOff + off;
+        for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
+            const FileByteOffset pos = relaEntryPos(relaOff, off);
             std::uint64_t rOffset = 0, rInfo = 0;
             std::int64_t rAddend = 0;
             std::memcpy(&rOffset, raw.data() + pos, 8);

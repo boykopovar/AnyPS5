@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 
@@ -56,7 +57,7 @@ int APS5_VABI sceHttpParseStatusLine(const char* statusLine, size_t lineLen, int
     size_t length = static_cast<size_t>(static_cast<const char*>(lineFeed) - phrase);
     const size_t consumed = index + length + 1;
     if (consumed > static_cast<size_t>(INT32_MAX)) {
-        NotImplemented_nid_no_patch("sceHttpParseStatusLine: status line longer than INT32_MAX");
+        throw std::out_of_range("sceHttpParseStatusLine: consumed byte count exceeds int");
     }
     if (length > 0 && phrase[length - 1] == '\r') --length;
 

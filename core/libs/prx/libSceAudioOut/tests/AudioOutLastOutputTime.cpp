@@ -122,6 +122,21 @@ void TestReopenedPort() {
     Require(sceAudioOutClose(reopened) == 0, "port must close");
 }
 
+void TestPortWithoutDeviceKeepsRealTime() {
+    const std::vector<std::int16_t> block(frames, 256);
+    const int handle = Open(portTypeVibration);
+    const std::uint64_t blockUs = 1000000ull * frames / frequency;
+    const std::uint64_t start = sceKernelGetProcessTime();
+    for (int i = 0; i < 7; i++) Require(sceAudioOutOutput(handle, block.data()) == static_cast<int>(frames), "output must accept the block");
+    Require(sceKernelGetProcessTime() - start < 3 * blockUs, "a port without a device must take blocks up to its latency without waiting");
+    for (int i = 7; i < 60; i++) Require(sceAudioOutOutput(handle, block.data()) == static_cast<int>(frames), "output must accept the block");
+    const std::uint64_t elapsed = sceKernelGetProcessTime() - start;
+    Require(elapsed + 50000 >= 60 * blockUs && elapsed < 60 * blockUs + 200000, "a port without a device must consume blocks in real time");
+    Require(sceAudioOutOutput(handle, nullptr) == static_cast<int>(frames), "waiting for the output must succeed");
+    Require(sceKernelGetProcessTime() - start + 2000 >= 60 * blockUs, "waiting on a port without a device must last until its queue has played");
+    Require(sceAudioOutClose(handle) == 0, "port must close");
+}
+
 void TestErrors() {
     const std::vector<std::int16_t> block(frames, 256);
     const int handle = Open(portTypeMain);
@@ -154,5 +169,6 @@ int main() {
     TestOutputs();
     TestReopenedPort();
     TestErrors();
+    TestPortWithoutDeviceKeepsRealTime();
     return 0;
 }

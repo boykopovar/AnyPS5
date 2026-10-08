@@ -319,15 +319,15 @@ IrU32 TranslationContext::readRawU32(const RdnaOperand& operand) {
         case RdnaOperandKind::VccLo: return IrU32(ir.GetVccLo());
         case RdnaOperandKind::VccHi: return IrU32(ir.GetVccHi());
         case RdnaOperandKind::M0: return IrU32(ir.GetM0());
-        case RdnaOperandKind::ExecLo: return IrU32(ir.GetExecLo());
-        case RdnaOperandKind::ExecHi: return IrU32(ir.GetExecHi());
+        case RdnaOperandKind::ExecLo: return hostExecWord(0u);
+        case RdnaOperandKind::ExecHi: return hostExecWord(1u);
         case RdnaOperandKind::Scc: return IrU32(ir.Select(ir.GetScc(), ir.Constant(1u), ir.Constant(0u)));
         case RdnaOperandKind::VccZ:
         case RdnaOperandKind::ExecZ: {
             const bool vcc = operand.kind == RdnaOperandKind::VccZ;
-            IrU32 mask(vcc ? ir.GetVccLo() : ir.GetExecLo());
+            IrU32 mask(vcc ? IrU32(ir.GetVccLo()) : hostExecWord(0u));
             if (program.WaveSize() == 64u) {
-                mask = IrU32(ir.BitwiseOr(mask.Value(), vcc ? ir.GetVccHi() : ir.GetExecHi()));
+                mask = IrU32(ir.BitwiseOr(mask.Value(), vcc ? ir.GetVccHi() : hostExecWord(1u).Value()));
             }
             const IrU32 zero(ir.Constant(0u));
             return IrU32(ir.Select(ir.IEqual(mask.Value(), zero.Value()), ir.Constant(1u), zero.Value()));

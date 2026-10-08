@@ -9,6 +9,7 @@ extern "C" {
 int APS5_VABI sceAudioOut2Initialize();
 int APS5_VABI sceAudioOut2Set3DLatency(int, std::uint32_t);
 int APS5_VABI sceAudioOut2MasteringInit(std::uint32_t);
+int APS5_VABI sceAudioOut2MasteringSetParam(const void*, std::uint32_t, std::uint32_t);
 }
 
 static void Require(bool value, const char* message) {
@@ -35,7 +36,8 @@ constexpr int user = 0x10000000;
 void TestSet3DLatency() {
     Require(sceAudioOut2Set3DLatency(systemUser, 2) == 0, "latency 2 for the system user must be accepted");
     Require(sceAudioOut2Set3DLatency(systemUser, 2) == 0, "latency 2 must be accepted again");
-    Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(systemUser, 1); }), "latency 1 must throw");
+    Require(sceAudioOut2Set3DLatency(systemUser, 1) == 0, "latency 1 for the system user must be accepted");
+    Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(systemUser, 0); }), "latency 0 must throw");
     Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(systemUser, 3); }), "latency 3 must throw");
     Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(user, 2); }), "a user other than the system user must throw");
 }
@@ -45,11 +47,18 @@ void TestMasteringInit() {
     Require(ThrowsRuntimeError([] { sceAudioOut2MasteringInit(1); }), "flags 1 must throw");
 }
 
+void TestMasteringSetParam() {
+    const std::uint32_t params[4] = {1u, 0u, 0u, 0u};
+    Require(sceAudioOut2MasteringSetParam(params, 0, 0) == 0, "mastering parameters must be accepted");
+    Require(ThrowsRuntimeError([] { sceAudioOut2MasteringSetParam(nullptr, 0, 0); }), "null mastering parameters must throw");
+}
+
 }
 
 int main() {
     Require(sceAudioOut2Initialize() == 0, "initialization must succeed");
     TestSet3DLatency();
     TestMasteringInit();
+    TestMasteringSetParam();
     return 0;
 }

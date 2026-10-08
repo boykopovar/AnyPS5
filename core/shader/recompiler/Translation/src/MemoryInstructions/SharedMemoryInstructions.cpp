@@ -42,6 +42,29 @@ bool TranslationContext::dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, 
     return true;
 }
 
+bool TranslationContext::dsWrxchg2(const RdnaInstruction& inst) {
+    MemoryInfo first = sharedMemoryInfoFromInstruction(inst);
+    const std::uint32_t width = first.dataDwords / 2u;
+    if (width == 2u && inst.gds) {
+        throw std::runtime_error("64-bit GDS atomics are not supported");
+    }
+    first.dataDwords = width;
+    first.componentCount = width;
+    MemoryInfo second = first;
+    second.offset = first.secondaryOffset;
+    const IrU32 address = readU32(inst.source0);
+    const auto data = [&](const RdnaOperand& operand) { return width == 2u ? &readU64(operand).Value() : &readU32(operand).Value(); };
+    IrValue* firstValue = data(inst.source1);
+    IrValue* secondValue = data(inst.source2);
+    IrValue& active = ir.GetExec();
+    const IrOpcode opcode = width == 2u ? IrOpcode::SharedAtomicSwap64 : IrOpcode::SharedAtomicSwap32;
+    IrValue& firstOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), firstValue, &active}, addMemoryInfo(first, inst.programCounter));
+    IrValue& secondOld = ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), secondValue, &active}, addMemoryInfo(second, inst.programCounter));
+    writeOperand(inst.destination, &firstOld);
+    writeOperand(offsetOperand(inst.destination, width), &secondOld);
+    return true;
+}
+
 IrValue* TranslationContext::loadSharedU32(std::uint32_t width, IrU32 address, const MemoryInfo& memory, std::uint32_t pc) {
     IrOpcode opcode;
     switch (width) {
@@ -198,6 +221,29 @@ bool TranslationContext::dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode
         old = &ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), &data0.Value(), &active}, addMemoryInfo(memory, inst.programCounter));
     }
     if (returnsValue) writeOperand(inst.destination, old);
+    return true;
+}
+
+bool TranslationContext::dsCondxchg32(const RdnaInstruction& inst) {
+    if (inst.gds) {
+        throw std::runtime_error("DS conditional exchange GDS mode is not supported");
+    }
+    MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
+    memory.dataDwords = 1u;
+    memory.componentCount = 1u;
+    const auto data = readU32Pair(inst.source1);
+    const IrU32 address = readU32(inst.source0);
+    IrValue& active = ir.GetExec();
+    std::array<IrValue*, 2> old{};
+    for (std::uint32_t index = 0u; index < 2u; ++index) {
+        IrValue& enabled = ir.UGreaterThan(data[index].Value(), ir.Constant(0x7fffffffu));
+        IrValue& mask = ir.Select(enabled, ir.Constant(0xffffffffu), ir.Constant(0u));
+        IrValue& value = ir.Select(enabled, ir.BitwiseAnd(data[index].Value(), ir.Constant(0x7fffffffu)), ir.Constant(0u));
+        memory.offset = inst.memoryOffset + index * 4u;
+        old[index] = &ir.Emit(IrOpcode::SharedAtomicMskor32, IrType::U32, {&address.Value(), &mask, &value, &active}, addMemoryInfo(memory, inst.programCounter));
+    }
+    writeOperand(inst.destination, old[0]);
+    writeOperand(offsetOperand(inst.destination, 1u), old[1]);
     return true;
 }
 

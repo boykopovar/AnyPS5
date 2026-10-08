@@ -1,8 +1,11 @@
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <unordered_map>
 #include <cstring>
 
 namespace Relinker::UnusedNidFilter {
+
+using namespace Elfpatcher;
 
 namespace {
 
@@ -38,7 +41,6 @@ std::uint64_t vaddrToFileOffset(const std::vector<LoadSegment>& loads, VirtualAd
     throw RelinkerException("Cannot translate virtual address to file offset", va);
 }
 
-constexpr std::uint32_t R_X86_64_RELATIVE = 8;
 constexpr std::size_t RelaEntSize = 24;
 
 void collectRelativeEntries(
@@ -105,7 +107,6 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
         std::size_t phPos = static_cast<std::size_t>(phOff) + i * phEntSize;
         if (phPos + 56 > elfBytes.size()) throw RelinkerException("Program header out of bounds");
         std::uint32_t type = read32(elfBytes, phPos);
-        constexpr std::uint32_t PT_LOAD = 1;
         if (type != PT_LOAD) continue;
         LoadSegment seg;
         seg.fileOffset = read64(elfBytes, phPos + 8);
@@ -121,22 +122,11 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
         if (phPos + 56 > elfBytes.size()) throw RelinkerException("Program header out of bounds");
 
         std::uint32_t type = read32(elfBytes, phPos);
-        constexpr std::uint32_t PT_DYNAMIC = 2;
         if (type != PT_DYNAMIC) continue;
 
         std::uint64_t segOff = read64(elfBytes, phPos + 8);
         std::uint64_t segSz = read64(elfBytes, phPos + 32);
         if (segOff + segSz > elfBytes.size()) throw RelinkerException("PT_DYNAMIC segment out of bounds");
-
-        constexpr std::int64_t DT_NULL = 0;
-        constexpr std::int64_t DT_RELA = 7;
-        constexpr std::int64_t DT_RELASZ = 8;
-        constexpr std::int64_t DT_JMPREL = 0x17;
-        constexpr std::int64_t DT_PLTRELSZ = 2;
-        constexpr std::int64_t DT_OS_RELA = 0x6100002f;
-        constexpr std::int64_t DT_OS_RELASZ = 0x61000031;
-        constexpr std::int64_t DT_OS_JMPREL = 0x61000029;
-        constexpr std::int64_t DT_OS_PLTRELSZ = 0x6100002d;
 
         VirtualAddress relaVa = 0;
         std::uint64_t relaSz = 0;

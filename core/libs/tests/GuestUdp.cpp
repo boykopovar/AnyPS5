@@ -54,6 +54,12 @@ int main() {
     Require(getsockopt_nid_postfix(sender, 0xffff, 0x20, &option, &optionSize) == 0 && option != 0);
     Require(setsockopt_nid_postfix(sender, 0xffff, 12345, &enabled, sizeof(enabled)) == -1);
     Require(*__error_nid_postfix() == 42);
+    const int unsized = socket_nid_postfix(2, 2, 0);
+    std::array<unsigned char, 16> unsizedAddress{0, 2, 0, 0, 127, 0, 0, 1};
+    Require(unsized >= 0 && bind_nid_postfix(unsized, unsizedAddress.data(), unsizedAddress.size()) == 0);
+    std::uint32_t unsizedLength = unsizedAddress.size();
+    Require(getsockname_nid_postfix(unsized, unsizedAddress.data(), &unsizedLength) == 0 && unsizedAddress[0] == 16);
+    Require(close_nid_postfix(unsized) == 0);
     Require(ioctl_nid_postfix(receiver, 0x8004667e, &enabled) == 0);
     Require(fcntl_nid_postfix(receiver, 3) == 6);
     Require(fcntl_nid_postfix(receiver, 4, 2) == 0);
@@ -66,7 +72,7 @@ int main() {
     Require(recvfrom_nid_postfix(receiver, buffer, sizeof(buffer), 0, nullptr, nullptr) == -1);
     Require(*__error_nid_postfix() == 35);
     const char message[] = "guest UDP loopback";
-    Require(sendto_nid_postfix(sender, message, sizeof(message), 0, destination.data(), destination.size()) == sizeof(message));
+    Require(sendto_nid_postfix(sender, message, sizeof(message), 0x20000, destination.data(), destination.size()) == sizeof(message));
     int queued = 0;
     for (int i = 0; i < 100 && queued == 0; ++i) {
         Require(ioctl_nid_postfix(receiver, 0x4004667f, &queued) == 0);

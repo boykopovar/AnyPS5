@@ -57,7 +57,7 @@ static void CheckGuestCalls() {
     Require(locale->base.references == initial + 1);
     Require(release(&locale->base) == nullptr);
     Require(locale->base.references == initial);
-    RequireException([&] { release(&locale->base); });
+    Require(release(&locale->base) == nullptr && locale->base.references == initial);
     RequireException([&] { retain(nullptr); });
     RequireException([&] { locale->base.vtable->deleteObject(&locale->base); });
     Require(locale->base.references == initial);

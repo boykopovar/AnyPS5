@@ -9,7 +9,7 @@
 #include <tuple>
 
 extern "C" int APS5_VABI sceAgcGetDataPacketPayloadRange(SceAgcMemoryRange* range, std::uint32_t* cmd, int type);
-extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddressUnk(std::uint32_t** addr, std::uint32_t* cmd, int type);
+extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
 
 namespace {
 
@@ -42,7 +42,7 @@ void testRanges() {
         check(range.size == size, "payload range size mismatch");
         check(words[0] == header && words[1] == 0x12345678u, "payload range query modified the packet");
         std::uint32_t* address = nullptr;
-        check(sceAgcGetDataPacketPayloadAddressUnk(&address, words.data(), type) == 0 && address == range.base,
+        check(sceAgcGetDataPacketPayloadAddress_0090(&address, words.data(), type) == 0 && address == range.base,
               "payload range base differs from the payload address");
     }
 }

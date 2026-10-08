@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 int main(int, char* argv[]) {
     const auto executable = std::filesystem::absolute(argv[0]);
@@ -14,7 +15,7 @@ int main(int, char* argv[]) {
         if (name.find("signal") != std::string::npos) std::raise(SIGILL);
         return 42;
     }
-    const auto child = std::filesystem::temp_directory_path() / ("anyps5-autorun-child-" +
+    auto child = std::filesystem::temp_directory_path() / ("anyps5-autorun-child-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + " with spaces" + executable.extension().string());
 #ifndef _WIN32
     const auto signaled = child.parent_path() / ("anyps5-autorun-child-signal-" + child.filename().string());
@@ -24,9 +25,21 @@ int main(int, char* argv[]) {
     int result = 0;
     try {
         std::filesystem::copy_file(executable, child);
-        for (const bool windows : {false, true}) {
-            const int code = Cli::Autorun(child.string(), windows);
-            if (code != 42) throw std::runtime_error("Autorun changed exit code 42 to " + std::to_string(code));
+        std::vector<std::string> suffixes{""};
+#ifndef _WIN32
+        suffixes.insert(suffixes.end(), {" $HOME", " $(printf substituted)", " `printf substituted`",
+            " 'single'", " \"double\"", " \\backslash", " line\nbreak"});
+#endif
+        const auto originalChild = child;
+        for (const auto& suffix : suffixes) {
+            const auto renamed = std::filesystem::path(originalChild.string() + suffix);
+            if (renamed != child) std::filesystem::rename(child, renamed);
+            child = renamed;
+            for (const bool windows : {false, true}) {
+                const int code = Cli::Autorun(child.string(), windows);
+                if (code != 42) throw std::runtime_error("Autorun changed exit code 42 to " +
+                    std::to_string(code) + " for " + child.string());
+            }
         }
 #ifndef _WIN32
         std::filesystem::rename(child, signaled);

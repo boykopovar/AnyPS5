@@ -43,6 +43,9 @@ public:
     }
 
     void* Allocate(std::size_t total, std::size_t& blockBytes) {
+        if (total > MaximumSmallBytes &&
+            total > std::numeric_limits<std::size_t>::max() - (LargeGranuleBytes - 1))
+            throw std::length_error("guest heap allocation overflow");
         if (total > MaximumSmallBytes) {
             blockBytes = alignUp(total, LargeGranuleBytes);
             if (void* cached = _large.Take(blockBytes)) return cached;

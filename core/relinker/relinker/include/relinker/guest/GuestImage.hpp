@@ -21,6 +21,7 @@ struct GuestSymbol {
     std::uint16_t Section;
     std::uint64_t Value;
     std::uint64_t Size;
+    std::string Library;
 };
 
 struct GuestImage {

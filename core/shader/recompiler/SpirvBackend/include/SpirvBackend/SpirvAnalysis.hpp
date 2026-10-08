@@ -23,6 +23,7 @@ struct SpirvRequirements {
     bool functionScratch = false;
     bool pixelValidMask = false;
     bool bufferInt64Atomics = false;
+    bool imageInt64Atomics = false;
     bool sharedInt64Atomics = false;
     bool float64 = false;
     bool coherentBuffers = false;

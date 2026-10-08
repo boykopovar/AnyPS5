@@ -83,10 +83,8 @@ int APS5_VABI sceMsgDialogProgressBarSetValue(int target, std::uint32_t rate) {
  return g_status.load() == COMMON_DIALOG_STATUS_RUNNING ? 0 : COMMON_DIALOG_ERROR_NOT_RUNNING;
 }
 
-APS5_EXPORT("CWVW78Qc3fI", sceMsgDialogUnknown00);
-int APS5_VABI sceMsgDialogUnknown00(void) {
-    NotImplemented_nid_no_patch("CWVW78Qc3fI");
-    return 0;
+int APS5_VABI sceMsgDialogGetStatus(void) {
+    return g_status.load();
 }
 
 }

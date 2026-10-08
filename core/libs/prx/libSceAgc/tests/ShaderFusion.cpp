@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/Misc/include/ShaderFusion.hpp"
+#include "prx/libSceAgcDriver/tests/execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -15,6 +16,7 @@ namespace {
 constexpr std::uint32_t SCodeEnd = 0xbf9f0000u;
 constexpr std::uint32_t SNop = 0xbf800000u;
 constexpr std::uint32_t SSetpcS6 = 0xbe802006u;
+constexpr std::uint32_t SSwappcNullS6 = 0xbefd2106u;
 constexpr std::uint32_t SMovS0 = 0xbe800380u;
 constexpr std::uint32_t VMovV0 = 0x7e000280u;
 constexpr std::uint32_t SEndpgm = 0xbf810000u;
@@ -67,8 +69,8 @@ struct Halves {
     Shader front{};
     Shader back{};
 
-    Halves() {
-        frontCode = {SMovS0, VMovV0, SSetpcS6, SCodeEnd, SCodeEnd};
+    explicit Halves(std::uint32_t terminator = SSetpcS6) {
+        frontCode = {SMovS0, VMovV0, terminator, SCodeEnd, SCodeEnd};
         const auto codeBytes = static_cast<std::uint32_t>(frontCode.size() * 4);
         std::array<std::uint32_t, 2> magic{};
         std::memcpy(magic.data(), "barefoot", 8);
@@ -123,16 +125,16 @@ std::uint8_t* aligned(std::vector<std::uint8_t>& storage, std::size_t alignment)
     return storage.data() + ((alignment - address % alignment) % alignment);
 }
 
-void testFusion(std::size_t misalignment) {
-    Halves halves;
+void testFusion(std::size_t misalignment, std::uint32_t terminator = SSetpcS6) {
+    Halves halves(terminator);
     SizeAlign size{};
-    check(sceAgcUnknownGetFusedShaderSize(&size, &halves.front, &halves.back) == 0, "fused size query failed");
+    check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "fused size query failed");
     check(size.m_align == 8, "fused shaders are not 256-byte aligned");
     check(size.m_size > 256 + 255 + halves.back.shader_size + sizeof(Shader), "fused size does not cover the alignment padding, code and header");
     std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
     auto* scratch = aligned(storage, 256) + misalignment;
     Shader fused{};
-    check(sceAgcUnknownFuseShaderHalves(&fused, &halves.front, &halves.back, scratch) == 0, "fusion failed");
+    check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch) == 0, "fusion failed");
     for (std::size_t i = 0; i < 16; ++i) check(scratch[size.m_size + i] == 0xcd, "fusion wrote past the reported size");
     auto* memory = scratch + (256 - misalignment) % 256;
     const auto base = reinterpret_cast<std::uintptr_t>(memory);
@@ -173,38 +175,38 @@ void testRejections() {
     Halves halves;
     SizeAlign size{};
     Shader fused{};
-    expectFailure([&] { sceAgcUnknownGetFusedShaderSize(nullptr, &halves.front, &halves.back); });
-    expectFailure([&] { sceAgcUnknownFuseShaderHalves(&fused, &halves.front, &halves.back, nullptr); });
+    expectFailure([&] { sceAgcGetFusedShaderSize_0080(nullptr, &halves.front, &halves.back); });
+    expectFailure([&] { sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, nullptr); });
     {
         Halves swapped;
-        check(sceAgcUnknownGetFusedShaderSize(&size, &swapped.back, &swapped.front) == InvalidShaderHalves, "swapped halves were accepted by the size query");
-        check(sceAgcUnknownFuseShaderHalves(&fused, &swapped.back, &swapped.front, nullptr) == InvalidShaderHalves, "swapped halves were fused");
+        check(sceAgcGetFusedShaderSize_0080(&size, &swapped.back, &swapped.front) == InvalidShaderHalves, "swapped halves were accepted by the size query");
+        check(sceAgcFuseShaderHalves_0200(&fused, &swapped.back, &swapped.front, nullptr) == InvalidShaderHalves, "swapped halves were fused");
     }
     {
         Halves stages;
         stages.backSpecials.vgt_shader_stages_en.value = 0;
         std::vector<std::uint8_t> storage(4096);
-        check(sceAgcUnknownFuseShaderHalves(&fused, &stages.front, &stages.back, storage.data()) == InvalidShaderHalves, "halves with different GS stages were fused");
+        check(sceAgcFuseShaderHalves_0200(&fused, &stages.front, &stages.back, storage.data()) == InvalidShaderHalves, "halves with different GS stages were fused");
     }
     {
         Halves noJump;
         noJump.frontCode[2] = SNop;
-        expectFailure([&] { sceAgcUnknownGetFusedShaderSize(&size, &noJump.front, &noJump.back); });
+        expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &noJump.front, &noJump.back); });
     }
     {
         Halves noTrailer;
         noTrailer.frontCode[5] = 0;
-        expectFailure([&] { sceAgcUnknownGetFusedShaderSize(&size, &noTrailer.front, &noTrailer.back); });
+        expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &noTrailer.front, &noTrailer.back); });
     }
     {
         Halves hardware;
         hardware.frontSh[2].value |= 1u << 16u;
-        expectFailure([&] { sceAgcUnknownGetFusedShaderSize(&size, &hardware.front, &hardware.back); });
+        expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &hardware.front, &hardware.back); });
     }
     {
         Halves constants;
         constants.back.embedded_constant_buffer_size_dqw = 1;
-        expectFailure([&] { sceAgcUnknownGetFusedShaderSize(&size, &constants.front, &constants.back); });
+        expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &constants.front, &constants.back); });
     }
 }
 
@@ -228,10 +230,10 @@ void testHullHalves() {
     back.specials = &specials;
     back.type = static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::HsBack);
     SizeAlign size{};
-    check(sceAgcUnknownGetFusedShaderSize(&size, &front, &back) == 0 && size.m_size == backSh.size() * sizeof(ShaderRegister) && size.m_align == 4, "hull size query changed");
+    check(sceAgcGetFusedShaderSize_0080(&size, &front, &back) == 0 && size.m_size == backSh.size() * sizeof(ShaderRegister) && size.m_align == 4, "hull size query changed");
     std::vector<ShaderRegister> scratch(backSh.size());
     Shader fused{};
-    check(sceAgcUnknownFuseShaderHalves(&fused, &front, &back, scratch.data()) == 0, "hull fusion failed");
+    check(sceAgcFuseShaderHalves_0200(&fused, &front, &back, scratch.data()) == 0, "hull fusion failed");
     check(fused.type == static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::Hs) && fused.code == back.code && fused.sh_registers == scratch.data() && fused.user_data == nullptr, "hull halves were not fused at the register level");
     const auto address = reinterpret_cast<std::uint64_t>(front.code);
     check(scratch[0].value == 0x11u && scratch[1].value == 0x22u, "hull checksums were not taken from the front half");
@@ -244,9 +246,12 @@ void testHullHalves() {
 
 int main() {
     try {
+        const auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
         testFusion(0);
         testFusion(0xa0);
         testFusion(4);
+        testFusion(0, SSwappcNullS6);
         testRejections();
         testHullHalves();
         LibcRunShutdown_nid_postfix();

@@ -95,17 +95,23 @@ void requireAlignment(std::size_t alignment) {
 }
 
 void finalize() {
-    Initialize finalizeCallback;
+    Initialize finalizeCallback = nullptr;
     {
         std::lock_guard lock(heapMutex);
-        if (heapFailure) std::rethrow_exception(heapFailure);
-        if (heapFinalized) throw std::runtime_error("application heap: duplicate finalization");
+        if (heapFinalized || heapFailure) return;
         finalizeCallback = heapFinalize;
     }
     if (finalizeCallback != nullptr) finalizeCallback();
     std::lock_guard lock(heapMutex);
     heapFinalized = true;
 }
+
+struct HeapFinalizerRegistration {
+    HeapFinalizerRegistration() {
+        if (std::atexit(finalize) != 0) std::terminate();
+    }
+};
+const HeapFinalizerRegistration heapFinalizerRegistration;
 
 }
 
@@ -144,7 +150,6 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
                 std::lock_guard lock(heapMutex);
                 heapFinalize = read<Initialize>(replacement, 0x18);
             }
-            if (std::atexit(finalize) != 0) throw std::runtime_error("application heap: cannot register finalization");
         } catch (...) {
             std::lock_guard lock(heapMutex);
             heapFailure = std::current_exception();
@@ -221,7 +226,8 @@ int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment
     const auto align = callback<PosixAlign>(6);
     CallbackScope scope;
     void* result = nullptr;
-    if (align(&result, alignment, bytes) != 0) throw std::runtime_error("application heap: posix_memalign failed");
+    const int error = align(&result, alignment, bytes);
+    if (error != 0) return error;
     requireAllocation(result);
     if (reinterpret_cast<std::uintptr_t>(result) % alignment != 0) throw std::runtime_error("application heap: allocator returned a misaligned pointer");
     *pointer = result;

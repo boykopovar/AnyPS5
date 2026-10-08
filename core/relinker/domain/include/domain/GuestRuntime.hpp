@@ -12,6 +12,7 @@ struct GuestImport {
     std::uint32_t TargetRva;
     std::uint64_t Addend;
     std::uint32_t RelocationType = 1;
+    std::string Library;
 };
 
 struct GuestRuntime {
@@ -22,6 +23,7 @@ struct GuestRuntime {
     std::uint32_t InitRva = 0;
     std::uint32_t FiniRva = 0;
     bool UsePlatformTlsResolver = true;
+    std::vector<std::string> Names;
 };
 
 }

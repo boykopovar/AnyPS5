@@ -35,4 +35,21 @@ int APS5_VABI sceRazorCpuPopMarker(void) {
  return 0;
 }
 
+int APS5_VABI sceRazorCpuFlushOccurred(uint64_t* timeSpentInFlush) {
+ if (timeSpentInFlush != nullptr) *timeSpentInFlush = 0;
+ return 0;
+}
+
+int APS5_VABI sceRazorCpuPlotValue(const char* series, float value) {
+ (void)series;
+ (void)value;
+ return 0;
+}
+
+int APS5_VABI sceRazorCpuWriteBookmark(const char* label, const char* description) {
+ (void)label;
+ (void)description;
+ return 0;
+}
+
 }

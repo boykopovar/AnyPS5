@@ -18,7 +18,8 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
 
     bool orderedAlready = false;
 
-    endOfPipeInterrupt = opcode == 0x49 && ((packet[2] >> 24u) & 7u) != 0;
+    const auto interruptSelect = (packet[2] >> 24u) & 7u;
+    endOfPipeInterrupt = opcode == 0x49 && interruptSelect != 0 && interruptSelect != 3;
     interruptDeferred = false;
     if (!drainAll && endOfPipeInterrupt) {
         const auto label = Pm4::DecodeLabelWrite(packet);
@@ -163,7 +164,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
 
     static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
     const bool drains = drainAll ? ((Pm4::AccessesMemory(header) && opcode != 0x16) || opcode == 0x42 || opcode == 0x46 || opcode == 0x58 || header == FlipPacketHeader)
-                                 : (!wroteOnGpu && !orderedAlready && (opcode == 0x49 || opcode == 0x37 || opcode == 0x40 || opcode == 0x50 || opcode == 0x83 || sampleDump || (drawPacket && drawDrain) || (header == FlipPacketHeader && syncFlip)));
+                                 : (!wroteOnGpu && !orderedAlready && (opcode == 0x49 || opcode == 0x37 || opcode == 0x40 || opcode == 0x45 || opcode == 0x50 || opcode == 0x83 || sampleDump || (drawPacket && drawDrain) || (header == FlipPacketHeader && syncFlip)));
     if (drains) {
 
         static const bool unlockedDrain = std::getenv("APS5_NO_UNLOCKED_DRAIN") == nullptr && !drainAll;

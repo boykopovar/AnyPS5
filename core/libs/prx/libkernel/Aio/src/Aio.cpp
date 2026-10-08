@@ -13,9 +13,9 @@
 #include "prx/libkernel/KernelErrors.hpp"
 
 #ifdef _WIN32
-#include <fcntl.h>
 #include <io.h>
 #include <limits>
+#include <windows.h>
 #else
 #include <fcntl.h>
 #include <unistd.h>
@@ -54,6 +54,35 @@ void SetState(std::int32_t id, std::int32_t state) {
     g_states[id] = state;
 }
 
+#ifdef _WIN32
+std::int64_t NativePositioned(std::int32_t fd, void* buf, std::size_t nbyte, std::int64_t offset, bool write, const char* name) {
+    if (nbyte > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
+        throw std::runtime_error(std::string(name) + ": nbytes exceeds platform limit");
+    }
+    if (offset < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(fd));
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
+    OVERLAPPED overlapped{};
+    overlapped.Offset = static_cast<DWORD>(offset);
+    overlapped.OffsetHigh = static_cast<DWORD>(static_cast<std::uint64_t>(offset) >> 32u);
+    DWORD done = 0;
+    const BOOL ok = write ? ::WriteFile(handle, buf, static_cast<DWORD>(nbyte), &done, &overlapped)
+                          : ::ReadFile(handle, buf, static_cast<DWORD>(nbyte), &done, &overlapped);
+    if (!ok) {
+        if (!write && ::GetLastError() == ERROR_HANDLE_EOF) return 0;
+        errno = EIO;
+        return -1;
+    }
+    return done;
+}
+#endif
+
 std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int64_t offset) {
     const GuestArena::HostWrite destination(buf, nbyte);
     if (!destination.Open()) {
@@ -61,22 +90,7 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
         return -1;
     }
 #ifdef _WIN32
-    if (nbyte > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
-        throw std::runtime_error("sceKernelAioSubmitReadCommands: nbytes exceeds platform limit");
-    }
-    const int duped = ::_dup(fd);
-    if (duped < 0) return -1;
-    if (::_lseeki64(duped, offset, SEEK_SET) < 0) {
-        const int error = errno;
-        ::_close(duped);
-        errno = error;
-        return -1;
-    }
-    const int result = ::_read(duped, buf, static_cast<unsigned int>(nbyte));
-    const int error = errno;
-    ::_close(duped);
-    errno = error;
-    return result;
+    return NativePositioned(fd, buf, nbyte, offset, false, "sceKernelAioSubmitReadCommands");
 #else
     return static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset)));
 #endif
@@ -84,22 +98,7 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
 
 std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, std::int64_t offset) {
 #ifdef _WIN32
-    if (nbyte > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
-        throw std::runtime_error("sceKernelAioSubmitWriteCommands: nbytes exceeds platform limit");
-    }
-    const int duped = ::_dup(fd);
-    if (duped < 0) return -1;
-    if (::_lseeki64(duped, offset, SEEK_SET) < 0) {
-        const int error = errno;
-        ::_close(duped);
-        errno = error;
-        return -1;
-    }
-    const int result = ::_write(duped, buf, static_cast<unsigned int>(nbyte));
-    const int error = errno;
-    ::_close(duped);
-    errno = error;
-    return result;
+    return NativePositioned(fd, const_cast<void*>(buf), nbyte, offset, true, "sceKernelAioSubmitWriteCommands");
 #else
     return static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset)));
 #endif
@@ -304,6 +303,11 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
         }
         std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
+}
+
+int APS5_VABI sceKernelAioPollRequests() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

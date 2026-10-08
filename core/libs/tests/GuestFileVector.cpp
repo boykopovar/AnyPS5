@@ -10,6 +10,16 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+static int MakePipe(int* ends) { return ::_pipe(ends, 64, _O_BINARY); }
+static int ClosePipe(int end) { return ::_close(end); }
+#else
+#include <unistd.h>
+static int MakePipe(int* ends) { return ::pipe(ends); }
+static int ClosePipe(int end) { return ::close(end); }
+#endif
 
 struct GuestIovec {
     void* base;
@@ -38,6 +48,7 @@ static void Check(bool value, int line) {
 static constexpr std::int64_t ErrorEbadf = static_cast<int>(0x80020009u);
 static constexpr std::int64_t ErrorEfault = static_cast<int>(0x8002000Eu);
 static constexpr std::int64_t ErrorEinval = static_cast<int>(0x80020016u);
+static constexpr std::int64_t ErrorEspipe = static_cast<int>(0x8002001Du);
 
 static std::string Contents(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
@@ -81,6 +92,14 @@ int main() {
     Require(sceKernelLseek(file, 0, 1) == 13);
     Require(Contents(path) == "01ABCDE7ABCDE");
 
+    GuestIovec gapped[3] = {{first, 2}, {nullptr, 0}, {second, 3}};
+    Require(sceKernelPreadv(file, gapped, 3, 0) == 5);
+    Require(std::memcmp(first, "01", 2) == 0 && std::memcmp(second, "ABC", 3) == 0);
+    Require(sceKernelLseek(file, 2, 0) == 2);
+    Require(sceKernelReadv(file, gapped, 3) == 5);
+    Require(std::memcmp(first, "AB", 2) == 0 && std::memcmp(second, "CDE", 3) == 0);
+    Require(sceKernelLseek(file, 0, 1) == 7);
+
     GuestIovec empty[1] = {{nullptr, 0}};
     Require(sceKernelReadv(file, empty, 1) == 0);
     Require(sceKernelReadv(file, reads, 0) == 0);
@@ -105,6 +124,17 @@ int main() {
     Require(sceKernelWritev(file, writes, 2) == ErrorEbadf);
     Require(sceKernelPreadv(file, reads, 2, 0) == ErrorEbadf);
     Require(sceKernelPwritev(file, writes, 2, 0) == ErrorEbadf);
+
+    int ends[2] = {};
+    Require(MakePipe(ends) == 0);
+    char xyz[] = "xyz";
+    GuestIovec message[1] = {{xyz, 3}};
+    Require(sceKernelWritev(ends[1], message, 1) == 3);
+    Require(sceKernelReadv(ends[0], reads, 2) == 3);
+    Require(std::memcmp(first, "xyz", 3) == 0);
+    Require(sceKernelPreadv(ends[0], reads, 2, 0) == ErrorEspipe);
+    Require(sceKernelPwritev(ends[1], message, 1, 0) == ErrorEspipe);
+    Require(ClosePipe(ends[0]) == 0 && ClosePipe(ends[1]) == 0);
 
     std::filesystem::remove_all(root);
     return 0;

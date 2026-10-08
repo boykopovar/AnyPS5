@@ -6,6 +6,7 @@
 extern "C" {
 int APS5_VABI sceMsgDialogInitialize(void);
 int APS5_VABI sceMsgDialogOpen(const void* param);
+int APS5_VABI sceMsgDialogGetStatus(void);
 int APS5_VABI sceMsgDialogUpdateStatus(void);
 int APS5_VABI sceMsgDialogGetResult(MsgDialogResult* result);
 int APS5_VABI sceMsgDialogClose(void);
@@ -31,19 +32,23 @@ int main() {
 
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogUpdateStatus() == 0);
+    Require(sceMsgDialogGetStatus() == 0);
 
     Require(sceMsgDialogInitialize() == 0);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogUpdateStatus() == kStatusInitialized);
+    Require(sceMsgDialogGetStatus() == kStatusInitialized);
 
     Require(sceMsgDialogProgressBarSetValue(0, 50) == kErrNotRunning);
     Require(sceMsgDialogOpen(param) == 0);
     Require(sceMsgDialogUpdateStatus() == kStatusFinished);
+    Require(sceMsgDialogGetStatus() == kStatusFinished);
     Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
     Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
     Require(sceMsgDialogProgressBarSetValue(0, 100) == kErrNotRunning);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogUpdateStatus() == kStatusFinished);
+    Require(sceMsgDialogGetStatus() == kStatusFinished);
 
     MsgDialogResult result{};
     result.button_id = -1;
@@ -53,4 +58,5 @@ int main() {
 
     Require(sceMsgDialogTerminate() == 0);
     Require(sceMsgDialogClose() == kErrNotRunning);
+    Require(sceMsgDialogGetStatus() == 0);
 }

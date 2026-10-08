@@ -14,7 +14,7 @@ int APS5_VABI sceNpSessionSignalingTerminate(void);
 
 namespace {
 
-constexpr int InvalidArgument = static_cast<int>(0x80552D02u);
+constexpr int InvalidArgument = static_cast<int>(0x80553303u);
 constexpr int Unavailable = static_cast<int>(0x80552D06u);
 
 void Require(bool condition, const char* message) {

@@ -33,56 +33,6 @@ ExportTargetKind exportTargetKindFromTarget(std::uint32_t target, std::uint32_t&
     return ExportTargetKind::Unknown;
 }
 
-std::uint32_t getDstSel(std::uint32_t dstSelXYZW, std::uint32_t component) {
-    return (dstSelXYZW >> (component * 3u)) & 0x7u;
-}
-
-bool isIntegerBufferFormat(IrBufferFormat format) {
-    switch (format) {
-        case IrBufferFormat::Format8UInt:
-        case IrBufferFormat::Format8SInt:
-        case IrBufferFormat::Format16UInt:
-        case IrBufferFormat::Format16SInt:
-        case IrBufferFormat::Format8_8UInt:
-        case IrBufferFormat::Format8_8SInt:
-        case IrBufferFormat::Format32UInt:
-        case IrBufferFormat::Format32SInt:
-        case IrBufferFormat::Format16_16UInt:
-        case IrBufferFormat::Format16_16SInt:
-        case IrBufferFormat::Format11_11_10UInt:
-        case IrBufferFormat::Format11_11_10SInt:
-        case IrBufferFormat::Format10_11_11UInt:
-        case IrBufferFormat::Format10_11_11SInt:
-        case IrBufferFormat::Format2_10_10_10UInt:
-        case IrBufferFormat::Format2_10_10_10SInt:
-        case IrBufferFormat::Format10_10_10_2UInt:
-        case IrBufferFormat::Format10_10_10_2SInt:
-        case IrBufferFormat::Format8_8_8_8UInt:
-        case IrBufferFormat::Format8_8_8_8SInt:
-        case IrBufferFormat::Format32_32UInt:
-        case IrBufferFormat::Format32_32SInt:
-        case IrBufferFormat::Format16_16_16_16UInt:
-        case IrBufferFormat::Format16_16_16_16SInt:
-        case IrBufferFormat::Format32_32_32UInt:
-        case IrBufferFormat::Format32_32_32SInt:
-        case IrBufferFormat::Format32_32_32_32UInt:
-        case IrBufferFormat::Format32_32_32_32SInt:
-            return true;
-        default:
-            return false;
-    }
-}
-
-std::uint32_t formattedConstantBits(IrBufferFormat format, std::uint32_t selector) {
-    if (selector == 0u) {
-        return 0u;
-    }
-    if (selector == 1u) {
-        return isIntegerBufferFormat(format) ? 1u : std::bit_cast<std::uint32_t>(1.0f);
-    }
-    throw std::runtime_error("reserved buffer destination selector");
-}
-
 }
 
 void TranslateAttributeInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const TranslateOptions& options) {
@@ -177,23 +127,12 @@ bool TranslationContext::emitInterpolation(const RdnaInstruction& inst) {
     }
 }
 
-void TranslationContext::TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t componentCount, const ShaderBufferResource& resource) {
-    const auto format = static_cast<IrBufferFormat>((resource.fields[3] >> 12u) & 0x7Fu);
-    const std::uint32_t dstSel = resource.fields[3] & 0xFFFu;
-    for (std::uint32_t component = 0u; component < componentCount; ++component) {
-        const std::uint32_t selector = instruction.formatted && !instruction.typed ? getDstSel(dstSel, component) : component + 4u;
-        IrValue* value = nullptr;
-        if (selector <= 1u) {
-            value = &ir.Constant(formattedConstantBits(format, selector));
-        } else if (selector >= 4u && selector <= 7u) {
-            const std::uint32_t memoryComponent = selector - 4u;
-            value = &ir.Emit(IrOpcode::GetAttribute, IrType::U32, {&ir.Constant(attribute), &ir.Constant(memoryComponent)});
-            std::uint8_t& required = program.Info().vertexFetchComponents[attribute];
-            required = static_cast<std::uint8_t>(std::max<std::uint32_t>(required, memoryComponent + 1u));
-        } else {
-            throw std::runtime_error("invalid embedded fetch component selector");
-        }
-        writeOperand(offsetOperand(instruction.destination, component), value);
+void TranslationContext::TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components) {
+    if (!instruction.formatted || instruction.typed || components == 0u || components > 4u) throw std::runtime_error("invalid prepared vertex fetch");
+    for (std::uint32_t component = 0; component < components; ++component) {
+        auto& value = ir.Emit(IrOpcode::GetAttribute, IrType::U32, {&ir.Constant(attribute), &ir.Constant(component)});
+        value.SetFlags<std::uint32_t>(1u);
+        writeOperand(offsetOperand(instruction.destination, component), &value);
     }
 }
 

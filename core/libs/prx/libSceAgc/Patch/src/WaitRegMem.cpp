@@ -7,6 +7,39 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+void ValidateWriteData(const std::uint32_t* cmd, const char* function) {
+    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), 4, function);
+    Agc::Command::Require(((cmd[0] >> 8u) & 0xffu) == 0x37u, function, "not a WRITE_DATA packet");
+}
+
+int SetWriteDataAddress(std::uint32_t* cmd, std::uint64_t address, const char* function) {
+    ValidateWriteData(cmd, function);
+    cmd[2] = static_cast<std::uint32_t>(address);
+    cmd[3] = static_cast<std::uint32_t>(address >> 32u);
+    return 0;
+}
+
+int SetWriteDataDst(std::uint32_t* cmd, std::uint8_t dst, bool compute, const char* function) {
+    ValidateWriteData(cmd, function);
+    Agc::Command::CheckBits(dst, compute ? 0xfu : 0x1fu, function);
+    Agc::Command::Require(dst != 0 || (cmd[1] & (1u << 20u)) == 0, function, "register writes do not support write confirmation");
+    const auto mask = compute ? 0xfu << 8u : (1u << 30u) | (0xfu << 8u);
+    const auto destination = compute ? static_cast<std::uint32_t>(dst) << 8u : ((dst & 1u) << 30u) | ((dst & 0x1eu) << 7u);
+    cmd[1] = (cmd[1] & ~mask) | destination;
+    return 0;
+}
+
+int SetWriteDataCachePolicy(std::uint32_t* cmd, std::uint8_t cachePolicy, const char* function) {
+    ValidateWriteData(cmd, function);
+    Agc::Command::CheckBits(cachePolicy, 3, function);
+    cmd[1] = (cmd[1] & ~(3u << 25u)) | (static_cast<std::uint32_t>(cachePolicy) << 25u);
+    return 0;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile void* address) {
@@ -29,6 +62,13 @@ int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint64_t r
     return 0;
 }
 
+int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint64_t mask) {
+    auto* wait = Agc::Command::ValidateWait(cmd, __func__);
+    Agc::Command::CheckBits(mask, 0xffffffffu, __func__);
+    wait[((wait[0] >> 8u) & 0xffu) == 0x3cu ? 5 : 6] = static_cast<std::uint32_t>(mask);
+    return 0;
+}
+
 int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction) {
     auto* wait = Agc::Command::ValidateWait(cmd, __func__);
     Agc::Command::Require(compareFunction <= 6, __func__, "invalid wait comparison");
@@ -37,11 +77,27 @@ int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint
 }
 
 int APS5_VABI sceAgcWriteDataPatchSetAddressOrOffset(std::uint32_t* cmd, std::uint64_t address) {
-    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), 4, __func__);
-    Agc::Command::Require(((cmd[0] >> 8u) & 0xffu) == 0x37u, __func__, "not a WRITE_DATA packet");
-    cmd[2] = static_cast<std::uint32_t>(address);
-    cmd[3] = static_cast<std::uint32_t>(address >> 32u);
-    return 0;
+    return SetWriteDataAddress(cmd, address, __func__);
+}
+
+int APS5_VABI sceAgcAsyncWriteDataPatchSetAddressOrOffset(std::uint32_t* cmd, std::uint64_t address) {
+    return SetWriteDataAddress(cmd, address, __func__);
+}
+
+int APS5_VABI sceAgcWriteDataPatchSetDst(std::uint32_t* cmd, std::uint8_t dst) {
+    return SetWriteDataDst(cmd, dst, false, __func__);
+}
+
+int APS5_VABI sceAgcAsyncWriteDataPatchSetDst(std::uint32_t* cmd, std::uint8_t dst) {
+    return SetWriteDataDst(cmd, dst, true, __func__);
+}
+
+int APS5_VABI sceAgcWriteDataPatchSetCachePolicy(std::uint32_t* cmd, std::uint8_t cachePolicy) {
+    return SetWriteDataCachePolicy(cmd, cachePolicy, __func__);
+}
+
+int APS5_VABI sceAgcAsyncWriteDataPatchSetCachePolicy(std::uint32_t* cmd, std::uint8_t cachePolicy) {
+    return SetWriteDataCachePolicy(cmd, cachePolicy, __func__);
 }
 
 }

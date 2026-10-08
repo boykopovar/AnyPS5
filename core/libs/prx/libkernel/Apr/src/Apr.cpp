@@ -590,7 +590,7 @@ void _execute(const Apr::CommandBufferObject& buffer) {
         }
         case Apr::Opcode::WriteKernelEventQueue: {
             const auto command = _read<Apr::WriteKernelEventQueueCommand>(buffer, cursor);
-            EqueueTriggerEvent_nid_postfix(static_cast<KernelEqueue>(command.equeue), static_cast<uintptr_t>(command.ident), EVFILT_USER, reinterpret_cast<void*>(command.data));
+            EqueueTriggerEvent_nid_postfix(static_cast<KernelEqueue>(command.equeue), static_cast<uintptr_t>(command.ident), EVFILT_AMPR, reinterpret_cast<void*>(command.data));
             break;
         }
         case Apr::Opcode::WriteAddressFromTimeCounter: {

@@ -371,8 +371,10 @@ private:
                 }
             }
         }
+        const double real = std::strtod(text.c_str(), nullptr);
+        if (!std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
         out.type = TypeReal;
-        out.real = std::strtod(text.c_str(), nullptr);
+        out.real = real;
         return true;
     }
     bool value(Node& out) {
@@ -498,6 +500,10 @@ int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5Va
     return 0;
 }
 
+int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void* self, NullAccessCallback callback, void* context) {
+    return _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(self, callback, context);
+}
+
 void APS5_VABI _ZN3sce4Json12MemAllocatorC2Ev(void* self) {
     *static_cast<void* const**>(self) = &JsonMemAllocatorVtable[2];
 }
@@ -567,6 +573,7 @@ void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { (void)se
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) { ++self->it; return self; }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) { return &*self->it; }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) { return self->it != other->it; }
+std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items->size(); }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) { Construct(*self); self->node->type = TypeBoolean; self->node->boolean = value; }
@@ -691,6 +698,25 @@ const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t in
     }
     return &NullAccess(TypeNull, self);
 }
+void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value* self, ValueType type) {
+    Construct(*self);
+    SetType(*self->node, type);
+}
+const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value* self, std::size_t index) { return _ZNK3sce4Json5ValueixEm(self, index); }
+const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* self, const String* key) {
+    const Node& n = NodeOf(*self);
+    if (key != nullptr && n.type == TypeObject)
+        for (const auto& pair : *n.object.items)
+            if (*pair.key.text == *key->text) return &pair.value;
+    return &NullAccess(TypeNull, self);
+}
+Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index) {
+    Node& n = NodeOf(*self);
+    if (n.type != TypeArray || index >= n.array.items->size()) return nullptr;
+    auto it = n.array.items->begin();
+    std::advance(it, static_cast<std::ptrdiff_t>(index));
+    return &*it;
+}
 Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value* self, const String* key) {
     Node& n = NodeOf(*self);
     if (key == nullptr || n.type != TypeObject) return nullptr;
@@ -732,7 +758,14 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
     if (text == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null text");
     Node parsed{};
     Parser parser(text, size);
-    if (!parser.Parse(parsed)) {
+    bool parsedOk = false;
+    try {
+        parsedOk = parser.Parse(parsed);
+    } catch (...) {
+        Clear(parsed);
+        throw;
+    }
+    if (!parsedOk) {
         Clear(parsed);
         return JsonErrorParse;
     }
@@ -742,9 +775,45 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
 }
 
 
-APS5_EXPORT("6i18OJSvFWk", sceJson2Unknown00);
-int APS5_VABI sceJson2Unknown00(void) {
-    NotImplemented_nid_no_patch("6i18OJSvFWk");
+int APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+struct InitParameter2 {
+    void* allocator;
+    void* userData;
+    std::size_t fileBufferSize;
+};
+static_assert(sizeof(InitParameter2) <= 40);
+
+void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(InitParameter2* self, void* allocator, void* userData) {
+    self->allocator = allocator;
+    self->userData = userData;
+}
+
+void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(InitParameter2* self, std::size_t size) {
+    self->fileBufferSize = size;
+}
+
+int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self, const InitParameter2* parameter) {
+    (void)self;
+    if (parameter == nullptr) throw std::invalid_argument("sce::Json::Initializer::initialize: null parameter");
+    return 0;
+}
+
+void APS5_VABI _ZN3sce4Json5Value5clearEv(Value* self) {
+    if (self == nullptr) return;
+    Clear(NodeOf(*self));
+}
+
+int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

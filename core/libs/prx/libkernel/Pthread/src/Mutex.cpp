@@ -1,5 +1,6 @@
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <atomic>
 #include <chrono>
@@ -20,8 +21,12 @@ PthreadMutex destroyedMutex() {
     return reinterpret_cast<PthreadMutex>(std::uintptr_t{2});
 }
 
+PthreadMutex adaptiveInitializer() {
+    return reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+}
+
 bool isInitializedMutex(PthreadMutex mutex) {
-    return mutex && mutex != destroyedMutex() && reinterpret_cast<std::uintptr_t>(mutex) != 1;
+    return mutex && mutex != destroyedMutex() && mutex != adaptiveInitializer();
 }
 
 PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
@@ -34,13 +39,13 @@ PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
     const auto current = slot.load(std::memory_order_acquire);
     if (current == destroyedMutex())
         throw std::runtime_error("Mutex has been destroyed");
-    if (reinterpret_cast<std::uintptr_t>(current) == 1)
-        throw std::runtime_error("Adaptive mutex initializer is unsupported");
-    if (current)
+    if (current && current != adaptiveInitializer())
         return current;
     if (!initialize)
         throw std::runtime_error("Mutex is not initialized");
     auto* created = new PthreadMutexPrivate();
+    if (current == adaptiveInitializer())
+        created->_type = MutexType::Adaptive;
     slot.store(created, std::memory_order_release);
     return created;
 }
@@ -110,7 +115,7 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
     case 2: (*attr)->type = MutexType::Recursive; break;
     case 3: (*attr)->type = MutexType::Normal; break;
     case 4: (*attr)->type = MutexType::Adaptive; break;
-    default: throw std::invalid_argument("Invalid mutex type");
+    default: return SCE_KERNEL_ERROR_EINVAL;
     }
     return 0;
 }
@@ -144,8 +149,10 @@ int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
     std::lock_guard lock(initializationMutex);
     if (*mutex == destroyedMutex())
         throw std::runtime_error("Mutex has already been destroyed");
-    if (reinterpret_cast<std::uintptr_t>(*mutex) == 1)
-        throw std::runtime_error("Adaptive mutex initializer is unsupported");
+    if (*mutex == adaptiveInitializer()) {
+        std::atomic_ref<PthreadMutex>(*mutex).store(destroyedMutex(), std::memory_order_release);
+        return 0;
+    }
     if (*mutex && (*mutex)->_owner.load(std::memory_order_acquire) != std::thread::id{})
         throw std::runtime_error("Cannot destroy a locked mutex");
     delete *mutex;

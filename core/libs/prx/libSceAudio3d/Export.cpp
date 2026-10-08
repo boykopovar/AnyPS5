@@ -4,6 +4,7 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -13,12 +14,14 @@
 namespace {
 
 constexpr int AUDIO3D_ERROR_INVALID_PORT = static_cast<int>(0x80EA0002);
+constexpr int AUDIO3D_ERROR_INVALID_OBJECT = static_cast<int>(0x80EA0003);
 constexpr int AUDIO3D_ERROR_INVALID_PARAMETER = static_cast<int>(0x80EA0004);
 constexpr int AUDIO3D_ERROR_OUT_OF_RESOURCES = static_cast<int>(0x80EA0006);
 constexpr int AUDIO3D_ERROR_NOT_READY = static_cast<int>(0x80EA0007);
 
 constexpr int AUDIO3D_USER_ID_SYSTEM = 0xFF;
 constexpr std::uint32_t AUDIO3D_PORT_ID = 0;
+constexpr std::uint32_t AUDIO3D_OBJECT_INVALID = 0xFFFFFFFF;
 constexpr std::uint32_t AUDIO3D_RATE_48000 = 0;
 constexpr std::uint32_t AUDIO3D_SAMPLE_RATE = 48000;
 constexpr std::uint32_t AUDIO3D_BUFFER_ADVANCE_AND_PUSH = 2;
@@ -36,6 +39,9 @@ struct Audio3dPort {
     Clock::duration frame_duration{};
     std::uint32_t advanced = 0;
     std::deque<Clock::time_point> playing;
+    std::uint32_t max_objects = 0;
+    std::uint32_t next_object_id = 0;
+    std::set<std::uint32_t> objects;
 };
 
 std::mutex g_mutex;
@@ -71,6 +77,13 @@ int APS5_VABI sceAudio3dInitialize(int64_t reserved) {
     std::lock_guard lock(g_mutex);
     if (g_initialized) Unsupported(__func__, "repeated initialization");
     g_initialized = true;
+    return 0;
+}
+
+int APS5_VABI sceAudio3dTerminate() {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized || g_port.open) return AUDIO3D_ERROR_NOT_READY;
+    g_initialized = false;
     return 0;
 }
 
@@ -129,6 +142,7 @@ int APS5_VABI sceAudio3dPortOpen(int user_id, const Audio3dOpenParameters* param
     g_port = Audio3dPort{};
     g_port.open = true;
     g_port.queue_depth = parameters->queue_depth;
+    g_port.max_objects = parameters->max_objects;
     g_port.frame_duration = std::chrono::duration_cast<Clock::duration>(
         std::chrono::nanoseconds(std::uint64_t{parameters->granularity} * 1000000000u / AUDIO3D_SAMPLE_RATE));
     *id = AUDIO3D_PORT_ID;
@@ -170,6 +184,27 @@ int APS5_VABI sceAudio3dPortSetAttribute(uint32_t port_id, uint32_t attribute_id
     default:
         Unsupported(__func__, "attribute " + std::to_string(attribute_id));
     }
+}
+
+int APS5_VABI sceAudio3dObjectReserve(uint32_t port_id, uint32_t* object_id) {
+    if (object_id == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    *object_id = AUDIO3D_OBJECT_INVALID;
+    std::lock_guard lock(g_mutex);
+    if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
+    if (g_port.objects.size() >= g_port.max_objects) return AUDIO3D_ERROR_OUT_OF_RESOURCES;
+    do {
+        ++g_port.next_object_id;
+    } while (g_port.next_object_id == 0 || g_port.next_object_id == AUDIO3D_OBJECT_INVALID || g_port.objects.contains(g_port.next_object_id));
+    g_port.objects.insert(g_port.next_object_id);
+    *object_id = g_port.next_object_id;
+    return 0;
+}
+
+int APS5_VABI sceAudio3dObjectUnreserve(uint32_t port_id, uint32_t object_id) {
+    std::lock_guard lock(g_mutex);
+    if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
+    if (g_port.objects.erase(object_id) == 0) return AUDIO3D_ERROR_INVALID_OBJECT;
+    return 0;
 }
 
 }

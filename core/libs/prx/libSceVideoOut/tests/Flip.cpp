@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <string>
 #include <limits>
 #include <thread>
@@ -229,6 +230,12 @@ void testControls() {
     const auto handle = sceVideoOutOpen(255, 0, 0, openParam.data());
     check(handle >= 0, "open with the highest priority on every CPU failed");
     const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    check(sceVideoOutIsOutputSupported(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 1, "default output mode is unsupported");
+    for (const uint64_t unsupported : std::initializer_list<uint64_t>{VIDEO_OUT_OUTPUT_MODE_119_88HZ, 0xd000000aull}) {
+        check(sceVideoOutIsOutputSupported(handle, unsupported, nullptr, nullptr, 0) == 0, "unavailable output mode is supported");
+        check(sceVideoOutConfigureOutput(handle, unsupported, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNAVAILABLE_OUTPUT_MODE, "unavailable output mode was configured");
+    }
+    check(sceVideoOutConfigureOutput(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 0, "default output mode was rejected");
     for (int rate = 0; rate <= 2; ++rate) {
         check(sceVideoOutSetFlipRate(handle, rate) == 0 && cfg->flipRate == rate, "flip rate was not applied");
     }
@@ -250,6 +257,15 @@ void testControls() {
     }
     check(sceVideoOutWaitVblank(handle) == 0, "vblank wait failed");
     check(owner->GetTriggeredEvents(&event, 1) == 1 && event.udata == &settings && sceVideoOutGetEventId(&event) == VIDEO_OUT_EVENT_VBLANK, "vblank event or updated user data missing");
+    std::vector<std::byte> allocation(65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffer{storage.data(), nullptr, {allocation.data(), storage.data()}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = 64;
+    attribute.height = 64;
+    attribute.pixel_format = 0x8000000000000000ull;
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffers with set reserved pointers were rejected");
+    check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     sceVideoOutClose(handle);
     check(owner->GetTriggeredEvents(&event, 1) == 0, "closed port retained pending events");
     check(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
@@ -311,7 +327,7 @@ void testCompressedPresentation() {
     std::vector<std::byte> allocation(6 * 65536 + 65535);
     const auto storage = alignedBuffer(allocation);
     fillBuffer(storage, 259, 137);
-    std::vector<std::uint8_t> keys(storage.size() / 256);
+    std::vector<std::uint8_t> keys(4096);
     VideoOutBuffers buffer{storage.data(), keys.data(), {nullptr, nullptr}};
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0x208, 0xff102030);

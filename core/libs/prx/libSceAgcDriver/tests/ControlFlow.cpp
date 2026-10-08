@@ -53,6 +53,13 @@ std::vector<std::uint32_t> constructBlocks(const ControlFlowGraph& graph, std::u
     return blocks;
 }
 
+bool inEnclosingContinueConstruct(const ControlFlowGraph& graph, std::uint32_t header, std::uint32_t member) {
+    return std::any_of(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& loop) {
+        const auto continueBlock = loop.terminator.continueBlock;
+        return loop.terminator.loopHeader && graph.Dominates(loop.id, header) && !graph.Dominates(continueBlock, header) && graph.Dominates(continueBlock, member);
+    });
+}
+
 void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) {
     std::map<std::uint32_t, std::uint32_t> mergeOwners;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> loopExits;
@@ -66,6 +73,7 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
         const auto& terminator = block.terminator;
         if (terminator.loopHeader || terminator.mergeBlock == InvalidControlFlowId) continue;
         for (const auto member : constructBlocks(graph, block.id, terminator.mergeBlock)) {
+            if (inEnclosingContinueConstruct(graph, block.id, member)) continue;
             for (const auto successor : graph.FindBlock(member).successors) {
                 if (successor == terminator.mergeBlock || (graph.Dominates(block.id, successor) && !graph.Dominates(terminator.mergeBlock, successor))) continue;
                 const bool loopExit = std::any_of(loopExits.begin(), loopExits.end(), [&](const auto& exits) { return successor == exits.first || successor == exits.second; });
@@ -277,7 +285,7 @@ void verifyNullSwappc() {
     verifyLongBranch("backward long branch", LongBranchBack, 0x24u, 0x08u);
     const std::array<std::uint32_t, 3> call{0xbe8c1f00u, 0xbe8e210cu, 0xbf810000u};
     const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
-        {"s_swappc_b64 with a return address", {call.begin(), call.end()}, "unsupported SOP1 opcode 33"},
+        {"s_swappc_b64 with a return address", {call.begin(), call.end()}, "unclosable s_swappc_b64 call/return pairing"},
         {"index rewritten after the bound", patched(DwordTableGetpcFirst, 5, {0xbe9203ffu, 0x00000040u}), "unsupported dynamic s_setpc_b64"},
         {"index scaled for two-dword entries", patched(DwordTableGetpcFirst, 7, {0x8f128312u}), "unsupported dynamic s_setpc_b64"},
         {"entry rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8e0380u}), "unsupported dynamic s_setpc_b64"},
@@ -363,6 +371,29 @@ latch:
   buffer_store_dword v1, off, s[0:3], 0
   s_endpgm)",
          Store({0xbe880380u, 0x7e020280u, 0x7d880008u, 0xbf860004u, 0x7d880088u, 0xbf870003u, 0x4a020281u, 0xbf820002u, 0x4a020282u, 0x4a020283u, 0x80089008u, 0xbf0ac008u, 0xbf85fff5u}), Split::Clone},
+        {"continue beside the inner merge of a nested selection in a loop", R"(
+  s_mov_b32 s8, 0
+  v_mov_b32 v1, 0
+loop:
+  v_cmp_gt_u32 vcc, s8, v0
+  s_cbranch_vccz join
+  v_cmp_gt_u32 vcc, 8, v0
+  s_cbranch_vccnz inner
+  v_cmp_gt_u32 vcc, 4, v0
+  s_cbranch_vccnz latch
+inner:
+  v_add_nc_u32 v1, 1, v1
+join:
+  v_add_nc_u32 v1, 2, v1
+  s_cmp_ge_u32 s8, 64
+  s_cbranch_scc1 done
+latch:
+  s_add_u32 s8, s8, 16
+  s_branch loop
+done:
+  buffer_store_dword v1, off, s[0:3], 0
+  s_endpgm)",
+         Store({0xbe880380u, 0x7e020280u, 0x7d880008u, 0xbf860005u, 0x7d880088u, 0xbf870002u, 0x7d880084u, 0xbf870004u, 0x4a020281u, 0x4a020282u, 0xbf09c008u, 0xbf850002u, 0x80089008u, 0xbf82fff4u}), Split::None},
         {"loop exit to the end of the program beside a kill exit", R"(
   v_mov_b32 v1, 0
   s_mov_b64 s[20:21], exec

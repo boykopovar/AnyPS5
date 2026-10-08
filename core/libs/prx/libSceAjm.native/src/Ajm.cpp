@@ -56,6 +56,8 @@ bool TraceEnabled() {
 
 constexpr std::uint64_t RUN_GET_CODEC_INFO = 1ull << 11;
 constexpr std::uint64_t RUN_MULTIPLE_FRAMES = 1ull << 12;
+constexpr std::uint64_t CONTROL_RESET = 1ull << 13;
+constexpr std::uint64_t CONTROL_INITIALIZE = 1ull << 14;
 constexpr std::uint64_t SIDEBAND_GAPLESS_DECODE = 1ull << 45;
 constexpr std::uint64_t SIDEBAND_FORMAT = 1ull << 46;
 constexpr std::uint64_t SIDEBAND_STREAM = 1ull << 47;
@@ -98,6 +100,18 @@ struct SidebandAt9CodecInfo {
     std::uint32_t frameSamples;
 };
 
+struct SidebandResampleInfo {
+    float ratio;
+    std::int32_t samples;
+    std::uint32_t reserved[8];
+};
+
+struct Resampler {
+    float ratio = 1.0f;
+    std::vector<double> frames;
+    double position = 1.0;
+};
+
 struct Instance {
     std::uint32_t codec = 0;
     std::uint64_t flags = 0;
@@ -117,6 +131,7 @@ struct Instance {
     std::uint32_t opusChannels = 0;
     std::uint32_t opusSampleRate = 0;
     std::vector<std::uint8_t> opusPending;
+    Resampler resampler;
 
     ~Instance() {
         if (decoder) Atrac9ReleaseHandle(decoder);
@@ -139,6 +154,9 @@ enum class JobKind : std::uint32_t {
     SetGaplessDecode = 3,
     Run = 4,
     GetStatistics = 5,
+    Control = 6,
+    SetResampleParameters = 7,
+    GetResampleInfo = 8,
 };
 
 struct JobHeader {
@@ -233,7 +251,13 @@ bool ResetDecoder(Instance& instance) {
 
 void OpenOpus(Instance& instance);
 
+void ClearResampler(Instance& instance) {
+    instance.resampler.frames.clear();
+    instance.resampler.position = 1.0;
+}
+
 std::int32_t InitializeInstance(Instance& instance, const std::uint8_t* parameters, std::uint64_t size) {
+    ClearResampler(instance);
     if (instance.codec == CODEC_OPUS) {
         if (size < 8) return AJM_RESULT_INVALID_PARAMETER;
         std::uint32_t channels = 0;
@@ -333,6 +357,82 @@ std::uint32_t PcmEncoding(const Instance& instance) {
     return static_cast<std::uint32_t>((instance.flags >> 7u) & 7u);
 }
 
+double PcmValue(const std::uint8_t* at, std::uint32_t encoding) {
+    if (encoding == 0) {
+        std::int16_t value = 0;
+        std::memcpy(&value, at, sizeof(value));
+        return value / 32768.0;
+    }
+    if (encoding == 1) {
+        std::int32_t value = 0;
+        std::memcpy(&value, at, sizeof(value));
+        return value / 2147483648.0;
+    }
+    float value = 0;
+    std::memcpy(&value, at, sizeof(value));
+    return value;
+}
+
+void StorePcm(double value, std::uint8_t* out, std::uint32_t encoding) {
+    if (encoding == 0) {
+        const auto converted = static_cast<std::int16_t>(std::clamp(std::lrint(value * 32768.0), -32768L, 32767L));
+        std::memcpy(out, &converted, sizeof(converted));
+    } else if (encoding == 1) {
+        const auto converted = static_cast<std::int32_t>(std::clamp(std::llrint(value * 2147483648.0), -2147483648LL, 2147483647LL));
+        std::memcpy(out, &converted, sizeof(converted));
+    } else {
+        const auto converted = static_cast<float>(value);
+        std::memcpy(out, &converted, sizeof(converted));
+    }
+}
+
+bool Resampling(const Instance& instance) {
+    return instance.resampler.ratio != 1.0f || !instance.resampler.frames.empty();
+}
+
+std::size_t ResamplerHeld(const Instance& instance, std::size_t channels) {
+    const auto& resampler = instance.resampler;
+    if (resampler.frames.empty() || channels == 0) return 0;
+    const std::size_t frames = resampler.frames.size() / channels;
+    const auto next = static_cast<std::size_t>(resampler.position);
+    return frames > next ? frames - next : 0;
+}
+
+void ResamplerPush(Instance& instance, const double* samples, std::size_t frames, std::size_t channels) {
+    auto& stored = instance.resampler.frames;
+    if (frames == 0) return;
+    if (stored.empty()) stored.insert(stored.end(), samples, samples + channels);
+    stored.insert(stored.end(), samples, samples + frames * channels);
+}
+
+void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t channels, std::uint32_t encoding, std::size_t sampleBytes) {
+    auto& resampler = instance.resampler;
+    if (resampler.frames.empty() || channels == 0) return;
+    const std::size_t frameBytes = channels * sampleBytes;
+    const std::size_t available = resampler.frames.size() / channels;
+    std::vector<std::uint8_t> frame(frameBytes);
+    while (outputs.Room() >= frameBytes) {
+        const auto index = static_cast<std::size_t>(resampler.position);
+        if (index + 2 >= available) break;
+        const double t = resampler.position - static_cast<double>(index);
+        for (std::size_t channel = 0; channel < channels; ++channel) {
+            const double p0 = resampler.frames[(index - 1) * channels + channel];
+            const double p1 = resampler.frames[index * channels + channel];
+            const double p2 = resampler.frames[(index + 1) * channels + channel];
+            const double p3 = resampler.frames[(index + 2) * channels + channel];
+            const double value = p1 + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t * (3.0 * (p1 - p2) + p3 - p0)));
+            StorePcm(value, frame.data() + channel * sampleBytes, encoding);
+        }
+        outputs.Emit(frame.data(), frameBytes);
+        resampler.position += resampler.ratio;
+    }
+    const auto index = std::min(static_cast<std::size_t>(resampler.position), available);
+    if (index > 1) {
+        resampler.frames.erase(resampler.frames.begin(), resampler.frames.begin() + static_cast<std::ptrdiff_t>((index - 1) * channels));
+        resampler.position -= static_cast<double>(index - 1);
+    }
+}
+
 void EmitFrame(Instance& instance, PcmOutputs& outputs, const std::uint8_t* pcm, std::size_t samples, std::size_t channels, std::size_t sampleBytes) {
     std::size_t first = 0;
     std::size_t count = samples;
@@ -346,8 +446,16 @@ void EmitFrame(Instance& instance, PcmOutputs& outputs, const std::uint8_t* pcm,
         const std::uint64_t remaining = instance.gapless.totalSamples > instance.totalDecodedSamples ? instance.gapless.totalSamples - instance.totalDecodedSamples : 0;
         count = static_cast<std::size_t>(std::min<std::uint64_t>(count, remaining));
     }
-    outputs.Emit(pcm + first * channels * sampleBytes, count * channels * sampleBytes);
     instance.totalDecodedSamples += count;
+    if (!Resampling(instance)) {
+        outputs.Emit(pcm + first * channels * sampleBytes, count * channels * sampleBytes);
+        return;
+    }
+    const auto encoding = PcmEncoding(instance);
+    std::vector<double> values(count * channels);
+    for (std::size_t index = 0; index < values.size(); ++index) values[index] = PcmValue(pcm + (first * channels + index) * sampleBytes, encoding);
+    ResamplerPush(instance, values.data(), count, channels);
+    ResamplerProduce(instance, outputs, channels, encoding, sampleBytes);
 }
 
 SidebandFormat CurrentFormat(const Instance& instance) {
@@ -416,6 +524,7 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     // reported as partial input, and the title resubmits it from the consumed offset.
     const auto superframeSize = static_cast<std::size_t>(instance.info.superframeSize);
     const auto framesInSuperframe = static_cast<std::uint32_t>(std::max(1, instance.info.framesInSuperframe));
+    if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
     for (;;) {
         if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input.data() + consumed, input.size() - consumed);
         const std::size_t needed = instance.superframeRemaining == 0 ? superframeSize : instance.superframeRemaining;
@@ -423,8 +532,8 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
             if (input.size() != consumed) result |= AJM_RESULT_PARTIAL_INPUT;
             break;
         }
-        if (pcmOutputs.Room() < frameBytes) {
-            if (frames == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
+        if (Resampling(instance) ? pcmOutputs.Room() < channels * sampleBytes : pcmOutputs.Room() < frameBytes) {
+            if (frames == 0 && pcmOutputs.produced == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
             break;
         }
         if (instance.superframeRemaining == 0) {
@@ -644,6 +753,7 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     std::int32_t result = 0;
     std::size_t consumed = 0;
     std::uint32_t frames = 0;
+    if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, instance.mp3Channels, encoding, sampleBytes);
     while (consumed < input.size()) {
         Mp3Frame frame{};
         if (!ParseMp3Frame(input.data() + consumed, input.size() - consumed, frame)) {
@@ -654,8 +764,8 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
             result |= AJM_RESULT_PARTIAL_INPUT;
             break;
         }
-        if (pcmOutputs.Room() < frame.samples * frame.channels * sampleBytes) {
-            if (frames == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
+        if (pcmOutputs.Room() < (Resampling(instance) ? 1 : frame.samples) * frame.channels * sampleBytes) {
+            if (frames == 0 && pcmOutputs.produced == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
             break;
         }
         packet->data = const_cast<std::uint8_t*>(input.data() + consumed);
@@ -701,7 +811,7 @@ void RunMp3(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         }
         if ((job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
     }
-    if (consumed == input.size() && frames == 0 && result == 0) result |= AJM_RESULT_PARTIAL_INPUT;
+    if (consumed == input.size() && frames == 0 && pcmOutputs.produced == 0 && result == 0) result |= AJM_RESULT_PARTIAL_INPUT;
 
     AJM_TRACE("[ajm] instance %u mp3 run flags 0x%llx: %zu input bytes, %zu output bytes -> result 0x%x, %u frames, consumed %zu, produced %zu, %u channels, %u Hz, %u bps, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, static_cast<unsigned>(result), frames, consumed, pcmOutputs.produced,
               instance.mp3Channels, instance.mp3SampleRate, instance.mp3Bitrate, static_cast<unsigned long long>(instance.totalDecodedSamples));
@@ -754,12 +864,19 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
     std::int32_t result = 0;
     std::size_t consumed = 0;
     std::uint32_t frames = 0;
+    const std::size_t frameBytes = channels * sampleBytes;
+    if (Resampling(instance) && !instance.opusPending.empty()) {
+        std::vector<double> values(instance.opusPending.size() / sampleBytes);
+        for (std::size_t index = 0; index < values.size(); ++index) values[index] = PcmValue(instance.opusPending.data() + index * sampleBytes, encoding);
+        ResamplerPush(instance, values.data(), values.size() / channels, channels);
+        instance.opusPending.clear();
+    }
+    if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
     if (!instance.opusPending.empty()) {
         const std::size_t bytes = std::min(instance.opusPending.size(), pcmOutputs.Room());
         pcmOutputs.Emit(instance.opusPending.data(), bytes);
         instance.opusPending.erase(instance.opusPending.begin(), instance.opusPending.begin() + static_cast<std::ptrdiff_t>(bytes));
     }
-    const std::size_t frameBytes = channels * sampleBytes;
     while (consumed < input.size() && instance.opusPending.empty()) {
         if (input.size() - consumed < 2) {
             result |= AJM_RESULT_PARTIAL_INPUT;
@@ -794,24 +911,11 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
             if (format != AV_SAMPLE_FMT_FLTP && format != AV_SAMPLE_FMT_FLT) throw std::runtime_error("AJM Opus: FFmpeg sample format " + std::to_string(decoded->format) + " is not converted");
             const auto frameChannels = static_cast<std::size_t>(decoded->ch_layout.nb_channels);
             const auto frameSamples = static_cast<std::size_t>(decoded->nb_samples);
-            pcm.assign(frameSamples * channels * sampleBytes, 0);
-            for (std::size_t sample = 0; sample < frameSamples; ++sample) {
-                for (std::size_t channel = 0; channel < channels; ++channel) {
-                    const std::size_t sourceChannel = std::min(channel, frameChannels - 1);
-                    const float value = format == AV_SAMPLE_FMT_FLTP ? reinterpret_cast<const float*>(decoded->extended_data[sourceChannel])[sample]
-                                                                     : reinterpret_cast<const float*>(decoded->data[0])[sample * frameChannels + sourceChannel];
-                    auto* out = pcm.data() + (sample * channels + channel) * sampleBytes;
-                    if (encoding == 0) {
-                        const auto converted = static_cast<std::int16_t>(std::clamp(std::lrint(value * 32768.0), -32768L, 32767L));
-                        std::memcpy(out, &converted, sizeof(converted));
-                    } else if (encoding == 1) {
-                        const auto converted = static_cast<std::int32_t>(std::clamp(std::llrint(value * 2147483648.0), -2147483648LL, 2147483647LL));
-                        std::memcpy(out, &converted, sizeof(converted));
-                    } else {
-                        std::memcpy(out, &value, sizeof(value));
-                    }
-                }
-            }
+            const auto value = [&](std::size_t sample, std::size_t channel) {
+                const std::size_t sourceChannel = std::min(channel, frameChannels - 1);
+                return format == AV_SAMPLE_FMT_FLTP ? reinterpret_cast<const float*>(decoded->extended_data[sourceChannel])[sample]
+                                                    : reinterpret_cast<const float*>(decoded->data[0])[sample * frameChannels + sourceChannel];
+            };
             std::size_t first = 0;
             std::size_t count = frameSamples;
             if (instance.gapless.skippedSamples < instance.gapless.skipSamples) {
@@ -824,12 +928,23 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
                 const std::uint64_t remaining = instance.gapless.totalSamples > instance.totalDecodedSamples ? instance.gapless.totalSamples - instance.totalDecodedSamples : 0;
                 count = static_cast<std::size_t>(std::min<std::uint64_t>(count, remaining));
             }
-            const auto* start = pcm.data() + first * frameBytes;
-            const std::size_t total = count * frameBytes;
-            const std::size_t fits = std::min(total, pcmOutputs.Room() / frameBytes * frameBytes);
-            pcmOutputs.Emit(start, fits);
-            instance.opusPending.insert(instance.opusPending.end(), start + fits, start + total);
             instance.totalDecodedSamples += count;
+            if (Resampling(instance)) {
+                std::vector<double> values(count * channels);
+                for (std::size_t sample = 0; sample < count; ++sample) {
+                    for (std::size_t channel = 0; channel < channels; ++channel) values[sample * channels + channel] = value(first + sample, channel);
+                }
+                ResamplerPush(instance, values.data(), count, channels);
+                ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
+            } else {
+                pcm.assign(count * frameBytes, 0);
+                for (std::size_t sample = 0; sample < count; ++sample) {
+                    for (std::size_t channel = 0; channel < channels; ++channel) StorePcm(value(first + sample, channel), pcm.data() + (sample * channels + channel) * sampleBytes, encoding);
+                }
+                const std::size_t fits = std::min(pcm.size(), pcmOutputs.Room() / frameBytes * frameBytes);
+                pcmOutputs.Emit(pcm.data(), fits);
+                instance.opusPending.insert(instance.opusPending.end(), pcm.begin() + static_cast<std::ptrdiff_t>(fits), pcm.end());
+            }
             av_frame_unref(decoded.get());
         }
         if (status != AVERROR(EAGAIN)) {
@@ -842,6 +957,51 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
 
     AJM_TRACE("[ajm] instance %u opus run flags 0x%llx: %zu input bytes, %zu output bytes -> result 0x%x, %u frames, consumed %zu, produced %zu, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, static_cast<unsigned>(result), frames, consumed, pcmOutputs.produced, static_cast<unsigned long long>(instance.totalDecodedSamples));
     WriteRunSideband(job, instance, result, consumed, pcmOutputs.produced, frames, CurrentFormat(instance));
+}
+
+void ClearContext(Instance& instance) {
+    instance.totalDecodedSamples = 0;
+    instance.gapless.skippedSamples = 0;
+    if (instance.decoder && instance.initialized) ResetDecoder(instance);
+    if (instance.mp3) avcodec_flush_buffers(instance.mp3);
+    if (instance.opus) avcodec_flush_buffers(instance.opus);
+    instance.opusPending.clear();
+    ClearResampler(instance);
+}
+
+std::size_t ControlInitializeSize(std::uint32_t codec) {
+    switch (codec) {
+    case CODEC_MP3: return 0;
+    case CODEC_AT9: return 8;
+    case CODEC_OPUS: return 12;
+    default: NotImplemented_nid_no_patch("sceAjmBatchJobControl (INITIALIZE for a codec other than MP3, ATRAC9 and Opus)"); return 0;
+    }
+}
+
+void Control(Instance& instance, const JobHeader& job, const AjmBuffer* inputs) {
+    const auto* input = job.inputCount ? static_cast<const std::uint8_t*>(inputs[0].ptr) : nullptr;
+    const std::size_t inputSize = job.inputCount ? inputs[0].size : 0;
+    const std::size_t gaplessSize = (job.flags & SIDEBAND_GAPLESS_DECODE) ? sizeof(SidebandGaplessDecode) : 0;
+    const std::size_t initializeSize = (job.flags & CONTROL_INITIALIZE) ? ControlInitializeSize(instance.codec) : 0;
+    if (inputSize != gaplessSize + initializeSize) NotImplemented_nid_no_patch("sceAjmBatchJobControl (sideband input size other than the gapless decode and the codec's initialize parameters)");
+    std::int32_t result = 0;
+    if (job.flags & CONTROL_RESET) ClearContext(instance);
+    if (job.flags & CONTROL_INITIALIZE) result = InitializeInstance(instance, input + gaplessSize, initializeSize);
+    if (gaplessSize) {
+        SidebandGaplessDecode gapless{};
+        std::memcpy(&gapless, input, sizeof(gapless));
+        instance.gapless.totalSamples = gapless.totalSamples;
+        instance.gapless.skipSamples = gapless.skipSamples;
+    }
+    AJM_TRACE("[ajm] instance %u control flags 0x%llx: %zu sideband input bytes -> result 0x%x, gapless total %u skip %u skipped %u\n", job.instance, static_cast<unsigned long long>(job.flags), inputSize, static_cast<unsigned>(result), instance.gapless.totalSamples, instance.gapless.skipSamples, instance.gapless.skippedSamples);
+    WriteResult(job.sideband, job.sidebandSize, result);
+}
+
+std::size_t HeldSamples(const Instance& instance) {
+    const std::size_t channels = instance.codec == CODEC_OPUS ? instance.opusChannels : instance.codec == CODEC_MP3 ? instance.mp3Channels : static_cast<std::size_t>(std::max(0, instance.info.channels));
+    if (Resampling(instance)) return ResamplerHeld(instance, channels);
+    const std::size_t sampleBytes = PcmEncoding(instance) == 0 ? sizeof(std::int16_t) : sizeof(std::int32_t);
+    return channels == 0 ? 0 : instance.opusPending.size() / (channels * sampleBytes);
 }
 
 void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* outputs) {
@@ -866,12 +1026,7 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
     }
     case JobKind::ClearContext:
         AJM_TRACE("[ajm] instance %u clear context (sideband %llu bytes)\n", job.instance, static_cast<unsigned long long>(job.sidebandSize));
-        instance->totalDecodedSamples = 0;
-        instance->gapless.skippedSamples = 0;
-        if (instance->decoder && instance->initialized) ResetDecoder(*instance);
-        if (instance->mp3) avcodec_flush_buffers(instance->mp3);
-        if (instance->opus) avcodec_flush_buffers(instance->opus);
-        instance->opusPending.clear();
+        ClearContext(*instance);
         WriteResult(job.sideband, job.sidebandSize, 0);
         break;
     case JobKind::SetGaplessDecode: {
@@ -882,6 +1037,20 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
         instance->gapless.skipSamples = gapless.skipSamples;
         if (job.flags) instance->gapless.skippedSamples = 0;
         WriteResult(job.sideband, job.sidebandSize, 0);
+        break;
+    }
+    case JobKind::Control:
+        Control(*instance, job, inputs);
+        break;
+    case JobKind::SetResampleParameters:
+        std::memcpy(&instance->resampler.ratio, job.parameters, sizeof(instance->resampler.ratio));
+        AJM_TRACE("[ajm] instance %u set resample ratio %f\n", job.instance, static_cast<double>(instance->resampler.ratio));
+        WriteResult(job.sideband, job.sidebandSize, 0);
+        break;
+    case JobKind::GetResampleInfo: {
+        const SidebandResampleInfo resample{instance->resampler.ratio, static_cast<std::int32_t>(HeldSamples(*instance)), {}};
+        WriteResult(job.sideband, job.sidebandSize, 0);
+        if (job.sideband && job.sidebandSize >= sizeof(SidebandResult) + sizeof(resample)) std::memcpy(static_cast<std::uint8_t*>(job.sideband) + sizeof(SidebandResult), &resample, sizeof(resample));
         break;
     }
     case JobKind::Run:
@@ -1029,6 +1198,19 @@ int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instan
     return Append(info, header, nullptr, nullptr);
 }
 
+int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* sideband_input, size_t sideband_input_size, void* sideband_output, size_t sideband_output_size) {
+    constexpr std::uint64_t supported = CONTROL_RESET | CONTROL_INITIALIZE | SIDEBAND_GAPLESS_DECODE;
+    if (flags == 0 || (flags & ~supported) != 0) NotImplemented_nid_no_patch("sceAjmBatchJobControl (flags other than a combination of RESET, INITIALIZE and SIDEBAND_GAPLESS_DECODE)");
+    if ((flags & SIDEBAND_GAPLESS_DECODE) != 0 && (flags & CONTROL_RESET) == 0) NotImplemented_nid_no_patch("sceAjmBatchJobControl (SIDEBAND_GAPLESS_DECODE without RESET)");
+    if (sideband_output_size != sizeof(SidebandResult)) NotImplemented_nid_no_patch("sceAjmBatchJobControl (sideband output other than the 8-byte result)");
+    if (sideband_input_size != 0 && !sideband_input) NotImplemented_nid_no_patch("sceAjmBatchJobControl (null sideband input)");
+    auto header = MakeHeader(JobKind::Control, instance, sideband_output, sideband_output_size);
+    header.flags = flags;
+    header.inputCount = sideband_input_size != 0 ? 1 : 0;
+    const AjmBuffer input{const_cast<void*>(sideband_input), sideband_input_size};
+    return Append(info, header, &input, nullptr);
+}
+
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) {
     auto header = MakeHeader(JobKind::Run, instance, sideband_output, sideband_output_size);
     header.flags = flags;
@@ -1043,6 +1225,19 @@ int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo* info, uint32_t instance, uint64_t 
     return sceAjmBatchJobRunSplit(info, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size);
 }
 
+int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t instance, float ratio, uint32_t flags, void* result) {
+    (void)flags;
+    if (!std::isfinite(ratio) || ratio <= 0.0f) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    auto header = MakeHeader(JobKind::SetResampleParameters, instance, result, sizeof(SidebandResult));
+    std::memcpy(header.parameters, &ratio, sizeof(ratio));
+    header.parameterSize = sizeof(ratio);
+    return Append(info, header, nullptr, nullptr);
+}
+
+int APS5_VABI sceAjmBatchJobGetResampleInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
+    return Append(info, MakeHeader(JobKind::GetResampleInfo, instance, result, sizeof(SidebandResult) + sizeof(SidebandResampleInfo)), nullptr, nullptr);
+}
+
 int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
     return sceAjmBatchJobRun(info, instance, SIDEBAND_STREAM, bitstream_input, bitstream_input_size, pcm_output, pcm_output_size, result, sizeof(SidebandResult) + sizeof(SidebandStream));
 }
@@ -1053,6 +1248,10 @@ int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, 
 
 int APS5_VABI sceAjmBatchJobGetGaplessDecode(AjmBatchInfo* info, uint32_t instance, void* result) {
     return sceAjmBatchJobRunSplit(info, instance, SIDEBAND_GAPLESS_DECODE, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandGaplessDecode));
+}
+
+int APS5_VABI sceAjmBatchJobGetInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
+    return sceAjmBatchJobRunSplit(info, instance, SIDEBAND_FORMAT, nullptr, 0, nullptr, 0, result, sizeof(SidebandResult) + sizeof(SidebandFormat));
 }
 
 int APS5_VABI sceAjmBatchJobGetCodecInfo(AjmBatchInfo* info, uint32_t instance, void* result, size_t result_size) {

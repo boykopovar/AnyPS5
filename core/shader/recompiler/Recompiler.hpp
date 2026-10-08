@@ -1,6 +1,8 @@
 #ifndef CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 #define CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 
+#include "RuntimeAbi.hpp"
+#include "PipelineSpecialization.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +46,7 @@ struct ShaderComputeStageInfo {
     bool tgSizeEnable;
     std::uint32_t threadIdComponentCount;
     std::array<std::uint32_t, 3> partialThreads;
+    std::uint32_t scratchDwords = 0;
 
     [[nodiscard]] bool PartialGroups() const {
         return partialThreads != std::array<std::uint32_t, 3>{};
@@ -126,6 +129,7 @@ struct ShaderPixelStageInfo {
     bool earlyZ;
     bool executeOnNoop;
     ConservativeZExport conservativeZExport;
+    bool orderedPixelShader;
     std::array<std::uint8_t, 8> targetOutputMode;
     std::array<std::uint8_t, 8> targetExportMapping;
 };
@@ -197,6 +201,8 @@ struct SpirvTarget {
     std::optional<MeshTargetLimits> mesh;
     std::optional<TessellationTargetLimits> tessellation;
     bool nonConstantImageOffsets = false;
+    std::uint32_t srgbDecodeFormats = 0;
+    bool narrowSubgroupClock = false;
 };
 
 struct BindingLayout {
@@ -290,7 +296,8 @@ enum class DescriptorImageShape {
     Image2D,
     Image2DArray,
     ImageCube,
-    Image3D
+    Image3D,
+    Image1DArray
 };
 
 enum class DescriptorRole {
@@ -318,6 +325,7 @@ struct DescriptorBinding {
     std::vector<bool> imageWritten;
     std::vector<bool> imageDepthCompare;
     std::vector<bool> imageAtomic;
+    std::vector<bool> imageAtomic64;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
     // (~0.4-0.5 us each on NVIDIA), so a driver may keep these elements in device-local memory.
@@ -328,6 +336,9 @@ struct DescriptorBinding {
     // skip the write-back and the pending-write note for the element; an element beyond the vector
     // (a producer that does not fill it) must be treated as written.
     std::vector<bool> bufferWritten;
+    std::vector<bool> samplerUnnormalized;
+    std::vector<bool> imageUnnormalized;
+    std::vector<std::uint32_t> imageSamplers;
 };
 
 struct VertexAttribute {
@@ -335,6 +346,7 @@ struct VertexAttribute {
     std::uint32_t components;
     ShaderVertexBufferResource resource;
     std::uint32_t fetchIndex;
+    std::uint32_t formatComponents = 0;
 };
 
 struct FragmentParameter {
@@ -390,17 +402,36 @@ private:
     std::shared_ptr<std::vector<std::uint32_t>> words;
 };
 
-struct RecompileResult {
+struct VertexInput {
+    std::uint32_t location;
+    std::uint32_t components;
+    std::uint32_t fetchIndex;
+    std::uint32_t outputMask = 0;
+
+    bool operator==(const VertexInput& other) const = default;
+};
+
+struct VertexInputPatch {
+    std::uint32_t location;
+    std::uint32_t word;
+    std::array<std::uint32_t, 3> values;
+
+    bool operator==(const VertexInputPatch& other) const = default;
+};
+
+struct CompiledShaderArtifact {
+    std::vector<VertexInputPatch> vertexInputPatches;
     SharedSpirv spirv;
-    std::vector<DescriptorBinding> bindings;
-    std::vector<std::byte> pushConstants;
     std::uint32_t memoryOffsetDword = 0;
+    std::uint32_t shaderDataDwords = 0;
+    std::uint32_t imageMetadataDword = 0;
+    std::uint32_t runtimeImageCount = 0;
+    std::vector<std::uint32_t> runtimeImageResources;
     std::uint32_t bdaAbiVersion = 0;
-    std::vector<VertexAttribute> vertexAttributes;
+    std::uint32_t runtimeAbiVersion = RuntimeAbi::Version;
+    std::vector<VertexInput> vertexInputs;
     std::int32_t vertexOffsetSgpr = -1;
     std::int32_t instanceOffsetSgpr = -1;
-    // The offset SGPR is also read elsewhere in the program (so a value folded into the draw's
-    // first vertex / instance cannot stand in for it), or two SGPRs were added (the SGPR is -1).
     bool vertexOffsetShared = false;
     bool instanceOffsetShared = false;
     bool vertexOffsetConflict = false;
@@ -408,20 +439,24 @@ struct RecompileResult {
     std::uint32_t hostSubgroupSize = 0;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
-    bool cacheHit = false;
-    // Identifies the compiled variant the result came from: equal ids mean identical SPIR-V and
-    // bindings, so drivers can reuse pipeline objects. Zero when unknown.
     std::uint64_t variantId = 0;
+};
+
+struct ShaderInvocation {
+    std::vector<PipelineSpecializationConstant> specialization;
+    std::uint64_t specializationId = 0;
+    std::vector<DescriptorBinding> bindings;
+    std::vector<std::byte> pushConstants;
+    std::vector<VertexAttribute> vertexAttributes;
+};
+
+struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    bool cacheHit = false;
+    [[nodiscard]] std::uint64_t PipelineVariantId() const { return specializationId != 0 ? specializationId : variantId; }
 };
 
 [[nodiscard]] RecompileResult Recompile(const RecompileRequest& request);
 
-// The resource plan, snapshot and specialization a driver captured for the request (see
-// CaptureResources in Optimization/ResourceProgram.hpp): this overload reuses them instead of
-// materializing the request's memory regions again, and is otherwise Recompile(request). The
-// result is immutable and shared: a capture that reproduces a snapshot the source's variant was
-// materialized over before receives the same object (`memoHit`), so the descriptor population runs
-// once per distinct snapshot. APS5_NO_RESULT_MEMO=1 materializes every call.
 struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
 

@@ -21,4 +21,9 @@ std::uint32_t readRegister(const Registers& registers, std::uint32_t offset) {
     return it->second;
 }
 
+std::uint32_t readUserData(const Registers& shader, std::uint32_t offset) {
+    const auto it = shader.find(offset);
+    return it == shader.end() ? 0u : it->second;
+}
+
 }

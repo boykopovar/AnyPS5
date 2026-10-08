@@ -7,6 +7,7 @@
 
 // Resource registration feeds GPU debugging tools, none of which are attached; the game treats this code as benign.
 static constexpr int SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE = static_cast<int>(0x8A6C9018);
+static constexpr uint32_t RESOURCE_REGISTRATION_MAX_NAME_LENGTH = 0xfc;
 
 extern "C" {
 
@@ -67,6 +68,12 @@ int APS5_VABI sceAgcDriverUnregisterWorkloadStream(uint32_t stream_id) {
 int APS5_VABI sceAgcDriverGetDefaultOwner(uint32_t* owner_handle) {
     (void)owner_handle;
     return SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverGetResourceRegistrationMaxNameLength(uint32_t* max_length) {
+    if (max_length == nullptr) APS5_INVALID_ARG_EX;
+    *max_length = RESOURCE_REGISTRATION_MAX_NAME_LENGTH;
+    return 0;
 }
 
 int APS5_VABI sceAgcDriverGetOwnerName(uint32_t owner_handle, const char** name) {

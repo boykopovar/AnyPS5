@@ -41,6 +41,30 @@ static std::pair<int, std::uint8_t> ReadFrame(const unsigned char* jpeg, std::ui
     std::abort();
 }
 
+static std::pair<int, int> ReadRestart(const unsigned char* jpeg, std::uint32_t size) {
+    int interval = 0;
+    std::size_t offset = 2;
+    while (true) {
+        Require(offset + 3 < size && jpeg[offset] == 0xFF);
+        const std::uint8_t marker = jpeg[offset + 1];
+        const std::size_t length = (static_cast<std::size_t>(jpeg[offset + 2]) << 8) | jpeg[offset + 3];
+        Require(length >= 2 && offset + 2 + length <= size);
+        if (marker == 0xDD) {
+            Require(length == 4);
+            interval = (jpeg[offset + 4] << 8) | jpeg[offset + 5];
+        }
+        offset += 2 + length;
+        if (marker == 0xDA) break;
+    }
+    int markers = 0;
+    for (; offset + 1 < size; ++offset) {
+        if (jpeg[offset] != 0xFF || jpeg[offset + 1] < 0xD0 || jpeg[offset + 1] > 0xD7) continue;
+        Require(jpeg[offset + 1] == 0xD0 + markers % 8);
+        ++markers;
+    }
+    return {interval, markers};
+}
+
 static int AverageError(const std::vector<std::uint8_t>& expected, const std::vector<std::uint8_t>& actual) {
     long total = 0;
     for (std::size_t i = 0; i < expected.size(); ++i) total += expected[i] > actual[i] ? expected[i] - actual[i] : actual[i] - expected[i];
@@ -254,7 +278,59 @@ int main() {
 
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_width = 0; }) == invalidParam);
     Require(ThrowsRuntimeError([&] { encodeWith([](JpegEncEncodeParam& p) { p.encode_mode = 1; }); }));
-    Require(ThrowsRuntimeError([&] { encodeWith([](JpegEncEncodeParam& p) { p.restart_interval = 1; }); }));
+    Require(ThrowsRuntimeError([&] { encodeWith([](JpegEncEncodeParam& p) { p.restart_interval = -2; }); }));
+    Require(ThrowsRuntimeError([&] { encodeWith([](JpegEncEncodeParam& p) { p.restart_interval = INT32_MIN; }); }));
+
+    constexpr std::uint32_t wideWidth = 48;
+    constexpr std::uint32_t wideHeight = 32;
+    alignas(4) static unsigned char wide[wideWidth * wideHeight * 4];
+    for (std::size_t i = 0; i < sizeof(wide); ++i) wide[i] = static_cast<unsigned char>((i * 37) ^ (i / 192));
+    static unsigned char wideGray[wideWidth * wideHeight];
+    for (std::size_t i = 0; i < sizeof(wideGray); ++i) wideGray[i] = static_cast<unsigned char>((i * 53) ^ (i / 48));
+    static unsigned char restarted[8192];
+    auto encodeWide = [&](std::uint8_t sampling, std::int32_t restart, bool grayscale) {
+        JpegEncEncodeParam p = ValidEncodeParam();
+        p.image = grayscale ? wideGray : wide;
+        p.image_size = grayscale ? sizeof(wideGray) : sizeof(wide);
+        p.image_width = wideWidth;
+        p.image_height = wideHeight;
+        p.image_pitch = grayscale ? wideWidth : wideWidth * 4;
+        p.pixel_format = grayscale ? 11 : 0;
+        p.color_space = grayscale ? 2 : 1;
+        p.sampling_type = sampling;
+        p.jpeg = restarted;
+        p.jpeg_size = sizeof(restarted);
+        p.restart_interval = restart;
+        JpegEncOutputInfo out{};
+        Require(sceJpegEncEncode(handle, &p, &out) == 0);
+        Require(IsJpeg(restarted, out.size) && out.height == wideHeight);
+        const auto decoded = Decoder::Jpeg::Decode({restarted, out.size});
+        Require(decoded.has_value() && decoded->width == wideWidth && decoded->height == wideHeight);
+        return std::pair{ReadRestart(restarted, out.size), decoded->pixels};
+    };
+
+    const auto plain420 = encodeWide(2, 0, false);
+    Require(plain420.first == std::pair{0, 0});
+    const auto blocks420 = encodeWide(2, 2, false);
+    Require(blocks420.first == std::pair{2, 2});
+    Require(blocks420.second == plain420.second);
+    const auto rows420 = encodeWide(2, -1, false);
+    Require(rows420.first == std::pair{3, 1});
+    Require(rows420.second == plain420.second);
+    const auto plain422 = encodeWide(1, 0, false);
+    const auto rows422 = encodeWide(1, -1, false);
+    Require(rows422.first == std::pair{3, 3});
+    Require(rows422.second == plain422.second);
+    const auto blocks422 = encodeWide(1, 5, false);
+    Require(blocks422.first == std::pair{5, 2});
+    Require(blocks422.second == plain422.second);
+    const auto plainGray = encodeWide(0, 0, true);
+    const auto rowsGray = encodeWide(0, -1, true);
+    Require(rowsGray.first == std::pair{6, 3});
+    Require(rowsGray.second == plainGray.second);
+    const auto blocksGray = encodeWide(0, 0xFFFF, true);
+    Require(blocksGray.first == std::pair{0xFFFF, 0});
+    Require(blocksGray.second == plainGray.second);
 
     Require(sceJpegEncDelete(handle) == 0);
 

@@ -1,12 +1,28 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <filesystem>
 #include <optional>
 #include <cerrno>
 #include <cstring>
+#include <map>
+#include <memory>
+#include <set>
+#include <system_error>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
@@ -16,6 +32,7 @@ namespace {
 struct PathAliases {
     std::mutex mutex;
     std::vector<std::pair<std::string, std::string>> entries;
+    std::vector<std::string> blocked;
 };
 
 PathAliases& Aliases() {
@@ -36,15 +53,54 @@ std::string TrimSlashes(const char* path) {
     return s.substr(start, end - start);
 }
 
+bool SameName(std::string_view left, std::string_view right) {
+    if (left.size() != right.size()) return false;
+    const auto fold = [](unsigned char value) { return value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value; };
+    for (std::size_t i = 0; i < left.size(); ++i) if (fold(left[i]) != fold(right[i])) return false;
+    return true;
+}
+
+bool HasPrefix(const std::string& path, const std::string& prefix) {
+    return path.size() >= prefix.size() && SameName(std::string_view(path).substr(0, prefix.size()), prefix) &&
+           (path.size() == prefix.size() || path[prefix.size()] == '/');
+}
+
+std::filesystem::path ResolveHostPath(std::filesystem::path root, const std::filesystem::path& relative) {
+    const auto direct = root / relative;
+    std::error_code error;
+    if (std::filesystem::exists(direct, error)) return direct;
+    for (const auto& part : relative) {
+        const auto candidate = root / part;
+        const auto status = std::filesystem::symlink_status(candidate, error);
+        if (std::filesystem::exists(status) || (error && error != std::errc::no_such_file_or_directory)) {
+            root = candidate;
+            continue;
+        }
+        std::optional<std::filesystem::path> matched;
+        const auto name = part.string();
+        std::filesystem::directory_iterator entry(root, error), end;
+        for (; !error && entry != end; entry.increment(error)) {
+            if (!SameName(entry->path().filename().string(), name)) continue;
+            if (matched) throw std::runtime_error("Ambiguous case-insensitive guest path: " + candidate.string());
+            matched = entry->path();
+        }
+        root = !error && matched ? *matched : candidate;
+    }
+    return root;
+}
+
 std::optional<std::filesystem::path> ResolveAlias(const std::string& guestPath) {
     const auto relative = TrimSlashes(guestPath.c_str());
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
+    for (const auto& prefix : aliases.blocked) {
+        if (HasPrefix(relative, prefix))
+            throw std::filesystem::filesystem_error("Guest mount is unavailable", guestPath, std::make_error_code(std::errc::no_such_file_or_directory));
+    }
     for (const auto& [prefix, host] : aliases.entries) {
-        if (relative.size() < prefix.size() || relative.compare(0, prefix.size(), prefix) != 0) continue;
+        if (!HasPrefix(relative, prefix)) continue;
         if (relative.size() == prefix.size()) return std::filesystem::path(host).make_preferred();
-        if (relative[prefix.size()] != '/') continue;
-        std::filesystem::path result = std::filesystem::path(host) / std::filesystem::path(relative.substr(prefix.size() + 1));
+        std::filesystem::path result = ResolveHostPath(host, relative.substr(prefix.size() + 1));
         return result.make_preferred();
     }
     return std::nullopt;
@@ -67,8 +123,43 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
     auto guest = (std::filesystem::path("/") / state.current.lexically_relative(state.root));
     guest = (input.is_absolute() ? input : guest / input).lexically_normal();
     if (auto aliased = ResolveAlias(guest.relative_path().generic_string())) return *aliased;
-    return (state.root / guest.relative_path()).make_preferred();
+    return ResolveHostPath(state.root, guest.relative_path()).make_preferred();
 }
+struct WrittenPathRegistry {
+    std::mutex syncMutex;
+    std::mutex mutex;
+    std::map<std::filesystem::path, bool> dirty;
+#ifdef _WIN32
+    FILETIME mark = [] { FILETIME now; GetSystemTimeAsFileTime(&now); return now; }();
+#endif
+};
+WrittenPathRegistry& Written() { static WrittenPathRegistry registry; return registry; }
+#ifdef _WIN32
+std::optional<FILETIME> WriteTime(const std::filesystem::path& path) {
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) return data.ftLastWriteTime;
+    const auto error = GetLastError();
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return std::nullopt;
+    throw std::system_error(static_cast<int>(error), std::system_category(), "Reading the write time of " + path.string());
+}
+bool ChangedSince(const std::filesystem::path& path, const FILETIME& mark) {
+    const auto time = WriteTime(path);
+    return time && CompareFileTime(&*time, &mark) >= 0;
+}
+void FlushPath(const std::filesystem::path& path) {
+    const auto handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        const auto error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return;
+        if (error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION) return;
+        throw std::system_error(static_cast<int>(error), std::system_category(), "Opening " + path.string() + " for sync");
+    }
+    const std::unique_ptr<void, decltype(&CloseHandle)> owner(handle, &CloseHandle);
+    if (!FlushFileBuffers(handle))
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Flushing " + path.string());
+}
+#endif
 int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::permission_denied) return 13;
     if (error == std::errc::not_a_directory) return 20;
@@ -86,8 +177,9 @@ extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* h
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
     const auto prefix = TrimSlashes(guestPrefix);
+    std::erase_if(aliases.blocked, [&](const auto& entry) { return SameName(entry, prefix); });
     for (auto& entry : aliases.entries) {
-        if (entry.first == prefix) {
+        if (SameName(entry.first, prefix)) {
             entry.second = hostPath;
             return;
         }
@@ -102,7 +194,74 @@ extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix) {
     auto& aliases = Aliases();
     std::lock_guard lock(aliases.mutex);
     const auto prefix = TrimSlashes(guestPrefix);
-    std::erase_if(aliases.entries, [&](const auto& entry) { return entry.first == prefix; });
+    std::erase_if(aliases.entries, [&](const auto& entry) { return SameName(entry.first, prefix); });
+}
+
+extern "C" void RecordWrittenPath_nid_no_patch(const std::filesystem::path& path) {
+    auto& registry = Written();
+    std::lock_guard lock(registry.mutex);
+    registry.dirty[path.lexically_normal()] = true;
+}
+
+extern "C" std::vector<std::filesystem::path> WrittenPaths_nid_no_patch() {
+    auto& registry = Written();
+    std::lock_guard lock(registry.mutex);
+    std::vector<std::filesystem::path> paths;
+    for (const auto& entry : registry.dirty) paths.push_back(entry.first);
+    return paths;
+}
+
+extern "C" void SyncWrittenPaths_nid_no_patch() {
+    auto& registry = Written();
+    std::lock_guard serial(registry.syncMutex);
+#ifdef _WIN32
+    FILETIME start;
+    GetSystemTimeAsFileTime(&start);
+    FILETIME mark;
+    std::vector<std::pair<std::filesystem::path, bool>> entries;
+    {
+        std::lock_guard lock(registry.mutex);
+        mark = registry.mark;
+        registry.mark = start;
+        for (auto& [path, dirty] : registry.dirty) {
+            entries.emplace_back(path, dirty);
+            dirty = false;
+        }
+    }
+    std::set<std::filesystem::path> flushed;
+    std::vector<std::filesystem::path> missing;
+    for (const auto& [path, dirty] : entries) {
+        const auto time = WriteTime(path);
+        if (!time) missing.push_back(path);
+        if (!dirty && !(time && CompareFileTime(&*time, &mark) >= 0)) continue;
+        if (time && flushed.insert(path).second) FlushPath(path);
+        for (auto ancestor = path.parent_path(); ancestor.has_relative_path() && !flushed.contains(ancestor) && ChangedSince(ancestor, mark);
+             ancestor = ancestor.parent_path()) {
+            flushed.insert(ancestor);
+            FlushPath(ancestor);
+        }
+    }
+    std::lock_guard lock(registry.mutex);
+    for (const auto& path : missing) {
+        const auto entry = registry.dirty.find(path);
+        if (entry != registry.dirty.end() && !entry->second) registry.dirty.erase(entry);
+    }
+#else
+    ::sync();
+    std::lock_guard lock(registry.mutex);
+    registry.dirty.clear();
+#endif
+}
+
+extern "C" void BlockPathAlias_nid_no_patch(const char* guestPrefix) {
+    if (guestPrefix == nullptr) { APS5_INVALID_ARG_EX; }
+    const auto prefix = TrimSlashes(guestPrefix);
+    if (prefix.empty()) { APS5_INVALID_ARG_EX; }
+    auto& aliases = Aliases();
+    std::lock_guard lock(aliases.mutex);
+    std::erase_if(aliases.entries, [&](const auto& entry) { return SameName(entry.first, prefix); });
+    std::erase_if(aliases.blocked, [&](const auto& entry) { return SameName(entry, prefix); });
+    aliases.blocked.push_back(prefix);
 }
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {

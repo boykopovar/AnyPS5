@@ -2,12 +2,6 @@ add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export
 target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIme)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_ime_parameters_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeParameters.cpp)
     target_include_directories(guest_ime_parameters_tests PRIVATE ${LIBS_INCLUDE_DIR})

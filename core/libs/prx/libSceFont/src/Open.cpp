@@ -230,6 +230,24 @@ void CopyStyleToCache(FontHandleNative* font) {
     std::memcpy(&font->cached_style.state, &font->style, sizeof(StyleStateBlock));
 }
 
+template <typename TCall>
+int CallOpenFontObject(FontHandle fontHandle, TCall call) {
+    const auto* font = GetNativeFont(fontHandle);
+    if (!font || font->magic != HANDLE_MAGIC) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    auto* library = static_cast<FontLibNative*>(font->library);
+    if (!library || library->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    if (!library->sys_driver) return SCE_FONT_ERROR_FATAL;
+    const std::uint32_t modeLow = font->flags & 0x0Fu;
+    FontObj* head = nullptr;
+    std::uint32_t lockWord = 0;
+    auto* entry = AcquireFontCtxEntry(FontContext(library, font), font->open_info.ctx_entry_index, modeLow, &head, &lockWord);
+    if (!entry) return SCE_FONT_ERROR_FATAL;
+    FontObj* obj = FindSubFont(head, font->open_info.sub_font_index);
+    const int rc = (lockWord & OPEN_BIT) != 0 && (lockWord & COUNT_MASK) != 0 && obj ? call(*library->sys_driver, obj) : SCE_FONT_ERROR_FATAL;
+    ReleaseFontCtxEntryLock(entry, modeLow, lockWord);
+    return rc;
+}
+
 }
 
 #pragma GCC visibility push(default)
@@ -451,6 +469,46 @@ int APS5_VABI sceFontGetLibrary(FontHandle fontHandle, FontLibrary* pLibrary) {
     }
     *pLibrary = font->library;
     return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontGetFontGlyphsCount(FontHandle fontHandle, std::uint32_t* glyphsCount) {
+    if (!glyphsCount) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *glyphsCount = 0;
+    const int rc = CallOpenFontObject(fontHandle, [&](const SysDriver& driver, FontObj* obj) {
+        if (!driver.glyphs_count) return SCE_FONT_ERROR_FATAL;
+        return driver.glyphs_count(obj, glyphsCount);
+    });
+    if (rc != SCE_FONT_OK) *glyphsCount = 0;
+    return rc;
+}
+
+int APS5_VABI sceFontGetCharGlyphCode(FontHandle fontHandle, std::uint32_t code, std::uint32_t* glyphCode) {
+    if (!glyphCode) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    *glyphCode = 0;
+    const int rc = CallOpenFontObject(fontHandle, [&](const SysDriver& driver, FontObj* obj) {
+        if (!driver.glyph_index) return SCE_FONT_ERROR_FATAL;
+        if (code == 0) return SCE_FONT_ERROR_NO_SUPPORT_CODE;
+        return driver.glyph_index(obj, code, glyphCode);
+    });
+    if (rc != SCE_FONT_OK) *glyphCode = 0;
+    return rc;
+}
+
+int APS5_VABI sceFontGetFontResolution(FontHandle fontHandle, std::uint32_t* pResolution, float* pScalePixel) {
+    std::uint16_t unitsPerEm = 0;
+    float scalePixel = 0.0f;
+    const int rc = CallOpenFontObject(fontHandle, [&](const SysDriver& driver, FontObj* obj) {
+        if (!pResolution && !pScalePixel) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (!driver.scale) return SCE_FONT_ERROR_FATAL;
+        return driver.scale(obj, &unitsPerEm, &scalePixel);
+    });
+    if (rc != SCE_FONT_OK) {
+        unitsPerEm = 0;
+        scalePixel = 0.0f;
+    }
+    if (pResolution) *pResolution = unitsPerEm;
+    if (pScalePixel) *pScalePixel = scalePixel;
+    return rc;
 }
 
 int APS5_VABI sceFontBindRenderer(FontHandle fontHandle, FontRenderer renderer) {

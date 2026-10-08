@@ -8,6 +8,12 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__linux__)
+#include <fstream>
+#include <pthread.h>
+#include <sched.h>
+#include <string>
+#include <unistd.h>
 #endif
 
 // Hybrid CPU layout (Intel P/E cores) from the OS: which logical processors belong to the lowest and
@@ -21,6 +27,32 @@ struct Layout {
     std::uint64_t performant = 0;
     bool hybrid = false;
 };
+
+#ifdef __linux__
+inline std::uint64_t MaskFromCpuList(const char* path) {
+    std::ifstream file(path);
+    std::string text;
+    if (!std::getline(file, text)) return 0;
+    std::uint64_t mask = 0;
+    const char* cursor = text.c_str();
+    while (*cursor != '\0') {
+        char* end = nullptr;
+        const unsigned long first = std::strtoul(cursor, &end, 10);
+        if (end == cursor) return 0;
+        unsigned long last = first;
+        cursor = end;
+        if (*cursor == '-') {
+            last = std::strtoul(cursor + 1, &end, 10);
+            if (end == cursor + 1 || last < first) return 0;
+            cursor = end;
+        }
+        for (unsigned long cpu = first; cpu <= last && cpu < 64; ++cpu) mask |= std::uint64_t{1} << cpu;
+        if (*cursor == ',') ++cursor;
+        else if (*cursor != '\0') return 0;
+    }
+    return mask;
+}
+#endif
 
 inline const Layout& Get() {
     static const Layout layout = [] {
@@ -57,6 +89,16 @@ inline const Layout& Get() {
         result.efficient = byClass[lowest];
         result.performant = byClass[highest];
         result.hybrid = result.efficient != 0 && result.performant != 0;
+#elif defined(__linux__)
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+            for (unsigned cpu = 0; cpu < 64; ++cpu)
+                if (CPU_ISSET(cpu, &set)) result.process |= std::uint64_t{1} << cpu;
+        }
+        result.performant = MaskFromCpuList("/sys/devices/cpu_core/cpus");
+        result.efficient = MaskFromCpuList("/sys/devices/cpu_atom/cpus");
+        result.hybrid = result.efficient != 0 && result.performant != 0 && (result.efficient & result.performant) == 0;
 #endif
         return result;
     }();
@@ -78,6 +120,8 @@ inline bool Trace() {
 inline unsigned long ThreadId(void* handle) {
 #ifdef _WIN32
     return handle != nullptr ? GetThreadId(static_cast<HANDLE>(handle)) : GetCurrentThreadId();
+#elif defined(__linux__)
+    return handle == nullptr ? static_cast<unsigned long>(gettid()) : 0;
 #else
     (void)handle;
     return 0;
@@ -93,6 +137,15 @@ inline std::uint64_t Pin(void* handle, std::uint64_t mask) {
     if (mask == 0) return 0;
     HANDLE thread = handle != nullptr ? static_cast<HANDLE>(handle) : GetCurrentThread();
     return SetThreadAffinityMask(thread, static_cast<DWORD_PTR>(mask)) != 0 ? mask : 0;
+#elif defined(__linux__)
+    const auto& layout = Get();
+    if (layout.process != 0) mask &= layout.process;
+    if (mask == 0 || handle != nullptr) return 0;
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    for (unsigned cpu = 0; cpu < 64; ++cpu)
+        if ((mask >> cpu) & 1u) CPU_SET(cpu, &set);
+    return pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0 ? mask : 0;
 #else
     (void)handle;
     (void)mask;

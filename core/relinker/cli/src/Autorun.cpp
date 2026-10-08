@@ -16,7 +16,16 @@ int Autorun(const std::string& absPath, bool toWindows) {
             std::filesystem::perm_options::add);
     }
 
+#ifdef _WIN32
     const std::string cmd = "\"" + absPath + "\"";
+#else
+    std::string cmd = "'";
+    for (const char character : absPath) {
+        if (character == '\'') cmd += "'\\''";
+        else cmd += character;
+    }
+    cmd += '\'';
+#endif
     const int rawCode = std::system(cmd.c_str());
 
     int exitCode = rawCode;

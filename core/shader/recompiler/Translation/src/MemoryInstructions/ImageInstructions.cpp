@@ -41,6 +41,23 @@ MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
     return memory;
 }
 
+IrOpcode imageAtomic64Opcode(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::ImageAtomicSwap32: return IrOpcode::ImageAtomicSwap64;
+    case IrOpcode::ImageAtomicIAdd32: return IrOpcode::ImageAtomicIAdd64;
+    case IrOpcode::ImageAtomicISub32: return IrOpcode::ImageAtomicISub64;
+    case IrOpcode::ImageAtomicUMin32: return IrOpcode::ImageAtomicUMin64;
+    case IrOpcode::ImageAtomicUMax32: return IrOpcode::ImageAtomicUMax64;
+    case IrOpcode::ImageAtomicSMin32: return IrOpcode::ImageAtomicSMin64;
+    case IrOpcode::ImageAtomicSMax32: return IrOpcode::ImageAtomicSMax64;
+    case IrOpcode::ImageAtomicAnd32: return IrOpcode::ImageAtomicAnd64;
+    case IrOpcode::ImageAtomicOr32: return IrOpcode::ImageAtomicOr64;
+    case IrOpcode::ImageAtomicXor32: return IrOpcode::ImageAtomicXor64;
+    case IrOpcode::ImageAtomicCmpSwap32: return IrOpcode::ImageAtomicCmpSwap64;
+    default: throw std::runtime_error("64-bit " + std::string(IrOpcodeName(opcode)) + " is not implemented");
+    }
+}
+
 }
 
 bool TranslationContext::imageBvhIntersectRay(const RdnaInstruction& inst) {
@@ -72,17 +89,28 @@ bool TranslationContext::imageBvhIntersectRay(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::imageAtomic(const RdnaInstruction& inst, IrOpcode opcode) {
+    if (inst.dataBits == 64u) {
+        opcode = imageAtomic64Opcode(opcode);
+    }
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
     const MemoryFlags flags = addMemoryInfo(memory, inst.programCounter);
-    const IrU32 value = readU32(inst.destination);
     IrValue& exec = ir.GetExec();
     IrValue* result;
-    if (opcode == IrOpcode::ImageAtomicCmpSwap32 || opcode == IrOpcode::ImageAtomicFCmpSwap32) {
+    if (opcode == IrOpcode::ImageAtomicCmpSwap64) {
+        const IrU64 value = readU64(inst.destination);
+        const IrU64 comparator = readU64(offsetOperand(inst.destination, 2u));
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &comparator.Value(), &exec}, flags);
+    } else if (IsImageAtomic64Opcode(opcode)) {
+        const IrU64 value = readU64(inst.destination);
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &exec}, flags);
+    } else if (opcode == IrOpcode::ImageAtomicCmpSwap32 || opcode == IrOpcode::ImageAtomicFCmpSwap32) {
+        const IrU32 value = readU32(inst.destination);
         const IrU32 comparator = readU32(offsetOperand(inst.destination, 1u));
         result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &comparator.Value(), &exec}, flags);
     } else {
+        const IrU32 value = readU32(inst.destination);
         result = &ir.Emit(opcode, IrOpcodeType(opcode), {resource, address, &value.Value(), &exec}, flags);
     }
     if (inst.glc) {

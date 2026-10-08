@@ -34,6 +34,7 @@ struct PeImport {
     std::uint64_t Addend;
     std::int32_t TargetModule = -1;
     std::uint32_t RelocationType = 1;
+    std::string Library;
 };
 
 struct PeRelocations {

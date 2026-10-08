@@ -7,8 +7,9 @@
 
 namespace LibcDetail {
 
-inline int ScanWindows(const char* input, const char* format, const void* source) {
-    if (!input || !format || !source) { errno = 22; return EOF; }
+template <typename TScanner>
+inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* source, TScanner scan) {
+    if (!format || !source) { errno = 22; return EOF; }
     std::string translated;
     std::vector<void*> pointers;
     FormatArguments args(source);
@@ -45,7 +46,21 @@ inline int ScanWindows(const char* input, const char* format, const void* source
         }
         if (!suppressed) pointers.push_back(args.Next<void*>());
     }
-    return std::vsscanf(input, translated.c_str(), reinterpret_cast<char*>(pointers.data()));
+    return scan(translated.c_str(), reinterpret_cast<char*>(pointers.data()));
+}
+
+inline int ScanWindows(const char* input, const char* format, const void* source) {
+    if (!input) { errno = 22; return EOF; }
+    return ScanWindowsArguments_nid_no_patch(format, source, [input](const char* translated, char* pointers) {
+        return std::vsscanf(input, translated, pointers);
+    });
+}
+
+inline int ScanFileWindows_nid_no_patch(std::FILE* stream, const char* format, const void* source) {
+    if (!stream) { errno = 22; return EOF; }
+    return ScanWindowsArguments_nid_no_patch(format, source, [stream](const char* translated, char* pointers) {
+        return std::vfscanf(stream, translated, pointers);
+    });
 }
 
 }

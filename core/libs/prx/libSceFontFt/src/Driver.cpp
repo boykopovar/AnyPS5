@@ -295,6 +295,14 @@ int APS5_VABI LibraryGetFaceMetric(FontObj* obj, std::uint32_t metricId, std::ui
     return SCE_FONT_OK;
 }
 
+int APS5_VABI LibraryGetGlyphsCount(FontObj* obj, std::uint32_t* outCount) {
+    if (!obj || !outCount) return SCE_FONT_ERROR_FATAL;
+    const FT_Face face = FaceOf(obj);
+    if (!face || face->num_glyphs < 0) return SCE_FONT_ERROR_FATAL;
+    *outCount = static_cast<std::uint32_t>(face->num_glyphs);
+    return SCE_FONT_OK;
+}
+
 int APS5_VABI LibraryGetGlyphIndex(FontObj* obj, std::uint32_t codepoint, std::uint32_t* outGlyphIndex) {
     if (!obj || !outGlyphIndex) return SCE_FONT_ERROR_FATAL;
     const FT_Face face = FaceOf(obj);
@@ -735,6 +743,7 @@ SysDriver MakeDriverTable() {
     driver.close = &LibraryCloseFont;
     driver.scale = &LibraryGetFaceScale;
     driver.metric = &LibraryGetFaceMetric;
+    driver.glyphs_count = &LibraryGetGlyphsCount;
     driver.glyph_index = &LibraryGetGlyphIndex;
     driver.set_char_with_dpi = &LibrarySetCharSizeWithDpi;
     driver.set_char_default_dpi = &LibrarySetCharSizeDefaultDpi;

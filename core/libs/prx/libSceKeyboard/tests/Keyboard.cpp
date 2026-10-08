@@ -27,11 +27,15 @@ static SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Ui
     return event;
 }
 
-static std::uint16_t Char(std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode) {
+static std::uint16_t Char(std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode, std::int32_t arrange = KEYBOARD_ARRANGEMENT_101) {
     KeyboardCharData data{};
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, led, modifierKey, keyCode, &data) == KEYBOARD_OK);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, led, modifierKey, keyCode, &data) == KEYBOARD_OK);
     Require(data.processed == (data.char_code != 0) && data.length == (data.processed ? 1 : 0));
     return data.char_code;
+}
+
+static std::uint16_t Jis(std::uint32_t modifierKey, std::uint16_t keyCode, std::uint32_t led = 0) {
+    return Char(led, modifierKey, keyCode, KEYBOARD_ARRANGEMENT_106);
 }
 
 int main() {
@@ -115,7 +119,22 @@ int main() {
     Require(Char(0, 0, 0x59) == 0 && Char(KEYBOARD_LED_NUM_LOCK, 0, 0x59) == '1');
     Require(Char(KEYBOARD_LED_NUM_LOCK, 0, 0x62) == '0' && Char(KEYBOARD_LED_NUM_LOCK, 0, 0x63) == '.');
     Require(Char(0, 0, 0x54) == '/' && Char(0, 0, 0x57) == '+' && Char(0, 0, 0x58) == '\n');
+    Require(Char(0, 0, 0x87) == 0 && Char(0, 0, 0x89) == 0);
+
+    constexpr std::uint32_t shift = KEYBOARD_MOD_LEFT_SHIFT;
+    Require(Jis(0, 0x04) == 'a' && Jis(shift, 0x04) == 'A' && Jis(KEYBOARD_MOD_RIGHT_SHIFT, 0x04, KEYBOARD_LED_CAPS_LOCK) == 'a');
+    Require(Jis(0, 0x1e) == '1' && Jis(shift, 0x1e) == '!' && Jis(shift, 0x1f) == '"' && Jis(shift, 0x23) == '&');
+    Require(Jis(shift, 0x24) == '\'' && Jis(shift, 0x25) == '(' && Jis(shift, 0x26) == ')' && Jis(0, 0x27) == '0' && Jis(shift, 0x27) == 0);
+    Require(Jis(0, 0x28) == '\n' && Jis(0, 0x29) == 0 && Jis(0, 0x2a) == '\b' && Jis(0, 0x2b) == '\t' && Jis(shift, 0x2c) == ' ');
+    Require(Jis(0, 0x2d) == '-' && Jis(shift, 0x2d) == '=' && Jis(0, 0x2e) == '^' && Jis(shift, 0x2e) == '~');
+    Require(Jis(0, 0x2f) == '@' && Jis(shift, 0x2f) == '`' && Jis(0, 0x30) == '[' && Jis(shift, 0x30) == '{');
+    Require(Jis(0, 0x31) == ']' && Jis(shift, 0x31) == '}' && Jis(0, 0x32) == ']' && Jis(shift, 0x32) == '}');
+    Require(Jis(0, 0x33) == ';' && Jis(shift, 0x33) == '+' && Jis(0, 0x34) == ':' && Jis(shift, 0x34) == '*');
+    Require(Jis(0, 0x35) == 0 && Jis(shift, 0x35) == 0 && Jis(0, 0x36) == ',' && Jis(shift, 0x37) == '>' && Jis(shift, 0x38) == '?');
+    Require(Jis(0, 0x87) == '\\' && Jis(shift, 0x87) == '_' && Jis(0, 0x89) == '\\' && Jis(shift, 0x89) == '|');
+    Require(Jis(0, 0x59, KEYBOARD_LED_NUM_LOCK) == '1' && Jis(0, 0x59) == 0 && Jis(0, 0x55) == '*' && Jis(0, 0xe1) == 0);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
 
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);

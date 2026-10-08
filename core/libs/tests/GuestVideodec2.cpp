@@ -83,6 +83,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t, const InputData*, Fr
 int APS5_VABI sceVideodec2Flush_nid_postfix(std::uint64_t, FrameBuffer*, OutputInfo*);
 int APS5_VABI sceVideodec2Reset_nid_postfix(std::uint64_t);
 int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo*, AvcPictureInfo*, void*);
+int APS5_VABI sceVideodec2GetAvcPictureInfo_nid_postfix(const OutputInfo*, AvcPictureInfo*, AvcPictureInfo*);
 }
 
 namespace {
@@ -272,6 +273,11 @@ void testFailures() {
     input.auSize = 2;
     checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
     check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
+    AvcPictureInfo avc{sizeof(AvcPictureInfo)};
+    checkThrows([&] { sceVideodec2GetAvcPictureInfo_nid_postfix(nullptr, &avc, nullptr); });
+    checkThrows([&] { sceVideodec2GetAvcPictureInfo_nid_postfix(&output, nullptr, nullptr); });
+    output.frameBuffer = buffer.data();
+    check(sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &avc, nullptr) == 0 && !avc.isValid, "unknown frame buffer reported a picture");
     frame.frameBufferSize = 1;
     checkThrows([&] {
         for (const auto& unit : accessUnits(false)) {
@@ -302,6 +308,9 @@ void testDecode(bool lengthPrefixed) {
         const auto unit = DisplayOrderUnits[pictures];
         check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit, "picture timestamps out of display order");
         check(info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.profileIdc == 100, "picture flags mismatch");
+        AvcPictureInfo avc{sizeof(AvcPictureInfo)};
+        check(sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &avc, nullptr) == 0 && avc.isValid, "avc picture info missing");
+        check(avc.ptsData == 1000 + unit && avc.dtsData == unit && avc.attachedData == 0xa0 + unit && avc.idrPictureFlag == (pictures == 0 ? 1 : 0) && avc.profileIdc == 100 && avc.picWidthInLumaSamples == Width && avc.picHeightInLumaSamples == Height, "avc picture info mismatch");
         check(hashNv12(buffer.data(), output.framePitch) == PictureHashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
         ++pictures;
         return true;

@@ -88,6 +88,9 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
             RecordBdaFault(state, BdaConstant(state, state.program.Resources().shaderHash), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
         });
     }
+    if (OrderedPixelShader(state)) {
+        state.module.AddFunction(spv::OpEndInvocationInterlockEXT);
+    }
     EmitKillIfPixelValidMaskInactive(state);
     state.module.AddFunction(spv::OpReturn);
 }
@@ -656,6 +659,17 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ImageAtomicFCmpSwap32: return Invoke(EmitImageAtomicFCmpSwap32, ctx, inst);
         case IrOpcode::ImageAtomicFMin32: return Invoke(EmitImageAtomicFMin32, ctx, inst);
         case IrOpcode::ImageAtomicFMax32: return Invoke(EmitImageAtomicFMax32, ctx, inst);
+        case IrOpcode::ImageAtomicSwap64: return Invoke(EmitImageAtomicSwap64, ctx, inst);
+        case IrOpcode::ImageAtomicIAdd64: return Invoke(EmitImageAtomicIAdd64, ctx, inst);
+        case IrOpcode::ImageAtomicISub64: return Invoke(EmitImageAtomicISub64, ctx, inst);
+        case IrOpcode::ImageAtomicUMin64: return Invoke(EmitImageAtomicUMin64, ctx, inst);
+        case IrOpcode::ImageAtomicUMax64: return Invoke(EmitImageAtomicUMax64, ctx, inst);
+        case IrOpcode::ImageAtomicSMin64: return Invoke(EmitImageAtomicSMin64, ctx, inst);
+        case IrOpcode::ImageAtomicSMax64: return Invoke(EmitImageAtomicSMax64, ctx, inst);
+        case IrOpcode::ImageAtomicAnd64: return Invoke(EmitImageAtomicAnd64, ctx, inst);
+        case IrOpcode::ImageAtomicOr64: return Invoke(EmitImageAtomicOr64, ctx, inst);
+        case IrOpcode::ImageAtomicXor64: return Invoke(EmitImageAtomicXor64, ctx, inst);
+        case IrOpcode::ImageAtomicCmpSwap64: return Invoke(EmitImageAtomicCmpSwap64, ctx, inst);
         case IrOpcode::GetAttribute: return Invoke(EmitGetAttribute, ctx, inst);
         case IrOpcode::GetInterpolationParameter: return Invoke(EmitGetInterpolationParameter, ctx, inst);
         case IrOpcode::SetAttribute: return Invoke(EmitSetAttribute, ctx, inst);

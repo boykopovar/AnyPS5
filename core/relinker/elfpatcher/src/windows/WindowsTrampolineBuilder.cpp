@@ -1,9 +1,11 @@
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
+#include <span>
 
 namespace Elfpatcher::Windows {
 
@@ -40,6 +42,7 @@ void WindowsTrampolineBuilder::Build(const std::vector<Codegen::TrampolineSite>&
         const auto stubRva = CheckedRva(sectionRva + bytes.size());
         const auto bodyOffset = bytes.size();
         bytes.insert(bytes.end(), site.Body.begin(), site.Body.end());
+        Codegen::ApplyStubRelocations(std::span<std::uint8_t>(bytes.data() + bodyOffset, site.ReturnBranchOffset), site.Relocations, siteRva, stubRva, site.Offset);
         const auto returnRva = CheckedRva(siteRva + site.Length);
         const auto displacement = static_cast<std::int64_t>(returnRva) - (static_cast<std::int64_t>(stubRva) + static_cast<std::int64_t>(site.ReturnBranchOffset + kJmpRel32.Size));
         if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())

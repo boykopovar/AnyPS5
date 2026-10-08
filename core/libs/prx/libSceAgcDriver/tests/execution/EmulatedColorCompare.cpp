@@ -5,6 +5,7 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -38,10 +39,12 @@ constexpr std::uint32_t BorderTable = 3;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
 constexpr std::uint32_t FilterAnisoBilinear = 3;
+constexpr std::uint32_t ReductionMin = 1;
 constexpr std::array<std::uint8_t, 4> Red{0, 64, 128, 255};
 
 alignas(256) std::array<float, Threads * 3> Input{};
 alignas(256) std::array<float, Threads> Output{};
+alignas(256) std::array<std::uint32_t, Threads * 3> Extra{};
 alignas(4096) std::array<std::uint8_t, 4096> Texels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 13> Code{
@@ -49,15 +52,22 @@ alignas(256) constexpr std::array<std::uint32_t, 13> Code{
     0x34160082, 0xe0701000, 0x8001040b, 0xbf810000, 0xbf810000, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 16> OffsetCode{
+    0x1614008c, 0xe03c1000, 0x8000030a, 0xe03c1000, 0x8005060a, 0xbf8c3f70, 0x7e020306, 0x7e040307,
+    0x7e0c0308, 0xf0f80108, 0x00820901, 0xbf8c3f70, 0x34160082, 0xe0701000, 0x8001090b, 0xbf810000,
+};
+
 struct Sampler {
     std::uint32_t clamp;
     std::uint32_t filter;
     std::uint32_t border = BorderBlack;
+    std::uint32_t reduction = 0;
+    std::uint32_t lodBias = 0;
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
@@ -73,9 +83,9 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
 
 std::array<std::uint32_t, 4> SamplerDescriptor(const Sampler& sampler) {
     return {
-        sampler.clamp | (sampler.clamp << 3u) | (ClampEdge << 6u) | (LessEqual << 12u),
+        sampler.clamp | (sampler.clamp << 3u) | (ClampEdge << 6u) | (LessEqual << 12u) | (sampler.reduction << 29u),
         0u,
-        (sampler.filter << 20u) | (sampler.filter << 22u),
+        sampler.lodBias | (sampler.filter << 20u) | (sampler.filter << 22u),
         sampler.border << 30u,
     };
 }
@@ -107,6 +117,19 @@ void FillInput() {
     Input[6] = 0.6f; Input[7] = -0.1f; Input[8] = 0.5f;
     Input[9] = 0.3f; Input[10] = 0.5f; Input[11] = 1.1f;
     Input[12] = 0.9f; Input[13] = 1.05f; Input[14] = -0.05f;
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto x = static_cast<std::int32_t>(tid % 7u) - 3;
+        const auto y = static_cast<std::int32_t>((tid / 7u) % 5u) - 2;
+        Extra[tid * 3u + 0u] = (static_cast<std::uint32_t>(x) & 0x3fu) | ((static_cast<std::uint32_t>(y) & 0x3fu) << 8u) | (tid % 3u == 0u ? 0x3f0000u : 0u);
+        Extra[tid * 3u + 1u] = std::bit_cast<std::uint32_t>(-2.5f + 0.25f * static_cast<float>(tid % 21u));
+        Extra[tid * 3u + 2u] = std::bit_cast<std::uint32_t>(0.5f * static_cast<float>(tid % 5u));
+    }
+    Extra[0] = 0x00001f20u;
+}
+
+std::int32_t OffsetComponent(std::uint32_t tid, std::uint32_t component) {
+    const auto field = (Extra[tid * 3u] >> (component * 8u)) & 0x3fu;
+    return static_cast<std::int32_t>(field ^ 0x20u) - 0x20;
 }
 
 float ReferenceTexel(int x, int y, float reference, const Sampler& sampler) {
@@ -125,15 +148,17 @@ float ReferenceTexel(int x, int y, float reference, const Sampler& sampler) {
     return reference <= red ? 1.0f : 0.0f;
 }
 
-float Expected(std::uint32_t tid, const Sampler& sampler) {
+float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
     const float u = Input[tid * 3u + 1u] * static_cast<float>(Side);
     const float v = Input[tid * 3u + 2u] * static_cast<float>(Side);
     const float reference = std::clamp(Input[tid * 3u + 0u], 0.0f, 1.0f);
-    if (sampler.filter == FilterPoint) return ReferenceTexel(static_cast<int>(std::floor(u)), static_cast<int>(std::floor(v)), reference, sampler);
+    const int offsetX = offsets ? OffsetComponent(tid, 0u) : 0;
+    const int offsetY = offsets ? OffsetComponent(tid, 1u) : 0;
+    if (sampler.filter == FilterPoint) return ReferenceTexel(static_cast<int>(std::floor(u)) + offsetX, static_cast<int>(std::floor(v)) + offsetY, reference, sampler);
     const float cu = u - 0.5f;
     const float cv = v - 0.5f;
-    const int x = static_cast<int>(std::floor(cu));
-    const int y = static_cast<int>(std::floor(cv));
+    const int x = static_cast<int>(std::floor(cu)) + offsetX;
+    const int y = static_cast<int>(std::floor(cv)) + offsetY;
     const float a = cu - std::floor(cu);
     const float b = cv - std::floor(cv);
     const float top = ReferenceTexel(x, y, reference, sampler) * (1.0f - a) + ReferenceTexel(x + 1, y, reference, sampler) * a;
@@ -141,8 +166,8 @@ float Expected(std::uint32_t tid, const Sampler& sampler) {
     return top * (1.0f - b) + bottom * b;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler) {
-    std::vector<std::uint32_t> userData(20, 0u);
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, bool useCache = false, bool nativeSampleOffsets = true) {
+    std::vector<std::uint32_t> userData(24, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
     const auto texture = TextureDescriptor(format);
@@ -151,7 +176,8 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
     std::copy(samplerWords.begin(), samplerWords.end(), userData.begin() + 16);
-    const std::span<const std::uint32_t> code(Code);
+    const auto extra = BufferDescriptor(Extra.data(), static_cast<std::uint32_t>(sizeof(Extra)));
+    std::copy(extra.begin(), extra.end(), userData.begin() + 20);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -160,17 +186,23 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
         device.Target(),
         {0, 0, 0, 128}
     };
-    request.useCache = false;
+    request.useCache = useCache;
+    request.target.nonConstantImageOffsets = request.target.nonConstantImageOffsets && nativeSampleOffsets;
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name) {
+void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name, bool offsets = false, bool useCache = false) {
     Output.fill(-1.0f);
-    const auto result = Compile(device, Format8888UNorm, sampler);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    const std::span<const std::uint32_t> code = offsets ? std::span<const std::uint32_t>(OffsetCode) : std::span<const std::uint32_t>(Code);
+    const auto result = Compile(device, Format8888UNorm, sampler, code, useCache);
+    for (const auto& binding : result.bindings) {
+        Require(binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers, "emulated comparison retained a sampler binding");
+        Require(std::all_of(binding.imageSamplers.begin(), binding.imageSamplers.end(), [](auto mask) { return mask == 0u; }), "emulated comparison retained an unused sampler association");
+    }
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const float expected = Expected(tid, sampler);
+        const float expected = Expected(tid, sampler, offsets);
         const float tolerance = sampler.filter == FilterPoint ? 0.0f : 1e-4f;
         Require(std::fabs(Output[tid] - expected) <= tolerance, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
     }
@@ -182,9 +214,9 @@ bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
     });
 }
 
-void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason) {
+void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason, std::span<const std::uint32_t> code = Code, bool nativeSampleOffsets = true) {
     try {
-        static_cast<void>(Compile(device, format, sampler));
+        static_cast<void>(Compile(device, format, sampler, code, false, nativeSampleOffsets));
     } catch (const std::exception& error) {
         Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
         return;
@@ -209,11 +241,21 @@ int main() {
         Run(*device, {ClampBorder, FilterPoint, BorderBlack}, "point, black border");
         Run(*device, {ClampBorder, FilterBilinear, BorderWhite}, "bilinear, white border");
         Run(*device, {ClampBorder, FilterBilinear, BorderBlack}, "bilinear, black border");
+        Run(*device, {ClampEdge, FilterPoint, BorderBlack, 0u, 0x0140u}, "point, clamp to edge, sampler LOD bias");
+        Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge, offsets, bias and LOD clamp", true);
+        Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap, offsets, bias and LOD clamp", true);
+        Run(*device, {ClampBorder, FilterBilinear, BorderWhite, 0u, 0x3f00u}, "bilinear, white border, offsets, bias and LOD clamp", true);
+        for (unsigned iteration = 0; iteration < 2; ++iteration) {
+            Run(*device, {ClampEdge, FilterPoint}, "cached point comparison", false, true);
+            Run(*device, {ClampWrap, FilterBilinear}, "cached bilinear comparison with offsets", true, true);
+        }
+        Reject(*device, Format32Float, {ClampEdge, FilterPoint}, "native comparison with a nonconstant texel offset requires", OffsetCode, false);
         Reject(*device, Format8888UInt, {ClampEdge, FilterPoint}, "unsupported format");
         Reject(*device, Format8888UNorm, {ClampMirror, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampBorder, FilterPoint, BorderTable}, "border color table");
         Reject(*device, Format8888UNorm, {ClampEdge, FilterAnisoBilinear}, "point or bilinear");
+        Reject(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, ReductionMin}, "min or max reduction");
         std::puts("emulated color compare tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -5,7 +5,7 @@
 #include <atomic>
 
 // Peer-to-peer signaling needs the network: contexts exist, but sessions never activate.
-static constexpr int SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80552D02);
+static constexpr int SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80553303);
 static constexpr int SCE_NP_SESSION_SIGNALING_ERROR_UNAVAILABLE = static_cast<int>(0x80552D06);
 static std::atomic<uint32_t> g_nextContext{1};
 

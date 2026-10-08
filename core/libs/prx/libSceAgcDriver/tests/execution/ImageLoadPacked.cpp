@@ -107,7 +107,7 @@ std::array<std::uint32_t, 4> RawTexel(const Format& format, std::uint32_t level,
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t format, std::uint32_t swizzle) {
@@ -140,8 +140,10 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t sw
         device.Target(),
         {0, 0, 0, 128}
     };
-    request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    static ShaderRecompiler::CompiledShaderArtifact first;
+    if (first.variantId == 0u) first = result;
+    else Require(result.cacheHit && result.variantId == first.variantId, "runtime image format changed the compiled artifact");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }

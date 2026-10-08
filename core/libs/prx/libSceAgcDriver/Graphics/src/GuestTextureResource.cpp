@@ -18,8 +18,15 @@ TextureTileMode resolveTileMode(std::uint32_t raw) {
     switch (raw) {
         case 0x00: return TextureTileMode::kLinear;
         case 0x01: return TextureTileMode::kStandard256B;
+        case 0x02: return TextureTileMode::kD256B;
         case 0x05: return TextureTileMode::kStandard4KB;
+        case 0x06: return TextureTileMode::kD4KB;
         case 0x09: return TextureTileMode::kStandard64KB;
+        case 0x0a: return TextureTileMode::kD64KB;
+        case 0x11: return TextureTileMode::kS64KBT;
+        case 0x12: return TextureTileMode::kD64KBT;
+        case 0x15: return TextureTileMode::kS4KBX;
+        case 0x16: return TextureTileMode::kD4KBX;
         case 0x18: return TextureTileMode::kZ64KBX;
         case 0x19: return TextureTileMode::kS64KBX;
         case 0x1a: return TextureTileMode::kD64KBX;
@@ -34,6 +41,7 @@ TextureDimension resolveDimension(std::uint32_t raw) {
         case 9: return TextureDimension::k2D;
         case 10: return TextureDimension::k3D;
         case 11: return TextureDimension::kCube;
+        case 12: return TextureDimension::k1DArray;
         case 13: return TextureDimension::k2DArray;
         default: throw std::runtime_error("AGC graphics: guest texture descriptor uses an unsupported image type " + std::to_string(raw));
     }
@@ -63,7 +71,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     const auto bcSwizzle = (words[3] >> 25u) & 0x7u;
     const auto typeRaw = (words[3] >> 28u) & 0xfu;
 
-    const auto depth = (words[4] >> 0u) & 0x1fffu;
+    auto depth = (words[4] >> 0u) & 0x1fffu;
     const auto baseArray = (words[4] >> 16u) & 0x1fffu;
 
     const auto arrayPitch = (words[5] >> 0u) & 0xfu;
@@ -107,7 +115,6 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     static_cast<void>(maxCompBlkSize);
     // Surfaces are always written uncompressed here (render targets and storage images bypass DCC), so
     // only the fast-clear keys in DCC metadata change what a read returns (see DccMetadata.hpp).
-    static_cast<void>(metaPipeAligned);
     static_cast<void>(writeCompress);
     if (dccColorTransf) {
         static bool reported = false;
@@ -134,7 +141,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     // hardware never addresses them, so the view ends at the surface's last level.
     if (baseLevel <= maxMip) lastLevel = std::min(lastLevel, maxMip);
     // XOR swizzles fold a pipe/bank XOR into the low address bits; only unmodified 64 KiB bases are modeled.
-    Require(XorSwizzleMode(tileMode) == 0 || (baseAddress & 0xffffu) == 0, "guest texture descriptor combines an XOR swizzle with a pipe/bank XOR base which is not implemented");
+    Require(XorSwizzleMode(tileMode) == 0 || (baseAddress & (tileMode == TextureTileMode::kS4KBX || tileMode == TextureTileMode::kD4KBX ? 0xfffu : 0xffffu)) == 0, "guest texture descriptor combines an XOR swizzle with a pipe/bank XOR base which is not implemented");
 
     switch (dimension) {
         case TextureDimension::k1D:
@@ -150,10 +157,19 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
         case TextureDimension::k2DArray:
             Require(baseArray <= depth, "guest 2D array texture descriptor has a base array past its last array slice");
             break;
+        case TextureDimension::k1DArray:
+            Require(height == 1, "guest 1D array texture descriptor has a nonzero height");
+            Require(baseArray <= depth, "guest 1D array texture descriptor has a base array past its last array slice");
+            Require(tileMode == TextureTileMode::kLinear || tileMode == TextureTileMode::kZ64KBX || tileMode == TextureTileMode::kR64KBX, "guest 1D array texture descriptor uses a tile mode other than linear, Z or R, which 1D resources cannot use");
+            break;
         case TextureDimension::kCube:
             Require(width == height, "guest cube texture descriptor is not square");
             Require(baseArray <= depth, "guest cube texture descriptor has a base array past its last array slice");
-            Require((depth - baseArray + 1u) % 6u == 0, "guest cube texture descriptor does not contain a multiple of 6 array slices");
+            if (baseArray == depth) depth += 5u;
+            if ((depth - baseArray + 1u) % 6u != 0) {
+                Require(false, "guest cube texture descriptor does not contain a multiple of 6 array slices" +
+                    describe() + " (base array " + std::to_string(baseArray) + ")");
+            }
             break;
     }
 
@@ -176,6 +192,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     result.dstSelW = static_cast<std::uint8_t>(dstSelW);
     result.dccAddress = metaCompress ? metaAddr << 8u : 0u;
     result.dccAlphaOnMsb = dccAlphaPos;
+    result.dccPipeAligned = metaPipeAligned;
     result.minLod = minLod;
     if (baseLevel > maxMip) {
         Require(LevelsFitAllocation(result, lastLevel + 1u), "guest texture descriptor starts past the surface's last mip level at levels that would move the surface's own" + describe());
@@ -196,6 +213,7 @@ bool MatchesGuestDimension(ShaderRecompiler::DescriptorImageShape shape, Texture
         case ShaderRecompiler::DescriptorImageShape::Image2DArray: return dimension == TextureDimension::k2DArray || dimension == TextureDimension::kCube;
         case ShaderRecompiler::DescriptorImageShape::ImageCube: return dimension == TextureDimension::kCube;
         case ShaderRecompiler::DescriptorImageShape::Image3D: return dimension == TextureDimension::k3D;
+        case ShaderRecompiler::DescriptorImageShape::Image1DArray: return dimension == TextureDimension::k1DArray;
     }
     throw std::runtime_error("AGC graphics: MatchesGuestDimension encountered an unknown descriptor image shape");
 }

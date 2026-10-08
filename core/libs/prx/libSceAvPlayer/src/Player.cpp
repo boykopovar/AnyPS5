@@ -327,7 +327,7 @@ int Player::SetAvSyncMode(std::uint32_t mode) {
 
 bool Player::GetVideoData(AvPlayerFrameInfoEx& info) {
     std::lock_guard lock(mutex);
-    if (!source || state != State::Play) return false;
+    if (!source || (state != State::Play && state != State::Pause)) return false;
     return source->GetVideoData(info);
 }
 

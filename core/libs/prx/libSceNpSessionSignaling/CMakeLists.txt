@@ -2,12 +2,6 @@ add_library(libSceNpSessionSignaling SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpSessionSignaling PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpSessionSignaling)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_np_session_signaling_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpSessionSignaling.cpp)
     target_include_directories(guest_np_session_signaling_tests PRIVATE ${LIBS_INCLUDE_DIR})

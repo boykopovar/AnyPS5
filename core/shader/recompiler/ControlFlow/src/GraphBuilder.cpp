@@ -146,7 +146,7 @@ bool resolveLongSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex
     const bool adds = low.op == RdnaOpcode::SAddU32 && high.op == RdnaOpcode::SAddcU32;
     const bool subtracts = low.op == RdnaOpcode::SSubU32 && high.op == RdnaOpcode::SSubbU32;
     std::uint32_t lowImmediate = 0, highImmediate = 0;
-    if (setpc.op != RdnaOpcode::SSetpcB64 || pcRegister == NoScalarRegister || pcRegister % 2u != 0u || pc.op != RdnaOpcode::SGetpcB64 || !isScalar(pc.destination, pcRegister)) return false;
+    if (!(setpc.op == RdnaOpcode::SSetpcB64 || setpc.op == RdnaOpcode::SSwappcB64) || pcRegister == NoScalarRegister || pcRegister % 2u != 0u || pc.op != RdnaOpcode::SGetpcB64 || !isScalar(pc.destination, pcRegister)) return false;
     if (adds ? !addsImmediateTo(low, pcRegister, lowImmediate) || !addsImmediateTo(high, pcRegister + 1u, highImmediate)
              : !subtracts || !subtractsImmediateFrom(low, pcRegister, lowImmediate) || !subtractsImmediateFrom(high, pcRegister + 1u, highImmediate)) return false;
     const auto offset = (static_cast<std::uint64_t>(highImmediate) << 32u) | lowImmediate;
@@ -166,7 +166,7 @@ bool resolveSetpcTarget(const RdnaProgram& program, std::uint32_t setpcIndex, st
     }
 
     const auto& setpc = program.instructions[setpcIndex];
-    if (setpc.op != RdnaOpcode::SSetpcB64 || setpc.source0.kind != RdnaOperandKind::ScalarRegister) {
+    if (!(setpc.op == RdnaOpcode::SSetpcB64 || setpc.op == RdnaOpcode::SSwappcB64) || setpc.source0.kind != RdnaOperandKind::ScalarRegister) {
         return false;
     }
 
@@ -392,6 +392,202 @@ bool resolveBoundedJumpTable(const RdnaProgram& program, std::uint32_t index, Bo
     return resolveDwordJumpTable(program, index, result);
 }
 
+bool pairOverlapsRegister(const RdnaOperand& operand, std::uint32_t linkRegister) {
+    const std::uint32_t slot = scalarIndex(operand);
+    return slot != NoScalarRegister && (slot == linkRegister || slot == linkRegister + 1u);
+}
+
+bool touchesLinkRegister(const RdnaInstruction& instruction, std::uint32_t linkRegister) {
+    return pairOverlapsRegister(instruction.destination, linkRegister) || pairOverlapsRegister(instruction.destination2, linkRegister) ||
+        pairOverlapsRegister(instruction.source0, linkRegister) || pairOverlapsRegister(instruction.source1, linkRegister) ||
+        pairOverlapsRegister(instruction.source2, linkRegister) || pairOverlapsRegister(instruction.source3, linkRegister);
+}
+
+bool isFetchCallPrefixOpcode(const RdnaInstruction& instruction) {
+    return IsScalarAluOpcode(instruction.op) || instruction.op == RdnaOpcode::SNop || instruction.op == RdnaOpcode::SWaitcnt ||
+        instruction.op == RdnaOpcode::SWaitcntDepctr || instruction.op == RdnaOpcode::SWaitIdle || instruction.op == RdnaOpcode::SIcacheInv ||
+        instruction.op == RdnaOpcode::SSetprio || instruction.op == RdnaOpcode::SClause;
+}
+
+std::uint32_t instructionIndexOfProgramCounter(const RdnaProgram& program, std::uint32_t programCounter) {
+    for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+        if (program.instructions[index].programCounter == programCounter) {
+            return index;
+        }
+    }
+    return InvalidControlFlowId;
+}
+
+const SwappcCall* findCallAt(const std::vector<SwappcCall>& calls, std::uint32_t index) {
+    for (const auto& call : calls) {
+        if (call.callIndex == index) {
+            return &call;
+        }
+    }
+    return nullptr;
+}
+
+const SwappcCall* findReturnAt(const std::vector<SwappcCall>& calls, std::uint32_t index) {
+    for (const auto& call : calls) {
+        if (!call.fetch && call.returnIndex == index) {
+            return &call;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<SwappcCall> analyzeSwappcCalls(const RdnaProgram& program, const SwappcInfo* swappc) {
+    std::vector<SwappcCall> calls;
+    for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        if (instruction.op != RdnaOpcode::SSwappcB64) {
+            continue;
+        }
+        const std::uint32_t linkRegister = scalarIndex(instruction.destination);
+        if (linkRegister == NoScalarRegister) {
+            throw std::invalid_argument("unsupported s_swappc_b64 link register at program counter " + toHexString(instruction.programCounter) + ": the link must be a scalar register pair");
+        }
+        SwappcCall call;
+        call.callIndex = index;
+        call.linkRegister = linkRegister;
+        for (const auto& other : calls) {
+            if (call.linkRegister <= other.linkRegister + 1u && other.linkRegister <= call.linkRegister + 1u) {
+                throw std::invalid_argument("unclosable s_swappc_b64 call/return pairing at program counter " + toHexString(instruction.programCounter) +
+                    ": link register s[" + std::to_string(call.linkRegister) + "] is shared with another call");
+            }
+        }
+        std::uint32_t target = 0;
+        const bool staticTarget = resolveSetpcTarget(program, index, target);
+        call.targetIndex = staticTarget ? instructionIndexOfProgramCounter(program, target) : InvalidControlFlowId;
+        const bool positional = std::all_of(program.instructions.begin(), program.instructions.begin() + index, isFetchCallPrefixOpcode);
+        const std::uint32_t targetRegister = scalarIndex(instruction.source0);
+        const bool userDataPair = swappc != nullptr && targetRegister != NoScalarRegister &&
+            targetRegister >= swappc->userDataBaseRegister && targetRegister + 1u < swappc->userDataBaseRegister + swappc->userDataCount &&
+            std::none_of(program.instructions.begin(), program.instructions.end(), [&](const RdnaInstruction& other) {
+                return writesScalar(other, targetRegister) || writesScalar(other, targetRegister + 1u);
+            });
+        const bool outsideProgram = staticTarget && call.targetIndex == InvalidControlFlowId;
+        if (swappc != nullptr && swappc->fetchCallAllowed && positional && (userDataPair || outsideProgram)) {
+            call.fetch = true;
+            call.returnTargetProgramCounter = instructionEndProgramCounter(instruction);
+            calls.push_back(call);
+            continue;
+        }
+        if (!staticTarget || call.targetIndex == InvalidControlFlowId) {
+            throw std::invalid_argument("computed/data-dependent s_swappc_b64 call target at program counter " + toHexString(instruction.programCounter) + " is not statically resolvable");
+        }
+        call.targetProgramCounter = target;
+        calls.push_back(call);
+    }
+
+    for (auto& call : calls) {
+        std::uint32_t returnIndex = InvalidControlFlowId;
+        for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+            if (index == call.callIndex) {
+                continue;
+            }
+            const auto& instruction = program.instructions[index];
+            if (instruction.op == RdnaOpcode::SSetpcB64 && pairOverlapsRegister(instruction.source0, call.linkRegister)) {
+                if (returnIndex != InvalidControlFlowId) {
+                    throw std::invalid_argument("unclosable s_swappc_b64 call/return pairing at program counter " + toHexString(program.instructions[call.callIndex].programCounter) +
+                        ": multiple s_setpc_b64 returns read link register s[" + std::to_string(call.linkRegister) + "]");
+                }
+                returnIndex = index;
+                continue;
+            }
+            if (touchesLinkRegister(instruction, call.linkRegister)) {
+                throw std::invalid_argument("s_swappc_b64 link register s[" + std::to_string(call.linkRegister) + "] written at program counter " +
+                    toHexString(program.instructions[call.callIndex].programCounter) + " escapes the constant-offset call/return model (used at program counter " +
+                    toHexString(instruction.programCounter) + ")");
+            }
+        }
+        if (call.fetch) {
+            if (returnIndex != InvalidControlFlowId) {
+                throw std::invalid_argument("unclosable s_swappc_b64 fetch-shader call at program counter " + toHexString(program.instructions[call.callIndex].programCounter) +
+                    ": its s_setpc_b64 return must live in the fetch-shader code");
+            }
+            continue;
+        }
+        if (returnIndex == InvalidControlFlowId) {
+            throw std::invalid_argument("unclosable s_swappc_b64 call/return pairing at program counter " + toHexString(program.instructions[call.callIndex].programCounter) +
+                ": no paired s_setpc_b64 return reads link register s[" + std::to_string(call.linkRegister) + "]");
+        }
+        call.returnIndex = returnIndex;
+        call.returnTargetProgramCounter = instructionEndProgramCounter(program.instructions[call.callIndex]);
+    }
+
+    for (std::size_t first = 0; first < calls.size(); ++first) {
+        if (!calls[first].fetch && calls[first].callIndex >= calls[first].targetIndex && calls[first].callIndex <= calls[first].returnIndex) {
+            throw std::invalid_argument("recursive s_swappc_b64 call at program counter " + toHexString(program.instructions[calls[first].callIndex].programCounter) +
+                ": the call executes inside its own call region");
+        }
+        for (std::size_t second = first + 1u; second < calls.size(); ++second) {
+            if (calls[first].fetch || calls[second].fetch) {
+                continue;
+            }
+            const bool disjoint = calls[first].returnIndex < calls[second].targetIndex || calls[second].returnIndex < calls[first].targetIndex;
+            const bool firstContainsSecond = calls[first].targetIndex <= calls[second].targetIndex && calls[second].returnIndex <= calls[first].returnIndex;
+            const bool secondContainsFirst = calls[second].targetIndex <= calls[first].targetIndex && calls[first].returnIndex <= calls[second].returnIndex;
+            if (!disjoint && !firstContainsSecond && !secondContainsFirst) {
+                throw std::invalid_argument("recursive s_swappc_b64 calls at program counter " + toHexString(program.instructions[calls[first].callIndex].programCounter) +
+                    " and program counter " + toHexString(program.instructions[calls[second].callIndex].programCounter) + ": call regions interleave");
+            }
+        }
+    }
+
+    const bool anyStaticCall = std::any_of(calls.begin(), calls.end(), [](const SwappcCall& call) { return !call.fetch; });
+    if (anyStaticCall) {
+        struct Transfer {
+            std::uint32_t index;
+            std::uint32_t targetIndex;
+        };
+        std::vector<Transfer> transfers;
+        for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+            const auto& instruction = program.instructions[index];
+            if (IsDirectBranchOpcode(instruction.op)) {
+                transfers.push_back(Transfer{index, instructionIndexOfProgramCounter(program, instruction.branchTarget)});
+                continue;
+            }
+            if (instruction.op == RdnaOpcode::SSetpcB64) {
+                if (findReturnAt(calls, index) != nullptr) {
+                    continue;
+                }
+                std::uint32_t target = 0;
+                if (!resolveSetpcTarget(program, index, target)) {
+                    throw std::invalid_argument("unclosable s_swappc_b64 call region in a program with calls: dynamic s_setpc_b64 at program counter " +
+                        toHexString(instruction.programCounter) + " cannot be confined to a call region");
+                }
+                transfers.push_back(Transfer{index, instructionIndexOfProgramCounter(program, target)});
+                continue;
+            }
+            if (instruction.op == RdnaOpcode::SSwappcB64) {
+                const SwappcCall* call = findCallAt(calls, index);
+                transfers.push_back(Transfer{index, call->targetIndex});
+            }
+        }
+        for (const auto& call : calls) {
+            if (call.fetch) {
+                continue;
+            }
+            for (const auto& transfer : transfers) {
+                const bool sourceInside = transfer.index >= call.targetIndex && transfer.index <= call.returnIndex;
+                const bool targetInside = transfer.targetIndex != InvalidControlFlowId && transfer.targetIndex >= call.targetIndex && transfer.targetIndex <= call.returnIndex;
+                if (!sourceInside && targetInside && transfer.index != call.callIndex) {
+                    throw std::invalid_argument("unclosable s_swappc_b64 call/return pairing at program counter " +
+                        toHexString(program.instructions[call.callIndex].programCounter) + ": control flow enters the call region from program counter " +
+                        toHexString(program.instructions[transfer.index].programCounter));
+                }
+                if (sourceInside && !targetInside && transfer.index != call.returnIndex) {
+                    throw std::invalid_argument("unclosable s_swappc_b64 call/return pairing at program counter " +
+                        toHexString(program.instructions[call.callIndex].programCounter) + ": control flow leaves the call region at program counter " +
+                        toHexString(program.instructions[transfer.index].programCounter));
+                }
+            }
+        }
+    }
+    return calls;
+}
+
 BranchCondition conditionForOpcode(RdnaOpcode opcode) {
     switch (opcode) {
         case RdnaOpcode::SBranch: return BranchCondition::Always;
@@ -472,7 +668,7 @@ void pruneUnreachableBlocks(ControlFlowGraph& graph) {
 
 }
 
-std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program) const {
+std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program, const std::vector<SwappcCall>& calls) const {
     if (program.instructions.empty()) {
         throw std::invalid_argument("cannot build a control flow graph for an empty program");
     }
@@ -503,7 +699,9 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
             }
         } else if (instruction.op == RdnaOpcode::SSetpcB64) {
             std::uint32_t target = 0;
-            if (!resolveSetpcTarget(program, index, target)) {
+            if (const SwappcCall* returnCall = findReturnAt(calls, index); returnCall != nullptr) {
+                target = returnCall->returnTargetProgramCounter;
+            } else if (!resolveSetpcTarget(program, index, target)) {
                 BoundedJumpTable table;
                 if (!resolveBoundedJumpTable(program, index, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(instruction.programCounter));
                 for (const auto tableTarget : table.targets) {
@@ -519,6 +717,14 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
             labels.insert(target);
             if (nextProgramCounter <= endProgramCounter) {
                 labels.insert(nextProgramCounter);
+            }
+        } else if (instruction.op == RdnaOpcode::SSwappcB64) {
+            const SwappcCall* call = findCallAt(calls, index);
+            if (call != nullptr && !call->fetch) {
+                labels.insert(call->targetProgramCounter);
+                if (nextProgramCounter <= endProgramCounter) {
+                    labels.insert(nextProgramCounter);
+                }
             }
         } else if (instruction.op == RdnaOpcode::SEndpgm) {
             labels.insert(nextProgramCounter);
@@ -550,7 +756,7 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
     return blocks;
 }
 
-void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram& program) const {
+void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram& program, const std::vector<SwappcCall>& calls) const {
     std::map<std::uint32_t, std::uint32_t> programCounterToBlock;
     for (const auto& block : blocks) {
         programCounterToBlock.emplace(block.startProgramCounter, block.id);
@@ -570,7 +776,11 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
             block.terminator.kind = TerminatorKind::Return;
         } else if (last.op == RdnaOpcode::SSetpcB64) {
             std::uint32_t target = 0;
-            if (!resolveSetpcTarget(program, block.instructionEnd - 1u, target)) {
+            if (const SwappcCall* returnCall = findReturnAt(calls, block.instructionEnd - 1u); returnCall != nullptr) {
+                block.terminator.kind = TerminatorKind::Branch;
+                block.terminator.condition = BranchCondition::Always;
+                block.terminator.trueBlock = programCounterToBlock.at(returnCall->returnTargetProgramCounter);
+            } else if (!resolveSetpcTarget(program, block.instructionEnd - 1u, target)) {
                 BoundedJumpTable table;
                 if (!resolveBoundedJumpTable(program, block.instructionEnd - 1u, table)) throw std::invalid_argument("unsupported dynamic s_setpc_b64 at program counter " + toHexString(last.programCounter));
                 block.terminator.kind = TerminatorKind::IndirectBranch;
@@ -582,11 +792,18 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
                     addUnique(block.successors, programCounterToBlock.at(tableTarget));
                 }
                 continue;
+            } else {
+                if (block.instructionEnd - block.instructionBegin < 4u && resolveLongSetpcTarget(program, block.instructionEnd - 1u, target)) throw std::invalid_argument("long branch at program counter " + toHexString(last.programCounter) + " does not start in its block");
+                block.terminator.kind = TerminatorKind::Branch;
+                block.terminator.condition = BranchCondition::Always;
+                block.terminator.trueBlock = programCounterToBlock.at(target);
             }
-            if (block.instructionEnd - block.instructionBegin < 4u && resolveLongSetpcTarget(program, block.instructionEnd - 1u, target)) throw std::invalid_argument("long branch at program counter " + toHexString(last.programCounter) + " does not start in its block");
+        } else if (const SwappcCall* call = findCallAt(calls, block.instructionEnd - 1u); call != nullptr && !call->fetch) {
+            std::uint32_t ignoredTarget = 0;
+            if (block.instructionEnd - block.instructionBegin < 4u && resolveLongSetpcTarget(program, block.instructionEnd - 1u, ignoredTarget)) throw std::invalid_argument("long branch at program counter " + toHexString(last.programCounter) + " does not start in its block");
             block.terminator.kind = TerminatorKind::Branch;
             block.terminator.condition = BranchCondition::Always;
-            block.terminator.trueBlock = programCounterToBlock.at(target);
+            block.terminator.trueBlock = programCounterToBlock.at(call->targetProgramCounter);
         } else if (last.op == RdnaOpcode::SBranch) {
             block.terminator.kind = TerminatorKind::Branch;
             block.terminator.condition = BranchCondition::Always;
@@ -636,10 +853,17 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
     }
 }
 
-ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program) const {
+ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInfo* swappc) const {
+    const std::vector<SwappcCall> calls = analyzeSwappcCalls(program, swappc);
     ControlFlowGraph graph;
-    graph.blocks = splitIntoBlocks(program);
-    linkBlocks(graph.blocks, program);
+    graph.blocks = splitIntoBlocks(program, calls);
+    linkBlocks(graph.blocks, program, calls);
+    for (const auto& call : calls) {
+        if (call.fetch) {
+            graph.hasFetchCall = true;
+            graph.fetchCallProgramCounter = program.instructions[call.callIndex].programCounter;
+        }
+    }
     const auto originalSize = graph.blocks.size();
     for (std::uint32_t id = 0; id < originalSize; ++id) {
         const auto term = graph.blocks[id].terminator;

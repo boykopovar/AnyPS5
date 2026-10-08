@@ -36,6 +36,7 @@ struct TrampolineSite {
     std::vector<std::uint8_t> OriginalBytes;
     std::vector<std::uint8_t> Body;
     std::size_t ReturnBranchOffset;
+    std::vector<StubRelocation> Relocations = {};
 };
 
 struct ConvertResult {

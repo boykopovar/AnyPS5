@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
@@ -7,10 +8,6 @@
 namespace ShaderRecompiler
 {
 namespace {
-
-[[noreturn]] void FailEmit(const std::string& reason) {
-    throw std::runtime_error("SPIR-V module emission failed: " + reason);
-}
 
 std::uint32_t StorageBufferType(SpirvEmitterState& state) {
     const auto array = state.module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, TypeU32(state));

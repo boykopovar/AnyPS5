@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -103,7 +104,7 @@ void SetVolume(AudioOut2PortHandle port, const std::vector<float>& volume) {
 }
 
 std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume) {
-    const auto path = std::filesystem::temp_directory_path() / "anyps5_audio_out2_port_layouts.raw";
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_layouts-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 

@@ -21,6 +21,8 @@ int keyCount = 0;
 
 constexpr char US_NORMAL[] = "1234567890\n\0\b\t -=[]\\\0;'`,./";
 constexpr char US_SHIFTED[] = "!@#$%^&*()\n\0\b\t _+{}|\0:\"~<>?";
+constexpr char JIS_NORMAL[] = "1234567890\n\0\b\t -^@[]];:\0,./";
+constexpr char JIS_SHIFTED[] = "!\"#$%&'()\0\n\0\b\t =~`{}}+*\0<>?";
 constexpr char KEYPAD_DIGITS[] = "1234567890.";
 
 KeyboardData snapshot() {
@@ -69,15 +71,18 @@ bool updateKey(std::uint16_t keyCode, bool pressed) {
     return true;
 }
 
-std::uint16_t usCharacter(std::uint32_t ledState, std::uint32_t modifierKey, std::uint16_t keyCode) {
+std::uint16_t character(bool jis, std::uint32_t ledState, std::uint32_t modifierKey, std::uint16_t keyCode) {
     const bool shift = (modifierKey & (KEYBOARD_MOD_LEFT_SHIFT | KEYBOARD_MOD_RIGHT_SHIFT)) != 0;
     if (keyCode >= 0x04 && keyCode <= 0x1d) {
         const bool upper = shift != ((ledState & KEYBOARD_LED_CAPS_LOCK) != 0);
         return static_cast<std::uint16_t>((upper ? 'A' : 'a') + keyCode - 0x04);
     }
     if (keyCode >= 0x1e && keyCode <= 0x38) {
-        return static_cast<unsigned char>((shift ? US_SHIFTED : US_NORMAL)[keyCode - 0x1e]);
+        const char* table = jis ? (shift ? JIS_SHIFTED : JIS_NORMAL) : (shift ? US_SHIFTED : US_NORMAL);
+        return static_cast<unsigned char>(table[keyCode - 0x1e]);
     }
+    if (jis && keyCode == 0x87) return shift ? '_' : '\\';
+    if (jis && keyCode == 0x89) return shift ? '|' : '\\';
     switch (keyCode) {
         case 0x54: return '/';
         case 0x55: return '*';
@@ -155,13 +160,13 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
         if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     }
     if (charData == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
-    if (arrange == KEYBOARD_ARRANGEMENT_106) {
+    if (arrange != KEYBOARD_ARRANGEMENT_101 && arrange != KEYBOARD_ARRANGEMENT_106) return KEYBOARD_ERROR_INVALID_ARG;
+    if (arrange == KEYBOARD_ARRANGEMENT_106 && (ledState & KEYBOARD_LED_KANA) != 0) {
         NotImplemented_nid_no_patch(__func__);
         return KEYBOARD_ERROR_INVALID_ARG;
     }
-    if (arrange != KEYBOARD_ARRANGEMENT_101) return KEYBOARD_ERROR_INVALID_ARG;
     *charData = {};
-    charData->char_code = usCharacter(ledState, modifierKey, keyCode);
+    charData->char_code = character(arrange == KEYBOARD_ARRANGEMENT_106, ledState, modifierKey, keyCode);
     charData->processed = charData->char_code != 0;
     charData->length = charData->processed ? 1 : 0;
     return KEYBOARD_OK;

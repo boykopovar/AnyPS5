@@ -569,7 +569,7 @@ constexpr DivisionVector DivisionVectors[] = {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x11016facu};
 }
 
 class Shader {

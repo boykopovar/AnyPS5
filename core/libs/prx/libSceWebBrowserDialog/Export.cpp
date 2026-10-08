@@ -46,6 +46,10 @@ int APS5_VABI sceWebBrowserDialogGetResult(void* result) {
  return 0;
 }
 
+int APS5_VABI sceWebBrowserDialogGetStatus(void) {
+    return g_status.load();
+}
+
 int APS5_VABI sceWebBrowserDialogOpen(const void* param) {
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
@@ -57,6 +61,22 @@ int APS5_VABI sceWebBrowserDialogOpen(const void* param) {
 
 int APS5_VABI sceWebBrowserDialogUpdateStatus(void) {
     return g_status.load();
+}
+
+
+int APS5_VABI sceWebBrowserDialogSetCookie(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceWebBrowserDialogResetCookie() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

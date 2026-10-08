@@ -78,4 +78,23 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
     }
 }
 
+int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept {
+    const auto failed = [](int error) {
+        SetError(error);
+        return -1;
+    };
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    if (length == 0) return 0;
+    if (start == 0 || length > std::numeric_limits<std::uintptr_t>::max() - start)
+        return failed(GuestInvalid);
+    try {
+        if (DoMprotect(address, length, protection) != 0) return failed(GuestInvalid);
+        return 0;
+    } catch (const std::bad_alloc&) {
+        return failed(GuestNoMemory);
+    } catch (const std::exception&) {
+        return failed(GuestInvalid);
+    }
+}
+
 }

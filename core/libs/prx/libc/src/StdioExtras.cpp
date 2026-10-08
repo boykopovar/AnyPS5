@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -76,12 +77,20 @@ void* APS5_VABI _Znam_nid_postfix(std::size_t size) {
     return Allocate(size);
 }
 
-void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) {
-    return Allocate(size);
+void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
+    try {
+        return Allocate(size);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
 }
 
-void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) {
-    return Allocate(size);
+void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
+    try {
+        return Allocate(size);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
 }
 
 void APS5_VABI _ZdlPv_nid_postfix(void* pointer) {
@@ -101,6 +110,11 @@ void APS5_VABI _ZdaPvm_nid_postfix(void* pointer, std::size_t) {
 }
 
 void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alignment) {
+    (void)alignment;
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void APS5_VABI _ZdlPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, std::size_t alignment) {
     (void)alignment;
     if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
 }

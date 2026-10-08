@@ -6,7 +6,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <SDL_loadso.h>
 #include <array>
+#include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -42,7 +44,27 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            const auto rankDeviceType = [](VkPhysicalDeviceType type) {
+                switch (type) {
+                    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
+                    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 2;
+                    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 1;
+                    default: return 0;
+                }
+            };
+            const auto physicalProperties = function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
+            int selectedRank = -1;
+            for (const auto physical : devices) {
+                VkPhysicalDeviceProperties candidate{};
+                physicalProperties(physical, &candidate);
+                if (candidate.apiVersion < VK_API_VERSION_1_1) continue;
+                const int rank = rankDeviceType(candidate.deviceType);
+                if (rank <= selectedRank) continue;
+                context.physical = physical;
+                selectedRank = rank;
+                cpu = candidate.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+            }
+            Require(context.physical != VK_NULL_HANDLE, "no Vulkan 1.1 device");
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -90,6 +112,7 @@ public:
 
     ~Device() { release(); }
     const Context& GetContext() const { return context; }
+    bool RunsOnCpu() const { return cpu; }
 
 private:
     template<typename TFunction>
@@ -111,6 +134,7 @@ private:
     PFN_vkGetInstanceProcAddr instanceProc = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
+    bool cpu = false;
 };
 
 }
@@ -125,13 +149,24 @@ int main(int argc, char** argv) {
             Require(static_cast<bool>(file), "cannot save BDA test SPIR-V");
             return 0;
         }
-        Device device;
-        Buffer buffer(device.GetContext(), 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        std::unique_ptr<Device> device;
+        try {
+            device = std::make_unique<Device>();
+        } catch (const std::exception& error) {
+            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+            std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
+            return 77;
+        }
+        Buffer buffer(device->GetContext(), 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
         Require(buffer.DeviceAddress() != 0 && buffer.Bytes().size() == 256, "invalid real BDA buffer");
         buffer.Bytes()[255] = std::byte{0x5a};
         Require(buffer.Bytes()[255] == std::byte{0x5a}, "real BDA buffer mapping failed");
-        RunBdaExecutionTests(device.GetContext());
-        RunColorTransferTests(device.GetContext());
+        if (device->RunsOnCpu()) {
+            std::cout << "CPU Vulkan device: BDA execution not tested\n";
+        } else {
+            RunBdaExecutionTests(device->GetContext());
+        }
+        RunColorTransferTests(device->GetContext());
         std::cout << "Vulkan BDA allocation and execution tests passed\n";
         return 0;
     } catch (const std::exception& error) {

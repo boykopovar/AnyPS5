@@ -15,8 +15,24 @@ namespace ShaderRecompiler
 {
 namespace {
 
-    [[noreturn]] void FailEmit(const std::string& reason) {
-        throw std::runtime_error("SPIR-V module emission failed: " + reason);
+    std::uint32_t UnormToF32Bits(SpirvEmitterState& state, std::uint32_t value, std::uint32_t bits) {
+        const std::uint32_t maximum = (1u << bits) - 1u;
+        const auto zero = EmitCompareU32Constant(state, spv::OpIEqual, value, 0u);
+        const auto safe = EmitSelectValueU32(state, zero, ConstantU32(state, 1u), value);
+        const auto msb = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeU32(state), msb, GlslStd450(state), GLSLstd450FindUMsb, safe);
+        const auto leading = EmitBinaryU32(state, spv::OpISub, ConstantU32(state, bits - 1u), msb);
+        const auto high = EmitBinaryU32(state, spv::OpShiftLeftLogical, safe, leading);
+        const auto low = EmitBinaryU32(state, spv::OpShiftRightLogical, safe, EmitBinaryU32(state, spv::OpISub, ConstantU32(state, bits), leading));
+        const auto rotated = EmitAndConstant(state, EmitOrU32(state, high, low), maximum);
+        auto pattern = EmitBinaryU32(state, spv::OpShiftLeftLogical, rotated, ConstantU32(state, 32u - bits));
+        for (std::uint32_t shift = bits; shift < 32u; shift *= 2u) {
+            pattern = EmitOrU32(state, pattern, EmitBinaryU32(state, spv::OpShiftRightLogical, pattern, ConstantU32(state, shift)));
+        }
+        const auto round = EmitAndConstant(state, EmitBinaryU32(state, spv::OpShiftRightLogical, pattern, ConstantU32(state, 7u)), 1u);
+        const auto rounded = EmitAddU32(state, EmitBinaryU32(state, spv::OpShiftRightLogical, pattern, ConstantU32(state, 8u)), round);
+        const auto exponent = EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitAddU32(state, msb, ConstantU32(state, 126u - bits)), ConstantU32(state, 23u));
+        return EmitSelectValueU32(state, zero, ConstantU32(state, 0u), EmitAddU32(state, exponent, rounded));
     }
 
 }
@@ -71,24 +87,16 @@ std::uint32_t NormalizeFormatComponent(SpirvEmitterState& state, const SpirvBuff
             state.module.AddFunction(spv::OpConvertSToF, TypeF32(state), value, signedRaw);
             return EmitBitcastF32ToU32(state, value);
     }
-    case SpirvFormatComponentType::Unorm: {
-            const auto value = state.module.AllocateId();
-            const auto normalized = state.module.AllocateId();
-            const auto maxValue = static_cast<float>((1u << bits) - 1u);
-            state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), value, raw);
-            state.module.AddFunction(spv::OpFDiv, TypeF32(state), normalized, value, ConstantF32Value(state, maxValue));
-            return EmitBitcastF32ToU32(state, normalized);
-    }
+    case SpirvFormatComponentType::Unorm:
+        return UnormToF32Bits(state, raw, bits);
     case SpirvFormatComponentType::Snorm: {
-            const auto signedRaw = EmitTBufferBitcastU32ToI32(state, raw);
-            const auto value = state.module.AllocateId();
-            const auto normalized = state.module.AllocateId();
+            const std::uint32_t maximum = (1u << (bits - 1u)) - 1u;
+            const auto negative = Binary(state, spv::OpSLessThan, TypeBool(state), EmitTBufferBitcastU32ToI32(state, raw), EmitTBufferBitcastU32ToI32(state, ConstantU32(state, 0u)));
+            const auto magnitude = EmitSelectValueU32(state, negative, Unary(state, spv::OpSNegate, TypeU32(state), raw), raw);
             const auto clamped = state.module.AllocateId();
-            const auto maxValue = static_cast<float>((1u << (bits - 1u)) - 1u);
-            state.module.AddFunction(spv::OpConvertSToF, TypeF32(state), value, signedRaw);
-            state.module.AddFunction(spv::OpFDiv, TypeF32(state), normalized, value, ConstantF32Value(state, maxValue));
-            state.module.AddFunction(spv::OpExtInst, TypeF32(state), clamped, GlslStd450(state), GLSLstd450FMax, normalized, ConstantF32Value(state, -1.0f));
-            return EmitBitcastF32ToU32(state, clamped);
+            state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, magnitude, ConstantU32(state, maximum));
+            const auto sign = EmitSelectValueU32(state, negative, ConstantU32(state, 0x80000000u), ConstantU32(state, 0u));
+            return EmitOrU32(state, sign, UnormToF32Bits(state, clamped, bits - 1u));
     }
     case SpirvFormatComponentType::Float:
         if (bits == 32u) {

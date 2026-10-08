@@ -1,6 +1,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <array>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -18,6 +21,7 @@ struct FormatEntry {
 constexpr FormatEntry kFormatLookup[] = {
     {1, VK_FORMAT_R8_UNORM, 1, false},
     {5, VK_FORMAT_R8_UINT, 1, false},
+    {6, VK_FORMAT_R8_SINT, 1, false},
     {7, VK_FORMAT_R16_UNORM, 2, false},
     {8, VK_FORMAT_R16_SNORM, 2, false},
     {11, VK_FORMAT_R16_UINT, 2, false},
@@ -92,7 +96,7 @@ constexpr auto MakeFormatLookupTable() {
 constexpr auto kFormatLookupTable = MakeFormatLookupTable();
 
 std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
-    return guestFormat == 34 ? 20 : guestFormat;
+    return guestFormat == 30 || guestFormat == 34 || guestFormat == 43 ? 20 : guestFormat;
 }
 
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
@@ -108,6 +112,27 @@ VkFormat ResolveTextureFormat(std::uint32_t guestFormat) {
     return findFormatEntry(guestFormat).vkFormat;
 }
 
+std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
+    const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
+    const bool always = forced != nullptr && std::strcmp(forced, "1") == 0;
+    const auto sampled = [&](ShaderRecompiler::IrBufferFormat format) {
+        VkFormatProperties properties{};
+        formatProperties(physical, ResolveTextureFormat(static_cast<std::uint32_t>(format)), &properties);
+        return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+    };
+    std::uint32_t formats = 0;
+    for (const auto format : {ShaderRecompiler::IrBufferFormat::Format8Srgb, ShaderRecompiler::IrBufferFormat::Format8_8Srgb}) {
+        if ((always || !sampled(format)) && sampled(ShaderRecompiler::SrgbUnormFormat(format))) formats |= ShaderRecompiler::SrgbDecodeBit(format);
+    }
+    return formats;
+}
+
+VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
+    const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
+    if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
+    return ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format)));
+}
+
 std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32_t elementBytes) {
     for (const auto& entry : kFormatLookup) {
         if (!entry.blockCompressed && entry.vkFormat == format && entry.bytesPerElement == elementBytes) return entry.guestFormat;
@@ -117,6 +142,10 @@ std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32
 
 std::uint32_t BytesPerElement(std::uint32_t guestFormat) {
     return findFormatEntry(guestFormat).bytesPerElement;
+}
+
+bool IsConvertedTextureFormat(std::uint32_t guestFormat) {
+    return remapGuestFormat(guestFormat) != guestFormat;
 }
 
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes) {

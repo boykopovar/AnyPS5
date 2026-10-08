@@ -66,9 +66,16 @@ public:
 
     VkImageView View() const;
     VkImageView FirstLayerView() const { return firstLayerView; }
+    struct ViewRange {
+        VkImageViewType type;
+        std::uint32_t levels;
+        std::uint32_t layers;
+    };
+    ViewRange SampledViewRange(bool firstLayer) const { return firstLayer ? firstLayerRange : viewRange; }
     // The layout the image is kept in while sampled.
     VkImageLayout Layout() const { return layout; }
     VkDeviceSize AllocationBytes() const { return allocationBytes; }
+    VkFormat ViewFormat() const { return viewFormat; }
     // Whether this texture is a view of a storage image (no snapshot of its own).
     bool ViewsStorageImage() const { return storageSource != nullptr; }
     const StorageTexture* StorageSource() const { return storageSource.get(); }
@@ -90,12 +97,17 @@ private:
     std::shared_ptr<OwnedImage> owned;
     VkImageView view = VK_NULL_HANDLE;
     VkImageView firstLayerView = VK_NULL_HANDLE;
+    ViewRange viewRange{};
+    ViewRange firstLayerRange{};
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
+    VkFormat viewFormat = VK_FORMAT_UNDEFINED;
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<StorageTexture> storageSource;
     std::unique_ptr<CommandBatch> upload;
 };
+
+VkFormat AttachmentProxyFormat(const Context& context, VkFormat format);
 
 // A guest texture a shader writes through a storage image. It is uploaded like a sampled texture;
 // after the GPU work completes its results are stored to guest memory (retiled, changed bytes only),
@@ -114,11 +126,16 @@ public:
     // so successive mip writes of a chain share one image and one write-back.
     VkImageView View(std::uint32_t mip);
     VkImageView FirstLayerView(std::uint32_t mip);
+    VkImageView StorageView(std::uint32_t mip, bool firstLayer);
     VkImageView AtomicView(std::uint32_t mip, bool firstLayer);
+    VkImageView Atomic64View(std::uint32_t mip, bool firstLayer);
     // Render targets live in the same images: draws attach mip 0 through a view of the color
     // buffer's format and mark the image dirty like a storage write.
     bool Attachable() const { return attachable; }
     VkImageView AttachmentView(VkFormat format, std::uint32_t mip = 0, std::uint32_t depthSlice = 0);
+    VkImageView AttachmentProxyView();
+    void RecordAttachmentProxyLoad(VkCommandBuffer commands, VkImageLayout attachmentLayout) const;
+    void RecordAttachmentProxyStore(VkCommandBuffer commands, VkImageLayout attachmentLayout) const;
     void WriteBack();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
@@ -266,6 +283,7 @@ public:
     DccKeys UploadedKeys() const { return uploadedKeys; }
     DccKeys FilledKeys() const { return filledKeys; }
     DccKeyProof& KeyProof() const { return keyProof; }
+    DccKeys ProvedKeys() const;
     bool ServesKeysAt(std::uint64_t dccAddress) const;
     // Brings the image up to date with guest memory before another use; returns whether its content
     // was still current (nothing uploaded).
@@ -409,7 +427,7 @@ private:
     std::vector<std::byte> original;
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
-    DccKeys filledKeys = DccKeys::Uncompressed;
+    mutable DccKeys filledKeys = DccKeys::Uncompressed;
     mutable DccKeyProof keyProof;
     struct ForeignKeyProof {
         std::uint64_t dccAddress = 0;
@@ -444,8 +462,12 @@ private:
     std::map<std::uint32_t, VkImageView> extraViews;
     std::map<std::uint32_t, VkImageView> firstLayerViews;
     std::map<std::pair<std::uint32_t, bool>, VkImageView> atomicViews;
+    std::map<std::pair<std::uint32_t, bool>, VkImageView> uintViews;
     bool attachable = false;
     std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
+    VkImage proxyImage = VK_NULL_HANDLE;
+    VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
+    VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;

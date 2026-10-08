@@ -12,6 +12,7 @@
 
 namespace {
 
+constexpr int PAD_ERROR_DEVICE_NOT_CONNECTED = static_cast<int>(0x80920007);
 constexpr int PAD_ERROR_DEVICE_NO_HANDLE = static_cast<int>(0x80920008);
 
 bool g_opened = false;
@@ -139,6 +140,22 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  return PAD_HANDLE;
 }
 
+int APS5_VABI scePadOpenExt(int userId, int type, int index, const void* param) {
+ if (!ValidPort(userId, type, index) || param == nullptr) {
+  return PAD_ERROR_INVALID_ARG;
+ }
+ if (type != PAD_PORT_TYPE_SPECIAL) NotImplemented_nid_no_patch(__func__);
+ return PAD_ERROR_DEVICE_NOT_CONNECTED;
+}
+
+int APS5_VABI scePadReadExt() { NotImplemented_nid_no_patch(__func__); return 0; }
+
+int APS5_VABI scePadGetFeatureReport() { NotImplemented_nid_no_patch(__func__); return 0; }
+
+int APS5_VABI scePadSetFeatureReport() { NotImplemented_nid_no_patch(__func__); return 0; }
+
+int APS5_VABI scePadOutputReport() { NotImplemented_nid_no_patch(__func__); return 0; }
+
 int APS5_VABI scePadReadState(int handle, PadData* data);
 
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
@@ -150,7 +167,7 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 }
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
- if (handle != 1) APS5_INVALID_ARG_EX;
+ if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr) APS5_INVALID_ARG_EX;
 
  *data = Pad::ReadState();
@@ -233,8 +250,25 @@ int APS5_VABI scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool enab
  return PAD_OK;
 }
 
-APS5_EXPORT("fCWdlnmB1Ks", scePadUnknown_fCWdlnmB1Ks);
-int APS5_VABI scePadUnknown_fCWdlnmB1Ks(void) {
+int APS5_VABI scePadVrControllerGetDeviceInformation() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI scePadVrControllerRead() {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
+ if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (remote == nullptr) return PAD_ERROR_INVALID_ARG;
+ *remote = false;
+ return 0;
+}
+
+
+int APS5_VABI scePadSetAngularVelocityBiasCorrectionState() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

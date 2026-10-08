@@ -13,7 +13,13 @@ static std::string _jsonString(const std::string& s) {
         else if (c == '\n') out += "\\n";
         else if (c == '\r') out += "\\r";
         else if (c == '\t') out += "\\t";
-        else out.push_back(c);
+        else if (static_cast<unsigned char>(c) < 0x20) {
+            constexpr char digits[] = "0123456789abcdef";
+            const auto value = static_cast<unsigned char>(c);
+            out += "\\u00";
+            out.push_back(digits[value >> 4]);
+            out.push_back(digits[value & 0x0f]);
+        } else out.push_back(c);
     }
     out.push_back('"');
     return out;

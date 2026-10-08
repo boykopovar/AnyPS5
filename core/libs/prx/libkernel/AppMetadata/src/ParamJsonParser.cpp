@@ -181,7 +181,12 @@ JsonValue parseJsonNumber(const std::string& text, std::size_t& position) {
     const std::size_t start = position;
     if (peekChar(text, position) == '-') ++position;
     if (position >= text.size() || text[position] < '0' || text[position] > '9') throw std::runtime_error("malformed number in param.json");
-    while (position < text.size() && text[position] >= '0' && text[position] <= '9') ++position;
+    if (text[position] == '0') {
+        ++position;
+        if (position < text.size() && text[position] >= '0' && text[position] <= '9') throw std::runtime_error("malformed number in param.json");
+    } else {
+        while (position < text.size() && text[position] >= '0' && text[position] <= '9') ++position;
+    }
     if (position < text.size() && text[position] == '.') {
         ++position;
         if (position >= text.size() || text[position] < '0' || text[position] > '9') throw std::runtime_error("malformed number in param.json");
@@ -281,6 +286,15 @@ ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
             if (downloadData->numberValue >= 0x1p64) throw std::runtime_error("param.json downloadDataSize exceeds uint64 range");
             result.downloadDataSizeMiB = static_cast<std::uint64_t>(downloadData->numberValue);
         }
+    }
+    for (int index = 0; index < 4; ++index) {
+        const std::string key = "userDefinedParam" + std::to_string(index + 1);
+        const JsonValue* param = findObjectMember(root, key);
+        if (param == nullptr) continue;
+        const auto& number = param->numberText;
+        if (param->type != JsonType::Number || number.find_first_of(".eE") != std::string::npos) throw std::runtime_error("param.json " + key + " is not an integer");
+        const auto parsed = std::from_chars(number.data(), number.data() + number.size(), result.userDefinedParams[index]);
+        if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size()) throw std::runtime_error("param.json " + key + " exceeds int32 range");
     }
     return result;
 }

@@ -9,7 +9,7 @@
 extern "C" {
 
 int APS5_VABI sceNpTrophy2GetGameInfo(int context, int handle, NpTrophy2GameDetails* details, NpTrophy2GameData* data) {
-    if (details == nullptr || data == nullptr) {
+    if (details == nullptr && data == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     (void)context;

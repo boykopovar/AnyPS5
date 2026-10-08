@@ -10,7 +10,6 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/VarArgsAbi.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
 
@@ -89,7 +88,7 @@ void AppendPadded(std::u16string& out, const std::u16string& text, bool left, in
     if (left) out.append(pad, u' ');
 }
 
-std::u16string FormatWide(const char16_t* format, VaList* source, bool rejectNullStrings = false) {
+std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = false) {
     if (format == nullptr || source == nullptr) throw std::invalid_argument("Null formatting argument");
     LibcDetail::FormatArguments args(source);
     std::u16string out;
@@ -172,15 +171,23 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool rejectNul
             const std::size_t limit = precision < 0 ? SIZE_MAX : static_cast<std::size_t>(precision);
             if (conversion == u'S' || length == "l") {
                 const char16_t* value = args.Next<const char16_t*>();
-                if (value == nullptr && rejectNullStrings) throw std::invalid_argument("Null string argument");
+                if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
                 if (value == nullptr) value = u"(null)";
                 for (std::size_t index = 0; index < limit && value[index] != 0; ++index) text.push_back(value[index]);
             } else {
                 const char* value = args.Next<const char*>();
-                if (value == nullptr && rejectNullStrings) throw std::invalid_argument("Null string argument");
+                if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
                 AppendUtf16(text, value != nullptr ? value : "(null)", limit);
             }
             AppendPadded(out, text, left, width);
+        } else if (conversion == u'n' && integerLength && spec == "%" && !secure) {
+            void* pointer = args.Next<void*>();
+            if (!pointer) throw std::invalid_argument("Null format count pointer");
+            const int count = static_cast<int>(out.size());
+            if (length == "hh") *static_cast<signed char*>(pointer) = static_cast<signed char>(count);
+            else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
+            else if (length.empty()) *static_cast<int*>(pointer) = count;
+            else *static_cast<long long*>(pointer) = count;
         } else {
             throw std::invalid_argument("Unsupported format conversion");
         }

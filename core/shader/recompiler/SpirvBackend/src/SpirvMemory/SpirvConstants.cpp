@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
@@ -6,14 +7,6 @@
 
 namespace ShaderRecompiler
 {
-namespace {
-
-[[noreturn]] void FailEmit(const std::string& reason) {
-    throw std::runtime_error("SPIR-V module emission failed: " + reason);
-}
-
-}
-
 
 std::uint32_t ConstantU32(SpirvEmitterState& state, std::uint32_t value) {
     return state.module.Constant(spv::OpConstant, TypeU32(state), value);

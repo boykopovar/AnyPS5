@@ -194,7 +194,7 @@ struct PhaseTimer {
 
 
 VkImageType ImageTypeFor(TextureDimension dimension) {
-    return dimension == TextureDimension::k1D ? VK_IMAGE_TYPE_1D : dimension == TextureDimension::k3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    return dimension == TextureDimension::k1D || dimension == TextureDimension::k1DArray ? VK_IMAGE_TYPE_1D : dimension == TextureDimension::k3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
 }
 
 VkImageViewType ViewTypeFor(TextureDimension dimension, [[maybe_unused]] std::uint32_t viewLayerCount) {
@@ -205,6 +205,7 @@ VkImageViewType ViewTypeFor(TextureDimension dimension, [[maybe_unused]] std::ui
         // Shaders address cube maps as 2D arrays of faces.
         case TextureDimension::kCube: return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
         case TextureDimension::k3D: return VK_IMAGE_VIEW_TYPE_3D;
+        case TextureDimension::k1DArray: return VK_IMAGE_VIEW_TYPE_1D_ARRAY;
     }
     throw std::runtime_error("AGC graphics: Texture encountered an unknown guest texture dimension");
 }
@@ -229,7 +230,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
     try {
-        const auto colorFormat = ResolveTextureFormat(descriptor.format);
+        const auto colorFormat = SampledTextureFormat(context, descriptor.format);
         Require(!depthCompare || colorFormat == VK_FORMAT_R32_SFLOAT || colorFormat == VK_FORMAT_R16_UNORM, "comparison sampling requires an R32 float or R16 unorm depth texture");
         Require(!depthCompare || descriptor.dimension != TextureDimension::k3D, "comparison sampling does not support 3D depth textures");
         const auto vkFormat = depthCompare ? (colorFormat == VK_FORMAT_R32_SFLOAT ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM) : colorFormat;
@@ -311,9 +312,9 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             VkCommandBuffer commands = VK_NULL_HANDLE;
             if (recorder != nullptr) {
                 commands = recorder->Commands();
-                recorder->Keep(staging);
-                recorder->Keep(tiled);
-                recorder->Keep(linear);
+                recorder->Keep(staging, static_cast<std::size_t>(guestBytes));
+                recorder->Keep(tiled, static_cast<std::size_t>(guestBytes));
+                recorder->Keep(linear, static_cast<std::size_t>(linearBytes));
                 recorder->Keep(owned);
             } else {
                 batch = std::make_unique<CommandBatch>(context);
@@ -423,12 +424,14 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         viewInfo.image = image;
         viewInfo.viewType = ViewTypeFor(descriptor.dimension, viewLayerCount);
         viewInfo.format = vkFormat;
+        viewFormat = vkFormat;
         viewInfo.components = depthCompare ? VkComponentMapping{} : components;
         viewInfo.subresourceRange = {aspect, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
 
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView");
+        viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         if (profile) {
             auto& totals = Profile();
@@ -454,7 +457,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
     PhaseTimer timer;
     try {
         Require(source != nullptr && CanCopyFrom(*source, descriptor), "storage image does not match the sampled texture");
-        const auto vkFormat = ResolveTextureFormat(descriptor.format);
+        const auto vkFormat = SampledTextureFormat(context, descriptor.format);
         const auto geometry = DescribeSurface(descriptor);
         APS5_LOG_OUT("Texture address=0x%llx %ux%u mips=%u viewed from storage image (vk=%d)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, static_cast<int>(vkFormat));
         // Storage images stay in the general layout; the view samples them there.
@@ -468,11 +471,13 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewInfo.image = source->Image();
         viewInfo.viewType = ViewTypeFor(descriptor.dimension, viewLayerCount);
         viewInfo.format = vkFormat;
+        viewFormat = vkFormat;
         viewInfo.components = components;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView storage view");
+        viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         if (profile) {
             auto& totals = Profile();
@@ -492,9 +497,11 @@ Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthForma
     viewInfo.image = depthImage;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = depthFormat;
+    viewFormat = depthFormat;
     viewInfo.components = components;
     viewInfo.subresourceRange = {aspect, 0, 1, 0, 1};
     Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView depth plane");
+    viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
 }
 
 Texture::~Texture() {
@@ -506,6 +513,7 @@ void Texture::createFirstLayerView(const GuestTextureResource& descriptor, VkIma
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.subresourceRange.layerCount = 1;
     Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &firstLayerView), "vkCreateImageView first layer");
+    firstLayerRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
 }
 
 void Texture::release() noexcept {
@@ -580,6 +588,20 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
     return storage;
 }
 
+VkFormat UintFormatOfSint(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8G8_SINT: return VK_FORMAT_R8G8_UINT;
+        case VK_FORMAT_R8G8B8A8_SINT: return VK_FORMAT_R8G8B8A8_UINT;
+        case VK_FORMAT_R16_SINT: return VK_FORMAT_R16_UINT;
+        case VK_FORMAT_R16G16_SINT: return VK_FORMAT_R16G16_UINT;
+        case VK_FORMAT_R16G16B16A16_SINT: return VK_FORMAT_R16G16B16A16_UINT;
+        case VK_FORMAT_R32_SINT: return VK_FORMAT_R32_UINT;
+        case VK_FORMAT_R32G32_SINT: return VK_FORMAT_R32G32_UINT;
+        case VK_FORMAT_R32G32B32A32_SINT: return VK_FORMAT_R32G32B32A32_UINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+
 VkFormat StorageFormatFor(const Context& context, VkFormat format) {
     const auto storage = StorageFormatOrUndefined(context, format);
     if (storage == VK_FORMAT_UNDEFINED) Require(false, "guest storage texture format " + std::to_string(format) + " cannot be used as a storage image");
@@ -631,6 +653,28 @@ VkFormat StorageFormatForGuest(const Context& context, std::uint32_t guestFormat
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys) {
     VkClearColorValue clear{};
     return IsDccClear(keys) && StorageFormatAvailable(context, guestFormat) && ClearColorFor(StorageFormatForGuest(context, guestFormat), keys, clear);
+}
+
+VkFormat AttachmentProxyFormat(const Context& context, VkFormat format) {
+    if (format != VK_FORMAT_R8_SRGB) return VK_FORMAT_UNDEFINED;
+    struct Table {
+        std::mutex mutex;
+        std::unordered_map<VkPhysicalDevice, VkFormat> formats;
+    };
+    static Table table;
+    {
+        std::lock_guard lock(table.mutex);
+        if (const auto found = table.formats.find(context.physical); found != table.formats.end()) return found->second;
+    }
+    const char* forced = std::getenv("APS5_SRGB_ATTACHMENT_PROXY");
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    constexpr VkFormatFeatureFlags attachment = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
+    const bool proxied = (forced != nullptr && std::strcmp(forced, "1") == 0) || (properties.optimalTilingFeatures & attachment) != attachment;
+    const auto proxy = proxied ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_UNDEFINED;
+    std::lock_guard lock(table.mutex);
+    table.formats.emplace(context.physical, proxy);
+    return proxy;
 }
 
 StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel) : context(context), detiler(detiler), descriptor(descriptor) {
@@ -953,7 +997,7 @@ VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer, VkFor
     viewInfo.pNext = format == storageFormat ? nullptr : &usage;
     viewInfo.image = image;
     // Storage views address one mip; cube faces are written as array layers.
-    viewInfo.viewType = firstLayer ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    viewInfo.viewType = firstLayer ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, descriptor.baseArray, viewLayerCount};
@@ -984,6 +1028,95 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, s
     return created;
 }
 
+VkImageView StorageTexture::AttachmentProxyView() {
+    if (proxyView != VK_NULL_HANDLE) return proxyView;
+    Require(storageFormat == VK_FORMAT_R8_UNORM && descriptor.dimension == TextureDimension::k2D && descriptor.mipCount == 1 && geometry.imageLayers == 1, "an RGBA8_SRGB attachment proxy is only modeled for a single-mip 2D R8 surface");
+    try {
+        VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        imageInfo.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        imageInfo.extent = {descriptor.width, descriptor.height, 1};
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &proxyImage), "vkCreateImage attachment proxy");
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, proxyImage, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &proxyMemory), "vkAllocateMemory attachment proxy");
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, proxyImage, proxyMemory, 0), "vkBindImageMemory attachment proxy");
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image = proxyImage;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+        viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &proxyView), "vkCreateImageView attachment proxy");
+    } catch (...) {
+        if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
+        if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
+        proxyImage = VK_NULL_HANDLE;
+        proxyMemory = VK_NULL_HANDLE;
+        proxyView = VK_NULL_HANDLE;
+        throw;
+    }
+    return proxyView;
+}
+
+namespace {
+
+void blitWhole(const Context& context, VkCommandBuffer commands, VkImage source, VkImage destination, std::uint32_t width, std::uint32_t height) {
+    VkImageBlit region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.srcOffsets[1] = {static_cast<std::int32_t>(width), static_cast<std::int32_t>(height), 1};
+    region.dstSubresource = region.srcSubresource;
+    region.dstOffsets[1] = region.srcOffsets[1];
+    context.Function<PFN_vkCmdBlitImage>("vkCmdBlitImage")(commands, source, VK_IMAGE_LAYOUT_GENERAL, destination, VK_IMAGE_LAYOUT_GENERAL, 1, &region, VK_FILTER_NEAREST);
+}
+
+VkImageMemoryBarrier proxyBarrier(VkImage image, VkAccessFlags source, VkAccessFlags destination, VkImageLayout from, VkImageLayout to) {
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = source;
+    barrier.dstAccessMask = destination;
+    barrier.oldLayout = from;
+    barrier.newLayout = to;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    return barrier;
+}
+
+}
+
+void StorageTexture::RecordAttachmentProxyLoad(VkCommandBuffer commands, VkImageLayout attachmentLayout) const {
+    Require(proxyView != VK_NULL_HANDLE, "the storage image has no attachment proxy");
+    const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
+    const VkMemoryBarrier written{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    const auto discard = proxyBarrier(proxyImage, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &written, 0, nullptr, 1, &discard);
+    blitWhole(context, commands, image, proxyImage, descriptor.width, descriptor.height);
+    const auto attach = proxyBarrier(proxyImage, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, attachmentLayout);
+    barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &attach);
+}
+
+void StorageTexture::RecordAttachmentProxyStore(VkCommandBuffer commands, VkImageLayout attachmentLayout) const {
+    Require(proxyView != VK_NULL_HANDLE, "the storage image has no attachment proxy");
+    const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
+    const auto detach = proxyBarrier(proxyImage, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, attachmentLayout, VK_IMAGE_LAYOUT_GENERAL);
+    barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &detach);
+    blitWhole(context, commands, proxyImage, image, descriptor.width, descriptor.height);
+    const VkMemoryBarrier stored{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT};
+    barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &stored, 0, nullptr, 0, nullptr);
+}
+
 VkImageView StorageTexture::View(std::uint32_t mip) {
     if (mip == defaultMip) return view;
     const auto found = extraViews.find(mip);
@@ -1001,12 +1134,34 @@ VkImageView StorageTexture::FirstLayerView(std::uint32_t mip) {
     return created;
 }
 
+VkImageView StorageTexture::StorageView(std::uint32_t mip, bool firstLayer) {
+    const auto format = UintFormatOfSint(storageFormat);
+    if (format == VK_FORMAT_UNDEFINED) return firstLayer ? FirstLayerView(mip) : View(mip);
+    if (format == VK_FORMAT_R32_UINT) return AtomicView(mip, firstLayer);
+    const auto found = uintViews.find({mip, firstLayer});
+    if (found != uintViews.end()) return found->second;
+    Require(StorageFormatOrUndefined(context, format) == format, "storage image of format " + std::to_string(storageFormat) + " has no storage view of its UINT format " + std::to_string(format));
+    const auto created = createView(mip, firstLayer, format);
+    uintViews.emplace(std::pair{mip, firstLayer}, created);
+    return created;
+}
+
 VkImageView StorageTexture::AtomicView(std::uint32_t mip, bool firstLayer) {
     if (storageFormat == VK_FORMAT_R32_UINT) return firstLayer ? FirstLayerView(mip) : View(mip);
     Require(storageFormat == VK_FORMAT_R32_SINT || storageFormat == VK_FORMAT_R32_SFLOAT, "storage image atomics need a surface of one 32-bit component");
     const auto found = atomicViews.find({mip, firstLayer});
     if (found != atomicViews.end()) return found->second;
     const auto created = createView(mip, firstLayer, VK_FORMAT_R32_UINT);
+    atomicViews.emplace(std::pair{mip, firstLayer}, created);
+    return created;
+}
+
+VkImageView StorageTexture::Atomic64View(std::uint32_t mip, bool firstLayer) {
+    if (storageFormat == VK_FORMAT_R64_UINT) return firstLayer ? FirstLayerView(mip) : View(mip);
+    Require(storageFormat == VK_FORMAT_R32G32_UINT || storageFormat == VK_FORMAT_R32G32_SINT || storageFormat == VK_FORMAT_R32G32_SFLOAT, "64-bit storage image atomics need a surface of two 32-bit components");
+    const auto found = atomicViews.find({mip, firstLayer});
+    if (found != atomicViews.end()) return found->second;
+    const auto created = createView(mip, firstLayer, VK_FORMAT_R64_UINT);
     atomicViews.emplace(std::pair{mip, firstLayer}, created);
     return created;
 }
@@ -1101,7 +1256,7 @@ bool StorageTexture::Refresh() {
             tracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks);
         };
         const auto keysStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        keys = ProvedClearKeys(descriptor, guestBytes, keyProof);
+        keys = ProvedKeys();
         if (profile && descriptor.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, keysStart);
         if (keys != uploadedKeys) {
             changed.assign(trackedLayers, true);
@@ -1279,6 +1434,15 @@ bool StorageTexture::Refresh() {
     return false;
 }
 
+DccKeys StorageTexture::ProvedKeys() const {
+    std::optional<DccKeys> keys;
+    if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) keys = WaitForKeyWriters(descriptor, guestBytes);
+    if (keys.has_value()) keyProof = {};
+    else keys = ProvedClearKeys(descriptor, guestBytes, keyProof);
+    if (IsDccClear(filledKeys) && *keys != filledKeys && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
+    return *keys;
+}
+
 bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
     const bool locked = GuestMemory::GpuMutex().HeldByThisThread();
     const auto readFollowed = [&] {
@@ -1308,7 +1472,7 @@ void traceKeyStore(const char* path, const GuestTextureResource& descriptor, std
     static const bool trace = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
     if (!trace || descriptor.dccAddress == 0) return;
     const auto packet = GuestMemory::CurrentPacket();
-    std::fprintf(stderr, "[dcc-keys] uncompressed store by %s (%s) for surface 0x%llx+0x%llx: keys 0x%llx+0x%llx (packet 0x%x queue 0x%x)\n", path, flushReason != nullptr ? flushReason : "?", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(descriptor.dccAddress), static_cast<unsigned long long>(guestBytes / 256), packet.opcode, packet.queue);
+    std::fprintf(stderr, "[dcc-keys] uncompressed store by %s (%s) for surface 0x%llx+0x%llx: keys 0x%llx+0x%llx (packet 0x%x queue 0x%x)\n", path, flushReason != nullptr ? flushReason : "?", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(descriptor.dccAddress), static_cast<unsigned long long>(DccKeyCount(descriptor, guestBytes)), packet.opcode, packet.queue);
 }
 
 }
@@ -1435,7 +1599,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             recorder->FlushStoresOverlapping(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
-            recorder->Keep(linear);
+            recorder->Keep(linear, linear->Size());
             // The image itself must outlive the recorded copy: the cache may evict it right after.
             if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
             // The detile reads the tiled bytes from the import when the batch runs.
@@ -1764,7 +1928,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
         for (const auto& [begin, end] : reads) recorder->FlushStoresOverlapping(begin, static_cast<std::size_t>(end - begin));
         commands = recorder->Commands();
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
-        recorder->Keep(linear);
+        recorder->Keep(linear, linear->Size());
         for (const auto& source : sources) {
             if (source.slab != nullptr) recorder->Keep(source.slab);
         }
@@ -1930,8 +2094,8 @@ std::uint64_t StorageTexture::writeBackWindows(const HostImport& import, std::sp
         recorder->FlushStoresOverlapping(flushBegin, static_cast<std::size_t>(flushEnd - flushBegin));
         commands = recorder->Commands(&covered);
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageWriteBack);
-        recorder->Keep(linear);
-        recorder->Keep(tiledScratch);
+        recorder->Keep(linear, linear->Size());
+        recorder->Keep(tiledScratch, tiledScratch->Size());
         for (const auto& pieces : slabPieces) recorder->Keep(pieces.slab);
         for (const auto& slab : padding.slabs) recorder->Keep(slab);
         if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
@@ -2049,6 +2213,11 @@ bool StorageTexture::overlaps(std::uint64_t address, std::size_t bytes) const {
 }
 
 void StorageTexture::MarkDirty() {
+    if (descriptor.dccAddress != 0 && IsDccClear(uploadedKeys) && !IsDccClear(filledKeys)) {
+        traceKeyStore("first write", descriptor, guestBytes);
+        MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+        uploadedKeys = DccKeys::Uncompressed;
+    }
     markLayersPending(0, trackedLayers);
 }
 
@@ -3316,7 +3485,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (profile) Profile().storageGpu += timer.lap();
             originalValid = false;
             traceKeyStore("block write-back", descriptor, guestBytes);
-            if (!IsDccClear(filledKeys)) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes);
+            if (!IsDccClear(filledKeys)) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
             uploadedKeys = DccKeys::Uncompressed;
             for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
             settle(true);
@@ -3347,8 +3516,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             recorder->FlushStoresOverlapping(firstStored, static_cast<std::size_t>(lastStored - firstStored));
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageWriteBack);
-            recorder->Keep(linear);
-            recorder->Keep(tiledScratch);
+            recorder->Keep(linear, linear->Size());
+            recorder->Keep(tiledScratch, tiledScratch->Size());
             for (const auto& slab : padding.slabs) recorder->Keep(slab);
             // The image itself must outlive the recorded retile: the cache may evict it right after.
             if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
@@ -3424,7 +3593,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // metadata is host-imported (no CPU wait for the title's key-writing kernels), else a CPU
         // store (APS5_CPU_DCC_KEYS=1 keeps the CPU store; see DccMetadata.hpp).
         traceKeyStore("layer write-back", descriptor, guestBytes);
-        if (!IsDccClear(filledKeys)) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes);
+        if (!IsDccClear(filledKeys)) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
         for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
         // The walk covers this surface's pages only: an adjacent image's later CPU write is stamped
@@ -3534,7 +3703,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // The texels now hold the whole image, so later reads must see them rather than a fast clear
     // (the keys may be host-imported although the texels were not: then a recorded fill, else a CPU store).
     traceKeyStore("cpu write-back", descriptor, guestBytes);
-    if (!IsDccClear(filledKeys)) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes);
+    if (!IsDccClear(filledKeys)) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
     uploadedKeys = DccKeys::Uncompressed;
     // The store above is the only write to these pages, so `original` is current at a fresh
     // generation, unless blocks were kept for the CPU: then the image is stale there.
@@ -3575,8 +3744,13 @@ void StorageTexture::release() noexcept {
     firstLayerViews.clear();
     for (const auto& [key, atomic] : atomicViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, atomic, nullptr);
     atomicViews.clear();
+    for (const auto& [key, uint] : uintViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uint, nullptr);
+    uintViews.clear();
     for (const auto& [format, attachment] : attachmentViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, attachment, nullptr);
     attachmentViews.clear();
+    if (proxyView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, proxyView, nullptr);
+    if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
+    if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
     if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);

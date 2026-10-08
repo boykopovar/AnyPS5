@@ -100,6 +100,9 @@ int main() {
         Require(ReadFrame(highQuality).components == 3 && ReadFrame(highQuality).sampling == factor);
     }
     Require(ThrowsInvalidArgument([&] { Decoder::Jpeg::Encode(rgb, width, height, 3, 90, static_cast<Decoder::Jpeg::Sampling>(3)); }));
+    Require(ThrowsInvalidArgument([&] { Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv444, 1, 1); }));
+    Require(ThrowsInvalidArgument([&] { Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv444, 0x10000, 0); }));
+    Require(ThrowsInvalidArgument([&] { Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv444, 0, 0x10000); }));
 
     Require(!Decoder::Jpeg::Decode({}).has_value());
     const std::vector<std::uint8_t> garbage{1, 2, 3, 4, 5, 6, 7, 8};

@@ -136,8 +136,7 @@ int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
 }
 
 int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceOpenChallengeActivity(void) {
@@ -151,8 +150,7 @@ int APS5_VABI sceSystemServiceOpenTournamentOccurrence(void) {
 }
 
 int APS5_VABI sceSystemServiceReenableMusicPlayer(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceShowControllerSettings(void) {

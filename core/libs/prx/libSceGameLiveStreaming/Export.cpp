@@ -14,4 +14,14 @@ int APS5_VABI sceGameLiveStreamingTerminate(void) {
     return 0;
 }
 
+int APS5_VABI sceGameLiveStreamingGetCurrentStatus2() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceGameLiveStreamingGetProgramInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

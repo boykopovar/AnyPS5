@@ -26,13 +26,20 @@ struct Submission {
     std::map<std::size_t, std::shared_ptr<IFlipRequest>> flips;
     std::map<std::size_t, std::shared_ptr<IRenderingWait>> renderingWaits;
     std::map<std::size_t, std::size_t> conditionalEnds;
+    std::map<std::size_t, std::vector<std::uint32_t>> registerLists;
     bool suspend = false;
     bool waitFree = false;
 
     std::uint64_t received = 0;
     std::vector<std::uint64_t> labelWrites;
     std::set<std::size_t> heldAtSubmit;
+    std::chrono::steady_clock::time_point receivedAt{};
+    std::chrono::steady_clock::time_point copiedAt{};
+    std::chrono::steady_clock::time_point validatedAt{};
+    std::chrono::steady_clock::time_point roomReadyAt{};
     std::chrono::steady_clock::time_point enqueuedAt{};
+    std::chrono::steady_clock::time_point dequeuedAt{};
+    std::chrono::steady_clock::time_point orderedAt{};
     const std::uint32_t* rewindTail = nullptr;
     std::size_t rewindWords = 0;
 };

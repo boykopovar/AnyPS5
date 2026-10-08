@@ -11,6 +11,9 @@
 
 extern "C" {
 
+std::tm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, std::tm* result);
+std::tm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, std::tm* result);
+
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {
     std::time_t t = std::time(nullptr);
     if (timer != nullptr) *timer = static_cast<int64_t>(t);
@@ -44,20 +47,12 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 std::tm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local std::tm result;
-    const std::time_t t = static_cast<std::time_t>(*timer);
-    const std::tm* converted = std::gmtime(&t);
-    if (converted == nullptr) return nullptr;
-    result = *converted;
-    return &result;
+    return gmtime_s_nid_postfix(timer, &result);
 }
 
 std::tm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
     static thread_local std::tm result;
-    const std::time_t t = static_cast<std::time_t>(*timer);
-    const std::tm* converted = std::localtime(&t);
-    if (converted == nullptr) return nullptr;
-    result = *converted;
-    return &result;
+    return localtime_s_nid_postfix(timer, &result);
 }
 
 std::tm* APS5_VABI localtime_nid_postfix(const int64_t* timer) {

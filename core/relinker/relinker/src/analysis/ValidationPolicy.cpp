@@ -1,7 +1,10 @@
 #include "relinker/analysis//ValidationPolicy.hpp"
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <sstream>
 
 namespace Relinker {
+
+using namespace Elfpatcher;
 
 static constexpr std::uint8_t SYSCALL_BYTE0 = 0x0F;
 static constexpr std::uint8_t SYSCALL_BYTE1 = 0x05;
@@ -11,21 +14,6 @@ static constexpr std::uint8_t SYSENTER_BYTE0 = 0x0F;
 static constexpr std::uint8_t SYSENTER_BYTE1 = 0x34;
 static constexpr std::uint8_t SYSRET_BYTE0 = 0x0F;
 static constexpr std::uint8_t SYSRET_BYTE1 = 0x07;
-
-static constexpr std::uint32_t R_X86_64_NONE = 0;
-static constexpr std::uint32_t R_X86_64_64 = 1;
-static constexpr std::uint32_t R_X86_64_PC32 = 2;
-static constexpr std::uint32_t R_X86_64_GOT32 = 3;
-static constexpr std::uint32_t R_X86_64_PLT32 = 4;
-static constexpr std::uint32_t R_X86_64_COPY = 5;
-static constexpr std::uint32_t R_X86_64_GLOB_DAT = 6;
-static constexpr std::uint32_t R_X86_64_JUMP_SLOT = 7;
-static constexpr std::uint32_t R_X86_64_RELATIVE = 8;
-static constexpr std::uint32_t R_X86_64_GOTPCREL = 9;
-static constexpr std::uint32_t R_X86_64_32 = 10;
-static constexpr std::uint32_t R_X86_64_32S = 11;
-static constexpr std::uint32_t R_X86_64_GOTPCRELX = 41;
-static constexpr std::uint32_t R_X86_64_REX_GOTPCRELX = 42;
 
 void ValidationPolicy::_initializeSupportedRelocationTypes() {
     _supportedRelocationTypes = {

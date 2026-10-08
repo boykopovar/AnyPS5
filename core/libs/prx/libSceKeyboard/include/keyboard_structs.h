@@ -18,6 +18,7 @@ constexpr std::int32_t KEYBOARD_ARRANGEMENT_106 = 1;
 constexpr std::uint32_t KEYBOARD_LED_NUM_LOCK = 1;
 constexpr std::uint32_t KEYBOARD_LED_CAPS_LOCK = 2;
 constexpr std::uint32_t KEYBOARD_LED_SCROLL_LOCK = 4;
+constexpr std::uint32_t KEYBOARD_LED_KANA = 16;
 constexpr std::uint32_t KEYBOARD_MOD_LEFT_SHIFT = 2;
 constexpr std::uint32_t KEYBOARD_MOD_RIGHT_SHIFT = 32;
 

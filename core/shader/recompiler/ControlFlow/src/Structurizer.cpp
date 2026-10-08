@@ -464,6 +464,19 @@ std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock
     if (isLoopControlGateway(graph, *loop, falseTarget) && graph.Dominates(block.id, falseTarget) && isInsideLoopConstruct(graph, *loop, trueTarget)) {
         return falseTarget;
     }
+    const auto joinsAt = [&](std::uint32_t join, std::uint32_t other) {
+        const auto& arm = graph.FindBlock(other);
+        const bool armLeavesOrJoins = arm.terminator.kind == TerminatorKind::ConditionalBranch && arm.predecessors.size() == 1u && std::all_of(arm.successors.begin(), arm.successors.end(), [&](std::uint32_t successor) {
+            return successor == join || successor == loop->continueBlock || successor == loop->mergeBlock;
+        });
+        return armLeavesOrJoins && isInsideLoopConstruct(graph, *loop, other) && isInsideLoopConstruct(graph, *loop, join) && graph.Dominates(block.id, join);
+    };
+    if (joinsAt(trueTarget, falseTarget)) {
+        return trueTarget;
+    }
+    if (joinsAt(falseTarget, trueTarget)) {
+        return falseTarget;
+    }
     if (globalMerge != InvalidControlFlowId) {
         const bool trueJoins = reachesWithinIteration(graph, *loop, trueTarget, globalMerge);
         const bool falseJoins = reachesWithinIteration(graph, *loop, falseTarget, globalMerge);

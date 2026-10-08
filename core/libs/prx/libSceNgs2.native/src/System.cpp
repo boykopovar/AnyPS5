@@ -13,11 +13,10 @@
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
-static constexpr std::uint32_t MIN_GRAIN_SAMPLES = 64;
 
 static std::vector<Ngs2System*>& Systems() {
-    static std::vector<Ngs2System*> systems;
-    return systems;
+    static auto* const systems = new std::vector<Ngs2System*>();
+    return *systems;
 }
 
 std::string Ngs2Hex(std::uint32_t value) {
@@ -27,8 +26,8 @@ std::string Ngs2Hex(std::uint32_t value) {
 }
 
 std::recursive_mutex& Ngs2Mutex() {
-    static std::recursive_mutex mutex;
-    return mutex;
+    static auto* const mutex = new std::recursive_mutex();
+    return *mutex;
 }
 
 Ngs2System* Ngs2FindSystem(Ngs2Handle handle) {

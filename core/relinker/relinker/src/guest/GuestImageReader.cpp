@@ -7,6 +7,7 @@
 #include <iterator>
 #include <set>
 #include <sstream>
+#include <domain/ImportModule.hpp>
 
 namespace Relinker {
 
@@ -61,12 +62,14 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     if (loads.empty() || dynamic == nullptr || dynamic->FileSize % 16 != 0) fail("Missing or invalid ELF load/dynamic segments");
     std::map<std::uint64_t, std::uint64_t> tags;
     std::vector<std::uint64_t> needed;
+    std::vector<std::uint64_t> moduleImports;
     bool terminated = false;
     for (std::uint64_t offset = dynamic->Offset; offset < dynamic->Offset + dynamic->FileSize; offset += 16) {
         const auto tag = Io::ReadU64(bytes, offset);
         const auto value = Io::ReadU64(bytes, offset + 8);
         if (tag == 0) { terminated = true; break; }
         if (tag == 1) needed.push_back(value);
+        else if (tag == 0x61000045) moduleImports.push_back(value);
         else if (tag < 0x60000000 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
             if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
         }
@@ -118,9 +121,15 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     const auto symOffset = table(6, 0x61000039, symSize);
     image.Dynamic.DynSymData.assign(bytes.begin() + symOffset, bytes.begin() + symOffset + symSize);
     image.Dynamic.DynStrData.push_back(0);
+    std::map<std::uint64_t, std::string> importModules;
+    for (const auto value : moduleImports)
+        if (!importModules.emplace(value >> 48, string(value & 0xffffffffu)).second) fail("Duplicate import module ID");
+    std::vector<std::string> neededLibraries;
+    for (const auto offset : needed) neededLibraries.push_back(string(offset));
     std::set<std::string> exports;
     for (std::uint64_t offset = 0; offset < symSize; offset += 24) {
         auto name = string(Io::ReadU32(bytes, symOffset + offset));
+        const auto library = Io::ReadU16(bytes, symOffset + offset + 6) == 0 ? Domain::ImportModule(name, importModules, neededLibraries) : std::string{};
         name = name.substr(0, name.find('#'));
         const auto info = bytes[symOffset + offset + 4];
         const auto visibility = bytes[symOffset + offset + 5];
@@ -144,7 +153,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (image.Dynamic.DynStrData.size() > std::numeric_limits<std::uint32_t>::max()) fail("String table too large");
         Io::WriteU32(image.Dynamic.DynSymData, offset, static_cast<std::uint32_t>(image.Dynamic.DynStrData.size()));
         Io::AppendString(image.Dynamic.DynStrData, name);
-        image.Symbols.push_back({name, info, visibility, section, value, size});
+        image.Symbols.push_back({name, info, visibility, section, value, size, library});
     }
     if (tags.contains(14)) {
         image.Soname = string(tags.at(14));

@@ -100,21 +100,21 @@ def main():
         source = app / "eboot.bin"
         source.write_bytes(fixture())
         icon = app / "sce_sys" / "icon0.png"
-        output = work / "output.exe"
 
-        def relink():
-            output.unlink(missing_ok=True)
-            return subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
-                                  cwd=work, capture_output=True, text=True, timeout=20)
+        def relink(name):
+            output = work / f"{name}.exe"
+            result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
+                                    cwd=work, capture_output=True, text=True, timeout=20)
+            return result, output
 
-        result = relink()
+        result, output = relink("missing-initial")
         assert result.returncode == 0, (result.stdout, result.stderr)
         assert resources(output.read_bytes()) is None
         icon.parent.mkdir()
         for width, height in ((32, 32), (128, 64), (256, 256), (512, 512), (1024, 1024)):
             image = png(width, height)
             icon.write_bytes(image)
-            result = relink()
+            result, output = relink(f"icon-{width}x{height}")
             assert result.returncode == 0, (result.stdout, result.stderr)
             embedded = resources(output.read_bytes())
             assert embedded is not None, "missing Windows icon resources"
@@ -133,13 +133,13 @@ def main():
                      png(0, 32), png(32, 0), bytes(bad_crc), valid[:-1], valid[:-12],
                      valid + b"garbage", valid[:33] + chunk(b"IEND", b""),
                      valid[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 32, 32, 8, 6, 1, 0, 0)) + valid[33:])
-        for image in malformed:
+        for index, image in enumerate(malformed):
             icon.write_bytes(image)
-            result = relink()
+            result, output = relink(f"malformed-{index}")
             assert result.returncode != 0 and not output.exists(), (result.stdout, result.stderr)
             assert "Invalid Windows icon PNG" in result.stderr and str(icon) in result.stderr, result.stderr
         icon.unlink()
-        result = relink()
+        result, output = relink("missing-final")
         assert result.returncode == 0 and resources(output.read_bytes()) is None
     print("Windows icon integration tests passed (5 images, 11 malformed files, missing icon)")
 

@@ -83,7 +83,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     for (std::size_t index = 0; index < dynamicSection.GuestModules.size(); ++index) {
         const auto& module = dynamicSection.GuestModules[index];
         guestPaths.push_back(module.Path);
-        for (const auto& import : module.Imports) relocations.Imports.push_back({import.Name, import.TargetRva, import.Addend, static_cast<std::int32_t>(index), import.RelocationType});
+        for (const auto& import : module.Imports) relocations.Imports.push_back({import.Name, import.TargetRva, import.Addend, static_cast<std::int32_t>(index), import.RelocationType, import.Library});
     }
     libraries.insert(libraries.begin(), guestPaths.begin(), guestPaths.end());
     if (dependencyDiagnostics)

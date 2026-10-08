@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -211,7 +212,7 @@ void Fill(std::uint32_t tid, std::uint32_t* words) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -247,12 +248,18 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void Check() {
+bool ReadsExecLo(std::string_view name) {
+    if (name.starts_with("scc") || (name.find("saveexec") == std::string_view::npos && name.find("wrexec") == std::string_view::npos)) return false;
+    return name.find("_b32 ") != std::string_view::npos || name.ends_with(" s12") || name.ends_with(" s14");
+}
+
+void Check(std::uint32_t subgroupSize) {
+    const std::uint32_t hostLanes = subgroupSize < 32u ? (1u << subgroupSize) - 1u : 0xffffffffu;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < Results; ++i) {
-            if (Names[i] != nullptr) Expect(tid, out[i], Expected[tid][i], Names[i]);
+            if (Names[i] != nullptr) Expect(tid, out[i], ReadsExecLo(Names[i]) ? Expected[tid][i] & hostLanes : Expected[tid][i], Names[i]);
         }
     }
 }
@@ -264,7 +271,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device);
-        Check();
+        Check(device->Target().subgroupSize);
         std::puts("scalar sop1 tests passed");
         return 0;
     } catch (const std::exception& error) {

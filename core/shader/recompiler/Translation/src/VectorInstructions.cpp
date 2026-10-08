@@ -722,8 +722,9 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         vPackB32F16(inst);
         return true;
     case RdnaOpcode::VCvtPkU16U32:
+        return vCvtPk16I32(inst, false);
     case RdnaOpcode::VCvtPkI16I32:
-        return packB16(inst, false, false);
+        return vCvtPk16I32(inst, true);
     case RdnaOpcode::VLshlrevB16:
         return integer16Shift(inst, IrOpcode::ShiftLeftLogical32, false);
     case RdnaOpcode::VLshrrevB16:

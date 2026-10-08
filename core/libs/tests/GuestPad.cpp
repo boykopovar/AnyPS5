@@ -8,13 +8,17 @@
 
 extern "C" {
 int APS5_VABI scePadOpen_nid_postfix(int, int, int, const void*);
+int APS5_VABI scePadOpenExt(int, int, int, const void*);
 int APS5_VABI scePadClose_nid_postfix(int);
 int APS5_VABI scePadGetHandle(int, int, int);
 int APS5_VABI scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool);
 int APS5_VABI scePadInit_nid_postfix(void);
+int APS5_VABI scePadRead_nid_postfix(int, PadData*, int);
+int APS5_VABI scePadReadState(int, PadData*);
 int APS5_VABI scePadSetTiltCorrectionState(int, bool);
 int APS5_VABI scePadResetOrientation(int);
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int, bool);
+int APS5_VABI scePadIsRemoteController(int, bool*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -57,6 +61,23 @@ static void CheckTouchContact() {
     Pad::ReadState();
 }
 
+static void CheckReadStateHandle(int handle) {
+    PadData data{};
+    Require(scePadReadState(0, &data) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadReadState(handle + 1, &data) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadRead_nid_postfix(0, &data, 1) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadReadState(handle, &data) == PAD_OK);
+}
+
+static void CheckRemoteController(int handle) {
+    bool remote = true;
+    Require(scePadIsRemoteController(handle + 1, &remote) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadIsRemoteController(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(remote);
+    Require(scePadIsRemoteController(handle, &remote) == PAD_OK);
+    Require(!remote);
+}
+
 int main() {
     constexpr int noHandle = static_cast<int>(0x80920008);
     constexpr int user = 0x10000000;
@@ -65,12 +86,19 @@ int main() {
     Require(scePadOpen_nid_postfix(user, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadOpen_nid_postfix(user, 0, 1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
+    const unsigned char wheel[16]{0xb7, 0x0e, 0x04, 0x0e, 0x08, 0x6e, 0x01};
+    Require(scePadOpenExt(user, PAD_PORT_TYPE_SPECIAL, 0, wheel) == static_cast<int>(0x80920007));
+    Require(scePadOpenExt(user, PAD_PORT_TYPE_SPECIAL, 1, wheel) == PAD_ERROR_INVALID_ARG);
+    Require(scePadOpenExt(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetHandle(user, 0, 0) == noHandle);
     const int handle = scePadOpen_nid_postfix(user, 0, 0, nullptr);
     Require(handle > 0);
     Require(scePadGetHandle(user, 0, 0) == handle);
     Require(scePadGetHandle(user, 2, 0) == handle);
     CheckTiltCorrection(handle);
     CheckTouchContact();
+    CheckReadStateHandle(handle);
+    CheckRemoteController(handle);
     Require(scePadGetHandle(0xff, 16, 0) == handle);
     Require(scePadGetHandle(user, 16, 0) == noHandle);
     Require(scePadGetHandle(user, 0, 1) == noHandle);

@@ -1,7 +1,7 @@
 function(add_sce_avplayer_library target)
     set(avPlayerDir ${CMAKE_CURRENT_FUNCTION_LIST_DIR})
     add_library(${target} SHARED EXCLUDE_FROM_ALL
-            ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+            ${avPlayerDir}/Export.cpp
             ${avPlayerDir}/src/Player.cpp
             ${avPlayerDir}/src/Source.cpp
     )

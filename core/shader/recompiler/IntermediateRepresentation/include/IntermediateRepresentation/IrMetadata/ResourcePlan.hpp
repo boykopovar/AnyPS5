@@ -55,6 +55,7 @@ struct IrResourcePlan {
     std::uint64_t shaderHash = 0;
     std::uint32_t userDataBase = 0;
     std::uint32_t userDataCount = 64;
+    std::uint32_t srgbDecodeFormats = 0;
     std::vector<std::unique_ptr<IrValue>> valueStorage;
     std::vector<std::unique_ptr<IrBlock>> blockStorage;
     std::vector<MemoryInfo> memoryInfo;

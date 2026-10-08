@@ -10,6 +10,9 @@ from test_linux_load_alignment import fixture as executable_fixture
 SITE = bytes.fromhex("f2 0f 78 db 08 08")
 SITE_ADDRESSES = (0x1002, 0x1012)
 PLAIN_SITE = b"\x90" * len(SITE)
+RIP_DISPLACEMENT = 0x10F6
+RIP_SITE = bytes.fromhex("0f 38 cc 15") + struct.pack("<i", RIP_DISPLACEMENT)
+CASES = (("plain", PLAIN_SITE), ("stub", SITE), ("rip", RIP_SITE))
 
 
 def guest_fixture(site):
@@ -26,8 +29,9 @@ def guest_fixture(site):
     struct.pack_into("<IIQQQQQQ", image, 176,
                      2, 6, 0x600, 0x2000, 0x2000, len(tags) * 16, len(tags) * 16, 8)
     image[0x400:0x500] = b"\x90" * 0x100
-    image[0x400:0x409] = b"\xeb\x06" + site + b"\xc3"
-    image[0x410:0x419] = b"\xeb\x06" + site + b"\xc3"
+    code = bytes((0xEB, len(site))) + site + b"\xc3"
+    image[0x400:0x400 + len(code)] = code
+    image[0x410:0x410 + len(code)] = code
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x600 + index * 16, *tag)
     struct.pack_into("<II", image, 0x840, 1, 1)
@@ -96,19 +100,30 @@ def check_trampoline(read, site_address):
     assert continuation == site_address + len(SITE), (target, continuation)
 
 
+def check_rip_trampoline(read, site_address):
+    patched = read(site_address, len(RIP_SITE))
+    assert patched[0] == 0xE9 and patched[5:] == b"\x90" * (len(RIP_SITE) - 5), patched.hex()
+    target = site_address + 5 + struct.unpack_from("<i", patched, 1)[0]
+    body = read(target, 21)
+    assert body[13:17] == bytes.fromhex("f3 0f 6f 0d"), body.hex()
+    operand = target + 21 + struct.unpack_from("<i", body, 17)[0]
+    assert operand == site_address + len(RIP_SITE) + RIP_DISPLACEMENT, (site_address, operand)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-intel-") as directory:
         work = Path(directory)
         for windows in (False, True):
-            for has_stub in (False, True):
-                case = work / ("windows" if windows else "linux") / ("stub" if has_stub else "plain")
+            for kind, site in CASES:
+                has_stub = kind != "plain"
+                case = work / ("windows" if windows else "linux") / kind
                 module_dir = case / "sce_module"
                 module_dir.mkdir(parents=True)
                 source = case / "input.elf"
                 output = case / ("output.exe" if windows else "output.elf")
                 source.write_bytes(main_fixture())
-                (module_dir / "sample.prx").write_bytes(guest_fixture(SITE if has_stub else PLAIN_SITE))
+                (module_dir / "sample.prx").write_bytes(guest_fixture(site))
                 arguments = [str(relinker), "--to-intel"]
                 if windows:
                     arguments.append("--windows")
@@ -129,7 +144,10 @@ def main():
                     loads = elf_loads(data)
                     site_addresses = SITE_ADDRESSES
                     read = lambda address, size: elf_bytes_at(data, loads, address, size)
-                if has_stub:
+                if kind == "rip":
+                    for site_address in site_addresses:
+                        check_rip_trampoline(read, site_address)
+                elif has_stub:
                     for site_address in site_addresses:
                         check_trampoline(read, site_address)
                 else:

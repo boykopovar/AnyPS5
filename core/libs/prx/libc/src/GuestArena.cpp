@@ -1,6 +1,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/WindowsMappings.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <iterator>
@@ -17,6 +18,11 @@
 
 namespace GuestArena {
 namespace {
+
+#ifdef _WIN32
+std::atomic<std::uint64_t> commitGeneration{1};
+std::atomic<void (*)(std::uintptr_t, std::size_t, std::uint64_t)> privateMappingObserver{nullptr};
+#endif
 
 constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull;
 constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull;
@@ -188,6 +194,16 @@ bool GuestArenaHandleWrite_nid_postfix(std::uintptr_t address) {
     return WindowsMappings::Get().HandleWrite(address);
 }
 
+void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) return;
+    WindowsMappings::Get().Pin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+}
+
+void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) return;
+    WindowsMappings::Get().Unpin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+}
+
 bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection) {
     return WindowsMappings::Get().Protection(address, protection);
 }
@@ -210,9 +226,21 @@ std::invalid_argument OutsideArena(const char* operation, const void* pointer, s
 
 }
 
+std::uint64_t GuestArenaCommitGeneration_nid_postfix() {
+    return commitGeneration.load(std::memory_order_acquire);
+}
+
+void GuestArenaSetPrivateMappingObserver_nid_postfix(void (*callback)(std::uintptr_t, std::size_t, std::uint64_t)) {
+    privateMappingObserver.store(callback, std::memory_order_release);
+}
+
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
-    WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
+    const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const auto created = WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
+    if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) {
+        for (const auto& [address, size] : created) callback(address, size, generation);
+    }
 }
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
@@ -256,5 +284,22 @@ void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
     (void)bytes;
 #endif
 }
+
+#ifndef _WIN32
+namespace {
+
+std::atomic<SharedBackingResolver> sharedBackingResolver{nullptr};
+
+}
+
+void GuestArenaSetSharedBacking_nid_postfix(SharedBackingResolver resolver) {
+    sharedBackingResolver.store(resolver, std::memory_order_release);
+}
+
+bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
+    const auto resolver = sharedBackingResolver.load(std::memory_order_acquire);
+    return resolver != nullptr && resolver(address, bytes, file, offset);
+}
+#endif
 
 }

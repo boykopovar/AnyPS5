@@ -124,6 +124,16 @@ int APS5_VABI sceFontWritingLineGetRenderMetrics(void* writingLine, FontWritingM
     return SCE_FONT_OK;
 }
 
+int APS5_VABI sceFontWritingLineGetOrderingSpace(void* writingLine, float* headSpace, float* inlineSpace, float* tailSpace, float* advanceSpace) {
+    GetLine(__func__, writingLine);
+    if (!headSpace || !inlineSpace || !tailSpace || !advanceSpace) Unsupported(__func__, "null space pointer (error code not verified)");
+    *headSpace = 0.0f;
+    *inlineSpace = 0.0f;
+    *tailSpace = 0.0f;
+    *advanceSpace = 0.0f;
+    return SCE_FONT_OK;
+}
+
 }
 
 #pragma GCC visibility pop

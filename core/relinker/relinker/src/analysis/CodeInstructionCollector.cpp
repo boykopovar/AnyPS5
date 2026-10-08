@@ -209,9 +209,59 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             address += info.Length;
         }
     }
+    for (const auto& header : headers) {
+        if (header.Type != 1 || (header.Flags & 1) == 0 || header.FileSize < 16) continue;
+        range(header.Offset, header.FileSize);
+        const auto* text = bytes.data() + header.Offset;
+        const auto size = static_cast<std::size_t>(header.FileSize);
+        const auto paddedStart = [&](std::size_t address) { return address % 16 == 0 && address >= 2 && text[address - 1] == 0xcc && text[address - 2] == 0xcc; };
+        const auto nextPaddedStart = [&](std::size_t address) {
+            address = (address + 16) & ~std::size_t{15};
+            while (address < size && !paddedStart(address)) address += 16;
+            return address;
+        };
+        for (std::size_t position = nextPaddedStart(0); position < size;) {
+            if (position + 1 < size && text[position] == 0 && text[position + 1] == 0) {
+                position = nextPaddedStart(position);
+                continue;
+            }
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = decoder.DecodeInstruction(text + position, size - position);
+            } catch (const Codegen::CodegenException&) {
+                position = nextPaddedStart(position);
+                continue;
+            }
+            if (info.Length == 0 || info.Length > size - position) {
+                position = nextPaddedStart(position);
+                continue;
+            }
+            const auto next = position + info.Length;
+            const auto crossed = (position & ~std::size_t{15}) + 16;
+            if (crossed < next && paddedStart(crossed)) {
+                position = crossed;
+                continue;
+            }
+            const auto opcode = position + info.OpcodeOffset;
+            if (info.SegmentPrefix == 0x64 && opcode + 2 < next && (text[opcode + 1] & 0xc7) == 0x04 && text[opcode + 2] == 0x25) addRoot(header.MappedAddress + position);
+            position = next;
+        }
+    }
+    const auto decodesInSegment = [&](std::uint64_t address) {
+        for (const auto& header : headers) {
+            if (header.Type != 1 || (header.Flags & 1) == 0 || address < header.MappedAddress || address - header.MappedAddress >= header.FileSize) continue;
+            const auto offset = address - header.MappedAddress;
+            try {
+                return decoder.DecodeInstruction(bytes.data() + header.Offset + offset, header.FileSize - offset).Length != 0;
+            } catch (const Codegen::CodegenException&) {
+                return false;
+            }
+        }
+        return false;
+    };
     for (const auto target : staticTargets) {
         for (const auto& [skipBegin, skipEnd] : skipped) {
-            if (skipBegin <= target && target < skipEnd)
+            if (skipBegin <= target && target < skipEnd && !decodesInSegment(target))
                 throw Domain::RelinkerException("Code analysis: branch into skipped range tail", target);
         }
     }

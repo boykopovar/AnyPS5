@@ -12,12 +12,6 @@ target_include_directories(libSceNpTrophy2 PRIVATE
 target_link_libraries(libSceNpTrophy2 PRIVATE libc)
 configure_windows_unwind(libSceNpTrophy2)
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-endif()
-
 if(BUILD_TESTING)
     add_test_executable(guest_nptrophy2_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpTrophy2.cpp)
     target_include_directories(guest_nptrophy2_tests PRIVATE ${LIBS_INCLUDE_DIR})

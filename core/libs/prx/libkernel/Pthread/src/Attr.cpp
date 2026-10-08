@@ -7,6 +7,7 @@
 static constexpr int SCE_OK = 0;
 
 static constexpr std::size_t DEFAULT_STACK_SIZE = 1u << 20;
+static constexpr std::size_t MIN_STACK_SIZE = 16384;
 static constexpr int DETACH_JOINABLE = 0;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr int SCHED_FIFO_PS5 = 1;
@@ -55,7 +56,7 @@ int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedPa
 
 int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize) {
     if (!attr || !*attr) throw std::runtime_error(std::string(__func__) + ": null attr");
-    if (stacksize < 16384) throw std::runtime_error(std::string(__func__) + ": too small");
+    if (stacksize < MIN_STACK_SIZE) return SCE_KERNEL_ERROR_EINVAL;
 #ifdef _WIN32
     if (stacksize > std::numeric_limits<unsigned>::max() - 0xffffu)
         throw std::runtime_error(std::string(__func__) + ": stack size exceeds the Windows limit");

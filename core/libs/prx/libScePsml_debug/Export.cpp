@@ -30,8 +30,7 @@ std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1100(void* context, void*
  return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-APS5_EXPORT("+2KpvixvL6E", scePsmlUnknown__P2KpvixvL6E);
-int APS5_VABI scePsmlUnknown__P2KpvixvL6E() {
+int APS5_VABI scePsmlMfsrGetSharedResourcesInitRequirement() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -46,26 +45,22 @@ int APS5_VABI scePsmlMfsrGetDispatchMfsrPacketSizeInDwords() {
  return 0;
 }
 
-APS5_EXPORT("ArakEpzsZo0", scePsmlUnknown_ArakEpzsZo0);
-int APS5_VABI scePsmlUnknown_ArakEpzsZo0() {
+int APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3_2() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("FSGaTQze0UY", scePsmlUnknown_FSGaTQze0UY);
-int APS5_VABI scePsmlUnknown_FSGaTQze0UY() {
+int APS5_VABI scePsmlMfsrSelectConfig() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("GHna9-DvnUk", scePsmlUnknown_GHna9_MDvnUk);
-int APS5_VABI scePsmlUnknown_GHna9_MDvnUk() {
+int APS5_VABI scePsmlMfsrGetMipmapBias() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("GJY0MvuTcs8", scePsmlUnknown_GJY0MvuTcs8);
-int APS5_VABI scePsmlUnknown_GJY0MvuTcs8() {
+int APS5_VABI scePsmlMfsrRequestCapture() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -75,34 +70,74 @@ int APS5_VABI scePsmlMfsrReleaseContext() {
  return 0;
 }
 
-APS5_EXPORT("LXq+6mIxpCw", scePsmlUnknown_LXq_P6mIxpCw);
-int APS5_VABI scePsmlUnknown_LXq_P6mIxpCw() {
+int APS5_VABI scePsmlMfsrIsCaptureInProgress() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("RUNLFro+qok", scePsmlUnknown_RUNLFro_Pqok);
-int APS5_VABI scePsmlUnknown_RUNLFro_Pqok() {
+int APS5_VABI scePsmlMfsrGetDispatchMfsrPacket900() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("eWoKNeB6V-k", scePsmlUnknown_eWoKNeB6V_Mk);
-int APS5_VABI scePsmlUnknown_eWoKNeB6V_Mk() {
+int APS5_VABI scePsmlMfsrCreateSharedResources() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("gxv3i+MTEzU", scePsmlUnknown_gxv3i_PMTEzU);
-int APS5_VABI scePsmlUnknown_gxv3i_PMTEzU() {
+int APS5_VABI scePsmlMfsrCreateContext800M3_2() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
-APS5_EXPORT("jEevBXmagOQ", scePsmlUnknown_jEevBXmagOQ);
-int APS5_VABI scePsmlUnknown_jEevBXmagOQ() {
+int APS5_VABI scePsmlMfsrReleaseSharedResources() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
+}
+
+int APS5_VABI scePsmlMfsr2ReleaseSharedResources() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2GetSharedResourcesInitRequirement() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2GetContextInitRequirement() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2ReleaseContext() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2GetDispatchPacketsSizeInDwords() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2CreateSharedResources() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2GetDispatchPackets() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2CreateContext() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsr2Init() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

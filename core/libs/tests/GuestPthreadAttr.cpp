@@ -19,6 +19,7 @@ int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedPa
 int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask);
 int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, std::size_t* stackSize);
 int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state);
+int APS5_VABI pthread_attr_setstacksize_nid_postfix(PthreadAttr* attr, std::size_t stackSize);
 }
 
 static constexpr int SCE_OK = 0;
@@ -30,6 +31,8 @@ static constexpr int UPDATED_PRIORITY = 767;
 static constexpr KernelCpumask CREATION_AFFINITY = 0x3;
 static constexpr KernelCpumask UPDATED_AFFINITY = 0x1000;
 static constexpr std::size_t STACK_SIZE = 2u << 20;
+static constexpr std::size_t MIN_STACK_SIZE = 16384;
+static constexpr int GUEST_EINVAL = 22;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -39,6 +42,11 @@ struct ReportedAttributes {
     std::size_t stackSize = 0;
     int detachState = -1;
 };
+
+extern "C" {
+int APS5_VABI pthread_attr_setstack_nid_postfix(PthreadAttr* attr, void* addr, std::size_t size);
+int APS5_VABI pthread_attr_getstack_nid_postfix(const PthreadAttr* attr, void** addr, std::size_t* size);
+}
 
 static ReportedAttributes Query(Pthread thread) {
     PthreadAttr attr = nullptr;
@@ -55,12 +63,26 @@ static ReportedAttributes Query(Pthread thread) {
     return reported;
 }
 
+static void CheckStackSizeLimit() {
+    PthreadAttr attr = nullptr;
+    Require(scePthreadAttrInit(&attr) == SCE_OK);
+    std::size_t stackSize = 0;
+    Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE) == SCE_OK);
+    Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
+    Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE - 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetstacksize(&attr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_attr_setstacksize_nid_postfix(&attr, MIN_STACK_SIZE - 1) == GUEST_EINVAL);
+    Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
+    Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+}
+
 static void* APS5_VABI Worker(void* arg) {
     static_cast<std::future<void>*>(arg)->get();
     return nullptr;
 }
 
 int main() {
+    CheckStackSizeLimit();
     PthreadAttr attr = nullptr;
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_OK);
@@ -98,4 +120,19 @@ int main() {
 
     release.set_value();
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+
+    PthreadAttr stackAttr = nullptr;
+    char stackMarker;
+    Require(pthread_attr_setstack_nid_postfix(nullptr, &stackMarker, STACK_SIZE) == 22);
+    Require(pthread_attr_setstack_nid_postfix(&stackAttr, &stackMarker, STACK_SIZE) == 22);
+    Require(scePthreadAttrInit(&stackAttr) == SCE_OK);
+    Require(pthread_attr_setstack_nid_postfix(&stackAttr, &stackMarker, STACK_SIZE) == 0);
+    Require(pthread_attr_setstack_nid_postfix(&stackAttr, nullptr, STACK_SIZE) == 22);
+    Require(pthread_attr_setstack_nid_postfix(&stackAttr, &stackMarker, 16383) == 22);
+    void* reportedAddress = nullptr;
+    std::size_t reportedSize = 0;
+    Require(pthread_attr_getstack_nid_postfix(&stackAttr, &reportedAddress, &reportedSize) == 0);
+    Require(reportedAddress == &stackMarker && reportedSize == STACK_SIZE);
+    Require(scePthreadAttrDestroy(&stackAttr) == SCE_OK);
+    Require(pthread_attr_setstack_nid_postfix(&stackAttr, &stackMarker, STACK_SIZE) == 22);
 }

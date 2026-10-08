@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -11,7 +12,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -61,6 +64,15 @@ void testEvents() {
     expectFailure([&] { sceAgcDriverGetEqEventType(&event); });
     expectFailure([] { sceAgcDriverGetEqEventType(nullptr); });
     expectFailure([&] { sceAgcDriverGetEqEventType(reinterpret_cast<const KernelEvent*>(reinterpret_cast<const std::byte*>(&event) + 1)); });
+    event.ident = 0x29;
+    check(sceAgcDriverGetEqContextId(&event) == 0x29, "graphics event context id uses wrong field");
+    event.ident = std::numeric_limits<std::uintptr_t>::max();
+    expectFailure([&] { sceAgcDriverGetEqContextId(&event); });
+    event.ident = 1;
+    event.filter = -1;
+    expectFailure([&] { sceAgcDriverGetEqContextId(&event); });
+    expectFailure([] { sceAgcDriverGetEqContextId(nullptr); });
+    expectFailure([&] { sceAgcDriverGetEqContextId(reinterpret_cast<const KernelEvent*>(reinterpret_cast<const std::byte*>(&event) + 1)); });
 }
 
 void testValidation() {
@@ -102,6 +114,7 @@ void testClearState() {
     graphics.ClearContext();
     check(graphics.context == AgcDriver::InitialContextRegisters(), "CLEAR_STATE retained context registers");
     check(graphics.shader == shader && graphics.userConfig == userConfig, "CLEAR_STATE reset unrelated registers");
+    check(graphics.context.count(0x1b3) == 1 && graphics.context.at(0x1b3) == 0 && graphics.context.count(0x1b4) == 1 && graphics.context.at(0x1b4) == 0, "CLEAR_STATE left SPI_PS_INPUT_ENA/ADDR unset");
     graphics.context.emplace(0x10, 31);
     graphics.ClearContext();
     check(graphics.context == AgcDriver::InitialContextRegisters(), "repeated CLEAR_STATE retained context registers");
@@ -172,14 +185,24 @@ void testEndOfPipeInterrupts() {
     std::array<KernelEvent, 2> events{};
     check(owner->GetTriggeredEvents(events.data(), 2) == 1, "graphics end-of-pipe interrupt was not delivered to its queue only");
     check(events[0].filter == -14 && events[0].udata == &graphicsTag && events[0].data == 2 && sceAgcDriverGetEqEventType(events.data()) == 0, "graphics end-of-pipe event encoding is wrong");
+    check(sceAgcDriverGetEqContextId(events.data()) == 0, "graphics end-of-pipe event reports another context");
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "delivered interrupt was not cleared");
     check(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "compute interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &computeTag && sceAgcDriverGetEqEventType(events.data()) == 0x20, "compute end-of-pipe interrupt missing");
+    check(sceAgcDriverGetEqContextId(events.data()) == 0x20, "compute end-of-pipe event reports another context");
     words[2] = 0;
     check(sceAgcDriverSubmitDcb(&packet) == 0, "plain release submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "release without INT_SEL raised an interrupt");
+    alignas(8) static volatile std::uint64_t label = 0;
+    const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
+    words = {0xc0064900, 0x528, (3u << 29u) | (3u << 24u) | (1u << 16u), static_cast<std::uint32_t>(labelAddress), static_cast<std::uint32_t>(static_cast<std::uint64_t>(labelAddress) >> 32u), 0x89abcdefu, 0x01234567u, 0};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "send-data release submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(label != 0, "send-data release did not write its label");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "release with INT_SEL send data after write confirm raised an interrupt");
+    words = {0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
     check(sceAgcDriverDeleteEqEvent(eq, 0) == 0, "graphics event deletion failed");
     expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, 0); });
     words[2] = 1u << 24u;
@@ -333,6 +356,48 @@ void testWaitFreeSubmissionBehindHeldOne() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testMultiAcbs() {
+    alignas(64) static volatile std::uint32_t value = 0, done = 0, gate = 0;
+    check(sceAgcDriverSubmitMultiAcbs(0x20, nullptr, nullptr, 0) == 0, "empty multi-ACB submit failed");
+    auto write = writeData(&value, 1);
+    std::array<std::uint32_t*, 1> addresses{write.data()};
+    std::array<std::uint32_t, 1> sizes{static_cast<std::uint32_t>(write.size())};
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x1f, addresses.data(), sizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x58, addresses.data(), sizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0, addresses.data(), sizes.data(), 1); });
+    check(sceAgcDriverSubmitMultiAcbs(0, nullptr, nullptr, 0) == 0, "empty multi-ACB submit checked its queue");
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullptr, sizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, addresses.data(), nullptr, 1); });
+    check(value == 0, "a rejected multi-ACB submit ran a command buffer");
+    for (std::uint32_t queue : {0x20u, 0x57u}) {
+        value = 0;
+        done = 0;
+        auto first = writeData(&value, 1);
+        auto second = writeData(&value, 2);
+        auto third = writeData(&done, 1);
+        std::array<std::uint32_t*, 3> buffers{first.data(), second.data(), third.data()};
+        std::array<std::uint32_t, 3> lengths{static_cast<std::uint32_t>(first.size()), static_cast<std::uint32_t>(second.size()), static_cast<std::uint32_t>(third.size())};
+        check(sceAgcDriverSubmitMultiAcbs(queue, buffers.data(), lengths.data(), 3) == 0, "multi-ACB submit failed");
+        waitFor(&done, 1, "the last ACB of a multi-ACB submit never ran");
+        check(value == 2, "multi-ACB submit did not run its ACBs in order");
+        AgcDriverWaitIdle_nid_postfix();
+    }
+    done = 0;
+    value = 0;
+    auto wait = waitEqual(&gate, 1);
+    auto finish = writeData(&done, 1);
+    std::array<std::uint32_t*, 2> buffers{wait.data(), finish.data()};
+    std::array<std::uint32_t, 2> lengths{static_cast<std::uint32_t>(wait.size()), static_cast<std::uint32_t>(finish.size())};
+    check(sceAgcDriverSubmitMultiAcbs(0x21, buffers.data(), lengths.data(), 2) == 0, "waiting multi-ACB submit failed");
+    submit(0x21, commands(writeData(&value, 1)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    check(value == 0 && done == 0, "a later submission on the same compute queue overtook a multi-ACB submit");
+    gate = 1;
+    waitFor(&value, 1, "a submission queued behind a multi-ACB submit never ran");
+    check(done == 1, "a multi-ACB submit did not run before a later submission on its queue");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testWaitFreeSubmissionTheCpuWaitsFor() {
     alignas(64) static volatile std::uint32_t stored = 0, flag = 0, done = 0;
     submit(0, commands(waitEqual(&flag, 1), writeData(&done, 1)));
@@ -374,6 +439,47 @@ void testMultiSubmissions() {
     }
 }
 
+void testShaderHeaderAlignment() {
+    alignas(256) static const std::array<std::uint32_t, 64> code{0xbf810000};
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    };
+    alignas(8) static std::array<std::byte, sizeof(Header) + 8> storage{};
+    Shader shader{};
+    shader.file_header = 0x34333231;
+    shader.version = 0x18;
+    shader.header_size = sizeof(Header);
+    shader.shader_size = sizeof(code);
+    shader.code = code.data();
+    const auto at = [](std::size_t offset, const Shader& fields) {
+        Header header;
+        header.shader = fields;
+        const auto address = reinterpret_cast<std::uintptr_t>(fields.code);
+        header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 0}}};
+        header.specials.dispatch_modifier = 0x8000u;
+        header.shader.sh_registers = reinterpret_cast<ShaderRegister*>(storage.data() + offset + offsetof(Header, registers));
+        header.shader.num_sh_registers = header.registers.size();
+        header.shader.specials = reinterpret_cast<ShaderSpecialRegs*>(storage.data() + offset + offsetof(Header, specials));
+        std::memcpy(storage.data() + offset, &header, sizeof(header));
+        return reinterpret_cast<const Shader*>(storage.data() + offset);
+    };
+    for (const std::size_t offset : {0, 4, 1}) AgcDriverRegisterShader_nid_postfix(at(offset, shader));
+    const auto refused = [](const std::string& message, const char* reason) { check(message.find(reason) != std::string::npos, message.c_str()); };
+    refused(expectFailure([] { AgcDriverRegisterShader_nid_postfix(nullptr); }), "null or misaligned address");
+    refused(expectFailure([] { AgcDriverRegisterShader_nid_postfix(reinterpret_cast<const Shader*>(0x1001)); }), "not readable");
+    Shader misplaced = shader;
+    misplaced.code = code.data() + 1;
+    refused(expectFailure([&] { AgcDriverRegisterShader_nid_postfix(at(4, misplaced)); }), "null or misaligned address");
+    Shader older = shader;
+    older.version = 0x17;
+    refused(expectFailure([&] { AgcDriverRegisterShader_nid_postfix(at(1, older)); }), "invalid shader header");
+    Shader truncated = shader;
+    truncated.header_size = sizeof(Shader) - 4;
+    refused(expectFailure([&] { AgcDriverRegisterShader_nid_postfix(at(4, truncated)); }), "smaller than its fixed fields");
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -394,6 +500,8 @@ void testWorkerFailure() {
 
 int main() {
     try {
+        const auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
         alignas(256) std::array<std::uint32_t, 64> rawCode{};
         rawCode.fill(0xbf800000);
         rawCode[0] = 0xbe8003ff;
@@ -467,9 +575,11 @@ int main() {
         testWideLabelStoredSinceSubmission();
         testWaitFreeSubmissionAfterEarlierQueue0Work();
         testWaitFreeSubmissionQueue0WaitsOn();
+        testMultiAcbs();
         testWaitFreeSubmissionBehindHeldOne();
         testWaitFreeSubmissionTheCpuWaitsFor();
         testMultiSubmissions();
+        testShaderHeaderAlignment();
         testWorkerFailure();
         check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("required shader register") != std::string::npos, "shutdown lost worker failure");
         std::puts("AGC driver submit tests passed");

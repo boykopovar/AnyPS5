@@ -12,11 +12,12 @@ namespace AgcDriver::Graphics {
 enum class ColorTileMode : std::uint32_t {
     Linear = 0,
     Standard4KB = 5,
+    Standard64KB = 9,
     RenderTarget = 0x1b
 };
 
 constexpr TextureTileMode ColorTextureTileMode(ColorTileMode mode) {
-    return mode == ColorTileMode::Linear ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : TextureTileMode::kR64KBX;
+    return mode == ColorTileMode::Linear ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : mode == ColorTileMode::Standard64KB ? TextureTileMode::kStandard64KB : TextureTileMode::kR64KBX;
 }
 
 ColorTileMode DecodeColorTileMode(std::uint32_t attrib3);

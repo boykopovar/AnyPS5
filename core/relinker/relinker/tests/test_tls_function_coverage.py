@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import platform
 import struct
 import subprocess
 import sys
@@ -9,6 +10,8 @@ from test_optional_plt import fixture
 
 
 TLS_LOAD = bytes.fromhex("66 66 66 64 48 8b 04 25 00 00 00 00")
+RUNNER = Path(__file__).with_name("windows_image_runner.py")
+RUNS_ON_HOST = sys.platform == "linux" and platform.machine() == "x86_64"
 
 
 def register_load(register):
@@ -213,6 +216,113 @@ def displacement_bounds_cases():
             yield f"displacement-bounds-{register}-{displacement}", image, error
 
 
+REGISTER_VALUES = {-8: 0x8877665544332211, 0x10: 0x0123456789abcdef, 0x28: 0xfedcba9876543210}
+REGISTER_LOADS = (
+    ("rax-rbx", bytes.fromhex("64 48 8b 03"), 0, True, {3: -8}, -8),
+    ("rcx-rax", bytes.fromhex("64 48 8b 08"), 1, True, {0: 0x10}, 0x10),
+    ("rax-rax", bytes.fromhex("64 48 8b 00"), 0, True, {0: 0x28}, 0x28),
+    ("r13-rbx-rcx-disp8", bytes.fromhex("64 4c 8b 6c 0b f0"), 13, True, {3: 0x18, 1: -0x10}, -8),
+    ("edx-rbx", bytes.fromhex("64 8b 13"), 2, False, {3: 0x10}, 0x10),
+    ("r9d-r13-disp8", bytes.fromhex("64 45 8b 4d 00"), 9, False, {13: 0x28}, 0x28),
+    ("rax-r12-index-disp32", bytes.fromhex("64 4a 8b 04 25 28 00 00 00"), 0, True, {12: -0x30}, -8),
+    ("rax-rcx-scaled-disp32", bytes.fromhex("64 48 8b 04 cd 10 00 00 00"), 0, True, {1: -3}, -8),
+    ("rax-r12", bytes.fromhex("64 49 8b 04 24"), 0, True, {12: 0x10}, 0x10),
+    ("rdx-rbp-disp32", bytes.fromhex("64 48 8b 95 f8 ff ff ff"), 2, True, {5: 0x30}, 0x28),
+    ("r15-r14", bytes.fromhex("64 4d 8b 3e"), 15, True, {14: -8}, -8),
+)
+REGISTER_LOAD_FOLLOWERS = (
+    ("rax-rbx-rip-follower", bytes.fromhex("64 48 8b 03"), 0, True, {3: -8}, -8, b"", 0x0fedcba987654321),
+    ("edx-rbx-nop-follower", bytes.fromhex("64 8b 13"), 2, False, {3: 0x10}, 0x10, b"\x90", None),
+)
+
+
+def register_load_body(instruction, register, wide, address, offset, flags, follower=b"", rip_constant=None):
+    saved = (3, 5, 6, 7, 12, 13, 14, 15)
+    mask = (1 << 64) - 1
+    code = bytearray()
+    failures = []
+
+    def emit(data):
+        code.extend(data)
+
+    def immediate(target, value):
+        emit(bytes([0x48 | (target >> 3), 0xb8 | (target & 7)]) + struct.pack("<Q", value & mask))
+
+    def check(slot):
+        emit(bytes.fromhex("48 39 84 24") + struct.pack("<i", slot * 8) + bytes.fromhex("0f 85 00 00 00 00"))
+        failures.append(len(code) - 4)
+
+    for target in saved:
+        emit((b"\x41" if target >= 8 else b"") + bytes([0x50 | (target & 7)]))
+    emit(bytes.fromhex("48 8d a4 24 00 ff ff ff"))
+    emit(fs_load(0, 0))
+    for displacement, value in REGISTER_VALUES.items():
+        immediate(1, value)
+        emit(bytes([0x48, 0x89, 0x48, displacement & 255]))
+    markers = [0x1020304050607000 + target * 0x101 for target in range(16)]
+    expected = list(markers)
+    for target in range(16):
+        if target != 4:
+            immediate(target, markers[target])
+    for target, value in address.items():
+        immediate(target, value)
+        expected[target] = value & mask
+    value = REGISTER_VALUES[offset]
+    expected[register] = value if wide else value & 0xffffffff
+    emit(b"\x68" + struct.pack("<I", flags) + b"\x9d")
+    load_offset = len(code)
+    emit(instruction)
+    emit(follower)
+    rip_offset = None
+    if rip_constant is not None:
+        rip_offset = len(code)
+        emit(bytes.fromhex("48 8b 15 00 00 00 00"))
+        expected[2] = rip_constant
+    for target in range(16):
+        emit(bytes([0x48 | (target >> 3) << 2, 0x89, 0x84 | (target & 7) << 3, 0x24]) + struct.pack("<i", target * 8))
+    emit(bytes.fromhex("9c 8f 84 24 88 00 00 00"))
+    for target in range(16):
+        if target == 4:
+            emit(bytes.fromhex("48 8d 04 24"))
+        else:
+            immediate(0, expected[target])
+        check(target)
+    immediate(0, flags)
+    check(17)
+    emit(bytes.fromhex("b8 2a 00 00 00 eb 05"))
+    failure = len(code)
+    emit(bytes.fromhex("b8 01 00 00 00 48 8d a4 24 00 01 00 00"))
+    for target in reversed(saved):
+        emit((b"\x41" if target >= 8 else b"") + bytes([0x58 | (target & 7)]))
+    emit(b"\xc3")
+    if rip_offset is not None:
+        struct.pack_into("<i", code, rip_offset + 3, len(code) - rip_offset - 7)
+        emit(struct.pack("<Q", rip_constant))
+    for position in failures:
+        struct.pack_into("<i", code, position, failure - position - 4)
+    return load_offset, bytes(code)
+
+
+def register_load_cases():
+    cases = [case + (b"", None) for case in REGISTER_LOADS] + list(REGISTER_LOAD_FOLLOWERS)
+    for name, instruction, register, wide, address, offset, follower, rip_constant in cases:
+        for flags in (0x202, 0xad7):
+            load_offset, body = register_load_body(instruction, register, wide, address, offset, flags, follower, rip_constant)
+            moved = body[load_offset + len(instruction):load_offset + 5] if len(instruction) < 5 else b""
+            yield f"register-load-{name}-{flags:x}", make_image("register", "unwind", body=body), 0x1240 + load_offset, instruction, register, wide, follower if rip_constant is None and follower else moved
+
+
+def register_load_stub(instruction, register, wide):
+    position = 1
+    while instruction[position] != 0x8b:
+        position += 1
+    rex = instruction[position - 1] if 0x40 <= instruction[position - 1] <= 0x4f else 0
+    address = bytes([0x48 | (rex & 3), 0x8d, instruction[position + 1] & 0xc7]) + instruction[position + 2:]
+    move = (bytes([(0x48 if wide else 0x40) | (register >> 3) << 2]) if wide or register >= 8 else b"") + bytes([0x8b, 0x04 | (register & 7) << 3, 0x08])
+    restore = {0: bytes.fromhex("48 8d 64 24 08 59"), 1: bytes.fromhex("58 48 8d 64 24 08")}.get(register, bytes.fromhex("58 59"))
+    return bytes.fromhex("48 8d 64 24 80 51 50") + address + b"\x50", b"\x59" + move + restore + bytes.fromhex("48 8d a4 24 80 00 00 00")
+
+
 def make_image(transfer, metadata, extent=None, body=None):
     image = fixture()
     image.extend(b"\x90" * 0x1000)
@@ -272,8 +382,8 @@ def pe_bytes_at(pe, rva, size):
     raise AssertionError(f"Unmapped PE RVA {rva:#x}")
 
 
-def add_alias(image, size):
-    struct.pack_into("<IBBHQQ", image, 0x650, 0, 0x12, 0, 1, 0x1200, size)
+def add_alias(image, size, begin=0x1200):
+    struct.pack_into("<IBBHQQ", image, 0x650, 0, 0x12, 0, 1, begin, size)
     struct.pack_into("<IIIII", image, 0x680, 1, 3, 1, 0, 0)
     return image
 
@@ -307,6 +417,10 @@ def main():
             if os.name == "nt":
                 executed = subprocess.run([str(output)], capture_output=True, timeout=30)
                 assert executed.returncode == 42, (name, executed.returncode, executed.stderr)
+            elif RUNS_ON_HOST:
+                entry = 0x10000 + struct.unpack_from("<Q", image, 24)[0]
+                executed = subprocess.run([sys.executable, str(RUNNER), str(output), hex(entry)], capture_output=True, timeout=30)
+                assert executed.returncode == 42, (name, executed.returncode, executed.stderr)
 
         for metadata in ("unwind", "symbol"):
             for transfer in ("table", "register", "memory"):
@@ -324,6 +438,15 @@ def main():
         alias_tail[0x1258:0x1260] = bytes.fromhex("64 8b 04 25 28 00 00 00")
         convert("symbol-alias-unreachable-tls-tail", alias_tail,
                 "Unsupported Windows guest TLS instruction", error_offset=0x1258)
+        for metadata in ("unwind", "symbol"):
+            convert(f"branch-into-cut-tail-{metadata}",
+                    make_image("register", metadata, 0x50, TLS_LOAD + bytes.fromhex("eb 00 8b 40 f0 c3")))
+        convert("branch-into-undecodable-tail",
+                make_image("register", "unwind", 0x50, TLS_LOAD + bytes.fromhex("eb 01 66 0f 78 c0 01 02 c3")),
+                "Code analysis: branch into skipped range tail", error_offset=0x124f)
+        split_body = TLS_LOAD + bytes.fromhex("eb 00 8b 40 f0 48 b9 00 00 00 65 2e 62 69 6e") + b"\xc3" * 8
+        convert("function-begins-inside-instruction",
+                add_alias(make_image("register", "symbol", 0x55, split_body), 0x0c, 0x1256))
         overlapping = make_image("register", "unwind")
         overlapping[0x1200:0x1205] = b"\xe9" + struct.pack("<i", 0x1245 - 0x1205)
         convert("overlapping-entry", overlapping, "Code analysis: overlapping instruction boundaries")
@@ -339,6 +462,28 @@ def main():
         external[0x1300:0x1310] = external[0x1240:0x1250]
         external[0x1240:0x1250] = b"\xe8" + struct.pack("<i", 0x1300 - 0x1245) + b"\xc3" + b"\x90" * 10
         convert("direct-call-from-indirect-block", external, tls_address=0x1300)
+
+        def convert_padded(name, image):
+            source = work / (name + ".elf")
+            output = source.with_suffix(".exe")
+            source.write_bytes(image)
+            result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (name, result.stdout, result.stderr)
+            return output.read_bytes()
+
+        unreferenced = make_image("register", "unwind")
+        unreferenced[0x18f0:0x1900] = b"\xcc" * 16
+        unreferenced[0x1900:0x1900 + len(TLS_LOAD) + 4] = TLS_LOAD + bytes.fromhex("8b 40 f0 c3")
+        pe = convert_padded("unreferenced-padded-function", unreferenced)
+        assert pe_bytes_at(pe, 0x11900, 1)[0] == 0xe9, "unreferenced-padded-function"
+        assert pe_bytes_at(pe, 0x11850, len(TLS_LOAD)) == TLS_LOAD, "unreferenced-padded-function"
+        zero_filled = make_image("register", "unwind")
+        zero_filled[0x18f0:0x1900] = b"\xcc" * 16
+        zero_filled[0x1900:0x1910] = bytes(16)
+        zero_filled[0x1910:0x1910 + len(TLS_LOAD)] = TLS_LOAD
+        pe = convert_padded("zero-filled-after-padding", zero_filled)
+        assert pe_bytes_at(pe, 0x11910, len(TLS_LOAD)) == TLS_LOAD, "zero-filled-after-padding"
         for register in range(16):
             offset, body = register_load(register)
             image = make_image("register", "unwind", body=body)
@@ -378,14 +523,32 @@ def main():
                     assert expected in stub, (case, expected.hex(), stub.hex())
         for name, image in alu_execution_cases():
             convert(name, image)
+        for name, image, address, instruction, register, wide, moved in register_load_cases():
+            convert(name, image, tls_address=address)
+            pe = (work / (name + ".exe")).read_bytes()
+            patched = pe_bytes_at(pe, 0x10000 + address, 5)
+            stub = pe_bytes_at(pe, 0x10000 + address + 5 + struct.unpack_from("<i", patched, 1)[0], 96)
+            head, tail = register_load_stub(instruction, register, wide)
+            assert stub.startswith(head) and tail + moved in stub, (name, head.hex(), (tail + moved).hex(), stub.hex())
+        for name, instruction in {
+            "short-before-return": bytes.fromhex("64 48 8b 03 c3"),
+            "short-before-call": bytes.fromhex("64 48 8b 03 e8 00 00 00 00 c3"),
+            "short-before-tls": bytes.fromhex("64 48 8b 03 64 48 8b 03 c3"),
+        }.items():
+            convert(name, make_image("register", "unwind", body=instruction),
+                    "Short guest TLS instruction is followed by an instruction that cannot move", error_offset=0x1244)
         rejected = {
             "rsp-displacement": fs_load(4, 40),
             "rsp-alu": fs_alu(0x33, 4, 40),
             "dword-load": bytes.fromhex("64 8b 04 25 28 00 00 00"),
-            "register-address": bytes.fromhex("64 48 8b 00"),
             "gs-load": bytes.fromhex("65 48 8b 04 25 28 00 00 00"),
             "rex-b-load": bytes.fromhex("64 49 8b 04 25 28 00 00 00"),
-            "rex-x-load": bytes.fromhex("64 4a 8b 04 25 28 00 00 00"),
+            "rsp-base-load": bytes.fromhex("64 48 8b 04 24"),
+            "rsp-register-address": bytes.fromhex("64 48 8b 20"),
+            "rip-relative-load": bytes.fromhex("64 48 8b 05 00 00 00 00"),
+            "word-register-address": bytes.fromhex("66 64 8b 00"),
+            "register-address-store": bytes.fromhex("64 48 89 03"),
+            "register-address-alu": bytes.fromhex("64 48 33 03"),
         }
         for name, instruction in rejected.items():
             convert(name, make_image("register", "unwind", body=instruction + b"\xc3"),

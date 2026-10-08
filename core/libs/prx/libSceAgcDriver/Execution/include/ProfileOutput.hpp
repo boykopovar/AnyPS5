@@ -24,12 +24,17 @@ public:
     }
 
     ~ProfileOutput() {
+        Stop();
+    }
+
+    void Stop() {
+        std::lock_guard stopLock(stopMutex);
         {
             std::lock_guard lock(mutex);
             stopping = true;
         }
         changed.notify_one();
-        worker.join();
+        if (worker.joinable()) worker.join();
     }
 
     bool Write(std::string text) {
@@ -117,6 +122,7 @@ private:
 
     std::function<void(std::string_view)> writer;
     const std::size_t capacity;
+    std::mutex stopMutex;
     std::mutex mutex;
     std::condition_variable changed;
     std::condition_variable idle;

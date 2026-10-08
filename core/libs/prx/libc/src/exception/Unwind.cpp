@@ -5,13 +5,16 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#ifdef __APPLE__
+#include <dlfcn.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#endif
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
 
-#if defined(_WIN32) || defined(__linux__)
 extern "C" _Unwind_Reason_Code __gxx_personality_v0(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
 extern "C" _Unwind_Reason_Code __gcc_personality_v0(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
-#endif
 
 namespace LibcUnwind {
 _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context) {
@@ -25,13 +28,13 @@ _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _U
 #endif
     if (personality == reinterpret_cast<Word>(__gxx_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gxx_personality_v0))
         return __gxx_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
-    if (personality == reinterpret_cast<Word>(__gcc_personality_v0))
-        return __gcc_personality_v0(1, actions, exception->exception_class, exception, context);
+    if (personality == reinterpret_cast<Word>(__gcc_personality_v0_nid_postfix) || personality == reinterpret_cast<Word>(__gcc_personality_v0))
+        return __gcc_personality_v0_nid_postfix(1, actions, exception->exception_class, exception, context);
     return (actions & _UA_SEARCH_PHASE) ? _URC_FATAL_PHASE1_ERROR : _URC_FATAL_PHASE2_ERROR;
 }
 struct Lookup { Word pc; const Byte* fde {}; Word text {}; Word data {}; };
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 int FindFrame(dl_phdr_info* info, std::size_t, void* argument) {
     auto& query = *static_cast<Lookup*>(argument);
     const Byte* header = nullptr;
@@ -141,8 +144,32 @@ bool DecodeCandidate(_Unwind_Context& context, Frame& frame, const Lookup& query
 
 bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     Lookup query {context.registers[16] - !context.signalFrame};
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     dl_iterate_phdr(FindFrame, &query);
+#ifdef __APPLE__
+    if (!query.fde) {
+        Dl_info image {};
+        if (!dladdr(reinterpret_cast<void*>(query.pc), &image) || !image.dli_fbase) return false;
+        unsigned long size = 0;
+        const Byte* p = getsectiondata(static_cast<const mach_header_64*>(image.dli_fbase), "__TEXT", "__eh_frame", &size);
+        if (!p) return false;
+        const Byte* end = p + size;
+        while (end - p >= 8) {
+            const Byte* record = p;
+            const auto length = Read<std::uint32_t>(p);
+            if (length == 0) return false;
+            if (length == 0xffffffff || length < 4 || Word(end - p) < length) return false;
+            const Byte* next = p + length;
+            if (Read<std::uint32_t>(p)) {
+                query.fde = record;
+                frame = {};
+                if (DecodeCandidate(context, frame, query)) return true;
+            }
+            p = next;
+        }
+        return false;
+    }
+#endif
     return DecodeCandidate(context, frame, query);
 #else
     MEMORY_BASIC_INFORMATION memory{};

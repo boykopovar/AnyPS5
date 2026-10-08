@@ -307,6 +307,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             if ((BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic || addressAccess == AddressAccess::Atomic) && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
             }
+            if (IsImageAtomic64Opcode(inst->Opcode())) {
+                requirements.imageInt64Atomics = true;
+            }
             if (IsFloat64Opcode(inst->Opcode())) {
                 requirements.float64 = true;
             }
@@ -329,21 +332,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
                 requirements.coherentBuffers = requirements.coherentBuffers || (memory.coherent && !memory.gpuDescriptor);
-                if (memory.gpuDescriptor) {
-                    if (program.Resources().stage != IrShaderStage::Compute) {
-                        throw std::runtime_error("GPU-selected buffer descriptors outside compute shaders are not implemented");
-                    }
-                    requirements.subgroupLocalInvocationId = true;
-                } else if (memory.kind == ResourceKind::Buffer) {
-                    if (memory.resource >= program.Info().buffers.size()) {
-                        throw std::runtime_error("buffer operation has invalid resource metadata");
-                    }
-                    if ((program.Info().buffers.at(memory.resource).packedStride & (1u << 20u)) != 0u) {
-                        if (program.Resources().stage != IrShaderStage::Compute) {
-                            throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
-                        }
-                        requirements.subgroupLocalInvocationId = true;
-                    }
+                if (!memory.planningOnly) {
+                    requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage == IrShaderStage::Compute;
                 }
             }
             const auto sharedAccess = SharedAccessOf(inst->Opcode());
@@ -363,6 +353,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     requirements.functionLds = true;
                 } else if (sharedAccess == SharedAccess::Atomic && inst->Type() == IrType::U64 && kind == ResourceKind::Lds) {
                     requirements.ldsLock = true;
+                    requirements.subgroupBallot = true;
                 }
                 if (sharedAccess == SharedAccess::Append || sharedAccess == SharedAccess::Consume) {
                     requirements.subgroupBallot = true;

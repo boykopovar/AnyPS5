@@ -428,4 +428,8 @@ int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, A
     return 0;
 }
 
+int APS5_VABI sceVideodec2GetAvcPictureInfo_nid_postfix(const OutputInfo* output, AvcPictureInfo* first, AvcPictureInfo* second) {
+    return sceVideodec2GetPictureInfo_nid_postfix(output, first, second);
+}
+
 }

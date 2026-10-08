@@ -1,7 +1,10 @@
 #include <relinker/analysis/UnusedNidFilter/IEntryPointCollector.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <cstring>
 
 namespace Relinker::UnusedNidFilter {
+
+using namespace Elfpatcher;
 
 namespace {
 
@@ -65,27 +68,12 @@ public:
 
             std::uint32_t type = read32(elfBytes, phPos);
 
-            constexpr std::uint32_t PT_DYNAMIC = 2;
             if (type != PT_DYNAMIC) continue;
 
             std::uint64_t segOff = read64(elfBytes, phPos + 8);
             std::uint64_t segSz = read64(elfBytes, phPos + 32);
 
             if (segOff + segSz > elfBytes.size()) throw RelinkerException("PT_DYNAMIC segment out of bounds");
-
-            constexpr std::int64_t DT_NULL = 0;
-            constexpr std::int64_t DT_INIT = 12;
-            constexpr std::int64_t DT_FINI = 13;
-            constexpr std::int64_t DT_INIT_ARRAY = 25;
-            constexpr std::int64_t DT_INIT_ARRAYSZ = 27;
-            constexpr std::int64_t DT_FINI_ARRAY = 26;
-            constexpr std::int64_t DT_FINI_ARRAYSZ = 28;
-            constexpr std::int64_t DT_OS_INIT_ARRAY = 0x60000019;
-            constexpr std::int64_t DT_OS_INIT_ARRAYSZ = 0x6000001b;
-            constexpr std::int64_t DT_OS_FINI_ARRAY = 0x6000001a;
-            constexpr std::int64_t DT_OS_FINI_ARRAYSZ = 0x6000001c;
-            constexpr std::int64_t DT_OS_INIT = 0x6000000c;
-            constexpr std::int64_t DT_OS_FINI = 0x6000000d;
 
             VirtualAddress initArrayVa = 0;
             std::uint64_t initArraySz = 0;
@@ -142,8 +130,6 @@ public:
                     if (shPos + 64 > elfBytes.size()) break;
                     std::uint32_t shType = read32(elfBytes, shPos + 4);
 
-                    constexpr std::uint32_t SHT_DYNSYM = 11;
-                    constexpr std::uint32_t SHT_SYMTAB = 2;
                     if (shType != SHT_DYNSYM && shType != SHT_SYMTAB) continue;
 
                     std::uint64_t symOff = read64(elfBytes, shPos + 24);
@@ -172,10 +158,6 @@ public:
                         std::uint8_t stType = info & 0xF;
                         std::uint16_t shndx = read16(elfBytes, sPos + 6);
                         std::uint64_t symVal = read64(elfBytes, sPos + 8);
-                        constexpr std::uint8_t STB_GLOBAL = 1;
-                        constexpr std::uint8_t STB_WEAK = 2;
-                        constexpr std::uint8_t STT_FUNC = 2;
-                        constexpr std::uint16_t SHN_UNDEF = 0;
                         if ((stBind == STB_GLOBAL || stBind == STB_WEAK) &&
                             stType == STT_FUNC && shndx != SHN_UNDEF) {
                             addIfInText(symVal);

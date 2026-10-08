@@ -36,9 +36,16 @@ struct Push {
 std::uint32_t BlockBytesFor(TextureTileMode tileMode) {
     switch (tileMode) {
         case TextureTileMode::kLinear: return 0u;
-        case TextureTileMode::kStandard256B: return 256u;
-        case TextureTileMode::kStandard4KB: return 4096u;
+        case TextureTileMode::kStandard256B:
+        case TextureTileMode::kD256B: return 256u;
+        case TextureTileMode::kStandard4KB:
+        case TextureTileMode::kD4KB:
+        case TextureTileMode::kS4KBX:
+        case TextureTileMode::kD4KBX: return 4096u;
         case TextureTileMode::kStandard64KB:
+        case TextureTileMode::kD64KB:
+        case TextureTileMode::kS64KBT:
+        case TextureTileMode::kD64KBT:
         case TextureTileMode::kZ64KBX:
         case TextureTileMode::kS64KBX:
         case TextureTileMode::kD64KBX:
@@ -108,8 +115,8 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     // per-bit XOR equation for the equation family (2); 20-21 override the block extent in elements.
     std::array<std::uint32_t, 22> values{elementBytes, BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
     if (thick) {
-        const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : 0u;
-        Require(thickMode != 0, "3D textures are only detiled from SW_4KB_S or SW_64KB_S");
+        const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : tileMode == TextureTileMode::kS64KBX ? 0x119u : 0u;
+        Require(thickMode != 0, "3D textures are only detiled thick from SW_4KB_S, SW_64KB_S or SW_64KB_S_X");
         const auto* equation = FindTextureSwizzleEquation(thickMode, elementBytes);
         Require(equation != nullptr, "no thick swizzle equation for the element size");
         values[2] = 2u;
@@ -117,7 +124,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         const auto extent = ThickBlockExtent(tileMode, elementBytes);
         values[20] = extent[0];
         values[21] = extent[1];
-    } else if (const auto mode = XorSwizzleMode(tileMode); mode != 0) {
+    } else if (const auto mode = EquationSwizzleMode(tileMode); mode != 0) {
         const auto* equation = FindTextureSwizzleEquation(mode, elementBytes);
         if (equation == nullptr) Require(false, "no swizzle equation for tile mode " + std::to_string(mode) + " at " + std::to_string(elementBytes) + " bytes per element");
         values[2] = 2u;

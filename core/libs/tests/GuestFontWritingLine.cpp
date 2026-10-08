@@ -11,6 +11,7 @@ int APS5_VABI sceFontWritingLineClear(void*);
 int APS5_VABI sceFontWritingLineWritesOrder(void*, std::uint64_t, const FontWritingMetrics*, void*);
 const FontWritingLineStep* APS5_VABI sceFontWritingLineRefersRenderStep(void*);
 int APS5_VABI sceFontWritingLineGetRenderMetrics(void*, FontWritingMetrics*);
+int APS5_VABI sceFontWritingLineGetOrderingSpace(void*, float*, float*, float*, float*);
 }
 
 static void Check(bool value, int line) {
@@ -42,6 +43,15 @@ static bool Same(const FontWritingMetrics& a, const FontWritingMetrics& b) {
            a.Extent.bottom == b.Extent.bottom && a.Extent.left == b.Extent.left && a.Extent.right == b.Extent.right;
 }
 
+static bool NoSpace(void* line) {
+    float head = 1.0f;
+    float inner = 1.0f;
+    float tail = 1.0f;
+    float advance = 1.0f;
+    return sceFontWritingLineGetOrderingSpace(line, &head, &inner, &tail, &advance) == SCE_FONT_OK && head == 0.0f && inner == 0.0f &&
+           tail == 0.0f && advance == 0.0f;
+}
+
 static bool StepIs(const FontWritingLineStep* step, float x, const FontWritingMetrics& run, void* orderer) {
     return step && step->x == x && step->y == 0.0f && step->advanceX == run.advanceX && step->advanceY == run.advanceY &&
            step->spacingProgress == 0.0f && step->writingOrderer == orderer && step->Adjusting.x == 0.0f &&
@@ -62,6 +72,7 @@ int main() {
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &ltr) == SCE_FONT_OK && ltr != nullptr && ltr != line);
 
     FontWritingMetrics metrics{};
+    Require(NoSpace(line));
     Require(sceFontWritingLineRefersRenderStep(line) == nullptr);
     Require(Throws([&] { sceFontWritingLineGetRenderMetrics(line, &metrics); }));
 
@@ -74,6 +85,10 @@ int main() {
     Require(sceFontWritingLineWritesOrder(line, 0, &runB, &ordererB) == SCE_FONT_OK);
     Require(sceFontWritingLineGetRenderMetrics(line, &metrics) == SCE_FONT_OK);
     Require(Same(metrics, {16.0f, 0.0f, {-12.0f, 3.0f, 1.0f, 15.0f}}));
+    Require(NoSpace(line));
+    float space = 0.0f;
+    Require(Throws([&] { sceFontWritingLineGetOrderingSpace(line, nullptr, &space, &space, &space); }));
+    Require(Throws([&] { sceFontWritingLineGetOrderingSpace(line, &space, &space, &space, nullptr); }));
 
     Require(StepIs(sceFontWritingLineRefersRenderStep(line), 0.0f, runA, &ordererA));
     Require(StepIs(sceFontWritingLineRefersRenderStep(line), 10.0f, runB, &ordererB));
@@ -109,6 +124,7 @@ int main() {
     Require(Throws([&] { sceFontWritingLineClear(nullptr); }));
     Require(Throws([&] { sceFontWritingLineClear(&notALine); }));
     Require(Throws([&] { sceFontWritingLineRefersRenderStep(&notALine); }));
+    Require(Throws([&] { sceFontWritingLineGetOrderingSpace(&notALine, &space, &space, &space, &space); }));
     void* bogus = &notALine;
     Require(Throws([&] { sceFontDestroyWritingLine(&bogus); }) && bogus == &notALine);
 

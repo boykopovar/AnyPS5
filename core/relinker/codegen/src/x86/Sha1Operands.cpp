@@ -67,6 +67,8 @@ Sha1Operands DecodeSha1(const std::uint8_t* data, const std::size_t length) {
         }
         operands.Function = static_cast<std::uint8_t>(data[immediateOffset] & 3);
     }
+    if (operands.Memory && operands.Memory->RipRelative && immediateOffset + (operands.Operation == Sha1Operation::Rnds4 ? 1 : 0) != length)
+        throw CodegenException("RIP-relative SHA-1 operand does not end the instruction");
     return operands;
 }
 

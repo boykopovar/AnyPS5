@@ -2,7 +2,9 @@
 #include <cerrno>
 #include <vector>
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -97,6 +99,8 @@ extern "C" int APS5_VABI rename_nid_postfix(const char* from, const char* to) {
         std::error_code error;
         std::filesystem::rename(source, destination, error);
         if (error) { errno = FilesystemError(error); return -1; }
+        RecordWrittenPath_nid_no_patch(source);
+        RecordWrittenPath_nid_no_patch(destination);
         return 0;
     } catch (const std::bad_alloc&) { errno = 12; return -1; }
       catch (const std::filesystem::filesystem_error& error) {
@@ -130,6 +134,7 @@ extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
             errno = error ? FilesystemError(error) : 2;
             return -1;
         }
+        RecordWrittenPath_nid_no_patch(resolved);
         return 0;
     } catch (const std::bad_alloc&) { errno = 12; return -1; }
       catch (const std::filesystem::filesystem_error& error) {

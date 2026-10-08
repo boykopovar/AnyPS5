@@ -11,6 +11,9 @@ int APS5_VABI sceImeClose_nid_postfix(void);
 int APS5_VABI sceImeSetCaret(const Caret* caret);
 int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length);
 int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geometry);
+int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param);
+int APS5_VABI sceImeKeyboardClose(int32_t user_id);
+int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids);
 }
 
 static_assert(sizeof(Param) == 96);
@@ -118,9 +121,36 @@ static void CheckClosedPanel() {
     Require(sceImeClose_nid_postfix() == notOpened, "closing needs an open panel");
 }
 
+static void CheckKeyboardResourceIds() {
+    constexpr int NotOpened = static_cast<int>(0x80bc0002u);
+    constexpr int ConnectionFailed = static_cast<int>(0x80bc0004u);
+    constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
+    constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
+    KeyboardResourceIdArray ids;
+    std::memset(&ids, 0xa5, sizeof(ids));
+    Require(sceImeKeyboardGetResourceId(1, nullptr) == InvalidAddress, "null resource id array");
+    Require(sceImeKeyboardGetResourceId(-1, &ids) == InvalidUserId, "invalid user");
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&ids);
+    for (size_t i = 0; i < sizeof(ids); ++i) Require(bytes[i] == 0xa5, "outputs changed on argument error");
+    Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "keyboard not opened");
+    Require(ids.user_id == 1, "user not reported for an unopened keyboard");
+    for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported for an unopened keyboard");
+    KeyboardParam param{};
+    Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
+    std::memset(&ids, 0xa5, sizeof(ids));
+    Require(sceImeKeyboardGetResourceId(1, &ids) == ConnectionFailed, "a keyboard was reported as connected");
+    Require(ids.user_id == 1, "user not reported");
+    for (uint32_t id : ids.resource_id) Require(id == 0, "resource id reported without a keyboard");
+    Require(sceImeKeyboardGetResourceId(2, &ids) == NotOpened, "keyboard of another user reported as opened");
+    Require(ids.user_id == 2, "other user not reported");
+    Require(sceImeKeyboardClose(1) == 0, "keyboard close failed");
+    Require(sceImeKeyboardGetResourceId(1, &ids) == NotOpened, "closed keyboard reported as opened");
+}
+
 int main() {
     CheckInitialization();
     CheckPanelSizes();
     CheckErrors();
     CheckClosedPanel();
+    CheckKeyboardResourceIds();
 }

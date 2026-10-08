@@ -92,6 +92,7 @@ static RackOptions CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption*
 
 static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackOptions& options, const Ngs2ContextBufferInfo& bufferInfo,
                       const Ngs2BufferAllocator& allocator, Ngs2Handle* handle) {
+    static std::uint32_t nextUid = 1;
     auto* system = Ngs2FindSystem(systemHandle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
     auto* rack = new (Ngs2Place(&bufferInfo, sizeof(Ngs2Rack), alignof(Ngs2Rack))) Ngs2Rack{};
@@ -99,6 +100,13 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
     rack->rackId = rackId;
     rack->maxChannels = RackMaxChannels(rackId, options);
     rack->maxFilters = rackId == SCE_NGS2_RACK_ID_SAMPLER ? options.sampler.max_filters : 0;
+    rack->uid = nextUid++;
+    std::memcpy(rack->name, options.common.name, sizeof(rack->name));
+    rack->name[sizeof(rack->name) - 1] = '\0';
+    rack->maxGrainSamples = options.common.max_grain_samples;
+    if (rackId == SCE_NGS2_RACK_ID_SAMPLER) rack->maxChannelWorks = options.sampler.max_channel_works;
+    if (rackId == SCE_NGS2_RACK_ID_SUBMIXER) rack->maxInputs = options.submixer.max_inputs;
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) rack->maxInputs = options.customSubmixer.max_inputs;
     rack->bufferInfo = bufferInfo;
     rack->allocator = allocator;
     rack->voices.resize(options.common.max_voices);
@@ -179,6 +187,34 @@ int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
     if (voice_id >= rack->voices.size()) APS5_INVALID_ARG_EX;
     *handle = reinterpret_cast<Ngs2Handle>(&rack->voices[voice_id]);
+    return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2RackGetInfo(uintptr_t rack_handle, Ngs2RackInfo* info, size_t info_size) {
+    if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (info_size != sizeof(Ngs2RackInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+    std::lock_guard lock(Ngs2Mutex());
+    const auto* rack = Ngs2FindRack(rack_handle);
+    if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    *info = {};
+    std::memcpy(info->name, rack->name, sizeof(info->name));
+    info->rack_handle = rack_handle;
+    info->buffer_info = rack->bufferInfo;
+    info->owner_system_handle = reinterpret_cast<Ngs2Handle>(rack->system);
+    info->type = rack->rackId >> 12;
+    info->rack_id = rack->rackId;
+    info->uid = rack->uid;
+    info->min_grain_samples = MIN_GRAIN_SAMPLES;
+    info->max_grain_samples = rack->maxGrainSamples;
+    info->max_voices = static_cast<std::uint32_t>(rack->voices.size());
+    info->max_channel_works = rack->maxChannelWorks;
+    info->max_inputs = rack->maxInputs;
+    info->max_matrices = static_cast<std::uint32_t>(rack->voices.front().matrices.size());
+    info->max_ports = static_cast<std::uint32_t>(rack->voices.front().ports.size());
+    info->state_flags = 1;
+    info->render_count = static_cast<std::uint64_t>(rack->system->renderCount);
+    info->active_voice_count = static_cast<std::uint32_t>(std::count_if(rack->voices.begin(), rack->voices.end(),
+                                                                        [](const Ngs2Voice& voice) { return voice.state != Ngs2PlayState::Empty; }));
     return SCE_NGS2_OK;
 }
 

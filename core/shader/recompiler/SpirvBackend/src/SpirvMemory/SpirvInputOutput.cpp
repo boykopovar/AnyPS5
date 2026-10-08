@@ -1,4 +1,6 @@
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvInputOutput.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
@@ -17,28 +19,6 @@ namespace ShaderRecompiler
 
         constexpr std::uint32_t PsInputFlatShade = 0x00000400u;
         constexpr std::uint32_t PixelParameterLimit = 32u;
-
-        [[noreturn]] void FailEmit(const std::string& reason) {
-            throw std::runtime_error("SPIR-V module emission failed: " + reason);
-        }
-
-        IrShaderStage StageOf(const SpirvEmitterState& state) {
-            return state.program.Resources().stage;
-        }
-
-        const ShaderVertexInputInfo& VertexInfo(const SpirvEmitterState& state) {
-            if (state.inputInfo.vertex == nullptr) {
-                FailEmit("vertex input info is missing");
-            }
-            return *state.inputInfo.vertex;
-        }
-
-        const ShaderPixelInputInfo& PixelInfo(const SpirvEmitterState& state) {
-            if (state.inputInfo.pixel == nullptr) {
-                FailEmit("pixel input info is missing");
-            }
-            return *state.inputInfo.pixel;
-        }
 
         bool IsVertexLikeStage(const SpirvEmitterState& state) {
             return StageOf(state) == IrShaderStage::Vertex || StageOf(state) == IrShaderStage::Local;
@@ -109,29 +89,10 @@ namespace ShaderRecompiler
         if (location >= static_cast<std::uint32_t>(ShaderVertexInputInfo::MaxResources) || location >= static_cast<std::uint32_t>(vertex.resourcesNum)) {
             return VertexInputScalarKind::Float;
         }
-        switch (vertex.resources[location].Format()) {
-        case IrBufferFormat::Format8UInt:
-        case IrBufferFormat::Format16UInt:
-        case IrBufferFormat::Format8_8UInt:
-        case IrBufferFormat::Format32UInt:
-        case IrBufferFormat::Format16_16UInt:
-        case IrBufferFormat::Format8_8_8_8UInt:
-        case IrBufferFormat::Format32_32UInt:
-        case IrBufferFormat::Format16_16_16_16UInt:
-        case IrBufferFormat::Format32_32_32UInt:
-        case IrBufferFormat::Format32_32_32_32UInt: return VertexInputScalarKind::Uint;
-        case IrBufferFormat::Format8SInt:
-        case IrBufferFormat::Format16SInt:
-        case IrBufferFormat::Format8_8SInt:
-        case IrBufferFormat::Format32SInt:
-        case IrBufferFormat::Format16_16SInt:
-        case IrBufferFormat::Format8_8_8_8SInt:
-        case IrBufferFormat::Format32_32SInt:
-        case IrBufferFormat::Format16_16_16_16SInt:
-        case IrBufferFormat::Format32_32_32SInt:
-        case IrBufferFormat::Format32_32_32_32SInt: return VertexInputScalarKind::Sint;
-        default: return VertexInputScalarKind::Float;
-        }
+        const auto numeric = VertexInputNumericClass(vertex.resources[location].Format());
+        if (numeric == IrTextureNumericClass::Uint) return VertexInputScalarKind::Uint;
+        if (numeric == IrTextureNumericClass::Sint) return VertexInputScalarKind::Sint;
+        return VertexInputScalarKind::Float;
     }
 
     std::uint32_t VertexParameterComponentCount(const SpirvInputBinding& input) {
@@ -170,6 +131,10 @@ namespace ShaderRecompiler
             }
         }
         return 0;
+    }
+
+    bool OrderedPixelShader(const SpirvEmitterState& state) {
+        return state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->psOrderedPixelShader;
     }
 
     const SpirvInputBinding* SpirvInputBindingForParameter(const SpirvEmitterState& state, std::uint32_t location) {

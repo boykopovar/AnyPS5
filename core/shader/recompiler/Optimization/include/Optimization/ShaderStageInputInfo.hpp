@@ -40,18 +40,6 @@ struct ShaderBufferResource {
     [[nodiscard]] std::uint8_t Type() const { return (fields[3] >> 30u) & 0x3u; }
 };
 
-struct ShaderColorComponentMapping {
-    static constexpr std::uint8_t Identity = 0xe4u;
-    std::uint8_t packed = Identity;
-
-    [[nodiscard]] std::uint32_t Map(std::uint32_t component) const {
-        return (packed >> (component * 2u)) & 0x3u;
-    }
-    [[nodiscard]] bool IsIdentity() const {
-        return packed == Identity;
-    }
-};
-
 struct ShaderVertexInputBuffer {
     static constexpr int MaxAttributes = 32;
 
@@ -169,7 +157,6 @@ struct ShaderPixelInputInfo {
         return vgprs;
     }();
     std::uint8_t targetOutputMode[8] = {};
-    std::array<ShaderColorComponentMapping, 8> targetExportMapping = {};
     std::uint32_t scratchSizeDwords = 0;
     bool psPosX = false;
     bool psPosY = false;
@@ -185,6 +172,7 @@ struct ShaderPixelInputInfo {
     bool psEarlyZ = false;
     bool psExecuteOnNoop = false;
     ConservativeZExport psConservativeZExport = ConservativeZExport::AnyZ;
+    bool psOrderedPixelShader = false;
     ShaderStageRuntime stage;
 
     bool HasPositionInput() const {

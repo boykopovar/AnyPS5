@@ -5,6 +5,22 @@
 
 namespace ShaderRecompiler {
 
+namespace {
+
+const char* globalWaveSyncName(RdnaOpcode opcode) {
+    switch (opcode) {
+    case RdnaOpcode::DsGwsInit: return "ds_gws_init";
+    case RdnaOpcode::DsGwsSemaV: return "ds_gws_sema_v";
+    case RdnaOpcode::DsGwsSemaBr: return "ds_gws_sema_br";
+    case RdnaOpcode::DsGwsSemaP: return "ds_gws_sema_p";
+    case RdnaOpcode::DsGwsSemaReleaseAll: return "ds_gws_sema_release_all";
+    case RdnaOpcode::DsGwsBarrier: return "ds_gws_barrier";
+    default: throw std::logic_error("opcode is not a global wave sync instruction");
+    }
+}
+
+}
+
 void TranslateMemoryInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
     throw std::runtime_error("TranslateMemoryInstruction not implemented");
 }
@@ -430,6 +446,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsAtomic64(inst, IrOpcode::SharedAtomicFMax64, true);
     case RdnaOpcode::DsWrxchgRtnB64:
         return dsAtomic64(inst, IrOpcode::SharedAtomicSwap64, true);
+    case RdnaOpcode::DsCondxchg32RtnB64:
+        return dsCondxchg32(inst);
     case RdnaOpcode::DsNop:
         emitControlNop();
         return true;
@@ -443,6 +461,15 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsAppendConsume(inst, IrOpcode::DataConsume);
     case RdnaOpcode::DsAppend:
         return dsAppendConsume(inst, IrOpcode::DataAppend);
+    case RdnaOpcode::DsGwsInit:
+    case RdnaOpcode::DsGwsSemaV:
+    case RdnaOpcode::DsGwsSemaBr:
+    case RdnaOpcode::DsGwsSemaP:
+    case RdnaOpcode::DsGwsSemaReleaseAll:
+    case RdnaOpcode::DsGwsBarrier:
+        throw std::runtime_error(std::string(globalWaveSyncName(inst.op)) + " at pc " + std::to_string(inst.programCounter) + ": global wave sync barriers and semaphores shared by waves of different workgroups are not modeled");
+    case RdnaOpcode::DsOrderedCount:
+        throw std::runtime_error("ds_ordered_count at pc " + std::to_string(inst.programCounter) + ": GDS counters updated in wave launch order are not modeled");
     case RdnaOpcode::DsWriteAddtidB32:
         return dsAddtid(inst, true);
     case RdnaOpcode::DsReadAddtidB32:
@@ -473,6 +500,11 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::DsWrite2B64:
     case RdnaOpcode::DsWrite2st64B64:
         return dsWrite2(inst);
+    case RdnaOpcode::DsWrxchg2RtnB32:
+    case RdnaOpcode::DsWrxchg2st64RtnB32:
+    case RdnaOpcode::DsWrxchg2RtnB64:
+    case RdnaOpcode::DsWrxchg2st64RtnB64:
+        return dsWrxchg2(inst);
     case RdnaOpcode::DsWriteB8:
     case RdnaOpcode::DsWriteB16:
     case RdnaOpcode::DsWriteB16D16Hi:

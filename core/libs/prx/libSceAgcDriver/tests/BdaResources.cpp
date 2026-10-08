@@ -61,9 +61,21 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
         if (written != 0) leased.AddWritable(written, 32);
         leased.Upload(true);
         const auto ranges = leased.AddressRanges();
-        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address && range.end == address + bytes; });
-        Require(found != ranges.end() && found->permissions == ShaderRecompiler::BdaAbi::Read, "the heap range is missing from the BDA table");
+        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address; });
+        Require(found != ranges.end() && found->deviceAddress != 0u, "the heap range is missing from the BDA table");
         const auto device = found->deviceAddress;
+        auto cursor = address;
+        std::uint64_t writableBytes = 0;
+        for (auto part = found; cursor < address + bytes && part != ranges.end(); ++part) {
+            Require(part->begin == cursor && part->end > cursor && part->end <= address + bytes, "heap BDA ranges have gaps or overlap");
+            Require(part->deviceAddress == device + cursor - address, "heap BDA ranges are not contiguous on the device");
+            const bool writable = written != 0u && part->begin >= written && part->end <= written + 32u;
+            const auto permissions = ShaderRecompiler::BdaAbi::Read | (writable ? ShaderRecompiler::BdaAbi::Write : 0u);
+            Require(part->permissions == permissions, "heap BDA range has incorrect permissions");
+            if (writable) writableBytes += part->end - part->begin;
+            cursor = part->end;
+        }
+        Require(cursor == address + bytes && writableBytes == (written != 0u ? 32u : 0u), "heap BDA coverage or writable extent is incorrect");
         if (gpu) gpu(leased);
         leased.WriteBack();
         return device;
@@ -240,7 +252,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     Require(first.buffer == alias.buffer && alias.offset + adjustment == 16 && alias.range == 16 + adjustment, "aliased guest buffers have different owners");
     const auto ranges = memory.AddressRanges();
     Require(ranges.size() == 1 && ranges[0].begin == address && ranges[0].end == address + sizeof(guest), "incorrect BDA range bounds");
-    Require(ranges[0].deviceAddress != 0 && ranges[0].permissions == ShaderRecompiler::BdaAbi::Read, "incorrect BDA address or permissions");
+    Require(ranges[0].deviceAddress != 0 && ranges[0].permissions == (ShaderRecompiler::BdaAbi::Read | ShaderRecompiler::BdaAbi::Write), "incorrect BDA address or permissions");
     std::uint32_t changed = 321;
     std::memcpy(access.bytes(alias.buffer).data() + alias.offset, &changed, sizeof(changed));
     memory.WriteBack();
@@ -325,6 +337,20 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         const auto view = unaligned.Descriptor(address + 4, 4, adjustment);
         Require(adjustment == 4 && view.offset == 0 && view.range == 8, "a view off the offset alignment binds from below it");
         reject([&] { unaligned.Descriptor(address + sizeof(guest), 4, adjustment); }, "exceeds its GPU owner");
+        const auto odd = unaligned.Descriptor(address + 2, 6, adjustment);
+        Require(adjustment == 2 && odd.offset == 0 && odd.range == 8, "a view off a DWORD boundary does not bind the DWORDs around it");
+        const auto late = unaligned.Descriptor(address + 0x13, 8, adjustment);
+        Require(adjustment == 3 && late.offset == 16 && late.range == 12, "a view off a DWORD boundary does not bind from the offset alignment below it");
+        GuestBufferMemory lone(aligned);
+        lone.AddReadable(address + 6, 5);
+        lone.Upload(true);
+        const auto copied = lone.Descriptor(address + 6, 5, adjustment);
+        Require(adjustment == 2 && copied.offset == 0 && copied.range == 8, "a lone view off a DWORD boundary is not copied from the DWORD below it");
+        Require(std::memcmp(access.bytes(copied.buffer).data(), reinterpret_cast<const void*>(address + 4), 8) == 0, "a lone view off a DWORD boundary copied other bytes");
+        GuestBufferMemory tail(aligned);
+        tail.AddWritable(address, 62);
+        tail.Upload(true);
+        reject([&] { tail.Descriptor(address + 58, 4, adjustment); }, "exceeds its GPU owner");
     }
     {
         // The cached address space: a second build in an unchanged registry takes the first one's

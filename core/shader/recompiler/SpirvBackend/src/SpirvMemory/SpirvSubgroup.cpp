@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
 #include <string>
@@ -12,10 +13,6 @@ namespace ShaderRecompiler
     struct SpirvEmitterState;
 
     namespace {
-
-        [[noreturn]] void FailEmit(const std::string& reason) {
-            throw std::runtime_error("SPIR-V module emission failed: " + reason);
-        }
 
         std::uint32_t HostInvocationId(SpirvEmitterState& state) {
             if (state.subgroupLocalInvocationIdVariable == 0) {

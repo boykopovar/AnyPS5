@@ -47,13 +47,13 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
                 if (addend != 0 || (symbolIndex != 0 && (symbol.Info & 15) != 6)) throw Domain::RelinkerException("Invalid guest TLS module relocation", target);
                 if (symbolIndex != 0 && symbol.Section == 0) {
                     image.WritePointer(target, 0);
-                    runtime.Imports.push_back({symbol.Name, rva, 0, 16});
+                    runtime.Imports.push_back({symbol.Name, rva, 0, 16, symbol.Library});
                 } else tlsModules.emplace_back(target, rva);
             } else if (type == 17) {
                 if (symbolIndex != 0 && (symbol.Info & 15) != 6) throw Domain::RelinkerException("Invalid guest TLS offset relocation", target);
                 if (symbolIndex != 0 && symbol.Section == 0) {
                     image.WritePointer(target, 0);
-                    runtime.Imports.push_back({symbol.Name, rva, addend, 17});
+                    runtime.Imports.push_back({symbol.Name, rva, addend, 17, symbol.Library});
                 } else image.WritePointer(target, symbol.Value + addend);
             } else if (type == 18) {
                 const auto tls = std::find_if(guest.Headers.begin(), guest.Headers.end(), [](const auto& header) { return header.Type == 7; });
@@ -70,7 +70,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
                 } else {
                     if (symbol.Name.empty()) throw Domain::RelinkerException("Empty guest import", target);
                     image.WritePointer(target, 0);
-                    runtime.Imports.push_back({symbol.Name, rva, addend});
+                    runtime.Imports.push_back({symbol.Name, rva, addend, 1, symbol.Library});
                 }
             } else throw Domain::RelinkerException("Unsupported Windows guest relocation " + std::to_string(type), target);
         }

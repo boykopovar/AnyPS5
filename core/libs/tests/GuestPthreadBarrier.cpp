@@ -66,14 +66,16 @@ int main() {
     Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
     Require(pthread_barrierattr_setpshared_nid_postfix(&attr, 2) == GUEST_EINVAL);
     Require(pthread_barrierattr_setpshared_nid_postfix(&attr, -1) == GUEST_EINVAL);
-    bool rejected = false;
-    try { pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_SHARED); }
-    catch (const std::runtime_error&) { rejected = true; }
-    Require(rejected);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_SHARED) == 0);
+    Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_SHARED);
+    Context shared;
+    Require(pthread_barrier_init_nid_postfix(&shared.barrier, &attr, WAITERS) == 0);
+    RunWaiters(shared);
+    Require(pthread_barrier_destroy_nid_postfix(&shared.barrier) == 0);
     Require(pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_PRIVATE) == 0);
     pshared = -1;
     Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
-    rejected = false;
+    bool rejected = false;
     try { pthread_barrierattr_getpshared_nid_postfix(&attr, nullptr); }
     catch (const std::invalid_argument&) { rejected = true; }
     Require(rejected);

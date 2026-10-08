@@ -289,7 +289,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWo
         }
     }
     const auto address = reinterpret_cast<std::uintptr_t>(Buffer.data());
-    const std::array<std::uint32_t, 4> buffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(Buffer.size() * 4u), 0x01016facu};
+    const std::array<std::uint32_t, 4> buffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(Buffer.size() * 4u), 0x31016facu};
     const auto texture = TextureDescriptor(type, height, depth);
     const std::array<std::uint32_t, 4> sampler{0x92u, (4u * 256u) << 12u, (1u << 22u) | (1u << 26u), 0u};
     std::vector<std::uint32_t> userData(16, 0u);
@@ -329,10 +329,12 @@ int main() {
         if (device->Target().subgroupSize < Threads) {
             std::printf("EXEC-masked cases skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
         }
+        const bool computedOffsets = device->Target().nonConstantImageOffsets;
+        if (!computedOffsets) std::puts("2D cases skipped, their computed texel offsets need VK_KHR_maintenance8");
         std::vector<std::uint32_t> waves{Threads};
         if (device->Target().subgroupSize >= Threads) waves.push_back(Wave64Threads);
         for (const auto threads : waves) {
-            Run(*device, Code2D, threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D);
+            if (computedOffsets) Run(*device, Code2D, threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D);
             Run(*device, Code3D, threads, 10u, Height, Depth, Names3D, Masked3D, Expected3D);
             Run(*device, Code1D, threads, 8u, 1u, 1u, Names1D, Masked1D, Expected1D);
         }

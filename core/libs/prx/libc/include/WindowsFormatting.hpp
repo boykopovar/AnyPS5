@@ -146,15 +146,25 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         } else {
             while (*format >= '0' && *format <= '9') spec += *format++;
         }
+        size_t precisionLimit = std::numeric_limits<size_t>::max();
         if (*format == '.') {
             ++format;
             if (*format == '*') {
                 ++format;
                 const int precision = args.Next<int>();
-                if (precision >= 0) spec += "." + std::to_string(precision);
+                if (precision >= 0) {
+                    spec += "." + std::to_string(precision);
+                    precisionLimit = static_cast<size_t>(precision);
+                }
             } else {
                 spec += '.';
-                while (*format >= '0' && *format <= '9') spec += *format++;
+                precisionLimit = 0;
+                while (*format >= '0' && *format <= '9') {
+                    const auto digit = static_cast<size_t>(*format - '0');
+                    precisionLimit = precisionLimit <= (std::numeric_limits<size_t>::max() - digit) / 10
+                        ? precisionLimit * 10 + digit : std::numeric_limits<size_t>::max();
+                    spec += *format++;
+                }
             }
         }
         std::string length;
@@ -209,10 +219,15 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             const char16_t* value = args.Next<const char16_t*>();
             if (!value) value = u"(null)";
             std::string utf8;
-            while (*value) {
+            while (utf8.size() < precisionLimit && *value) {
                 char32_t code = *value++;
                 if (code >= 0xd800 && code < 0xdc00 && *value >= 0xdc00 && *value < 0xe000) code = 0x10000 + ((code - 0xd800) << 10) + (*value++ - 0xdc00);
+                const auto previousSize = utf8.size();
                 AppendUtf8(utf8, code);
+                if (utf8.size() > precisionLimit) {
+                    utf8.resize(previousSize);
+                    break;
+                }
             }
             output.Value(spec + 's', utf8.c_str());
         } else if (conversion == 'p' && length.empty()) {

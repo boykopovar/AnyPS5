@@ -1,5 +1,6 @@
 #include "prx/libkernel/DirectMemory/MemoryPool.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include <algorithm>
 #include <map>
 #include <mutex>
 
@@ -54,6 +55,21 @@ struct PhysicalMemoryPool {
         *end = static_cast<int64_t>(it->second.end);
         *memoryType = it->second.type;
         return true;
+    }
+
+    void Retype(uint64_t start, size_t len, int memoryType) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const uint64_t end = start + len;
+        auto it = _blocks.upper_bound(start);
+        if (it != _blocks.begin() && std::prev(it)->second.end > start) --it;
+        while (it != _blocks.end() && it->first < end) {
+            const uint64_t blockStart = it->first;
+            const Block block = it->second;
+            it = _blocks.erase(it);
+            if (blockStart < start) _blocks[blockStart] = {start, block.type};
+            _blocks[std::max(blockStart, start)] = {std::min(block.end, end), memoryType};
+            if (block.end > end) it = _blocks.emplace(end, Block{block.end, block.type}).first;
+        }
     }
 
     size_t FreeRun(uint64_t offset, uint64_t limit) {
@@ -123,6 +139,10 @@ bool DirectMemoryCheckedFree(int64_t start, size_t len) {
 
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType) {
     return PhysicalMemoryPool::Instance().Find(static_cast<uint64_t>(offset), findNext, start, end, memoryType);
+}
+
+void DirectMemoryRetype(int64_t start, size_t len, int memoryType) {
+    PhysicalMemoryPool::Instance().Retype(static_cast<uint64_t>(start), len, memoryType);
 }
 
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit) {

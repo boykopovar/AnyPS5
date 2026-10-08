@@ -12,9 +12,9 @@ class TranslationContext {
 public:
     TranslationContext(IrProgram& program, IrBlock& block, std::uint32_t vectorLimit);
 
+    void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components);
     void TranslateInstruction(const RdnaInstruction& instruction);
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
-    void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t componentCount, const ShaderBufferResource& resource);
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
 
@@ -38,6 +38,7 @@ private:
     RdnaOperand scalarDestinationOperand(const RdnaOperand& operand, std::uint32_t offset);
     RdnaOperand plainOperand(const RdnaOperand& operand);
     std::array<IrU32, 2> ballotMask(IrU1 value);
+    IrU32 hostExecWord(std::uint32_t half);
     IrU32 readRawU32(const RdnaOperand& operand);
     IrU32 readScalarCode(std::uint32_t code);
     IrU32 applyBitSourceModifiers(const RdnaOperand& operand, IrU32 value);
@@ -95,6 +96,7 @@ private:
     bool bufferAtomic(const RdnaInstruction& inst, IrOpcode opcode);
     bool imageAtomic(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
+    bool dsWrxchg2(const RdnaInstruction& inst);
     bool flatLoad(const RdnaInstruction& inst);
     bool flatStore(const RdnaInstruction& inst);
     bool flatAtomic(const RdnaInstruction& inst, IrOpcode opcode);
@@ -115,6 +117,7 @@ private:
     bool dsWrite2(const RdnaInstruction& inst);
     bool dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
+    bool dsCondxchg32(const RdnaInstruction& inst);
     bool dsAppendConsume(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAddtid(const RdnaInstruction& inst, bool write);
     bool globalAddtid(const RdnaInstruction& inst, bool write);
@@ -239,7 +242,7 @@ private:
     IrU32 extractBits32(IrU32 source, IrU32 offset, IrU32 rawCount, bool sign);
     bool sBfmB64(const RdnaInstruction& inst);
     bool sBfeU32(const RdnaInstruction& inst, bool sign);
-    bool sBfeU64(const RdnaInstruction& inst);
+    bool sBfeU64(const RdnaInstruction& inst, bool sign);
     bool vBfeU32(const RdnaInstruction& inst, bool sign);
     bool vBfiB32(const RdnaInstruction& inst);
     bool sBitcmpB32(const RdnaInstruction& inst, bool expected);
@@ -255,6 +258,7 @@ private:
     bool integerDot(const RdnaInstruction& inst, std::uint32_t elementBits, bool sign, bool accumulator);
     bool vCndmaskB32(const RdnaInstruction& inst);
     bool packB16(const RdnaInstruction& inst, bool high0, bool high1);
+    bool vCvtPk16I32(const RdnaInstruction& inst, bool sign);
     void sSubvectorLoop(const RdnaInstruction& inst, bool begin);
     void sSaveexec(const RdnaInstruction& inst, IrOpcode operation, bool negateExec, bool negateSource, bool write64, bool negateResult = false, bool writeResult = false);
     void addU32(const RdnaInstruction& inst, bool vector, bool useCarryIn);
@@ -272,6 +276,7 @@ private:
     void sTtracedata();
     void sInstPrefetch();
     void sGetpcB64(const RdnaInstruction& inst);
+    void sSwappcB64(const RdnaInstruction& inst);
     void sCselectB32(const RdnaInstruction& inst);
     void scalarSelect64(const RdnaInstruction& inst, const RdnaOperand& falseSource);
     void movB32(const RdnaInstruction& inst, bool applyFloatModifiers);

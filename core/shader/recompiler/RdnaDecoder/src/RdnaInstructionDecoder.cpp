@@ -168,7 +168,7 @@ void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program
             furthestBranchTarget = std::max(furthestBranchTarget, targetIndex);
         }
 
-        if (instruction.op == RdnaOpcode::SEndpgm && furthestBranchTarget < wordIndex) {
+        if ((instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) && furthestBranchTarget < wordIndex) {
             return;
         }
     }

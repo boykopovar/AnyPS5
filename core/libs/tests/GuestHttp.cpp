@@ -7,10 +7,12 @@
 
 extern "C" {
 int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
+int APS5_VABI sceHttpUriMerge(char*, const char*, const char*, std::size_t*, std::size_t, std::uint32_t);
 int APS5_VABI sceHttpSetInflateGZIPEnabled(int, int);
 int APS5_VABI sceHttpUriBuild(char*, std::size_t*, std::size_t, const SceHttpUriElement*, std::uint32_t);
 int APS5_VABI sceHttpUriEscape(char*, std::size_t*, std::size_t, const char*);
 int APS5_VABI sceHttpUriUnescape(char*, std::size_t*, std::size_t, const char*);
+int APS5_VABI sceHttpUriSweepPath(char*, const char*, std::size_t);
 int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
 int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
 int APS5_VABI sceHttpReadData(int, void*, std::size_t);
@@ -21,6 +23,10 @@ int APS5_VABI sceHttpGetLastErrno(int, int*);
 int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
 int APS5_VABI sceHttpRedirectCacheFlush(int);
 int APS5_VABI sceHttpsUnloadCert(int);
+int APS5_VABI sceHttpsSetSslVersion(int, int);
+int APS5_VABI sceHttpsGetSslError(int, int*, std::uint32_t*);
+int APS5_VABI sceHttpSetRedirectCallback(int, HttpRedirectCallback, void*);
+int APS5_VABI sceHttpSetCookieRecvCallback(int, HttpCookieRecvCallback, void*);
 int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
 }
 
@@ -125,6 +131,57 @@ int main() {
     Require(sceHttpUriUnescape(decodedBytes, &required, sizeof(decodedBytes), encodedBytes) == 0);
     Require(required == sizeof(bytes) && std::memcmp(bytes, decodedBytes, sizeof(bytes)) == 0);
 
+    const char* base = "http://foo.com/foo/index.html";
+    const std::size_t baseMergeSize = 5 + 1 + 1 + 8 + 16 + 1 + 1 + 2;
+    char merged[512];
+    auto merge = [&](const char* mergeBase, const char* relative, const char* expected) {
+        std::memset(merged, 'Z', sizeof(merged));
+        return sceHttpUriMerge(merged, mergeBase, relative, &required, sizeof(merged), 0) == 0 && Equal(merged, expected);
+    };
+    Require(merge(base, "./default.html", "http://foo.com/foo/./default.html"));
+    Require(required == baseMergeSize + 2 * (29 + 14));
+    Require(merge(base, "../sibling.html", "http://foo.com/foo/../sibling.html"));
+    Require(merge(base, "", "http://foo.com/foo/"));
+    Require(merge(base, "/root.html", "http://foo.com/root.html"));
+    Require(merge(base, "a?q=1#f", "http://foo.com/foo/a?q=1#f"));
+    Require(merge("https://u:p@foo.com:8443/a/b?x=1#top", "c", "https://u:p@foo.com:8443/a/c"));
+    Require(merge("http://foo.com", "x", "http://foo.com/x"));
+    Require(merge("http://foo.com:80/", "x", "http://foo.com/x"));
+    Require(merge("http://foo.com/a/b", "mailto:x", "http://foo.com/a/mailto:x"));
+    Require(merge(base, "a%20b.html", "http://foo.com/foo/a%20b.html"));
+    Require(merge(base, "~user/x", "http://foo.com/foo/~user/x"));
+    Require(merge(base, "file(1).png", "http://foo.com/foo/file(1).png"));
+    Require(merge(base, "a+b=c;d!e", "http://foo.com/foo/a+b=c;d!e"));
+
+    Require(merge(base, "http://bar.com/other", "http://bar.com/other") && required == 21);
+    const std::size_t absoluteSize = baseMergeSize + 2 * (29 + 20);
+    for (std::size_t i = 21; i < absoluteSize; ++i) Require(merged[i] == '\0');
+    Require(merged[absoluteSize] == 'Z');
+    Require(merge(base, "//bar.com/x", "//bar.com/x") && required == 12);
+
+    required = 0;
+    Require(sceHttpUriMerge(nullptr, base, "./default.html", &required, 0, 0) == 0);
+    Require(required == baseMergeSize + 2 * (29 + 14));
+    Require(sceHttpUriMerge(nullptr, base, "http://bar.com/other", &required, 0, 0) == 0);
+    Require(required == absoluteSize);
+    Require(sceHttpUriMerge(nullptr, base, "x", nullptr, 0, 0) == 0);
+    std::memset(merged, 'Z', sizeof(merged));
+    Require(sceHttpUriMerge(merged, base, "./default.html", &required, baseMergeSize + 2 * (29 + 14) - 1, 0) == outOfMemory);
+    Require(required == baseMergeSize + 2 * (29 + 14) && merged[0] == 'Z');
+    Require(sceHttpUriMerge(merged, base, "http://bar.com/other", &required, absoluteSize - 1, 0) == outOfMemory);
+    Require(merged[0] == 'Z');
+    Require(sceHttpUriMerge(merged, base, "./default.html", nullptr, baseMergeSize + 2 * (29 + 14), 0) == 0);
+    Require(Equal(merged, "http://foo.com/foo/./default.html"));
+
+    required = 123;
+    Require(sceHttpUriMerge(merged, nullptr, "./x", &required, sizeof(merged), 0) == invalidValue);
+    Require(sceHttpUriMerge(merged, base, nullptr, &required, sizeof(merged), 0) == invalidValue);
+    Require(sceHttpUriMerge(merged, base, "./x", &required, sizeof(merged), 1) == invalidValue);
+    Require(sceHttpUriMerge(nullptr, nullptr, nullptr, &required, 0, 1) == invalidValue);
+    Require(sceHttpUriMerge(merged, "http://bad host/", "./x", &required, sizeof(merged), 0) == invalidUrl);
+    Require(sceHttpUriMerge(merged, base, "http://bad host/", &required, sizeof(merged), 0) == invalidUrl);
+    Require(required == 123);
+
     HttpEpollHandle epoll = nullptr;
     Require(sceHttpCreateEpoll(1, nullptr) == invalidValue);
     Require(sceHttpCreateEpoll(1, &epoll) == 0 && epoll != nullptr);
@@ -147,6 +204,15 @@ int main() {
     Require(sceHttpGetLastErrno(1, &httpErrno) == 0);
     Require(httpErrno == 0);
     Require(sceHttpGetLastErrno(1, nullptr) == invalidValue);
+    Require(sceHttpsSetSslVersion(1, 0) == 0);
+    Require(sceHttpSetRedirectCallback(1, nullptr, nullptr) == 0);
+    Require(sceHttpSetCookieRecvCallback(1, nullptr, nullptr) == 0);
+    int sslError = -1;
+    std::uint32_t sslDetail = 0xFFFFFFFFu;
+    Require(sceHttpsGetSslError(1, &sslError, &sslDetail) == 0);
+    Require(sslError == 0 && sslDetail == 0);
+    Require(sceHttpsGetSslError(1, nullptr, &sslDetail) == invalidValue);
+    Require(sceHttpsGetSslError(1, &sslError, nullptr) == invalidValue);
 
     constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
     constexpr int parseInvalidValue = static_cast<int>(0x804321FE);
@@ -194,4 +260,30 @@ int main() {
     Require(parse(response, 15) == parseInvalidResponse);
     Require(parse(response, 16) == parseInvalidResponse);
     Require(phrase == nullptr && phraseLength == 0);
+    auto sweep = [](const char* src, const char* expected) {
+        char swept[128];
+        std::memset(swept, 'x', sizeof(swept));
+        return sceHttpUriSweepPath(swept, src, std::strlen(src) + 1) == 0 && Equal(swept, expected);
+    };
+    Require(sceHttpUriSweepPath(nullptr, nullptr, 0) == 0);
+    Require(sceHttpUriSweepPath(nullptr, "/foo", 5) == invalidValue);
+    char sweptPath[16];
+    Require(sceHttpUriSweepPath(sweptPath, nullptr, 5) == invalidValue);
+    Require(sweep("foo/../bar", "foo/../bar"));
+    Require(sweep("/foo/../bar", "/bar"));
+    Require(sweep("/foo/./bar", "/foo/bar"));
+    Require(sweep("/foo/.", "/foo/."));
+    Require(sweep("/foo/..", "/foo/.."));
+    Require(sweep("/foo/bar/../foo/././../../../test/index.html", "/test/index.html"));
+    Require(sweep("/", "/"));
+    Require(sweep("", ""));
+    Require(sweep("/a/b/c/../../d/", "/a/d/"));
+    Require(sweep("/../a", "/a"));
+    Require(sweep("/a/..b/.c", "/a/..b/.c"));
+    Require(sceHttpUriSweepPath(sweptPath, "/a/b/../c", 6) == 0 && Equal(sweptPath, "/a/b/"));
+    Require(sceHttpUriSweepPath(sweptPath, "/ab/c", 3) == 0 && Equal(sweptPath, "/a"));
+    Require(sceHttpUriSweepPath(sweptPath, "/a/./b", 5) == 0 && Equal(sweptPath, "/a/."));
+    Require(sceHttpUriSweepPath(sweptPath, "/a/b/../c", 8) == 0 && Equal(sweptPath, "/a/b/.."));
+    char sweptByte[2] = {'x', 'x'};
+    Require(sceHttpUriSweepPath(sweptByte, "/", 1) == 0 && sweptByte[0] == '\0' && sweptByte[1] == 'x');
 }
