@@ -536,7 +536,9 @@ std::uint32_t emulatedCompareState(const IrResourcePlan& plan, const ResourceSna
     const auto reference = colorCompareReference(format);
     const auto type = rawImageType(descriptor);
     if (type != ImageType::Color2D && type != ImageType::Color2DArray) throw std::runtime_error("comparison sampling of a color texture is implemented only for 2D and 2D array views");
-    if ((descriptorImageSwizzle(descriptor) & 0x7u) != 4u) throw std::runtime_error("comparison sampling of a color texture is implemented only when the view's X channel is red");
+    const auto selectX = descriptorImageSwizzle(descriptor) & 0x7u;
+    if (selectX != 0u && selectX != 1u && selectX != 4u) throw std::runtime_error("comparison sampling of a color texture is implemented only when the view's X channel is red or a constant");
+    const auto result = selectX == 0u ? EmulatedCompare::ResultZero : selectX == 1u ? EmulatedCompare::ResultOne : EmulatedCompare::ResultCompared;
     std::optional<std::uint32_t> samplerState;
     for (const auto& pair : plan.info.sampledPairs) {
         if (pair.image != index) continue;
@@ -569,7 +571,7 @@ std::uint32_t emulatedCompareState(const IrResourcePlan& plan, const ResourceSna
     }
     if (!samplerState.has_value()) throw std::runtime_error("comparison sampling of a color texture has no paired sampler");
     const bool singleLevel = ((descriptor.dwords[3] >> 12u) & 0xfu) == ((descriptor.dwords[3] >> 16u) & 0xfu);
-    return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u);
+    return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u) | (result << EmulatedCompare::ResultShift);
 }
 
 void buildResourceSpecialization(const IrResourcePlan& plan, ResourceSnapshot& snapshot, const std::vector<TableResolution>& tables, ResourceSpecialization& specialization) {

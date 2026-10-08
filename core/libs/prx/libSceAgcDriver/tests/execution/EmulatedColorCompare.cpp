@@ -70,13 +70,13 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
+std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format, std::uint32_t swizzle = 0xfacu) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
-        0xfacu | (Type2D << 28u),
+        swizzle | (Type2D << 28u),
         0u, 0u, 0u, 0u,
     };
 }
@@ -166,11 +166,11 @@ float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
     return top * (1.0f - b) + bottom * b;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, std::uint32_t swizzle = 0xfacu) {
     std::vector<std::uint32_t> userData(24, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
-    const auto texture = TextureDescriptor(format);
+    const auto texture = TextureDescriptor(format, swizzle);
     const auto samplerWords = SamplerDescriptor(sampler);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
@@ -203,15 +203,26 @@ void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* na
     }
 }
 
+void RunConstant(AgcDriver::VulkanDevice& device, std::uint32_t swizzle, float expected, const char* name) {
+    Output.fill(-1.0f);
+    const std::span<const std::uint32_t> code(Code);
+    const auto result = Compile(device, Format8888UNorm, {ClampEdge, FilterBilinear}, code, swizzle);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        Require(Output[tid] == expected, std::string(name) + ": thread " + std::to_string(tid) + " compared to " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
+    }
+}
+
 bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
     return std::any_of(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) {
         return std::any_of(binding.imageDepthCompare.begin(), binding.imageDepthCompare.end(), [](bool compare) { return compare; });
     });
 }
 
-void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason) {
+void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason, std::uint32_t swizzle = 0xfacu) {
     try {
-        static_cast<void>(Compile(device, format, sampler));
+        static_cast<void>(Compile(device, format, sampler, Code, swizzle));
     } catch (const std::exception& error) {
         Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
         return;
@@ -240,7 +251,10 @@ int main() {
         Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge, offsets, bias and LOD clamp", true);
         Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap, offsets, bias and LOD clamp", true);
         Run(*device, {ClampBorder, FilterBilinear, BorderWhite, 0u, 0x3f00u}, "bilinear, white border, offsets, bias and LOD clamp", true);
+        RunConstant(*device, 0x000u, 0.0f, "bilinear, view X channel constant 0");
+        RunConstant(*device, 0xfa9u, 1.0f, "bilinear, view X channel constant 1");
         Reject(*device, Format8888UInt, {ClampEdge, FilterPoint}, "unsupported format");
+        Reject(*device, Format8888UNorm, {ClampEdge, FilterPoint}, "X channel is red or a constant", 0xfadu);
         Reject(*device, Format8888UNorm, {ClampMirror, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampBorder, FilterPoint, BorderTable}, "border color table");
