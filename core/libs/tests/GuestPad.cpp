@@ -18,6 +18,7 @@ int APS5_VABI scePadReadState(int, PadData*);
 int APS5_VABI scePadSetTiltCorrectionState(int, bool);
 int APS5_VABI scePadResetOrientation(int);
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int, bool);
+int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int, bool);
 int APS5_VABI scePadIsRemoteController(int, bool*);
 }
 
@@ -78,6 +79,15 @@ static void CheckRemoteController(int handle) {
     Require(!remote);
 }
 
+static void CheckAngularVelocityBiasCorrection(int handle) {
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle + 1, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle, false) == PAD_OK);
+    Require(scePadResetOrientation(handle) == PAD_OK);
+    Require(SettleOrientationW() == 1.0f);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle, true) == PAD_OK);
+}
+
 int main() {
     constexpr int noHandle = static_cast<int>(0x80920008);
     constexpr int user = 0x10000000;
@@ -96,6 +106,7 @@ int main() {
     Require(scePadGetHandle(user, 0, 0) == handle);
     Require(scePadGetHandle(user, 2, 0) == handle);
     CheckTiltCorrection(handle);
+    CheckAngularVelocityBiasCorrection(handle);
     CheckTouchContact();
     CheckReadStateHandle(handle);
     CheckRemoteController(handle);
