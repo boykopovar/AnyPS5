@@ -80,7 +80,7 @@ static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: u
 static_assert(sizeof(BindingAllocationResult) == 120, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(ResourceSpecialization) == 72, "ResourceSpecialization changed: update BuildKey");
 static_assert(sizeof(ResourceSpecialization::Buffer) == 16, "ResourceSpecialization::Buffer changed: update BuildKey");
-static_assert(sizeof(ResourceSpecialization::Image) == 48, "ResourceSpecialization::Image changed: update BuildKey");
+static_assert(sizeof(ResourceSpecialization::Image) == 52, "ResourceSpecialization::Image changed: update BuildKey");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
 #endif
 
