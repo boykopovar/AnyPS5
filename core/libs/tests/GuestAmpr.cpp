@@ -980,7 +980,7 @@ void TestAmmPrt() {
     Require(sceAmprAmmCommandBufferRemapIntoPrt(&unbound, prt, source, page, cpuReadWrite, 0) == permissionDenied);
     Require(sceAmprAmmCommandBufferUnmapToPrt(&unbound, prt, page) == permissionDenied);
     std::array<std::uint8_t, 64> loose{};
-    Apr::CommandBufferObject sized{nullptr, static_cast<std::uint32_t>(loose.size()), 0, 0, Apr::BufferType::Generic, 0};
+    Apr::CommandBufferObject sized{Apr::BufferType::Generic, 0, 0, 0, static_cast<std::uint32_t>(loose.size()), nullptr};
     Require(sceAmprAmmCommandBufferMapAsPrt(&sized, prt, page) == permissionDenied);
     Require(sceAmprAmmMeasureAmmCommandSizeMapAsPrt(prt, 0) == ammRejected);
     Require(sceAmprAmmMeasureAmmCommandSizeAllocatePaForPrt(prt, page, 0, 0x08) == ammRejected);

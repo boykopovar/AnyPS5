@@ -645,7 +645,7 @@ void AmmVirtualAddressRanges_nid_no_patch(std::uint64_t* start, std::uint64_t* e
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
-    _execute(Apr::CommandBufferObject{static_cast<std::uint8_t*>(base), bytes, bytes, 0, Apr::BufferType::Generic, 0});
+    _execute(Apr::CommandBufferObject{Apr::BufferType::Generic, 0, bytes, 0, bytes, static_cast<std::uint8_t*>(base)});
     auto& last = _amm().lastSubmit;
     std::uint32_t id = last.fetch_add(1) + 1;
     while (id == 0) id = last.fetch_add(1) + 1;
