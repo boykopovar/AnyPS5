@@ -9,6 +9,8 @@ extern "C" {
 int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
 int APS5_VABI sceHttpUriMerge(char*, const char*, const char*, std::size_t*, std::size_t, std::uint32_t);
 int APS5_VABI sceHttpSetInflateGZIPEnabled(int, int);
+int APS5_VABI sceHttpSetRequestStatusCallback(int, void (APS5_VABI *)(int, int, void*), void*);
+int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
 int APS5_VABI sceHttpUriBuild(char*, std::size_t*, std::size_t, const SceHttpUriElement*, std::uint32_t);
 int APS5_VABI sceHttpUriEscape(char*, std::size_t*, std::size_t, const char*);
 int APS5_VABI sceHttpUriUnescape(char*, std::size_t*, std::size_t, const char*);
@@ -37,8 +39,18 @@ static void Require(bool value) { if (!value) std::abort(); }
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
 
 static int AuthInfo(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*) { std::abort(); }
+static void APS5_VABI RequestStatusCallback(int, int, void* argument) {
+    ++*static_cast<int*>(argument);
+}
 
 int main() {
+    int callbackCount = 0;
+    const auto request = sceHttpCreateRequest2(1, "GET", "/", 0);
+    Require(sceHttpSetRequestStatusCallback(request, RequestStatusCallback, &callbackCount) == 0);
+    Require(sceHttpSendRequest(request, nullptr, 0) == static_cast<int>(0x80431063u));
+    Require(callbackCount == 0);
+    Require(sceHttpSetRequestStatusCallback(request, nullptr, nullptr) == 0);
+    Require(sceHttpSetRequestStatusCallback(-1, RequestStatusCallback, &callbackCount) == static_cast<int>(0x80431100u));
     constexpr int outOfMemory = static_cast<int>(0x80431022);
     constexpr int invalidValue = static_cast<int>(0x804311FE);
     constexpr int invalidUrl = static_cast<int>(0x80433060);
