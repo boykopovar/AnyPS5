@@ -1,0 +1,15 @@
+add_library(libSceContentSearch SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceContentSearch PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceContentSearch)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_content_search_tests ${LIBS_INCLUDE_DIR}/tests/GuestContentSearch.cpp)
+    target_include_directories(guest_content_search_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_content_search_tests PRIVATE libSceContentSearch libSceContentExport libc)
+    configure_windows_unwind(guest_content_search_tests)
+    add_test(NAME guest_content_search COMMAND guest_content_search_tests)
+    if(WIN32)
+        set_tests_properties(guest_content_search PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
