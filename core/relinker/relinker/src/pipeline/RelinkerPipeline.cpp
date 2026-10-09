@@ -196,6 +196,20 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         return relaOff + off;
     };
 
+    auto symbolNamePos = [&](const std::uint32_t symbolIndex) -> FileByteOffset {
+        if (dynSymTabOffset > raw.size())
+            throw RelinkerException("Symbol table entry out of bounds", dynSymTabOffset);
+        const FileByteOffset room = raw.size() - dynSymTabOffset;
+        const FileByteOffset index = symbolIndex;
+        if (index > room / symEntSize)
+            throw RelinkerException("Symbol table entry out of bounds", dynSymTabOffset);
+        const FileByteOffset entry = index * static_cast<FileByteOffset>(symEntSize);
+        constexpr FileByteOffset nameBytes = 4;
+        if (nameBytes > room - entry)
+            throw RelinkerException("Symbol table entry out of bounds", dynSymTabOffset + entry);
+        return dynSymTabOffset + entry;
+    };
+
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -215,9 +229,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
                 continue;
             }
 
-            const FileByteOffset symOff = dynSymTabOffset + static_cast<FileByteOffset>(symIdx) * symEntSize;
-            if (symOff + 4 > raw.size())
-                throw RelinkerException("Symbol table entry out of bounds", symOff);
+            const FileByteOffset symOff = symbolNamePos(symIdx);
 
             std::uint32_t nameOff = 0;
             std::memcpy(&nameOff, raw.data() + symOff, 4);
