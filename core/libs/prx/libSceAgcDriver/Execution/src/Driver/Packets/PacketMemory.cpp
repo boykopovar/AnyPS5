@@ -18,8 +18,8 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
 
     bool orderedAlready = false;
 
-    const auto interruptSelect = (packet[2] >> 24u) & 7u;
-    endOfPipeInterrupt = opcode == 0x49 && interruptSelect != 0 && interruptSelect != 3;
+    const auto interruptSelect = opcode == 0x49 ? (packet[2] >> 24u) & 7u : 0u;
+    endOfPipeInterrupt = interruptSelect != 0 && interruptSelect != 3;
     interruptDeferred = false;
     if (!drainAll && endOfPipeInterrupt) {
         const auto label = Pm4::DecodeLabelWrite(packet);
