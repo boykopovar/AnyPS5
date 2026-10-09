@@ -136,34 +136,36 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Append(format++, 1);
             continue;
         }
-        std::string spec = "%";
-        while (*format && std::strchr("-+ #0", *format)) spec += *format++;
+        std::string flags;
+        while (*format && std::strchr("-+ #0", *format)) flags += *format++;
+        std::string width;
         if (*format == '*') {
             ++format;
-            const int width = args.Next<int>();
-            if (width < 0) spec += '-';
-            spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
+            const int value = args.Next<int>();
+            if (value < 0) flags += '-';
+            width = std::to_string(value < 0 ? -static_cast<long long>(value) : value);
         } else {
-            while (*format >= '0' && *format <= '9') spec += *format++;
+            while (*format >= '0' && *format <= '9') width += *format++;
         }
+        std::string precision;
         size_t precisionLimit = std::numeric_limits<size_t>::max();
         if (*format == '.') {
             ++format;
             if (*format == '*') {
                 ++format;
-                const int precision = args.Next<int>();
-                if (precision >= 0) {
-                    spec += "." + std::to_string(precision);
-                    precisionLimit = static_cast<size_t>(precision);
+                const int value = args.Next<int>();
+                if (value >= 0) {
+                    precision = "." + std::to_string(value);
+                    precisionLimit = static_cast<size_t>(value);
                 }
             } else {
-                spec += '.';
+                precision = ".";
                 precisionLimit = 0;
                 while (*format >= '0' && *format <= '9') {
                     const auto digit = static_cast<size_t>(*format - '0');
                     precisionLimit = precisionLimit <= (std::numeric_limits<size_t>::max() - digit) / 10
                         ? precisionLimit * 10 + digit : std::numeric_limits<size_t>::max();
-                    spec += *format++;
+                    precision += *format++;
                 }
             }
         }
@@ -176,6 +178,9 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         const char conversion = *format;
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
+        if (flags.find('-') != std::string::npos) std::erase(flags, '0');
+        if (std::strchr("ouxX", conversion)) std::erase_if(flags, [](char flag) { return flag == ' ' || flag == '+'; });
+        const std::string spec = "%" + flags + width + precision;
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
@@ -195,7 +200,8 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 if (length == "h") value = static_cast<unsigned short>(value);
                 if (length == "hh") value = static_cast<unsigned char>(value);
             } else value = args.Next<unsigned long long>();
-            output.Value(spec + "ll" + conversion, value);
+            const bool alternateZeroOctal = conversion == 'o' && value == 0 && precisionLimit == 0 && flags.find('#') != std::string::npos;
+            output.Value((alternateZeroOctal ? "%" + flags + width + ".1" : spec) + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             if (length == "L") {
                 static_assert(sizeof(long double) == 16);
