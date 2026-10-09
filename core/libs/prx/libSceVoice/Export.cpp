@@ -24,6 +24,7 @@ struct Port {
     std::int32_t type;
     float volume;
     std::uint32_t bitrate;
+    bool muted;
 };
 
 struct Voice {
@@ -108,7 +109,7 @@ int APS5_VABI sceVoiceCreatePort(uint32_t* port_id, const VoicePortParam* param)
     if (!voice.initialized) Fail(__func__, "library not initialized");
     const bool voicePort = param->port_type == PortInVoice || param->port_type == PortOutVoice;
     const auto id = voice.nextId++;
-    voice.ports.emplace(id, Port{param->port_type, param->volume, voicePort ? static_cast<std::uint32_t>(param->voice.bitrate) : 0u});
+    voice.ports.emplace(id, Port{param->port_type, param->volume, voicePort ? static_cast<std::uint32_t>(param->voice.bitrate) : 0u, param->mute != 0});
     *port_id = id;
     return 0;
 }
@@ -204,8 +205,10 @@ int APS5_VABI sceVoiceWriteToIPort(uint32_t input_port_id, const void* data, uin
     return 0;
 }
 
-int APS5_VABI sceVoiceSetMuteFlag() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVoiceSetMuteFlag(uint32_t portId, uint32_t muted) {
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    RequirePort(voice, portId, __func__).muted = muted != 0;
     return 0;
 }
 
@@ -219,8 +222,10 @@ int APS5_VABI sceVoiceEnableChat(void) {
     return 0;
 }
 
-int APS5_VABI sceVoiceResetPort(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVoiceResetPort(uint32_t portId) {
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    RequirePort(voice, portId, __func__);
     return 0;
 }
 
