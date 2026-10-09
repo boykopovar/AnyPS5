@@ -290,6 +290,7 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
     const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
     if (type == 0) return PosixFailure(GUEST_EBADF);
     if (NativeFlock(d, type | (operation & 4)) != 0) {
+        if (errno == EBADF) return PosixFailure(GUEST_EBADF);
 #ifdef _WIN32
         const auto error = ::GetLastError();
         if ((operation & 4) && error == ERROR_LOCK_VIOLATION) return PosixFailure(GUEST_EWOULDBLOCK);

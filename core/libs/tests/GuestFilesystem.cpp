@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <cstdio>
 #include <cstring>
 #ifdef _WIN32
@@ -53,6 +54,12 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 int main() {
+    for (const int invalid : {-1, -2, std::numeric_limits<int>::max()}) {
+        for (const int operation : {1 | 4, 2 | 4, 8}) {
+            *__error_nid_postfix() = 0;
+            Require(flock_nid_postfix(invalid, operation) == -1 && *__error_nid_postfix() == 9);
+        }
+    }
     Require(sceKernelDebugOutText(-1, "text") == static_cast<int>(0x80020016u));
     std::uint64_t throttling[4] = {1, 2, 3, 4};
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
@@ -212,7 +219,14 @@ int main() {
     Require(unlink_nid_postfix(link.string().c_str()) == 0 && unlink_nid_postfix(dangling.string().c_str()) == 0);
 #endif
     const int opened = open_nid_postfix(presentName.c_str(), 0, 0);
-    Require(opened >= 0 && close_nid_postfix(opened) == 0);
+    Require(opened >= 0);
+    Require(flock_nid_postfix(opened, 2 | 4) == 0);
+    Require(flock_nid_postfix(opened, 8) == 0);
+    Require(close_nid_postfix(opened) == 0);
+    for (const int operation : {1 | 4, 2 | 4, 8}) {
+        *__error_nid_postfix() = 0;
+        Require(flock_nid_postfix(opened, operation) == -1 && *__error_nid_postfix() == 9);
+    }
     const int reopened = _open_nid_postfix(presentName.c_str(), 0);
     Require(reopened >= 0 && close_nid_postfix(reopened) == 0);
     const int locked = open_nid_postfix(presentName.c_str(), 0, 0);
@@ -246,6 +260,7 @@ int main() {
     const int holder = open_nid_postfix(presentName.c_str(), 0, 0);
     const int contender = open_nid_postfix(presentName.c_str(), 0, 0);
     Require(holder >= 0 && contender >= 0 && flock_nid_postfix(holder, 2 | 4) == 0);
+    *__error_nid_postfix() = 9;
     Require(flock_nid_postfix(contender, 2 | 4) == -1 && *__error_nid_postfix() == 35);
     Require(flock_nid_postfix(contender, 1 | 4) == -1 && *__error_nid_postfix() == 35);
     Require(flock_nid_postfix(holder, 1 | 4) == 0 && flock_nid_postfix(contender, 1 | 4) == 0);
