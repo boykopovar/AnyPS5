@@ -138,6 +138,77 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
     return finish(assigned);
 }
 
+class GuestArguments {
+#ifdef _WIN32
+    LibcDetail::FormatArguments arguments;
+
+public:
+    explicit GuestArguments(const VaList* source) : arguments(source) {}
+    template <class T> T Next() { return arguments.Next<T>(); }
+#else
+    std::va_list arguments;
+
+public:
+    explicit GuestArguments(VaList* source) { va_copy(arguments, *reinterpret_cast<std::va_list*>(source)); }
+    ~GuestArguments() { va_end(arguments); }
+    template <class T> T Next() { return va_arg(arguments, T); }
+#endif
+    GuestArguments(const GuestArguments&) = delete;
+    GuestArguments& operator=(const GuestArguments&) = delete;
+};
+
+struct NullScanTarget {};
+
+bool HasCountConversion(const char* format) {
+    for (const char* cursor = format; *cursor != '\0';) {
+        if (*cursor++ != '%') continue;
+        while (*cursor != '\0' && std::strchr("0123456789$-+ #'*.hljztLq", *cursor) != nullptr) ++cursor;
+        if (*cursor == '\0') break;
+        if (*cursor++ == 'n') return true;
+    }
+    return false;
+}
+
+bool StringArgumentsPresent(const char* format, GuestArguments& arguments) {
+    for (const char* cursor = format; *cursor != '\0';) {
+        if (*cursor++ != '%') continue;
+        if (*cursor == '%') {
+            ++cursor;
+            continue;
+        }
+        while (*cursor != '\0' && std::strchr("-+ #0", *cursor) != nullptr) ++cursor;
+        if (*cursor == '*') {
+            ++cursor;
+            arguments.Next<int>();
+        } else {
+            while (std::isdigit(static_cast<unsigned char>(*cursor))) ++cursor;
+        }
+        if (*cursor == '.') {
+            ++cursor;
+            if (*cursor == '*') {
+                ++cursor;
+                arguments.Next<int>();
+            } else {
+                while (std::isdigit(static_cast<unsigned char>(*cursor))) ++cursor;
+            }
+        }
+        bool longDouble = false;
+        while (*cursor != '\0' && std::strchr("hljztL", *cursor) != nullptr) longDouble |= *cursor++ == 'L';
+        const char conversion = *cursor;
+        if (conversion == '\0') return true;
+        ++cursor;
+        if (std::strchr("diouxXcC", conversion) != nullptr) arguments.Next<long long>();
+        else if (std::strchr("aAeEfFgG", conversion) != nullptr) {
+            if (longDouble) arguments.Next<long double>();
+            else arguments.Next<double>();
+        } else if (conversion == 's' || conversion == 'S') {
+            if (arguments.Next<const void*>() == nullptr) return false;
+        } else if (conversion == 'p') arguments.Next<const void*>();
+        else return true;
+    }
+    return true;
+}
+
 }
 
 extern "C" {
@@ -393,6 +464,33 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
     va_end(copy);
     return result;
 #endif
+}
+
+int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
+    constexpr size_t RsizeMax = SIZE_MAX >> 1;
+    const bool writable = buffer != nullptr && size != 0 && size <= RsizeMax;
+    bool valid = writable && format != nullptr && args != nullptr && !HasCountConversion(format);
+    if (valid) {
+        GuestArguments arguments(args);
+        valid = StringArgumentsPresent(format, arguments);
+    }
+    const int result = valid ? vsnprintf_nid_postfix(buffer, size, format, args) : -1;
+    if (result < 0 && writable) buffer[0] = '\0';
+    return result;
+}
+
+int APS5_VABI vsscanf_s_nid_postfix(const char* input, const char* format, VaList* args) {
+    if (input == nullptr || format == nullptr || args == nullptr) return EOF;
+    GuestArguments arguments(args);
+    try {
+        return ScanGuest(input, format, true, [&] {
+            void* target = arguments.Next<void*>();
+            if (target == nullptr) throw NullScanTarget{};
+            return target;
+        }, [&] { return arguments.Next<unsigned int>(); });
+    } catch (const NullScanTarget&) {
+        return EOF;
+    }
 }
 
 #ifdef _WIN32
