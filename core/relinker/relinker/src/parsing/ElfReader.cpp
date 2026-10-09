@@ -84,6 +84,25 @@ ElfHeader ElfReader::ReadHeader() const {
         throw RelinkerException("Invalid ELF magic number: " + formatMagic());
     }
 
+    if (_fileBuffer[4] != 2) {
+        throw RelinkerException("Unsupported ELF class: expected ELF64", 4);
+    }
+    if (_fileBuffer[5] != 1) {
+        throw RelinkerException("Unsupported ELF data encoding: expected little-endian", 5);
+    }
+    if (_fileBuffer[6] != 1) {
+        throw RelinkerException("Unsupported ELF identification version", 6);
+    }
+    if (_readU16At(0x12) != 62) {
+        throw RelinkerException("Unsupported ELF machine: expected x86-64", 0x12);
+    }
+    if (_readU32At(0x14) != 1) {
+        throw RelinkerException("Unsupported ELF version", 0x14);
+    }
+    if (_readU16At(0x34) != 64) {
+        throw RelinkerException("Invalid ELF header size: expected 64 bytes", 0x34);
+    }
+
     ElfHeader header{};
     header.Machine = _readU16At(0x12);
     header.Type = _readU16At(0x10);
