@@ -7,6 +7,8 @@ extern "C" {
 int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void*, void*);
 int APS5_VABI sceNpTrophy2UnregisterUnlockCallback();
 int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
+int APS5_VABI sceNpTrophy2ShowTrophyList();
+int APS5_VABI sceNpTrophy2GetRewardIcon();
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -33,4 +35,12 @@ int main() {
         threw = true;
     }
     Require(threw);
+    Require(sceNpTrophy2ShowTrophyList() == 0);
+    bool rewardThrew = false;
+    try {
+        sceNpTrophy2GetRewardIcon();
+    } catch (const std::runtime_error&) {
+        rewardThrew = true;
+    }
+    Require(rewardThrew);
 }
