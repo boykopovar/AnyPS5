@@ -50,9 +50,12 @@ int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t
 }
 
 const char* APS5_VABI sceAjmStrError(int error) {
- (void)error;
- AjmStub(__func__);
- return nullptr;
+ if (error == static_cast<int>(0x80930002)) return "Invalid context";
+ if (error == static_cast<int>(0x80930003)) return "Invalid instance";
+ if (error == static_cast<int>(0x80930004)) return "Invalid batch";
+ if (error == static_cast<int>(0x80930005)) return "Invalid parameter";
+ if (error == static_cast<int>(0x80930007)) return "Out of resources";
+ return "Unknown AJM error";
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(void) {

@@ -20,6 +20,7 @@ int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo*, std::uint32_t, const void*
 int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t, void*, std::size_t);
+const char* APS5_VABI sceAjmStrError(int);
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo*, std::uint32_t, std::uint64_t, const AjmBuffer*, std::size_t, const AjmBuffer*, std::size_t, void*, std::size_t);
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo*, std::uint32_t, const void*, int, void*);
 int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t);
@@ -1013,6 +1014,22 @@ void TestAt9RunDecodesWholeInput(std::uint32_t context) {
 
 }
 
+void TestStrError() {
+    const char* invalidContext = sceAjmStrError(static_cast<int>(0x80930002));
+    const char* invalidInstance = sceAjmStrError(static_cast<int>(0x80930003));
+    const char* invalidBatch = sceAjmStrError(static_cast<int>(0x80930004));
+    const char* invalidParameter = sceAjmStrError(static_cast<int>(0x80930005));
+    const char* outOfResources = sceAjmStrError(static_cast<int>(0x80930007));
+    for (const char* message : {invalidContext, invalidInstance, invalidBatch, invalidParameter, outOfResources}) Require(message != nullptr && message[0] != '\0');
+    Require(std::strcmp(invalidContext, invalidInstance) != 0 && std::strcmp(invalidContext, invalidBatch) != 0 && std::strcmp(invalidContext, invalidParameter) != 0 && std::strcmp(invalidContext, outOfResources) != 0);
+    Require(std::strcmp(invalidInstance, invalidBatch) != 0 && std::strcmp(invalidInstance, invalidParameter) != 0 && std::strcmp(invalidInstance, outOfResources) != 0);
+    Require(std::strcmp(invalidBatch, invalidParameter) != 0 && std::strcmp(invalidBatch, outOfResources) != 0);
+    Require(std::strcmp(invalidParameter, outOfResources) != 0);
+    const char* unknown = sceAjmStrError(static_cast<int>(0x80930006));
+    const char* zero = sceAjmStrError(0);
+    Require(unknown != nullptr && unknown[0] != '\0' && zero != nullptr && zero[0] != '\0');
+}
+
 int main() {
     constexpr int invalidParameter = static_cast<int>(0x80930005);
     std::uint32_t context = 0;
@@ -1056,5 +1073,6 @@ int main() {
     TestResampleAt9(context);
     TestAt9GaplessSegments(context);
     TestAt9RunDecodesWholeInput(context);
+    TestStrError();
     Require(sceAjmFinalize(context) == 0);
 }
