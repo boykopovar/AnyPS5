@@ -1006,8 +1006,10 @@ int main(int argc, char** argv) {
         verifyVertexTypeSpecialization();
         verifyBuiltinSpecialization();
         verifySpecializationLiveness();
+        ShaderRecompiler::ShaderDiskCache::Flush();
         std::error_code error;
         std::filesystem::remove_all(directory, error);
+        require(!error, "cannot remove the shader cache test directory: " + error.message());
         std::cout << "shader disk cache tests passed\n";
         return 0;
     } catch (const std::exception& error) {
