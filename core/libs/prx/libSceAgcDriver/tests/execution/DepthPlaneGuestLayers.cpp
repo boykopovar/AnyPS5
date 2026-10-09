@@ -39,6 +39,36 @@ constexpr std::size_t LayerBytes = std::size_t{Side} * Side * 4u;
 constexpr std::size_t BlockBytes = 2u * LayerBytes;
 constexpr int Skipped = 77;
 
+PFN_vkGetDeviceProcAddr realDeviceProc = nullptr;
+PFN_vkCmdCopyImageToBuffer realCopyImageToBuffer = nullptr;
+PFN_vkCmdCopyBufferToImage realCopyBufferToImage = nullptr;
+std::atomic<std::uint32_t> imageToBufferCopies{0};
+std::atomic<std::uint32_t> bufferToImageCopies{0};
+
+VKAPI_ATTR void VKAPI_CALL CountImageToBuffer(VkCommandBuffer commands, VkImage image, VkImageLayout layout, VkBuffer buffer, std::uint32_t count, const VkBufferImageCopy* regions) {
+    imageToBufferCopies.fetch_add(1);
+    realCopyImageToBuffer(commands, image, layout, buffer, count, regions);
+}
+
+VKAPI_ATTR void VKAPI_CALL CountBufferToImage(VkCommandBuffer commands, VkBuffer buffer, VkImage image, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) {
+    bufferToImageCopies.fetch_add(1);
+    realCopyBufferToImage(commands, buffer, image, layout, count, regions);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL CountingDeviceProc(VkDevice device, const char* name) {
+    const auto function = realDeviceProc(device, name);
+    if (function == nullptr) return nullptr;
+    if (std::strcmp(name, "vkCmdCopyImageToBuffer") == 0) {
+        realCopyImageToBuffer = reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(function);
+        return reinterpret_cast<PFN_vkVoidFunction>(&CountImageToBuffer);
+    }
+    if (std::strcmp(name, "vkCmdCopyBufferToImage") == 0) {
+        realCopyBufferToImage = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(function);
+        return reinterpret_cast<PFN_vkVoidFunction>(&CountBufferToImage);
+    }
+    return function;
+}
+
 class Device {
 public:
     Device() {
@@ -93,7 +123,8 @@ public:
             device.ppEnabledExtensionNames = extensionsEnabled.data();
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
-            context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
+            realDeviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
+            context.deviceProc = &CountingDeviceProc;
             function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(context.physical, &context.memory);
             VkPhysicalDeviceProperties properties{};
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
@@ -235,6 +266,28 @@ void Run(const Context& base, const WatchedBlock& block) {
         Require(sample("after the re-read") == 0, "sampling the depth planes after the re-read of the written layer read it once more");
         AgcDriver::GuestMemory::MarkWritten(address + LayerBytes, 4096);
         Require(sample("after a driver store") != 0, "sampling the depth planes after a driver store over the guest layer did not read it again");
+        const DepthTarget slice{address, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0};
+        const DepthTarget other{address + 2 * BlockBytes, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0};
+        const auto copies = [&](const char* when, std::uint32_t fromSlices, std::uint32_t intoCopy) {
+            imageToBufferCopies = 0;
+            bufferToImageCopies = 0;
+            sample(when);
+            if (imageToBufferCopies.load() != fromSlices || bufferToImageCopies.load() != intoCopy) {
+                throw std::runtime_error(std::string("sampling the depth planes ") + when + " recorded " + std::to_string(imageToBufferCopies.load()) + " depth surface copies and " + std::to_string(bufferToImageCopies.load()) + " plane copy fills, expected " + std::to_string(fromSlices) + " and " + std::to_string(intoCopy));
+            }
+        };
+        DepthSurfaceView(context, other);
+        copies("after a draw to another depth surface", 1, 1);
+        copies("with nothing written since", 0, 0);
+        DepthSurfaceView(context, slice);
+        copies("while a draw to its depth surface is being recorded", 1, 1);
+        copies("again while that draw is the last depth draw", 1, 1);
+        DepthSurfaceView(context, other);
+        copies("after that draw", 1, 1);
+        copies("with nothing written since that draw", 0, 0);
+        FillLayer(block.Data() + LayerBytes, 0.5f);
+        copies("after a CPU write to the guest layer only", 0, 1);
+        copies("with nothing written since the CPU write", 0, 0);
     } catch (...) {
         AgcDriver::GuestMemory::SetFlushHook(nullptr);
         throw;
