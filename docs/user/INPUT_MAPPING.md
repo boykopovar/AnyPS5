@@ -31,3 +31,29 @@ ToggleMouse = MOUSE:Middle
 ```
 
 An invalid line reports the file and line number and stops input initialization. If the configured file does not exist or cannot be read, AnyPS5 reports an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
+
+
+
+## Web configurator
+
+The [input mapper](../../tools/input-mapper/index.html) edits keyboard, mouse and wheel overrides in the browser. It supports alternate bindings, physical-key capture, search, INI import, preview, copy and download. Invalid imports preserve the current configuration. Invalid bindings block export; duplicate and shared inputs, including retained built-in bindings, produce warnings. Removing every binding for an action restores its built-in inputs.
+
+From the repository root, with Node.js 22 or later:
+
+```sh
+npm --prefix tools/input-mapper start
+```
+
+Open `http://127.0.0.1:4173`. Stop the server with Ctrl+C. No package installation is required. Set `PORT` to use another port. Run the tests with:
+
+```sh
+npm --prefix tools/input-mapper test
+```
+
+Controls, Configuration and Help are separate views; switching views preserves bindings. Search covers all control groups. The group selector supports arrow keys, Home and End. Input and language menus support search, arrow keys and Enter; Escape cancels selection. Menus open beside their fields on larger screens and as bottom sheets on phones. The interface uses system fonts and respects reduced-motion preferences.
+
+The translation button selects one of 22 interface and FAQ languages. First visits use English; a saved language choice takes priority. Egyptian Arabic appears first in the language list. Arabic, Urdu and Persian use right-to-left layouts. Only the language preference is persisted; copy or download input changes before reloading.
+
+Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `4b69833bc54abf3dd3288d4aa7afbba527775e5b`. The source-contract tests compare actions, restrictions and defaults with the current native input code.
+
+For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory. For the existing GitHub Pages deployment, these files can be copied into `out/input-mapper/` after the Progress workflow generates `out`. The progress dashboard remains at `out/index.html`; publication and a dashboard link are left for maintainer review.

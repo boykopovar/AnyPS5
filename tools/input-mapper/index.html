@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>AnyPS5 · Input mapper</title>
+    <link rel="stylesheet" href="styles.css">
+    <script type="module" src="app.js"></script>
+</head>
+<body>
+    <div class="ambient" aria-hidden="true"><div class="ambient-glow"></div><div class="particles"></div><div class="particles distant"></div></div>
+    <a class="skip-link" href="#content" data-i18n="skip">Skip to content</a>
+    <header>
+        <a class="brand" href="https://github.com/boykopovar/AnyPS5">AnyPS5</a>
+        <nav class="system-nav" aria-label="Main navigation" data-i18n-label="mainNav"><a class="current" href="#controls" data-view="controls" data-i18n="controls">Controls</a><a href="#configuration" data-view="configuration" data-i18n="configuration">Configuration</a><a href="#help" data-view="help" data-i18n="help">Help</a></nav>
+        <div class="system-tools">
+            <button id="focus-search" class="icon-button" type="button" aria-label="Find an action" data-i18n-label="find"><span class="search-icon" aria-hidden="true"></span></button>
+            <button id="settings" class="icon-button" type="button" aria-label="Language" data-i18n-label="language"><span class="translation-icon" aria-hidden="true"><span>A</span><span>ع</span></span></button>
+            <time id="clock" aria-label="Local time" data-i18n-label="clock"></time>
+        </div>
+    </header>
+    <main id="content" tabindex="-1">
+        <nav id="categories" aria-label="Control groups" data-i18n-label="groups"></nav>
+        <div class="intro">
+            <p class="eyebrow" data-i18n="eyebrow">Accessories / Custom controls</p>
+            <h1 id="group-title">Face buttons</h1>
+            <p id="view-intro" data-i18n="intro">Choose a control, then assign your keyboard or mouse inputs.</p>
+        </div>
+        <div id="toolbar" class="toolbar">
+            <label class="search"><span class="sr-only" data-i18n="find">Find an action</span><input id="search" type="search" placeholder="Search controls" data-i18n-placeholder="search" autocomplete="off"></label>
+            <div class="tools">
+                <button id="import" type="button" data-i18n="import">Import INI</button>
+                <input id="file" type="file" accept=".ini,text/plain" hidden>
+                <button id="reset" type="button" data-i18n="reset">Reset</button>
+            </div>
+        </div>
+        <div id="mappings" tabindex="-1" aria-label="Controls" data-i18n-label="controls"></div>
+        <section id="configuration" class="configuration-panel" aria-label="Configuration output" data-i18n-label="output" tabindex="-1" hidden>
+                <div class="output-heading"><h2 data-i18n="configuration">Configuration</h2><span id="count" class="tag">0 / 27</span></div>
+                <label for="preview">anyps5-input.ini</label>
+                <textarea id="preview" readonly spellcheck="false" placeholder="Add a binding to begin." data-i18n-placeholder="previewEmpty" dir="ltr"></textarea>
+                <div class="export-actions">
+                    <button id="download" class="primary" type="button" data-i18n="download">Download INI</button>
+                    <button id="copy" type="button" data-i18n="copy">Copy configuration</button>
+                    <button id="back-controls" type="button" data-i18n="backControls">Back to controls</button>
+                </div>
+        </section>
+        <section id="help" tabindex="-1" aria-label="Help" data-i18n-label="help" hidden></section>
+        <div id="validation" aria-live="polite"></div>
+        <p id="status" role="status"></p>
+        <section id="import-report" hidden aria-label="Import diagnostics" tabindex="-1"></section>
+    </main>
+    <footer><span>© Amr Yasser</span><span class="navigation-hint"><kbd>←</kbd><kbd>→</kbd> <span data-i18n="switchGroup">Switch group</span><span class="footer-divider"></span><kbd>Tab</kbd> <span data-i18n="moveFocus">Move focus</span></span></footer>
+    <dialog id="capture-dialog" aria-labelledby="capture-title" aria-describedby="capture-help">
+        <h2 id="capture-title">Press a key</h2>
+        <p id="capture-help" data-i18n="captureHelp">Capture uses physical key positions. Escape cancels capture; choose Escape from the list to assign it. Some browser and system shortcuts require manual selection.</p>
+        <p id="capture-status" role="status"></p>
+        <button id="cancel-capture" type="button" data-i18n="cancelCapture" autofocus>Cancel capture</button>
+    </dialog>
+    <dialog id="replace-dialog" aria-labelledby="replace-title" aria-describedby="replace-help">
+        <h2 id="replace-title" data-i18n="replaceTitle">Discard unsaved changes?</h2>
+        <p id="replace-help" data-i18n="replaceHelp">Copy or download your configuration first if you want to keep it.</p>
+        <form method="dialog">
+            <button type="submit" value="cancel" data-i18n="keepEditing" autofocus>Keep editing</button>
+            <button type="submit" value="discard" data-i18n="discard">Discard changes</button>
+        </form>
+    </dialog>
+    <div id="language-control" hidden></div>
+    <dialog id="picker-dialog" aria-labelledby="picker-title">
+        <div class="picker-heading"><h2 id="picker-title"></h2><button id="picker-close" type="button">Close</button></div>
+        <input id="picker-search" type="search" autocomplete="off" spellcheck="false" dir="auto">
+        <div id="picker-options" role="listbox"></div>
+        <p id="picker-empty" class="hint" hidden></p>
+    </dialog>
+    <noscript>This configurator needs JavaScript enabled.</noscript>
+</body>
+</html>
