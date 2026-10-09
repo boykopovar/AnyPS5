@@ -2021,7 +2021,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
         for (auto& region : regions) {
             if (region.mirror != nullptr) continue;
             // An import found when the lease was acquired is reused while none was dropped since.
-            const HostImport* entry = region.direct != nullptr && state.epoch == importsEpoch ? region.direct : nullptr;
+            const HostImport* entry = region.direct != nullptr && state.epoch == importsEpoch && region.begin >= region.direct->base && region.end <= region.direct->base + region.direct->bytes ? region.direct : nullptr;
             region.direct = nullptr;
             if (stale) {
                 region.pending = true;
@@ -2165,7 +2165,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             }
             // An import taken by UploadPrepare (or at the lease) is still the registry's unless one
             // was dropped since.
-            const HostImport* entry = region.direct != nullptr && state.epoch == importsEpoch ? region.direct : nullptr;
+            const HostImport* entry = region.direct != nullptr && state.epoch == importsEpoch && region.begin >= region.direct->base && region.end <= region.direct->base + region.direct->bytes ? region.direct : nullptr;
             region.direct = nullptr;
             if (entry == nullptr) entry = findImport(state, region.begin, region.end);
             if (entry == nullptr) {

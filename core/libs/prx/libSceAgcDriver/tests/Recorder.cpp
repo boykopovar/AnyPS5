@@ -772,6 +772,52 @@ void remappedImportTests(const Device& device) {
     HostImportFor(context, address, bytes);
 }
 
+void crossingImportTests(const Device& device) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: crossing imports not tested\n";
+        return;
+    }
+    constexpr std::size_t half = 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, 2 * half, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(half, 2 * half);
+#endif
+    Require(block != nullptr, "cannot allocate the crossing test block");
+    auto* bytes8 = static_cast<std::uint8_t*>(block);
+    for (std::size_t i = 0; i < 2 * half; ++i) bytes8[i] = static_cast<std::uint8_t>(i * 7u);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    void* second = bytes8 + half;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, half, true, true);
+        mutation.Add(second, half, true, true);
+    }
+    if (HostImportFor(context, address, half) == nullptr || HostImportFor(context, address + half, half) == nullptr) {
+        std::cout << "host import of the crossing test block refused: crossing imports not tested\n";
+        return;
+    }
+    const auto viewStart = address + half - 256;
+    constexpr std::size_t viewBytes = 512;
+    {
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        memory.AddReadable(viewStart, viewBytes);
+        memory.Upload(true);
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(viewStart, viewBytes, adjustment);
+        Require(view.range >= viewBytes + adjustment, "a view crossing two imported ranges is cut short");
+        memory.WriteBack();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+        mutation.Remove(second);
+    }
+    HostImportFor(context, address, half);
+}
+
 void movedMetadataTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -2905,6 +2951,7 @@ int main(int argc, char** argv) {
         RunResidentPresentTests(device.GetContext());
         storeRunTests(device, recorder);
         remappedImportTests(device);
+        crossingImportTests(device);
         movedMetadataTests(device, recorder);
         viewPastLastMipTests(device, recorder);
         keysFillTests(device, recorder);
