@@ -648,7 +648,7 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
                 return SAVE_DATA_ERROR_INTERNAL;
             }
         }
-        data.resize(setup_param->memory_size, 0);
+        data.resize(std::max(data.size(), setup_param->memory_size), 0);
         if (!write_file_replace(path, data)) {
             if (needParam) {
                 if (!haveParam) {

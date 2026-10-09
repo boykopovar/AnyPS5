@@ -36,6 +36,51 @@ static std::vector<char> Read(const std::filesystem::path& path) {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
+static void CheckMetadataRecovery(std::size_t requestedSize, std::size_t expectedSize) {
+    const auto base = std::filesystem::path("_sd_mem/u99") / ("slot" + std::to_string(requestedSize));
+    const auto paramPath = base.string() + ".param";
+    const auto binPath = base.string() + ".bin";
+    std::filesystem::create_directories(base.parent_path());
+    std::vector<char> original(64);
+    for (std::size_t index = 0; index < original.size(); ++index) {
+        original[index] = static_cast<char>(index * 3 + 7);
+    }
+    {
+        std::ofstream file(binPath, std::ios::binary);
+        file.write(original.data(), static_cast<std::streamsize>(original.size()));
+        Require(static_cast<bool>(file));
+    }
+    SaveDataParam param{};
+    param.user_param = 42;
+    SaveDataMemorySetup2 setup{};
+    setup.user_id = 99;
+    setup.slot_id = static_cast<std::uint32_t>(requestedSize);
+    setup.memory_size = requestedSize;
+    setup.option = 1;
+    setup.init_param = &param;
+    SaveDataMemorySetupResult result{};
+    result.existed_memory_size = 333;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup, &result) == 0);
+    Require(result.existed_memory_size == original.size());
+    auto expected = original;
+    expected.resize(expectedSize, 0);
+    const auto actual = Read(binPath);
+    if (actual.size() != expectedSize) {
+        std::fprintf(stderr, "Metadata recovery requested %zu bytes: expected %zu bytes, got %zu\n",
+                     requestedSize, expectedSize, actual.size());
+    }
+    Require(actual == expected);
+    const auto* paramBytes = reinterpret_cast<const char*>(&param);
+    const std::vector<char> expectedParam(paramBytes, paramBytes + sizeof(param));
+    Require(Read(paramPath) == expectedParam);
+    Require(sceSaveDataTerminate() == 0);
+    Require(sceSaveDataInitialize3(nullptr) == 0);
+    Require(sceSaveDataSetupSaveDataMemory2(&setup, &result) == 0);
+    Require(result.existed_memory_size == expectedSize);
+    Require(Read(binPath) == expected);
+    Require(Read(paramPath) == expectedParam);
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() /
@@ -188,30 +233,9 @@ int main() {
     Require(Read(setupBinPath) == expectedBlob512);
     const auto* param300Bytes = reinterpret_cast<const char*>(&setupParam);
     Require(Read(setupParamPath) == std::vector<char>(param300Bytes, param300Bytes + sizeof(setupParam)));
-    const auto orphanParamPath = std::filesystem::path("_sd_mem/u99/slot0.param");
-    const auto orphanBinPath = std::filesystem::path("_sd_mem/u99/slot0.bin");
-    Require(std::filesystem::create_directories(orphanBinPath.parent_path()));
-    const std::vector<char> orphanBin(64, 'k');
-    {
-        std::ofstream orphanFile(orphanBinPath, std::ios::binary);
-        orphanFile.write(orphanBin.data(), static_cast<std::streamsize>(orphanBin.size()));
-        Require(static_cast<bool>(orphanFile));
-    }
-    SaveDataParam orphanParam{};
-    orphanParam.user_param = 42;
-    SaveDataMemorySetup2 orphanSetup{};
-    orphanSetup.user_id = 99;
-    orphanSetup.slot_id = 0;
-    orphanSetup.memory_size = 64;
-    orphanSetup.option = 1;
-    orphanSetup.init_param = &orphanParam;
-    SaveDataMemorySetupResult orphanResult{};
-    orphanResult.existed_memory_size = 333;
-    Require(sceSaveDataSetupSaveDataMemory2(&orphanSetup, &orphanResult) == 0);
-    Require(orphanResult.existed_memory_size == 64);
-    Require(Read(orphanBinPath) == orphanBin);
-    const auto* orphanBytes = reinterpret_cast<const char*>(&orphanParam);
-    Require(Read(orphanParamPath) == std::vector<char>(orphanBytes, orphanBytes + sizeof(orphanParam)));
+    CheckMetadataRecovery(32, 64);
+    CheckMetadataRecovery(64, 64);
+    CheckMetadataRecovery(96, 96);
     Require(sceSaveDataTerminate() == 0);
     Require(Read(setupBinPath) == expectedBlob512);
     Require(Read(setupParamPath) == std::vector<char>(param300Bytes, param300Bytes + sizeof(setupParam)));
