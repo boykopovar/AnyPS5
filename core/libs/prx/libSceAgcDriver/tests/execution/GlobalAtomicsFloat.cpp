@@ -24,7 +24,6 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
-constexpr std::uint32_t Int64AtomicsCapability = 12;
 constexpr std::uint32_t OpCount = 8;
 constexpr std::uint32_t NarrowOps = 3;
 constexpr std::uint32_t OpStride = 0x200;
@@ -609,7 +608,7 @@ void Put(std::vector<std::uint8_t>& image, std::uint32_t offset, std::uint64_t v
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::string Hex(std::uint64_t value) {
@@ -737,8 +736,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto capabilities = device->Target().supportedCapabilities;
-        if (std::find(capabilities.begin(), capabilities.end(), Int64AtomicsCapability) == capabilities.end()) {
+        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
             std::puts("skipped, the device has no shaderBufferInt64Atomics");
             return VulkanTestSkipped;
         }

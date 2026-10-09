@@ -161,7 +161,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     };
 }
 
-ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<DecodeRead>* reads) {
+ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<DecodeRead>* reads, bool staticAbi) {
     if (header.size() < sizeof(Shader)) throw std::runtime_error("AGC graphics: shader header is smaller than the fixed AGC header");
     Shader shader;
     std::memcpy(&shader, header.data(), sizeof(Shader));
@@ -190,14 +190,21 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
     _readHeaderArray(header, headerAddress, shader.input_semantics, shader.num_input_semantics, semantics.data());
     const auto attribTableAddr = static_cast<std::uint64_t>(userData[static_cast<std::uint32_t>(vertexAttribReg)]) | (static_cast<std::uint64_t>(userData[static_cast<std::uint32_t>(vertexAttribReg) + 1u]) << 32u);
     const auto bufferTableAddr = static_cast<std::uint64_t>(userData[static_cast<std::uint32_t>(vertexBufferReg)]) | (static_cast<std::uint64_t>(userData[static_cast<std::uint32_t>(vertexBufferReg) + 1u]) << 32u);
-    if (attribTableAddr == 0) throw std::runtime_error("AGC graphics: null vertex attribute table address");
-    if (bufferTableAddr == 0) throw std::runtime_error("AGC graphics: null vertex buffer table address");
+    if (!staticAbi && attribTableAddr == 0) throw std::runtime_error("AGC graphics: null vertex attribute table address");
+    if (!staticAbi && bufferTableAddr == 0) throw std::runtime_error("AGC graphics: null vertex buffer table address");
     info.fetchEmbedded = true;
     info.fetchAttribReg = static_cast<std::uint32_t>(vertexAttribReg);
     info.fetchBufferReg = static_cast<std::uint32_t>(vertexBufferReg);
     for (std::uint32_t i = 0; i < shader.num_input_semantics; ++i) {
         const auto& semantic = semantics[i];
         if (semantic.static_vb_index == 1 || semantic.static_attribute == 1) throw std::runtime_error("AGC graphics: statically bound vertex attributes are not implemented");
+        if (staticAbi) {
+            auto& destination = info.resourcesDst.at(info.resourcesNum++);
+            destination.registerStart = static_cast<std::int32_t>(semantic.hardware_mapping);
+            destination.registersNum = static_cast<std::int32_t>(semantic.size_in_elements);
+            destination.attrId = static_cast<std::int32_t>(semantic.semantic);
+            continue;
+        }
         std::array<std::byte, 4> attribWordBytes{};
         const auto attribWordAddress = attribTableAddr + static_cast<std::uint64_t>(semantic.semantic) * 4u;
         AgcDriver::GuestMemory::Read(attribWordAddress, attribWordBytes, 4);

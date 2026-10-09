@@ -67,7 +67,7 @@ struct Sampler {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
@@ -166,7 +166,7 @@ float Expected(std::uint32_t tid, const Sampler& sampler, bool offsets) {
     return top * (1.0f - b) + bottom * b;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::span<const std::uint32_t> code = Code, bool useCache = false, bool nativeSampleOffsets = true) {
     std::vector<std::uint32_t> userData(24, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
@@ -186,14 +186,19 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
         device.Target(),
         {0, 0, 0, 128}
     };
-    request.useCache = false;
+    request.useCache = useCache;
+    request.target.nonConstantImageOffsets = request.target.nonConstantImageOffsets && nativeSampleOffsets;
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name, bool offsets = false) {
+void Run(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char* name, bool offsets = false, bool useCache = false) {
     Output.fill(-1.0f);
     const std::span<const std::uint32_t> code = offsets ? std::span<const std::uint32_t>(OffsetCode) : std::span<const std::uint32_t>(Code);
-    const auto result = Compile(device, Format8888UNorm, sampler, code);
+    const auto result = Compile(device, Format8888UNorm, sampler, code, useCache);
+    for (const auto& binding : result.bindings) {
+        Require(binding.role != ShaderRecompiler::DescriptorRole::GuestSamplers, "emulated comparison retained a sampler binding");
+        Require(std::all_of(binding.imageSamplers.begin(), binding.imageSamplers.end(), [](auto mask) { return mask == 0u; }), "emulated comparison retained an unused sampler association");
+    }
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -209,9 +214,9 @@ bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
     });
 }
 
-void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason) {
+void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason, std::span<const std::uint32_t> code = Code, bool nativeSampleOffsets = true) {
     try {
-        static_cast<void>(Compile(device, format, sampler));
+        static_cast<void>(Compile(device, format, sampler, code, false, nativeSampleOffsets));
     } catch (const std::exception& error) {
         Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
         return;
@@ -240,6 +245,11 @@ int main() {
         Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge, offsets, bias and LOD clamp", true);
         Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap, offsets, bias and LOD clamp", true);
         Run(*device, {ClampBorder, FilterBilinear, BorderWhite, 0u, 0x3f00u}, "bilinear, white border, offsets, bias and LOD clamp", true);
+        for (unsigned iteration = 0; iteration < 2; ++iteration) {
+            Run(*device, {ClampEdge, FilterPoint}, "cached point comparison", false, true);
+            Run(*device, {ClampWrap, FilterBilinear}, "cached bilinear comparison with offsets", true, true);
+        }
+        Reject(*device, Format32Float, {ClampEdge, FilterPoint}, "native comparison with a nonconstant texel offset requires", OffsetCode, false);
         Reject(*device, Format8888UInt, {ClampEdge, FilterPoint}, "unsupported format");
         Reject(*device, Format8888UNorm, {ClampMirror, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
         Reject(*device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");

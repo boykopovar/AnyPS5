@@ -34,6 +34,7 @@ static std::atomic<int> calls{0};
 static std::atomic<std::thread::id> handlerThread;
 static std::atomic<std::uint64_t> handlerRsp{0};
 static std::atomic<std::uintptr_t> handlerFrame{0};
+static std::atomic<bool> clobberVectors{false};
 
 static void APS5_VABI Handler(int signum, void* context) {
     Require(signum == SIGUSR1);
@@ -43,6 +44,7 @@ static void APS5_VABI Handler(int signum, void* context) {
     handlerFrame.store(reinterpret_cast<std::uintptr_t>(&local));
     handlerRsp.store(rsp);
     handlerThread.store(std::this_thread::get_id());
+    if (clobberVectors.load()) asm volatile("vzeroall" ::: "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
     calls.fetch_add(1);
 }
 
@@ -101,6 +103,60 @@ static void* APS5_VABI Leaving(void* arg) {
         volatile std::uint64_t spins = 0;
         while (leavingRound.load() == round) spins = spins + 1;
     }
+    return nullptr;
+}
+
+static constexpr int VectorRounds = 100;
+static constexpr std::size_t VectorBytes = 16 * 32;
+alignas(32) static std::uint8_t vectorPattern[VectorBytes];
+alignas(32) static std::uint8_t vectorResult[VectorBytes];
+static volatile std::uint8_t vectorStop = 0;
+
+static void* APS5_VABI Vectors(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    worker.started.store(true);
+    asm volatile(
+        "vmovdqu 0(%[pattern]), %%ymm0\n"
+        "vmovdqu 32(%[pattern]), %%ymm1\n"
+        "vmovdqu 64(%[pattern]), %%ymm2\n"
+        "vmovdqu 96(%[pattern]), %%ymm3\n"
+        "vmovdqu 128(%[pattern]), %%ymm4\n"
+        "vmovdqu 160(%[pattern]), %%ymm5\n"
+        "vmovdqu 192(%[pattern]), %%ymm6\n"
+        "vmovdqu 224(%[pattern]), %%ymm7\n"
+        "vmovdqu 256(%[pattern]), %%ymm8\n"
+        "vmovdqu 288(%[pattern]), %%ymm9\n"
+        "vmovdqu 320(%[pattern]), %%ymm10\n"
+        "vmovdqu 352(%[pattern]), %%ymm11\n"
+        "vmovdqu 384(%[pattern]), %%ymm12\n"
+        "vmovdqu 416(%[pattern]), %%ymm13\n"
+        "vmovdqu 448(%[pattern]), %%ymm14\n"
+        "vmovdqu 480(%[pattern]), %%ymm15\n"
+        "1:\n"
+        "pause\n"
+        "cmpb $0, (%[stop])\n"
+        "je 1b\n"
+        "vmovdqu %%ymm0, 0(%[result])\n"
+        "vmovdqu %%ymm1, 32(%[result])\n"
+        "vmovdqu %%ymm2, 64(%[result])\n"
+        "vmovdqu %%ymm3, 96(%[result])\n"
+        "vmovdqu %%ymm4, 128(%[result])\n"
+        "vmovdqu %%ymm5, 160(%[result])\n"
+        "vmovdqu %%ymm6, 192(%[result])\n"
+        "vmovdqu %%ymm7, 224(%[result])\n"
+        "vmovdqu %%ymm8, 256(%[result])\n"
+        "vmovdqu %%ymm9, 288(%[result])\n"
+        "vmovdqu %%ymm10, 320(%[result])\n"
+        "vmovdqu %%ymm11, 352(%[result])\n"
+        "vmovdqu %%ymm12, 384(%[result])\n"
+        "vmovdqu %%ymm13, 416(%[result])\n"
+        "vmovdqu %%ymm14, 448(%[result])\n"
+        "vmovdqu %%ymm15, 480(%[result])\n"
+        "vzeroupper\n"
+        :
+        : [pattern] "r"(vectorPattern), [result] "r"(vectorResult), [stop] "r"(&vectorStop)
+        : "memory", "cc", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
     return nullptr;
 }
 
@@ -280,6 +336,24 @@ int main() {
     }
     Require(scePthreadJoin(leavingThread, nullptr) == 0);
     Require(sceKernelDeleteSema(leaving.sem) == 0);
+
+    if (__builtin_cpu_supports("avx")) {
+        for (std::size_t i = 0; i < VectorBytes; ++i) vectorPattern[i] = static_cast<std::uint8_t>(i * 7 + 1);
+        clobberVectors.store(true);
+        Worker vectors;
+        Pthread vectorsThread = nullptr;
+        Require(scePthreadCreate(&vectorsThread, nullptr, Vectors, &vectors, "vectors") == 0);
+        while (!vectors.started.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        for (int raised = 0; raised < VectorRounds; ++raised) {
+            Require(sceKernelRaiseException(vectorsThread, SIGUSR1) == 0);
+            ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + raised, vectors.id);
+        }
+        clobberVectors.store(false);
+        vectorStop = 1;
+        Require(scePthreadJoin(vectorsThread, nullptr) == 0);
+        Require(std::memcmp(vectorPattern, vectorResult, VectorBytes) == 0);
+    }
 
     Pthread finishedThread = nullptr;
     Require(scePthreadCreate(&finishedThread, nullptr, Finished, nullptr, "finished") == 0);

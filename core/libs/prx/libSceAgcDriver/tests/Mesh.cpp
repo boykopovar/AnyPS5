@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
+#include "execution/VulkanTestDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <array>
 #include <cmath>
@@ -240,11 +241,17 @@ int main() {
         }
         FanRestart[FanRim] = 0xffffu;
 
-        AgcDriver::VulkanDevice device;
+        const auto testDevice = OpenVulkanTestDevice();
+        if (!testDevice) return VulkanTestSkipped;
+        auto& device = *testDevice;
         const auto target = device.Target();
         if (!target.mesh.has_value()) {
-            std::puts("Mesh tests skipped: the device has no VK_EXT_mesh_shader");
-            return 0;
+            std::puts("skipped, the device has no VK_EXT_mesh_shader");
+            return VulkanTestSkipped;
+        }
+        if (device.DeviceName().starts_with("llvmpipe")) {
+            std::puts("skipped, the device has no mesh shader compiler that handles these programs (llvmpipe)");
+            return VulkanTestSkipped;
         }
 
         for (const auto& [name, subgroup] : {std::pair{"one-wave subgroups", SmallSubgroup}, std::pair{"two-wave subgroups", WideSubgroup}}) {

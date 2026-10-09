@@ -26,9 +26,12 @@ from the GPU (`HW_ORACLE_TARGET` overrides it).
 
 - `v4`-`v7` hold the row's 4 input dwords. `v10`-`v25` start at 0 and are stored as the result (16 dwords).
 - Leave `v0` (lane id), `v1` (input offset), `v2` (output offset) and `s[4:7]` (input and output addresses) unchanged.
-- 4 KiB of LDS. Rows run in workgroups of up to 1024 lanes, padded to whole waves with zero rows.
+- 4 KiB of LDS, or the group segment size `--lds` (Python `lds`) gives in bytes, up to 64 KiB. Rows run in workgroups of up to
+  1024 lanes, padded to whole waves with zero rows.
 - Bytes passed as `extra` follow the rows of each dispatch, at `s[4:5] + 16 * rows`: buffer contents, texels, etc.
-  Build buffer and image descriptors in SGPRs from that address.
+  Build buffer and image descriptors in SGPRs from that address. A kernel that needs more than 4 input dwords per lane
+  takes the rest from there too, for example `v_lshlrev_b32 v40, 3, v0` / `v_add_nc_u32 v40, 16 * rows, v40` /
+  `global_load_dwordx2 v[8:9], v40, s[4:5]` for two more dwords per lane, with `rows` the padded count.
 
 Every run must explicitly set all floating-point controls, including runs of integer instructions. The CLI flags
 use hyphens; Python keywords use underscores. Record these settings alongside the GPU and measured results.

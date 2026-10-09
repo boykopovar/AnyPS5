@@ -8,57 +8,20 @@
 
 namespace ShaderRecompiler {
 
-struct ResourceSpecialization {
-    struct Buffer {
-        std::uint32_t packedStride = 0;
-        IrBufferFormat descriptorFormat = IrBufferFormat::Invalid;
-        std::uint32_t descriptorSwizzle = ShaderImageIdentitySwizzle;
-        bool empty = false;
-        std::uint8_t baseMisalignment = 0;
-
-        bool operator==(const Buffer& other) const;
-    };
-
-    struct Image {
-        IrTextureNumericClass numericClass = IrTextureNumericClass::Unsupported;
-        RdnaImageDimension dimension = RdnaImageDimension::Unknown;
-        std::uint32_t mipCount = 1;
-        IrBufferFormat conversionFormat = IrBufferFormat::Invalid;
-        std::uint32_t shaderSwizzle = ShaderImageIdentitySwizzle;
-        std::uint32_t indirectRoot = ImageResource::NoIndirectImage;
-        std::uint32_t indirectMappingOffset = 0;
-        std::uint32_t indirectSearchIterations = 0;
-        bool cube = false;
-        bool fmask = false;
-        bool depthBits = false;
-        bool depthUnorm16 = false;
-        IrBufferFormat packedFormat = IrBufferFormat::Invalid;
-        std::uint32_t emulatedCompare = 0;
-        bool srgbDecode = false;
-
-        bool operator==(const Image& other) const;
-    };
-
-    std::vector<Buffer> buffers;
-    std::vector<Image> images;
-
-    bool operator==(const ResourceSpecialization& other) const;
-
-    std::vector<std::uint32_t> boundDescriptors;
-};
-
 // Why a bindless image table (a T# loaded from a table buffer at a runtime key) was not bound;
 // counted on the [bindless] line (APS5_PROFILE_DRAW).
 enum class BindlessRejection { Capacity, MaterialScan, NoEntry, Storage, NonUniform, ImageSlots, Count };
 
 class ResourceMaterializer {
 public:
-    void Apply(IrProgram& program, const ResourceSpecialization& specialization) const;
+    static std::uint32_t EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
+    void ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets = true) const;
+    static std::vector<ImageResource> RuntimeImageModes(const ImageResource& image);
+    static std::uint32_t RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes);
+    static void PrepareImageModes(ShaderInfo& info);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
-    void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot, ResourceSpecialization& specialization) const;
-    // APS5_PROFILE_DRAW: the time Materialize spent building specializations, over every call.
+    void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();
-    // The slots every bindless image table binds (APS5_BINDLESS_SLOTS, default 16, 1..48).
     static std::uint32_t BindlessSlots();
     static void CountBindlessRejection(BindlessRejection reason);
 };

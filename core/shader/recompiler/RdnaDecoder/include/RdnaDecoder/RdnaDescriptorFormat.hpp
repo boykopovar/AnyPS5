@@ -17,6 +17,7 @@ enum class ImageType : std::uint32_t {
     Color2DMsaaArray = 15
 };
 
+[[nodiscard]] IrTextureNumericClass VertexInputNumericClass(IrBufferFormat format);
 [[nodiscard]] bool IsFmaskTextureFormat(IrBufferFormat format);
 [[nodiscard]] IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format);
 [[nodiscard]] IrBufferFormat RemapTextureFormat(IrBufferFormat format);

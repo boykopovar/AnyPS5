@@ -5,13 +5,25 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include <atomic>
 #include <deque>
+#include <map>
 #include <mutex>
+#include <stdexcept>
 #include <unordered_map>
 
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
 static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
 static std::atomic<int> g_nextHandle{1};
+static std::mutex g_poolsMutex;
+static std::map<int, size_t> g_pools;
+
+struct Http2MemoryPoolStats {
+    size_t pool_size;
+    size_t max_inuse_size;
+    size_t current_inuse_size;
+    int32_t reserved;
+};
+
 static std::mutex g_completionsMutex;
 static std::unordered_map<int, std::deque<Http2AsyncResult>> g_completions;
 
@@ -92,9 +104,11 @@ int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
     (void)libnet_mem_id;
     (void)libssl_ctx_id;
-    (void)pool_size;
     (void)max_concurrent_request;
-    return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard lock(g_poolsMutex);
+    g_pools[id] = pool_size;
+    return id;
 }
 
 int APS5_VABI sceHttp2ReadData(int req_id, void* data, size_t size) {
@@ -220,7 +234,8 @@ int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
 }
 
 int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
-    (void)lib_http2_ctx_id;
+    std::lock_guard lock(g_poolsMutex);
+    g_pools.erase(lib_http2_ctx_id);
     return 0;
 }
 
@@ -240,8 +255,12 @@ int APS5_VABI sceHttp2AbortRequest(int req_id) {
     return 0;
 }
 
-int APS5_VABI sceHttp2GetMemoryPoolStats() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolStats* stats) {
+    if (stats == nullptr) APS5_INVALID_ARG_EX;
+    std::lock_guard lock(g_poolsMutex);
+    const auto pool = g_pools.find(lib_http2_ctx_id);
+    if (pool == g_pools.end()) throw std::invalid_argument("sceHttp2GetMemoryPoolStats: unknown context");
+    *stats = {pool->second, 0, 0, 0};
     return 0;
 }
 
@@ -263,6 +282,33 @@ int APS5_VABI sceHttp2SetCookieBox(int id, int cookie_box_id) {
 
 int APS5_VABI sceHttp2SetRequestNoContentLength(int id) {
     (void)id;
+    return 0;
+}
+
+
+int APS5_VABI sceHttp2SetResolveRetry(int id, int32_t retry) {
+    (void)id;
+    (void)retry;
+    return 0;
+}
+
+int APS5_VABI sceHttp2WebSocketCreateRequest() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttp2WebSocketCloseAsync() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttp2WebSocketSendTextMessageAsync() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttp2WebSocketSendDataMessageAsync() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

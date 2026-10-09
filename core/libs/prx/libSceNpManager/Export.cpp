@@ -8,6 +8,7 @@
 // PSN is not emulated: the user is reported as signed out and online queries fail.
 static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
+static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
 static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
@@ -33,12 +34,10 @@ int APS5_VABI sceNpCheckCallback(void) {
     return 0;
 }
 
-int APS5_VABI sceNpCheckNpAvailability(int req_id, const char* user, void* result) {
+int APS5_VABI sceNpCheckNpAvailability(int req_id, const NpOnlineId* online_id) {
  (void)req_id;
- (void)user;
- (void)result;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+ return SCE_NP_ERROR_USER_NOT_FOUND;
 }
 
 int APS5_VABI sceNpCheckNpReachability(int req_id, int user_id) {

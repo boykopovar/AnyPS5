@@ -16,8 +16,10 @@ int APS5_VABI sceAudio3dPortSetAttribute(std::uint32_t port_id, std::uint32_t at
 int APS5_VABI sceAudio3dPortGetQueueLevel(std::uint32_t port_id, std::uint32_t* queue_level, std::uint32_t* queue_available);
 int APS5_VABI sceAudio3dPortAdvance(std::uint32_t port_id);
 int APS5_VABI sceAudio3dPortPush(std::uint32_t port_id, std::uint32_t blocking);
+int APS5_VABI sceAudio3dPortFlush(std::uint32_t port_id);
 int APS5_VABI sceAudio3dObjectReserve(std::uint32_t port_id, std::uint32_t* object_id);
 int APS5_VABI sceAudio3dObjectUnreserve(std::uint32_t port_id, std::uint32_t object_id);
+int APS5_VABI sceAudio3dObjectSetAttributes(std::uint32_t port_id, std::uint32_t object_id, std::uint64_t num_attributes, const Audio3dAttribute* attribute_array);
 }
 
 namespace {
@@ -212,6 +214,41 @@ void CheckQueue() {
     Require(sceAudio3dPortClose(0) == 0, "close");
 }
 
+void CheckFlush() {
+    Require(sceAudio3dPortFlush(0) == INVALID_PORT, "flush needs an open port");
+    Audio3dOpenParameters parameters = Defaults();
+    std::uint32_t id = 7;
+    Require(Open(parameters, &id) == 0 && id == 0, "open");
+    Require(sceAudio3dPortAdvance(0) == 0, "advance");
+    RequireLevel(1, 1, "one frame queued");
+    Require(sceAudio3dPortFlush(1) == INVALID_PORT, "flush of port 1");
+    Require(sceAudio3dPortFlush(0) == 0, "flush");
+    RequireLevel(0, 2, "flush drops the queued frames");
+    Require(sceAudio3dPortClose(0) == 0, "close");
+}
+
+void CheckObjectAttributes() {
+    float value = 0.5f;
+    Audio3dAttribute attribute{0x10001, 0, &value, sizeof(value)};
+    Require(sceAudio3dObjectSetAttributes(0, 1, 1, &attribute) == INVALID_PORT, "attributes need an open port");
+    Audio3dOpenParameters parameters = Defaults();
+    std::uint32_t id = 7;
+    Require(Open(parameters, &id) == 0 && id == 0, "open");
+    std::uint32_t object = 0;
+    Require(sceAudio3dObjectReserve(0, &object) == 0 && object == 1, "reserve");
+    Require(sceAudio3dObjectSetAttributes(1, 1, 1, &attribute) == INVALID_PORT, "attributes on port 1");
+    Require(sceAudio3dObjectSetAttributes(0, 1, 0, &attribute) == INVALID_PARAMETER, "zero attributes");
+    Require(sceAudio3dObjectSetAttributes(0, 1, 1, nullptr) == INVALID_PARAMETER, "null array");
+    Require(sceAudio3dObjectSetAttributes(0, 2, 1, &attribute) == INVALID_OBJECT, "unreserved object");
+    Require(sceAudio3dObjectSetAttributes(0, 1, 1, &attribute) == 0, "set one attribute");
+    Audio3dAttribute reset{0x20000, 0, nullptr, 0};
+    Require(sceAudio3dObjectSetAttributes(0, 1, 1, &reset) == 0, "reset state takes a null value");
+    Audio3dAttribute missing{0x10001, 0, nullptr, 0};
+    Require(sceAudio3dObjectSetAttributes(0, 1, 1, &missing) == INVALID_PARAMETER, "a value is required");
+    Require(sceAudio3dObjectUnreserve(0, 1) == 0, "unreserve");
+    Require(sceAudio3dPortClose(0) == 0, "close");
+}
+
 void CheckTerminate() {
     std::uint32_t id = 7;
     const Audio3dOpenParameters parameters = Defaults();
@@ -236,5 +273,7 @@ int main() {
     CheckOpenClose();
     CheckObjects();
     CheckQueue();
+    CheckFlush();
+    CheckObjectAttributes();
     CheckTerminate();
 }

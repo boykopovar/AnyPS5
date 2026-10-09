@@ -58,7 +58,7 @@ constexpr std::array<Workgroup, 4> Workgroups{{{32, 32, 32}, {32, 32, 20}, {64, 
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x11016facu};
 }
 
 std::vector<std::uint32_t> Packet(std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {

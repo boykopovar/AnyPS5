@@ -35,6 +35,11 @@ int APS5_VABI sceImeClose_nid_postfix(void) {
  return ErrorNotOpened;
 }
 
+int APS5_VABI sceImeGetPanelPositionAndForm(PositionAndForm* form) {
+ (void)form;
+ return ErrorNotOpened;
+}
+
 int APS5_VABI sceImeGetPanelSize(const Param* param, uint32_t* width, uint32_t* height) {
  if (!param || !width || !height) return ErrorInvalidAddress;
  if (param->type > TypeNumber) return ErrorInvalidType;

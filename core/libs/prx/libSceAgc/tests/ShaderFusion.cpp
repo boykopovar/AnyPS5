@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/Misc/include/ShaderFusion.hpp"
+#include "prx/libSceAgcDriver/tests/execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -245,6 +246,8 @@ void testHullHalves() {
 
 int main() {
     try {
+        const auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
         testFusion(0);
         testFusion(0xa0);
         testFusion(4);

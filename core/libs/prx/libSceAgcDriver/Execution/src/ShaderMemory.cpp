@@ -201,6 +201,28 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     return true;
 }
 
+bool ShaderMemory::accessible(void* context, std::uint64_t address, std::uint64_t bytes) {
+    auto& self = *static_cast<ShaderMemory*>(context);
+    if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;
+    const auto end = address + bytes;
+    while (address < end) {
+        const auto next = self.initial.upper_bound(address);
+        if (next != self.initial.begin()) {
+            const auto previous = std::prev(next);
+            if (address - previous->first < previous->second.size()) {
+                address = previous->first + previous->second.size();
+                continue;
+            }
+        }
+        const auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1);
+        const auto pageEnd = std::min<std::uint64_t>(base + PageBytes, end);
+        const auto& page = self.page(base);
+        if (!page.wordwise && !page.valid.all() && !GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(pageEnd - address))) return false;
+        address = pageEnd;
+    }
+    return true;
+}
+
 ShaderMemory::KnownValueCounts ShaderMemory::KnownValues() {
     auto& totals = CaptureTotals();
     return {totals.wordsKnown.load(std::memory_order_relaxed), totals.wordsKnownVerified.load(std::memory_order_relaxed), totals.wordsKnownMismatches.load(std::memory_order_relaxed)};
@@ -212,6 +234,14 @@ void ShaderMemory::CountHandleMemo(bool hit) {
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle) {
+    return capture(request, handle, nullptr);
+}
+
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::PreparedShaderInvocation& invocation) {
+    return capture(invocation.Request(), nullptr, &invocation);
+}
+
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation) {
     // The capture's word and page reads (through `read`) are attributed to it ([hooksync], [guestmem]).
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Capture);
     const bool profile = CaptureProfiled();
@@ -225,7 +255,8 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(c
     runtime.userContext = this;
     runtime.readMemory = &read;
     runtime.readSpecializationMemory = &read;
-    auto capture = handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
+    runtime.accessible = &accessible;
+    auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
         totals.resolveNanoseconds += capture->sourceNanoseconds;

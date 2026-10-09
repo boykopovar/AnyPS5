@@ -534,6 +534,13 @@ struct Audio3dOpenParameters {
     std::uint32_t num_beds;
 };
 
+struct Audio3dAttribute {
+    std::uint32_t attribute_id;
+    std::uint32_t pad;
+    const void* value;
+    std::uint64_t value_size;
+};
+
 using AudioPropagationHandle = std::uint64_t;
 
 struct AudioPropagationStructDescriptor {
@@ -1221,6 +1228,7 @@ using HttpEpollHandle = HttpEpoll*;
 using HttpsCallback = int (*)(int, unsigned int, void* const*, int, void*);
 using HttpRedirectCallback = int (*)(int, std::int32_t, std::int32_t*, const char*, void*);
 using HttpCookieRecvCallback = int (*)(int, const char*, const char*, std::uint64_t, void*);
+using HttpAuthInfoCallback = int (*)(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*);
 
 struct HttpNBEvent { std::uint8_t opaque[64]; };
 
@@ -1825,6 +1833,19 @@ struct VideoOutOutputStatus {
     std::uint64_t flags = 0;
     std::uint64_t reserved[3] = {};
 };
+
+struct VideoOutResolutionStatus {
+    std::uint32_t fullWidth = 0;
+    std::uint32_t fullHeight = 0;
+    std::uint32_t paneWidth = 0;
+    std::uint32_t paneHeight = 0;
+    std::uint64_t refreshRate = 0;
+    float screenSizeInInch = 0.0f;
+    std::uint16_t flags = 0;
+    std::uint16_t reserved0 = 0;
+    std::uint32_t reserved1[3] = {};
+};
+static_assert(sizeof(VideoOutResolutionStatus) == 48 && offsetof(VideoOutResolutionStatus, refreshRate) == 16 && offsetof(VideoOutResolutionStatus, screenSizeInInch) == 24);
 
 struct VideoOutOutputOptions { std::uint32_t internalData[16] = {}; };
 

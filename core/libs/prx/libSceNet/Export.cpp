@@ -230,7 +230,13 @@ std::map<int, Sock> g_socks;
 std::set<int> g_epolls;
 std::map<int, std::map<int, NetEpollEvent>> g_epoll_socks;
 std::set<int> g_epoll_aborted;
-std::set<int> g_pools;
+std::map<int, std::size_t> g_pools;
+
+struct NetMemoryPoolStats {
+    std::size_t pool_size;
+    std::size_t max_inuse_size;
+    std::size_t current_inuse_size;
+};
 std::map<int, int> g_resolvers;
 int g_next_sock = 32;
 int g_next_epoll = 0x4000;
@@ -395,7 +401,7 @@ int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags) {
     }
     std::lock_guard<std::mutex> lk(g_mutex);
     const int id = g_next_pool++;
-    g_pools.insert(id);
+    g_pools.emplace(id, static_cast<std::size_t>(size));
     return id;
 }
 
@@ -848,8 +854,16 @@ int APS5_VABI sceNetEpollCreate(const char* name, int flags) {
     return id;
 }
 
-int APS5_VABI sceNetGetMemoryPoolStats() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNetGetMemoryPoolStats(int memid, NetMemoryPoolStats* stats) {
+    if (stats == nullptr) {
+        return fail(NET_EINVAL);
+    }
+    std::lock_guard<std::mutex> lk(g_mutex);
+    const auto pool = g_pools.find(memid);
+    if (pool == g_pools.end()) {
+        return fail(NET_EBADF);
+    }
+    *stats = {pool->second, 0, 0};
     return 0;
 }
 
@@ -1074,11 +1088,7 @@ int APS5_VABI sceNetResolverDestroy(int rid) {
     return g_resolvers.erase(rid) != 0 ? 0 : fail(NET_EBADF);
 }
 
-int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
-    (void)timeout;
-    (void)retry;
-    (void)flags;
-    if (!hostname || !addr) return fail(NET_EINVAL);
+int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std::uint32_t>& addresses) {
     {
         std::lock_guard<std::mutex> lk(g_mutex);
         if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
@@ -1090,14 +1100,61 @@ int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr,
     const int result = ::getaddrinfo(hostname, nullptr, &hints, &results);
     if (result != 0) {
         *errno_slot() = result == EAI_AGAIN ? NET_ETIMEDOUT : NET_ENOENT;
-        log_soft(__func__, "host DNS lookup failed");
+        log_soft(func, "host DNS lookup failed");
         set_resolver_error(rid, NET_ERROR_RESOLVER_ENODNS);
         return NET_ERROR_RESOLVER_ENODNS;
     }
-    const auto* address = reinterpret_cast<const sockaddr_in*>(results->ai_addr);
-    std::memcpy(addr, &address->sin_addr, sizeof(address->sin_addr));
+    for (const addrinfo* entry = results; entry != nullptr; entry = entry->ai_next) {
+        const auto address = reinterpret_cast<const sockaddr_in*>(entry->ai_addr)->sin_addr.s_addr;
+        if (std::find(addresses.begin(), addresses.end(), address) == addresses.end()) addresses.push_back(address);
+    }
     ::freeaddrinfo(results);
     set_resolver_error(rid, 0);
+    return 0;
+}
+
+int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
+    (void)timeout;
+    (void)retry;
+    (void)flags;
+    if (!hostname || !addr) return fail(NET_EINVAL);
+    std::vector<std::uint32_t> addresses;
+    if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;
+    std::memcpy(addr, addresses.data(), sizeof(addresses[0]));
+    return 0;
+}
+
+struct NetResolverRecord {
+    std::uint32_t address;
+    std::uint8_t address6[12];
+    std::int32_t family;
+    std::int32_t reserved[3];
+};
+
+struct NetResolverInfo {
+    NetResolverRecord records[10];
+    std::int32_t count;
+    std::int32_t count4;
+    std::int32_t reserved[14];
+};
+static_assert(sizeof(NetResolverRecord) == 32 && offsetof(NetResolverRecord, family) == 16);
+static_assert(sizeof(NetResolverInfo) == 384 && offsetof(NetResolverInfo, count) == 320 && offsetof(NetResolverInfo, count4) == 324);
+
+int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int rid, const char* hostname, NetResolverInfo* info, int timeout,
+    int retry, int flags) {
+    (void)timeout;
+    (void)retry;
+    if (flags != 0) throw std::runtime_error("sceNetResolverStartNtoaMultipleRecordsEx: flags " + std::to_string(flags) + " are not supported");
+    if (!hostname || !info) return fail(NET_EINVAL);
+    std::vector<std::uint32_t> addresses;
+    if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;
+    *info = {};
+    info->count = static_cast<std::int32_t>(std::min<std::size_t>(addresses.size(), std::size(info->records)));
+    info->count4 = info->count;
+    for (std::int32_t index = 0; index < info->count; ++index) {
+        info->records[index].address = addresses[index];
+        info->records[index].family = NET_AF_INET;
+    }
     return 0;
 }
 

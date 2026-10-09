@@ -56,7 +56,7 @@ bool HasLimitedUseTypes(std::span<const std::uint32_t> spirv) {
 
 }
 
-std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_t> spirv, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, bool allowOffsetTextureOperand) {
+std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_t> spirv, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, bool allowOffsetTextureOperand, bool optimize, bool specialize) {
     spv_target_env environment;
     const auto apiVersion = vulkanVersion & ~0xfffu;
     std::uint32_t maxSpirvVersion = 0;
@@ -86,13 +86,15 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
     tools.SetMessageConsumer(consumer);
     spvtools::ValidatorOptions validatorOptions;
     validatorOptions.SetAllowOffsetTextureOperand(allowOffsetTextureOperand);
+    validatorOptions.SetFriendlyNames(false);
     if (!tools.Validate(spirv.data(), spirv.size(), validatorOptions)) {
         throw std::runtime_error("SPIR-V validation before optimization failed:\n" + diagnostics);
     }
+    if (!optimize) return std::vector<std::uint32_t>(spirv.begin(), spirv.end());
     spvtools::Optimizer optimizer(environment);
     optimizer.SetMessageConsumer(consumer);
     static const char* mode = std::getenv("APS5_SPIRV_OPT");
-    if (mode != nullptr && std::string(mode) == "none") return std::vector<std::uint32_t>(spirv.begin(), spirv.end());
+    if (!specialize && mode != nullptr && std::string(mode) == "none") return std::vector<std::uint32_t>(spirv.begin(), spirv.end());
     // The recompiler emits helpers (BDA lookup, fault reporting) as functions called from every memory
     // access. Exhaustive inlining multiplies module size by ~10x and optimization time by ~20x, so the
     // default pipeline keeps the performance passes that work per function and leaves inlining to the driver.
@@ -156,7 +158,7 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
     optimizer.SetValidateAfterAll(false);
     spvtools::OptimizerOptions options;
     options.set_preserve_bindings(true);
-    options.set_preserve_spec_constants(true);
+    options.set_preserve_spec_constants(!specialize);
     options.set_validator_options(validatorOptions);
     std::vector<std::uint32_t> optimized;
     diagnostics.clear();

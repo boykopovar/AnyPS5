@@ -4,7 +4,7 @@
 
 ## Library counts
 
-The scanner reads `APS5_VABI` function definitions under `core/libs/prx/<library>/`. A definition is pending when its body calls `NotImplemented_nid_no_patch`, directly or through a recognized local stub wrapper. Other definitions are counted as implemented. These counts describe declared functions, not every firmware export, verified ABI compatibility or playable games. Silent behavior and unverified assumptions remain in [Technical debt](TechnicalDebt.md).
+The scanner reads `APS5_VABI` function definitions under `core/libs/prx/<library>/`, excluding `tests` subdirectories and their descendants. Test callbacks do not contribute to library counts. A definition is pending when its body calls `NotImplemented_nid_no_patch`, directly or through a recognized local stub wrapper. Other definitions are counted as implemented. These counts describe declared functions, not every firmware export, verified ABI compatibility or playable games. Silent behavior and unverified assumptions remain in [Technical debt](TechnicalDebt.md).
 
 A library with no scanned definitions can include a sibling library's source builder. The scanner recognizes literal `include(${CMAKE_CURRENT_SOURCE_DIR}/../<library>/<file>.cmake)` references, including quoted paths. It does not evaluate arbitrary CMake expressions.
 
@@ -23,4 +23,4 @@ python3 tools/tests/test_progress.py
 python3 tools/progress.py /tmp/anyps5-progress
 ```
 
-The regression creates a source library and a copied wrapper, moves the wrapper to a shared builder, checks output labels and totals, then verifies real regressions and removals are still reported. With `BUILD_TESTING=ON` and Python available, CTest registers it as `progress_report`.
+The regressions check that adding test callbacks leaves counts and comparisons unchanged, including when a callback shares a pending function's name or a wrapper uses shared sources. They also create a source library and a copied wrapper, move the wrapper to a shared builder, check output labels and totals, then verify real regressions and removals are still reported. With `BUILD_TESTING=ON` and Python available, CTest registers them as `progress_report`.

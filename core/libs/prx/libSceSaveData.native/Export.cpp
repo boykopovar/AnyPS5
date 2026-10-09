@@ -71,7 +71,7 @@ namespace {
 // with a small .param sidecar holding the last SaveDataParam the title wrote. Keying by user as well as slot
 // keeps two users' in-memory saves from colliding on the same console.
 constexpr char MEM_DIR[] = "_sd_mem";
-constexpr std::size_t MEM_MAX_SIZE = 0x1000000;  // 16 MiB
+constexpr std::size_t MEM_MAX_SIZE = 32u * 1024u * 1024u;
 std::mutex g_mem_mutex;
 
 std::string mem_path(std::int32_t user_id, std::uint32_t slot, const char* ext) {
@@ -482,7 +482,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     g_slots[slot].real_path = real_path;
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
     mount_result->required_blocks = 0;
-    mount_result->mount_status = (create || create2) ? 1u : 0u;
+    mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
     return SAVE_DATA_OK;
 }
 

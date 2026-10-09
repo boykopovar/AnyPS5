@@ -465,12 +465,12 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
             Require(shader.program != nullptr, "missing compiled shader");
             const auto& program = *shader.program;
             const bool generated = state.rectList && (shader.stage == Stage::TessellationControl || shader.stage == Stage::TessellationEvaluation);
-            if (!generated && program.variantId == 0) {
+            if (!generated && program.PipelineVariantId() == 0) {
                 keyed = false;
                 break;
             }
             add(shader.stage);
-            add(generated ? std::uint64_t{0} : program.variantId);
+            add(generated ? std::uint64_t{0} : program.PipelineVariantId());
             add(shader.pushConstantOffset);
             add(program.pushConstants.size());
             add(program.bdaAbiVersion);
@@ -479,6 +479,7 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
                 add(attribute.location);
                 add(attribute.components);
                 add(attribute.fetchIndex);
+                add(attribute.formatComponents);
                 // The data format bits of the V# decide the attribute's signature.
                 add((attribute.resource.fields[3] >> 12u) & 0x7fu);
             }
@@ -963,7 +964,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // The render target and index ranges stay out of the key (see DrawResourceKey); a hit repeats
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
-    resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->variantId != 0; });
+    resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
     if (resolved.cacheable) {
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, draw.indexAddress, indexBytes, !trimKey);
         if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -127,7 +128,7 @@ void Fill(std::uint32_t tid, std::uint32_t* words) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -150,7 +151,7 @@ void ExpectHalf(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected,
     Expect(tid, actual, expected, name);
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -168,6 +169,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = floatMode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -187,8 +189,17 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
+        Run(*device, std::nullopt);
         Check();
+        Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
+        Check();
+        bool refused = false;
+        try {
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
+        } catch (const std::runtime_error& error) {
+            refused = std::string(error.what()).find("output modifier on an f16") != std::string::npos;
+        }
+        Require(refused, "float16 modifiers: an output modifier with f16 output denormals flushed was not refused");
         std::puts("float16 modifiers tests passed");
         return 0;
     } catch (const std::exception& error) {

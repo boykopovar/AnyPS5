@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
@@ -18,6 +20,10 @@ Player* ToPlayer(AvPlayerInternal* h) {
 std::uint32_t VideoBufferCount(std::int32_t requested) {
     return static_cast<std::uint32_t>(std::clamp(requested, 2, 16));
 }
+
+constexpr std::size_t Ps5InitDataExSize = 0x230;
+constexpr std::size_t Ps5AutoStartOffset = 0x74;
+constexpr std::size_t Ps5VideoFrameBuffersOffset = 0x228;
 
 }
 
@@ -97,8 +103,14 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
     init.file_replacement = init_ex->file_replacement;
     init.event_replacement = init_ex->event_replacement;
     init.debug_level = init_ex->debug_level;
-    init.num_output_video_framebuffers = init_ex->num_output_video_framebuffers;
-    init.auto_start = init_ex->auto_start;
+    if (init_ex->this_size >= Ps5InitDataExSize) {
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(init_ex);
+        std::memcpy(&init.num_output_video_framebuffers, bytes + Ps5VideoFrameBuffersOffset, sizeof(init.num_output_video_framebuffers));
+        init.auto_start = bytes[Ps5AutoStartOffset] != 0;
+    } else {
+        init.num_output_video_framebuffers = init_ex->num_output_video_framebuffers;
+        init.auto_start = init_ex->auto_start;
+    }
     init.default_language = init_ex->default_language;
     *handle = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
     return SCE_OK;

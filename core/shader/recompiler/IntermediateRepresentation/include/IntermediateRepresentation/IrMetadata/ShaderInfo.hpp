@@ -18,6 +18,7 @@ struct ShaderInfo {
 
     std::vector<BufferResource> buffers;
     std::vector<ImageResource> images;
+    std::vector<std::vector<ImageResource>> runtimeImageModes;
     std::vector<SamplerResource> samplers;
     std::vector<SampledResourcePair> sampledPairs;
     std::vector<StageInput> inputs;
@@ -32,6 +33,7 @@ struct ShaderInfo {
     bool hasBitwiseXor = false;
     bool usesDma = false;
     bool bdaWrites = false;
+    bool usesFaultBuffer = false;
     bool dispatchThreadLimit = false;
 
     bool operator==(const ShaderInfo& other) const = default;

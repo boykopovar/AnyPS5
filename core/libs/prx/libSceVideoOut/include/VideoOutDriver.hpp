@@ -12,6 +12,7 @@
 #include <vector>
 #include <atomic>
 #include <exception>
+#include <future>
 #include <memory>
 #include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
@@ -40,6 +41,9 @@ static constexpr int VIDEO_OUT_ERROR_INVALID_EVENT = -2144796659;
 static constexpr int VIDEO_OUT_BUS_TYPE_MAIN = 0;
 static constexpr int VIDEO_OUT_BUS_TYPE_OVERLAY = 1;
 static constexpr int VIDEO_OUT_BUS_TYPE_SUB = 2;
+
+static constexpr uint32_t VIDEO_OUT_DEFAULT_WIDTH = 1920;
+static constexpr uint32_t VIDEO_OUT_DEFAULT_HEIGHT = 1080;
 
 static constexpr std::uint32_t VIDEO_OUT_OPEN_PARAM_FIRST_WORD = 16;
 static constexpr std::int32_t VIDEO_OUT_SERVICE_THREAD_PRIORITY_HIGHEST = 256;
@@ -70,6 +74,7 @@ static constexpr int VIDEO_OUT_EVENT_FLIP = 0;
 static constexpr int VIDEO_OUT_EVENT_VBLANK = 1;
 static constexpr int VIDEO_OUT_EVENT_PRE_VBLANK_START = 2;
 static constexpr int VIDEO_OUT_EVENT_SET_MODE = 8;
+static constexpr int VIDEO_OUT_EVENT_VRR_STATUS = 16;
 
 static constexpr int VIDEO_OUT_FLIP_MODE_VSYNC = 1;
 static constexpr int VIDEO_OUT_FLIP_MODE_VSYNC_MULTI = 4;
@@ -112,9 +117,10 @@ struct VideoOutConfig {
     std::vector<EventRegistration> vblankEvents;
     std::vector<EventRegistration> preVblankEvents;
     std::vector<EventRegistration> outputModeEvents;
+    std::vector<EventRegistration> vrrStatusEvents;
 
-    uint32_t width = 1920;
-    uint32_t height = 1080;
+    uint32_t width = VIDEO_OUT_DEFAULT_WIDTH;
+    uint32_t height = VIDEO_OUT_DEFAULT_HEIGHT;
     uint64_t generation = 0;
     bool opened = false;
     bool closing = false;
@@ -201,7 +207,7 @@ public:
 
 private:
     bool close(int handle);
-    void presentLoop(std::stop_token token);
+    void presentLoop(std::stop_token token, std::promise<void>& started);
     void vblankLoop(std::stop_token token);
     void vblankEnd();
     void processFlip(FlipRequest& req);

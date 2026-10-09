@@ -563,6 +563,85 @@ bool ControlRefused(std::uint32_t context, std::uint32_t instance, std::uint64_t
     return Refused(context, info);
 }
 
+struct SyntheticAt9Channel {
+    std::uint8_t header;
+    std::uint8_t fill;
+    std::size_t blockBytes;
+};
+
+std::vector<std::uint8_t> SyntheticAt9Block(const SyntheticAt9Channel& channel, std::uint32_t frame) {
+    std::vector<std::uint8_t> block(channel.blockBytes, channel.fill);
+    block[0] = frame == 0 ? channel.header : static_cast<std::uint8_t>(channel.header | 0x80u);
+    return block;
+}
+
+std::vector<std::int16_t> DecodeAt9Superframe(std::uint32_t context, const std::uint8_t (&config)[4], const std::vector<std::uint8_t>& superframe, std::size_t channels) {
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    constexpr std::uint64_t sidebandStream = 1ull << 47;
+    std::vector<std::uint8_t> batch(4096);
+    std::vector<std::int16_t> pcm(1024 * channels);
+    std::int32_t initResult[2] = {-1, -1};
+    struct {
+        DecodeSideband stream;
+        std::uint32_t frames;
+        std::uint32_t reserved;
+    } decoded{};
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobInitialize(&info, instance, config, sizeof(config), initResult) == 0);
+    Require(sceAjmBatchJobRun(&info, instance, sidebandStream | runMultipleFrames, superframe.data(), superframe.size(), pcm.data(), pcm.size() * sizeof(std::int16_t), &decoded, sizeof(decoded)) == 0);
+    Submit(context, info);
+    Require(initResult[0] == 0);
+    Require(decoded.stream.result == 0 && static_cast<std::size_t>(decoded.stream.inputConsumed) == superframe.size());
+    Require(static_cast<std::size_t>(decoded.stream.outputWritten) == pcm.size() * sizeof(std::int16_t) && decoded.stream.totalDecodedSamples == 1024 && decoded.frames == 4);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+    return pcm;
+}
+
+void TestMultichannelAt9(std::uint32_t context) {
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    const std::uint8_t thirdOrder[4] = {0x30, 0x73, 0xC1, 0x7E};
+    AjmDecAt9ConfigDataInfo parsed{};
+    Require(sceAjmDecAt9ParseConfigData(thirdOrder, &parsed) == 0);
+    Require(parsed.channels == 16 && parsed.sample_rate == 48000 && parsed.frame_samples_per_channel == 256);
+    Require(parsed.superframe_samples_per_channel == 1024 && parsed.superframe_size == 6144);
+    const std::uint8_t validationBitSet[4] = {0x30, 0x73, 0xE1, 0x7E};
+    Require(sceAjmDecAt9ParseConfigData(validationBitSet, &parsed) == invalidParameter);
+
+    const SyntheticAt9Channel channels[2] = {{0x00, 0xA5, 27}, {0x01, 0x0E, 22}};
+    const std::uint8_t mono[4] = {0xFE, 0x70, 0x0B, 0xF0};
+    std::vector<std::int16_t> reference[2];
+    for (std::size_t channel = 0; channel < 2; ++channel) {
+        std::vector<std::uint8_t> superframe;
+        for (std::uint32_t frame = 0; frame < 4; ++frame) {
+            const auto block = SyntheticAt9Block(channels[channel], frame);
+            superframe.insert(superframe.end(), block.begin(), block.end());
+        }
+        superframe.resize(384, 0x01);
+        reference[channel] = DecodeAt9Superframe(context, mono, superframe, 1);
+    }
+
+    const std::uint8_t stereoAmbisonic[4] = {0x30, 0x70, 0x41, 0x7E};
+    std::vector<std::uint8_t> superframe;
+    for (std::uint32_t frame = 0; frame < 4; ++frame) {
+        for (const auto& channel : channels) {
+            auto block = SyntheticAt9Block(channel, frame);
+            if (frame == 3) block.resize(384 - 3 * channel.blockBytes, 0x01);
+            superframe.insert(superframe.end(), block.begin(), block.end());
+        }
+    }
+    Require(superframe.size() == 768);
+    const auto decoded = DecodeAt9Superframe(context, stereoAmbisonic, superframe, 2);
+    bool audible = false;
+    for (std::size_t sample = 0; sample < 1024; ++sample) {
+        Require(decoded[sample * 2] == reference[0][sample] && decoded[sample * 2 + 1] == reference[1][sample]);
+        audible = audible || reference[0][sample] != 0 || reference[1][sample] != 0;
+    }
+    Require(audible);
+}
+
 void TestControlAt9(std::uint32_t context) {
     std::uint32_t instance = 0;
     Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
@@ -903,6 +982,7 @@ int main() {
     TestBatchWaitRelease(context);
     TestBatchCancel(context);
     TestControlAt9(context);
+    TestMultichannelAt9(context);
     TestControlMp3(context);
     TestControlOpus(context);
     TestResampleOpus(context);

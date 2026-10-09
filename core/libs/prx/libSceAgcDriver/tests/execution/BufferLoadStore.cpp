@@ -288,6 +288,47 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
+void CheckRuntimeDescriptors(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    constexpr std::array<std::uint32_t, 6> code{0x34040082u, 0xe0000000u, 0x80000100u, 0xe0701000u, 0x80010102u, 0xbf810000u};
+    struct Case {
+        std::uint32_t stride;
+        std::uint32_t records;
+        std::uint32_t format;
+        std::uint32_t selector;
+        bool swizzle;
+    };
+    constexpr std::array<Case, 6> cases{{{4u, 32u, 20u, 4u, false}, {8u, 32u, 5u, 4u, false}, {8u, 32u, 11u, 4u, true}, {4u, 32u, 18u, 5u, false}, {4u, 16u, 20u, 4u, false}, {4u, 64u, 20u, 4u, false}}};
+    for (std::uint32_t index = 0; index < Input.size(); ++index) Input[index] = 0x3f000000u + index * 0x201u;
+    std::array<std::uint32_t, 8> userData{};
+    const auto threads = waveSize * 2u;
+    const auto output = BufferDescriptor(Output.data(), threads * 4u);
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    ShaderRecompiler::RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}}, {waveSize, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.Target(), {0u, 0u, 0u, 128u}};
+    ShaderRecompiler::RecompileResult first;
+    for (const auto& value : cases) {
+        auto input = BufferDescriptor(Input.data(), value.records);
+        input[1] |= (value.stride << 16u) | (value.swizzle ? 0x80000000u : 0u);
+        input[3] = 0x11800000u | (value.format << 12u) | value.selector;
+        std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(0xdeadbeefu);
+        const auto result = ShaderRecompiler::Recompile(request);
+        if (first.spirv.empty()) first = result;
+        else Require(result.cacheHit && result.variantId == first.variantId, "runtime V# changed the formatted shader artifact");
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        for (std::uint32_t thread = 0; thread < threads; ++thread) {
+            const auto lane = thread % waveSize;
+            const auto index = value.swizzle ? (lane / 8u) * 16u + lane % 8u : lane * value.stride / 4u;
+            auto expected = lane >= value.records ? 0u : Input[index];
+            if (value.format == 5u) expected &= 0xffu;
+            if (value.format == 11u) expected &= 0xffffu;
+            if (value.format == 18u) expected = (expected >> 8u) & 0xffu;
+            Require(Output[thread] == expected, "runtime V# formatted load mismatch: wave" + std::to_string(waveSize) + " thread " + std::to_string(thread) + " format " + std::to_string(value.format) + " actual " + Hex(Output[thread]) + " expected " + Hex(expected));
+        }
+    }
+}
+
 template <std::size_t Lanes>
 void Check(const std::uint32_t (&expected)[Lanes][Checked], const char* const (&names)[Checked], const char* run) {
     for (std::uint32_t tid = 0; tid < Lanes; ++tid) {
@@ -310,6 +351,8 @@ int main() {
         Check(Expected64, Names, "wave64");
         Run(*device, Wave64Code, 64, device->ComputeTarget(32));
         Check(Expected64, Names, "wave64 split");
+        CheckRuntimeDescriptors(*device, 32u);
+        CheckRuntimeDescriptors(*device, 64u);
         std::puts("buffer load store tests passed");
         return 0;
     } catch (const std::exception& error) {

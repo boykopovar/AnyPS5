@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -6,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupClock.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -188,6 +190,7 @@ struct VulkanDevice::State {
     VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     std::vector<std::uint32_t> capabilities{1};
     std::vector<std::string_view> spirvExtensions;
+    std::unique_ptr<const ShaderDeviceProfile> shaderProfile;
     bool tessellationShader = false;
     bool meshShader = false;
     bool fragmentShaderBarycentric = false;
@@ -211,6 +214,7 @@ struct VulkanDevice::State {
     bool occlusionQueryPrecise = false;
     VkDeviceSize hostImportAlignment = 0;
     bool dmaBufImport = false;
+    bool memoryBudget = false;
     bool depthRangeUnrestricted = false;
     bool samplerAnisotropy = false;
     bool textureCompressionBC = false;
@@ -853,6 +857,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     // without it resolves such draws on the CPU.
     state->drawIndirectCount = hasExtension(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
     if (state->drawIndirectCount) deviceExtensions.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+    state->memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     // Guest memory is host memory: importing it lets address-based shaders use it in place instead of
     // copying every registered allocation per draw.
     if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) && std::getenv("APS5_NO_HOST_IMPORT") == nullptr) {
@@ -958,6 +963,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     enabled.occlusionQueryPrecise = available.occlusionQueryPrecise;
     state->occlusionQueryPrecise = enabled.occlusionQueryPrecise == VK_TRUE;
     // Recompiled storage-image access declares no format (the guest descriptor decides it).
+    enabled.shaderStorageImageMultisample = available.shaderStorageImageMultisample;
+    if (enabled.shaderStorageImageMultisample) state->capabilities.push_back(spv::CapabilityStorageImageMultisample);
+    state->capabilities.push_back(spv::CapabilityImageMSArray);
     enabled.shaderStorageImageWriteWithoutFormat = available.shaderStorageImageWriteWithoutFormat;
     enabled.shaderStorageImageReadWithoutFormat = available.shaderStorageImageReadWithoutFormat;
     // Gathers with non-constant offsets (ImageGatherExtended).
@@ -1105,8 +1113,22 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         byteFeatures.pNext = &pipelineFeatures;
     }
     bdaFeatures.pNext = &byteFeatures;
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
+    Graphics::Require(hasExtension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME), "shader runtime requires VK_EXT_robustness2");
+    VkPhysicalDeviceFeatures2 queried{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &robustness2};
+    state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &queried);
+    Graphics::Require(robustness2.nullDescriptor == VK_TRUE, "shader runtime requires nullDescriptor");
+    robustness2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
+    robustness2.nullDescriptor = VK_TRUE;
+    robustness2.pNext = bdaFeatures.pNext;
+    bdaFeatures.pNext = &robustness2;
+    deviceExtensions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+    deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
+    deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     deviceInfo.pNext = &bdaFeatures;
+    auto shaderProfile = std::make_unique<const ShaderDeviceProfile>(buildTarget(), deviceInfo, state->properties.limits);
     check(state->InstanceFunction<PFN_vkCreateDevice>("vkCreateDevice")(selected, &deviceInfo, nullptr, &state->device), "vkCreateDevice");
+    state->shaderProfile = std::move(shaderProfile);
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
     APS5_LOG_OUT("Vulkan device ready device=%p queue=%p family=%u", reinterpret_cast<void*>(state->device), reinterpret_cast<void*>(state->queue), family);
     VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -2429,6 +2451,11 @@ std::string VulkanDevice::DeviceName() const {
 }
 
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
+    require(state->shaderProfile != nullptr, "shader device profile is unavailable");
+    return state->shaderProfile->Target();
+}
+
+ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     const auto& limits = state->properties.limits;
     ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_1, state->meshShader ? 0x00010400u : 0x00010300u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
     target.fragmentShaderBarycentricEnabled = state->fragmentShaderBarycentric;
@@ -2509,10 +2536,12 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.imageInt64Atomics = state->imageInt64Atomics;
     context.geometryShader = state->geometryShader;
     context.sampleRateShading = state->sampleRateShading;
+    context.nullDescriptors = state->shaderProfile != nullptr && state->shaderProfile->NullDescriptors();
     context.primitiveListRestart = state->primitiveListRestart;
     context.imageViewMinLod = state->imageViewMinLod;
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;
     context.srgbDecodeFormats = state->srgbDecodeFormats;
+    context.memoryProperties2 = state->memoryBudget ? state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2") : nullptr;
     return context;
 }
 
@@ -2529,6 +2558,10 @@ void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
 }
 
 void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe) {
+    for (const auto& shader : shaders) {
+        require(shader.program != nullptr, "missing compiled shader");
+        ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
+    }
     // Two stdout lines per draw cost ~1.3 ms per frame of the queue-0 worker (part of it under the
     // GPU mutex); APS5_TRACE_DRAWS=1 restores them.
     static const bool trace = std::getenv("APS5_TRACE_DRAWS") != nullptr;
@@ -2935,6 +2968,7 @@ struct RecordedDispatch {
     DispatchTimer* timer;
     // Whether the data refresh recorded anything.
     bool refreshed = false;
+    bool resourceKeyMatched = false;
 };
 
 VkDevice VulkanDevice::Device() const {
@@ -3038,6 +3072,7 @@ std::uint64_t VulkanDevice::presync(std::span<const std::pair<std::uint64_t, std
 }
 
 std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots) {
+    ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
     static const bool lockedBuild = std::getenv("APS5_LOCKED_BUILD") != nullptr;
     if (lockedBuild || shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return nullptr;
@@ -3057,7 +3092,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
         prepared->phaseMs[which] += std::chrono::duration<double, std::milli>(now - phaseStart).count();
         phaseStart = now;
     };
-    if (ResourceCacheEnabled() && shader.variantId != 0) {
+    if (ResourceCacheEnabled() && shader.PipelineVariantId() != 0) {
         prepared->key = DispatchContentKey(compute, context.device);
         phase(PreparedDispatch::PrepareKey);
         cached = state->resourceCache.Find(prepared->key);
@@ -3253,7 +3288,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         // after an earlier dispatch's reads of the buffers by that dispatch's trailing barrier. A
         // recipe compares the two 64-bit hashes first: equal hashes mean the buffers hold the words.
         const bool differs = record.dataRefresh == RecordedDispatch::DataRefresh::Words || resources.DataWordsHash() != record.dataWordsHash;
-        if (differs && resources.RefreshData(commands, *record.shader, &recorder)) {
+        if (differs && (record.resourceKeyMatched ? resources.refreshData(commands, *record.shader, &recorder) : resources.RefreshData(commands, *record.shader, &recorder))) {
             covered = 0;
             ++d.templateRefreshed;
             d.templateRevalidateMs += record.revalidateMs;
@@ -3330,6 +3365,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
 }
 
 VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut) {
+    ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.Dispatch");
     if (recipeOut != nullptr) *recipeOut = nullptr;
     // Group counts for the trace lines; an indirect dispatch does not know them.
@@ -3353,7 +3389,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     }
     // Pipelines are shared by dispatches of one compiled variant; descriptor set layouts built from the
     // same bindings are compatible, so the pipeline layout of the first dispatch serves them all.
-    const std::uint64_t pipelineKey = shader.variantId != 0 ? (shader.variantId << 1u) | (pushStages != 0 ? 1u : 0u) : 0u;
+    const std::uint64_t pipelineKey = shader.PipelineVariantId() != 0 ? (shader.PipelineVariantId() << 1u) | (pushStages != 0 ? 1u : 0u) : 0u;
     std::shared_ptr<ComputePipelineObjects> objects;
     if (pipelineKey != 0) {
         std::lock_guard pipelines(state->computePipelinesMutex);
@@ -3369,7 +3405,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     const auto lookupsBefore = Graphics::DeviceProcLookups();
     std::shared_ptr<Graphics::ShaderResources> resources;
     ResourceCache::Key contentKey;
-    const bool cacheable = ResourceCacheEnabled() && shader.variantId != 0;
+    const bool cacheable = ResourceCacheEnabled() && shader.PipelineVariantId() != 0;
     // The object came from the resource cache: a compute template whose data buffers take this
     // dispatch's words at the record (ShaderResources::RefreshData).
     bool fromCache = false;
@@ -3522,6 +3558,8 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
         pipelineInfo.stage.module = objects->module;
         pipelineInfo.stage.pName = "main";
+        const Graphics::PipelineSpecialization specialization(shader);
+        pipelineInfo.stage.pSpecializationInfo = specialization.Info();
         VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT requiredSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT};
         requiredSubgroup.requiredSubgroupSize = std::min(shader.hostSubgroupSize, state->maxComputeSubgroupSize);
         if (state->computeWave32 && (shader.hostSubgroupSize == 32u || shader.hostSubgroupSize > state->maxComputeSubgroupSize)) pipelineInfo.stage.pNext = &requiredSubgroup;
@@ -3543,6 +3581,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     auto& recorder = *state->recorder;
     IndirectOutcome outcome{0, 0};
     RecordedDispatch record{&context, &shaders[0], resources, objects, pushStages, &pushBytes, x, y, z, arguments, nullptr, programAddress, fromCache && TemplateDataRefresh() ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::None, 0, revalidateMs, &timer};
+    record.resourceKeyMatched = fromCache;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
     // The indirect hold total below still covers the whole call of a CPU-resolved one.
     const bool indirect = record.arguments != 0 || outcome.cpuReason != 0;
@@ -3570,7 +3609,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
             static auto lastReport = std::chrono::steady_clock::now();
             const auto now = std::chrono::steady_clock::now();
             const auto ms = std::chrono::duration<double, std::milli>(now - syncStart).count();
-            auto& waits = byProgram[programAddress != 0 ? programAddress : shader.variantId];
+            auto& waits = byProgram[programAddress != 0 ? programAddress : shader.PipelineVariantId()];
             ++waits.count;
             waits.ms += ms;
             ++syncs;
@@ -3618,6 +3657,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
 }
 
 RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, const std::shared_ptr<RecipeHit>& hit, IndirectOutcome& outcome, const std::shared_ptr<PreparedDispatch>& verify, bool refreshByWords) {
+    ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.DispatchRecipe");
     outcome = {0, 0};
     char groupsText[40];
@@ -3667,7 +3707,7 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
             return RecipeOutcome::Rebuild;
         }
         std::shared_ptr<ComputePipelineObjects> mapped;
-        const auto pipelineKey = (shader.variantId << 1u) | (recipe.pushes ? 1u : 0u);
+        const auto pipelineKey = (shader.PipelineVariantId() << 1u) | (recipe.pushes ? 1u : 0u);
         {
             std::lock_guard pipelines(state->computePipelinesMutex);
             if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) mapped = found->second;
@@ -3712,6 +3752,7 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     const auto dataRefresh = !TemplateDataRefresh() ? RecordedDispatch::DataRefresh::None : refreshByWords ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::Hash;
     if (dataRefresh == RecordedDispatch::DataRefresh::Words) counters.refreshByWords.fetch_add(1, std::memory_order_relaxed);
     RecordedDispatch record{&context, &shaders[0], hit->resources, hit->objects, recipe.pushes ? VkShaderStageFlags{VK_SHADER_STAGE_COMPUTE_BIT} : VkShaderStageFlags{0}, &recipe.pushBytes, x, y, z, arguments, nullptr, programAddress, dataRefresh, recipe.dataWordsHash, 0, &timer};
+    record.resourceKeyMatched = verify != nullptr;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
     const bool indirect = record.arguments != 0 || outcome.cpuReason != 0;
     const auto recordStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

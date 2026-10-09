@@ -339,6 +339,36 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsAtomic(inst, IrOpcode::SharedAtomicXor32, false);
     case RdnaOpcode::DsXorRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicXor32, true);
+    case RdnaOpcode::DsAddSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicIAdd32);
+    case RdnaOpcode::DsSubSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicISub32);
+    case RdnaOpcode::DsRsubSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicRsub32);
+    case RdnaOpcode::DsIncSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicInc32);
+    case RdnaOpcode::DsDecSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicDec32);
+    case RdnaOpcode::DsMinSrc2I32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMin32);
+    case RdnaOpcode::DsMaxSrc2I32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMax32);
+    case RdnaOpcode::DsMinSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMin32);
+    case RdnaOpcode::DsMaxSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMax32);
+    case RdnaOpcode::DsAndSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicAnd32);
+    case RdnaOpcode::DsOrSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicOr32);
+    case RdnaOpcode::DsXorSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicXor32);
+    case RdnaOpcode::DsWriteSrc2B32:
+        return dsSrc2(inst, IrOpcode::WriteSharedU32);
+    case RdnaOpcode::DsMinSrc2F32:
+    case RdnaOpcode::DsMaxSrc2F32:
+    case RdnaOpcode::DsAddSrc2F32:
+        throw std::runtime_error("f32 DS src2 operations depend on the f32 denormal mode, which is not modelled for LDS float atomics");
     case RdnaOpcode::DsWrxchgRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicSwap32, true);
 
@@ -574,6 +604,7 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::ImageGather4CO:
     case RdnaOpcode::ImageGather4CLzO:
     case RdnaOpcode::ImageGather4h:
+    case RdnaOpcode::ImageGather4hPck:
     case RdnaOpcode::ImageGather4:
     case RdnaOpcode::ImageGather4B:
     case RdnaOpcode::ImageGather4BCl:
@@ -625,6 +656,23 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return imageAtomic(inst, IrOpcode::ImageAtomicFMin32);
     case RdnaOpcode::ImageAtomicFmax:
         return imageAtomic(inst, IrOpcode::ImageAtomicFMax32);
+    case RdnaOpcode::ImageLoadBy2:
+    case RdnaOpcode::ImageLoadBy4:
+    case RdnaOpcode::ImageLoadMipBy2:
+    case RdnaOpcode::ImageLoadMipBy4:
+    case RdnaOpcode::ImageStoreBy2:
+    case RdnaOpcode::ImageStoreBy4:
+    case RdnaOpcode::ImageStoreMipBy2:
+    case RdnaOpcode::ImageStoreMipBy4:
+    case RdnaOpcode::ImageLoadPck2:
+    case RdnaOpcode::ImageLoadPck4:
+    case RdnaOpcode::ImageLoadMipPck2:
+    case RdnaOpcode::ImageLoadMipPck4:
+    case RdnaOpcode::ImageStorePck2:
+    case RdnaOpcode::ImageStorePck4:
+    case RdnaOpcode::ImageStoreMipPck2:
+    case RdnaOpcode::ImageStoreMipPck4:
+        return imageBy(inst);
     case RdnaOpcode::ImageLoad:
     case RdnaOpcode::ImageLoadMip:
     case RdnaOpcode::ImageLoadPck:

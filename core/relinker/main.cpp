@@ -97,7 +97,12 @@ int main(const int argc, char* argv[]) {
         if (args.writeRegistry) {
             const std::filesystem::path outFsPath(absPath);
             const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
-            fileWriter.Write(registryPath, std::make_shared<Relinker::CallRegistryWriter>()->WriteCallRegistry(result.RegistryEntries));
+            const auto registryWriter = std::make_shared<Relinker::CallRegistryWriter>();
+            fileWriter.Write(registryPath, registryWriter->WriteCallRegistry(result.RegistryEntries));
+            for (const auto& artifact : guestArtifacts) {
+                const auto modulePath = outFsPath.parent_path() / (outFsPath.stem().string() + "." + artifact.Path.filename().string() + ".registry.json");
+                fileWriter.Write(modulePath.string(), registryWriter->WriteModuleImports(artifact.Imports));
+            }
         }
 
         auto byteWriter = std::make_shared<Io::ByteWriter>();

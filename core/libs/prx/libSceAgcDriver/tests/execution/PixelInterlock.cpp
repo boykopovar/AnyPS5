@@ -27,7 +27,6 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
 constexpr std::uint32_t Layers = 64;
-constexpr std::uint32_t PixelInterlockCapability = 5378;
 constexpr std::size_t GuestBytes = 65536;
 constexpr std::uint32_t FaultColumns = 8;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
@@ -88,7 +87,7 @@ private:
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, stride == 0u ? 0x31016facu : 0x01016facu};
 }
 
 const std::vector<std::array<float, 4>>& Triangles() {
@@ -215,8 +214,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto capabilities = device->Target().supportedCapabilities;
-        if (std::find(capabilities.begin(), capabilities.end(), PixelInterlockCapability) == capabilities.end()) {
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFragmentShaderPixelInterlockEXT)) {
             std::puts("skipped, the device lacks fragmentShaderPixelInterlock");
             return VulkanTestSkipped;
         }

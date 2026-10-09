@@ -27,6 +27,7 @@ constexpr std::uint32_t AUDIO3D_SAMPLE_RATE = 48000;
 constexpr std::uint32_t AUDIO3D_BUFFER_ADVANCE_AND_PUSH = 2;
 constexpr std::uint32_t AUDIO3D_BLOCKING_ASYNC = 0;
 constexpr std::uint32_t AUDIO3D_BLOCKING_SYNC = 1;
+constexpr std::uint32_t AUDIO3D_ATTRIBUTE_RESET_STATE = 0x20000;
 constexpr std::uint32_t AUDIO3D_ATTRIBUTE_LATE_REVERB_LEVEL = 0x10001;
 constexpr std::uint32_t AUDIO3D_ATTRIBUTE_DOWNMIX_SPREAD_RADIUS = 0x10002;
 constexpr std::uint32_t AUDIO3D_ATTRIBUTE_DOWNMIX_SPREAD_HEIGHT_AWARE = 0x10003;
@@ -204,6 +205,26 @@ int APS5_VABI sceAudio3dObjectUnreserve(uint32_t port_id, uint32_t object_id) {
     std::lock_guard lock(g_mutex);
     if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
     if (g_port.objects.erase(object_id) == 0) return AUDIO3D_ERROR_INVALID_OBJECT;
+    return 0;
+}
+
+int APS5_VABI sceAudio3dObjectSetAttributes(uint32_t port_id, uint32_t object_id, uint64_t num_attributes, const Audio3dAttribute* attribute_array) {
+    std::lock_guard lock(g_mutex);
+    if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
+    if (num_attributes == 0 || attribute_array == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    if (!g_port.objects.contains(object_id)) return AUDIO3D_ERROR_INVALID_OBJECT;
+    for (std::uint64_t i = 0; i < num_attributes; ++i) {
+        if (attribute_array[i].attribute_id == AUDIO3D_ATTRIBUTE_RESET_STATE) continue;
+        if (attribute_array[i].value == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    }
+    return 0;
+}
+
+int APS5_VABI sceAudio3dPortFlush(uint32_t port_id) {
+    std::lock_guard lock(g_mutex);
+    if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
+    g_port.advanced = 0;
+    g_port.playing.clear();
     return 0;
 }
 

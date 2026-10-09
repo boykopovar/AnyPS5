@@ -12,6 +12,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 static std::string NativeFileMode(const char* mode) {
     std::string result(mode);
@@ -154,6 +155,11 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
     auto* handle = GetNativeStream(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fread: null buffer");
+    if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fread: buffer size overflow");
+    const auto bytes = size * count;
+    if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fread: buffer address overflow");
+    const GuestArena::HostWrite destination(buffer, bytes);
+    if (!destination.Open()) throw std::runtime_error("fread: buffer is not writable");
     const auto result = std::fread(buffer, size, count, handle);
     stream->SyncStatus();
     if (std::ferror(handle)) throw std::runtime_error("fread: read failed");
@@ -224,6 +230,10 @@ int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
 int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     if (std::fflush(stream ? GetNativeStream(stream) : nullptr) != 0) throw std::runtime_error("fflush: flush failed");
     return 0;
+}
+
+int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
+    return ApplicationHeapStatsFast_nid_no_patch(stats);
 }
 
 void* APS5_VABI malloc_nid_postfix(size_t size) {

@@ -9,9 +9,9 @@
 
 namespace ShaderRecompiler {
 
-void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const BindingAllocationResult& bindings);
+void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const CompiledBindingLayout& bindings);
 
-void EmitModuleHeader(SpirvEmitterState& state, const BindingAllocationResult& bindings);
+void EmitModuleHeader(SpirvEmitterState& state, const CompiledBindingLayout& bindings);
 
 }
 

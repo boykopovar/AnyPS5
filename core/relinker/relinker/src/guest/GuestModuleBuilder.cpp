@@ -171,6 +171,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (!windows && exports.contains(name)) rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
     }
     std::vector<std::set<std::size_t>> dependencies(images.size());
+    std::vector<std::set<std::size_t>> systemImports(images.size());
     for (auto& image : images) {
         image.UsePlatformTlsResolver = !windows ? !exports.contains("vNe1w4diLCs") : std::none_of(image.Symbols.begin(), image.Symbols.end(), [](const auto& symbol) {
             return symbol.Name == "vNe1w4diLCs" && symbol.Section != 0 && symbol.Section != AbsoluteSection && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
@@ -181,7 +182,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             const auto found = findGuest(name);
             if (found != guestNames.end() && found->second != index) dependencies[index].insert(found->second);
         }
-        for (const auto& symbol : images[index].Symbols) {
+        for (std::size_t symbolIndex = 0; symbolIndex < images[index].Symbols.size(); ++symbolIndex) {
+            const auto& symbol = images[index].Symbols[symbolIndex];
             if (symbol.Section != 0 || symbol.Name.empty()) continue;
             rejectSharedImport(symbol.Name, images[index].SourcePath.string());
             const auto found = exports.find(symbol.Name);
@@ -199,6 +201,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (exported == provider.Symbols.end() || ((symbol.Info & 15) != 0 && (symbol.Info & 15) != (exported->Info & 15))) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (providers.front() != index) dependencies[index].insert(providers.front());
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
+            if (providers.empty()) systemImports[index].insert(symbolIndex);
         }
     }
     if (!windows) {
@@ -274,8 +277,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (provider == index && std::find(runtime.Names.begin(), runtime.Names.end(), name) == runtime.Names.end()) runtime.Names.push_back(name);
             }
         }
+        std::vector<Domain::CallRegistryEntry> imports;
+        for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData}) {
+            for (std::size_t position = 0; position < table->size(); position += 24) {
+                const auto symbolIndex = static_cast<std::size_t>(Io::ReadU64(*table, position + 8) >> 32);
+                if (!systemImports[index].contains(symbolIndex)) continue;
+                const auto& symbol = image.Symbols[symbolIndex];
+                imports.push_back({symbol.Name, symbol.Library, {}, 0, {}, Io::ReadU64(*table, position), {}, false});
+            }
+        }
         dynamic.GuestModules.push_back(std::move(runtime));
-        artifacts.push_back({target, std::move(output)});
+        artifacts.push_back({target, std::move(output), std::move(imports)});
     }
     return artifacts;
 }

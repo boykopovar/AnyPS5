@@ -5,10 +5,31 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <span>
 extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister*, ShaderRegister*, const void*, const Shader*, const Shader*, std::uint32_t);
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults();
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t);
 static void Require(bool value) { if (!value) std::abort(); }
+static unsigned preparations = 0;
+static unsigned mappings = 0;
+static unsigned links = 0;
+static const Shader* mappedPixel = nullptr;
+
+extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
+    Require(!stages.empty() && stages[0] != nullptr && context.size() == 2u && primitive.size() == 3u);
+    ++preparations;
+}
+
+extern "C" void AgcDriverResolveShaderAbi_nid_postfix(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
+    Require(shader != nullptr && context.size() == 32u && primitive.empty());
+    mappedPixel = shader;
+    ++mappings;
+}
+
+extern "C" void AgcDriverResolveGraphicsAbi_nid_postfix(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
+    Require(vertex != nullptr && (pixel == nullptr || pixel == mappedPixel) && (primitiveType == 0u || primitiveType == 2u || primitiveType == 4u));
+    ++links;
+}
 int main() {
     using namespace ShaderRegs;
     auto* defaults = static_cast<unsigned char*>(sceAgcGetRegisterDefaults());
@@ -83,4 +104,5 @@ int main() {
     input.default_value = 2;
     Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == 0);
     Require(context[2].value == 0x220);
+    Require(preparations == 4u && mappings == 3u && links == 7u);
 }

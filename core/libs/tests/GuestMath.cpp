@@ -20,6 +20,7 @@ struct LibcFloatConstant { std::uint32_t bits[4]; };
 extern LibcFloatConstant _FInf_nid_postfix;
 extern LibcFloatConstant _FNan_nid_postfix;
 short APS5_VABI _FDtest_nid_postfix(const float*);
+int APS5_VABI __fpclassifyf_nid_postfix(float);
 float APS5_VABI fmodf_nid_postfix(float, float);
 float APS5_VABI asinf_nid_postfix(float);
 float APS5_VABI acosf_nid_postfix(float);
@@ -44,6 +45,7 @@ int APS5_VABI __isnormal_nid_postfix(double);
 int APS5_VABI __isnormalf_nid_postfix(float);
 int APS5_VABI __isinff_nid_postfix(float);
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
+std::lldiv_t APS5_VABI ldiv_nid_postfix(std::int64_t, std::int64_t);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -53,8 +55,12 @@ static void CheckIntegerConversions() {
             const auto result = lldiv_nid_postfix(numerator, denominator);
             Require(result.quot == numerator / denominator && result.rem == numerator % denominator);
             Require(result.quot * denominator + result.rem == numerator);
+            const auto wide = ldiv_nid_postfix(numerator, denominator);
+            Require(wide.quot == result.quot && wide.rem == result.rem);
         }
     }
+    const auto extreme = ldiv_nid_postfix(INT64_MIN, 2);
+    Require(extreme.quot == INT64_MIN / 2 && extreme.rem == 0);
     struct SignedCase {
         const char* text;
         int base;
@@ -153,6 +159,11 @@ static void CheckFloatClassification() {
         std::memcpy(&value, &test.bits, sizeof(value));
         if (_FDtest_nid_postfix(&value) != test.code) {
             std::fprintf(stderr, "Guest _FDtest failed for %08x\n", test.bits);
+            std::abort();
+        }
+        const int fpclass = test.code == 0 ? 0x10 : test.code == -2 ? 0x08 : test.code == -1 ? 0x04 : test.code == 1 ? 0x01 : 0x02;
+        if (__fpclassifyf_nid_postfix(value) != fpclass) {
+            std::fprintf(stderr, "Guest __fpclassifyf failed for %08x\n", test.bits);
             std::abort();
         }
     }

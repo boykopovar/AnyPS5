@@ -9,6 +9,36 @@ import progress
 
 
 class ProgressTests(unittest.TestCase):
+    def test_test_sources_do_not_change_library_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "tests" / "prx"
+            library = root / "libSceExample"
+            source = library / "src"
+            source.mkdir(parents=True)
+            (source / "Export.cpp").write_text(
+                "int APS5_VABI Ready() { return 0; }\n"
+                "int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n")
+            alias = root / "libSceExample.native"
+            alias.mkdir()
+            (alias / "CMakeLists.txt").write_text('include("${CMAKE_CURRENT_SOURCE_DIR}/../libSceExample/Library.cmake")\n')
+            with patch.object(progress, "PRX", root):
+                base = progress.collect_libraries()
+                self.assertEqual(base["groups"][0]["done_names"], ["Ready"])
+                self.assertEqual(base["groups"][0]["todo_names"], ["Pending"])
+                tests = library / "tests"
+                nested = tests / "fixtures"
+                nested.mkdir(parents=True)
+                (tests / "Callbacks.cpp").write_text(
+                    "int APS5_VABI FixtureReady() { return 0; }\n"
+                    "int APS5_VABI Pending() { return 0; }\n"
+                    "int APS5_VABI FixturePending() { NotImplemented_nid_no_patch(__func__); }\n")
+                (nested / "Callbacks.cpp").write_text("int APS5_VABI NestedFixture() { return 0; }\n")
+                (alias / "tests").mkdir()
+                (alias / "tests" / "Callbacks.cpp").write_text("int APS5_VABI AliasFixture() { return 0; }\n")
+                head = progress.collect_libraries()
+                self.assertEqual(head, base)
+                self.assertEqual(progress.compare("Libraries", "Library", "functions", base, head), [])
+
     def test_shared_source_refactor_preserves_functions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <span>
 #include <string>
 #include <vector>
@@ -179,8 +180,11 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const 
         device.Target(),
         {0, 0, 0, 128}
     };
-    request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    static std::map<std::uintptr_t, ShaderRecompiler::CompiledShaderArtifact> artifacts;
+    auto& first = artifacts[reinterpret_cast<std::uintptr_t>(code.data())];
+    if (first.variantId == 0u) first = result;
+    else Require(result.cacheHit && result.variantId == first.variantId, "runtime storage image changed the compiled artifact");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");

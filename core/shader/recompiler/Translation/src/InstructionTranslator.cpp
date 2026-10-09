@@ -38,14 +38,12 @@ IrShaderStage toIrShaderStage(ShaderStageKind stage) {
 }
 
 void validateTranslateOptions(const TranslateOptions& options) {
+    if (options.embeddedFetch != nullptr && options.stage != ShaderStageKind::Vertex && options.stage != ShaderStageKind::Local) throw std::runtime_error("embedded vertex fetch requires a vertex or local shader");
     if (options.userDataBaseRegister >= NumScalarRegs || options.userDataCount > NumScalarRegs - options.userDataBaseRegister) {
         throw std::runtime_error("shader user data exceeds the scalar register bank");
     }
     if (options.waveSize != 32u && options.waveSize != 64u) {
         throw std::runtime_error("shader translation requires wave32 or wave64, got " + std::to_string(options.waveSize));
-    }
-    if (options.embeddedFetch != nullptr && options.stage != ShaderStageKind::Vertex && options.stage != ShaderStageKind::Local) {
-        throw std::runtime_error("embedded vertex fetch requires a vertex or local shader");
     }
     switch (options.stage) {
     case ShaderStageKind::Vertex:
@@ -92,51 +90,26 @@ bool isCodeTableLoad(const ControlFlowGraph& cfg, std::uint32_t programCounter) 
     return std::find(cfg.codeTableLoadProgramCounters.begin(), cfg.codeTableLoadProgramCounters.end(), programCounter) != cfg.codeTableLoadProgramCounters.end();
 }
 
-const EmbeddedFetchLoad* findEmbeddedFetchLoad(const EmbeddedFetchPlan* plan, std::uint32_t programCounter) {
-    if (plan == nullptr) {
-        return nullptr;
+void translateExternalFetch(TranslationContext& context, const RdnaInstruction& call, const ShaderVertexInputInfo* input) {
+    if (input == nullptr || input->resourcesNum <= 0) {
+        throw std::runtime_error("s_swappc_b64 fetch-shader call at program counter " + std::to_string(call.programCounter) + " has no parsed fetch-shader plan to inline");
     }
-    const auto found = std::find_if(plan->loads.begin(), plan->loads.end(), [programCounter](const EmbeddedFetchLoad& load) {
-        return load.programCounter == programCounter;
-    });
-    return found != plan->loads.end() ? &*found : nullptr;
-}
-
-int resolveEmbeddedFetchResource(const ShaderVertexInputInfo& input, const EmbeddedFetchLoad& load) {
-    if (load.attributeId >= 0 && load.attributeId < input.resourcesNum && input.resourcesDst[load.attributeId].attrId == load.attributeId) {
-        return load.attributeId;
-    }
-    for (int index = 0; index < input.resourcesNum; index++) {
-        const auto& destination = input.resourcesDst[index];
-        if (destination.attrId == load.attributeId && load.componentCount <= static_cast<std::uint32_t>(std::max(destination.registersNum, 1))) {
-            return index;
+    for (int index = 0; index < input->resourcesNum && index < ShaderVertexInputInfo::MaxResources; ++index) {
+        const auto& destination = input->resourcesDst[index];
+        if (destination.attrId < 0 || destination.registersNum <= 0) {
+            continue;
         }
-    }
-    for (int index = 0; index < input.resourcesNum; index++) {
-        if (input.resourcesDst[index].attrId == load.attributeId) {
-            return index;
+        if (destination.registersNum > 4 || destination.registerStart < 0) {
+            throw std::runtime_error("external fetch-shader attribute " + std::to_string(destination.attrId) + " writes " + std::to_string(destination.registersNum) +
+                " registers starting at " + std::to_string(destination.registerStart) + "; the inline model supports one to four");
         }
-    }
-    return -1;
-}
-
-bool isBufferDwordLoad(RdnaOpcode opcode) {
-    switch (opcode) {
-    case RdnaOpcode::BufferLoadFormatX:
-    case RdnaOpcode::BufferLoadFormatXy:
-    case RdnaOpcode::BufferLoadFormatXyz:
-    case RdnaOpcode::BufferLoadFormatXyzw:
-    case RdnaOpcode::BufferLoadDword:
-    case RdnaOpcode::BufferLoadDwordx2:
-    case RdnaOpcode::BufferLoadDwordx3:
-    case RdnaOpcode::BufferLoadDwordx4:
-    case RdnaOpcode::TbufferLoadFormatX:
-    case RdnaOpcode::TbufferLoadFormatXy:
-    case RdnaOpcode::TbufferLoadFormatXyz:
-    case RdnaOpcode::TbufferLoadFormatXyzw:
-        return true;
-    default:
-        return false;
+        RdnaInstruction fetch{};
+        fetch.op = RdnaOpcode::BufferLoadFormatXyzw;
+        fetch.programCounter = call.programCounter;
+        fetch.destination.kind = RdnaOperandKind::VectorRegister;
+        fetch.destination.reg = static_cast<std::uint32_t>(destination.registerStart);
+        fetch.formatted = true;
+        context.TranslateEmbeddedFetch(fetch, static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(destination.registersNum));
     }
 }
 
@@ -460,6 +433,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         const auto typedIndex = blockIndices.at(cfgBlock.id);
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
+        context.SetFloatMode(options.floatMode);
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
             if (isCodeTableLoad(cfg, instruction.programCounter)) {
@@ -468,19 +442,22 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 context.TranslateCodeTableLoad(instruction, *table);
                 continue;
             }
-            const auto* embedded = findEmbeddedFetchLoad(options.embeddedFetch, instruction.programCounter);
-            if (embedded != nullptr && isBufferDwordLoad(instruction.op) && instruction.dataDwordCount == embedded->componentCount && instruction.destination.kind == RdnaOperandKind::VectorRegister) {
-                if (options.inputInfo.vertex == nullptr) {
-                    throw std::runtime_error("embedded vertex fetch requires vertex input metadata");
+            if (options.embeddedFetch != nullptr) {
+                const auto load = std::ranges::find(options.embeddedFetch->loads, instruction.programCounter, &EmbeddedFetchLoad::programCounter);
+                if (load != options.embeddedFetch->loads.end()) {
+                    if (options.inputInfo.vertex == nullptr || instruction.destination.kind != RdnaOperandKind::VectorRegister || instruction.dataDwordCount != load->componentCount) throw std::runtime_error("prepared vertex fetch does not match its instruction");
+                    const auto& vertex = *options.inputInfo.vertex;
+                    std::uint32_t attribute = 0;
+                    while (attribute < static_cast<std::uint32_t>(vertex.resourcesNum) && vertex.resourcesDst[attribute].attrId != load->attributeId) ++attribute;
+                    if (attribute == static_cast<std::uint32_t>(vertex.resourcesNum)) throw std::runtime_error("prepared vertex fetch has no matching semantic");
+                    context.TranslateEmbeddedFetch(instruction, attribute, load->componentCount);
+                    continue;
                 }
-                const auto resource = resolveEmbeddedFetchResource(*options.inputInfo.vertex, *embedded);
-                if (resource < 0 || resource >= options.inputInfo.vertex->resourcesNum) {
-                    throw std::runtime_error("embedded vertex fetch at program counter " + std::to_string(instruction.programCounter) + " has no resource for attribute " + std::to_string(embedded->attributeId));
-                }
-                context.TranslateEmbeddedFetch(instruction, static_cast<std::uint32_t>(resource), embedded->componentCount, options.inputInfo.vertex->resources[resource]);
-                continue;
             }
             context.TranslateInstruction(instruction);
+            if (cfg.hasFetchCall && instruction.programCounter == cfg.fetchCallProgramCounter) {
+                translateExternalFetch(context, instruction, options.inputInfo.vertex);
+            }
         }
         context.AddBranchCondition(cfgBlock, blockInfos[typedIndex]);
     }

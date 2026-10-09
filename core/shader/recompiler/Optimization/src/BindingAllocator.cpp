@@ -1,4 +1,5 @@
 #include "Optimization/BindingAllocator.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include <algorithm>
 #include <array>
 #include <stdexcept>
@@ -73,7 +74,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
                                           : "shader binding layout failed: shader info is not ready");
     }
-    if (layout.descriptorSet != 0u) {
+    if (layout.descriptorSet != RuntimeAbi::DescriptorSet) {
         fail("shader binding layout failed: descriptor set must be 0");
     }
     if (layout.firstBinding != 0u) {
@@ -96,10 +97,11 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
     next.memoryOffsetCount = static_cast<std::uint32_t>(info.buffers.size());
     next.dispatchThreadLimit = info.dispatchThreadLimit;
-    const std::uint32_t pushDataStartDword = layout.pushConstantOffsetBytes / 4u;
-    const std::uint32_t pushConstantSizeDwords = layout.pushConstantSizeBytes / 4u;
-    const bool usesPushData = next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushConstantSizeDwords;
-    next.pushDataStartDword = usesPushData ? pushDataStartDword : PushData::NoStart;
+    if (info.buffers.size() > RuntimeAbi::BufferCapacity || info.images.size() > RuntimeAbi::ImageCapacity || info.samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader binding layout exceeds runtime metadata capacity");
+    if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");
+    if (std::ranges::any_of(info.images, [](const auto& image) { return image.indirectRoot != ImageResource::NoIndirectImage; })) next.runtimeImageCount = static_cast<std::uint32_t>(info.images.size());
+    const auto pushSize = layout.pushConstantSizeBytes / 4u;
+    next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
 
     if (!info.buffers.empty()) {
         std::vector<std::uint32_t> resources(info.buffers.size());
@@ -111,19 +113,15 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
 
     std::array<std::vector<std::uint32_t>, ImageBindingCount> imageGroups;
     const auto place = [&](std::uint32_t i) {
-        const DescriptorBindingKind kind = DescriptorBindingForImage(info.images[i]);
-        const std::uint32_t group = ImageBindingIndex(kind);
-        if (group >= imageGroups.size()) {
-            fail("shader binding layout failed: image " + std::to_string(i) + " has an unmapped binding class");
-        }
-        std::vector<std::uint32_t>& resources = imageGroups[group];
         const bool dynamic = info.images[i].mipMode == ImageMipMode::DynamicStorage;
-        const std::uint32_t count = dynamic ? info.images[i].mipCount : 1u;
-        if (count == 0u || (!dynamic && info.images[i].mipCount != 1u)) {
-            fail("shader binding layout failed: image " + std::to_string(i) + " has an invalid specialized mip count " +
-                 std::to_string(info.images[i].mipCount));
+        const std::uint32_t count = dynamic ? RuntimeAbi::StorageHeapCapacity : 1u;
+        std::array<bool, ImageBindingCount> placed{};
+        for (const auto& mode : ResourceMaterializer::RuntimeImageModes(info.images[i])) {
+            const auto group = ImageBindingIndex(DescriptorBindingForImage(mode));
+            if (placed.at(group)) continue;
+            placed[group] = true;
+            imageGroups[group].insert(imageGroups[group].end(), count, i);
         }
-        resources.insert(resources.end(), count, i);
     };
     // A bindless table's slots follow their root as consecutive elements: the SPIR-V indexes the
     // binding with element(root) + slot.
@@ -145,14 +143,16 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     }
     for (std::uint32_t i = 0; i < imageGroups.size(); i++) {
         if (!imageGroups[i].empty()) {
+            if (imageGroups[i].size() > RuntimeAbi::HeapCapacity(static_cast<DescriptorBindingKind>(FirstImageBinding + i))) fail("shader image heap capacity exceeded");
             addBinding(next, static_cast<DescriptorBindingKind>(FirstImageBinding + i), std::move(imageGroups[i]));
         }
     }
 
     if (!info.samplers.empty()) {
-        std::vector<std::uint32_t> resources(info.samplers.size());
+        if (info.samplers.size() > RuntimeAbi::SamplerHeapCapacity / 2u) fail("shader sampler pairs exceed runtime heap capacity");
+        std::vector<std::uint32_t> resources(info.samplers.size() * 2u);
         for (std::uint32_t i = 0; i < resources.size(); i++) {
-            resources[i] = i;
+            resources[i] = i / 2u;
         }
         addBinding(next, DescriptorBindingKind::Samplers, std::move(resources));
     }
@@ -161,6 +161,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     }
     if (info.usesDma) {
         addBinding(next, DescriptorBindingKind::BdaPagetable);
+    }
+    if (info.usesDma || info.usesFaultBuffer) {
         addBinding(next, DescriptorBindingKind::FaultBuffer);
     }
 

@@ -24,8 +24,8 @@ struct SpirvTargetOptions {
 
 class SpirvEmitter {
 public:
-    [[nodiscard]] std::vector<std::uint32_t> Emit(const IrProgram& program, const BindingAllocationResult& bindings, const SpirvTargetOptions& target) const;
-    [[nodiscard]] std::vector<std::uint32_t> Emit(const IrProgram& program, const ShaderStageInputInfo& inputInfo, const BindingAllocationResult& bindings, const SpirvTargetOptions& target) const;
+    [[nodiscard]] std::vector<std::uint32_t> Emit(const IrProgram& program, const CompiledBindingLayout& bindings, const SpirvTargetOptions& target) const;
+    [[nodiscard]] std::vector<std::uint32_t> Emit(const IrProgram& program, const ShaderStageInputInfo& inputInfo, const CompiledBindingLayout& bindings, const SpirvTargetOptions& target) const;
 
 };
 

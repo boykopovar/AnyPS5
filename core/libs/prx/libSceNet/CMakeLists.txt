@@ -8,7 +8,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_sce_net_tests PRIVATE libSceNet libSceNetCtl libkernel libc)
     configure_windows_unwind(guest_sce_net_tests)
     add_test(NAME guest_sce_net COMMAND guest_sce_net_tests)
-    set_tests_properties(guest_sce_net PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_sce_net PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(guest_sce_net PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNet>")

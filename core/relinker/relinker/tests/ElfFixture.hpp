@@ -18,6 +18,9 @@ inline constexpr std::uint64_t kCodeOffset = 0x4000;
 inline constexpr std::uint64_t kCodeSize = 0x1000;
 inline constexpr std::uint64_t kDynamicVaddr = 0x600;
 inline constexpr std::uint16_t kSpareProgramHeaders = 3;
+inline constexpr std::uint64_t kModuleDataOffset = 0x5000;
+inline constexpr std::uint64_t kModuleDataVaddr = 0x2000;
+inline constexpr std::uint64_t kModuleDataSize = 0x400;
 
 template<typename TValue>
 void Write(Bytes& bytes, const std::size_t offset, const TValue value) {
@@ -69,6 +72,42 @@ inline Bytes MakeExecutable(const std::span<const std::uint8_t> code) {
         Write<std::int64_t>(image, kCodeOffset + kDynamicVaddr + index * 16, tags[index].first);
         Write<std::uint64_t>(image, kCodeOffset + kDynamicVaddr + index * 16 + 8, tags[index].second);
     }
+    return image;
+}
+
+inline Bytes MakeModule(const std::span<const std::uint8_t> code) {
+    if (code.size() > kCodeSize) throw std::runtime_error("ELF fixture code exceeds the code segment");
+    Bytes image(0x8000);
+    const std::uint8_t ident[16] = {0x7F, 'E', 'L', 'F', 2, 1, 1};
+    std::memcpy(image.data(), ident, sizeof(ident));
+    Write<std::uint16_t>(image, 16, 3);
+    Write<std::uint16_t>(image, 18, 62);
+    Write<std::uint32_t>(image, 20, 1);
+    Write<std::uint64_t>(image, 24, 0);
+    Write<std::uint64_t>(image, 32, 64);
+    Write<std::uint16_t>(image, 52, 64);
+    Write<std::uint16_t>(image, 54, 56);
+    Write<std::uint16_t>(image, 56, 3 + kSpareProgramHeaders);
+    Write<std::uint16_t>(image, 58, 64);
+    const std::pair<std::int64_t, std::uint64_t> tags[] = {
+        {5, kModuleDataVaddr + 0x200}, {10, 1},
+        {6, kModuleDataVaddr + 0x220}, {11, 24},
+        {4, kModuleDataVaddr + 0x240},
+        {7, kModuleDataVaddr + 0x300}, {8, 0}, {9, 24},
+        {0, 0},
+    };
+    WriteProgramHeader(image, 0, 1, 5, kCodeOffset, 0, kCodeSize, 0x4000);
+    WriteProgramHeader(image, 1, 1, 6, kModuleDataOffset, kModuleDataVaddr, kModuleDataSize, 8);
+    WriteProgramHeader(image, 2, 2, 6, kModuleDataOffset, kModuleDataVaddr, sizeof(tags) / sizeof(tags[0]) * 16, 8);
+    for (std::uint16_t index = 3; index < 3 + kSpareProgramHeaders; ++index) WriteProgramHeader(image, index, 0x6FFFFF01, 0, 0, 0, 0, 1);
+    std::fill(image.begin() + kCodeOffset, image.begin() + kCodeOffset + kCodeSize, 0xCC);
+    std::copy(code.begin(), code.end(), image.begin() + kCodeOffset);
+    for (std::size_t index = 0; index < sizeof(tags) / sizeof(tags[0]); ++index) {
+        Write<std::int64_t>(image, kModuleDataOffset + index * 16, tags[index].first);
+        Write<std::uint64_t>(image, kModuleDataOffset + index * 16 + 8, tags[index].second);
+    }
+    Write<std::uint32_t>(image, kModuleDataOffset + 0x240, 1);
+    Write<std::uint32_t>(image, kModuleDataOffset + 0x244, 1);
     return image;
 }
 

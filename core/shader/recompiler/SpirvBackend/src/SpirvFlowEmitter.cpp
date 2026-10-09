@@ -85,7 +85,8 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         const auto pc = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), pc, state.loopGuardPc);
         EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), pc, ConstantU32(state, 0u)), [&] {
-            RecordBdaFault(state, BdaConstant(state, state.program.Resources().shaderHash), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
+            const auto hash = state.program.Resources().shaderHash;
+            RecordBdaFaultWords(state, ConstantU32(state, static_cast<std::uint32_t>(hash)), ConstantU32(state, static_cast<std::uint32_t>(hash >> 32u)), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
         });
     }
     if (OrderedPixelShader(state)) {
@@ -476,6 +477,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPSqrt64: return Invoke(EmitFPSqrt64, ctx, inst);
         case IrOpcode::FPTrigPreop64: return Invoke(EmitFPTrigPreop64, ctx, inst);
         case IrOpcode::FPDot2F32F16: return Invoke(EmitFPDot2F32F16, ctx, inst);
+        case IrOpcode::FPInterpolateF32: return Invoke(EmitFPInterpolateF32, ctx, inst);
+        case IrOpcode::FPInterpolateF16: return Invoke(EmitFPInterpolateF16, ctx, inst);
         case IrOpcode::ConvertF32F64: return Invoke(EmitConvertF32F64, ctx, inst);
         case IrOpcode::ConvertF64F32: return Invoke(EmitConvertF64F32, ctx, inst);
         case IrOpcode::ConvertF64S32: return Invoke(EmitConvertF64S32, ctx, inst);
@@ -672,6 +675,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ImageAtomicCmpSwap64: return Invoke(EmitImageAtomicCmpSwap64, ctx, inst);
         case IrOpcode::GetAttribute: return Invoke(EmitGetAttribute, ctx, inst);
         case IrOpcode::GetInterpolationParameter: return Invoke(EmitGetInterpolationParameter, ctx, inst);
+        case IrOpcode::GetInterpolationParameterF16: return Invoke(EmitGetInterpolationParameterF16, ctx, inst);
         case IrOpcode::SetAttribute: return Invoke(EmitSetAttribute, ctx, inst);
         case IrOpcode::ControlNop: return Invoke(EmitControlNop, ctx, inst);
         case IrOpcode::Waitcnt: return Invoke(EmitWaitcnt, ctx, inst);

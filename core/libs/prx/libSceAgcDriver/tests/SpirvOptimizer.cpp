@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvOptimizer.hpp"
+#include "SpirvBackend/SpirvSpecialization.hpp"
 #include <spirv-tools/libspirv.hpp>
 #include <spirv/unified1/spirv.hpp>
 #include <array>
@@ -188,6 +189,58 @@ void expectRejected(const std::vector<std::uint32_t>& words, std::uint32_t vulka
     }
 }
 
+void testSpecializedSelectionExit() {
+    for (const bool useSwitch : {false, true}) {
+        const std::string source = std::string(R"(OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main" %index
+OpExecutionMode %main LocalSize 8 1 1
+OpDecorate %index BuiltIn LocalInvocationIndex
+%void = OpTypeVoid
+%bool = OpTypeBool
+%uint = OpTypeInt 32 0
+%input = OpTypePointer Input %uint
+%private = OpTypePointer Private %uint
+%function = OpTypeFunction %void
+%zero = OpConstant %uint 0
+%true = OpConstantTrue %bool
+%index = OpVariable %input Input
+%output = OpVariable %private Private
+%main = OpFunction %void None %function
+%entry = OpLabel
+%lane = OpLoad %uint %index
+%condition = OpIEqual %bool %lane %zero
+OpSelectionMerge %exit None
+)") + (useSwitch ? "OpSwitch %zero %body 1 %dead\n" : "OpBranchConditional %true %body %dead\n") + R"(%body = OpLabel
+OpBranchConditional %condition %exit %nested
+%nested = OpLabel
+OpSelectionMerge %join None
+OpBranchConditional %condition %write %join
+%write = OpLabel
+OpStore %output %lane
+OpBranch %join
+%join = OpLabel
+OpBranch %exit
+%dead = OpLabel
+OpStore %output %zero
+OpBranch %exit
+%exit = OpLabel
+OpReturn
+OpFunctionEnd
+)";
+        try {
+            const auto words = assemble(source);
+            static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(words, Vulkan11, Spirv13, false, false));
+            const auto specialized = ShaderRecompiler::SpecializeSpirv(words);
+            static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specialized, Vulkan11, Spirv13, false, false));
+            check(opcodeCount(specialized, spv::OpStore) == 1u, "specialization retained the dead selection arm");
+            check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "selection exit specialization is not stable");
+        } catch (const std::exception& error) {
+            check(false, std::string("specialized selection exit: ") + error.what());
+        }
+    }
+}
+
 void testInvalidInputIsRejected() {
     const auto valid = assemble(moduleSource(Types.front(), false, ArithmeticSupport::StorageOnly));
     expectRejected(valid, 0x00400000u, Spirv13, "SPIR-V 1.3 with Vulkan 1.0");
@@ -231,6 +284,7 @@ int main() {
     const bool optimizationEnabled = mode == nullptr || std::string(mode) != "none";
     testNarrowConversions(optimizationEnabled);
     testInvalidInputIsRejected();
+    testSpecializedSelectionExit();
     if (failures != 0) {
         std::fprintf(stderr, "%d optimizer check(s) failed\n", failures);
         return 1;

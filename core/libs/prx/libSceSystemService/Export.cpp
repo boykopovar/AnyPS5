@@ -5,6 +5,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 
 extern "C" {
@@ -121,18 +122,22 @@ int APS5_VABI sceSystemServiceInitializePlayerDialogParam(void* param) {
 }
 
 int APS5_VABI sceSystemServiceDisableMediaPlay() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceReenableMediaPlay() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
  if (param == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri, void* param) {
+ (void)uri;
+ (void)param;
+ return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {
@@ -156,6 +161,20 @@ int APS5_VABI sceSystemServiceReenableMusicPlayer(void) {
 int APS5_VABI sceSystemServiceShowControllerSettings(void) {
  NotImplemented_nid_no_patch(__func__);
  return 0;
+}
+
+int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
+ return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
+ if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) {
+  NotImplemented_nid_no_patch("sceSystemServiceKillApp: application other than the running title");
+ }
+ if (how != -1 || reason != 0 || coreDump != 0) {
+  NotImplemented_nid_no_patch("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
+ }
+ LibcExit_nid_no_patch(0);
 }
 
 }

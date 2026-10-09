@@ -3,6 +3,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -28,6 +29,18 @@
 #endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
+
+static constexpr int GUEST_EINVAL = 22;
+static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
+
+static bool IsCpuClock(int clockId) {
+    const auto bits = static_cast<std::uint32_t>(clockId);
+    if ((bits & CPU_CLOCK_BIT) == 0)
+        return false;
+    if ((bits & CPU_CLOCK_PROCESS_BIT) != 0)
+        throw std::runtime_error("clock: unsupported process CPU clock_id " + std::to_string(clockId));
+    return true;
+}
 
 static std::uint64_t RawMonotonicNanos() {
 #ifdef _WIN32
@@ -329,6 +342,16 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     if (tp == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    if (IsCpuClock(clockId)) {
+        std::uint64_t nanos = 0;
+        if (!GuestThreadCpuNanos(static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK), &nanos)) {
+            *__error_nid_postfix() = GUEST_EINVAL;
+            return -1;
+        }
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
     if (clockId == 1 || clockId == 2) {
         const std::uint64_t nanos = ProcessCpuNanos(clockId == 2);
         tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
@@ -443,6 +466,8 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     if (res == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    if (IsCpuClock(clockId))
+        return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
     if (clockId == 1 || clockId == 2) {
         const std::uint64_t nanos = ProcessCpuResolutionNanos();
         res->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);

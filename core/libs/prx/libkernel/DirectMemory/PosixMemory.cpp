@@ -5,6 +5,8 @@
 #include <stdexcept>
 
 extern "C" int* APS5_VABI __error_nid_postfix();
+extern "C" int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length);
+extern "C" int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length);
 
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
@@ -95,6 +97,20 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
     } catch (const std::exception&) {
         return failed(GuestInvalid);
     }
+}
+
+int APS5_VABI mlock_nid_postfix(const void* address, std::size_t length) {
+    const int result = sceKernelMlock_nid_postfix(const_cast<void*>(address), length);
+    if (result == 0) return 0;
+    SetError(result & 0xffff);
+    return -1;
+}
+
+int APS5_VABI munlock_nid_postfix(const void* address, std::size_t length) {
+    const int result = sceKernelMunlock_nid_postfix(const_cast<void*>(address), length);
+    if (result == 0) return 0;
+    SetError(result & 0xffff);
+    return -1;
 }
 
 }

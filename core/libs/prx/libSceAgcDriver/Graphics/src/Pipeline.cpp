@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <algorithm>
 #include <array>
@@ -92,6 +94,7 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
 }
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias) {
+    PerformanceTimer timing("Vulkan.GraphicsPipeline");
     // A cached pipeline may outlive its device's teardown (see ClearCachedPipelines); it must not keep
     // the buffer pool, which is reset with the device, alive past it.
     this->context.bufferPool.reset();
@@ -118,6 +121,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PipelinePushConstantBytes, "graphics push constant range exceeds device limit");
     try {
         std::vector<VkPipelineShaderStageCreateInfo> stages(shaders.size());
+        std::vector<PipelineSpecialization> specializations;
+        specializations.reserve(shaders.size());
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
             VkShaderModuleCreateInfo module{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -129,6 +134,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             stages[i].stage = stage;
             stages[i].module = _modules[i];
             stages[i].pName = "main";
+            specializations.emplace_back(shader);
+            stages[i].pSpecializationInfo = specializations.back().Info();
         }
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
@@ -245,7 +252,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         pipelineInfo.pDynamicState = &dynamic;
         pipelineInfo.layout = layout;
         pipelineInfo.renderPass = renderPass;
+        timing.Mark("modules_and_state");
         Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
+        timing.Mark("create");
         LogPipelineStatistics_nid_no_patch(context, pipeline);
     } catch (...) {
         release();
@@ -371,9 +380,9 @@ std::vector<std::byte> pipelineKey(const Context& context, const State& state, c
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         const bool generated = state.rectList && (shader.stage == Stage::TessellationControl || shader.stage == Stage::TessellationEvaluation);
-        if (!generated && shader.program->variantId == 0) return {};
+        if (!generated && shader.program->PipelineVariantId() == 0) return {};
         append(key, shader.stage);
-        append(key, generated ? std::uint64_t{0} : shader.program->variantId);
+        append(key, generated ? std::uint64_t{0} : shader.program->PipelineVariantId());
         // Where the stage's push constants sit in the block (AssemblePushConstants).
         append(key, shader.pushConstantOffset);
     }
@@ -549,7 +558,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     store.entries.push_back({context.device, context.bufferPool, hash, key, pipeline});
     store.index[hash] = std::prev(store.entries.end());
-    constexpr std::size_t bound = 256;
+    constexpr std::size_t bound = 1024;
     while (store.entries.size() > bound) {
         // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
         const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });

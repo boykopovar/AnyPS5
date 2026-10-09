@@ -33,6 +33,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
 )
@@ -233,6 +234,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_errors PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_syslog_tests ${LIBS_INCLUDE_DIR}/tests/GuestSyslog.cpp)
+    target_include_directories(guest_syslog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_syslog_tests PRIVATE libc)
+    configure_windows_unwind(guest_syslog_tests)
+    add_test(NAME guest_syslog COMMAND guest_syslog_tests)
+    if(WIN32)
+        set_tests_properties(guest_syslog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(mspace_tests ${LIBS_INCLUDE_DIR}/tests/Mspace.cpp)
     target_include_directories(mspace_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(mspace_tests PRIVATE libc)
@@ -336,6 +346,17 @@ if(BUILD_TESTING)
     add_test(NAME application_heap_exit_order COMMAND application_heap_tests exit-order)
     if(WIN32)
         set_tests_properties(application_heap_replacement application_heap_invalid_metadata application_heap_default application_heap_exit_order
+            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(application_heap_stats_tests ${LIBS_INCLUDE_DIR}/tests/ApplicationHeapStats.cpp)
+    target_include_directories(application_heap_stats_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(application_heap_stats_tests PRIVATE libc)
+    configure_windows_unwind(application_heap_stats_tests)
+    add_test(NAME application_heap_stats COMMAND application_heap_stats_tests)
+    add_test(NAME application_heap_stats_default COMMAND application_heap_stats_tests default)
+    add_test(NAME application_heap_stats_missing COMMAND application_heap_stats_tests missing)
+    if(WIN32)
+        set_tests_properties(application_heap_stats application_heap_stats_default application_heap_stats_missing
             PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

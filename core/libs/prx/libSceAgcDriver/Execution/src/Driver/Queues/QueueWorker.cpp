@@ -5,9 +5,38 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
+
+FrameTiming* Driver::frameTiming() {
+    if (!APS5_ENABLE_TIMING_LOG) return nullptr;
+    if (pendingFrameTiming == nullptr) pendingFrameTiming = std::make_shared<FrameTiming>(++frameSerial, true);
+    return pendingFrameTiming.get();
+}
+
+FrameTiming* Driver::includeTimingSubmission(const Submission& submission, bool firstSegment) {
+    if (!APS5_ENABLE_TIMING_LOG) return nullptr;
+    auto* frame = submission.queue == 0 ? frameTiming() : FrameTiming::Async();
+    require(submission.receivedAt != FrameTiming::Clock::time_point{} && submission.receivedAt <= submission.enqueuedAt && submission.enqueuedAt <= submission.dequeuedAt && submission.dequeuedAt <= submission.orderedAt, "invalid submission timing order");
+    if (submission.queue == 0) frame->IncludeSubmission(submission.serial, submission.receivedAt, submission.enqueuedAt, submission.orderedAt, firstSegment);
+    else if (firstSegment) {
+        frame->Add(frame->Get("Submission", "accept"), submission.enqueuedAt - submission.receivedAt);
+        frame->Add(frame->Get("Submission", "queue"), submission.orderedAt - submission.enqueuedAt);
+    }
+    if (firstSegment) {
+        frame->Add(frame->Get("Submission", "dequeue"), submission.dequeuedAt - submission.enqueuedAt);
+        frame->Add(frame->Get("Submission", "order_wait"), submission.orderedAt - submission.dequeuedAt);
+        if (!submission.suspend) {
+            frame->Add(frame->Get("Submission", "copy"), submission.copiedAt - submission.receivedAt, submission.commands.size() * sizeof(std::uint32_t));
+            frame->Add(frame->Get("Submission", "validate"), submission.validatedAt - submission.copiedAt);
+            frame->Add(frame->Get("Submission", "flip_room_wait"), submission.roomReadyAt - submission.validatedAt);
+            frame->Add(frame->Get("Submission", "reserve_enqueue"), submission.enqueuedAt - submission.roomReadyAt);
+        }
+    }
+    return frame;
+}
 
 void Driver::markCompleted(std::uint64_t serial) {
     completedOutOfOrder.insert(serial);
@@ -53,7 +82,10 @@ void Driver::run(std::uint32_t id) noexcept {
             submission = Submission{};
             static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
             {
+                PerformanceContext timingContext(id == 0 ? frameTiming() : FrameTiming::Async());
+                PerformanceTimer timing("Driver.WorkerWait");
                 std::unique_lock lock(mutex);
+                timing.Mark("mutex_wait");
                 auto& worker = workers.at(id);
                 auto& pending = worker.pending;
                 workerQueued() = &worker.queued;
@@ -82,12 +114,14 @@ void Driver::run(std::uint32_t id) noexcept {
                     reapCompletionLabels();
                     lock.lock();
                 }
+                timing.Mark("idle_and_completion_poll");
                 rethrowFailure();
                 if (stopping || shutdownToken.stop_requested() || pending.empty()) {
                     break;
                 }
                 submission = std::move(pending.front());
                 pending.pop_front();
+                if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
                 if (submission.waitFree) {
                     orderHolders.fetch_add(1, std::memory_order_acq_rel);
@@ -96,6 +130,8 @@ void Driver::run(std::uint32_t id) noexcept {
                     orderHolders.fetch_sub(1, std::memory_order_acq_rel);
                     rethrowFailure();
                 }
+                if (APS5_ENABLE_TIMING_LOG) submission.orderedAt = std::chrono::steady_clock::now();
+                timing.Mark("dequeue_order");
                 worker.queued.fetch_sub(1, std::memory_order_acq_rel);
                 if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
@@ -109,6 +145,8 @@ void Driver::run(std::uint32_t id) noexcept {
             }
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
             const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            PerformanceContext completionContext(id == 0 ? frameTiming() : FrameTiming::Async());
+            PerformanceTimer completionTiming("Driver.Completion");
             bool notify = true;
             {
                 std::lock_guard lock(mutex);

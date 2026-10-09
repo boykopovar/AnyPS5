@@ -312,6 +312,9 @@ def main(argv=None):
     except AuditError as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 2
+    except OSError as error:
+        print(f"FAIL: {error.strerror}: {error.filename}" if error.filename else f"FAIL: {error}", file=sys.stderr)
+        return 2
     print(render(summary, records, missing))
     return 1 if summary["unique_by_class"]["absent"] or missing else 0
 

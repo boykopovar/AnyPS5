@@ -20,37 +20,39 @@ struct VertexFormat {
 
 inline VertexFormat DecodeVertexFormat(const ShaderRecompiler::VertexAttribute& attribute) {
     Require(attribute.components >= 1 && attribute.components <= 4, "invalid vertex attribute component count");
+    const auto components = attribute.formatComponents == 0u ? attribute.components : attribute.formatComponents;
+    Require(components >= 1u && components <= 4u, "invalid vertex format component count");
     const auto format = (attribute.resource.fields[3] >> 12u) & 0x7fu;
     switch (format) {
-        case 1: { const std::array formats{VK_FORMAT_R8_UNORM}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 2: { const std::array formats{VK_FORMAT_R8_SNORM}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 3: { const std::array formats{VK_FORMAT_R8_USCALED}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 4: { const std::array formats{VK_FORMAT_R8_SSCALED}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 5: { const std::array formats{VK_FORMAT_R8_UINT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 1u, 1u, "u32"}; }
-        case 6: { const std::array formats{VK_FORMAT_R8_SINT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 1u, 1u, "i32"}; }
-        case 7: { const std::array formats{VK_FORMAT_R16_UNORM}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 8: { const std::array formats{VK_FORMAT_R16_SNORM}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 9: { const std::array formats{VK_FORMAT_R16_USCALED}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 10: { const std::array formats{VK_FORMAT_R16_SSCALED}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 11: { const std::array formats{VK_FORMAT_R16_UINT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 2u, 2u, "u32"}; }
-        case 12: { const std::array formats{VK_FORMAT_R16_SINT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 2u, 2u, "i32"}; }
-        case 13: { const std::array formats{VK_FORMAT_R16_SFLOAT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 14: { const std::array formats{VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 15: { const std::array formats{VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 16: { const std::array formats{VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 17: { const std::array formats{VK_FORMAT_R8_SSCALED, VK_FORMAT_R8G8_SSCALED}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 18: { const std::array formats{VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 1u, 1u, "u32"}; }
-        case 19: { const std::array formats{VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 1u, 1u, "i32"}; }
-        case 20: { const std::array formats{VK_FORMAT_R32_UINT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
-        case 21: { const std::array formats{VK_FORMAT_R32_SINT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
-        case 22: { const std::array formats{VK_FORMAT_R32_SFLOAT}; const auto count = std::min(attribute.components, 1u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
-        case 23: { const std::array formats{VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 24: { const std::array formats{VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 25: { const std::array formats{VK_FORMAT_R16_USCALED, VK_FORMAT_R16G16_USCALED}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 26: { const std::array formats{VK_FORMAT_R16_SSCALED, VK_FORMAT_R16G16_SSCALED}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 27: { const std::array formats{VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 2u, 2u, "u32"}; }
-        case 28: { const std::array formats{VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 2u, 2u, "i32"}; }
-        case 29: { const std::array formats{VK_FORMAT_R16_SFLOAT, VK_FORMAT_R16G16_SFLOAT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 1: { const std::array formats{VK_FORMAT_R8_UNORM}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 2: { const std::array formats{VK_FORMAT_R8_SNORM}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 3: { const std::array formats{VK_FORMAT_R8_USCALED}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 4: { const std::array formats{VK_FORMAT_R8_SSCALED}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 5: { const std::array formats{VK_FORMAT_R8_UINT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 1u, 1u, "u32"}; }
+        case 6: { const std::array formats{VK_FORMAT_R8_SINT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 1u, 1u, "i32"}; }
+        case 7: { const std::array formats{VK_FORMAT_R16_UNORM}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 8: { const std::array formats{VK_FORMAT_R16_SNORM}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 9: { const std::array formats{VK_FORMAT_R16_USCALED}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 10: { const std::array formats{VK_FORMAT_R16_SSCALED}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 11: { const std::array formats{VK_FORMAT_R16_UINT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 2u, 2u, "u32"}; }
+        case 12: { const std::array formats{VK_FORMAT_R16_SINT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 2u, 2u, "i32"}; }
+        case 13: { const std::array formats{VK_FORMAT_R16_SFLOAT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 14: { const std::array formats{VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 15: { const std::array formats{VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 16: { const std::array formats{VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 17: { const std::array formats{VK_FORMAT_R8_SSCALED, VK_FORMAT_R8G8_SSCALED}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 18: { const std::array formats{VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 1u, 1u, "u32"}; }
+        case 19: { const std::array formats{VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 1u, 1u, "i32"}; }
+        case 20: { const std::array formats{VK_FORMAT_R32_UINT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
+        case 21: { const std::array formats{VK_FORMAT_R32_SINT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
+        case 22: { const std::array formats{VK_FORMAT_R32_SFLOAT}; const auto count = std::min(components, 1u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
+        case 23: { const std::array formats{VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 24: { const std::array formats{VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 25: { const std::array formats{VK_FORMAT_R16_USCALED, VK_FORMAT_R16G16_USCALED}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 26: { const std::array formats{VK_FORMAT_R16_SSCALED, VK_FORMAT_R16G16_SSCALED}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 27: { const std::array formats{VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 2u, 2u, "u32"}; }
+        case 28: { const std::array formats{VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 2u, 2u, "i32"}; }
+        case 29: { const std::array formats{VK_FORMAT_R16_SFLOAT, VK_FORMAT_R16G16_SFLOAT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
         case 36: return {VK_FORMAT_B10G11R11_UFLOAT_PACK32, 4u, 4u, "f32"};
         case 50: return {VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4u, 4u, "f32"};
         case 51: return {VK_FORMAT_A2B10G10R10_SNORM_PACK32, 4u, 4u, "f32"};
@@ -58,28 +60,28 @@ inline VertexFormat DecodeVertexFormat(const ShaderRecompiler::VertexAttribute& 
         case 53: return {VK_FORMAT_A2B10G10R10_SSCALED_PACK32, 4u, 4u, "f32"};
         case 54: return {VK_FORMAT_A2B10G10R10_UINT_PACK32, 4u, 4u, "u32"};
         case 55: return {VK_FORMAT_A2B10G10R10_SINT_PACK32, 4u, 4u, "i32"};
-        case 56: { const std::array formats{VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R8G8B8_UNORM, VK_FORMAT_R8G8B8A8_UNORM}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 57: { const std::array formats{VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM, VK_FORMAT_R8G8B8_SNORM, VK_FORMAT_R8G8B8A8_SNORM}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 58: { const std::array formats{VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED, VK_FORMAT_R8G8B8_USCALED, VK_FORMAT_R8G8B8A8_USCALED}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 59: { const std::array formats{VK_FORMAT_R8_SSCALED, VK_FORMAT_R8G8_SSCALED, VK_FORMAT_R8G8B8_SSCALED, VK_FORMAT_R8G8B8A8_SSCALED}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
-        case 60: { const std::array formats{VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT, VK_FORMAT_R8G8B8_UINT, VK_FORMAT_R8G8B8A8_UINT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 1u, 1u, "u32"}; }
-        case 61: { const std::array formats{VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT, VK_FORMAT_R8G8B8_SINT, VK_FORMAT_R8G8B8A8_SINT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 1u, 1u, "i32"}; }
-        case 62: { const std::array formats{VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
-        case 63: { const std::array formats{VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
-        case 64: { const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT}; const auto count = std::min(attribute.components, 2u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
-        case 65: { const std::array formats{VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16_UNORM, VK_FORMAT_R16G16B16A16_UNORM}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 66: { const std::array formats{VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM, VK_FORMAT_R16G16B16_SNORM, VK_FORMAT_R16G16B16A16_SNORM}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 67: { const std::array formats{VK_FORMAT_R16_USCALED, VK_FORMAT_R16G16_USCALED, VK_FORMAT_R16G16B16_USCALED, VK_FORMAT_R16G16B16A16_USCALED}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 68: { const std::array formats{VK_FORMAT_R16_SSCALED, VK_FORMAT_R16G16_SSCALED, VK_FORMAT_R16G16B16_SSCALED, VK_FORMAT_R16G16B16A16_SSCALED}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 69: { const std::array formats{VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT, VK_FORMAT_R16G16B16_UINT, VK_FORMAT_R16G16B16A16_UINT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 2u, 2u, "u32"}; }
-        case 70: { const std::array formats{VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16B16_SINT, VK_FORMAT_R16G16B16A16_SINT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 2u, 2u, "i32"}; }
-        case 71: { const std::array formats{VK_FORMAT_R16_SFLOAT, VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
-        case 72: { const std::array formats{VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT}; const auto count = std::min(attribute.components, 3u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
-        case 73: { const std::array formats{VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT}; const auto count = std::min(attribute.components, 3u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
-        case 74: { const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT}; const auto count = std::min(attribute.components, 3u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
-        case 75: { const std::array formats{VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
-        case 76: { const std::array formats{VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT, VK_FORMAT_R32G32B32A32_SINT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
-        case 77: { const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT}; const auto count = std::min(attribute.components, 4u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
+        case 56: { const std::array formats{VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R8G8B8_UNORM, VK_FORMAT_R8G8B8A8_UNORM}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 57: { const std::array formats{VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM, VK_FORMAT_R8G8B8_SNORM, VK_FORMAT_R8G8B8A8_SNORM}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 58: { const std::array formats{VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED, VK_FORMAT_R8G8B8_USCALED, VK_FORMAT_R8G8B8A8_USCALED}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 59: { const std::array formats{VK_FORMAT_R8_SSCALED, VK_FORMAT_R8G8_SSCALED, VK_FORMAT_R8G8B8_SSCALED, VK_FORMAT_R8G8B8A8_SSCALED}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 1u, 1u, "f32"}; }
+        case 60: { const std::array formats{VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT, VK_FORMAT_R8G8B8_UINT, VK_FORMAT_R8G8B8A8_UINT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 1u, 1u, "u32"}; }
+        case 61: { const std::array formats{VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT, VK_FORMAT_R8G8B8_SINT, VK_FORMAT_R8G8B8A8_SINT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 1u, 1u, "i32"}; }
+        case 62: { const std::array formats{VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
+        case 63: { const std::array formats{VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
+        case 64: { const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT}; const auto count = std::min(components, 2u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
+        case 65: { const std::array formats{VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16_UNORM, VK_FORMAT_R16G16B16A16_UNORM}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 66: { const std::array formats{VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM, VK_FORMAT_R16G16B16_SNORM, VK_FORMAT_R16G16B16A16_SNORM}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 67: { const std::array formats{VK_FORMAT_R16_USCALED, VK_FORMAT_R16G16_USCALED, VK_FORMAT_R16G16B16_USCALED, VK_FORMAT_R16G16B16A16_USCALED}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 68: { const std::array formats{VK_FORMAT_R16_SSCALED, VK_FORMAT_R16G16_SSCALED, VK_FORMAT_R16G16B16_SSCALED, VK_FORMAT_R16G16B16A16_SSCALED}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 69: { const std::array formats{VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT, VK_FORMAT_R16G16B16_UINT, VK_FORMAT_R16G16B16A16_UINT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 2u, 2u, "u32"}; }
+        case 70: { const std::array formats{VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16B16_SINT, VK_FORMAT_R16G16B16A16_SINT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 2u, 2u, "i32"}; }
+        case 71: { const std::array formats{VK_FORMAT_R16_SFLOAT, VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 2u, 2u, "f32"}; }
+        case 72: { const std::array formats{VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT}; const auto count = std::min(components, 3u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
+        case 73: { const std::array formats{VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT}; const auto count = std::min(components, 3u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
+        case 74: { const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT}; const auto count = std::min(components, 3u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
+        case 75: { const std::array formats{VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 4u, 4u, "u32"}; }
+        case 76: { const std::array formats{VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT, VK_FORMAT_R32G32B32A32_SINT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 4u, 4u, "i32"}; }
+        case 77: { const std::array formats{VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT}; const auto count = std::min(components, 4u); return {formats[count - 1], count * 4u, 4u, "f32"}; }
         default: throw std::runtime_error("AGC graphics: unsupported vertex format " + std::to_string(format));
     }
 }

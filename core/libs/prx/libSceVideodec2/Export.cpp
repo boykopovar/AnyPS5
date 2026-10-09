@@ -16,6 +16,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/frame.h>
+#include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
 
@@ -24,6 +25,9 @@ namespace {
 constexpr std::uint64_t WorkMemoryBytes = 1u << 20u;
 constexpr std::uint32_t PitchAlignment = 256;
 constexpr std::uint32_t HeightAlignment = 32;
+constexpr std::uint32_t CodecAvc = 1;
+constexpr std::uint32_t CodecHevc = 974921;
+constexpr std::uint32_t CodecVp9 = 2382845;
 
 struct ComputeMemoryInfo {
     std::uint64_t thisSize;
@@ -174,9 +178,18 @@ std::shared_ptr<Decoder> FindDecoder(std::uint64_t handle) {
     return found != decoders.end() ? found->second : nullptr;
 }
 
+AVCodecID CodecId(std::uint32_t codec) {
+    switch (codec) {
+        case CodecAvc: return AV_CODEC_ID_H264;
+        case CodecHevc: return AV_CODEC_ID_HEVC;
+        case CodecVp9: return AV_CODEC_ID_VP9;
+        default: throw std::runtime_error("Videodec2: unsupported codec");
+    }
+}
+
 void OpenCodec(Decoder& decoder) {
-    const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    if (codec == nullptr) throw std::runtime_error("Videodec2: H.264 decoder is unavailable");
+    const AVCodec* codec = avcodec_find_decoder(CodecId(decoder.codec));
+    if (codec == nullptr) throw std::runtime_error("Videodec2: decoder is unavailable");
     decoder.context = avcodec_alloc_context3(codec);
     if (decoder.context == nullptr) throw std::runtime_error("Videodec2: cannot allocate codec context");
     decoder.context->err_recognition = AV_EF_EXPLODE;
@@ -184,7 +197,7 @@ void OpenCodec(Decoder& decoder) {
     decoder.context->thread_type = FF_THREAD_SLICE;
     if (avcodec_open2(decoder.context, codec, nullptr) < 0) {
         avcodec_free_context(&decoder.context);
-        throw std::runtime_error("Videodec2: cannot open H.264 decoder");
+        throw std::runtime_error("Videodec2: cannot open decoder");
     }
 }
 
@@ -233,6 +246,8 @@ bool WriteNv12(Decoder& decoder, const AVFrame& frame, std::uint8_t* target, std
     std::uint8_t* planes[4] = {target, target + luma, nullptr, nullptr};
     const int strides[4] = {static_cast<int>(pitch), static_cast<int>(pitch), 0, 0};
     const auto format = static_cast<AVPixelFormat>(frame.format);
+    const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
+    if (descriptor == nullptr || descriptor->comp[0].depth > 8) throw std::runtime_error("Videodec2: output deeper than 8 bits is not implemented");
     if (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P) {
         for (std::uint32_t row = 0; row < height; ++row) std::memcpy(planes[0] + static_cast<std::size_t>(row) * pitch, frame.data[0] + static_cast<std::ptrdiff_t>(row) * frame.linesize[0], width);
         for (std::uint32_t row = 0; row < height / 2; ++row) {
@@ -329,14 +344,14 @@ int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const DecoderConfig
 
 int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) {
     if (!config || !memory || !handle) throw std::runtime_error("Videodec2: invalid argument pointer");
-    if (config->codecType != 1) throw std::runtime_error("Videodec2: unsupported codec");
+    CodecId(config->codecType);
     auto decoder = std::make_shared<Decoder>();
     decoder->codec = config->codecType;
     OpenCodec(*decoder);
     std::lock_guard guard(lock);
     *handle = nextDecoder++;
     decoders.emplace(*handle, decoder);
-    std::fprintf(stderr, "[videodec2] decoder %llu: codec=%u max %dx%d (%s)\n", static_cast<unsigned long long>(*handle), config->codecType, config->maxFrameWidth, config->maxFrameHeight, "H.264 through FFmpeg");
+    std::fprintf(stderr, "[videodec2] decoder %llu: codec=%u max %dx%d (%s)\n", static_cast<unsigned long long>(*handle), config->codecType, config->maxFrameWidth, config->maxFrameHeight, decoder->context->codec->long_name);
     return 0;
 }
 
@@ -357,7 +372,8 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     const Picture picture{input->ptsData, input->dtsData, input->attachedData};
     if (decoder.flushing) throw std::runtime_error("Videodec2: reset required after flushing");
     if (!input->auData || input->auSize == 0 || input->auSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Videodec2: invalid access unit");
-    const auto* unit = ToAnnexB(decoder, input->auData, static_cast<std::size_t>(input->auSize));
+    if (decoder.codec == CodecVp9) decoder.annexB.assign(input->auData, input->auData + input->auSize);
+    const auto* unit = decoder.codec == CodecVp9 ? &decoder.annexB : ToAnnexB(decoder, input->auData, static_cast<std::size_t>(input->auSize));
     AVPacket* packet = av_packet_alloc();
     if (!packet) throw std::runtime_error("Videodec2: cannot allocate packet");
     const auto freePacket = [](AVPacket* value) { av_packet_free(&value); };
@@ -410,6 +426,7 @@ int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, A
         std::lock_guard guard(decoder->mutex);
         const auto found = decoder->pictures.find(output->frameBuffer);
         if (found == decoder->pictures.end()) continue;
+        if (decoder->codec != CodecAvc) throw std::runtime_error("Videodec2: picture info is only implemented for H.264");
         const auto& picture = found->second;
         first->isValid = true;
         first->ptsData = picture.pts;
