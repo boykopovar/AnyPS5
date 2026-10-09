@@ -443,6 +443,18 @@ std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock
     if (joinsAt(falseTarget, trueTarget)) {
         return falseTarget;
     }
+    if (globalMerge == InvalidControlFlowId || !isInsideLoopConstruct(graph, *loop, globalMerge)) {
+        std::uint32_t commonExit = InvalidControlFlowId;
+        bool multipleExits = false;
+        for (const auto exit : loop->exitBlocks) {
+            if (exit == loop->mergeBlock || !graph.Dominates(block.id, exit) || !reachesWithinIteration(graph, *loop, trueTarget, exit) || !reachesWithinIteration(graph, *loop, falseTarget, exit)) {
+                continue;
+            }
+            if (commonExit != InvalidControlFlowId) multipleExits = true;
+            commonExit = exit;
+        }
+        if (commonExit != InvalidControlFlowId && !multipleExits) return commonExit;
+    }
     if (globalMerge != InvalidControlFlowId) {
         const bool trueJoins = reachesWithinIteration(graph, *loop, trueTarget, globalMerge);
         const bool falseJoins = reachesWithinIteration(graph, *loop, falseTarget, globalMerge);
