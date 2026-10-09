@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +9,11 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 struct Value { void* node; };
 struct String { void* text; };
@@ -86,6 +92,7 @@ void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(void*);
 void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(void*, void*, void*);
 void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(void*, std::size_t);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const void*);
+void APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void*, int, std::size_t, void*);
 }
 
 static void Check(bool value, int line) {
@@ -95,6 +102,68 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+static std::string CaptureAllocatorError(void* allocator, int errorCode, std::size_t size, void* userData) {
+    auto* captured = std::tmpfile();
+    Require(captured != nullptr && std::fflush(stdout) == 0);
+#ifdef _WIN32
+    const int saved = ::_dup(::_fileno(stdout));
+    Require(saved >= 0 && ::_dup2(::_fileno(captured), ::_fileno(stdout)) == 0);
+#else
+    const int saved = ::dup(::fileno(stdout));
+    Require(saved >= 0 && ::dup2(::fileno(captured), ::fileno(stdout)) == ::fileno(stdout));
+#endif
+    const auto restore = [&] {
+        Require(std::fflush(stdout) == 0);
+#ifdef _WIN32
+        Require(::_dup2(saved, ::_fileno(stdout)) == 0 && ::_close(saved) == 0);
+#else
+        Require(::dup2(saved, ::fileno(stdout)) == ::fileno(stdout) && ::close(saved) == 0);
+#endif
+    };
+    try {
+        _ZN3sce4Json12MemAllocator11notifyErrorEimPv(allocator, errorCode, size, userData);
+    } catch (...) {
+        restore();
+        Require(std::fclose(captured) == 0);
+        throw;
+    }
+    restore();
+    Require(std::fseek(captured, 0, SEEK_SET) == 0);
+    std::string diagnostic;
+    std::array<char, 256> buffer{};
+    while (const auto count = std::fread(buffer.data(), 1, buffer.size(), captured))
+        diagnostic.append(buffer.data(), count);
+    Require(std::feof(captured) && !std::ferror(captured));
+    Require(std::fclose(captured) == 0);
+    return diagnostic;
+}
+
+static void AllocatorErrors() {
+    std::array<std::uint64_t, 2> allocator{0x0123456789abcdef, 0xfedcba9876543210};
+    std::array<std::uint64_t, 2> userData{0x13579bdf2468ace0, 0x02468ace13579bdf};
+    const auto originalAllocator = allocator;
+    const auto originalUserData = userData;
+    const struct {
+        int errorCode;
+        std::size_t size;
+        bool withUserData;
+    } cases[] = {
+        {-12345, 4096, true},
+        {67890, static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1, true},
+        {std::numeric_limits<int>::min(), std::numeric_limits<std::size_t>::max(), true},
+        {std::numeric_limits<int>::max(), 1, false},
+        {0, 0, false},
+    };
+    for (const auto& test : cases) {
+        const auto diagnostic = CaptureAllocatorError(allocator.data(), test.errorCode, test.size,
+            test.withUserData ? userData.data() : nullptr);
+        Require(diagnostic.find("MemAllocator::notifyError") != std::string::npos);
+        Require(diagnostic.find("error " + std::to_string(test.errorCode)) != std::string::npos);
+        Require(diagnostic.find("requested " + std::to_string(test.size) + " bytes") != std::string::npos);
+        Require(allocator == originalAllocator && userData == originalUserData);
+    }
+}
 
 enum : std::int32_t { TypeNull, TypeBoolean, TypeInteger, TypeUInteger, TypeReal, TypeString, TypeArray, TypeObject };
 
@@ -399,6 +468,7 @@ static void ValueClear() {
 }
 
 int main() {
+    AllocatorErrors();
     ParseAndRoundTrip();
     NestingDepth();
     ObjectsAndArrays();

@@ -812,9 +812,10 @@ void APS5_VABI _ZN3sce4Json5Value5clearEv(Value* self) {
     Clear(NodeOf(*self));
 }
 
-int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void* self, int errorCode, std::size_t size, void* userData) {
+    (void)self;
+    (void)userData;
+    std::printf("sce::Json::MemAllocator::notifyError: error %d, requested %zu bytes\n", errorCode, size);
 }
 
 }
