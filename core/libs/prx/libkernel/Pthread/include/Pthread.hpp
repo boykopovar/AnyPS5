@@ -12,6 +12,9 @@
 #include <shared_mutex>
 #include <string>
 #include <thread>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 
 enum class MutexType : std::uint32_t {
     ErrorCheck = 1,
@@ -80,6 +83,7 @@ struct PthreadPrivate {
     void* nativeHandle = nullptr;
 #else
     std::thread _thr;
+    pthread_t hostThread{};
 #endif
     std::thread::id threadId;
     std::atomic<unsigned> references{2};
