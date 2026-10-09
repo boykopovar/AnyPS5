@@ -165,7 +165,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (name.empty() || name.find_first_of("\\:$\r\n") != std::string::npos || !dependencies.insert(name).second) fail("Invalid or duplicate dependency: " + name);
         image.Dependencies.push_back(name);
     }
-    std::map<std::uint64_t, std::uint64_t> relocationTargets;
+    std::map<std::uint64_t, std::uint64_t> relocationOffsets;
     const auto copyRelocations = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag, std::vector<std::uint8_t>& output, bool plt) {
         if (!tags.contains(addressTag) && !tags.contains(sceAddressTag) && !tags.contains(sizeTag) && !tags.contains(sceSizeTag)) return;
         const auto size = get(sizeTag, sceSizeTag);
@@ -179,9 +179,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto target = Io::ReadU64(output, index);
             const auto addend = Io::ReadU64(output, index + 16);
             mapped(target, 8, 2);
-            const auto next = relocationTargets.lower_bound(target);
-            if ((next != relocationTargets.end() && next->first < target + 8) || (next != relocationTargets.begin() && std::prev(next)->second > target)) fail("Overlapping guest relocations");
-            relocationTargets.emplace(target, target + 8);
+            const auto next = relocationOffsets.lower_bound(target);
+            if ((next != relocationOffsets.end() && next->first < target + 8) || (next != relocationOffsets.begin() && std::prev(next)->first + 8 > target)) fail("Overlapping guest relocations");
+            relocationOffsets.emplace(target, offset + index);
             if (relocation == 8) {
                 if ((info >> 32) != 0) fail("RELATIVE relocation has a symbol");
                 mapped(addend, 0, 0);
@@ -215,23 +215,17 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         mapped(address, size, 4);
         const auto fileOffset = translate(address, size);
         for (std::uint64_t offset = 0; offset < size; offset += 8) {
-            bool relocated = false;
-            for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData}) {
-                for (std::size_t position = 0; position < table->size(); position += 24) {
-                    if (Io::ReadU64(*table, position) != address + offset) continue;
-                    relocated = true;
-                    const auto info = Io::ReadU64(*table, position + 8);
-                    const auto addend = Io::ReadU64(*table, position + 16);
-                    const auto type = static_cast<std::uint32_t>(info);
-                    if (type == 8) mapped(addend, 1, 1);
-                    else if (type == 1) {
-                        const auto& symbol = image.Symbols.at(info >> 32);
-                        if ((symbol.Info & 15) != 2 || addend != 0) fail("Invalid guest lifecycle function relocation");
-                        if (symbol.Section != 0 && symbol.Section != AbsoluteSection) mapped(symbol.Value, 1, 1);
-                    } else fail("Unsupported guest lifecycle relocation");
-                }
-            }
-            if (!relocated && Io::ReadU64(bytes, fileOffset + offset) != 0) fail("Unrelocated guest lifecycle pointer");
+            if (const auto relocation = relocationOffsets.find(address + offset); relocation != relocationOffsets.end()) {
+                const auto info = Io::ReadU64(bytes, relocation->second + 8);
+                const auto addend = Io::ReadU64(bytes, relocation->second + 16);
+                const auto type = static_cast<std::uint32_t>(info);
+                if (type == 8) mapped(addend, 1, 1);
+                else if (type == 1) {
+                    const auto& symbol = image.Symbols.at(info >> 32);
+                    if ((symbol.Info & 15) != 2 || addend != 0) fail("Invalid guest lifecycle function relocation");
+                    if (symbol.Section != 0 && symbol.Section != AbsoluteSection) mapped(symbol.Value, 1, 1);
+                } else fail("Unsupported guest lifecycle relocation");
+            } else if (Io::ReadU64(bytes, fileOffset + offset) != 0) fail("Unrelocated guest lifecycle pointer");
             entries.push_back(address + offset);
         }
     };
