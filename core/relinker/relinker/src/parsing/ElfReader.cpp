@@ -130,6 +130,16 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
 
 std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
     const ElfHeader header = ReadHeader();
+    if (header.SectionHeaderCount != 0 && header.SectionHeaderEntrySize != 64) {
+        throw RelinkerException("Invalid ELF section header entry size: expected 64 bytes", 0x3a);
+    }
+    if (header.SectionHeaderCount != 0 && !_rangeFits(header.SectionHeaderOffset,
+            static_cast<std::uint64_t>(header.SectionHeaderCount) * header.SectionHeaderEntrySize, _fileBuffer.size())) {
+        throw RelinkerException("Section header table out of bounds", header.SectionHeaderOffset);
+    }
+    if (header.SectionHeaderStringIndex != 0 && header.SectionHeaderStringIndex >= header.SectionHeaderCount) {
+        throw RelinkerException("Section name table index out of bounds", 0x3e);
+    }
 
     std::vector<SectionHeader> headers;
     FileByteOffset offset = header.SectionHeaderOffset;
@@ -164,13 +174,25 @@ std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeade
                         (header.SectionHeaderStringIndex * header.SectionHeaderEntrySize);
 
     const FileByteOffset strTableOffset = _readU64At(shstrOffset + 0x18);
+    const ByteCount strTableSize = _readU64At(shstrOffset + 0x20);
+    if (!_rangeFits(strTableOffset, strTableSize, _fileBuffer.size())) {
+        throw RelinkerException("Section name table out of bounds", strTableOffset);
+    }
+    if (nameOffset == 0) return "";
+    if (nameOffset >= strTableSize) {
+        throw RelinkerException("Section name offset out of bounds", nameOffset);
+    }
 
     std::string name;
     FileByteOffset currentPos = strTableOffset + nameOffset;
 
-    while (currentPos < _fileBuffer.size() && _fileBuffer[currentPos] != '\0') {
+    const FileByteOffset end = strTableOffset + strTableSize;
+    while (currentPos < end && _fileBuffer[currentPos] != '\0') {
         name += static_cast<char>(_fileBuffer[currentPos]);
         currentPos++;
+    }
+    if (currentPos == end) {
+        throw RelinkerException("Unterminated section name", strTableOffset + nameOffset);
     }
 
     return name;

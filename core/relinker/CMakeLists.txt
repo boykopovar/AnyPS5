@@ -145,6 +145,17 @@ if(BUILD_TESTING)
     target_include_directories(buffer_bounds_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include)
     add_test(NAME buffer_bounds COMMAND buffer_bounds_tests)
 
+    add_test_executable(section_name_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/SectionNameBoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
+    )
+    target_include_directories(section_name_bounds_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+    )
+    add_test(NAME section_name_bounds COMMAND section_name_bounds_tests)
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(file_writer_tests
             ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/FileWriterTests.cpp
