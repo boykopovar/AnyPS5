@@ -459,9 +459,23 @@ std::uint32_t EmitCompositeExtractU64(SpirvEmitterState& state, std::uint32_t ar
     return EmitNative<spv::OpCompositeExtract, IrType::U32>(state, arg0, arg1->ImmediateU32());
 }
 
+static bool NativeF16Rte(const SpirvEmitterState& state);
+
+static std::uint32_t EmitF32ToF16BitsTowardZero(SpirvEmitterState& state, std::uint32_t value) {
+    if (!NativeF16Rte(state)) return EmitF32ToF16RtzBits(state, value);
+    const auto u32 = TypeU32(state);
+    const auto f16 = state.module.Type(spv::OpTypeFloat, 16u);
+    const auto nearest = EmitF32ToF16BitsRte(state, value);
+    const auto half = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, f16, half, Unary(state, spv::OpBitcast, state.module.Type(spv::OpTypeVector, f16, 2u), nearest), 0u);
+    const auto widened = Unary(state, spv::OpFConvert, TypeF32(state), half);
+    const auto away = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), EmitFAbsValue(state, widened), EmitFAbsValue(state, value));
+    return Select(state, u32, away, Binary(state, spv::OpISub, u32, nearest, ConstantU32(state, 1u)), nearest);
+}
+
 std::uint32_t EmitPackFloat2x16Rtz(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
-    const auto low = EmitF32ToF16RtzBits(state, arg0);
-    const auto high = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), EmitF32ToF16RtzBits(state, arg1), ConstantU32(state, 16u));
+    const auto low = EmitF32ToF16BitsTowardZero(state, arg0);
+    const auto high = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), EmitF32ToF16BitsTowardZero(state, arg1), ConstantU32(state, 16u));
     return Binary(state, spv::OpBitwiseOr, TypeU32(state), low, high);
 }
 
