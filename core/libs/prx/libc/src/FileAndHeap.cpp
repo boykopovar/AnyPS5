@@ -22,6 +22,13 @@ static std::string NativeFileMode(const char* mode) {
     return result;
 }
 
+#ifdef _WIN32
+static std::wstring WideFileMode(const char* mode) {
+    const std::string native = NativeFileMode(mode);
+    return std::wstring(native.begin(), native.end());
+}
+#endif
+
 static bool WritesFile(const char* mode) {
     return std::strpbrk(mode, "wa+") != nullptr;
 }
@@ -62,9 +69,13 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
     for (const auto* candidate : supported) if (std::strcmp(mode, candidate) == 0) valid = true;
     if (!valid) { errno = 22; return nullptr; }
     try {
-        const auto path = *filename ? ResolvePath_nid_no_patch(filename).string() : std::string{};
-        if (stream->Reopen(path.c_str(), NativeFileMode(mode).c_str())) {
-            if (!path.empty() && WritesFile(mode)) RecordWrittenPath_nid_no_patch(path);
+        const auto fpath = *filename ? ResolvePath_nid_no_patch(filename) : std::filesystem::path{};
+#ifdef _WIN32
+        if (stream->Reopen(fpath, WideFileMode(mode).c_str())) {
+#else
+        if (stream->Reopen(fpath, NativeFileMode(mode).c_str())) {
+#endif
+            if (!fpath.empty() && WritesFile(mode)) RecordWrittenPath_nid_no_patch(fpath);
             return stream;
         }
         const int error = errno;
@@ -79,7 +90,11 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
     if (!filename || !mode) throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_NULL_ARG);
     const std::filesystem::path fpath = ResolvePath_nid_no_patch(filename);
     const auto abs_path = fpath.string();
+#ifdef _WIN32
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(::_wfopen(fpath.c_str(), WideFileMode(mode).c_str()), std::fclose);
+#else
     std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(abs_path.c_str(), NativeFileMode(mode).c_str()), std::fclose);
+#endif
     if (!handle) {
         const int error = errno;
         if (error == ENOENT) {

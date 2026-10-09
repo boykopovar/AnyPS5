@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <type_traits>
+#include <filesystem>
 #ifdef _WIN32
 #include <io.h>
 #endif
@@ -66,21 +67,39 @@ public:
     }
 
     GuestFilePrefix& GuestState() { return _guest; }
-    bool Reopen(const char* filename, const char* mode) {
+#ifdef _WIN32
+    bool Reopen(const std::filesystem::path& path, const wchar_t* mode) {
         auto* previous = GetHandle();
         _guest = {};
         encodingError = false;
-        _handle = std::freopen(filename, mode, previous);
+        _handle = path.empty() ? ::_wfreopen(nullptr, mode, previous) : ::_wfreopen(path.c_str(), mode, previous);
         if (!_handle) return false;
         _guest.flags = 0x10;
-#ifdef _WIN32
         const int descriptor = _fileno(_handle);
-#else
-        const int descriptor = ::fileno(_handle);
-#endif
         _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
         return true;
     }
+    bool Reopen(const char* filename, const char* mode) {
+        const std::string modeStr = mode ? mode : "";
+        const std::wstring wideMode(modeStr.begin(), modeStr.end());
+        return Reopen(filename ? std::filesystem::path(filename) : std::filesystem::path{}, wideMode.c_str());
+    }
+#else
+    bool Reopen(const std::filesystem::path& path, const char* mode) {
+        auto* previous = GetHandle();
+        _guest = {};
+        encodingError = false;
+        _handle = path.empty() ? std::freopen(nullptr, mode, previous) : std::freopen(path.c_str(), mode, previous);
+        if (!_handle) return false;
+        _guest.flags = 0x10;
+        const int descriptor = ::fileno(_handle);
+        _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
+        return true;
+    }
+    bool Reopen(const char* filename, const char* mode) {
+        return Reopen(filename ? std::filesystem::path(filename) : std::filesystem::path{}, mode);
+    }
+#endif
     void SyncStatus() {
         _guest.readRemaining = 0;
         _guest.writeRemaining = 0;

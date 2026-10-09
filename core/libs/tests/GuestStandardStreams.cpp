@@ -297,5 +297,27 @@ int main() {
     Require(freopen_nid_postfix(filename.c_str(), "rb", &failed) == nullptr);
     Require(*__error_nid_postfix() == 2);
     Require(failed.GuestState().flags == 0 && failed.GuestState().descriptor == -1);
+    const auto utf8Directory = std::filesystem::path("anyps5-utf8-stream-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(utf8Directory));
+    const auto utf8File = utf8Directory / u8"\u30bb\u30fc\u30d6.dat";
+    const auto utf8NameU8 = utf8File.u8string();
+    const auto* utf8Name = reinterpret_cast<const char*>(utf8NameU8.c_str());
+    auto* utf8Stream = fopen_nid_postfix(utf8Name, "wb");
+    Require(utf8Stream != nullptr);
+    Require(fputc_nid_postfix('U', utf8Stream) == 'U');
+    Require(fclose_nid_postfix(utf8Stream) == 0);
+    FileStream utf8Redirected(std::tmpfile());
+    Require(freopen_nid_postfix(utf8Name, "ab", &utf8Redirected) == &utf8Redirected);
+    Require(fputc_nid_postfix('8', &utf8Redirected) == '8');
+    Require(fclose_nid_postfix(&utf8Redirected) == 0);
+    auto* utf8Read = fopen_nid_postfix(utf8Name, "rb");
+    Require(utf8Read != nullptr);
+    char utf8Buf[4]{};
+    Require(fread_nid_postfix(utf8Buf, 1, sizeof(utf8Buf), utf8Read) == 2);
+    Require(std::memcmp(utf8Buf, "U8", 2) == 0);
+    Require(fclose_nid_postfix(utf8Read) == 0);
+    Require(std::filesystem::exists(utf8File));
+    Require(std::filesystem::remove(utf8File));
+    Require(std::filesystem::remove(utf8Directory));
     return CheckBinaryModes() ? 0 : 1;
 }
