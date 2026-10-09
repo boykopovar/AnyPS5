@@ -19,4 +19,5 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - run: python3 -m unittest discover -s tools/tests -p test_conventions_links.py -v
       - run: python3 tools/check_conventions.py --base ${{ github.event.pull_request.base.sha }} --head ${{ github.event.pull_request.head.sha }}

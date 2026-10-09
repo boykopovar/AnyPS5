@@ -185,7 +185,7 @@ def utf8(data):
 def links(path, text):
     result = []
     for target in LINK.findall(text):
-        if re.match(r"[a-z]+:|#", target):
+        if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|#|//", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
         result.append((target, posixpath.normpath(target.lstrip("/") if target.startswith("/") else str(PurePosixPath(path).parent / target))))
