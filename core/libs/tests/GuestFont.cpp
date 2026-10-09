@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <initializer_list>
 #include <map>
 #include <string>
@@ -39,6 +40,11 @@ int APS5_VABI sceFontGetRenderScaledKerning(FontHandle, std::uint32_t, std::uint
 int APS5_VABI sceFontGenerateCharGlyph(FontHandle, std::uint32_t, const FontGenerateGlyphDetail*, FontGlyph*);
 int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph, std::uint32_t, std::uint64_t);
 int APS5_VABI sceFontDeleteGlyph(const FontMemory*, FontGlyph*);
+int APS5_VABI sceFontDefineAttribute(FontHandle, int, int*);
+int APS5_VABI sceFontGetAttribute(FontHandle, int, int*);
+int APS5_VABI sceFontOpenFontInstance(FontHandle, FontHandle, FontHandle*);
+void APS5_VABI sceFontRenderSurfaceInit(FontRenderSurface*, void*, int, int, int, int);
+int APS5_VABI sceFontRenderCharGlyphImage(FontHandle, std::uint32_t, FontRenderSurface*, float, float, FontGlyphMetrics*, FontRenderOutput*);
 const void* APS5_VABI sceFontSelectLibraryFt(int);
 const void* APS5_VABI sceFontSelectRendererFt(int);
 }
@@ -50,6 +56,16 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+template <typename F>
+static bool Throws(F f) {
+    try {
+        f();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
 
 static int allocations = 0;
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {
@@ -76,9 +92,9 @@ static std::vector<unsigned char> Words(std::initializer_list<int> values) {
     return out;
 }
 
-static std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string, std::vector<unsigned char>> tables) {
+static std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string, std::vector<unsigned char>> tables, int yMax = 0) {
     tables["glyf"] = Words({0, 0});
-    tables["head"] = Words({1, 0, 1, 0, 0, 0, 0x5F0F, 0x3CF5, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 2, 0, 0});
+    tables["head"] = Words({1, 0, 1, 0, 0, 0, 0x5F0F, 0x3CF5, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, yMax, 0, 8, 2, 0, 0});
     tables["hhea"] = Words({1, 0, 800, -200, 0, 500, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1});
     tables["hmtx"] = Words({500});
     tables["hmtx"].resize(2 + 2 * static_cast<std::size_t>(glyphCount));
@@ -109,7 +125,7 @@ static std::vector<unsigned char> KerningFont() {
     return BuildFont(3, {
         {"cmap", Words({0, 1, 3, 1, 0, 12, 4, 40, 0, 6, 4, 1, 2, 'A', 'V', 0xFFFF, 0, 'A', 'V', 0xFFFF, 1 - 'A', 2 - 'V', 1, 0, 0, 0})},
         {"kern", Words({0, 1, 0, 20, 1, 1, 6, 0, 0, 1, 2, -200})},
-    });
+    }, 800);
 }
 
 static bool KerningIs(const FontKerning& kerning, float offsetX) {
@@ -276,6 +292,46 @@ int main() {
     Require(sceFontGetRenderScaledKerning(nullptr, 'A', 'V', &kerning) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && KerningIs(kerning, 0.0f));
     kerning = {1.0f, 1.0f, 1.0f, 1.0f};
     Require(sceFontGetRenderScaledKerning(&unopened, 'A', 'V', &kerning) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && KerningIs(kerning, 0.0f));
+    int attribute = 1;
+    Require(sceFontGetAttribute(font, 0x40, &attribute) == SCE_FONT_OK && attribute == 0x40);
+    std::vector<unsigned char> pixels(64 * 64);
+    FontRenderSurface surface{};
+    sceFontRenderSurfaceInit(&surface, pixels.data(), 64, 1, 64, 64);
+    FontGlyphMetrics glyphMetrics{};
+    FontRenderOutput horizontal{};
+    Require(sceFontRenderCharGlyphImage(font, 'A', &surface, 10.0f, 10.0f, &glyphMetrics, &horizontal) == SCE_FONT_OK);
+    Require(horizontal.UpdateRect.x == 10 && horizontal.UpdateRect.y == 42);
+    Require(sceFontDefineAttribute(font, 0x41, &attribute) == SCE_FONT_OK && attribute == 0x40);
+    Require(sceFontGetAttribute(font, 0x40, &attribute) == SCE_FONT_OK && attribute == 0x41);
+    Require(sceFontGetAttribute(font, 0x41, &attribute) == SCE_FONT_OK && attribute == 0x41);
+    FontRenderOutput vertical{};
+    Require(sceFontRenderCharGlyphImage(font, 'A', &surface, 10.0f, 10.0f, &glyphMetrics, &vertical) == SCE_FONT_OK);
+    Require(vertical.UpdateRect.x == 10 && vertical.UpdateRect.y == 10);
+    FontHandle instance = nullptr;
+    Require(sceFontOpenFontInstance(font, nullptr, &instance) == SCE_FONT_OK && instance != nullptr);
+    Require(sceFontGetAttribute(instance, 0x40, &attribute) == SCE_FONT_OK && attribute == 0x41);
+    Require(sceFontDefineAttribute(instance, 0x40, nullptr) == SCE_FONT_OK);
+    Require(sceFontGetAttribute(instance, 0x40, &attribute) == SCE_FONT_OK && attribute == 0x40);
+    Require(sceFontGetAttribute(font, 0x40, &attribute) == SCE_FONT_OK && attribute == 0x41);
+    Require(sceFontCloseFont(instance) == SCE_FONT_OK);
+    Require(sceFontDefineAttribute(font, 0x41, nullptr) == SCE_FONT_OK);
+    Require(sceFontDefineAttribute(font, 0x40, &attribute) == SCE_FONT_OK && attribute == 0x41);
+    Require(sceFontGetAttribute(font, 0x40, &attribute) == SCE_FONT_OK && attribute == 0x40);
+    Require(sceFontGetAttribute(font, 0x40, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    attribute = 1;
+    Require(sceFontGetAttribute(nullptr, 0x40, &attribute) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && attribute == 0);
+    attribute = 1;
+    Require(sceFontGetAttribute(&unopened, 0x40, &attribute) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && attribute == 0);
+    attribute = 1;
+    Require(sceFontDefineAttribute(nullptr, 0x41, &attribute) == SCE_FONT_ERROR_INVALID_FONT_HANDLE && attribute == 0);
+    Require(sceFontDefineAttribute(&unopened, 0x41, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    attribute = 1;
+    Require(Throws([&] { sceFontDefineAttribute(font, 0x11, &attribute); }) && attribute == 1);
+    Require(Throws([&] { sceFontDefineAttribute(font, 0x30, nullptr); }));
+    Require(Throws([&] { sceFontGetAttribute(font, 0x20, &attribute); }) && attribute == 1);
+    Require(Throws([&] { sceFontDefineAttribute(font, 0x42, nullptr); }));
+    Require(Throws([&] { sceFontGetAttribute(font, 0, &attribute); }));
+    Require(sceFontGetAttribute(font, 0x41, &attribute) == SCE_FONT_OK && attribute == 0x40);
     Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
     Require(sceFontGetRenderScaledKerning(font, 'A', 'V', &kerning) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);

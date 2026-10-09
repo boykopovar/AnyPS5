@@ -2,13 +2,58 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 #include "prx/libSceFont/include/FontInternal.hpp"
 
 namespace {
 
 using namespace Font;
+
+constexpr std::uint16_t HANDLE_WRITING_VERTICAL = 0x8000;
+constexpr int ATTRIBUTE_NONE = 0;
+constexpr int ATTRIBUTE_WRITING_HORIZONTAL = 0x40;
+constexpr int ATTRIBUTE_WRITING_VERTICAL = 0x41;
+constexpr int ATTRIBUTE_RENDER_DETAIL_NO_ADJOIN = 0x10;
+constexpr int ATTRIBUTE_RENDER_DETAIL_ADJOIN = 0x11;
+constexpr int ATTRIBUTE_VERTICAL_NO_EXCLUSIVE = 0x20;
+constexpr int ATTRIBUTE_VERTICAL_EXCLUSIVE = 0x21;
+constexpr int ATTRIBUTE_VERTICAL_ROTATION_ENABLE = 0x30;
+constexpr int ATTRIBUTE_VERTICAL_ROTATION_DISABLE = 0x31;
+
+[[noreturn]] void Unsupported(const char* function, const std::string& what) {
+    throw std::runtime_error(std::string(function) + ": " + what);
+}
+
+std::string AttributeName(int attribute) {
+    char name[16];
+    std::snprintf(name, sizeof(name), "0x%X", static_cast<unsigned>(attribute));
+    return name;
+}
+
+void CheckWritingAttribute(const char* function, int attribute) {
+    switch (attribute) {
+    case ATTRIBUTE_WRITING_HORIZONTAL:
+    case ATTRIBUTE_WRITING_VERTICAL:
+        return;
+    case ATTRIBUTE_RENDER_DETAIL_NO_ADJOIN:
+    case ATTRIBUTE_RENDER_DETAIL_ADJOIN:
+    case ATTRIBUTE_VERTICAL_NO_EXCLUSIVE:
+    case ATTRIBUTE_VERTICAL_EXCLUSIVE:
+    case ATTRIBUTE_VERTICAL_ROTATION_ENABLE:
+    case ATTRIBUTE_VERTICAL_ROTATION_DISABLE:
+        Unsupported(function, "attribute " + AttributeName(attribute) + " is not modelled");
+    default:
+        Unsupported(function, "unknown attribute " + AttributeName(attribute) + " (error code not verified)");
+    }
+}
+
+int WritingAttribute(const FontHandleNative* font) {
+    return (font->flags & HANDLE_WRITING_VERTICAL) != 0 ? ATTRIBUTE_WRITING_VERTICAL : ATTRIBUTE_WRITING_HORIZONTAL;
+}
 
 template<typename Setter>
 int UpdateFontStyle(FontHandle fontHandle, Setter&& setter) {
@@ -143,6 +188,47 @@ int APS5_VABI sceFontGetEffectWeight(FontHandle fontHandle, float* weightXScale,
     const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetWeightScale(&font->style, weightXScale, weightYScale, mode); });
     if (rc != SCE_FONT_OK) ResetWeightOutputs(weightXScale, weightYScale, mode);
     return rc;
+}
+
+int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* oldAttribute) {
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC) {
+        if (oldAttribute) *oldAttribute = ATTRIBUTE_NONE;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    CheckWritingAttribute(__func__, attribute);
+    if (!AcquireFontLock(font, fontLock)) {
+        if (oldAttribute) *oldAttribute = ATTRIBUTE_NONE;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    const int previous = WritingAttribute(font);
+    if (attribute == ATTRIBUTE_WRITING_VERTICAL) {
+        font->flags = static_cast<std::uint16_t>(font->flags | HANDLE_WRITING_VERTICAL);
+    } else {
+        font->flags = static_cast<std::uint16_t>(font->flags & ~HANDLE_WRITING_VERTICAL);
+    }
+    ReleaseFontLock(font, fontLock);
+    if (oldAttribute) *oldAttribute = previous;
+    return SCE_FONT_OK;
+}
+
+int APS5_VABI sceFontGetAttribute(FontHandle fontHandle, int attribute, int* nowAttribute) {
+    if (!nowAttribute) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* font = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!font || font->magic != HANDLE_MAGIC) {
+        *nowAttribute = ATTRIBUTE_NONE;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    CheckWritingAttribute(__func__, attribute);
+    if (!AcquireFontLock(font, fontLock)) {
+        *nowAttribute = ATTRIBUTE_NONE;
+        return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    }
+    *nowAttribute = WritingAttribute(font);
+    ReleaseFontLock(font, fontLock);
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontSetupRenderScalePixel(FontHandle fontHandle, float w, float h) {

@@ -4,8 +4,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <new>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "prx/libSceFont/include/FontInternal.hpp"
@@ -27,6 +31,56 @@ constexpr std::size_t MAX_PARSED_CHARACTERS = 4096;
 constexpr std::int32_t WRITING_MASK_NONE = 0;
 constexpr std::int32_t WRITING_MASK_FORMAT_CHARACTERS = 1;
 constexpr std::uint64_t CHARACTER_FLAG_FORMAT = 1ull << 42;
+constexpr std::uint64_t TEXT_CODES_TAG = 0x5345444F43545854ull;
+constexpr int SYLLABLE_STRING_NON_DETECTION = 0;
+
+struct TextCodesState {
+    std::uint64_t tag;
+    FontTextCharacter* current;
+    const FontTextCharacter* term;
+};
+
+static_assert(sizeof(TextCodesState) <= sizeof(FontTextCodes::systemUse));
+
+[[noreturn]] void Unsupported(const char* function, const std::string& what) {
+    throw std::runtime_error(std::string(function) + ": " + what);
+}
+
+std::string CodeName(std::uint32_t code) {
+    char name[16];
+    std::snprintf(name, sizeof(name), "U+%04X", static_cast<unsigned>(code));
+    return name;
+}
+
+FontTextCodes* SetTextCodesStep(FontTextCodes* textCodes, FontTextCharacter* character, const FontTextCharacter* term) {
+    textCodes->textOrder = character->textOrder;
+    textCodes->textCode = character->characterCode;
+    const TextCodesState state{TEXT_CODES_TAG, character, term};
+    std::memcpy(textCodes->systemUse, &state, sizeof(state));
+    return textCodes;
+}
+
+TextCodesState GetTextCodesStep(const char* function, const FontTextCodes* textCodesStep) {
+    TextCodesState state{};
+    std::memcpy(&state, textCodesStep->systemUse, sizeof(state));
+    if (state.tag != TEXT_CODES_TAG || !state.current) Unsupported(function, "text codes step not set up by sceFontCharactersRefersTextCodes");
+    return state;
+}
+
+bool IsSyllableFreeCode(std::uint32_t code) {
+    struct Range {
+        std::uint32_t first;
+        std::uint32_t last;
+    };
+    static constexpr Range ranges[] = {
+        {0x0000, 0x00AC}, {0x00AE, 0x02FF}, {0x0370, 0x03FF}, {0x0400, 0x0482}, {0x048A, 0x052F},
+        {0x1E00, 0x1FFF}, {0x2000, 0x200A}, {0x2010, 0x2027}, {0x202F, 0x205F}, {0x2070, 0x20CF},
+        {0x2100, 0x2BFF}, {0x3000, 0x3029}, {0x3030, 0x303F}, {0x3041, 0x3096}, {0x309B, 0x30FF},
+        {0x31F0, 0x31FF}, {0x3400, 0x4DBF}, {0x4E00, 0x9FFF}, {0xF900, 0xFAFF}, {0xFF01, 0xFF9D},
+        {0xFFE0, 0xFFEE}, {0x20000, 0x3FFFF},
+    };
+    return std::any_of(std::begin(ranges), std::end(ranges), [code](const Range& range) { return code >= range.first && code <= range.last; });
+}
 
 struct CharacterStorage {
     std::atomic<std::uint32_t> refCount{1};
@@ -537,6 +591,39 @@ FontTextCharacter* APS5_VABI sceFontCharacterRefersTextNext(const FontTextCharac
         if (current->synthetic == 0 && current->clusterIndex == 0) return current;
     }
     return nullptr;
+}
+
+int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter* textCharacter, int* syllableStringState) {
+    if (!textCharacter || !syllableStringState) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    const FontTextCharacter* const neighbourhood[] = {textCharacter->prev, textCharacter, textCharacter->next};
+    for (const FontTextCharacter* character : neighbourhood) {
+        if (character && !IsSyllableFreeCode(character->characterCode)) Unsupported(__func__, "syllable detection next to " + CodeName(character->characterCode) + " is not modelled");
+    }
+    *syllableStringState = SYLLABLE_STRING_NON_DETECTION;
+    return SCE_FONT_OK;
+}
+
+FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(const FontTextCharacter* textCharacter, const FontTextCharacter* termCharacter, FontTextCodes* textCodes) {
+    if (!textCodes || !textCharacter) return nullptr;
+    if (textCharacter == termCharacter) Unsupported(__func__, "a start character equal to the term character is not modelled");
+    std::memset(textCodes, 0, sizeof(*textCodes));
+    return SetTextCodesStep(textCodes, const_cast<FontTextCharacter*>(textCharacter), termCharacter);
+}
+
+FontTextCodes* APS5_VABI sceFontTextCodesStepNext(FontTextCodes* textCodesStep) {
+    if (!textCodesStep) return nullptr;
+    const TextCodesState state = GetTextCodesStep(__func__, textCodesStep);
+    FontTextCharacter* next = state.current->next;
+    if (!next || next == state.term) return nullptr;
+    return SetTextCodesStep(textCodesStep, next, state.term);
+}
+
+FontTextCodes* APS5_VABI sceFontTextCodesStepBack(FontTextCodes* textCodesStep) {
+    if (!textCodesStep) return nullptr;
+    const TextCodesState state = GetTextCodesStep(__func__, textCodesStep);
+    FontTextCharacter* previous = state.current->prev;
+    if (!previous) return nullptr;
+    return SetTextCodesStep(textCodesStep, previous, state.term);
 }
 
 int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString, const FontTextCharacter* fontCharacter) {
