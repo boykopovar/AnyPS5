@@ -1,9 +1,13 @@
 #include "BdaShader.hpp"
 #include "BdaAbi.hpp"
+#include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <array>
 #include <cstring>
 #include <limits>
+#include <initializer_list>
+#include <set>
+#include <string>
 
 namespace {
 
@@ -165,4 +169,66 @@ void RunBdaExecutionTests(const Context& context) {
     }
     ranges[0].permissions = 0;
     run(guest, 8, 0, Abi::FaultReason::Permission);
+}
+
+void RunBdaStoreExecutionTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    Buffer first(context, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer second(context, 3, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer table(context, sizeof(Abi::Header) + 2 * sizeof(Abi::Range), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    constexpr std::uint64_t guest = 0x12345ffd;
+    constexpr std::uint32_t writable = Abi::Read | Abi::Write;
+    const Abi::Header header{Abi::Version, 2, sizeof(Abi::Range), 0};
+    std::array<Abi::Range, 2> ranges{};
+    const auto run = [&](const char* name, std::uint64_t address, std::uint32_t bits, bool coherent, const std::array<std::uint8_t, 5>& expected, std::initializer_list<std::uint64_t> writtenAddresses, Abi::FaultReason reason = {}, std::uint64_t faultAddress = 0, std::uint32_t faultBytes = 0) {
+        const std::string label = std::string("BDA store ") + name + (coherent ? " coherent: " : ": ");
+        std::memset(first.Bytes().data(), 0xcd, first.Bytes().size());
+        std::memset(second.Bytes().data(), 0xcd, second.Bytes().size());
+        std::memcpy(table.Bytes().data(), &header, sizeof(header));
+        std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        std::memset(output.Bytes().data(), 0, output.Bytes().size());
+        Pipeline pipeline(context, MakeBdaStoreTestShader(address, 0xa1b2c3d4u, bits, coherent), {&table, &fault, &output});
+        pipeline.Run(1);
+        std::array<std::uint8_t, 5> actual{};
+        std::memcpy(actual.data(), first.Bytes().data(), 2);
+        std::memcpy(actual.data() + 2, second.Bytes().data(), 3);
+        Require(actual == expected, label + "incorrect stored bytes or writes outside the mapped span");
+        Abi::Fault report{};
+        std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+        if (reason == Abi::FaultReason{}) {
+            Require(report.state == Abi::FaultState::Empty && report.reason == Abi::FaultReason{} && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.reserved == 0, label + "mapped store published a fault");
+        } else {
+            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.stage == static_cast<std::uint32_t>(ShaderRecompiler::IrShaderStage::Compute) && report.instruction == 0x1234 && report.reserved == 0, label + "incorrect first fault metadata");
+        }
+        std::array<std::uint32_t, Abi::FaultBufferBytes / sizeof(std::uint32_t)> words{};
+        std::memcpy(words.data(), fault.Bytes().data(), sizeof(words));
+        Require(words[Abi::WrittenOverflowWord] == 0, label + "written-page table overflowed");
+        std::set<std::uint32_t> recordedPages;
+        for (std::uint32_t slot = 0; slot < Abi::WrittenPageSlots; ++slot) {
+            const auto page = words[Abi::WrittenSlotsWord + slot];
+            if (page != 0) Require(recordedPages.insert(page).second, label + "written-page table contains duplicate pages");
+        }
+        std::set<std::uint32_t> expectedPages;
+        for (const auto writtenAddress : writtenAddresses) expectedPages.insert(static_cast<std::uint32_t>((writtenAddress >> Abi::WrittenPageShift) + 1u));
+        Require(recordedPages == expectedPages, label + "incorrect written-page set");
+        std::uint32_t completed = 0;
+        std::memcpy(&completed, output.Bytes().data(), sizeof(completed));
+        Require(completed == 1, label + "store did not finish its per-byte accesses");
+    };
+    for (const bool coherent : {false, true}) {
+        ranges = {{{guest, guest + 2, first.DeviceAddress(), writable, 0}, {guest + 2, guest + 5, second.DeviceAddress(), writable, 0}}};
+        run("byte", guest + 1, 8, coherent, {0xcd, 0xd4, 0xcd, 0xcd, 0xcd}, {guest + 1});
+        run("split short", guest + 1, 16, coherent, {0xcd, 0xd4, 0xc3, 0xcd, 0xcd}, {guest + 1, guest + 2});
+        run("split unaligned dword", guest, 32, coherent, {0xd4, 0xc3, 0xb2, 0xa1, 0xcd}, {guest, guest + 3});
+        ranges[1].permissions = Abi::Read;
+        run("read-only suffix", guest, 32, coherent, {0xd4, 0xc3, 0xcd, 0xcd, 0xcd}, {guest}, Abi::FaultReason::Permission, guest + 2, 1);
+        ranges[0].end = guest + 1;
+        ranges[1].permissions = writable;
+        run("unmapped middle byte", guest, 32, coherent, {0xd4, 0xcd, 0xb2, 0xa1, 0xcd}, {guest, guest + 3}, Abi::FaultReason::Unmapped, guest + 1, 1);
+        ranges = {{{guest + 3, guest + 5, first.DeviceAddress(), writable, 0}, {guest + 5, guest + 8, second.DeviceAddress(), writable, 0}}};
+        run("split aligned dword", guest + 3, 32, coherent, {0xcd, 0xcd, 0xcd, 0xcd, 0xcd}, {}, Abi::FaultReason::Unmapped, guest + 3, 4);
+    }
 }

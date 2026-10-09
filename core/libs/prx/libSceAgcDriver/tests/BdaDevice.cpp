@@ -162,10 +162,12 @@ int main(int argc, char** argv) {
         buffer.Bytes()[255] = std::byte{0x5a};
         Require(buffer.Bytes()[255] == std::byte{0x5a}, "real BDA buffer mapping failed");
         if (device->RunsOnCpu()) {
-            std::cout << "CPU Vulkan device: BDA execution not tested\n";
+            std::cout << "CPU Vulkan device: BDA read execution not tested\n";
         } else {
             RunBdaExecutionTests(device->GetContext());
         }
+        RunBdaStoreExecutionTests(device->GetContext());
+        std::cout << "BDA store boundary tests passed\n";
         RunColorTransferTests(device->GetContext());
         std::cout << "Vulkan BDA allocation and execution tests passed\n";
         return 0;

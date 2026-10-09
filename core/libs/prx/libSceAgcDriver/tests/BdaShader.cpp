@@ -2,15 +2,19 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+#include "SpirvBackend/SpirvOptimizer.hpp"
+#endif
 
 namespace {
 
 template<typename TEmit>
-std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool stops, const TEmit& emit) {
+std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool stops, const TEmit& emit, bool writes = false) {
     using namespace ShaderRecompiler;
     IrProgram program;
     program.Resources().stage = IrShaderStage::Compute;
     program.Info().usesDma = true;
+    program.Info().bdaWrites = writes;
     if (coherent) {
         MemoryInfo memory;
         memory.coherent = true;
@@ -38,7 +42,7 @@ std::vector<std::uint32_t> MakeShader(std::uint64_t address, bool coherent, bool
     state.module.AddFunction(spv::OpFunction, TypeVoid(state), main, spv::FunctionControlMaskNone, TypeFunction(state));
     EmitLabel(state, state.module.AllocateId());
     SpirvValueEmitContext ctx(state);
-    auto& instruction = program.CreateValue(IrOpcode::LoadAddressU32, IrType::U32);
+    auto& instruction = program.CreateValue(writes ? IrOpcode::StoreAddressU32 : IrOpcode::LoadAddressU32, writes ? IrType::Void : IrType::U32);
     MemoryFlags flags{};
     flags.pc = 0x1234;
     instruction.SetFlags(flags);
@@ -73,4 +77,16 @@ std::vector<std::uint32_t> MakeBdaDwordReadTestShader(std::uint64_t address, std
         const auto values = EmitBdaDwordReads(ctx, instruction, base, 0u, dwords, true);
         return std::vector<std::uint32_t>(values.begin(), values.begin() + dwords);
     });
+}
+
+std::vector<std::uint32_t> MakeBdaStoreTestShader(std::uint64_t address, std::uint32_t value, std::uint32_t bits, bool coherent) {
+    using namespace ShaderRecompiler;
+    auto shader = MakeShader(address, coherent, true, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {
+        EmitBdaStore(ctx, instruction, base, ConstantU32(ctx.state, value), bits);
+        return std::vector<std::uint32_t>{ConstantU32(ctx.state, 1u)};
+    }, true);
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    shader = ValidateAndOptimizeSpirv(shader, VK_API_VERSION_1_1, shader[1], false, false);
+#endif
+    return shader;
 }
