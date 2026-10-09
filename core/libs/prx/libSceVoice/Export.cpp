@@ -24,6 +24,7 @@ struct Port {
     std::int32_t type;
     float volume;
     std::uint32_t bitrate;
+    bool muted = false;
 };
 
 struct Voice {
@@ -204,8 +205,18 @@ int APS5_VABI sceVoiceWriteToIPort(uint32_t input_port_id, const void* data, uin
     return 0;
 }
 
-int APS5_VABI sceVoiceSetMuteFlag() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVoiceSetMuteFlag(uint32_t port_id, bool muted) {
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    RequirePort(voice, port_id, __func__).muted = muted;
+    return 0;
+}
+
+int APS5_VABI sceVoiceGetMuteFlag(uint32_t port_id, bool* muted) {
+    if (muted == nullptr) APS5_INVALID_ARG_EX;
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    *muted = RequirePort(voice, port_id, __func__).muted;
     return 0;
 }
 
