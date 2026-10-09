@@ -144,6 +144,13 @@ if(BUILD_TESTING)
     )
     target_include_directories(buffer_bounds_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/io/include)
     add_test(NAME buffer_bounds COMMAND buffer_bounds_tests)
+    add_test_executable(segment_filter_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/SegmentFilterTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp)
+    target_include_directories(segment_filter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include)
+    add_test(NAME segment_filter COMMAND segment_filter_tests)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(file_writer_tests
