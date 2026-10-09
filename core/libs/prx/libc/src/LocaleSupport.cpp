@@ -213,6 +213,16 @@ int APS5_VABI isxdigit_nid_postfix(int c) { return ClassifyCharacter(c, std::cty
 int APS5_VABI toupper_nid_postfix(int c) { return ConvertCharacter(c, true); }
 int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 
+int APS5_VABI _Iswctype_nid_postfix(std::uint32_t c, std::uint64_t desc) {
+    static const std::array<std::ctype_base::mask, 13> classes{std::ctype_base::mask{}, std::ctype_base::alnum,
+        std::ctype_base::alpha, std::ctype_base::cntrl, std::ctype_base::digit, std::ctype_base::graph,
+        std::ctype_base::lower, std::ctype_base::print, std::ctype_base::punct, std::ctype_base::space,
+        std::ctype_base::upper, std::ctype_base::xdigit, std::ctype_base::blank};
+    if (desc >= classes.size()) throw std::invalid_argument("_Iswctype: unknown character class");
+    if (desc == 0 || c > UCHAR_MAX) return 0;
+    return ClassifyCharacter(static_cast<int>(c), classes[desc]);
+}
+
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
