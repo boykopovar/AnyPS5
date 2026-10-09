@@ -119,4 +119,43 @@ extern "C" std::uint64_t APS5_VABI libcUnknown_H2e8t5ScQGc(void) {
     NotImplemented_nid_no_patch("H2e8t5ScQGc");
     return 0;
 }
+
+// Append these to core/libs/prx/libc/Export.cpp
+
+APS5_EXPORT("802pFCwC9w0", libcUnknown_802pFCwC9w0);
+extern "C" std::uint64_t APS5_VABI libcUnknown_802pFCwC9w0(void) {
+    NotImplemented_nid_no_patch("802pFCwC9w0");
+    return 0;
+}
+
+APS5_EXPORT("KuOuD58hqn4", libcUnknown_KuOuD58hqn4);
+extern "C" std::uint64_t APS5_VABI libcUnknown_KuOuD58hqn4(void) {
+    NotImplemented_nid_no_patch("KuOuD58hqn4");
+    return 0;
+}
+
+APS5_EXPORT("VUzjXknPPBs", libcUnknown_VUzjXknPPBs);
+extern "C" std::uint64_t APS5_VABI libcUnknown_VUzjXknPPBs(void) {
+    NotImplemented_nid_no_patch("VUzjXknPPBs");
+    return 0;
+}
+
+APS5_EXPORT("c+4r-T-tEIc", libcUnknown_c_4r_T_tEIc);
+extern "C" std::uint64_t APS5_VABI libcUnknown_c_4r_T_tEIc(void) {
+    NotImplemented_nid_no_patch("c+4r-T-tEIc");
+    return 0;
+}
+
+APS5_EXPORT("jfRI3snge3o", libcUnknown_jfRI3snge3o);
+extern "C" std::uint64_t APS5_VABI libcUnknown_jfRI3snge3o(void) {
+    NotImplemented_nid_no_patch("jfRI3snge3o");
+    return 0;
+}
+
+APS5_EXPORT("k6pGNMwJB08", libcUnknown_k6pGNMwJB08);
+extern "C" std::uint64_t APS5_VABI libcUnknown_k6pGNMwJB08(void) {
+    NotImplemented_nid_no_patch("k6pGNMwJB08");
+    return 0;
+}
+
 }
