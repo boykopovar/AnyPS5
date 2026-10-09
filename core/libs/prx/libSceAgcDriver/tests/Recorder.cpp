@@ -1724,8 +1724,7 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
         };
         const auto memoryHolds = [&](std::array<std::uint8_t, 4> texel, std::size_t first = 0, std::uint8_t other = 0) {
             std::vector<std::byte> read(surfaceBytes);
-            if (watched) AgcDriver::GuestMemory::Read(address, read);
-            else std::memcpy(read.data(), texels, surfaceBytes);
+            AgcDriver::GuestMemory::Read(address, read);
             for (std::size_t i = 0; i < surfaceBytes; ++i) {
                 if (std::to_integer<std::uint8_t>(read[i]) != (i < first ? other : texel[i % 4])) return false;
             }
@@ -1989,7 +1988,9 @@ void staleGenerationTests(const Device& device, Recorder& recorder) {
         const auto pixels = readback.Bytes();
         constexpr std::array<std::uint8_t, 4> expected{255, 0, 0, 255};
         for (std::size_t i = 0; i < pixels.size(); ++i) Require(std::to_integer<std::uint8_t>(pixels[i]) == expected[i % 4], "(s) results pending when their memory left the watch were dropped");
-        for (std::size_t i = 0; i < surfaceBytes; ++i) Require(texels[i] == expected[i % 4], "(s) results pending when their memory left the watch did not reach it");
+        std::vector<std::byte> stored(surfaceBytes);
+        AgcDriver::GuestMemory::Read(address, stored);
+        for (std::size_t i = 0; i < surfaceBytes; ++i) Require(std::to_integer<std::uint8_t>(stored[i]) == expected[i % 4], "(s) results pending when their memory left the watch did not reach it");
     }
     recorder.Sync();
 #endif
