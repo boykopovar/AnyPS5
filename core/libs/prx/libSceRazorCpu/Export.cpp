@@ -24,7 +24,8 @@ int APS5_VABI sceRazorCpuJobManagerSequence(const void* args) {
  return 0;
 }
 
-int APS5_VABI sceRazorCpuNamedSync(void) {
+int APS5_VABI sceRazorCpuNamedSync(const char* label) {
+ (void)label;
  return 0;
 }
 
