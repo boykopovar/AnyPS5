@@ -39,6 +39,37 @@ bool AcquireUntil(std::uint64_t deadlineNanos, TTryLock tryLock, TTryLockFor try
     }
 }
 
+class InterruptibleScope {
+public:
+    InterruptibleScope();
+    ~InterruptibleScope();
+    InterruptibleScope(const InterruptibleScope&) = delete;
+    InterruptibleScope& operator=(const InterruptibleScope&) = delete;
+
+    void Poll();
+};
+
+constexpr std::uint64_t INTERRUPT_SLICE_MICROS = 1000ULL;
+
+template <class TTryLock, class TTryLockFor>
+void AcquireInterruptibly(TTryLock tryLock, TTryLockFor tryLockFor) {
+    if (tryLock()) return;
+    InterruptibleScope scope;
+    while (!tryLockFor(INTERRUPT_SLICE_MICROS)) scope.Poll();
+}
+
+template <class TTryLock, class TTryLockFor>
+bool AcquireInterruptiblyUntil(std::uint64_t deadlineNanos, TTryLock tryLock, TTryLockFor tryLockFor) {
+    if (tryLock()) return true;
+    if (Coarse()) return tryLockFor(RemainingMicros(deadlineNanos));
+    InterruptibleScope scope;
+    return AcquireUntil(deadlineNanos, tryLock, [&](std::uint64_t micros) {
+        if (tryLockFor(micros < INTERRUPT_SLICE_MICROS ? micros : INTERRUPT_SLICE_MICROS)) return true;
+        scope.Poll();
+        return false;
+    });
+}
+
 struct Waiter;
 
 class Condition {
