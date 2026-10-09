@@ -1434,6 +1434,8 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     return it == table.end() ? nullptr : it->second;
 }
 
+const VkBuffer MockEmptyBuffer = reinterpret_cast<VkBuffer>(std::uintptr_t{0xe0e0});
+
 AgcDriver::Graphics::Context mockContext() {
     AgcDriver::Graphics::Context context{};
     context.deviceProc = mockProc;
@@ -1446,6 +1448,7 @@ AgcDriver::Graphics::Context mockContext() {
     context.limits.maxPerStageDescriptorStorageBuffers = 16;
     context.limits.maxPerStageResources = 128;
     context.limits.maxDescriptorSetStorageBuffers = 32;
+    context.emptyBuffer = MockEmptyBuffer;
     return context;
 }
 
@@ -1679,9 +1682,24 @@ void resourceTests() {
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::FlattenedSrt; binding.guestDescriptor.clear(); }), "empty shader data descriptor");
     expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[1] |= 0x40000000u; }), "reserved bits");
     expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[3] |= 0x40000000u; }), "unsupported type");
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(reinterpret_cast<const void*>(0x2000), 8), vsharp(reinterpret_cast<const void*>(0x1000), 8))));
+        mock = MockVulkan{};
+        const auto nullContext = mockContext();
+        {
+            AgcDriver::Graphics::ShaderResources resources(nullContext, vertex, fragment, state.color, 0, 0);
+            const auto& write = findWrite(0);
+            Require(write.buffers.size() == 2 && write.buffers[0].buffer == MockEmptyBuffer && write.buffers[1].buffer == MockEmptyBuffer, "unreachable V#s did not bind the placeholder buffer");
+        }
+        Require(mock.live == 0, "null V# resources leaked Vulkan objects");
+    }
     expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[1] |= 0x3fffu << 16u; binding.guestDescriptor[2] = 0xffffffffu; }), "descriptor range limit");
     expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor[2] = 32768; }), "descriptor range limit");
     expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(0x1000), 8); }), "an unmapped V#");
+    expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(0x1000), 8); binding.guestDescriptor[1] |= 0x3fffu << 16u; binding.guestDescriptor[2] = 0xffffffffu; }), "an unmapped V# beyond the descriptor range limit");
+    expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(0xfffff0000000ull), 8); }), "a V# outside the user address space");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(state.color.address), 64); }), "aliases the render target");
     expectSingleAccepted(changed([](auto& binding) { binding.count = 3; binding.guestDescriptor = join(join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)), vsharp(reinterpret_cast<const void*>(0x1000), 8)); }), "an unmapped V# element");
     expectSingleFailure(changed([&](auto& binding) { binding.count = 2; binding.guestDescriptor = join(vsharp(guestFirst.data(), 16), vsharp(reinterpret_cast<const void*>(state.color.address), 64)); }), "aliases the render target");

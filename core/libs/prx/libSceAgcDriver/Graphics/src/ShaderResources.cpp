@@ -2478,7 +2478,12 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
     const auto address = descriptor.Base48();
     const auto byteSize = descriptor.GetSize();
-    if (byteSize == 0 || address == 0) {
+    const auto describesBuffer = [&] {
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), 1)) return false;
+        const auto limit = context.limits.maxStorageBufferRange;
+        return byteSize <= limit || GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(limit) + 1u);
+    };
+    if (byteSize == 0 || address == 0 || !describesBuffer()) {
         allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
         return allocations.size() - 1;
     }
