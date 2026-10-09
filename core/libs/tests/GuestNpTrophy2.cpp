@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -7,6 +8,8 @@ extern "C" {
 int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void*, void*);
 int APS5_VABI sceNpTrophy2UnregisterUnlockCallback();
 int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
+int APS5_VABI sceNpTrophy2GetRewardIcon(int, int, int, void*, std::size_t*);
+int APS5_VABI sceNpTrophy2ShowTrophyList(int);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -30,6 +33,26 @@ int main() {
     try {
         sceNpTrophy2GetGameInfo(1, 1, nullptr, nullptr);
     } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    Require(sceNpTrophy2ShowTrophyList(1) == 0);
+    Require(sceNpTrophy2ShowTrophyList(1) == 0);
+
+    unsigned char icon[16]{};
+    std::size_t size = sizeof(icon);
+    threw = false;
+    try {
+        sceNpTrophy2GetRewardIcon(1, 1, 0, icon, &size);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && size == 0);
+    threw = false;
+    try {
+        sceNpTrophy2GetRewardIcon(1, 1, 0, nullptr, nullptr);
+    } catch (const std::runtime_error&) {
         threw = true;
     }
     Require(threw);
