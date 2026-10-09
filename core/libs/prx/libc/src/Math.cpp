@@ -110,13 +110,25 @@ int APS5_VABI __signbitf_nid_postfix(float x) { return std::signbit(x) ? 1 : 0; 
 static std::mutex g_randLock;
 static std::uint32_t g_randState = 1;
 
-int APS5_VABI rand_nid_postfix() {
-    std::lock_guard lock(g_randLock);
-    const std::int64_t x = static_cast<std::int64_t>(g_randState % 0x7ffffffeu) + 1;
+static int NextRand_nid_no_patch(std::uint32_t& state) {
+    const std::int64_t x = static_cast<std::int64_t>(state % 0x7ffffffeu) + 1;
     std::int64_t next = 16807 * (x % 127773) - 2836 * (x / 127773);
     if (next < 0) next += 0x7fffffff;
-    g_randState = static_cast<std::uint32_t>(next - 1);
+    state = static_cast<std::uint32_t>(next - 1);
     return static_cast<int>(next - 1);
+}
+
+int APS5_VABI rand_nid_postfix() {
+    std::lock_guard lock(g_randLock);
+    return NextRand_nid_no_patch(g_randState);
+}
+
+int APS5_VABI rand_r_nid_postfix(unsigned int* state) {
+    if (state == nullptr) throw std::invalid_argument("rand_r: null state");
+    std::uint32_t value = *state;
+    const int result = NextRand_nid_no_patch(value);
+    *state = value;
+    return result;
 }
 
 void APS5_VABI srand_nid_postfix(unsigned int seed) {

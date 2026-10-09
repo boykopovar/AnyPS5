@@ -27,6 +27,9 @@ float APS5_VABI atan2f_nid_postfix(float, float);
 float APS5_VABI hypotf_nid_postfix(float, float);
 double APS5_VABI hypot_nid_postfix(double, double);
 float APS5_VABI tanf_nid_postfix(float);
+int APS5_VABI rand_nid_postfix();
+void APS5_VABI srand_nid_postfix(unsigned int);
+int APS5_VABI rand_r_nid_postfix(unsigned int*);
 float APS5_VABI log10f_nid_postfix(float);
 float APS5_VABI logbf_nid_postfix(float);
 double APS5_VABI exp2_nid_postfix(double);
@@ -181,6 +184,18 @@ int main() {
     Require(std::abs(acosf_nid_postfix(0.5f) - 1.0471976f) < 0.000001f);
     Require(std::abs(atan2f_nid_postfix(1.f, -1.f) - 2.3561945f) < 0.000001f);
     Require(tanf_nid_postfix(0.f) == 0.f);
+    unsigned int randomState = 1;
+    Require(rand_r_nid_postfix(&randomState) == 33613 && randomState == 33613u);
+    randomState = 0;
+    Require(rand_r_nid_postfix(&randomState) == 16806 && randomState == 16806u);
+    for (const unsigned int seed : {0u, 1u, 12345u, 0x7ffffffeu, 0xffffffffu}) {
+        srand_nid_postfix(seed);
+        randomState = seed;
+        for (int step = 0; step < 8; ++step) Require(rand_r_nid_postfix(&randomState) == rand_nid_postfix());
+    }
+    bool threw = false;
+    try { rand_r_nid_postfix(nullptr); } catch (...) { threw = true; }
+    Require(threw);
     Require(hypot_nid_postfix(3.0, 4.0) == 5.0 && hypot_nid_postfix(-3.0, -4.0) == 5.0 && hypotf_nid_postfix(3.f, -4.f) == 5.f);
     Require(std::abs(hypot_nid_postfix(1e308, 1e308) / 1.4142135623730951e308 - 1.0) < 1e-15);
     Require(std::abs(hypotf_nid_postfix(2e38f, 2e38f) / 2.8284271e38f - 1.f) < 1e-6f);
