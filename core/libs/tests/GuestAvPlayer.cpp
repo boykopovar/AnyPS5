@@ -534,6 +534,8 @@ int TextureCount() {
 struct Events {
     std::mutex mutex;
     std::vector<std::pair<std::int32_t, std::int32_t>> received;
+    std::chrono::steady_clock::time_point stopAt{};
+    bool hasStop = false;
 
     bool Seen(std::int32_t id, std::int32_t warning = 0) {
         std::lock_guard lock(mutex);
@@ -543,6 +545,8 @@ struct Events {
     void Clear() {
         std::lock_guard lock(mutex);
         received.clear();
+        stopAt = {};
+        hasStop = false;
     }
 };
 
@@ -550,6 +554,10 @@ void APS5_VABI OnEvent(void* object, std::int32_t id, std::int32_t source, void*
     auto* events = static_cast<Events*>(object);
     if (source != 0 || (id == EventWarning) != (data != nullptr)) std::abort();
     std::lock_guard lock(events->mutex);
+    if (id == EventStop && !events->hasStop) {
+        events->stopAt = std::chrono::steady_clock::now();
+        events->hasStop = true;
+    }
     events->received.emplace_back(id, id == EventWarning ? *static_cast<std::int32_t*>(data) : 0);
 }
 
@@ -993,6 +1001,61 @@ void TestHandedOutFramesStayIntact() {
     Check(sceAvPlayerClose(player) == 0, "close failed");
 }
 
+void TestEofStopLatency() {
+    constexpr int Rounds = 9;
+    std::array<std::chrono::steady_clock::duration, Rounds> elapsed{};
+    for (int round = 0; round < Rounds; ++round) {
+        Events events;
+        AvPlayerInitData init = InitData(&events);
+        auto* player = sceAvPlayerInit(&init);
+        Check(player != nullptr, "eof latency init failed");
+        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "eof latency add source failed");
+        Check(WaitFor([&] { return events.Seen(EventReady); }), "eof latency ready event missing");
+        Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "eof latency enable video failed");
+        Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "eof latency enable audio failed");
+        Check(sceAvPlayerStart(player) == 0, "eof latency start failed");
+        Check(WaitFor([&] { return events.Seen(EventPlay); }), "eof latency play event missing");
+        AvPlayerFrameInfoEx frame{};
+        AvPlayerFrameInfo sound{};
+        const auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        bool ended = false;
+        while (std::chrono::steady_clock::now() < drainDeadline) {
+            while (sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound);
+            while (sceAvPlayerGetVideoDataEx(player, &frame)) CheckVideoFrame(frame);
+            if (!sceAvPlayerIsActive(player)) {
+                ended = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        Check(ended, "eof latency playback never ended");
+        const auto inactive = std::chrono::steady_clock::now();
+        Check(WaitFor([&] { return events.Seen(EventStop); }), "eof latency stop event missing");
+        std::chrono::steady_clock::time_point stopAt{};
+        {
+            std::lock_guard lock(events.mutex);
+            Check(events.hasStop, "eof latency stop timestamp missing");
+            stopAt = events.stopAt;
+            const int stops = static_cast<int>(std::count_if(events.received.begin(), events.received.end(), [](const auto& event) { return event.first == EventStop; }));
+            Check(stops == 1, "eof latency stop delivered " + std::to_string(stops) + " times");
+        }
+        elapsed[static_cast<std::size_t>(round)] = stopAt > inactive ? stopAt - inactive : std::chrono::steady_clock::duration::zero();
+        Check(sceAvPlayerCurrentTime(player) >= 950, "eof latency clock not at the end");
+        Check(!sceAvPlayerIsActive(player), "eof latency active after the end");
+        Check(sceAvPlayerClose(player) == 0, "eof latency close failed");
+        std::lock_guard lock(allocations.mutex);
+        Check(allocations.blocks.empty(), "eof latency allocations leaked");
+    }
+    std::sort(elapsed.begin(), elapsed.end());
+    const auto median = elapsed[elapsed.size() / 2];
+    const auto medianMs = std::chrono::duration_cast<std::chrono::microseconds>(median).count() / 1000.0;
+    std::printf("EofStopLatency median %.3f ms:", medianMs);
+    for (const auto& sample : elapsed) std::printf(" %.3f", std::chrono::duration_cast<std::chrono::microseconds>(sample).count() / 1000.0);
+    std::printf("\n");
+    std::fflush(stdout);
+    Check(median < std::chrono::milliseconds(10), "eof stop median " + std::to_string(medianMs) + " ms exceeds 10 ms");
+}
+
 }
 
 int main() {
@@ -1005,6 +1068,7 @@ int main() {
         TestOptionalVideoBuffersRespectMemoryLimit();
         TestFileReplacementAutoStart();
         TestHandedOutFramesStayIntact();
+        TestEofStopLatency();
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {
