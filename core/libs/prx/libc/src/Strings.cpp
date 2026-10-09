@@ -61,6 +61,17 @@ void* APS5_VABI memcpy_nid_postfix(void* dest, const void* src, size_t n) {
     return std::memcpy(dest, src, n);
 }
 
+void* APS5_VABI memccpy_nid_postfix(void* destination, const void* source, int character, size_t count) {
+    auto* output = static_cast<unsigned char*>(destination);
+    const auto* input = static_cast<const unsigned char*>(source);
+    const auto stop = static_cast<unsigned char>(character);
+    for (size_t i = 0; i < count; ++i) {
+        output[i] = input[i];
+        if (output[i] == stop) return output + i + 1;
+    }
+    return nullptr;
+}
+
 void* APS5_VABI memmove_nid_postfix(void* dest, const void* src, size_t n) {
     return std::memmove(dest, src, n);
 }
