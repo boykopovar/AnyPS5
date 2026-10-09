@@ -19,7 +19,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - run: |
-          label() { gh label create "$1" --color "$2" --description "$3"; }
+          existing=$(gh label list --limit 1000 --json name --jq '.[].name')
+          label() { grep -qxF -- "$1" <<< "$existing" || gh label create "$1" --color "$2" --description "$3"; }
           force_label() { gh label create "$1" --color "$2" --description "$3" --force; }
 
           force_label 'needs rebase' b60205 'Conflicts with main, rebase needed'
