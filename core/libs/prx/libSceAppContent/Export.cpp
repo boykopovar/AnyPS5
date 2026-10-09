@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -163,8 +164,9 @@ int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint* moun
 }
 
 
-int APS5_VABI sceAppContentAddcontEnqueueDownload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontEnqueueDownload(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label) {
+    (void)service_label;
+    if (!entitlement_label || std::any_of(std::begin(entitlement_label->padding), std::end(entitlement_label->padding), [](char value) { return value != 0; })) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 }
