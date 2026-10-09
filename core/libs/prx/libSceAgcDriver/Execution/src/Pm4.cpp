@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -839,7 +840,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             const auto start = std::chrono::steady_clock::now();
             bool warned = false;
             while (!WaitSatisfied(packet)) {
-                std::this_thread::sleep_for(std::chrono::microseconds(50));
+                PreciseSleepUs(50);
                 if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
                     warned = true;
                     std::fprintf(stderr, "[gpu] WAIT_REG_MEM at 0x%llx still waiting after 5s (function %u ref 0x%x mask 0x%x)\n",

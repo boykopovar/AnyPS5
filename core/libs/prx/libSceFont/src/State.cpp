@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libSceFont/include/FontInternal.hpp"
 
 namespace {
@@ -56,7 +57,7 @@ Font::FontState::~FontState() {
 }
 
 void Font::Backoff() {
-    std::this_thread::sleep_for(std::chrono::microseconds(30));
+    PreciseSleepUs(30);
 }
 
 std::uint32_t Font::AcquireWordLock(std::uint32_t& word) {
