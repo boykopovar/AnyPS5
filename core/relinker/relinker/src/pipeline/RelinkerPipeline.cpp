@@ -196,6 +196,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         return relaOff + off;
     };
 
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> definedSymbolRelocations;
+
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -216,11 +218,32 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             }
 
             const FileByteOffset symOff = dynSymTabOffset + static_cast<FileByteOffset>(symIdx) * symEntSize;
-            if (symOff + 4 > raw.size())
+            if (symOff > raw.size() || symEntSize > raw.size() - symOff)
                 throw RelinkerException("Symbol table entry out of bounds", symOff);
 
             std::uint32_t nameOff = 0;
+            std::uint16_t shndx = 0;
+            std::uint64_t symValue = 0;
             std::memcpy(&nameOff, raw.data() + symOff, 4);
+            std::memcpy(&shndx, raw.data() + symOff + 6, 2);
+            std::memcpy(&symValue, raw.data() + symOff + 8, 8);
+
+            if (shndx != SHN_UNDEF) {
+                if (shndx >= SHN_LORESERVE)
+                    throw RelinkerException("Relocation against a symbol with a special section index is not supported", pos);
+                if ((raw[symOff + 4] & 0xf) == STT_TLS)
+                    throw RelinkerException("Relocation against a defined TLS symbol is not supported", pos);
+                if ((raw[symOff + 4] & 0xf) == STT_GNU_IFUNC)
+                    throw RelinkerException("Relocation against a defined IFUNC symbol is not supported", pos);
+                if (relType == R_X86_64_JUMP_SLOT)
+                    throw RelinkerException("JUMP_SLOT relocation against a defined symbol is not supported", pos);
+                if (relType != R_X86_64_64 && relType != R_X86_64_GLOB_DAT)
+                    throw RelinkerException("Unsupported relocation type against a defined symbol", pos);
+                if (relType == R_X86_64_GLOB_DAT && rAddend != 0)
+                    throw RelinkerException("GLOB_DAT relocation has a nonzero addend", pos);
+                definedSymbolRelocations.push_back({rOffset, symValue + static_cast<std::uint64_t>(rAddend)});
+                continue;
+            }
 
             const auto name = readCStr(nameOff);
             nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend});
@@ -245,6 +268,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     if (unusedFilterLevel == 2) {
         if (executableSegments.size() > 1)
             throw RelinkerException("Strict NID filtering does not support multiple executable segments");
+        if (!definedSymbolRelocations.empty())
+            throw RelinkerException("Strict NID filtering does not support relocations against defined symbols");
         nidRefs = _unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr);
         if (nidRefs.size() > originalNidCount) throw RelinkerException("Strict NID filter increased the reference count");
         std::cout << "Strict filtering total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n";
@@ -262,6 +287,9 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         const std::size_t nonPltCount = nonPltRefs.size();
         if (executableSegments.size() > 1) {
             std::cout << "CFG/GOT filtering skipped: multiple executable segments are not modeled; "
+                      << nonPltCount << " -> " << nonPltCount << "; filtered=0\n";
+        } else if (!definedSymbolRelocations.empty()) {
+            std::cout << "CFG/GOT filtering skipped: relocations against defined symbols are not modeled; "
                       << nonPltCount << " -> " << nonPltCount << "; filtered=0\n";
         } else {
             nonPltRefs = _unusedNidFilter->Filter(nonPltRefs, raw, textSection, textVAddr);
@@ -316,6 +344,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     extractRelative(dynRelaOffset, dynRelaSize);
     extractRelative(dynJmpRelOffset, dynJmpRelSize);
+    for (const auto& [target, resolved] : definedSymbolRelocations)
+        appendRela(dynSection.RelaData, target, static_cast<std::uint64_t>(R_X86_64_RELATIVE), static_cast<std::int64_t>(resolved));
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());
