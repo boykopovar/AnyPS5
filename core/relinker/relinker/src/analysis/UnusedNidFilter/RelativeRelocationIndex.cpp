@@ -46,12 +46,13 @@ constexpr std::size_t RelaEntSize = 24;
 void collectRelativeEntries(
     const std::vector<std::uint8_t>& elfBytes,
     const std::vector<LoadSegment>& loads,
-    VirtualAddress tableVaddr,
+    VirtualAddress tableAddress,
     std::uint64_t tableSize,
+    bool tableIsFileOffset,
     std::unordered_map<VirtualAddress, VirtualAddress>& out
 ) {
-    if (tableVaddr == 0 || tableSize == 0) return;
-    std::uint64_t tableFileOff = vaddrToFileOffset(loads, tableVaddr);
+    if (tableAddress == 0 || tableSize == 0) return;
+    std::uint64_t tableFileOff = tableIsFileOffset ? tableAddress : vaddrToFileOffset(loads, tableAddress);
 
     for (std::uint64_t off = 0; off + RelaEntSize <= tableSize; off += RelaEntSize) {
         std::size_t pos = static_cast<std::size_t>(tableFileOff + off);
@@ -128,10 +129,12 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
         std::uint64_t segSz = read64(elfBytes, phPos + 32);
         if (segOff + segSz > elfBytes.size()) throw RelinkerException("PT_DYNAMIC segment out of bounds");
 
-        VirtualAddress relaVa = 0;
+        VirtualAddress relaAddr = 0;
         std::uint64_t relaSz = 0;
-        VirtualAddress jmprelVa = 0;
+        bool relaIsFileOffset = false;
+        VirtualAddress jmprelAddr = 0;
         std::uint64_t pltrelsz = 0;
+        bool jmprelIsFileOffset = false;
 
         for (std::uint64_t off = 0; off + 16 <= segSz; off += 16) {
             std::size_t pos = static_cast<std::size_t>(segOff + off);
@@ -139,14 +142,16 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
             std::uint64_t val = read64(elfBytes, pos + 8);
 
             if (tag == DT_NULL) break;
-            if (tag == DT_RELA || tag == DT_OS_RELA) relaVa = val;
+            if (tag == DT_RELA) { relaAddr = val; relaIsFileOffset = false; }
+            if (tag == DT_OS_RELA) { relaAddr = val; relaIsFileOffset = true; }
             if (tag == DT_RELASZ || tag == DT_OS_RELASZ) relaSz = val;
-            if (tag == DT_JMPREL || tag == DT_OS_JMPREL) jmprelVa = val;
+            if (tag == DT_JMPREL) { jmprelAddr = val; jmprelIsFileOffset = false; }
+            if (tag == DT_OS_JMPREL) { jmprelAddr = val; jmprelIsFileOffset = true; }
             if (tag == DT_PLTRELSZ || tag == DT_OS_PLTRELSZ) pltrelsz = val;
         }
 
-        collectRelativeEntries(elfBytes, loads, relaVa, relaSz, targets);
-        collectRelativeEntries(elfBytes, loads, jmprelVa, pltrelsz, targets);
+        collectRelativeEntries(elfBytes, loads, relaAddr, relaSz, relaIsFileOffset, targets);
+        collectRelativeEntries(elfBytes, loads, jmprelAddr, pltrelsz, jmprelIsFileOffset, targets);
 
         break;
     }
