@@ -165,6 +165,12 @@ def source_stubs(source):
     return {nid: name for nid, name in pending.items() if nid not in done}
 
 
+def source_libraries(source):
+    if not Path(source).is_dir():
+        raise AuditError(f"{source}: not a directory")
+    return {f"{item.name}.prx" for item in Path(source).iterdir() if item.is_dir()}
+
+
 def read_registry(path):
     try:
         entries = json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -243,10 +249,10 @@ def git_stamp():
     return commit, dirty
 
 
-def summarize(records, references, missing):
+def summarize(records, references, missing, source_libs=None):
     counts = {kind: sum(1 for record in records if record["class"] == kind) for kind in CLASSES}
     by_references = {kind: sum(record["references"] for record in records if record["class"] == kind) for kind in CLASSES}
-    return {
+    summary = {
         "references": references,
         "unique_imports": len(records),
         "unique_by_class": counts,
@@ -254,6 +260,10 @@ def summarize(records, references, missing):
         "missing_libraries": missing,
         "library_mismatch": sum(1 for record in records if record["library_mismatch"]),
     }
+    if source_libs is not None:
+        summary["missing_system_libraries"] = dict(sorted({lib: count for lib, count in missing.items() if lib in source_libs}.items()))
+        summary["missing_title_modules"] = dict(sorted({lib: count for lib, count in missing.items() if lib not in source_libs}.items()))
+    return summary
 
 
 def label(record):
@@ -263,7 +273,7 @@ def label(record):
     return f"{record['nid']}  {record['name']}{mark}"
 
 
-def render(summary, records, missing):
+def render(summary, records, missing, source_libs=None):
     lines = [f"{summary['references']} references, {summary['unique_imports']} unique imports"]
     for kind in CLASSES:
         lines.append(f"  {kind:<12}{summary['unique_by_class'][kind]:>6} imports  {summary['references_by_class'][kind]:>6} references")
@@ -276,12 +286,27 @@ def render(summary, records, missing):
             for record in selected:
                 if record["library"] != current:
                     current = record["library"]
-                    lines.append(f"  [{current or 'library not named'}]")
+                    note = ""
+                    if current and current in missing:
+                        note = " (no provider: missing title module)" if source_libs and current not in source_libs else " (no provider: missing from --libs)"
+                    lines.append(f"  [{current or 'library not named'}]{note}")
                 lines.append(f"    {label(record)}")
     if missing:
         lines.append("")
-        lines.append(f"Needed libraries with no file in --libs or --modules ({len(missing)})")
-        lines.extend(f"  {library}: {count} imports" for library, count in missing.items())
+        if source_libs is not None:
+            missing_system = {lib: count for lib, count in missing.items() if lib in source_libs}
+            missing_title = {lib: count for lib, count in missing.items() if lib not in source_libs}
+            if missing_system:
+                lines.append(f"Needed system libraries with no file in --libs ({len(missing_system)}): build via 'cmake --build build --target libs'")
+                lines.extend(f"  {library}: {count} imports" for library, count in sorted(missing_system.items()))
+            if missing_title:
+                if missing_system:
+                    lines.append("")
+                lines.append(f"Needed title modules with no file in --modules ({len(missing_title)}): must be supplied from the title dump (CONTRIBUTING rule 11)")
+                lines.extend(f"  {library}: {count} imports" for library, count in sorted(missing_title.items()))
+        else:
+            lines.append(f"Needed libraries with no file in --libs or --modules ({len(missing)})")
+            lines.extend(f"  {library}: {count} imports" for library, count in sorted(missing.items()))
     if summary["library_mismatch"]:
         lines.append("")
         lines.append(f"{summary['library_mismatch']} imports are exported only by a library other than the one they name: they resolve on Linux and can fail on Windows")
@@ -301,10 +326,11 @@ def main(argv=None):
         imports = [entry for registry in args.registries for entry in read_registry(registry)]
         exports, libraries = built_libraries(args.libs)
         modules = module_files(args.modules)
+        source_libs = source_libraries(args.source)
         records, missing = audit(imports, exports, source_stubs(args.source), libraries, modules)
         if args.names:
             attach_names(records, load_names(args.names))
-        summary = summarize(records, len(imports), missing)
+        summary = summarize(records, len(imports), missing, source_libs)
         if args.json:
             commit, dirty = git_stamp()
             result = {"source_commit": commit, "source_dirty": dirty, "registries": [str(path) for path in args.registries], **summary, "imports": records}
@@ -312,7 +338,7 @@ def main(argv=None):
     except AuditError as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 2
-    print(render(summary, records, missing))
+    print(render(summary, records, missing, source_libs))
     return 1 if summary["unique_by_class"]["absent"] or missing else 0
 
 

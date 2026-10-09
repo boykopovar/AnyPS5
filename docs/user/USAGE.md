@@ -117,7 +117,7 @@ python3 tools/import_audit.py app.registry.json --libs build/core/libs/libs --mo
 | `absent` | No built library exports the NID: the loader fails. |
 | `module` | The import names a file found in `--modules` (the title's own library); its exports are not checked. |
 
-The report also lists needed libraries that have no file in `--libs` or `--modules`, and imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
+The report also lists needed libraries that have no file in `--libs` (AnyPS5 system libraries) or `--modules` (title-shipped modules), and imports exported only by a library other than the one they name; those resolve on Linux and can fail on Windows.
 
 | Option | Effect |
 |--------|--------|

@@ -273,6 +273,39 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("game.json: entry 0 has an invalid NID 'short'", err)
 
+    def test_source_libraries(self):
+        source = self.work.source
+        write_source(source, "libSceA", "")
+        write_source(source, "libSceB.native", "")
+        self.assertEqual(import_audit.source_libraries(source), {"libSceA.prx", "libSceB.native.prx"})
+        with self.assertRaisesRegex(import_audit.AuditError, "not a directory"):
+            import_audit.source_libraries(self.work.root / "nonexistent")
+
+    def test_missing_system_and_title_prx_provider_diagnostics(self):
+        work = self.work
+        (work.libs / "libSceMsgDialog.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        write_source(work.source, "libSceMsgDialog", DONE_SOURCE.format(name="sceMsgDialogInit"))
+        write_source(work.source, "libSceSaveData", DONE_SOURCE.format(name="sceSaveDataInit"))
+        registry = work.root / "game.json"
+        write_registry(registry, [
+            ("AAAAAAAAAAA", "libSceMsgDialog.prx"),
+            ("BBBBBBBBBBB", "libSceSaveData.prx"),
+            ("CCCCCCCCCCC", "libSceNpCppWebApi.prx"),
+        ])
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["missing_libraries"], {"libSceNpCppWebApi.prx": 1, "libSceSaveData.prx": 1})
+        self.assertEqual(data["missing_system_libraries"], {"libSceSaveData.prx": 1})
+        self.assertEqual(data["missing_title_modules"], {"libSceNpCppWebApi.prx": 1})
+        self.assertIn("Needed system libraries with no file in --libs (1): build via 'cmake --build build --target libs'", out)
+        self.assertIn("  libSceSaveData.prx: 1 imports", out)
+        self.assertIn("Needed title modules with no file in --modules (1): must be supplied from the title dump (CONTRIBUTING rule 11)", out)
+        self.assertIn("  libSceNpCppWebApi.prx: 1 imports", out)
+        self.assertIn("  [libSceSaveData.prx] (no provider: missing from --libs)", out)
+        self.assertIn("  [libSceNpCppWebApi.prx] (no provider: missing title module)", out)
+
 
 if __name__ == "__main__":
     unittest.main()
