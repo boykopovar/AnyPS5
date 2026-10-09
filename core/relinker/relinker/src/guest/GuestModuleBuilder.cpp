@@ -244,7 +244,19 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated executable symbol name");
         const std::string name(start, end);
         if (declaresHost(executableModules[offset / 24])) continue;
-        rejectSharedImport(name.substr(0, name.find('#')), inputPath.string());
+        const std::string base = name.substr(0, name.find('#'));
+        const auto shared = sharedExports.find(base);
+        std::size_t needed = 0;
+        if (shared != sharedExports.end()) {
+            for (const auto provider : shared->second) {
+                const auto& file = images[provider].SourcePath.filename().string();
+                const auto& soname = images[provider].Soname;
+                if (std::find(neededNames.begin(), neededNames.end(), file) == neededNames.end() &&
+                    (soname.empty() || std::find(neededNames.begin(), neededNames.end(), soname) == neededNames.end())) continue;
+                if (++needed > 1) break;
+            }
+        }
+        if (needed != 1) rejectSharedImport(base, inputPath.string());
         if (!windows && exports.contains(name)) rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
     }
     std::vector<std::set<std::size_t>> dependencies(images.size());
@@ -260,13 +272,15 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         for (const auto& symbol : images[index].Symbols) {
             if (symbol.Section != 0 || symbol.Name.empty() || declaresHost(symbol.Library)) continue;
-            rejectSharedImport(symbol.Name, images[index].SourcePath.string());
+            const auto declared = symbol.Library.empty() ? guestNames.end() : findGuest(symbol.Library);
+            const auto shared = sharedExports.find(symbol.Name);
+            if (shared == sharedExports.end() || declared == guestNames.end() || !shared->second.contains(declared->second))
+                rejectSharedImport(symbol.Name, images[index].SourcePath.string());
             const auto found = exports.find(symbol.Name);
             std::vector<std::size_t> providers;
             if (found != exports.end()) {
                 for (const auto provider : found->second) {
-                    const auto declared = findGuest(symbol.Library);
-                    if (!windows || symbol.Library.empty() || (declared != guestNames.end() && declared->second == provider)) providers.push_back(provider);
+                    if (symbol.Library.empty() || (declared != guestNames.end() && declared->second == provider)) providers.push_back(provider);
                 }
             }
             if (providers.size() > 1) throw Domain::RelinkerException("Ambiguous guest import after stripping #: " + symbol.Name);
