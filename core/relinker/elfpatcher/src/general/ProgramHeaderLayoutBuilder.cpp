@@ -1,7 +1,9 @@
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
+#include <io/BufferUtils.hpp>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 namespace Elfpatcher {
@@ -108,6 +110,8 @@ std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
         if (ph.Type != PT_LOAD)
             continue;
         foundLoad = true;
+        if (ph.MemorySize > std::numeric_limits<std::uint64_t>::max() - ph.MappedAddress)
+            throw Domain::RelinkerException("PT_LOAD virtual address range overflows", ph.Offset);
         const std::uint64_t vaddrEnd = ph.MappedAddress + ph.MemorySize;
         if (vaddrEnd > highestVaddrEnd)
             highestVaddrEnd = vaddrEnd;
@@ -149,8 +153,16 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
         if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && (ph.Alignment & (ph.Alignment - 1)) == 0)
             headerBlockAlign = ph.Alignment;
     }
-    const std::uint64_t headerBlockVaddr =
-        (request.ExtraBlockVaddr + request.ExtraBlockSize + headerBlockAlign - 1) & ~(headerBlockAlign - 1);
+    if (request.ExtraBlockSize > std::numeric_limits<std::uint64_t>::max() - request.ExtraBlockVaddr)
+        throw Domain::RelinkerException("Extra block virtual address range overflows");
+    std::uint64_t headerBlockVaddr;
+    try {
+        headerBlockVaddr = Io::AlignUp64(request.ExtraBlockVaddr + request.ExtraBlockSize, headerBlockAlign);
+    } catch (const std::overflow_error&) {
+        throw Domain::RelinkerException("Header block virtual address alignment overflows");
+    }
+    if (headerBlockSize > std::numeric_limits<std::uint64_t>::max() - headerBlockVaddr)
+        throw Domain::RelinkerException("Header block virtual address range overflows");
 
     if (request.DynamicSegmentOffset < request.ExtraBlockOffset)
         throw Domain::RelinkerException("Dynamic segment offset lies before the extra block");

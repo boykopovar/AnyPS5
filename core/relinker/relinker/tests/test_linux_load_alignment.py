@@ -59,6 +59,44 @@ def main():
         assert warning.returncode == 0, (warning.stdout, warning.stderr)
         assert "--windows was not specified" in warning.stderr, warning.stderr
         assert named_exe.read_bytes().startswith(b"\x7fELF"), "The filename must not select the output format"
+
+        maximum = (1 << 64) - 1
+
+        def bss_fixture(address, size, alignment=0x1000, file_size=0x8000, header_offset=64):
+            data = fixture()
+            data.extend(bytes(file_size - len(data)))
+            struct.pack_into("<H", data, 0x38, 6)
+            struct.pack_into("<IIQQQQQQ", data, 176,
+                             PT_LOAD, 4, 0, address, address, 0, size, alignment)
+            struct.pack_into("<IIQQQQQQ", data, 64 + 5 * 56,
+                             PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)
+            if header_offset != 64:
+                data[header_offset:header_offset + 6 * 56] = data[64:64 + 6 * 56]
+                struct.pack_into("<Q", data, 0x20, header_offset)
+            return data
+
+        cases = (
+            ("valid-bss", bss_fixture(0x2000, 0x4000), None),
+            ("valid-high-address", bss_fixture(0x2000, maximum - 0x11fff), None),
+            ("load-range-wrap", bss_fixture(0x2000, maximum), "PT_LOAD virtual address range overflows"),
+            ("extra-range-wrap", bss_fixture(0x2000, maximum - 0x2080, file_size=0x8ff5),
+             "Extra block virtual address range overflows"),
+            ("header-alignment-wrap", bss_fixture(0, 1 << 63, 1 << 63),
+             "Header block virtual address alignment overflows"),
+            ("header-range-wrap", bss_fixture(0x2000, maximum - 0x9fff, header_offset=0x4000),
+             "Header block virtual address range overflows"),
+        )
+        for name, data, error in cases:
+            source = Path(directory) / (name + ".elf")
+            output = Path(directory) / (name + ".out")
+            source.write_bytes(data)
+            result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            if error is None:
+                assert result.returncode == 0 and output.exists(), (name, result)
+                assert all(segment[3] + segment[6] <= maximum for segment in loads(output.read_bytes()))
+            else:
+                assert result.returncode == 2 and error in result.stderr and not output.exists(), (name, result)
     print("Linux load alignment test passed")
 
 
