@@ -163,8 +163,9 @@ int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint* moun
 }
 
 
-int APS5_VABI sceAppContentAddcontEnqueueDownload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontEnqueueDownload(const NpUnifiedEntitlementLabel* entitlement_label) {
+    if (!entitlement_label) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    APS5_LOG_ERR("sceAppContentAddcontEnqueueDownload: Add-on downloads are not supported on PC. label: %s", entitlement_label->data);
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 }
