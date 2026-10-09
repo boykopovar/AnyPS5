@@ -16,6 +16,11 @@ int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
 int APS5_VABI sceRudpInit_nid_postfix(void*, int);
 int APS5_VABI sceRudpGetStatus(void*, std::size_t);
 int APS5_VABI sceRudpTerminate();
+int APS5_VABI sceNpAuthCreateRequest();
+int APS5_VABI sceNpAuthCreateAsyncRequest(const void*);
+int APS5_VABI sceNpAuthGetIdTokenV3(int, const void*, void*);
+int APS5_VABI sceNpAuthPollAsync(int, int*);
+int APS5_VABI sceNpAuthWaitAsync(int, int*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -75,5 +80,25 @@ int main() {
     Require(status == originalStatus);
     Require(unsupported(nullptr, 0));
     Require(sceRudpTerminate() == 0);
+    constexpr int npInvalidArgument = static_cast<int>(0x80550003);
+    constexpr int npSignedOut = static_cast<int>(0x80550006);
+    const int request = sceNpAuthCreateRequest();
+    const int asyncRequest = sceNpAuthCreateAsyncRequest(nullptr);
+    Require(request > 0 && asyncRequest > 0 && request != asyncRequest);
+    std::array<unsigned char, 32> tokenParameter{};
+    std::array<unsigned char, 64> token{};
+    token.fill(0x5a);
+    const auto untouched = token;
+    Require(sceNpAuthGetIdTokenV3(request, tokenParameter.data(), token.data()) == npSignedOut);
+    Require(token == untouched);
+    Require(sceNpAuthGetIdTokenV3(request, nullptr, token.data()) == npInvalidArgument);
+    Require(sceNpAuthGetIdTokenV3(request, tokenParameter.data(), nullptr) == npInvalidArgument);
+    Require(sceNpAuthGetIdTokenV3(asyncRequest, tokenParameter.data(), token.data()) == npSignedOut);
+    int polled = 0;
+    int waited = 0;
+    Require(sceNpAuthPollAsync(asyncRequest, &polled) == 0);
+    Require(sceNpAuthWaitAsync(asyncRequest, &waited) == 0);
+    Require(waited == polled && waited == npSignedOut);
+    Require(sceNpAuthWaitAsync(asyncRequest, nullptr) == 0);
     return 0;
 }
