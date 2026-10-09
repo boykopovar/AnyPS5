@@ -517,9 +517,11 @@ void APS5_VABI scePthreadYield() {
 }
 
 int APS5_VABI scePthreadCancel(Pthread thread) {
- (void)thread;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!thread)
+        return SCE_KERNEL_ERROR_EINVAL;
+
+    thread->cancelPending.store(true, std::memory_order_release);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadEqual(Pthread thread1, Pthread thread2) {
