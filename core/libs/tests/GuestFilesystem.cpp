@@ -34,6 +34,7 @@ int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
 int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
 int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelStat(const char*, FileStat*);
+int APS5_VABI sceKernelFstat(int, FileStat*);
 int APS5_VABI sceKernelUnlink(const char*);
 int APS5_VABI sceKernelRmdir(const char*);
 int* APS5_VABI __error_nid_postfix();
@@ -202,6 +203,18 @@ int main() {
     Require(closable >= 0 && sceKernelClose(closable) == 0);
     Require(sceKernelClose(closable) == static_cast<int>(0x80020009u));
     Require(sceKernelClose(-1) == static_cast<int>(0x80020009u));
+    const auto otherName = (root / "other.txt").string();
+    { std::ofstream stream(otherName); stream << "other"; }
+    FileStat byPath{};
+    FileStat otherByPath{};
+    FileStat byDescriptor{};
+    Require(sceKernelStat(presentName.c_str(), &byPath) == 0);
+    Require(sceKernelStat(otherName.c_str(), &otherByPath) == 0);
+    Require(byPath.st_dev == otherByPath.st_dev && byPath.st_ino != otherByPath.st_ino);
+    const int identified = sceKernelOpen(presentName.c_str(), 0, 0);
+    Require(identified >= 0 && sceKernelFstat(identified, &byDescriptor) == 0 && sceKernelClose(identified) == 0);
+    Require(byDescriptor.st_dev == byPath.st_dev && byDescriptor.st_ino == byPath.st_ino);
+    Require(unlink_nid_postfix(otherName.c_str()) == 0);
     Require(unlink_nid_postfix(presentName.c_str()) == 0 && !std::filesystem::exists(present));
     const auto empty = root / "empty";
     Require(std::filesystem::create_directory(empty));

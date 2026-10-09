@@ -1,10 +1,14 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 
+#include <cerrno>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
 #ifdef _WIN32
+#include <windows.h>
+#include <io.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 using NativeStat = struct __stat64;
@@ -15,6 +19,39 @@ static int DoFstat(int fd, NativeStat* st) {
     if (const auto directory = File::DirectoryDescriptorPath(fd)) return DoStat(*directory, st);
     return _fstat64(fd, st);
 }
+static bool CopyHandleIdentity(HANDLE handle, FileStat* sb) {
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!::GetFileInformationByHandle(handle, &info)) {
+        errno = EIO;
+        return false;
+    }
+    const auto index = (static_cast<std::uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
+    sb->st_dev = static_cast<std::uint32_t>(info.dwVolumeSerialNumber);
+    sb->st_ino = static_cast<std::uint32_t>(index ^ (index >> 32));
+    sb->st_nlink = static_cast<std::uint16_t>(info.nNumberOfLinks > 0xffff ? 0xffff : info.nNumberOfLinks);
+    return true;
+}
+static bool CopyPathIdentity(const std::filesystem::path& p, FileStat* sb) {
+    const auto handle = ::CreateFileW(p.wstring().c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EIO;
+        return false;
+    }
+    const bool copied = CopyHandleIdentity(handle, sb);
+    ::CloseHandle(handle);
+    return copied;
+}
+static bool CopyDescriptorIdentity(int fd, FileStat* sb) {
+    if (const auto directory = File::DirectoryDescriptorPath(fd)) return CopyPathIdentity(*directory, sb);
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(fd));
+    if (handle == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return false;
+    }
+    if (::GetFileType(handle) != FILE_TYPE_DISK) return true;
+    return CopyHandleIdentity(handle, sb);
+}
 #else
 #include <sys/stat.h>
 using NativeStat = struct stat;
@@ -23,6 +60,12 @@ static int DoStat(const std::filesystem::path& p, NativeStat* st) {
 }
 static int DoFstat(int fd, NativeStat* st) {
     return ::fstat(fd, st);
+}
+static bool CopyPathIdentity(const std::filesystem::path&, FileStat*) {
+    return true;
+}
+static bool CopyDescriptorIdentity(int, FileStat*) {
+    return true;
 }
 #endif
 
@@ -82,6 +125,9 @@ void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
         throw std::runtime_error(std::string("FillFileStat: stat failed for ") + nativePath.string());
     }
     CopyNativeStat(st, sb);
+    if (!CopyPathIdentity(nativePath, sb)) {
+        throw std::runtime_error(std::string("FillFileStat: file identity failed for ") + nativePath.string());
+    }
 }
 
 void FillFileStat(int nativeDescriptor, FileStat* sb) {
@@ -90,13 +136,16 @@ void FillFileStat(int nativeDescriptor, FileStat* sb) {
         throw std::runtime_error(std::string("FillFileStat: fstat failed for fd ") + std::to_string(nativeDescriptor));
     }
     CopyNativeStat(st, sb);
+    if (!CopyDescriptorIdentity(nativeDescriptor, sb)) {
+        throw std::runtime_error(std::string("FillFileStat: file identity failed for fd ") + std::to_string(nativeDescriptor));
+    }
 }
 
 bool FillFileStatFromDescriptor(int fd, FileStat* sb) {
     NativeStat st{};
     if (DoFstat(fd, &st) != 0) return false;
     CopyNativeStat(st, sb);
-    return true;
+    return CopyDescriptorIdentity(fd, sb);
 }
 
 }
