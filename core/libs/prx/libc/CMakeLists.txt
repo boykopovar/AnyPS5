@@ -12,6 +12,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
@@ -129,6 +130,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_execute_once PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_execute_once PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_libc_threads_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcThreads.cpp)
+    target_include_directories(guest_libc_threads_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_threads_tests PRIVATE libc)
+    configure_windows_unwind(guest_libc_threads_tests)
+    add_test(NAME guest_libc_threads COMMAND guest_libc_threads_tests)
+    set_tests_properties(guest_libc_threads PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_threads PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_std_execute_once_tests ${LIBS_INCLUDE_DIR}/tests/GuestStdExecuteOnce.cpp)

@@ -48,18 +48,6 @@ std::uint64_t APS5_VABI libcCyberUnknown02(void) {
     return 0;
 }
 
-APS5_EXPORT("5Lf51jvohTQ", libcCyberUnknown03);
-std::uint64_t APS5_VABI libcCyberUnknown03(void) {
-    NotImplemented_nid_no_patch("5Lf51jvohTQ");
-    return 0;
-}
-
-APS5_EXPORT("7yMFgcS8EPA", libcCyberUnknown05);
-std::uint64_t APS5_VABI libcCyberUnknown05(void) {
-    NotImplemented_nid_no_patch("7yMFgcS8EPA");
-    return 0;
-}
-
 APS5_EXPORT("CyXs2l-1kNA", libcCyberUnknown07);
 std::uint64_t APS5_VABI libcCyberUnknown07(void) {
     NotImplemented_nid_no_patch("CyXs2l-1kNA");
@@ -75,42 +63,6 @@ std::uint64_t APS5_VABI libcCyberUnknown08(void) {
 APS5_EXPORT("JhVR7D4Ax6Y", libcCyberUnknown09);
 std::uint64_t APS5_VABI libcCyberUnknown09(void) {
     NotImplemented_nid_no_patch("JhVR7D4Ax6Y");
-    return 0;
-}
-
-APS5_EXPORT("SreZybSRWpU", libcCyberUnknown10);
-std::uint64_t APS5_VABI libcCyberUnknown10(void) {
-    NotImplemented_nid_no_patch("SreZybSRWpU");
-    return 0;
-}
-
-APS5_EXPORT("VsP3daJgmVA", libcCyberUnknown11);
-std::uint64_t APS5_VABI libcCyberUnknown11(void) {
-    NotImplemented_nid_no_patch("VsP3daJgmVA");
-    return 0;
-}
-
-APS5_EXPORT("YaHc3GS7y7g", libcCyberUnknown12);
-std::uint64_t APS5_VABI libcCyberUnknown12(void) {
-    NotImplemented_nid_no_patch("YaHc3GS7y7g");
-    return 0;
-}
-
-APS5_EXPORT("gTuXQwP9rrs", libcCyberUnknown13);
-std::uint64_t APS5_VABI libcCyberUnknown13(void) {
-    NotImplemented_nid_no_patch("gTuXQwP9rrs");
-    return 0;
-}
-
-APS5_EXPORT("iS4aWbUonl0", libcCyberUnknown14);
-std::uint64_t APS5_VABI libcCyberUnknown14(void) {
-    NotImplemented_nid_no_patch("iS4aWbUonl0");
-    return 0;
-}
-
-APS5_EXPORT("vEaqE-7IZYc", libcCyberUnknown16);
-std::uint64_t APS5_VABI libcCyberUnknown16(void) {
-    NotImplemented_nid_no_patch("vEaqE-7IZYc");
     return 0;
 }
 }
