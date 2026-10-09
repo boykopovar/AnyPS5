@@ -631,11 +631,7 @@ int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) {
 }
 
 int APS5_VABI scePthreadGetthreadid(void) {
-#ifdef _WIN32
-    return static_cast<int>(GetCurrentThreadId());
-#else
-    return static_cast<int>(std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0x7fffffff);
-#endif
+    return static_cast<int>(scePthreadSelf()->tid);
 }
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {

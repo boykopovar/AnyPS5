@@ -97,7 +97,10 @@ struct PthreadAttrPrivate {
     int _solosched = 0;
 };
 
+inline std::atomic<long> nextThreadId{100000};
+
 struct PthreadPrivate {
+    long tid = nextThreadId.fetch_add(1, std::memory_order_relaxed);
 #ifdef _WIN32
     void* nativeHandle = nullptr;
 #else
