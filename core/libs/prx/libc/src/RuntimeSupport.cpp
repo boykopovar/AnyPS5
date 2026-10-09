@@ -11,6 +11,7 @@
 #include <random>
 #include <string>
 #include <cinttypes>
+#include <cstdint>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/specifics/gcc/AtomicOps.hpp"
@@ -130,8 +131,8 @@ void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
 #endif
 }
 
-unsigned long APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
-    return std::strtoul(str, endptr, base);
+std::uint64_t APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
+    return std::strtoull(str, endptr, base);
 }
 
 void APS5_VABI _Locksyslock_nid_postfix() {
