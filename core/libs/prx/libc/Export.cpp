@@ -40,6 +40,8 @@ int APS5_VABI vsscanf_s_nid_postfix() {
 }
 
 
+    double APS5_VABI __powidf2_nid_postfix(double base, int exponent);
+
 APS5_EXPORT("Ye20uNnlglA", libcCyberUnknown02);
 std::uint64_t APS5_VABI libcCyberUnknown02(void) {
     NotImplemented_nid_no_patch("Ye20uNnlglA");
@@ -62,9 +64,8 @@ std::uint64_t APS5_VABI _Iswctype_nid_postfix() {
 }
 
 APS5_EXPORT("H+8UBOwfScI", libcCyberUnknown08);
-std::uint64_t APS5_VABI libcCyberUnknown08(void) {
-    NotImplemented_nid_no_patch("H+8UBOwfScI");
-    return 0;
+double APS5_VABI libcCyberUnknown08(double base, int exponent) {
+    return __powidf2_nid_postfix(base, exponent);
 }
 
 std::uint64_t APS5_VABI _WStoul_nid_postfix() {

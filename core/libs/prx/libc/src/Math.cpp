@@ -138,4 +138,16 @@ void APS5_VABI srand_nid_postfix(unsigned int seed) {
     g_randState = seed;
 }
 
+double APS5_VABI __powidf2_nid_postfix(double base, int exponent) {
+    const bool negative = exponent < 0;
+    unsigned int magnitude = static_cast<unsigned int>(exponent);
+    if (negative) magnitude = -magnitude;
+    double result = (magnitude & 1u) != 0u ? base : 1.0;
+    while ((magnitude >>= 1u) != 0u) {
+        base *= base;
+        if ((magnitude & 1u) != 0u) result *= base;
+    }
+    return negative ? 1.0 / result : result;
+}
+
 }
