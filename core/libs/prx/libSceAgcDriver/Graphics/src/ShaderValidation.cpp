@@ -573,10 +573,16 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
             for (const auto& [location, signature] : current.inputs) {
                 const auto output = previous.outputs.find(location);
                 if (output == previous.outputs.end() || output->second != signature) {
+                    std::string exports;
+                    for (const auto value : shaders[i - 1].program->parameterExports) exports += " " + std::to_string(value);
+                    std::string parameters;
+                    for (const auto& parameter : shaders[i].program->fragmentParameters) parameters += " " + std::to_string(parameter.location) + "<-" + std::to_string(parameter.sourceLocation);
+                    std::string outputs;
+                    for (const auto& [index, kind] : previous.outputs) outputs += " " + std::to_string(index) + ":" + kind;
                     Require(false, "graphics interfaces disagree at location " + std::to_string(location) +
                         " (stage " + std::to_string(i - 1) + " output " +
                         (output == previous.outputs.end() ? "missing" : output->second) +
-                        ", stage " + std::to_string(i) + " input " + signature + ")");
+                        ", stage " + std::to_string(i) + " input " + signature + "; previous outputs:" + outputs + "; parameter exports:" + exports + "; fragment parameters:" + parameters + ")");
                 }
             }
         }
