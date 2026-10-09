@@ -49,6 +49,8 @@ jobs:
           path: C:\winlibs
           key: ${{ env.WINLIBS_ZIP }}
       - if: matrix.platform == 'windows' && steps.toolchain.outputs.cache-hit != 'true'
+        env:
+          SSL_CERT_FILE: 'C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs
@@ -58,12 +60,17 @@ jobs:
         with:
           key: ${{ matrix.platform }}
           save: false
+      - name: Install lavapipe for the GPU execution tests
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
       - name: Configure Linux
         if: matrix.platform == 'linux'
         run: cmake -S . -B build $CONFIGURE
       - name: Configure Windows
         if: matrix.platform == 'windows'
         shell: cmd
+        env:
+          SSL_CERT_FILE: 'C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt'
         run: cmake -S . -B build %CONFIGURE%
       - name: Build project and tests (Linux)
         if: matrix.platform == 'linux'
@@ -75,6 +82,9 @@ jobs:
       - name: Run tests (Linux)
         if: matrix.platform == 'linux'
         run: ctest --test-dir build --output-on-failure --timeout 120 --stop-on-failure --no-tests=error
+        env:
+          ANYPS5_REQUIRE_VULKAN: 1
+          GALLIUM_OVERRIDE_CPU_CAPS: avx
       - name: Run tests (Windows)
         if: matrix.platform == 'windows'
         shell: cmd
