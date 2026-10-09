@@ -53,6 +53,7 @@ constexpr int defaultMixLevel = 11626;
 constexpr int invalidPort = static_cast<int>(0x80260003);
 constexpr int invalidPortType = static_cast<int>(0x8026000A);
 constexpr int invalidMixLevel = static_cast<int>(0x80260014);
+constexpr int invalidVolume = static_cast<int>(0x80260009);
 
 template<typename TSample, typename TSetup>
 std::vector<TSample> Play(int type, std::uint32_t format, const std::vector<TSample>& block, TSetup setup) {
@@ -148,6 +149,19 @@ void TestLevelWithVolume() {
     }
 }
 
+void TestRejectedVolume() {
+    const auto block = Ramp();
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        int valid = unity / 2;
+        int invalid = unity + 1;
+        int negative = -1;
+        Require(sceAudioOutSetVolume(handle, 1, &valid) == 0);
+        Require(sceAudioOutSetVolume(handle, 1, &invalid) == invalidVolume);
+        Require(sceAudioOutSetVolume(handle, 1, &negative) == invalidVolume);
+        Require(sceAudioOutSetMixLevelPadSpk(handle, unity) == 0);
+    }) == Scaled(block, unity / 2));
+}
+
 void TestOtherPortType() {
     const auto block = Ramp();
     Require(Play(portTypeMain, formatS16Mono, block, [](int) {}) == block);
@@ -178,6 +192,7 @@ int main() {
     TestDefaultLevel();
     TestLevels();
     TestLevelWithVolume();
+    TestRejectedVolume();
     TestOtherPortType();
     TestRejectedLevels();
     return 0;
