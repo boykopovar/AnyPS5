@@ -6,6 +6,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/BsdStrings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/WideConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Multibyte.cpp
@@ -384,5 +385,17 @@ if(MINGW)
         set_target_properties(windows_exception_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
         add_test(NAME windows_exceptions COMMAND windows_exception_tests)
         set_tests_properties(windows_exceptions PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_bsd_strings_tests ${LIBS_INCLUDE_DIR}/tests/GuestBsdStrings.cpp)
+    target_include_directories(guest_bsd_strings_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_bsd_strings_tests PRIVATE libc)
+    configure_windows_unwind(guest_bsd_strings_tests)
+    add_test(NAME guest_bsd_strings COMMAND guest_bsd_strings_tests)
+    if(WIN32)
+        set_tests_properties(guest_bsd_strings PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
