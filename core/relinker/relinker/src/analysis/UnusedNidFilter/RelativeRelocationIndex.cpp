@@ -33,15 +33,23 @@ struct LoadSegment {
     std::uint64_t fileSize;
 };
 
-std::uint64_t vaddrToFileOffset(const std::vector<LoadSegment>& loads, VirtualAddress va) {
-    for (const auto& seg : loads) {
-        if (va >= seg.vaddr && va < seg.vaddr + seg.fileSize)
-            return seg.fileOffset + (va - seg.vaddr);
-    }
-    throw RelinkerException("Cannot translate virtual address to file offset", va);
-}
-
 constexpr std::size_t RelaEntSize = 24;
+
+std::uint64_t relocationTableFileOffset(
+    const std::vector<LoadSegment>& loads,
+    VirtualAddress tableVaddr,
+    std::uint64_t tableSize
+) {
+    for (const auto& seg : loads) {
+        if (tableVaddr < seg.vaddr) continue;
+        const std::uint64_t offsetInSegment = tableVaddr - seg.vaddr;
+        if (offsetInSegment >= seg.fileSize) continue;
+        if (tableSize > seg.fileSize - offsetInSegment)
+            throw RelinkerException("Relocation table extends beyond its PT_LOAD segment", tableVaddr);
+        return seg.fileOffset + offsetInSegment;
+    }
+    throw RelinkerException("Cannot translate virtual address to file offset", tableVaddr);
+}
 
 void collectRelativeEntries(
     const std::vector<std::uint8_t>& elfBytes,
@@ -51,13 +59,12 @@ void collectRelativeEntries(
     std::unordered_map<VirtualAddress, VirtualAddress>& out
 ) {
     if (tableVaddr == 0 || tableSize == 0) return;
-    std::uint64_t tableFileOff = vaddrToFileOffset(loads, tableVaddr);
+    if (tableSize % RelaEntSize != 0)
+        throw RelinkerException("Relocation table size is not a multiple of the entry size", tableSize);
+    const std::uint64_t tableFileOff = relocationTableFileOffset(loads, tableVaddr, tableSize);
 
-    for (std::uint64_t off = 0; off + RelaEntSize <= tableSize; off += RelaEntSize) {
+    for (std::uint64_t off = 0; off < tableSize; off += RelaEntSize) {
         std::size_t pos = static_cast<std::size_t>(tableFileOff + off);
-        if (pos + RelaEntSize > elfBytes.size())
-            throw RelinkerException("Relocation entry out of bounds", pos);
-
         std::uint64_t rOffset = read64(elfBytes, pos);
         std::uint64_t rInfo = read64(elfBytes, pos + 8);
         std::int64_t rAddend = static_cast<std::int64_t>(read64(elfBytes, pos + 16));
@@ -112,6 +119,8 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
         seg.fileOffset = read64(elfBytes, phPos + 8);
         seg.vaddr = read64(elfBytes, phPos + 16);
         seg.fileSize = read64(elfBytes, phPos + 32);
+        if (seg.fileOffset > elfBytes.size() || seg.fileSize > elfBytes.size() - seg.fileOffset)
+            throw RelinkerException("PT_LOAD segment out of bounds", seg.fileOffset);
         loads.push_back(seg);
     }
 
@@ -126,7 +135,8 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
 
         std::uint64_t segOff = read64(elfBytes, phPos + 8);
         std::uint64_t segSz = read64(elfBytes, phPos + 32);
-        if (segOff + segSz > elfBytes.size()) throw RelinkerException("PT_DYNAMIC segment out of bounds");
+        if (segOff > elfBytes.size() || segSz > elfBytes.size() - segOff)
+            throw RelinkerException("PT_DYNAMIC segment out of bounds");
 
         VirtualAddress relaVa = 0;
         std::uint64_t relaSz = 0;
