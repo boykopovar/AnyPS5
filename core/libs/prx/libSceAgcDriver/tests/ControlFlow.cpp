@@ -1,6 +1,9 @@
 #include "ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "ControlFlow/Structurizer.hpp"
+#include "BdaAbi.hpp"
+#include "Optimization/ResourceProgram.hpp"
+#include "PipelineSpecialization.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Recompiler.hpp"
 #include <algorithm>
@@ -10,6 +13,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <map>
+#include <set>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -17,6 +21,7 @@
 #include <string_view>
 #include <tuple>
 #include <vector>
+#include <spirv/unified1/spirv.hpp>
 
 namespace {
 
@@ -300,9 +305,205 @@ void verifyNullSwappc() {
     }
 }
 
+void verifyImageContinuePaths(const std::string& name, std::span<const std::uint32_t> words, std::size_t minimumSwitches, bool indirect) {
+    struct Block {
+        std::vector<std::uint32_t> successors;
+        std::vector<std::set<std::uint32_t>> phiParents;
+        std::uint32_t condition = 0;
+        bool switches = false;
+        bool terminal = false;
+    };
+    struct Loop {
+        std::uint32_t header;
+        std::uint32_t merge;
+        std::uint32_t continuation;
+    };
+    std::map<std::uint32_t, Block> blocks;
+    std::map<std::uint32_t, std::array<std::uint32_t, 2>> modeTests;
+    std::set<std::uint32_t> enabledModes;
+    std::vector<Loop> loops;
+    std::uint32_t label = 0;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        const auto opcode = words[cursor] & 0xffffu;
+        require(count != 0u && count <= words.size() - cursor, name + ": invalid SPIR-V instruction");
+        if (opcode == spv::OpDecorate && words[cursor + 2u] == spv::DecorationSpecId) {
+            const auto specId = words[cursor + 3u];
+            if (specId >= PipelineSpecialization::ImageModeBase && specId < PipelineSpecialization::CompareBase) enabledModes.insert(words[cursor + 1u]);
+        } else if (opcode == spv::OpINotEqual) {
+            modeTests[words[cursor + 2u]] = {words[cursor + 3u], words[cursor + 4u]};
+        } else if (opcode == spv::OpSpecConstantOp && words[cursor + 3u] == spv::OpINotEqual) {
+            modeTests[words[cursor + 2u]] = {words[cursor + 4u], words[cursor + 5u]};
+        } else if (opcode == spv::OpLabel) {
+            label = words[cursor + 1u];
+            blocks.emplace(label, Block{});
+        } else if (opcode == spv::OpLoopMerge) {
+            loops.push_back({label, words[cursor + 1u], words[cursor + 2u]});
+        } else if (opcode == spv::OpBranch) {
+            blocks.at(label).successors.push_back(words[cursor + 1u]);
+        } else if (opcode == spv::OpBranchConditional) {
+            blocks.at(label).condition = words[cursor + 1u];
+            blocks.at(label).successors = {words[cursor + 2u], words[cursor + 3u]};
+        } else if (opcode == spv::OpPhi) {
+            auto& parents = blocks.at(label).phiParents.emplace_back();
+            for (std::uint32_t operand = 4u; operand < count; operand += 2u) {
+                require(parents.insert(words[cursor + operand]).second, name + ": phi has a duplicate predecessor");
+            }
+        } else if (opcode == spv::OpSwitch) {
+            blocks.at(label).switches = true;
+            auto& successors = blocks.at(label).successors;
+            successors.push_back(words[cursor + 2u]);
+            for (std::uint32_t operand = 4u; operand < count; operand += 2u) successors.push_back(words[cursor + operand]);
+        } else if (opcode == spv::OpReturn || opcode == spv::OpReturnValue || opcode == spv::OpKill || opcode == spv::OpUnreachable || opcode == spv::OpTerminateInvocation) {
+            blocks.at(label).terminal = true;
+        }
+        cursor += count;
+    }
+    std::map<std::uint32_t, std::set<std::uint32_t>> predecessors;
+    for (const auto& [id, block] : blocks) {
+        for (const auto successor : block.successors) predecessors[successor].insert(id);
+    }
+    for (const auto& [id, block] : blocks) {
+        for (const auto& parents : block.phiParents) require(parents == predecessors[id], name + ": phi predecessors do not match incoming edges");
+    }
+    require(!loops.empty(), name + ": image loop is missing");
+    std::set<std::uint32_t> continueBlocks;
+    for (const auto& loop : loops) {
+        std::set<std::uint32_t> backEdges;
+        std::map<std::uint32_t, std::vector<std::uint32_t>> continuePredecessors;
+        std::vector<std::uint32_t> pending{loop.continuation};
+        std::set<std::uint32_t> visited;
+        while (!pending.empty()) {
+            const auto id = pending.back();
+            pending.pop_back();
+            if (!visited.insert(id).second) continue;
+            require(id != loop.header && id != loop.merge, name + ": a continue path bypasses its back-edge block");
+            const auto& block = blocks.at(id);
+            require(!block.terminal, name + ": a continue path terminates before its back-edge block");
+            if (std::find(block.successors.begin(), block.successors.end(), loop.header) != block.successors.end()) {
+                require(std::all_of(block.successors.begin(), block.successors.end(), [&](const auto successor) { return successor == loop.header || successor == loop.merge; }), name + ": a back-edge block has an unexpected successor");
+                backEdges.insert(id);
+                continue;
+            }
+            require(!block.successors.empty(), name + ": a continue path has no successor");
+            for (const auto successor : block.successors) {
+                continuePredecessors[successor].push_back(id);
+                pending.push_back(successor);
+            }
+        }
+        require(backEdges.size() == 1u, name + ": continue construct must reach exactly one back-edge block");
+        pending = {loop.header};
+        std::set<std::uint32_t> loopBlocks;
+        std::set<std::uint32_t> loopBackEdges;
+        while (!pending.empty()) {
+            const auto id = pending.back();
+            pending.pop_back();
+            if (id == loop.merge || !loopBlocks.insert(id).second) continue;
+            const auto& successors = blocks.at(id).successors;
+            if (std::find(successors.begin(), successors.end(), loop.header) != successors.end()) loopBackEdges.insert(id);
+            pending.insert(pending.end(), successors.begin(), successors.end());
+        }
+        require(loopBackEdges == backEdges, name + ": loop has a back-edge outside its continue construct");
+        pending.assign(backEdges.begin(), backEdges.end());
+        std::set<std::uint32_t> reachesBackEdge;
+        while (!pending.empty()) {
+            const auto id = pending.back();
+            pending.pop_back();
+            if (!reachesBackEdge.insert(id).second) continue;
+            const auto& incoming = continuePredecessors[id];
+            pending.insert(pending.end(), incoming.begin(), incoming.end());
+        }
+        require(reachesBackEdge == visited, name + ": a continue path never reaches its back-edge block");
+        continueBlocks.insert(visited.begin(), visited.end());
+    }
+    std::size_t switches = 0;
+    bool hasModeGuard = false;
+    for (const auto id : continueBlocks) {
+        const auto& block = blocks.at(id);
+        switches += block.switches;
+        const auto test = modeTests.find(block.condition);
+        if (test != modeTests.end()) {
+            const bool modeGuard = std::any_of(test->second.begin(), test->second.end(), [&](const auto operand) { return enabledModes.contains(operand); });
+            if (modeGuard) {
+                hasModeGuard = true;
+            }
+        }
+    }
+    require(switches >= minimumSwitches, name + ": image continue block lost its mode switches");
+    require(!indirect || hasModeGuard, name + ": indirect image mode guard is missing");
+}
+
+void verifyImageLoopPreparation() {
+    struct ImageLoop {
+        std::string name;
+        std::vector<std::uint32_t> code;
+        std::size_t minimumSwitches;
+        bool indirect = false;
+        std::uint32_t minimumSpirv = 0x00010300u;
+        std::span<const std::uint32_t> userData{};
+        std::array<std::uint32_t, 3> workgroupSize{0u, 1u, 1u};
+    };
+    const std::array<std::uint32_t, 32> msaaUserData{0x20000u, 20u << 20u, 7u | (7u << 14u), 0xf0020facu, 0u, 0x20u, 0u, 0u, 1u, 2u, 3u, 4u};
+    const std::vector<ImageLoop> programs{
+        {"image load in the continue block", {0xbe940380u, 0x7e020280u, 0xf0000108u, 0x00010400u, 0x80148114u, 0xbf0a8214u, 0xbf85fffbu, 0xe0700000u, 0x80000400u, 0xbf810000u}, 1u, false, 0x00010400u},
+        {"image store in the continue block", {0xbe940380u, 0x7e020280u, 0x7e080281u, 0xf0200108u, 0x00010400u, 0x80148114u, 0xbf0a8214u, 0xbf85fffbu, 0xbf810000u}, 1u},
+        {"early continue beside a nested selection with an image store", {0xbe940380u, 0x7e020280u, 0x7d880014u, 0xbf860005u, 0x7d880088u, 0xbf870002u, 0x7d880084u, 0xbf870004u, 0x4a020281u, 0x4a020282u, 0xbf09c014u, 0xbf850004u, 0xf0200108u, 0x00010100u, 0x80149014u, 0xbf82fff2u, 0xe0700000u, 0x80000100u, 0xbf810000u}, 1u},
+        {"MSAA array store with a changing sample index", {0xbe940380u, 0x7e000280u, 0x7e020280u, 0x7e040280u, 0x7e080208u, 0x7e0a0209u, 0x7e0c020au, 0x7e0e020bu, 0x7e060214u, 0xf0200f38u, 0x00000400u, 0x80148114u, 0xbf0a8414u, 0xbf85fffau, 0xbf810000u}, 1u, false, 0x00010300u, msaaUserData, {8u, 8u, 1u}},
+        {"scalar image atomic in the continue block", {0xbe940380u, 0x7e020280u, 0x7e080281u, 0xf0442108u, 0x00010400u, 0x80148114u, 0xbf0a8214u, 0xbf85fffbu, 0xe0700000u, 0x80000400u, 0xbf810000u}, 1u},
+        {"two image loads in the continue block", {0xbe940380u, 0x7e020280u, 0xf0000108u, 0x00010400u, 0xe0700000u, 0x80000400u, 0xf0000108u, 0x00030800u, 0xe0700000u, 0x80000800u, 0x80148114u, 0xbf0a8214u, 0xbf85fff5u, 0xbf810000u}, 2u, false, 0x00010400u},
+        {"indirect image sample in the continue block", {0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xbea00380u, 0xf09c0f08u, 0x00450000u, 0x80208120u, 0xbf0a8220u, 0xbf85fffbu, 0xe0700000u, 0x80070000u, 0xbf810000u}, 1u, true}
+    };
+    const std::array<std::uint32_t, 32> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu, 0x20000u, 20u << 20u, 0u, 0x90000facu, 0u, 0u, 0u, 0u, 0x30000u, 22u << 20u, 0u, 0x90000facu};
+    const std::array<std::uint32_t, 10> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilitySampledImageArrayDynamicIndexing, spv::CapabilityShaderNonUniform, spv::CapabilitySampledImageArrayNonUniformIndexing, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityStorageImageMultisample, spv::CapabilityImageMSArray};
+    const std::array<std::string_view, 4> extensions{"SPV_KHR_storage_buffer_storage_class", "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_descriptor_indexing"};
+    for (const auto& [name, code, minimumSwitches, indirect, minimumSpirv, imageUserData, workgroupSize] : programs) {
+        for (const auto wave : {32u, 64u}) {
+            for (const auto subgroup : {32u, 64u}) {
+                RecompileRequest request{};
+                request.shader = {ShaderStage::Compute, 0x20000u, code, 0u, {}};
+                request.context.waveSize = wave;
+                request.context.userData = imageUserData.empty() ? userData : imageUserData;
+                request.context.compute = ShaderComputeStageInfo{{workgroupSize[0u] == 0u ? wave : workgroupSize[0u], workgroupSize[1u], workgroupSize[2u]}, 0u, {false, false, false}, false, 1u};
+                request.target.vulkanVersion = 0x00403000u;
+                request.target.spirvVersion = 0x00010600u;
+                request.target.subgroupSize = subgroup;
+                request.target.bdaAbiVersion = BdaAbi::Version;
+                request.target.supportedCapabilities = capabilities;
+                request.target.supportedExtensions = extensions;
+                request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+                request.target.maxWorkgroupInvocations = 1024u;
+                request.target.maxWorkgroupSharedMemoryBytes = 49152u;
+                request.layout = {0u, 0u, 0u, 128u};
+                request.useCache = false;
+                const auto prepared = PrepareShader(request);
+                verifyImageContinuePaths(name + " wave" + std::to_string(wave) + "/host" + std::to_string(subgroup), GetPreparedArtifact(*prepared).spirv.Words(), minimumSwitches, indirect);
+                if (wave == 32u && subgroup == 32u) {
+                    for (const auto [vulkan, spirv] : {std::pair{0x00401000u, 0x00010300u}, std::pair{0x00401000u, 0x00010400u}, std::pair{0x00402000u, 0x00010500u}}) {
+                        if (spirv < minimumSpirv) continue;
+                        request.target.vulkanVersion = vulkan;
+                        request.target.spirvVersion = spirv;
+                        const auto older = PrepareShader(request);
+                        verifyImageContinuePaths(name + " SPIR-V 1." + std::to_string((spirv >> 8u) & 0xffu), GetPreparedArtifact(*older).spirv.Words(), minimumSwitches, indirect);
+                    }
+                }
+            }
+        }
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--image-loops") {
+        try {
+            verifyImageLoopPreparation();
+            std::puts("Image loop preparation tests passed");
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "%s\n", error.what());
+            return 1;
+        }
+    }
     if (argc > 1) {
         int failures = 0;
         for (int i = 1; i < argc; ++i) {
