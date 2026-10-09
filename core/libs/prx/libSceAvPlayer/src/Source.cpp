@@ -33,6 +33,7 @@ constexpr std::uint32_t AudioBufferAlignment = 0x10;
 constexpr std::uint32_t AudioChunkSamples = 1024;
 constexpr std::uint32_t AudioMaxChannels = 8;
 constexpr std::uint32_t VideoDecodeAheadFrames = 4;
+constexpr std::uint32_t VideoHeldFrames = 4;
 constexpr std::size_t VideoPacketLimit = 30;
 constexpr std::size_t AudioPacketLimit = 8;
 constexpr std::size_t AudioOnlyPacketLimit = 30;
@@ -201,7 +202,7 @@ struct Decoder {
     std::deque<PacketItem> packets;
     std::uint64_t queuedBytes = 0;
     std::deque<Frame> frames;
-    std::vector<std::uint8_t*> free;
+    std::deque<std::uint8_t*> free;
     std::vector<std::uint8_t*> allocated;
     std::optional<Frame> current;
     std::deque<std::uint8_t*> handedOut;
@@ -327,7 +328,7 @@ public:
                 return result;
             }
         }
-        addVideoDecodeAheadBuffers();
+        addOptionalVideoBuffers();
         const auto start = startOffset;
         startOffset = 0;
         seek(start);
@@ -627,18 +628,22 @@ private:
         return SCE_OK;
     }
 
-    void addVideoDecodeAheadBuffers() {
+    void addOptionalVideoBuffers() {
         if (video.stream < 0) return;
+        if (!addVideoBuffers(VideoDecodeAheadFrames)) return;
+        if (addVideoBuffers(VideoHeldFrames)) video.retained = std::max<std::size_t>(video.retained, VideoHeldFrames);
+    }
 
+    bool addVideoBuffers(std::uint32_t count) {
         const auto& memory = settings.memory;
         std::vector<std::uint8_t*> extra;
-        extra.reserve(VideoDecodeAheadFrames);
-        for (std::uint32_t index = 0; index < VideoDecodeAheadFrames; ++index) {
+        extra.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
             auto* buffer = static_cast<std::uint8_t*>(memory.allocate_texture(
                 memory.object_ptr, VideoBufferAlignment, video.bufferSize));
             if (!buffer) {
                 for (auto* allocated : extra) memory.deallocate_texture(memory.object_ptr, allocated);
-                return;
+                return false;
             }
             extra.push_back(buffer);
         }
@@ -646,6 +651,7 @@ private:
             video.allocated.push_back(buffer);
             video.free.push_back(buffer);
         }
+        return true;
     }
 
     void releaseDecoders() {
@@ -901,8 +907,8 @@ private:
         condition.wait(lock, [&] { return stopping || !decoder.free.empty() || epoch < minEpoch; });
         if (stopping) return Acquire::Stopping;
         if (epoch < minEpoch) return Acquire::Stale;
-        buffer = decoder.free.back();
-        decoder.free.pop_back();
+        buffer = decoder.free.front();
+        decoder.free.pop_front();
         return Acquire::Buffer;
     }
 
