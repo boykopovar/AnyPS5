@@ -70,9 +70,9 @@ static std::uint64_t ClockOrigin() {
 }
 
 static std::uint64_t GetMonotonicNanos() {
-    const auto raw = RawMonotonicNanos();
-    if (TimeScale() == 1.0) return raw;
+    if (TimeScale() == 1.0) return RawMonotonicNanos();
     const auto origin = ClockOrigin();
+    const auto raw = RawMonotonicNanos();
     return origin + static_cast<std::uint64_t>(static_cast<double>(raw - origin) * TimeScale());
 }
 
