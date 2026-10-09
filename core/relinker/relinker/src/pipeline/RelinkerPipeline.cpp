@@ -59,20 +59,18 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         }
     }
 
-    std::vector<DynamicTag> dynTags;
-    bool hasDynamicSegment = false;
-
+    const ProgramHeader* dynamicSegment = nullptr;
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_DYNAMIC)
             continue;
-
-        hasDynamicSegment = true;
-        dynTags = _elfReader->ReadDynamicTags(ph);
-        break;
+        if (dynamicSegment != nullptr)
+            throw RelinkerException("Duplicate dynamic segment");
+        dynamicSegment = &ph;
     }
 
-    if (!hasDynamicSegment)
+    if (dynamicSegment == nullptr)
         throw RelinkerException("No PT_DYNAMIC segment found");
+    const auto dynTags = _elfReader->ReadDynamicTags(*dynamicSegment);
 
     auto hasTag = [&](const std::int64_t tag) {
         for (const auto& t : dynTags)
@@ -82,10 +80,17 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     };
 
     auto getTagValue = [&](const std::int64_t tag) -> std::uint64_t {
-        for (const auto& t : dynTags)
-            if (t.Tag == tag)
-                return t.Value;
-        throw RelinkerException("DT tag not found");
+        const DynamicTag* found = nullptr;
+        for (const auto& t : dynTags) {
+            if (t.Tag != tag)
+                continue;
+            if (found != nullptr)
+                throw RelinkerException("Duplicate dynamic tag " + std::to_string(tag));
+            found = &t;
+        }
+        if (found == nullptr)
+            throw RelinkerException("DT tag not found");
+        return found->Value;
     };
 
     auto requireExactlyOneOf = [&](const std::int64_t osTag, const std::int64_t sysvTag, const char* name) {

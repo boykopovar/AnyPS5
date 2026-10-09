@@ -27,16 +27,42 @@ def main():
             source.write_bytes(image)
             for mode in ([], ["--windows"]):
                 output = work / (name + (".exe" if mode else ".out"))
-                result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(output)],
+                result = subprocess.run([str(relinker), "--skip-sce-module", "--registry", *mode, str(source), str(output)],
                                         capture_output=True, text=True, timeout=20)
-                valid = result.returncode == 0 and output.exists() if error is None else (
-                    result.returncode == 2 and error in result.stderr and not output.exists())
+                if error is None:
+                    valid = (result.returncode == 0 and output.exists()
+                             and output.with_suffix(".registry.json").exists())
+                else:
+                    valid = (result.returncode == 2 and error in result.stderr and not output.exists()
+                             and not output.with_suffix(".registry.json").exists())
                 if not valid:
                     failures.append((name, mode, result.returncode, result.stdout, result.stderr))
 
         image = fixture()
         size = struct.unpack_from("<Q", image, 120 + 32)[0]
         convert("valid", image)
+
+        missing = fixture()
+        struct.pack_into("<I", missing, 120, 0x6fffff01)
+        convert("missing", missing, "No PT_DYNAMIC segment found")
+
+        for name, offset, declared_size in (
+            ("same-table", 0x400, size),
+            ("different-table", 0x800, 16),
+            ("empty-table", 0x800, 0),
+            ("out-of-bounds-table", 0xffffffffffffffff, size),
+        ):
+            for first in (False, True):
+                duplicate = fixture()
+                duplicate[0x800:0x810] = bytes(16)
+                struct.pack_into("<IIQQQQQQ", duplicate, 176,
+                                 2, 6, offset, 0x800, 0x800, declared_size, declared_size, 8)
+                if first:
+                    original = duplicate[120:176]
+                    duplicate[120:176] = duplicate[176:232]
+                    duplicate[176:232] = original
+                convert("duplicate-" + name + ("-first" if first else "-last"),
+                        duplicate, "Duplicate dynamic segment")
 
         padded = fixture()
         struct.pack_into("<QQ", padded, 120 + 32, size + 16, size + 16)
