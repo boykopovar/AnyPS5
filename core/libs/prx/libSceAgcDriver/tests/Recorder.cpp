@@ -2874,6 +2874,115 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+void storageSnapshotTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.width = 128;
+    resource.height = 128;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t bytes = unit * 3;
+    Require(DescribeSurface(resource).guestBytes == unit, "snapshot test surface exceeds its block");
+    std::vector<std::byte> cpuMemory(unit + 256, std::byte{0x33});
+    resource.baseAddress = (reinterpret_cast<std::uintptr_t>(cpuMemory.data()) + 255) & ~std::uintptr_t{255};
+    {
+        auto cpu = context;
+        cpu.hostImportAlignment = 0;
+        auto image = std::make_shared<StorageTexture>(cpu, detiler, resource, 0);
+        recorder.Keep(image);
+        Require(image->SnapshotBytes() >= unit, "CPU upload omitted the snapshot needed for byte comparisons");
+        SampleProgram program(context, recorder);
+        expectRed(program.Red(image->View(), VK_IMAGE_LAYOUT_GENERAL, 0), 0x33 / 255.0f, "CPU snapshot upload changed the texels");
+        recorder.Sync();
+    }
+    if (context.hostImportAlignment == 0 || !AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "watched host imports unavailable: lazy imported snapshots not tested\n";
+        return;
+    }
+#ifndef _WIN32
+    if (PrepareImportWatch(context) == ImportWatch::Unwatch) {
+        std::cout << "host imports are compared: lazy imported snapshots not tested\n";
+        return;
+    }
+#endif
+#ifdef _WIN32
+    auto* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, unit);
+    Require(block != nullptr, "cannot reserve the shared snapshot block");
+    const std::unique_ptr<void, decltype(&CloseHandle)> section(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr), CloseHandle);
+    Require(section != nullptr, "cannot create the shared snapshot block");
+    GuestArena::GuestArenaMap_nid_postfix(block, bytes, section.get(), 0, PAGE_READWRITE);
+#else
+    auto* block = AllocateWatched(bytes, unit);
+#endif
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: lazy imported snapshots not tested\n";
+        return;
+    }
+    struct Release {
+        const Context& context;
+        void* block;
+        ~Release() {
+            GuestAllocations::Mutation().Remove(block);
+            HostImportFor(context, reinterpret_cast<std::uintptr_t>(block), bytes);
+            ReleaseWatched(block, bytes);
+        }
+    } release{context, block};
+    std::memset(block, 0x33, bytes);
+    GuestAllocations::Mutation().Add(block, bytes, true, true);
+    resource.baseAddress = reinterpret_cast<std::uintptr_t>(block) + unit;
+    auto image = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+    recorder.Keep(image);
+    recorder.Sync();
+    Require(AgcDriver::GuestMemory::Watched(resource.baseAddress, unit), "host import discarded snapshot test write watching");
+    Require(image->SnapshotBytes() == 0, "watched host upload retained an unused snapshot");
+    SampleProgram program(context, recorder);
+    expectRed(program.Red(image->View(), VK_IMAGE_LAYOUT_GENERAL, 0), 0x33 / 255.0f, "lazy host upload changed the texels");
+    std::memset(reinterpret_cast<void*>(resource.baseAddress), 0x55, unit);
+    image->Refresh();
+    Require(image->SnapshotBytes() == 0, "watched host refresh allocated an unused snapshot");
+    expectRed(program.Red(image->View(), VK_IMAGE_LAYOUT_GENERAL, 0), 0x55 / 255.0f, "lazy host upload lost a newer CPU write");
+    const auto commands = recorder.Commands();
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const VkClearColorValue red{{1.0f, 0.0f, 0.0f, 1.0f}};
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &red, 1, &range);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+    image->MarkDirty();
+    image->Flush();
+    recorder.Sync();
+    std::vector<std::byte> stored(bytes);
+    AgcDriver::GuestMemory::ReadCommitted(reinterpret_cast<std::uintptr_t>(block), stored);
+    for (std::size_t offset = 0; offset < bytes; ++offset) {
+        const auto expected = offset < unit || offset >= unit * 2 ? 0x33 : offset % 4 == 0 || offset % 4 == 3 ? 0xff : 0;
+        Require(stored[offset] == std::byte{static_cast<unsigned char>(expected)}, "lazy snapshot write-back changed texels or neighboring bytes");
+    }
+    Require(image->SnapshotBytes() == 0, "watched GPU write-back allocated an unused snapshot");
+    auto clearResource = resource;
+    clearResource.dccAddress = reinterpret_cast<std::uintptr_t>(block);
+    const auto keyBytes = DccKeyBytes(unit);
+    std::memset(block, 0, keyBytes);
+    auto cleared = std::make_shared<StorageTexture>(context, detiler, clearResource, 0);
+    recorder.Keep(cleared);
+    Require(cleared->SnapshotBytes() >= unit, "fast-clear byte comparisons omitted their snapshot");
+    expectRed(program.Red(cleared->View(), VK_IMAGE_LAYOUT_GENERAL, 0), 0, "fast-clear snapshot changed its clear value");
+    std::memset(block, 0xff, keyBytes);
+    std::memset(reinterpret_cast<void*>(resource.baseAddress), 0x77, unit);
+    cleared->Refresh();
+    Require(cleared->SnapshotBytes() == 0, "watched upload retained the old fast-clear snapshot");
+    expectRed(program.Red(cleared->View(), VK_IMAGE_LAYOUT_GENERAL, 0), 0x77 / 255.0f, "snapshot reclamation lost a newer CPU write");
+    recorder.Sync();
+    std::cout << "CPU snapshots and snapshot-free watched uploads, refreshes and write-back passed\n";
+}
+
 int main(int argc, char** argv) {
     try {
         Device device;
@@ -2881,6 +2990,10 @@ int main(int argc, char** argv) {
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--snapshot-only") {
+            storageSnapshotTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
             singleCubeTests(device, recorder);
             std::cout << "Single cube snapshot and storage sampling tests passed\n";

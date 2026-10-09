@@ -293,6 +293,7 @@ public:
     bool Refresh();
     std::uint64_t GuestBytes() const;
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
+    std::size_t SnapshotBytes() const { return original.capacity(); }
 
 private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
