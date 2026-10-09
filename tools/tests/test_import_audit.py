@@ -204,6 +204,44 @@ class ImportAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(import_audit.AuditError, "lib.prx"):
                 import_audit.pe_exports(path, image[:cut])
 
+    def test_pe_export_name_must_end_inside_its_section(self):
+        image = build_pe(["alpha"])
+        for suffix in (b"\0", b"outside-section\0"):
+            with self.subTest(suffix=suffix):
+                malformed = image[:-1] + b"X" + suffix
+                with self.assertRaisesRegex(import_audit.AuditError, "export name.*not a NUL-terminated string"):
+                    import_audit.pe_exports(Path("lib.prx"), malformed)
+
+    def test_pe_export_name_can_end_at_section_boundary(self):
+        image = build_pe(["alpha"])
+        for suffix in (b"", b"outside-section\0"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image + suffix), {"alpha"})
+
+    def test_pe_export_name_in_another_section(self):
+        image = bytearray(build_pe(["unused"]))
+        name = b"alpha\0"
+        struct.pack_into("<H", image, 0x46, 2)
+        struct.pack_into("<I", image, 0x200 + 40, 0x3000)
+        struct.pack_into("<8sIIIIIIHHI", image, 0x58 + 240 + 40, b".names", len(name), 0x3000, len(name), len(image), 0, 0, 0, 0, 0x40000040)
+        image.extend(name)
+        self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha"})
+        image[-1] = ord("X")
+        image.extend(b"\0")
+        with self.assertRaisesRegex(import_audit.AuditError, "export name.*not a NUL-terminated string"):
+            import_audit.pe_exports(Path("lib.prx"), image)
+
+    def test_pe_unterminated_export_name_exits_two(self):
+        work = self.work
+        image = build_pe(["AAAAAAAAAAA"])
+        (work.libs / "libSceA.prx").write_bytes(image[:-1] + b"X\0")
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        code, out, err = work.run(registry)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("libSceA.prx: export name", err)
+        self.assertIn("not a NUL-terminated string", err)
+
     def test_library_directories(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe(["AAAAAAAAAAA"]))

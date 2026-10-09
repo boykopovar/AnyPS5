@@ -84,7 +84,7 @@ def pe_exports(path, data):
         raise AuditError(f"{path}: PE file has no export table")
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
-    def to_offset(address, length):
+    def section_range(address, length):
         for section in sections:
             virtual, raw_size, raw_offset = section[2], section[3], section[4]
             if address < virtual:
@@ -93,19 +93,20 @@ def pe_exports(path, data):
             if relative >= raw_size or length > raw_size - relative:
                 continue
             take(data, raw_offset + relative, length, path, f"data at RVA 0x{address:x}")
-            return raw_offset + relative
+            return raw_offset + relative, min(raw_offset + raw_size, len(data))
         raise AuditError(f"{path}: RVA 0x{address:x} is not inside any section")
 
-    table = unpack("<IIHHIIIIIII", data, to_offset(rva, 40), path, "export directory")
+    table_offset, _ = section_range(rva, 40)
+    table = unpack("<IIHHIIIIIII", data, table_offset, path, "export directory")
     name_count, names_rva = table[7], table[9]
     names = set()
     if not name_count:
         return names
-    names_offset = to_offset(names_rva, name_count * 4)
+    names_offset, _ = section_range(names_rva, name_count * 4)
     for index in range(name_count):
         name_rva = unpack("<I", data, names_offset + index * 4, path, "export name RVA")[0]
-        offset = to_offset(name_rva, 1)
-        names.add(cstring(data, offset, len(data), path, "export name"))
+        offset, limit = section_range(name_rva, 1)
+        names.add(cstring(data, offset, limit, path, "export name"))
     return names
 
 
