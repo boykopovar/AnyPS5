@@ -193,7 +193,8 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
 }
 
 void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result) {
-    zero(cx, 0x000, 0x00001f9fu, "depth/stencil clear, copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
+    zero(cx, 0x000, 0x00001f9du, "depth clear, copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
+    const bool stencilClear = (read(cx, 0x000) & 2u) != 0;
     const auto view = read(cx, 0x002);
     zero(cx, 0x002, 0x3c000000u, "depth mips (DB_DEPTH_VIEW MIP_LEVEL)");
     zero(cx, 0x010, 0x000f100cu, "multisampled, partially resident or mipmapped depth (DB_Z_INFO)");
@@ -238,6 +239,23 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, State& result)
         const auto ops = read(cx, 0x10b);
         result.stencilFront = stencilFace((depthControl >> 8u) & 7u, ops, read(cx, 0x10c), stencilReadOnly);
         result.stencilBack = (depthControl & 0x80u) != 0 ? stencilFace((depthControl >> 20u) & 7u, ops >> 12u, read(cx, 0x10d), stencilReadOnly) : result.stencilFront;
+    }
+    if (stencilClear) {
+        Require(stencil, "stencil clear without a stencil plane");
+        Require(!stencilReadOnly, "stencil clear through a read-only stencil view");
+        Require(((read(cx, 0x10c) >> 16u) & 0xffu) == 0xffu, "stencil clear with a partial stencil write mask");
+        Require((depthControl & 0x80u) == 0 || ((read(cx, 0x10d) >> 16u) & 0xffu) == 0xffu, "stencil clear with a partial back-face stencil write mask");
+        VkStencilOpState clear{};
+        clear.failOp = VK_STENCIL_OP_REPLACE;
+        clear.passOp = VK_STENCIL_OP_REPLACE;
+        clear.depthFailOp = VK_STENCIL_OP_REPLACE;
+        clear.compareOp = VK_COMPARE_OP_ALWAYS;
+        clear.compareMask = 0xffu;
+        clear.writeMask = 0xffu;
+        clear.reference = depth.clearStencil;
+        result.stencilTest = true;
+        result.stencilFront = clear;
+        result.stencilBack = clear;
     }
 }
 

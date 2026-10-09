@@ -750,6 +750,25 @@ void DepthStencilTests() {
     queue.context[0x10b] = 0;
     queue.context[0x000] = 1;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
+    queue.context[0x000] = 0x22;
+    queue.context[0x10b] = 0x00010001;
+    queue.context[0x10c] = 0x01ffff05;
+    queue.context[0x200] = 0x00200211;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    for (const auto& face : {state.stencilFront, state.stencilBack}) {
+        Require(face.compareOp == VK_COMPARE_OP_ALWAYS && face.failOp == VK_STENCIL_OP_REPLACE && face.passOp == VK_STENCIL_OP_REPLACE && face.depthFailOp == VK_STENCIL_OP_REPLACE, "a stencil clear draw did not replace every covered stencil value");
+        Require(face.reference == 7 && face.writeMask == 0xff && face.compareMask == 0xff, "a stencil clear draw did not write DB_STENCIL_CLEAR");
+    }
+    Require(state.stencilTest && !state.depthWrite, "a stencil clear draw changed the depth or stencil enables");
+    queue.context[0x200] = 0x00200291;
+    queue.context[0x10d] = 0x010fff05;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "partial back-face stencil write mask");
+    queue.context[0x200] = 0x00200211;
+    queue.context[0x10c] = 0x010fff05;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "partial stencil write mask");
+    queue.context[0x10c] = 0x01ffff05;
+    queue.context[0x011] = 0x20000180;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "without a stencil plane");
     queue = makeState();
     queue.context[0x31b] = 1u << 26u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "mip exceeds");
