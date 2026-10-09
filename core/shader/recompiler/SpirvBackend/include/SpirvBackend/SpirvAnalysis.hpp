@@ -27,6 +27,7 @@ struct SpirvRequirements {
     bool sharedInt64Atomics = false;
     bool float64 = false;
     bool coherentBuffers = false;
+    bool coherentBufferAlias = false;
     std::vector<std::uint32_t> capabilities;
     std::vector<std::string> extensions;
 };

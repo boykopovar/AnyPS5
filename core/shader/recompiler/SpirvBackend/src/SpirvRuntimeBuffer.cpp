@@ -117,10 +117,10 @@ RuntimeAddress address(SpirvValueEmitContext& context, const IrValue& instructio
     return {AddBdaAddress(context, instruction, resource.base, Unary(state, spv::OpUConvert, TypeScalarU64(state), byte), false), inBounds};
 }
 
-MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue& instruction, bool wide = false) {
+MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue& instruction, bool wide = false, bool plainLoad = false) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
-    const auto variable = wide ? state.storageBufferU64Variable : state.storageBufferVariable;
+    const auto variable = wide ? state.storageBufferU64Variable : plainLoad || state.storageBufferCoherentVariable == 0u ? state.storageBufferVariable : state.storageBufferCoherentVariable;
     if (variable == 0u) context.Fail(instruction, "direct buffer descriptor array is missing");
     const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource);
     MemoryResourceAccess access;
@@ -150,7 +150,7 @@ std::uint32_t directWordIndex(SpirvEmitterState& state, const MemoryResourceAcce
 std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t bits) {
     if (context.Memory(instruction).gpuDescriptor) return EmitBdaRead(context, instruction, address, bits);
     auto& state = context.state;
-    const auto access = directAccess(context, instruction);
+    const auto access = directAccess(context, instruction, false, !context.Memory(instruction).coherent);
     const auto index = directWordIndex(state, access, address);
     const auto misalignment = baseMisalignment(context, instruction);
     const auto unaligned = nonzero(state, misalignment);
