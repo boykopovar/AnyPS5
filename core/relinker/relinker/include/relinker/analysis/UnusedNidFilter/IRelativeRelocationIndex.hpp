@@ -13,6 +13,7 @@ class IRelativeRelocationIndex {
 public:
     virtual ~IRelativeRelocationIndex() = default;
     virtual std::optional<VirtualAddress> TargetOfSlot(VirtualAddress slotVaddr) const = 0;
+    virtual std::vector<VirtualAddress> Targets() const = 0;
 };
 
 std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(

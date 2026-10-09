@@ -1,5 +1,6 @@
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/CodegenException.hpp>
 #include <unordered_map>
 #include <queue>
 #include <cstring>
@@ -26,29 +27,50 @@ private:
     const std::unordered_set<VirtualAddress>* _borrowed = nullptr;
 };
 
-std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
+namespace {
+
+void buildGraph(
     std::span<const std::uint8_t> text,
     VirtualAddress textVaddr,
     VirtualAddress entryVaddr,
     const std::vector<VirtualAddress>& extraEntries,
     const IRelativeRelocationIndex& relativeRelocations,
+    const std::vector<StrictDataRegion>* data,
     bool followCodeAddresses,
     std::unordered_set<VirtualAddress>& reachable
 ) {
     const Codegen::X64InstructionDecoder decoder;
+    std::unordered_set<VirtualAddress> visited;
     std::queue<VirtualAddress> worklist;
+    std::vector<VirtualAddress> addressTaken;
+    bool speculative = false;
 
     auto enqueue = [&](VirtualAddress va) {
         if (reachable.count(va) > 0) return;
         if (va < textVaddr || va >= textVaddr + static_cast<VirtualAddress>(text.size())) return;
-        reachable.insert(va);
+        if (!visited.insert(va).second) return;
         worklist.push(va);
+    };
+
+    auto takeAddress = [&](VirtualAddress va) {
+        if (data == nullptr) return;
+        if (speculative)
+            enqueue(va);
+        else
+            addressTaken.push_back(va);
     };
 
     enqueue(entryVaddr);
     for (VirtualAddress va : extraEntries) enqueue(va);
+    for (VirtualAddress va : relativeRelocations.Targets()) takeAddress(va);
 
-    while (!worklist.empty()) {
+    while (!worklist.empty() || !speculative) {
+        if (worklist.empty()) {
+            speculative = true;
+            for (VirtualAddress va : addressTaken) enqueue(va);
+            continue;
+        }
+
         VirtualAddress va = worklist.front();
         worklist.pop();
 
@@ -59,7 +81,17 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
         std::size_t available = text.size() - bufOff;
         if (available == 0) throw RelinkerException("CFG: zero available bytes at target", va);
 
-        Codegen::DecodedInstructionInfo info = decoder.DecodeInstruction(text.data() + bufOff, available);
+        Codegen::DecodedInstructionInfo info;
+        if (speculative) {
+            try {
+                info = decoder.DecodeInstruction(text.data() + bufOff, available);
+            } catch (const Codegen::CodegenException&) {
+                continue;
+            }
+        } else {
+            info = decoder.DecodeInstruction(text.data() + bufOff, available);
+        }
+        reachable.insert(va);
 
         VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
 
@@ -67,6 +99,14 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
             std::int32_t displacement = 0;
             std::memcpy(&displacement, text.data() + bufOff + info.RipRelativeDispOffset, 4);
             enqueue(static_cast<VirtualAddress>(static_cast<std::int64_t>(nextVaddr) + displacement));
+        }
+
+        if (data != nullptr && info.HasRipRelativeDisp && !info.IsTwoByteOpcode && info.Opcode == 0x8D) {
+            std::int32_t displacement = 0;
+            std::memcpy(&displacement, text.data() + bufOff + info.RipRelativeDispOffset, 4);
+            const auto base = static_cast<VirtualAddress>(static_cast<std::int64_t>(nextVaddr) + displacement);
+            takeAddress(base);
+            for (VirtualAddress target : ReadRelativeTableTargets(*data, base, textVaddr, text.size())) takeAddress(target);
         }
 
         switch (info.FlowKind) {
@@ -117,7 +157,20 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
                 break;
         }
     }
+}
 
+}
+
+std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
+    std::span<const std::uint8_t> text,
+    VirtualAddress textVaddr,
+    VirtualAddress entryVaddr,
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses,
+    std::unordered_set<VirtualAddress>& reachable
+) {
+    buildGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, nullptr, followCodeAddresses, reachable);
     return std::make_unique<ControlFlowGraph>(&reachable);
 }
 
@@ -143,6 +196,19 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
     bool followCodeAddresses
 ) {
     return BuildControlFlowGraph(std::span<const std::uint8_t>(text.data(), text.size()), textVaddr, entryVaddr, extraEntries, relativeRelocations, followCodeAddresses);
+}
+
+std::unique_ptr<IControlFlowGraph> BuildAddressTakenControlFlowGraph(
+    const std::vector<std::uint8_t>& text,
+    VirtualAddress textVaddr,
+    VirtualAddress entryVaddr,
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations,
+    const std::vector<StrictDataRegion>& data
+) {
+    std::unordered_set<VirtualAddress> reachable;
+    buildGraph(std::span<const std::uint8_t>(text.data(), text.size()), textVaddr, entryVaddr, extraEntries, relativeRelocations, &data, false, reachable);
+    return std::make_unique<ControlFlowGraph>(std::move(reachable));
 }
 
 }

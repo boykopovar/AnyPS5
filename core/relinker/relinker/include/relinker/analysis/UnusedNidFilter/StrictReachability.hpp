@@ -39,6 +39,8 @@ struct StrictReachabilityResult {
 
 StrictReachabilityResult AnalyzeStrictReachability(const StrictReachabilityInput& input);
 
+std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDataRegion>& data, VirtualAddress base, VirtualAddress textVaddr, std::size_t textSize);
+
 }
 
 #endif
