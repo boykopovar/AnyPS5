@@ -1202,6 +1202,144 @@ int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
     return 0;
 }
 
+int APS5_VABI sceNetEtherStrton(const char* str, NetEtherAddr* n) {
+    (void)str;
+    (void)n;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetGetDns6Info(uint8_t* info, int flags) {
+    (void)info;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetGetDnsInfo(void* info, int flags) {
+    (void)info;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+const char* APS5_VABI sceNetGetIfName(uint32_t index) {
+    (void)index;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+int APS5_VABI sceNetGetRandom(uint32_t* out) {
+    (void)out;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetGetStatisticsInfo(void* info, int flags) {
+    (void)info;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void APS5_VABI sceNetGetSystemTime(uint64_t* out) {
+    (void)out;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int flags) {
+    (void)af;
+    (void)src;
+    (void)dst;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetIoctl(int s, uint64_t cmd, void* data) {
+    (void)s;
+    (void)cmd;
+    (void)data;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+void* APS5_VABI sceNetMemoryAllocate(int64_t size, int flags) {
+    (void)size;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+void APS5_VABI sceNetMemoryFree(void* ptr) {
+    (void)ptr;
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNetSetDns6Info(const uint8_t* info, int flags) {
+    (void)info;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetSetDnsInfo(const void* info, int flags) {
+    (void)info;
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetShowIfconfigWithMemory(int memid) {
+    (void)memid;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetShowNetstatWithMemory(int memid) {
+    (void)memid;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetShowPolicyWithMemory(int memid) {
+    (void)memid;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetShowRoute6WithMemory(int memid) {
+    (void)memid;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetShowRouteWithMemory(int memid) {
+    (void)memid;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetThreadCreate(Pthread* thread, void* param, const char* name) {
+    (void)thread;
+    (void)param;
+    (void)name;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetThreadJoin(Pthread thread) {
+    (void)thread;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNetUsleep(int microseconds) {
+    (void)microseconds;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 extern const std::uint8_t in6addr_any_nid_postfix[16] = {};
 extern const std::uint8_t in6addr_loopback_nid_postfix[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
 
