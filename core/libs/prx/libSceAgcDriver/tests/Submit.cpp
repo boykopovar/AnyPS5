@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -480,6 +481,41 @@ void testShaderHeaderAlignment() {
     refused(expectFailure([&] { AgcDriverRegisterShader_nid_postfix(at(4, truncated)); }), "smaller than its fixed fields");
 }
 
+void testRegisteredFloatMode() {
+    using AgcDriver::DriverDetail::RegisteredFloatMode;
+    using AgcDriver::DriverDetail::ShaderSnapshot;
+    using AgcDriver::DriverDetail::RegisteredShaderState;
+    struct Stage {
+        std::uint8_t type;
+        std::uint32_t rsrc1;
+        std::uint32_t fp16OverflowBit;
+    };
+    constexpr std::array<Stage, 7> stages{{{0, 0x212, 26}, {1, 0x00a, 29}, {2, 0x08a, 31}, {4, 0x08a, 31}, {6, 0x08a, 31}, {5, 0x10a, 30}, {7, 0x10a, 30}}};
+    constexpr std::array<std::uint32_t, 4> otherBits{26, 29, 30, 31};
+    for (const auto& stage : stages) {
+        const auto mode = [&](std::uint32_t value) {
+            ShaderSnapshot snapshot{0x20000, 0, stage.type, {}, {}};
+            auto state = std::make_shared<RegisteredShaderState>();
+            state->shader.emplace(stage.rsrc1, value);
+            snapshot.registeredState = state;
+            return RegisteredFloatMode(snapshot);
+        };
+        const auto name = "stage type " + std::to_string(stage.type);
+        const auto astro = mode((0xc0u << 12u) | (1u << 21u) | 0x3fu);
+        check(astro.has_value() && astro->floatMode == 0xc0u && astro->dx10Clamp && !astro->ieeeMode && !astro->fp16Overflow, (name + ": FLOAT_MODE 0xc0 with DX10_CLAMP decoded wrong").c_str());
+        const auto ieee = mode(1u << 23u);
+        check(ieee && ieee->ieeeMode && ieee->floatMode == 0u && !ieee->dx10Clamp, (name + ": IEEE_MODE decoded wrong").c_str());
+        check(mode(1u << stage.fp16OverflowBit)->fp16Overflow, (name + ": FP16_OVFL not read from bit " + std::to_string(stage.fp16OverflowBit)).c_str());
+        for (const auto bit : otherBits) {
+            if (bit != stage.fp16OverflowBit) check(!mode(1u << bit)->fp16Overflow, (name + ": bit " + std::to_string(bit) + " read as FP16_OVFL").c_str());
+        }
+        ShaderSnapshot missing{0x20000, 0, stage.type, {}, {}};
+        check(!RegisteredFloatMode(missing).has_value(), (name + ": a snapshot without registered state has a float mode").c_str());
+        missing.registeredState = std::make_shared<RegisteredShaderState>();
+        check(!RegisteredFloatMode(missing).has_value(), (name + ": a missing RSRC1 has a float mode").c_str());
+    }
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -580,6 +616,7 @@ int main() {
         testWaitFreeSubmissionTheCpuWaitsFor();
         testMultiSubmissions();
         testShaderHeaderAlignment();
+        testRegisteredFloatMode();
         testWorkerFailure();
         check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("required shader register") != std::string::npos, "shutdown lost worker failure");
         std::puts("AGC driver submit tests passed");

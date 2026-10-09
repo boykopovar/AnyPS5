@@ -111,7 +111,7 @@ jobs:
         with:
           path: ${{ github.workspace }}/.ccache
           key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
-      - run: ctest --test-dir build --output-on-failure --timeout 120 --repeat until-fail:3 --parallel 4 --output-log ctest.log
+      - run: ctest --test-dir build --output-on-failure --timeout 120 ${{ github.event_name == 'push' && '--repeat until-fail:3' || '' }} --parallel 4 --output-log ctest.log
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
@@ -170,7 +170,7 @@ jobs:
           path: ${{ github.workspace }}\.ccache
           key: ccache-windows-${{ github.run_id }}-${{ github.run_attempt }}
       - shell: cmd
-        run: ctest --test-dir build --output-on-failure --timeout 120 --repeat until-fail:3 --parallel 4 --output-log ctest.log
+        run: ctest --test-dir build --output-on-failure --timeout 120 ${{ github.event_name == 'push' && '--repeat until-fail:3' || '' }} --parallel 4 --output-log ctest.log
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash

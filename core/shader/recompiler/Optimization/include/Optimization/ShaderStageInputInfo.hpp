@@ -201,6 +201,26 @@ struct ShaderPixelInputInfo {
         return one ? 0x3f800000u : 0u;
     }
 
+    [[nodiscard]] bool InputIsFp16(std::uint32_t input) const {
+        return input < inputNum && input < 32u && (interpolatorSettings[input] & 0x80000u) != 0u;
+    }
+
+    [[nodiscard]] bool InputHalfIsDefault(std::uint32_t input, bool high) const {
+        if (!high) {
+            return InputIsDefault(input);
+        }
+        return input < inputNum && input < 32u && (interpolatorSettings[input] & 0x100000u) != 0u;
+    }
+
+    [[nodiscard]] std::uint32_t InputHalfDefaultBits(std::uint32_t input, std::uint32_t component, bool high) const {
+        if (!high) {
+            return InputDefaultBits(input, component);
+        }
+        const auto value = input < 32u ? (interpolatorSettings[input] >> 21u) & 0x3u : 0u;
+        const bool one = component == 3u ? (value & 0x1u) != 0u : (value & 0x2u) != 0u;
+        return one ? 0x3f800000u : 0u;
+    }
+
     [[nodiscard]] bool InputIsLinear(std::uint32_t input, std::uint32_t linearInputs, std::uint32_t perspectiveInputs) const {
         const auto bit = input < 32u ? 1u << input : 0u;
         if ((linearInputs & perspectiveInputs & bit) != 0u) {

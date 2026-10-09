@@ -476,6 +476,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPSqrt64: return Invoke(EmitFPSqrt64, ctx, inst);
         case IrOpcode::FPTrigPreop64: return Invoke(EmitFPTrigPreop64, ctx, inst);
         case IrOpcode::FPDot2F32F16: return Invoke(EmitFPDot2F32F16, ctx, inst);
+        case IrOpcode::FPInterpolateF32: return Invoke(EmitFPInterpolateF32, ctx, inst);
+        case IrOpcode::FPInterpolateF16: return Invoke(EmitFPInterpolateF16, ctx, inst);
         case IrOpcode::ConvertF32F64: return Invoke(EmitConvertF32F64, ctx, inst);
         case IrOpcode::ConvertF64F32: return Invoke(EmitConvertF64F32, ctx, inst);
         case IrOpcode::ConvertF64S32: return Invoke(EmitConvertF64S32, ctx, inst);
@@ -672,6 +674,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ImageAtomicCmpSwap64: return Invoke(EmitImageAtomicCmpSwap64, ctx, inst);
         case IrOpcode::GetAttribute: return Invoke(EmitGetAttribute, ctx, inst);
         case IrOpcode::GetInterpolationParameter: return Invoke(EmitGetInterpolationParameter, ctx, inst);
+        case IrOpcode::GetInterpolationParameterF16: return Invoke(EmitGetInterpolationParameterF16, ctx, inst);
         case IrOpcode::SetAttribute: return Invoke(EmitSetAttribute, ctx, inst);
         case IrOpcode::ControlNop: return Invoke(EmitControlNop, ctx, inst);
         case IrOpcode::Waitcnt: return Invoke(EmitWaitcnt, ctx, inst);

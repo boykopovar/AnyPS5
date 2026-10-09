@@ -6,6 +6,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include "ControlFlow/RequestSerializer.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -394,6 +395,21 @@ void verifyKeySensitivity() {
     changes("the first binding", [](SampleRequest& sample) { sample.request.layout.firstBinding = 1; });
     changes("the push constant offset", [](SampleRequest& sample) { sample.request.layout.pushConstantOffsetBytes = 16; });
     changes("the push constant size", [](SampleRequest& sample) { sample.request.layout.pushConstantSizeBytes = 64; });
+    changes("a float mode", [](SampleRequest& sample) { sample.request.context.floatMode = ShaderFloatMode{}; });
+    const ShaderFloatMode astroMode{0xc0u, true, false, false};
+    const auto withMode = [&](const ShaderFloatMode& mode) {
+        SampleRequest sample;
+        sample.request.context.floatMode = mode;
+        return std::pair{sample.Key(), RecompileCacheKey::ContextHash(sample.request)};
+    };
+    const auto astro = withMode(astroMode);
+    require(withMode(astroMode) == astro, "the float mode key is not deterministic");
+    for (const auto& [what, mode] : std::initializer_list<std::pair<const char*, ShaderFloatMode>>{
+             {"FLOAT_MODE", {0x00u, true, false, false}}, {"DX10_CLAMP", {0xc0u, false, false, false}},
+             {"IEEE_MODE", {0xc0u, true, true, false}}, {"FP16_OVFL", {0xc0u, true, false, true}}}) {
+        const auto changed = withMode(mode);
+        require(changed.first != astro.first && changed.second != astro.second, std::string("the key ignores ") + what);
+    }
 
     SampleRequest moved;
     moved.userData[0] ^= 0x10000u;
@@ -443,6 +459,16 @@ void verifyKeySensitivity() {
     require(fragment.Key() == fragmentKey && RecompileCacheKey::ContextHash(fragment.request) == fragmentContextKey, "runtime export mapping changed the fragment artifact key");
     fragment.request.context.pixel->targetOutputMode[0] = 7;
     require(fragment.Key() != fragmentKey, "integer fragment output reused a float interface");
+}
+
+void verifyFloatModeSerialization() {
+    const RequestSerializer serializer;
+    SampleRequest sample;
+    require(!serializer.Deserialize(serializer.Serialize(sample.request)).request.context.floatMode.has_value(), "an unknown float mode came back from serialization");
+    const ShaderFloatMode mode{0x04u, false, true, true};
+    sample.request.context.floatMode = mode;
+    const auto back = serializer.Deserialize(serializer.Serialize(sample.request));
+    require(back.request.context.floatMode == mode, "the float mode did not survive serialization");
 }
 
 void verifyStore() {
@@ -996,6 +1022,7 @@ int main(int argc, char** argv) {
         verifyEntryRoundTrip();
         verifyArtifactStorageIsolation();
         verifyKeySensitivity();
+        verifyFloatModeSerialization();
         verifyStore();
         verifyAcrossProcesses(argv[0]);
         verifyEmissionFailureMemo();

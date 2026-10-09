@@ -24,6 +24,7 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
     if (instruction.op == RdnaOpcode::Unsupported) {
         throw std::runtime_error(instruction.unsupportedReason.empty() ? "unsupported decoded instruction at pc " + std::to_string(instruction.programCounter) : std::string(instruction.unsupportedReason));
     }
+    f32DenormalFlush = f32DenormalFlushFor(instruction);
     bool translated = false;
     switch (instruction.family) {
         case RdnaInstructionFamily::SOP1:
@@ -38,7 +39,7 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
         case RdnaInstructionFamily::VOP3:
         case RdnaInstructionFamily::VOP3P:
         case RdnaInstructionFamily::VOPC:
-            translated = emitVector(instruction);
+            translated = emitVector(instruction) || emitInterpolation(instruction);
             break;
         case RdnaInstructionFamily::SMEM:
         case RdnaInstructionFamily::MUBUF:

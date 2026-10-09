@@ -194,6 +194,23 @@ bool TranslationContext::dsWrite2(const RdnaInstruction& inst) {
     return true;
 }
 
+bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
+    if (inst.gds) {
+        throw std::runtime_error("GDS src2 operations are not supported");
+    }
+    const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
+    const IrU32 address = readU32(inst.source0);
+    MemoryInfo source = memory;
+    source.offset = memory.secondaryOffset;
+    source.secondaryOffset = 0u;
+    IrValue* value = loadSharedU32(1u, address, source, inst.programCounter);
+    MemoryInfo target = memory;
+    target.secondaryOffset = 0u;
+    IrValue& active = ir.GetExec();
+    (void)ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), value, &active}, addMemoryInfo(target, inst.programCounter));
+    return true;
+}
+
 bool TranslationContext::dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     const MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     const IrU32 address = readU32(inst.source0);

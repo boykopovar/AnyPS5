@@ -874,8 +874,9 @@ void EmitQueryLodOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 void EmitByReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto elements = access.mem.imageByElements;
-    const auto components = access.mem.dataDwords / elements;
-    if (access.image.dimension != RdnaImageDimension::Dim2D || components == 0u || components * elements != access.mem.dataDwords || access.mem.dataBits != 32u) {
+    const bool packed = access.mem.imagePacked;
+    const auto components = packed ? 1u : access.mem.dataDwords / elements;
+    if (access.image.dimension != RdnaImageDimension::Dim2D || components == 0u || (packed ? access.mem.dataDwords != 1u : components * elements != access.mem.dataDwords) || access.mem.dataBits != 32u) {
         ctx.Fail(access.inst, "is a MIMG BY2/BY4 load outside the measured 2D, 32-bit data subset");
     }
     state.module.EmitCapability(spv::CapabilityImageQuery);
@@ -916,6 +917,18 @@ void EmitByReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
             state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2), coord, column, row);
             const auto color = state.module.AllocateId();
             state.module.AddFunction(spv::OpImageFetch, ImageVectorType(state, access.image.numericClass, 4), color, image, coord, spv::ImageOperandsLodMask, queryLod);
+            if (packed) {
+                const auto info = PackedTexelFormat(ctx, access);
+                std::uint32_t texelBits = 0;
+                for (std::uint32_t component = 0; component < info.componentCount; ++component) texelBits += info.componentBits[component];
+                if (texelBits * elements > 32u) ctx.Fail(access.inst, "is a MIMG PCK2/PCK4 load whose elements do not fit one dword");
+                const auto raw = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), raw, PackedImageTexel(ctx, access, color), 0u);
+                const auto bits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), raw, ConstantU32(state, texelBits == 32u ? 0xffffffffu : (1u << texelBits) - 1u));
+                const auto shifted = element == 0u ? bits : Binary(state, spv::OpShiftLeftLogical, TypeU32(state), bits, ConstantU32(state, element * texelBits));
+                words[0] = Binary(state, spv::OpBitwiseOr, TypeU32(state), words[0], Select(state, TypeU32(state), inside, shifted, ConstantU32(state, 0)));
+                continue;
+            }
             const auto texel = ResultVector(ctx, texelAccess, UnpackImageTexel(ctx, texelAccess, color), access.image.numericClass, false, false);
             for (std::uint32_t component = 0; component < components; ++component) {
                 const auto value = state.module.AllocateId();
