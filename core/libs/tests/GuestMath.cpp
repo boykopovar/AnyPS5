@@ -14,6 +14,7 @@ float APS5_VABI strtof_nid_postfix(const char*, char**);
 long double APS5_VABI strtold_nid_postfix(const char*, char**);
 std::int64_t APS5_VABI strtol_nid_postfix(const char*, char**, int);
 std::uint64_t APS5_VABI strtoul_nid_postfix(const char*, char**, int);
+unsigned long long APS5_VABI _Stoul_nid_postfix(const char*, char**, int);
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char*, char**, int);
 int* APS5_VABI __error_nid_postfix();
 struct LibcFloatConstant { std::uint32_t bits[4]; };
@@ -132,10 +133,21 @@ static void CheckIntegerConversions() {
             std::abort();
         }
     }
+    for (const auto& test : unsignedCases) {
+        char* end = nullptr;
+        *__error_nid_postfix() = 0;
+        const auto value = _Stoul_nid_postfix(test.text, &end, test.base);
+        if (value != test.value || end != test.text + test.consumed || *__error_nid_postfix() != test.error) {
+            std::fprintf(stderr, "Guest _Stoul failed for '%s' in base %d\n", test.text, test.base);
+            std::abort();
+        }
+    }
     *__error_nid_postfix() = 13;
     Require(strtol_nid_postfix("-4294967296", nullptr, 10) == -INT64_C(4294967296));
     Require(*__error_nid_postfix() == 13);
     Require(strtoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
+    Require(*__error_nid_postfix() == 13);
+    Require(_Stoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
     Require(*__error_nid_postfix() == 13);
     *__error_nid_postfix() = 0;
 }
