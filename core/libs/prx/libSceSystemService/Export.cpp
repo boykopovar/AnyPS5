@@ -1,13 +1,81 @@
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include "prx/libc/include/Shutdown.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#else
+#include <spawn.h>
+#include <sys/wait.h>
+#include <thread>
+extern char** environ;
+#endif
+
+namespace {
+
+bool hasWebScheme(std::string_view uri) {
+    for (std::string_view scheme : {std::string_view("http://"), std::string_view("https://")}) {
+        if (uri.size() < scheme.size()) continue;
+        bool matches = true;
+        for (std::size_t i = 0; i < scheme.size() && matches; ++i) {
+            matches = std::tolower(static_cast<unsigned char>(uri[i])) == scheme[i];
+        }
+        if (matches) return true;
+    }
+    return false;
+}
+
+void openInHostBrowser(const char* uri) {
+#ifdef _WIN32
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, uri, -1, nullptr, 0);
+    if (length <= 0) throw std::runtime_error("sceSystemServiceLaunchWebBrowser: the URI is not valid UTF-8");
+    std::wstring wide(static_cast<std::size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, uri, -1, wide.data(), length);
+    const auto result = reinterpret_cast<std::intptr_t>(ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    if (result <= 32) {
+        throw std::runtime_error("sceSystemServiceLaunchWebBrowser: ShellExecuteW failed with " + std::to_string(result));
+    }
+#else
+#ifdef __APPLE__
+    const char* opener = "open";
+#else
+    const char* opener = "xdg-open";
+#endif
+    char* const arguments[] = {const_cast<char*>(opener), const_cast<char*>(uri), nullptr};
+    pid_t pid = 0;
+    const int error = posix_spawnp(&pid, opener, nullptr, nullptr, arguments, environ);
+    if (error != 0) {
+        throw std::runtime_error(std::string("sceSystemServiceLaunchWebBrowser: cannot start ") + opener + ": " + std::strerror(error));
+    }
+    std::thread([pid] {
+        int status = 0;
+        waitpid(pid, &status, 0);
+    }).detach();
+#endif
+}
+
+}
+
 extern "C" {
+
+int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri, const void* param) {
+    if (uri == nullptr || *uri == '\0') return SYSTEM_SERVICE_ERROR_PARAMETER;
+    if (param != nullptr) NotImplemented_nid_no_patch("sceSystemServiceLaunchWebBrowser: launch parameter");
+    if (!hasWebScheme(uri)) NotImplemented_nid_no_patch("sceSystemServiceLaunchWebBrowser: URI scheme other than http or https");
+    openInHostBrowser(uri);
+    return SYSTEM_SERVICE_OK;
+}
+
 
 int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
     if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;

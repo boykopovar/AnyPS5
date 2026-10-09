@@ -27,8 +27,34 @@ extern "C" int APS5_VABI sceSystemServicePowerTick(void);
 extern "C" int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info);
 extern "C" int APS5_VABI sceSystemServiceDisableMusicPlayer(void);
 extern "C" int APS5_VABI sceSystemServiceReenableMusicPlayer(void);
+extern "C" int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri, const void* param);
+
+namespace {
+
+bool LaunchWebBrowserThrows(const char* uri, const void* param, const char* what) {
+    try {
+        static_cast<void>(sceSystemServiceLaunchWebBrowser(uri, param));
+    } catch (const std::runtime_error& error) {
+        return std::strcmp(error.what(), what) == 0;
+    }
+    return false;
+}
+
+}
 
 int main() {
+    Require(sceSystemServiceLaunchWebBrowser(nullptr, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceLaunchWebBrowser("", nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    int launchParam = 0;
+    Require(LaunchWebBrowserThrows("https://example.com/", &launchParam,
+                                   "sceSystemServiceLaunchWebBrowser: launch parameter not implemented"));
+    constexpr const char* schemeNotImplemented =
+        "sceSystemServiceLaunchWebBrowser: URI scheme other than http or https not implemented";
+    Require(LaunchWebBrowserThrows("ftp://example.com/", nullptr, schemeNotImplemented));
+    Require(LaunchWebBrowserThrows("file:///etc/passwd", nullptr, schemeNotImplemented));
+    Require(LaunchWebBrowserThrows("example.com", nullptr, schemeNotImplemented));
+    Require(LaunchWebBrowserThrows("http:/example.com", nullptr, schemeNotImplemented));
+
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReportAbnormalTermination(nullptr) == SYSTEM_SERVICE_OK);

@@ -1,5 +1,8 @@
 add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
+if(WIN32)
+    target_link_libraries(libSceSystemService PRIVATE shell32)
+endif()
 configure_windows_unwind(libSceSystemService)
 
 if(BUILD_TESTING)
