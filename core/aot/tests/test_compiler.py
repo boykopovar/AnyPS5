@@ -74,15 +74,24 @@ class CompilerTests(unittest.TestCase):
             provider = self.directory / 'provider.c'
             provider.write_text(extra)
             additional.append(str(provider))
-        binary = self.directory / 'native.dylib'
+        with tempfile.NamedTemporaryFile(prefix='native-', suffix='.dylib', dir=self.directory, delete=False) as output:
+            binary = Path(output.name)
         subprocess.run(['xcrun', 'clang', '-arch', 'arm64', '-O3', '-dynamiclib', str(ll), *additional, '-o', str(binary)],
                        check=True, capture_output=True)
         self.assertIn('arm64', subprocess.check_output(['file', str(binary)], text=True))
         library = ctypes.CDLL(str(binary))
+        self.library = library
         function = library.test_entry
         function.restype = ctypes.c_uint64
         function.argtypes = [ctypes.c_uint64] * len(contracts['functions'][0]['parameters'])
         return function, report, text
+
+    def test_recompiled_library_executes_current_code(self):
+        first, _, _ = self.compile(*fixture(bytes.fromhex('b811000000c3')))
+        self.assertEqual(first(), 17)
+        second, _, _ = self.compile(*fixture(bytes.fromhex('b82a000000c3')))
+        self.assertEqual(second(), 42)
+        self.assertEqual(first(), 17)
 
     def test_cli_object_links_and_executes_as_arm64(self):
         raw, contracts = fixture(bytes.fromhex('4889f84801f0c3'), ['u64', 'u64'], result='u64')

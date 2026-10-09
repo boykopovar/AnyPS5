@@ -171,7 +171,7 @@ class NativeCallTests(unittest.TestCase):
 
     def compile(self, raw, contracts):
         function, report, ir = self.existing.compile(raw, contracts)
-        library = ctypes.CDLL(str(self.existing.directory / 'native.dylib'))
+        library = self.existing.library
         return function, library, report, ir
 
     def test_native_function_pointer_preserves_all_integer_bits(self):
