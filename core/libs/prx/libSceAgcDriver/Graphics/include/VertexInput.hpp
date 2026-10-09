@@ -138,7 +138,9 @@ inline std::size_t VertexBufferExtent(const ShaderRecompiler::VertexAttribute& a
 inline std::optional<std::size_t> ShortRawVertexBufferBytes(const ShaderRecompiler::VertexAttribute& attribute) {
     const auto stride = (attribute.resource.fields[1] >> 16u) & 0x3fffu;
     const auto records = attribute.resource.fields[2];
-    if (stride != 0 || records >= DecodeVertexFormat(attribute).bytes) return std::nullopt;
+    const auto bytes = DecodeVertexFormat(attribute).bytes;
+    if (stride != 0 || records >= bytes) return std::nullopt;
+    if (((attribute.resource.fields[3] >> 28u) & 3u) == 2u) return static_cast<std::size_t>(records == 0 ? 0u : bytes);
     return static_cast<std::size_t>(records & ~3u);
 }
 

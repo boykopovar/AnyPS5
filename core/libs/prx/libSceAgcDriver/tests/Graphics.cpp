@@ -2542,6 +2542,11 @@ void validationTests() {
         Require(AgcDriver::Graphics::ShortRawVertexBufferBytes(attribute) == std::optional<std::size_t>{8}, "a zero-stride buffer shorter than its element did not keep its in-range dwords");
         attribute.resource.fields[2] = 1;
         Require(AgcDriver::Graphics::ShortRawVertexBufferBytes(attribute) == std::optional<std::size_t>{0}, "a dword past a one-byte zero-stride buffer was read");
+        attribute.resource.fields[3] |= 2u << 28u;
+        Require(AgcDriver::Graphics::ShortRawVertexBufferBytes(attribute) == std::optional<std::size_t>{16}, "a zero-stride buffer without a range check did not read its whole element");
+        attribute.resource.fields[2] = 0;
+        Require(AgcDriver::Graphics::ShortRawVertexBufferBytes(attribute) == std::optional<std::size_t>{0}, "an empty zero-stride buffer without a range check was read");
+        attribute.resource.fields[3] = 77u << 12u;
         attribute.resource.fields[2] = 8;
         attribute.resource.fields[3] = 113u << 12u;
         expectFailure([&] { AgcDriver::Graphics::DecodeVertexFormat(attribute); }, "unsupported vertex format");
