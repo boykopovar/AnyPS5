@@ -22,6 +22,7 @@ extern "C" int APS5_VABI sceAgcInit_0090(std::uint32_t* state, std::uint32_t ver
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexAuto(CommandBuffer* buf, std::uint32_t indexCount, std::uint64_t modifier);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint64_t address, std::uint32_t offset);
 extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint64_t reference);
 extern "C" int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint64_t mask);
 extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
@@ -203,6 +204,22 @@ void testIndexBuffer() {
         return;
     }
     throw std::runtime_error("misaligned index buffer was accepted");
+}
+
+void testIndexIndirectArgs() {
+    Storage storage;
+    storage.words.fill(0xabcdef01u);
+    const std::uint64_t address = 0x123456789a0ull;
+    const auto* packet = sceAgcDcbSetIndexIndirectArgs(&storage.buffer, address, 0xfffcu);
+    const std::array expected{0xc0029100u, 0x456789a0u, 0x123u, 0xfffcu};
+    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect index indirect args packet");
+    check(storage.buffer.cursor_up == packet + expected.size() && packet[expected.size()] == 0xabcdef01u, "index indirect args cursor mismatch");
+    const auto before = storage.words;
+    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, 0, 0); });
+    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, address + 8, 0); });
+    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(&storage.buffer, address, 0x10000u); });
+    expectFailure([&] { sceAgcDcbSetIndexIndirectArgs(nullptr, address, 0); });
+    check(storage.words == before && storage.buffer.cursor_up == packet + expected.size(), "invalid index indirect args modified buffer");
 }
 
 void testContextState() {
@@ -408,6 +425,7 @@ int main(int argc, char** argv) {
         testIndexedIndirectDraws();
         testMarkers();
         testIndexBuffer();
+        testIndexIndirectArgs();
         testContextState();
         testFlip();
         testRegisters();
