@@ -1062,7 +1062,40 @@ static void CheckDirectMemoryWriteWatch() {
 }
 #endif
 
+static void CheckVirtualQuerySplitFlexibleRanges() {
+    constexpr std::size_t page = 0x4000;
+    void* mapped = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapped, page * 3, 3, 0) == 0);
+    auto* bytes = static_cast<unsigned char*>(mapped);
+    bytes[0] = 17;
+    bytes[page * 2] = 29;
+    Require(sceKernelMprotect(bytes + page, page, 1) == 0);
+    for (std::size_t index = 0; index < 3; ++index) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(bytes + page * index, 0, &info, sizeof(info)) == 0);
+        Require(info.start == reinterpret_cast<std::uintptr_t>(bytes + page * index));
+        Require(info.end == info.start + page);
+        Require(info.protection == (index == 1 ? 1 : 3));
+        Require(info.is_committed && info.is_flexible && !info.is_direct);
+    }
+    Require(sceKernelMunmap(bytes + page, page) == 0);
+    for (std::size_t index : {std::size_t{0}, std::size_t{2}}) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(bytes + page * index, 0, &info, sizeof(info)) == 0);
+        Require(info.start == reinterpret_cast<std::uintptr_t>(bytes + page * index));
+        Require(info.end == info.start + page);
+    }
+    VirtualQueryInfo next{};
+    Require(sceKernelVirtualQuery(bytes + page, 1, &next, sizeof(next)) == 0);
+    Require(next.start == reinterpret_cast<std::uintptr_t>(bytes + page * 2));
+    Require(next.end == next.start + page && next.protection == 3);
+    Require(bytes[0] == 17 && bytes[page * 2] == 29);
+    Require(sceKernelMunmap(bytes, page) == 0);
+    Require(sceKernelMunmap(bytes + page * 2, page) == 0);
+}
+
 int main() {
+    CheckVirtualQuerySplitFlexibleRanges();
     CheckReleaseFlexibleMemory();
     CheckNamedAndHintedMappings();
     CheckInternalNamedFlexibleMapping();
