@@ -116,15 +116,18 @@ public:
     std::weak_ptr<StorageTexture> writer;
     const StorageTexture* seeded = nullptr;
     std::uint32_t writerLayer = 0;
+    std::weak_ptr<StorageTexture> stencilWriter;
+    const StorageTexture* stencilSeeded = nullptr;
 
-    void Transfer(StorageTexture& storage, bool into, std::uint32_t layer) {
+    void Transfer(StorageTexture& storage, bool into, std::uint32_t layer, VkImageAspectFlagBits aspect = VK_IMAGE_ASPECT_DEPTH_BIT) {
         const auto& descriptor = storage.Descriptor();
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
         const auto storageFormat = storage.StorageFormat();
-        const bool sized = d16 ? (storageFormat == VK_FORMAT_R16_UINT || storageFormat == VK_FORMAT_R16_UNORM || storageFormat == VK_FORMAT_R16_SINT || storageFormat == VK_FORMAT_R16_SNORM || storageFormat == VK_FORMAT_R16_SFLOAT) : (storageFormat == VK_FORMAT_R32_SFLOAT || storageFormat == VK_FORMAT_R32_UINT || storageFormat == VK_FORMAT_R32_SINT);
+        const bool stencil = aspect == VK_IMAGE_ASPECT_STENCIL_BIT;
+        const bool sized = stencil ? (storageFormat == VK_FORMAT_R8_UINT || storageFormat == VK_FORMAT_R8_UNORM || storageFormat == VK_FORMAT_R8_SINT || storageFormat == VK_FORMAT_R8_SNORM) && layer == 0 : d16 ? (storageFormat == VK_FORMAT_R16_UINT || storageFormat == VK_FORMAT_R16_UNORM || storageFormat == VK_FORMAT_R16_SINT || storageFormat == VK_FORMAT_R16_SNORM || storageFormat == VK_FORMAT_R16_SFLOAT) : (storageFormat == VK_FORMAT_R32_SFLOAT || storageFormat == VK_FORMAT_R32_UINT || storageFormat == VK_FORMAT_R32_SINT);
         if (!sized || descriptor.width != target.extent.width || descriptor.height != target.extent.height || descriptor.mipCount != 1 || (descriptor.dimension != TextureDimension::k2D && descriptor.dimension != TextureDimension::k2DArray) || (layer != 0 && layer > descriptor.depthOrLastArray)) {
-            char text[256];
-            std::snprintf(text, sizeof(text), "AGC graphics: storage image access to depth surface 0x%llx (%ux%u, vk format %d) as a %ux%u image of vk format %d, dimension %d, %u mips is not implemented", static_cast<unsigned long long>(target.address), target.extent.width, target.extent.height, static_cast<int>(target.format), descriptor.width, descriptor.height, static_cast<int>(storageFormat), static_cast<int>(descriptor.dimension), descriptor.mipCount);
+            char text[320];
+            std::snprintf(text, sizeof(text), "AGC graphics: storage image access to the %s plane of depth surface 0x%llx (%ux%u, vk format %d) as a %ux%u image of vk format %d, dimension %d, %u mips is not implemented", stencil ? "stencil" : "depth", static_cast<unsigned long long>(target.address), target.extent.width, target.extent.height, static_cast<int>(target.format), descriptor.width, descriptor.height, static_cast<int>(storageFormat), static_cast<int>(descriptor.dimension), descriptor.mipCount);
             throw std::runtime_error(text);
         }
         if (transferBuffer == nullptr) transferBuffer = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(target.extent.width) * target.extent.height * (d16 ? 2u : 4u), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -138,7 +141,7 @@ public:
         constexpr VkAccessFlags all = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, all, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         VkBufferImageCopy depthRegion{};
-        depthRegion.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+        depthRegion.imageSubresource = {static_cast<VkImageAspectFlags>(aspect), 0, 0, 1};
         depthRegion.imageExtent = {target.extent.width, target.extent.height, 1};
         VkBufferImageCopy colorRegion = depthRegion;
         colorRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -163,6 +166,10 @@ public:
         if (aspects == 0) return;
         writer.reset();
         seeded = nullptr;
+        if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) {
+            stencilWriter.reset();
+            stencilSeeded = nullptr;
+        }
         auto* recorder = Recorder::Active();
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
@@ -182,6 +189,10 @@ public:
         writer.reset();
         seeded = nullptr;
         if (storage != nullptr) Transfer(*storage, false, writerLayer);
+        auto stencilStorage = stencilWriter.lock();
+        stencilWriter.reset();
+        stencilSeeded = nullptr;
+        if (stencilStorage != nullptr) Transfer(*stencilStorage, false, 0, VK_IMAGE_ASPECT_STENCIL_BIT);
     }
 
     const Context context;
@@ -466,6 +477,22 @@ void SeedStorageFromDepth(const Context& context, const std::shared_ptr<StorageT
         surface.seeded = storage.get();
         surface.writerLayer = layer;
     }
+}
+
+void SeedStorageFromStencil(const Context& context, const std::shared_ptr<StorageTexture>& storage) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    std::lock_guard lock(surfacesMutex());
+    const auto& list = surfaces();
+    const auto address = storage->Descriptor().baseAddress;
+    const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) { return surface->context.device == context.device && surface->target.stencilAddress != 0 && surface->target.stencilAddress == address && surface->target.address != address; });
+    if (found == list.rend()) return;
+    auto& surface = **found;
+    if (surface.stencilSeeded == storage.get() && surface.stencilWriter.lock() == storage) return;
+    surface.ApplyFastClear();
+    surface.TakeWrites();
+    surface.Transfer(*storage, true, 0, VK_IMAGE_ASPECT_STENCIL_BIT);
+    surface.stencilWriter = storage;
+    surface.stencilSeeded = storage.get();
 }
 
 VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile) {

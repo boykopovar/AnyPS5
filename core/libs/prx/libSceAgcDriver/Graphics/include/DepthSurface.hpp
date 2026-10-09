@@ -22,6 +22,7 @@ bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t addre
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components);
 class StorageTexture;
 void SeedStorageFromDepth(const Context& context, const std::shared_ptr<StorageTexture>& storage);
+void SeedStorageFromStencil(const Context& context, const std::shared_ptr<StorageTexture>& storage);
 
 }
 
