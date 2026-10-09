@@ -1,4 +1,6 @@
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -13,7 +15,7 @@ int APS5_VABI sceAudioOut2Initialize(void) {
 }
 
 int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t latency) {
-    if (userId != USER_ID_SYSTEM || latency < MIN_SUPPORTED_3D_LATENCY || latency > MAX_SUPPORTED_3D_LATENCY) NotImplemented_nid_no_patch(__func__);
+    if (userId != USER_ID_SYSTEM || latency < MIN_SUPPORTED_3D_LATENCY || latency > MAX_SUPPORTED_3D_LATENCY) throw std::runtime_error(std::string(__func__) + ": the effect of latency " + std::to_string(latency) + " for user " + std::to_string(userId) + " is unknown");
     return 0;
 }
 
