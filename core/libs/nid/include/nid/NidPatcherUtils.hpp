@@ -61,7 +61,7 @@ inline std::string StripNidPostfix(const std::string& name) {
 
 template<typename T>
 T Read(const std::vector<std::uint8_t>& buf, std::size_t offset) {
-    if (offset + sizeof(T) > buf.size()) throw std::runtime_error("read out of bounds");
+    if (offset > buf.size() || sizeof(T) > buf.size() - offset) throw std::runtime_error("read out of bounds");
     T v;
     std::memcpy(&v, buf.data() + offset, sizeof(T));
     return v;
@@ -69,7 +69,7 @@ T Read(const std::vector<std::uint8_t>& buf, std::size_t offset) {
 
 template<typename T>
 void Write(std::vector<std::uint8_t>& buf, std::size_t offset, const T& v) {
-    if (offset + sizeof(T) > buf.size()) throw std::runtime_error("write out of bounds");
+    if (offset > buf.size() || sizeof(T) > buf.size() - offset) throw std::runtime_error("write out of bounds");
     std::memcpy(buf.data() + offset, &v, sizeof(T));
 }
 
