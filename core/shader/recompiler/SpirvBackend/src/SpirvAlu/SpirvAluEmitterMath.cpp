@@ -140,31 +140,6 @@ std::uint32_t EmitExt(SpirvEmitterState& state, std::uint32_t type, std::uint32_
     return result;
 }
 
-std::uint32_t EmitF32ToU32(SpirvEmitterState& state, std::uint32_t src, bool signedValue) {
-    const auto truncated = EmitTruncF32Value(state, src);
-    const auto convertedRaw = state.module.AllocateId();
-    if (signedValue) {
-        const auto convertedSigned = state.module.AllocateId();
-        state.module.AddFunction(spv::OpConvertFToS, TypeI32(state), convertedSigned, truncated);
-        state.module.AddFunction(spv::OpBitcast, TypeU32(state), convertedRaw, convertedSigned);
-    } else {
-        state.module.AddFunction(spv::OpConvertFToU, TypeU32(state), convertedRaw, truncated);
-    }
-    const auto nan = EmitClassifyF32(state, src).nan;
-    if (signedValue) {
-        const auto below = Binary(state, spv::OpFOrdLessThanEqual, TypeBool(state), src, ConstantF32(state, 0xcf000000u));
-        const auto above = Binary(state, spv::OpFOrdGreaterThanEqual, TypeBool(state), src, ConstantF32(state, 0x4f000000u));
-        const auto high = Select(state, TypeU32(state), above, ConstantU32(state, 0x7fffffffu), convertedRaw);
-        const auto low = Select(state, TypeU32(state), below, ConstantU32(state, 0x80000000u), high);
-        return Select(state, TypeU32(state), nan, ConstantU32(state, 0u), low);
-    }
-    const auto below = Binary(state, spv::OpFOrdLessThanEqual, TypeBool(state), src, ConstantF32(state, 0u));
-    const auto above = Binary(state, spv::OpFOrdGreaterThanEqual, TypeBool(state), src, ConstantF32(state, 0x4f800000u));
-    const auto zero = Binary(state, spv::OpLogicalOr, TypeBool(state), nan, below);
-    const auto high = Select(state, TypeU32(state), above, ConstantU32(state, 0xffffffffu), convertedRaw);
-    return Select(state, TypeU32(state), zero, ConstantU32(state, 0u), high);
-}
-
 std::uint32_t EmitDppWriteCondition(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto flags = inst.Flags<DppMoveFlags>();
@@ -443,11 +418,12 @@ std::uint32_t EmitConvertF16F32(SpirvEmitterState& state, std::uint32_t arg0) {
 }
 
 std::uint32_t EmitConvertS32F32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return EmitF32ToU32(state, arg0, true);
+    const auto converted = Unary(state, spv::OpConvertFToS, TypeI32(state), arg0);
+    return Unary(state, spv::OpBitcast, TypeU32(state), converted);
 }
 
 std::uint32_t EmitConvertU32F32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return EmitF32ToU32(state, arg0, false);
+    return Unary(state, spv::OpConvertFToU, TypeU32(state), arg0);
 }
 
 std::uint32_t EmitConvertF32S32(SpirvEmitterState& state, std::uint32_t arg0) {
@@ -1117,10 +1093,6 @@ std::uint32_t EmitLogicalOrBool(SpirvEmitterState& state, std::uint32_t arg0, st
 
 std::uint32_t EmitLogicalNotBool(SpirvEmitterState& state, std::uint32_t arg0) {
     return EmitNative<spv::OpLogicalNot, IrType::U1>(state, arg0);
-}
-
-std::uint32_t EmitTruncF32Value(SpirvEmitterState& state, std::uint32_t arg0) {
-    return EmitGlsl<GLSLstd450Trunc, IrType::F32>(state, arg0);
 }
 
 std::uint32_t EmitFNegateValue(SpirvEmitterState& state, std::uint32_t arg0) {
