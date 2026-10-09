@@ -186,10 +186,13 @@ public:
         const auto offset = view->second.offset;
         SYSTEM_INFO system{};
         GetSystemInfo(&system);
-        for (std::size_t done = 0; done < bytes; done += pageBytes, ++view) {
-            if (view == views.end() || view->first != address + done || view->second.offset != offset + done) throw refuse("the range is not one contiguous run of views of a section");
-            if (view->second.section != section && !sameSection(view->second.section->handle, section->handle)) throw refuse("the range spans several sections");
+        bool contiguous = true;
+        for (std::size_t done = 0; done < bytes; done += pageBytes) {
+            const auto page = views.find(address + done);
+            if (page == views.end()) throw refuse("the range is not a run of shared views");
+            if (page->second.offset != offset + done || (page->second.section != section && !sameSection(page->second.section->handle, section->handle))) contiguous = false;
         }
+        if (!contiguous) return mapAliasRuns(address, bytes);
         const auto lead = offset % system.dwAllocationGranularity;
         void* alias = map(section->handle, GetCurrentProcess(), nullptr, offset - lead, lead + bytes, 0, PAGE_READWRITE, nullptr, 0);
         if (alias == nullptr) {
@@ -202,6 +205,15 @@ public:
 
     void UnmapAlias(void* alias) {
         if (alias == nullptr) return;
+        {
+            std::lock_guard lock(mutex);
+            if (const auto found = splitAliases.find(reinterpret_cast<std::uintptr_t>(alias)); found != splitAliases.end()) {
+                const auto error = releaseAlias(found->first, found->second);
+                splitAliases.erase(found);
+                if (error != ERROR_SUCCESS) throw std::system_error(static_cast<int>(error), std::system_category(), "unmap a run of a shared guest alias");
+                return;
+            }
+        }
         SYSTEM_INFO system{};
         GetSystemInfo(&system);
         const auto base = reinterpret_cast<std::uintptr_t>(alias) & ~(static_cast<std::uintptr_t>(system.dwAllocationGranularity) - 1);
@@ -409,9 +421,46 @@ private:
         if (query(address).RegionSize != bytes && !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS)) fail("coalesce guest placeholders");
     }
 
+    void* mapAliasRuns(std::uintptr_t address, std::size_t bytes) {
+        auto* reserved = allocate(GetCurrentProcess(), nullptr, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
+        if (reserved == nullptr) fail("reserve a read-write alias of shared guest memory");
+        const auto base = reinterpret_cast<std::uintptr_t>(reserved);
+        try {
+            for (std::size_t done = 0; done < bytes;) {
+                const auto& first = views.at(address + done);
+                auto run = pageBytes;
+                while (done + run < bytes) {
+                    const auto& next = views.at(address + done + run);
+                    if (next.offset != first.offset + run || (next.section != first.section && !sameSection(next.section->handle, first.section->handle))) break;
+                    run += pageBytes;
+                }
+                split(base + done, run);
+                if (!map(first.section->handle, GetCurrentProcess(), reinterpret_cast<void*>(base + done), first.offset, run, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, nullptr, 0)) fail("map a run of a read-write alias of shared guest memory");
+                done += run;
+            }
+        } catch (...) {
+            releaseAlias(base, bytes);
+            throw;
+        }
+        splitAliases.emplace(base, bytes);
+        return reserved;
+    }
+
+    DWORD releaseAlias(std::uintptr_t base, std::size_t bytes) {
+        DWORD error = ERROR_SUCCESS;
+        for (auto cursor = base; cursor < base + bytes;) {
+            const auto memory = query(cursor);
+            const auto released = memory.State == MEM_RESERVE ? VirtualFree(memory.BaseAddress, 0, MEM_RELEASE) : unmap(GetCurrentProcess(), memory.BaseAddress, 0);
+            if (!released && error == ERROR_SUCCESS) error = GetLastError();
+            cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+        }
+        return error;
+    }
+
     std::map<std::uintptr_t, std::uintptr_t> cleanRanges;
     std::map<std::uintptr_t, View> views;
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::weak_ptr<SharedPage>> physical;
+    std::map<std::uintptr_t, std::size_t> splitAliases;
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;
