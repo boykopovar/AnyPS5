@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "../include/ThreadLifecycle.hpp"
 #include "prx/libc/include/General.hpp"
@@ -26,6 +27,28 @@ int APS5_VABI scePthreadGetprio(Pthread thread, int* prio);
 static constexpr int GUEST_SCHED_FIFO = 1;
 
 extern "C" {
+int* APS5_VABI __error_nid_postfix();
+int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask);
+
+int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, void* mask) {
+    constexpr int LevelWhich = 3, WhichThread = 1;
+    constexpr int GuestEfault = 14, GuestErange = 34;
+    constexpr std::size_t MaximumSize = 256 / 8;
+    if (size < sizeof(KernelCpumask) || size > MaximumSize) {
+        *__error_nid_postfix() = GuestErange;
+        return -1;
+    }
+    if (level != LevelWhich || which != WhichThread || id != -1) NotImplemented_nid_no_patch("cpuset_getaffinity other than the calling thread");
+    if (!mask) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+    KernelCpumask affinity = 0;
+    scePthreadGetaffinity(scePthreadSelf(), &affinity);
+    std::memset(mask, 0, size);
+    std::memcpy(mask, &affinity, sizeof(affinity));
+    return 0;
+}
 
 int APS5_VABI pthread_create_nid_postfix(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg) {
     return PosixThread::ToErrno(scePthreadCreate(thread, attr, entry, arg, nullptr));
