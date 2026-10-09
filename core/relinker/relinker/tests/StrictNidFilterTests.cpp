@@ -3,6 +3,7 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
+#include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <algorithm>
 #include <cstring>
@@ -289,6 +290,65 @@ void filterAndPltCompaction() {
     requireFailure([&] { Relinker::MakeStrictUnusedNidFilter()->Filter(references, exceptional, input.Text, input.TextVaddr); }, "Exception metadata was ignored");
 }
 
+std::vector<std::uint8_t> relaIndexFixture(
+    std::uint64_t relaVaddr, std::uint64_t relaSize,
+    std::uint64_t jmprelVaddr, std::uint64_t jmprelSize,
+    std::uint64_t segVaddr, std::uint64_t segFileOff, std::uint64_t segFileSize,
+    std::size_t fileSize) {
+    std::vector<std::uint8_t> bytes(fileSize);
+    bytes[0] = 0x7F;
+    bytes[1] = 'E';
+    bytes[2] = 'L';
+    bytes[3] = 'F';
+    bytes[4] = 2;
+    write<std::uint64_t>(bytes, 32, 64);
+    write<std::uint16_t>(bytes, 54, 56);
+    write<std::uint16_t>(bytes, 56, 2);
+    write<std::uint32_t>(bytes, 64, 1);
+    write<std::uint64_t>(bytes, 72, segFileOff);
+    write<std::uint64_t>(bytes, 80, segVaddr);
+    write<std::uint64_t>(bytes, 96, segFileSize);
+    write<std::uint64_t>(bytes, 104, segFileSize);
+    write<std::uint32_t>(bytes, 120, 2);
+    write<std::uint64_t>(bytes, 128, 0x100);
+    write<std::uint64_t>(bytes, 152, 80);
+    write<std::uint64_t>(bytes, 160, 80);
+    write<std::int64_t>(bytes, 0x100, 7);
+    write<std::uint64_t>(bytes, 0x108, relaVaddr);
+    write<std::int64_t>(bytes, 0x110, 8);
+    write<std::uint64_t>(bytes, 0x118, relaSize);
+    write<std::int64_t>(bytes, 0x120, 23);
+    write<std::uint64_t>(bytes, 0x128, jmprelVaddr);
+    write<std::int64_t>(bytes, 0x130, 2);
+    write<std::uint64_t>(bytes, 0x138, jmprelSize);
+    write<std::int64_t>(bytes, 0x140, 0);
+    write<std::uint64_t>(bytes, 0x148, 0);
+    return bytes;
+}
+
+void relativeRelocationTableBounds() {
+    const std::uint64_t segVaddr = 0x400000;
+    const std::uint64_t segFileOff = 0x200;
+    const std::uint64_t segFileSize = 0x200;
+    auto valid = relaIndexFixture(0x400100, 24, 0, 0, segVaddr, segFileOff, segFileSize, 0x500);
+    write<std::uint64_t>(valid, 0x300, 0x600000);
+    write<std::uint64_t>(valid, 0x308, 8);
+    write<std::uint64_t>(valid, 0x310, 0x700000);
+    const auto index = Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(valid);
+    require(index->TargetOfSlot(0x600000).value_or(0) == 0x700000, "Valid relative relocation was not indexed");
+    require(!index->TargetOfSlot(0x600008).has_value(), "Missing relative relocation was reported");
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(relaIndexFixture(0x400100, 0x200, 0, 0, segVaddr, segFileOff, segFileSize, 0x600)); }, "Relocation table past the load segment was accepted");
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(relaIndexFixture(0x400100, 25, 0, 0, segVaddr, segFileOff, segFileSize, 0x500)); }, "Unaligned relocation table size was accepted");
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(relaIndexFixture(0x400100, 0xFFFFFFFFFFFFFFF0ULL, 0, 0, segVaddr, segFileOff, segFileSize, 0x500)); }, "Wrapping relocation table size was accepted");
+    auto overrunJmprel = relaIndexFixture(0x400100, 24, 0x400180, 0x100, segVaddr, segFileOff, segFileSize, 0x600);
+    write<std::uint64_t>(overrunJmprel, 0x300, 0x600000);
+    write<std::uint64_t>(overrunJmprel, 0x308, 8);
+    write<std::uint64_t>(overrunJmprel, 0x310, 0x700000);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overrunJmprel); }, "Jump relocation table past the load segment was accepted");
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(relaIndexFixture(0x400100, 24, 0x400180, 30, segVaddr, segFileOff, segFileSize, 0x500)); }, "Unaligned jump relocation table size was accepted");
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(relaIndexFixture(0xFFFFFFFFFFFFF800ULL, 0x800, 0, 0, 0xFFFFFFFFFFFFF000ULL, segFileOff, 0x1000, 0x1400)); }, "Wrapping relocation table address range was accepted");
+}
+
 }
 
 int main() {
@@ -306,6 +366,7 @@ int main() {
         exceptionLandingPads();
         filterCallbackDataImports();
         filterAndPltCompaction();
+        relativeRelocationTableBounds();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

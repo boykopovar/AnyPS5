@@ -2,6 +2,7 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <unordered_map>
 #include <cstring>
+#include <limits>
 
 namespace Relinker::UnusedNidFilter {
 
@@ -33,15 +34,32 @@ struct LoadSegment {
     std::uint64_t fileSize;
 };
 
-std::uint64_t vaddrToFileOffset(const std::vector<LoadSegment>& loads, VirtualAddress va) {
-    for (const auto& seg : loads) {
-        if (va >= seg.vaddr && va < seg.vaddr + seg.fileSize)
-            return seg.fileOffset + (va - seg.vaddr);
-    }
-    throw RelinkerException("Cannot translate virtual address to file offset", va);
-}
-
 constexpr std::size_t RelaEntSize = 24;
+
+std::uint64_t translateTableRange(
+    const std::vector<LoadSegment>& loads,
+    const std::vector<std::uint8_t>& elfBytes,
+    VirtualAddress tableVaddr,
+    std::uint64_t tableSize)
+{
+    if (tableSize % RelaEntSize != 0)
+        throw RelinkerException("Relocation table size is not a multiple of the entry size", tableVaddr);
+    if (tableSize > (std::numeric_limits<std::uint64_t>::max)() - tableVaddr)
+        throw RelinkerException("Relocation table address range overflows", tableVaddr);
+    for (const auto& seg : loads) {
+        if (tableVaddr < seg.vaddr) continue;
+        const std::uint64_t offsetInSegment = tableVaddr - seg.vaddr;
+        if (offsetInSegment > seg.fileSize) continue;
+        if (tableSize > seg.fileSize - offsetInSegment) continue;
+        const std::uint64_t tableFileOff = seg.fileOffset + offsetInSegment;
+        if (tableFileOff < seg.fileOffset)
+            throw RelinkerException("Relocation table file range overflows", tableVaddr);
+        if (tableSize > elfBytes.size() || tableFileOff > elfBytes.size() - tableSize)
+            throw RelinkerException("Relocation table is out of bounds", tableVaddr);
+        return tableFileOff;
+    }
+    throw RelinkerException("Relocation table is outside any load segment", tableVaddr);
+}
 
 void collectRelativeEntries(
     const std::vector<std::uint8_t>& elfBytes,
@@ -51,7 +69,7 @@ void collectRelativeEntries(
     std::unordered_map<VirtualAddress, VirtualAddress>& out
 ) {
     if (tableVaddr == 0 || tableSize == 0) return;
-    std::uint64_t tableFileOff = vaddrToFileOffset(loads, tableVaddr);
+    const std::uint64_t tableFileOff = translateTableRange(loads, elfBytes, tableVaddr, tableSize);
 
     for (std::uint64_t off = 0; off + RelaEntSize <= tableSize; off += RelaEntSize) {
         std::size_t pos = static_cast<std::size_t>(tableFileOff + off);
