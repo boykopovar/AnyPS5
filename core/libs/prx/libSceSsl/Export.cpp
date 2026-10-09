@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
@@ -37,6 +38,17 @@ struct SslCaCerts {
     void* pool;
 };
 
+struct SslCaList {
+    void** certs;
+    int num;
+};
+static_assert(sizeof(SslCaList) == 16);
+
+void RequireContext(const char* function, int sslCtxId) {
+    std::lock_guard lock(g_poolsMutex);
+    if (!g_pools.contains(sslCtxId)) throw std::invalid_argument(std::string(function) + ": unknown context");
+}
+
 }
 
 extern "C" {
@@ -53,6 +65,20 @@ int APS5_VABI sceSslGetCaCerts(int ssl_ctx_id, void* ca_certs) {
     if (!ca_certs) return ERROR_INVALID_ARG;
     *static_cast<SslCaCerts*>(ca_certs) = {};
     return ERROR_NOT_FOUND;
+}
+
+int APS5_VABI sceSslGetCaList(int sslCtxId, SslCaList* caList) {
+    if (!caList) return ERROR_INVALID_ARG;
+    RequireContext(__func__, sslCtxId);
+    *caList = {};
+    return ERROR_NOT_FOUND;
+}
+
+int APS5_VABI sceSslFreeCaList(int sslCtxId, SslCaList* caList) {
+    if (!caList) return ERROR_INVALID_ARG;
+    RequireContext(__func__, sslCtxId);
+    if (caList->certs || caList->num) throw std::invalid_argument("sceSslFreeCaList: list not returned by sceSslGetCaList");
+    return 0;
 }
 
 int APS5_VABI sceSslInit_nid_postfix(uint64_t pool_size) {
@@ -80,6 +106,11 @@ int APS5_VABI sceSslGetSerialNumber() {
 
 int APS5_VABI sceSslLoadCert() {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslUnloadCert(int sslCtxId) {
+    RequireContext(__func__, sslCtxId);
     return 0;
 }
 
