@@ -816,17 +816,7 @@ int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
