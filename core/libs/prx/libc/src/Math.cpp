@@ -14,6 +14,24 @@ std::lldiv_t APS5_VABI lldiv_nid_postfix(long long numerator, long long denomina
     return std::lldiv(numerator, denominator);
 }
 
+int APS5_VABI abs_nid_postfix(int x) {
+    return std::abs(x);
+}
+
+double APS5_VABI __powidf2_nid_postfix(double a, int b) {
+    const int recip = b < 0;
+    double r = 1;
+    while (1) {
+        if (b & 1)
+            r *= a;
+        b /= 2;
+        if (b == 0)
+            break;
+        a *= a;
+    }
+    return recip ? 1 / r : r;
+}
+
 float APS5_VABI fmodf_nid_postfix(float x, float y) { return std::fmod(x, y); }
 float APS5_VABI asinf_nid_postfix(float x) { return std::asin(x); }
 float APS5_VABI acosf_nid_postfix(float x) { return std::acos(x); }

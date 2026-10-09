@@ -25,6 +25,7 @@ long double APS5_VABI wcstold_nid_postfix(const char16_t* str, char16_t** endptr
 long long APS5_VABI wcstol_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 long long APS5_VABI wcstoll_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t* str, char16_t** endptr, int base);
+unsigned long long APS5_VABI _WStoul_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 unsigned long long APS5_VABI wcstoull_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second);
 std::size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, std::size_t count);
@@ -120,6 +121,8 @@ int main() {
     require(wcstoll_nid_postfix(hex, &end, 0) == 31 && end == hex + 4);
     const char16_t* wideSpace = u"　12";
     require(wcstoul_nid_postfix(wideSpace, &end, 10) == 0 && end == wideSpace);
+    require(_WStoul_nid_postfix(wideSpace, &end, 10) == 0 && end == wideSpace);
+    require(_WStoul_nid_postfix(u"42abc", &end, 10) == 42 && end == u"42abc" + 2);
     const char16_t* wideDigit = u"12١";
     require(wcstoll_nid_postfix(wideDigit, &end, 10) == 12 && end == wideDigit + 2);
     require(wcstoull_nid_postfix(u"18446744073709551615", nullptr, 10) == ULLONG_MAX);

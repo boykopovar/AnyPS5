@@ -325,6 +325,10 @@ wint_t APS5_VABI _Towctrans_nid_postfix(wint_t c, wctrans_t desc) {
     return std::towctrans(c, desc);
 }
 
+int APS5_VABI _Iswctype_nid_postfix(wint_t c, wctype_t desc) {
+    return std::iswctype(c, desc);
+}
+
 // Locale ids and stream objects the title imports besides the ones above; the streams are zeroed
 // storage (the guest constructs Dinkumware streams itself) so address-taking code links and only a
 // use of them would misbehave.

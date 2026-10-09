@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <cstdarg>
 
 extern "C" {
 char* APS5_VABI basename_nid_postfix(const char*);
@@ -24,7 +25,9 @@ int APS5_VABI memmove_s_nid_postfix(void*, std::size_t, const void*, std::size_t
 int APS5_VABI memset_s_nid_postfix(void*, std::size_t, int, std::size_t);
 char* APS5_VABI strnstr_nid_postfix(const char*, const char*, std::size_t);
 int APS5_VABI snprintf_s_nid_postfix(char*, std::size_t, const char*, ...);
+int APS5_VABI vsnprintf_s_nid_postfix(char*, std::size_t, const char*, void*);
 int APS5_VABI sscanf_s_nid_postfix(const char*, const char*, ...);
+int APS5_VABI vsscanf_s_nid_postfix(const char*, const char*, void*);
 }
 
 static void Require(bool condition) {
@@ -82,6 +85,23 @@ static void CheckBoundsCheckedFunctions() {
     Require(strnstr_nid_postfix(haystack, "st", 6) == haystack + 3);
     char formatted[8];
     Require(snprintf_s_nid_postfix(formatted, sizeof(formatted), "%d-%s", 42, "x") == 4 && std::strcmp(formatted, "42-x") == 0);
+    char vformatted[8];
+    auto callVsnprintfS = [](char* buf, std::size_t sz, const char* fmt, ...) {
+#ifdef _WIN32
+        __builtin_sysv_va_list a;
+        __builtin_sysv_va_start(a, fmt);
+        const int r = vsnprintf_s_nid_postfix(buf, sz, fmt, reinterpret_cast<void*>(a));
+        __builtin_sysv_va_end(a);
+        return r;
+#else
+        std::va_list a;
+        va_start(a, fmt);
+        const int r = vsnprintf_s_nid_postfix(buf, sz, fmt, reinterpret_cast<void*>(&a));
+        va_end(a);
+        return r;
+#endif
+    };
+    Require(callVsnprintfS(vformatted, sizeof(vformatted), "%d-%s", 42, "x") == 4 && std::strcmp(vformatted, "42-x") == 0);
 }
 
 static void CheckSscanfS() {
@@ -103,6 +123,24 @@ static void CheckSscanfS() {
     Require(sscanf_s_nid_postfix("   ", "%d", &number) == EOF);
     Require(sscanf_s_nid_postfix("x", "%d", &number) == 0);
 #endif
+    auto callVsscanfS = [](const char* buf, const char* fmt, ...) {
+#ifdef _WIN32
+        __builtin_sysv_va_list a;
+        __builtin_sysv_va_start(a, fmt);
+        const int r = vsscanf_s_nid_postfix(buf, fmt, reinterpret_cast<void*>(a));
+        __builtin_sysv_va_end(a);
+        return r;
+#else
+        std::va_list a;
+        va_start(a, fmt);
+        const int r = vsscanf_s_nid_postfix(buf, fmt, reinterpret_cast<void*>(&a));
+        va_end(a);
+        return r;
+#endif
+    };
+    int vnum = 0;
+    char vword[4] = {};
+    Require(callVsscanfS("42 abc", "%d %s", &vnum, vword, 4u) == 2 && vnum == 42 && std::strcmp(vword, "abc") == 0);
 }
 
 int main() {

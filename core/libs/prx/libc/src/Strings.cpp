@@ -420,6 +420,10 @@ unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t* str, char16_t**
     return ParseAsciiPrefix(str, endptr, [base](const char* text, char** end) { return std::strtoull(text, end, base); });
 }
 
+unsigned long long APS5_VABI _WStoul_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
+    return wcstoul_nid_postfix(str, endptr, base);
+}
+
 unsigned long long APS5_VABI wcstoull_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
     return ParseAsciiPrefix(str, endptr, [base](const char* text, char** end) { return std::strtoull(text, end, base); });
 }

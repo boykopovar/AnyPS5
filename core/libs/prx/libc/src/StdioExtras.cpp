@@ -50,6 +50,11 @@ int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* forma
     std::abort();
 }
 
+[[noreturn]] void APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix(const char* message, const char* location) {
+    _Assert_nid_postfix(message, location);
+}
+
+
 // Only the "C" locale exists.
 const char* APS5_VABI setlocale_nid_postfix(int category, const char* locale) {
     (void)category;

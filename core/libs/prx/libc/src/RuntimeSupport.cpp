@@ -6,6 +6,7 @@
 #include <functional>
 #include <regex>
 #include <mutex>
+#include <condition_variable>
 #include <vector>
 #include <utility>
 #include <random>
@@ -17,6 +18,14 @@
 #include "prx/libc/include/FileStream.hpp"
 
 namespace {
+
+struct MtxInternal {
+    std::recursive_mutex mutex;
+};
+
+struct CndInternal {
+    std::condition_variable_any cv;
+};
 
 std::recursive_mutex g_sysLock;
 
@@ -140,6 +149,50 @@ void APS5_VABI _Locksyslock_nid_postfix() {
 
 void APS5_VABI _Unlocksyslock_nid_postfix() {
     g_sysLock.unlock();
+}
+
+int APS5_VABI _Mtx_init_nid_postfix(MtxInternal** mtx, int) {
+    if (mtx == nullptr) return 4;
+    *mtx = new MtxInternal();
+    return 0;
+}
+
+void APS5_VABI _Mtx_destroy_nid_postfix(MtxInternal* mtx) {
+    delete mtx;
+}
+
+int APS5_VABI _Mtx_lock_nid_postfix(MtxInternal* mtx) {
+    if (mtx == nullptr) return 4;
+    mtx->mutex.lock();
+    return 0;
+}
+
+int APS5_VABI _Mtx_unlock_nid_postfix(MtxInternal* mtx) {
+    if (mtx == nullptr) return 4;
+    mtx->mutex.unlock();
+    return 0;
+}
+
+int APS5_VABI _Cnd_init_nid_postfix(CndInternal** cnd) {
+    if (cnd == nullptr) return 4;
+    *cnd = new CndInternal();
+    return 0;
+}
+
+void APS5_VABI _Cnd_destroy_nid_postfix(CndInternal* cnd) {
+    delete cnd;
+}
+
+int APS5_VABI _Cnd_wait_nid_postfix(CndInternal* cnd, MtxInternal* mtx) {
+    if (cnd == nullptr || mtx == nullptr) return 4;
+    cnd->cv.wait(mtx->mutex);
+    return 0;
+}
+
+int APS5_VABI _Cnd_broadcast_nid_postfix(CndInternal* cnd) {
+    if (cnd == nullptr) return 4;
+    cnd->cv.notify_all();
+    return 0;
 }
 
 }

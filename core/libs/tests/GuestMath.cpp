@@ -43,11 +43,16 @@ int APS5_VABI __isfinitef_nid_postfix(float);
 int APS5_VABI __isnormal_nid_postfix(double);
 int APS5_VABI __isnormalf_nid_postfix(float);
 int APS5_VABI __isinff_nid_postfix(float);
+int APS5_VABI abs_nid_postfix(int);
+double APS5_VABI __powidf2_nid_postfix(double, int);
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckIntegerConversions() {
+    Require(abs_nid_postfix(0) == 0);
+    Require(abs_nid_postfix(42) == 42);
+    Require(abs_nid_postfix(-42) == 42);
     for (const long long numerator : {4294967301LL, -4294967301LL}) {
         for (const long long denominator : {3LL, -3LL}) {
             const auto result = lldiv_nid_postfix(numerator, denominator);
@@ -163,6 +168,13 @@ static void CheckFloatClassification() {
 int main() {
     CheckFloatClassification();
     CheckIntegerConversions();
+    Require(__powidf2_nid_postfix(2.0, 0) == 1.0);
+    Require(__powidf2_nid_postfix(2.0, 3) == 8.0);
+    Require(__powidf2_nid_postfix(2.0, -2) == 0.25);
+    Require(__powidf2_nid_postfix(-3.0, 3) == -27.0);
+    Require(__powidf2_nid_postfix(-3.0, 2) == 9.0);
+    Require(__powidf2_nid_postfix(0.0, 5) == 0.0);
+    Require(__powidf2_nid_postfix(0.0, 0) == 1.0);
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
     const char input[] = "0x1.8p+2 remainder";
