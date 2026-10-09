@@ -216,6 +216,9 @@ FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const 
         const ByteCount segFileSize = _readU64At(offset + 0x20);
 
         if (type == PT_LOAD && address >= segVAddr && address < segVAddr + segFileSize) {
+            if (!_rangeFits(segOffset, segFileSize, _fileBuffer.size())) {
+                throw RelinkerException("Segment offset out of bounds", segOffset);
+            }
             return segOffset + (address - segVAddr);
         }
 
