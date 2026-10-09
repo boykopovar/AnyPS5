@@ -890,9 +890,21 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         if (const auto inRange = ShortRawVertexBufferBytes(attribute)) {
-            auto buffer = std::make_shared<Buffer>(context, DecodeVertexFormat(attribute).bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-            std::fill(buffer->Bytes().begin(), buffer->Bytes().end(), std::byte{0});
-            if (*inRange != 0) GuestMemory::Read(address, buffer->Bytes().first(*inRange), 4);
+            const auto elementBytes = DecodeVertexFormat(attribute).bytes;
+            std::shared_ptr<Buffer> buffer;
+            if (*inRange != 0) {
+                Require(!state.hasColorTarget || address + *inRange <= state.color.address || state.color.address + state.color.bytes <= address, "vertex buffer aliases the render target");
+                GuestMemory::CheckRange(reinterpret_cast<const void*>(address), *inRange, 1);
+                auto copy = CopyDrawInput(context, context.recorder, address, *inRange, 1, Recorder::SnapshotUse::Vertex);
+                KeepDrawInput(context.recorder, address, copy, Recorder::SnapshotUse::Vertex, 0);
+                buffer = std::move(copy.buffer);
+            }
+            if (*inRange != elementBytes) {
+                auto element = std::make_shared<Buffer>(context, elementBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                std::fill(element->Bytes().begin(), element->Bytes().end(), std::byte{0});
+                if (buffer != nullptr) std::copy_n(buffer->Bytes().begin(), *inRange, element->Bytes().begin());
+                buffer = std::move(element);
+            }
             shortBuffers[index] = std::move(buffer);
             continue;
         }
