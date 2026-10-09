@@ -116,18 +116,23 @@ std::uint32_t moveBlockBefore(ControlFlowGraph& graph, std::uint32_t blockId, st
 std::vector<std::uint32_t> dominatedBlocks(const ControlFlowGraph& graph, std::uint32_t headerBlock, std::uint32_t stopBlock = InvalidControlFlowId) {
     std::vector<std::uint32_t> blocks;
     std::vector<std::uint32_t> stack = {headerBlock};
+    std::vector<bool> visited(graph.blocks.size());
     blocks.reserve(graph.blocks.size());
     stack.reserve(graph.blocks.size());
 
     while (!stack.empty()) {
         const auto blockId = stack.back();
         stack.pop_back();
-        if (blockId == stopBlock || contains(blocks, blockId) || !graph.Dominates(headerBlock, blockId)) {
+        if (blockId >= visited.size()) {
+            visited.resize(blockId + 1);
+        }
+        if (blockId == stopBlock || visited[blockId] || !graph.Dominates(headerBlock, blockId)) {
             continue;
         }
 
         const auto& block = graph.FindBlock(blockId);
-        addUnique(blocks, blockId);
+        visited[blockId] = true;
+        blocks.push_back(blockId);
         for (const auto successor : block.successors) {
             if (successor != stopBlock && graph.Dominates(headerBlock, successor)) {
                 stack.push_back(successor);
