@@ -517,4 +517,22 @@ int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, int mixLevel) {
     return 0;
 }
 
+int APS5_VABI sceAudioOutGetSystemState(void* state) {
+    (void)state;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioOutMasteringInit(uint32_t flags) {
+    (void)flags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioOutMasteringGetState(void* state) {
+    (void)state;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

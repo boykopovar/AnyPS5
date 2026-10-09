@@ -94,4 +94,18 @@ int APS5_VABI sceImeDialogTerm(void) {
     return 0;
 }
 
+int APS5_VABI sceImeDialogInitInternal(const Param* param, const ExtendedParam* extended) {
+    (void)param;
+    (void)extended;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeDialogSetPanelPosition(int posX, int posY) {
+    (void)posX;
+    (void)posY;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

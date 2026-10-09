@@ -170,4 +170,12 @@ int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDu
  LibcExit_nid_no_patch(0);
 }
 
+int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char** argv, void* param) {
+    (void)titleId;
+    (void)argv;
+    (void)param;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

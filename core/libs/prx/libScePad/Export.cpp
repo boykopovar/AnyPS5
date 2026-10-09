@@ -273,4 +273,25 @@ int APS5_VABI scePadSetAngularVelocityBiasCorrectionState() {
  return 0;
 }
 
+int APS5_VABI scePadGetBluetoothAddress(int handle, uint64_t* address) {
+    (void)handle;
+    (void)address;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePadReadStateExt(int handle, PadData* data) {
+    (void)handle;
+    (void)data;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePadSetLightBarForTracker(int handle, const PadLightBarParam* param) {
+    (void)handle;
+    (void)param;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
