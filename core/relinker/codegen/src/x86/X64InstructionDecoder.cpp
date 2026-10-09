@@ -7,6 +7,8 @@ namespace Codegen {
 
 using namespace X64OpcodeConstants;
 
+constexpr std::size_t kMaxInstructionLength = 15;
+
 std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t available) const {
     std::size_t pos = 0;
     bool rexPresent = false;
@@ -15,7 +17,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     bool addressSizeOverride = false;
     bool repnePrefix = false;
 
-    while (pos < available) {
+    while (pos < available && pos < kMaxInstructionLength) {
         const std::uint8_t b = data[pos];
 
         if (b >= RexMin && b <= RexMax) {
@@ -47,6 +49,9 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
 
     if (pos >= available) {
         throw CodegenException("Instruction truncated after prefixes");
+    }
+    if (pos == kMaxInstructionLength) {
+        throw CodegenException("Instruction exceeds the maximum length of 15 bytes");
     }
 
     std::uint8_t opcode = data[pos];
@@ -270,6 +275,9 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         if (pos + immediateSize > available) {
             throw CodegenException("Instruction truncated in immediate operand");
         }
+        if (pos + immediateSize > kMaxInstructionLength) {
+            throw CodegenException("Instruction exceeds the maximum length of 15 bytes");
+        }
         return pos + immediateSize;
     }
 
@@ -318,6 +326,9 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
 
     if (pos > available) {
         throw CodegenException("Instruction truncated in displacement or immediate operand");
+    }
+    if (pos > kMaxInstructionLength) {
+        throw CodegenException("Instruction exceeds the maximum length of 15 bytes");
     }
 
     return pos;

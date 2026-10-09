@@ -151,6 +151,39 @@ void decoderLengths() {
     require(last.Length == 4 && last.OpcodeOffset == 2 && last.RexPrefix == 0x48, "The REX before the opcode was not the one kept");
 }
 
+void decoderMaximumLength() {
+    const Codegen::X64InstructionDecoder decoder;
+    const auto scanner = Codegen::MakeInstructionScanner();
+    for (const Bytes& instruction : {
+            Bytes{0x90},
+            Bytes{0x48, 0xB8, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66},
+            Bytes{0x48, 0x8B, 0x84, 0x24, 0x66, 0x66, 0x66, 0x66},
+            Bytes{0xC5, 0xF9, 0x6F, 0x05, 0x66, 0x66, 0x66, 0x66}}) {
+        Bytes maximum(15 - instruction.size(), 0x2E);
+        maximum.insert(maximum.end(), instruction.begin(), instruction.end());
+        maximum.push_back(0x90);
+        require(decoder.Decode(maximum.data(), maximum.size()) == 15, "A 15-byte instruction consumed the following opcode");
+        require(decoder.DecodeInstruction(maximum.data(), maximum.size()).Length == 15, "A 15-byte instruction could not be classified");
+        require(scanner->ScanCodeSection(maximum, 0, maximum.size()).size() == 2, "A 15-byte instruction changed scanner boundaries");
+        Bytes overlong(maximum.begin(), maximum.end() - 1);
+        overlong.insert(overlong.begin(), 0x2E);
+        requireFailure([&] { (void)decoder.Decode(overlong.data(), overlong.size()); }, "An instruction longer than 15 bytes was decoded");
+        requireFailure([&] { (void)decoder.DecodeInstruction(overlong.data(), overlong.size()); }, "An instruction longer than 15 bytes was classified");
+        overlong.insert(overlong.begin(), 0xC3);
+        require(failureOffset([&] { (void)scanner->ScanCodeSection(overlong, 0x40, overlong.size()); }, "An overlong instruction was scanned") == 0x41, "Overlong instruction failure does not carry the scanner offset");
+    }
+    const Bytes prefixes(64, 0x66);
+    requireFailure([&] { (void)decoder.Decode(prefixes.data(), prefixes.size()); }, "An overlong prefix stream was accepted");
+    Bytes file(0x300, 0xCC);
+    Bytes text(12, 0x2E);
+    text.insert(text.end(), {0xF3, 0x0F, 0x2B, 0x07});
+    file[0x200] = 0x90;
+    std::copy(text.begin(), text.end(), file.begin() + 0x201);
+    const Domain::ProgramHeader header{1, 5, 0x200, 0x1000, 0, 17, 17, 16};
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    require(failureOffset([&] { (void)converter->Convert(file, {header}); }, "An overlong MOVNTSS was converted") == 0x201, "Overlong instruction conversion failure does not carry the file offset");
+}
+
 const std::vector<Bytes> kRipRelativeVectorLoads = {
     {0xC5, 0xF9, 0x6F, 0x05, 0x10, 0x00, 0x00, 0x00},
     {0xC4, 0xE2, 0x79, 0x00, 0x05, 0x10, 0x00, 0x00, 0x00},
@@ -1312,6 +1345,7 @@ void scannerZeroTail() {
 int main() {
     try {
         decoderLengths();
+        decoderMaximumLength();
         decoderRipRelative();
         decoderTwoByteOpcodeLengths();
         sse4aOperands();
