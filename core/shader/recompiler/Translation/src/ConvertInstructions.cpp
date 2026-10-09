@@ -163,8 +163,8 @@ void TranslationContext::vCvtPkrtzF16F32(const RdnaInstruction& inst) {
 }
 
 void TranslationContext::vCvtPknormF32(const RdnaInstruction& inst, bool signedValue) {
-    const IrU32 low = normF32(readU32(sourceAt(inst, 0u)), signedValue);
-    const IrU32 high = normF32(readU32(sourceAt(inst, 1u)), signedValue);
+    const IrU32 low = normF32(flushF32Denormal(readU32(sourceAt(inst, 0u))), signedValue);
+    const IrU32 high = normF32(flushF32Denormal(readU32(sourceAt(inst, 1u))), signedValue);
     const IrU32 result(ir.BitwiseOr(low.Value(), ir.ShiftLeftLogical(high.Value(), ir.Constant(16u))));
     writeOperand(inst.destination, &result.Value());
 }

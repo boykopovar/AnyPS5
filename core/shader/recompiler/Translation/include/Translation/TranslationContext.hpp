@@ -12,9 +12,10 @@ class TranslationContext {
 public:
     TranslationContext(IrProgram& program, IrBlock& block, std::uint32_t vectorLimit);
 
+    void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components);
     void TranslateInstruction(const RdnaInstruction& instruction);
     void SetPixelInput(const ShaderPixelInputInfo* info, bool barycentricEnabled) { pixelInput = info; fragmentShaderBarycentricEnabled = barycentricEnabled; }
-    void TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t componentCount, const ShaderBufferResource& resource);
+    void SetFloatMode(const std::optional<ShaderFloatMode>& mode) { floatMode = mode; ieeeMode = mode.has_value() && mode->ieeeMode; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
 
@@ -47,12 +48,19 @@ private:
     void writeRawU32(const RdnaOperand& operand, IrU32 value);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
+    bool outputModifierApplies(std::uint32_t denormalShift) const;
+    bool dx10Clamp() const { return !floatMode.has_value() || floatMode->dx10Clamp; }
+    void rejectHalfOrDoubleOutputModifier(const RdnaOperand& operand) const;
     IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
     IrU32 packHalf2x16(IrF32 low, IrF32 high);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
     void writeF16(const RdnaOperand& operand, IrF32 value);
     IrU32 readU32(const RdnaOperand& operand);
+    IrU32 flushF32Denormal(IrU32 bits);
+    IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr);
+    IrU32 quietNan32(IrU32 bits);
+    IrU32 quietNan16(IrU32 bits);
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
@@ -103,6 +111,7 @@ private:
     bool imageGetResinfo(const RdnaInstruction& inst);
     bool imageGetLod(const RdnaInstruction& inst);
     bool imageLoad(const RdnaInstruction& inst);
+    bool imageBy(const RdnaInstruction& inst);
     bool imageMsaaLoad(const RdnaInstruction& inst);
     bool imageStore(const RdnaInstruction& inst);
     bool imageSample(const RdnaInstruction& inst);
@@ -115,6 +124,7 @@ private:
     bool dsRead2(const RdnaInstruction& inst);
     bool dsWrite(const RdnaInstruction& inst);
     bool dsWrite2(const RdnaInstruction& inst);
+    bool dsSrc2(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsCondxchg32(const RdnaInstruction& inst);
@@ -167,6 +177,7 @@ private:
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool floatTernary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
+    bool ieeeMinMaxF32(const RdnaInstruction& inst, IrOpcode opcode);
     bool vDivScaleF32(const RdnaInstruction& inst);
     bool vDivFmasF32(const RdnaInstruction& inst);
     bool vDivFixupF32(const RdnaInstruction& inst);
@@ -276,6 +287,7 @@ private:
     void sTtracedata();
     void sInstPrefetch();
     void sGetpcB64(const RdnaInstruction& inst);
+    void sSwappcB64(const RdnaInstruction& inst);
     void sCselectB32(const RdnaInstruction& inst);
     void scalarSelect64(const RdnaInstruction& inst, const RdnaOperand& falseSource);
     void movB32(const RdnaInstruction& inst, bool applyFloatModifiers);
@@ -294,19 +306,27 @@ private:
     void vInterpP1F32(const RdnaInstruction& inst);
     void vInterpP2F32(const RdnaInstruction& inst);
     void vInterpMovF32(const RdnaInstruction& inst);
+    std::uint32_t interpolationModeF16(const RdnaInstruction& inst) const;
+    IrF32 interpolationParameterF16(const RdnaInstruction& inst, std::uint32_t mode);
+    void vInterpP1F16(const RdnaInstruction& inst);
+    void vInterpP2F16(const RdnaInstruction& inst);
     void eXP(const RdnaInstruction& inst);
     bool emitScalar(const RdnaInstruction& inst);
     bool emitVector(const RdnaInstruction& inst);
+    std::uint32_t f32DenormalFlushFor(const RdnaInstruction& inst) const;
     bool emitInterpolation(const RdnaInstruction& inst);
     bool emitMemory(const RdnaInstruction& inst);
 
     IrProgram& program;
     const ShaderPixelInputInfo* pixelInput = nullptr;
     bool fragmentShaderBarycentricEnabled = false;
+    std::optional<ShaderFloatMode> floatMode;
+    bool ieeeMode = false;
     IrBuilder ir;
     IrBlock& block;
     IrU1 instructionBranchCondition;
     RdnaOpcode currentOpcode = RdnaOpcode::Unknown;
+    std::uint32_t f32DenormalFlush = 0u;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
 };

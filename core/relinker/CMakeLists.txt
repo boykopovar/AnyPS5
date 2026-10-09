@@ -1,13 +1,3 @@
-if(NOT ANYPS5_REPLACEMENT_MODULES)
-    message(FATAL_ERROR "Replacement module catalog is empty")
-endif()
-set(replacementModuleEntries "")
-foreach(module IN LISTS ANYPS5_REPLACEMENT_MODULES)
-    string(APPEND replacementModuleEntries "    \"${module}\",\n")
-endforeach()
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/relinker/guest/ReplacementModules.hpp"
-    "#ifndef RELINKER_REPLACEMENTMODULES_HPP\n#define RELINKER_REPLACEMENTMODULES_HPP\n#include <string_view>\nnamespace Relinker {\ninline constexpr std::string_view ReplacementModules[] = {\n${replacementModuleEntries}};\n}\n#endif\n")
-
 add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/CliArgs.cpp
@@ -76,7 +66,6 @@ add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/pipeline/RelinkerPipeline.cpp
 )
 target_include_directories(relinker PRIVATE
-        ${CMAKE_CURRENT_BINARY_DIR}/generated
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/include
         ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
@@ -241,18 +230,6 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbol_names.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_host_libc COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_host_libc.py $<TARGET_FILE:relinker>)
-        add_library(guest_lifecycle_replacement_fixture SHARED elfpatcher/tests/GuestLifecycleReplacement.cpp)
-        target_include_directories(guest_lifecycle_replacement_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
-        if(MINGW)
-            target_compile_options(guest_lifecycle_replacement_fixture PRIVATE
-                -fno-asynchronous-unwind-tables -fno-exceptions)
-        endif()
-        configure_windows_unwind(guest_lifecycle_replacement_fixture)
-        set_target_properties(guest_lifecycle_replacement_fixture PROPERTIES
-            PREFIX "" SUFFIX ".prx" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-        add_test(NAME guest_lifecycle_ownership COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_lifecycle_ownership.py
-            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_lifecycle_replacement_fixture>)
         add_test(NAME guest_absolute_symbols COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_absolute_symbols.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_import_modules COMMAND ${Python3_EXECUTABLE}
@@ -265,6 +242,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_string_table_bounds.py $<TARGET_FILE:relinker>)
         add_test(NAME call_registry COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_call_registry.py $<TARGET_FILE:relinker>)
+        add_test(NAME jmprel_table_bounds COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_jmprel_table_bounds.py $<TARGET_FILE:relinker>)
     else()
         message(STATUS "Python3 interpreter not found; skipping Python relinker tests")
     endif()
@@ -306,7 +285,7 @@ if(BUILD_TESTING)
     )
     add_test(NAME strict_nid_filter COMMAND strict_nid_filter_tests)
 
-    if(UNIX AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         add_test_executable(to_intel_linux_stubs_tests
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ToIntelLinuxStubsTests.cpp
         )

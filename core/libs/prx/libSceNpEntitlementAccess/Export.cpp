@@ -91,6 +91,16 @@ int APS5_VABI sceNpEntitlementAccessGetSkuFlag(uint32_t* sku_flag) {
     return 0;
 }
 
+int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
+    uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel,
+    NpEntitlementAccessEntitlementKey* key) {
+    (void)serviceLabel;
+    constexpr int errorParameter = static_cast<int>(0x817D0002);
+    constexpr int errorNoEntitlement = static_cast<int>(0x817D0007);
+    if (!entitlementLabel || !key) return errorParameter;
+    return errorNoEntitlement;
+}
+
 int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitParam* init_param, NpEntitlementAccessBootParam* boot_param) {
     (void)init_param;
     (void)boot_param;

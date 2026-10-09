@@ -327,7 +327,7 @@ void testCompressedPresentation() {
     std::vector<std::byte> allocation(6 * 65536 + 65535);
     const auto storage = alignedBuffer(allocation);
     fillBuffer(storage, 259, 137);
-    std::vector<std::uint8_t> keys(storage.size() / 256);
+    std::vector<std::uint8_t> keys(4096);
     VideoOutBuffers buffer{storage.data(), keys.data(), {nullptr, nullptr}};
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0x208, 0xff102030);

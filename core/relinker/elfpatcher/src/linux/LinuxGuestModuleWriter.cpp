@@ -73,9 +73,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU32(bytes, static_cast<std::uint32_t>(displacement));
         return start;
     };
-    const bool ownsLifecycle = image.ReplacementModule.empty();
-    const auto init = ownsLifecycle ? lifecycle(image.Init) : 0;
-    const auto fini = ownsLifecycle ? lifecycle(image.Fini) : 0;
+    const auto init = lifecycle(image.Init);
+    const auto fini = lifecycle(image.Fini);
     Io::AlignBuffer(bytes, 8);
     const auto dynamicOffset = bytes.size();
     const auto dynamicAddress = address();
@@ -99,8 +98,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         tag(20, 7);
         tag(3, image.Got);
     }
-    if (ownsLifecycle && !image.InitArray.empty()) { tag(25, image.InitArray.front()); tag(27, image.InitArray.size() * 8); }
-    if (ownsLifecycle && !image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
+    if (!image.InitArray.empty()) { tag(25, image.InitArray.front()); tag(27, image.InitArray.size() * 8); }
+    if (!image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
     if (init != 0) tag(12, init);
     if (fini != 0) tag(13, fini);
     tag(30, 8);

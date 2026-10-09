@@ -20,7 +20,73 @@ env:
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
 jobs:
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      relinker: ${{ steps.filter.outputs.relinker }}
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            relinker:
+              - 'core/relinker/**'
+              - 'core/libs/prx/libc/src/specifics/windows/**'
+              - 'CMakeLists.txt'
+              - '.github/workflows/build.yml'
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+
+  relinker:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.relinker == 'true') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: g++
+          - os: windows-latest
+            compiler: g++
+          - os: macos-latest
+            compiler: clang++
+    env:
+      WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
+      WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Windows'
+        id: toolchain
+        uses: actions/cache@v6
+        with:
+          path: C:\winlibs
+          key: ${{ env.WINLIBS_ZIP }}
+      - if: runner.os == 'Windows' && steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
+          7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
+      - if: runner.os == 'Windows'
+        run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
+      - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
+      - run: cmake --build build-relinker --parallel 3
+      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120
+
   linux:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -30,7 +96,7 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: linux
-          save: ${{ github.event_name == 'push' }}
+          save: false
           evict-old-files: job
       - name: Install lavapipe for the GPU execution tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
@@ -39,12 +105,27 @@ jobs:
         run: python3 tools/check_test_registration.py build
       - run: cmake --build build
       - run: cmake --build build --target libs
-      - run: ctest --test-dir build --output-on-failure --timeout 120 --repeat until-fail:3
+      - name: Save the compiler cache before the tests
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
+      - run: ctest --test-dir build --output-on-failure --timeout 120 ${{ github.event_name == 'push' && '--repeat until-fail:3' || '' }} --parallel 4 --output-log ctest.log
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
+      - name: Report tests slower than 30 s
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          [ -f ctest.log ] || exit 0
+          awk '/Test +#[0-9]+: / && $NF == "sec" { for (i = 1; i <= NF; i++) if ($i ~ /^#[0-9]+:$/) name = $(i + 1); t = $(NF - 1) + 0; if (t > max[name]) max[name] = t }
+            END { for (name in max) if (max[name] > 30) printf "::warning title=Slow test::%s took %.1f s on %s; tests must finish in 30 s (CONTRIBUTING.md)\n", name, max[name], ENVIRON["RUNNER_OS"] }' ctest.log
 
   windows:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -71,7 +152,7 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: windows
-          save: ${{ github.event_name == 'push' }}
+          save: false
           evict-old-files: job
       - shell: cmd
         run: cmake -S . -B build %CONFIGURE%
@@ -82,5 +163,18 @@ jobs:
         run: cmake --build build
       - shell: cmd
         run: cmake --build build --target libs
+      - name: Save the compiler cache before the tests
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ github.run_id }}-${{ github.run_attempt }}
       - shell: cmd
-        run: ctest --test-dir build --output-on-failure --timeout 120 --repeat until-fail:3
+        run: ctest --test-dir build --output-on-failure --timeout 120 ${{ github.event_name == 'push' && '--repeat until-fail:3' || '' }} --parallel 4 --output-log ctest.log
+      - name: Report tests slower than 30 s
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          [ -f ctest.log ] || exit 0
+          awk '/Test +#[0-9]+: / && $NF == "sec" { for (i = 1; i <= NF; i++) if ($i ~ /^#[0-9]+:$/) name = $(i + 1); t = $(NF - 1) + 0; if (t > max[name]) max[name] = t }
+            END { for (name in max) if (max[name] > 30) printf "::warning title=Slow test::%s took %.1f s on %s; tests must finish in 30 s (CONTRIBUTING.md)\n", name, max[name], ENVIRON["RUNNER_OS"] }' ctest.log

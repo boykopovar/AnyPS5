@@ -2762,6 +2762,7 @@ bool Recorder::writtenBackSince(std::uint64_t sequence, std::uint64_t begin, std
 }
 
 void Recorder::Submit() {
+    PerformanceTimer frameTiming("Recorder.Submit");
     // The work count is cleared even when nothing is open: the driver counts a dispatch after its
     // call returns (outside the mutex), so a submit by another thread in between leaves a stale
     // count behind, and the callers that act on it would otherwise take the mutex for nothing at
@@ -2871,6 +2872,7 @@ VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphore
 }
 
 void Recorder::WaitSerial(std::uint64_t serial) {
+    PerformanceTimer frameTiming("Recorder.WaitSerial");
     if (timeline == VK_NULL_HANDLE || serial == 0) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2900,6 +2902,7 @@ void Recorder::FinishUpTo(std::uint64_t serial) {
 }
 
 void Recorder::Sync() {
+    PerformanceTimer frameTiming("Recorder.Sync");
     const auto source = std::exchange(announcedSource, 4);
     const void* site = std::exchange(announcedSite, nullptr);
     Submit();
@@ -3172,6 +3175,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
 }
 
 bool Recorder::Reap() {
+    PerformanceTimer frameTiming("Recorder.Reap");
     const bool profile = DrawProfiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::uint64_t retired = 0;

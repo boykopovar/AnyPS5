@@ -204,6 +204,7 @@ public:
     void UploadPrepare(bool addressable);
     void UploadFinish(bool addressable);
     VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
+    static std::uint64_t ViewBytes(std::uint64_t bytes, std::uint32_t adjustment);
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;
     // The BDA table of the cached address space when it serves this upload alone (an address-based
     // build with no region outside it): its ranges, immutable while the space lives, and the
@@ -345,6 +346,8 @@ private:
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
+    mutable std::uint64_t writeTableSerial = 0;
+    mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> writeTableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while
     // no import was destroyed since.
     std::uint64_t importsEpoch = 0;

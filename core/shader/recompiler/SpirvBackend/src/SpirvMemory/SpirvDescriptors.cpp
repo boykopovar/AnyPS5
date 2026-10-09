@@ -3,6 +3,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
+#include "PipelineSpecialization.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <stdexcept>
@@ -48,15 +49,13 @@ std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t r
         ExitDescriptorBindingFailure(state, kind, resource, variableName);
     }
     const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, resultPtrType, pointer, variableId, ConstantU32(state, arrayIndex));
+    const bool heap = kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(kind) != ImageResourceClass::None;
+    const auto index = heap ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(kind), arrayIndex), arrayIndex) : ConstantU32(state, arrayIndex);
+    state.module.AddFunction(spv::OpAccessChain, resultPtrType, pointer, variableId, index);
     return pointer;
 }
 
-// The element of a bindless table's runtime slot, `arrayIndex` (the root's element) + `slotId`.
-// The slot is wave-uniform; where that is not uniform over the invocation group (see
-// SpirvEmitterState::tableIndexNonUniform) the index carries NonUniform, which needs
-// VK_EXT_descriptor_indexing on the device.
-std::uint32_t TableImageIndex(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, std::uint32_t arrayIndex, std::uint32_t slotId) {
+std::uint32_t TableImageIndex(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource) {
     const bool storage = ImageBindingResourceClass(kind) == ImageResourceClass::Storage;
     const auto supported = [&](std::uint32_t capability) {
         return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), capability) != state.supportedCapabilities.end();
@@ -66,7 +65,12 @@ std::uint32_t TableImageIndex(SpirvEmitterState& state, DescriptorBindingKind ki
         ExitDescriptorBindingFailure(state, kind, resource, "bindless image table needs image array dynamic indexing, which the device lacks");
     }
     state.module.EmitCapability(dynamic);
-    const auto index = Binary(state, spv::OpIAdd, TypeU32(state), ConstantU32(state, arrayIndex), slotId);
+    if (state.runtimeImageMetadata == 0u) FailEmit("bindless image has no runtime metadata index");
+    const auto offset = Binary(state, spv::OpIAdd, TypeU32(state), ConstantU32(state, state.program.Metadata().bindings.ImageMetadataDword() + offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t)), Binary(state, spv::OpIMul, TypeU32(state), state.runtimeImageMetadata, ConstantU32(state, sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t))));
+    const auto metadata = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), metadata, state.shaderDataStorageVariable, ConstantU32(state, 0u), offset);
+    const auto index = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), index, metadata);
     if (!state.tableIndexNonUniform) {
         return index;
     }
@@ -124,6 +128,13 @@ std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
         FailEmit("invalid image resource class");
     }
     const auto& info = RdnaImageDimensionInfoFor(image.dimension);
+    if (info.multisampled != 0u) {
+        if (sampled == 2u) {
+            if (std::ranges::find(state.supportedCapabilities, spv::CapabilityStorageImageMultisample) == state.supportedCapabilities.end()) FailEmit("storage image multisampling is unavailable on the target device");
+            state.module.EmitCapability(spv::CapabilityStorageImageMultisample);
+        }
+        if (info.arrayed != 0u) state.module.EmitCapability(spv::CapabilityImageMSArray);
+    }
     const auto scalar = image.atomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
     return state.module.Type(spv::OpTypeImage, scalar, info.spirvDimension, image.depthCompare ? 1u : 0u, info.arrayed, info.multisampled, sampled, format);
 }
@@ -138,7 +149,7 @@ std::uint32_t ImageViewSizeType(SpirvEmitterState& state, RdnaImageDimension dim
 }
 
 std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t slotId) {
-    const auto& imageResource = state.program.Info().images.at(resource);
+    const auto& imageResource = state.runtimeImage != nullptr ? *state.runtimeImage : state.program.Info().images.at(resource);
     if (imageResource.resourceClass != ImageResourceClass::Sampled) {
         FailEmit("sampled image descriptor requested for a non-sampled image");
     }
@@ -155,7 +166,7 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
         pointer = DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "sampled image descriptor array was not emitted");
     } else {
         pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, variable, TableImageIndex(state, kind, resource, arrayIndex, slotId));
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, variable, TableImageIndex(state, kind, resource));
         DecorateTableNonUniform(state, slotId, pointer);
     }
     const auto image = state.module.AllocateId();
@@ -165,7 +176,8 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
 }
 
 std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t sampler) {
-    const auto arrayIndex = ResourceForDescriptor(state, DescriptorBindingKind::Samplers, sampler);
+    const bool point = state.runtimeImage != nullptr && (state.runtimeImage->numericClass == IrTextureNumericClass::Sint || state.runtimeImage->conversionFormat != IrBufferFormat::Invalid || state.runtimeImage->depthBits);
+    const auto arrayIndex = ResourceForDescriptor(state, DescriptorBindingKind::Samplers, sampler) + (point ? 1u : 0u);
     const auto samplerType = state.module.Type(spv::OpTypeSampler);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, samplerType);
     const auto pointer = DescriptorElementPointer(state, pointerType, state.samplerVariable, arrayIndex, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
@@ -175,7 +187,7 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
 }
 
 std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t sampler, std::uint32_t slotId) {
-    const auto& imageResource = state.program.Info().images.at(resource);
+    const auto& imageResource = state.runtimeImage != nullptr ? *state.runtimeImage : state.program.Info().images.at(resource);
     const auto image = LoadSampledImageDescriptor(state, resource, slotId);
     const auto samplerId = LoadSamplerDescriptor(state, sampler);
     const auto sampledImage = state.module.AllocateId();
@@ -186,7 +198,7 @@ std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource,
 }
 
 std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint32_t resource) {
-    const auto& image = state.program.Info().images.at(resource);
+    const auto& image = state.runtimeImage != nullptr ? *state.runtimeImage : state.program.Info().images.at(resource);
     if (image.resourceClass != ImageResourceClass::Storage) {
         FailEmit("storage image descriptor requested for a non-storage image");
     }
@@ -197,8 +209,8 @@ std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint3
     return DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "storage image descriptor array was not emitted");
 }
 
-void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t mipLod, std::uint32_t coord, std::uint32_t texel) {
-    const auto& image = state.program.Info().images.at(resource);
+void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t mipLod, std::uint32_t coord, std::uint32_t texel, std::uint32_t sample) {
+    const auto& image = state.runtimeImage != nullptr ? *state.runtimeImage : state.program.Info().images.at(resource);
     if (image.resourceClass != ImageResourceClass::Storage) {
         FailEmit("storage image write requested for a non-storage image");
     }
@@ -216,6 +228,11 @@ void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std
         state.module.AddFunction(spv::OpLoad, imageType, descriptor, pointer);
         return descriptor;
     };
+    if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) {
+        if (sample == 0u || image.mipMode == ImageMipMode::DynamicStorage) FailEmit("multisampled storage image requires a sample and cannot have mip levels");
+        state.module.AddFunction(spv::OpImageWrite, loadAt(arrayIndex), coord, texel, spv::ImageOperandsSampleMask, sample);
+        return;
+    }
     if (image.mipMode != ImageMipMode::DynamicStorage) {
         state.module.AddFunction(spv::OpImageWrite, loadAt(arrayIndex), coord, texel);
         return;
@@ -235,7 +252,16 @@ void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std
     state.module.AddFunction(std::span<const std::uint32_t>(words));
     for (std::uint32_t mip = 0; mip < image.mipCount; mip++) {
         EmitLabel(state, labels[mip]);
+        const auto count = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MipCountBase + resource, image.mipCount);
+        const auto active = Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, mip), count);
+        const auto writeLabel = state.module.AllocateId();
+        const auto nextLabel = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, nextLabel, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, active, writeLabel, nextLabel);
+        EmitLabel(state, writeLabel);
         state.module.AddFunction(spv::OpImageWrite, loadAt(arrayIndex + mip), coord, texel);
+        state.module.AddFunction(spv::OpBranch, nextLabel);
+        EmitLabel(state, nextLabel);
         state.module.AddFunction(spv::OpBranch, mergeLabel);
     }
     EmitLabel(state, mergeLabel);

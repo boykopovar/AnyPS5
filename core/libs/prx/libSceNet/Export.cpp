@@ -39,20 +39,28 @@ namespace {
 // FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
 constexpr int NET_EBADF = 9;
+constexpr int NET_EACCES = 13;
 constexpr int NET_EFAULT = 14;
 constexpr int NET_EINVAL = 22;
 constexpr int NET_ENOSPC = 28;
 constexpr int NET_EAGAIN = 35;
+constexpr int NET_EINPROGRESS = 36;
+constexpr int NET_EALREADY = 37;
 constexpr int NET_ENOTSOCK = 38;
 constexpr int NET_EOPNOTSUPP = 45;
 constexpr int NET_EPROTONOSUPPORT = 43;
 constexpr int NET_EAFNOSUPPORT = 47;
 constexpr int NET_EADDRINUSE = 48;
+constexpr int NET_EADDRNOTAVAIL = 49;
 constexpr int NET_ENETUNREACH = 51;
 constexpr int NET_ECONNABORTED = 53;
+constexpr int NET_ENOBUFS = 55;
+constexpr int NET_EISCONN = 56;
+constexpr int NET_ENOTCONN = 57;
 constexpr int NET_EMSGSIZE = 40;
 constexpr int NET_ETIMEDOUT = 60;
 constexpr int NET_ECONNREFUSED = 61;
+constexpr int NET_EHOSTUNREACH = 65;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
 
@@ -85,11 +93,18 @@ void close_socket(NativeSocket socket) { closesocket(socket); }
 int native_error() {
     switch (WSAGetLastError()) {
         case WSAEWOULDBLOCK: return NET_EAGAIN;
+        case WSAEINPROGRESS: return NET_EINPROGRESS;
+        case WSAEALREADY: return NET_EALREADY;
         case WSAEADDRINUSE: return NET_EADDRINUSE;
+        case WSAEADDRNOTAVAIL: return NET_EADDRNOTAVAIL;
         case WSAEAFNOSUPPORT: return NET_EAFNOSUPPORT;
         case WSAENETUNREACH: return NET_ENETUNREACH;
-        case WSAEHOSTUNREACH: return NET_ENETUNREACH;
+        case WSAEHOSTUNREACH: return NET_EHOSTUNREACH;
         case WSAECONNABORTED: return NET_ECONNABORTED;
+        case WSAENOBUFS: return NET_ENOBUFS;
+        case WSAEISCONN: return NET_EISCONN;
+        case WSAENOTCONN: return NET_ENOTCONN;
+        case WSAEACCES: return NET_EACCES;
         case WSAECONNRESET: return 54;
         case WSAETIMEDOUT: return NET_ETIMEDOUT;
         case WSAECONNREFUSED: return NET_ECONNREFUSED;
@@ -113,11 +128,18 @@ int native_error() {
 #if EWOULDBLOCK != EAGAIN
         case EWOULDBLOCK: return NET_EAGAIN;
 #endif
+        case EINPROGRESS: return NET_EINPROGRESS;
+        case EALREADY: return NET_EALREADY;
         case EADDRINUSE: return NET_EADDRINUSE;
+        case EADDRNOTAVAIL: return NET_EADDRNOTAVAIL;
         case EAFNOSUPPORT: return NET_EAFNOSUPPORT;
         case ENETUNREACH: return NET_ENETUNREACH;
-        case EHOSTUNREACH: return NET_ENETUNREACH;
+        case EHOSTUNREACH: return NET_EHOSTUNREACH;
         case ECONNABORTED: return NET_ECONNABORTED;
+        case ENOBUFS: return NET_ENOBUFS;
+        case EISCONN: return NET_EISCONN;
+        case ENOTCONN: return NET_ENOTCONN;
+        case EACCES: return NET_EACCES;
         case ECONNRESET: return 54;
         case ETIMEDOUT: return NET_ETIMEDOUT;
         case ECONNREFUSED: return NET_ECONNREFUSED;
@@ -540,8 +562,11 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     NativeLength native_length = 0;
     if (!guest_to_native_address(addr, addrlen, native, native_length)) return fail(NET_EINVAL);
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
-    return ::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0
-        ? 0 : fail(native_error());
+    if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) return 0;
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEWOULDBLOCK) return fail(NET_EINPROGRESS);
+#endif
+    return fail(native_error());
 }
 
 int64_t APS5_VABI sceNetRecv(int s, void* buf, size_t len, int flags) {

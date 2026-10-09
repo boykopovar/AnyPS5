@@ -119,7 +119,7 @@ std::uint32_t Linear(std::uint32_t code) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* texels, std::uint32_t format, std::uint32_t swizzle) {
@@ -147,7 +147,7 @@ void Fill(std::uint32_t format) {
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const void* texels, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const void* texels, std::uint32_t format, std::uint32_t swizzle, std::uint32_t groups, bool useCache = false) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(24, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
@@ -163,7 +163,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
         device.Target(),
         {0, 0, 0, 128}
     };
-    request.useCache = false;
+    request.useCache = useCache;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -203,13 +203,15 @@ void CheckStoredLoad(AgcDriver::VulkanDevice& device, GuestBlock& block, std::sp
 
 void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& what) {
     Fill(Srgb8_8);
-    std::string refusal;
-    try {
-        Run(device, code, Texels.data(), Srgb8_8, SwizzleXY01, 1);
-    } catch (const std::exception& error) {
-        refusal = error.what();
+    for (const bool useCache : {false, true, true}) {
+        std::string refusal;
+        try {
+            Run(device, code, Texels.data(), Srgb8_8, SwizzleXY01, 1, useCache);
+        } catch (const std::exception& error) {
+            refusal = error.what();
+        }
+        Require(refusal.find("samples or gathers an sRGB image the device cannot sample") != std::string::npos, what + " of an 8_8_SRGB image read through its UNORM view was not refused: " + refusal);
     }
-    Require(refusal.find("samples or gathers an sRGB image the device cannot sample") != std::string::npos, what + " of an 8_8_SRGB image read through its UNORM view was not refused: " + refusal);
 }
 
 }

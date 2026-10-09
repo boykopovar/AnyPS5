@@ -81,6 +81,7 @@ struct GuestTextureResource {
     // DCC metadata of a compressed surface, or 0 (see DccMetadata.hpp).
     std::uint64_t dccAddress = 0;
     bool dccAlphaOnMsb = false;
+    bool dccPipeAligned = false;
     std::uint32_t minLod = 0;
     std::uint32_t allocatedMipCount = 0;
 };

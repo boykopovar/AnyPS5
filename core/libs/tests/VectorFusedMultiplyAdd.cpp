@@ -51,6 +51,7 @@ void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCo
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
     TranslationContext context(program, block, 256);
+    context.SetFloatMode(ShaderFloatMode{0xf0u, false, false, false});
     context.TranslateInstruction(instruction);
 
     const IrOpcode rejected = expected == IrOpcode::FPFma32 ? IrOpcode::FPMad32 : IrOpcode::FPFma32;
@@ -69,6 +70,26 @@ void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCo
     }
 }
 
+void CheckMix(const std::string& name, const std::array<std::uint32_t, 2>& words) {
+    const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words), 0u);
+    Require(instruction.family == RdnaInstructionFamily::VOP3P, name + " is not decoded as VOP3P");
+    Require(instruction.op == RdnaOpcode::VFmaF32, name + " decodes to another opcode");
+
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.SetFloatMode(ShaderFloatMode{0xf0u, false, false, false});
+    context.TranslateInstruction(instruction);
+
+    std::uint32_t fused = 0u;
+    for (const auto* value : block.Instructions()) {
+        Require(value->Opcode() != IrOpcode::FPMad32, name + " rounds the product separately");
+        if (value->Opcode() == IrOpcode::FPFma32) ++fused;
+    }
+    Require(fused == 1u, name + " emits " + std::to_string(fused) + " fused multiply-adds");
+}
+
 }
 
 int main() {
@@ -82,6 +103,8 @@ int main() {
         Check("v_fmac_f32", 0x2bu, 1u, RdnaOpcode::VMacF32, IrOpcode::FPFma32, accumulate);
         Check("v_fmamk_f32", 0x2cu, 2u, RdnaOpcode::VMadmkF32, IrOpcode::FPFma32, multiplyLiteral);
         Check("v_fmaak_f32", 0x2du, 2u, RdnaOpcode::VMadakF32, IrOpcode::FPFma32, addLiteral);
+        CheckMix("v_fma_mix_f32", {0xcc200005u, 0x04220f06u});
+        CheckMix("v_fma_mix_f32 op_sel_hi:[1,0,1]", {0xcc204005u, 0x0c220f06u});
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

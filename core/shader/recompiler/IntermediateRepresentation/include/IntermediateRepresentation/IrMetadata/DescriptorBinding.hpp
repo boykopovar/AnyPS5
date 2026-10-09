@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_DESCRIPTORBINDING_HPP
 #define CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_DESCRIPTORBINDING_HPP
 
+#include "RuntimeAbi.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -8,24 +9,15 @@
 
 namespace ShaderRecompiler {
 
-inline constexpr std::uint32_t FirstImageBinding = 1u;
-inline constexpr std::uint32_t FirstComparisonImageBinding = 22u;
-inline constexpr std::uint32_t FirstStorageImageBinding = 29u;
-inline constexpr std::uint32_t ImageBindingCount = 48u;
+inline constexpr std::uint32_t FirstImageBinding = RuntimeAbi::FirstImageBinding;
+inline constexpr std::uint32_t FirstComparisonImageBinding = RuntimeAbi::FirstComparisonImageBinding;
+inline constexpr std::uint32_t FirstStorageImageBinding = RuntimeAbi::FirstStorageImageBinding;
+inline constexpr std::uint32_t ImageBindingCount = RuntimeAbi::ImageBindingCount;
 
-enum class DescriptorBindingKind : std::uint32_t {
-    Buffers = 0u,
-    Samplers = FirstImageBinding + ImageBindingCount,
-    Gds,
-    BdaPagetable,
-    FaultBuffer,
-    FlattenedSrt,
-    ShaderData,
-    Count,
-};
+using DescriptorBindingKind = RuntimeAbi::Binding;
 
 struct PushData {
-    static constexpr std::uint32_t DwordCount = 32;
+    static constexpr std::uint32_t DwordCount = RuntimeAbi::PushConstantDwords;
     static constexpr std::uint32_t MeshDrawDwordCount = 6;
     static constexpr std::uint32_t NoStart = std::numeric_limits<std::uint32_t>::max();
     std::array<std::uint32_t, DwordCount> dwords {};
@@ -50,14 +42,18 @@ struct IrBindingLayout {
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t memoryOffsetCount = 0;
     bool dispatchThreadLimit = false;
+    std::uint32_t runtimeImageCount = 0;
     std::vector<std::uint32_t> userDataRegisters;
     std::vector<IrDescriptorBinding> descriptors;
 
     [[nodiscard]] std::uint32_t DispatchThreadLimitDword() const {
         return memoryOffsetDword + (memoryOffsetCount + 3u) / 4u;
     }
-    [[nodiscard]] std::uint32_t ShaderDataDwords() const {
+    [[nodiscard]] std::uint32_t ImageMetadataDword() const {
         return DispatchThreadLimitDword() + (dispatchThreadLimit ? 3u : 0u);
+    }
+    [[nodiscard]] std::uint32_t ShaderDataDwords() const {
+        return ImageMetadataDword() + runtimeImageCount * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t));
     }
     [[nodiscard]] bool UsesPushData() const {
         return pushDataStartDword != PushData::NoStart;

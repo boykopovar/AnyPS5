@@ -76,7 +76,6 @@ file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
 list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
 
 set(PATCHED_OUTPUTS ${LIBC_PATCHED})
-set(ANYPS5_REPLACEMENT_MODULES libc.prx)
 
 foreach(LIB_DIR ${LIBS_DIRS})
     if(IS_DIRECTORY ${LIB_DIR})
@@ -126,14 +125,21 @@ foreach(LIB_DIR ${LIBS_DIRS})
         )
 
         list(APPEND PATCHED_OUTPUTS ${PATCHED_FILE})
-        list(APPEND ANYPS5_REPLACEMENT_MODULES ${LIB_NAME}.prx)
     endif()
 endforeach()
-set(ANYPS5_REPLACEMENT_MODULES ${ANYPS5_REPLACEMENT_MODULES} PARENT_SCOPE)
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 
 if(BUILD_TESTING)
+    add_test_executable(guest_offline_imports_tests tests/GuestOfflineImports.cpp)
+    target_include_directories(guest_offline_imports_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_offline_imports_tests PRIVATE libSceHttp libSceNpEntitlementAccess libSceRudp libc)
+    configure_windows_unwind(guest_offline_imports_tests)
+    add_test(NAME guest_offline_imports COMMAND guest_offline_imports_tests)
+    if(WIN32)
+        set_tests_properties(guest_offline_imports PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
+    endif()
     add_test_executable(savedata_memory_metadata_tests tests/SaveDataMemoryMetadata.cpp)
     target_include_directories(savedata_memory_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(savedata_memory_metadata_tests PRIVATE libSceSaveData.native)

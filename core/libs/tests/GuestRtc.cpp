@@ -198,45 +198,105 @@ int main() {
     Require(sceRtcParseRFC3339(&tick, "2024-02-29T12:34:56.789-23:59") == 0 && tick.tick == leapDayTick + 86340000000ull);
     Require(sceRtcParseRFC3339(nullptr, "1970-01-01T00:00:00Z") == invalidPointer);
 
-    Require(sceRtcParseDateTime(&tick, "2024-02-29T12:34:56.789") == 0 && tick.tick == leapDayTick);
-    Require(sceRtcParseDateTime(&tick, "2024-02-29 12:34:56") == 0 && tick.tick == leapDayTick - 789000ull);
+    for (const char* text : {"2024-02-29T12:34:56.789", "2024-02-29 12:34:56", "2024-02-29 12:34:56Z", "2024-02-29", "2024/02/29T12:34:56Z", "2024-02-29T12:34:56."}) {
+        tick.tick = 123;
+        Require(sceRtcParseDateTime(&tick, text) == badParse);
+        Require(tick.tick == 123);
+    }
+    Require(sceRtcParseDateTime(&tick, " \t 2024-02-29T12:34:56.789Z") == 0 && tick.tick == leapDayTick);
+    Require(sceRtcParseDateTime(&tick, "2024-02-29T12:34:56.789Zjunk") == 0 && tick.tick == leapDayTick);
+    Require(sceRtcParseDateTime(&tick, "2024-02-29T12:34:56.789+99:99") == 0 && tick.tick == leapDayTick - 6039ull * 60000000ull);
+    tick.tick = 123;
+    Require(sceRtcParseDateTime(&tick, "2024-02-29T12:34:60-01:00") == 0 && tick.tick == 123ull + 3600000000ull);
+    Require(sceRtcParseDateTime(&tick, "2024-13-01T00:00:00Z") == static_cast<int>(0x80B50009));
     Require(sceRtcParseDateTime(&tick, "2024-02-29T14:04:56.789+01:30") == 0 && tick.tick == leapDayTick);
     Require(sceRtcParseDateTime(&tick, "2024-02-29t12:34:56.789z") == 0 && tick.tick == leapDayTick);
     Require(sceRtcParseDateTime(&tick, "1970-01-01T00:00:00Z") == 0 && tick.tick == unixEpochTick);
-    Require(sceRtcParseDateTime(&tick, "2023-02-29T00:00:00") == invalidDay);
+    Require(sceRtcParseDateTime(&tick, "2023-02-29T00:00:00Z") == invalidDay);
     Require(sceRtcParseDateTime(nullptr, "1970-01-01T00:00:00Z") == invalidPointer);
     Require(sceRtcParseDateTime(&tick, "Thu, 29 Feb 2024 12:34:56") == 0 && tick.tick == leapDayTick - 789000ull);
     Require(sceRtcParseDateTime(&tick, "Thu, 29 Feb 2024 12:34:56 GMT") == 0 && tick.tick == leapDayTick - 789000ull);
     Require(sceRtcParseDateTime(&tick, "Thu, 29 Feb 2024 14:04:56 +0130") == 0 && tick.tick == leapDayTick - 789000ull);
     Require(sceRtcParseDateTime(&tick, "Thu, 29 Feb 2024 11:04:56 -0130") == 0 && tick.tick == leapDayTick - 789000ull);
     Require(sceRtcParseDateTime(&tick, "Thu, 01 Jan 1970 00:00:00 +0000") == 0 && tick.tick == unixEpochTick);
-    Require(sceRtcParseDateTime(&tick, "Thu, 30 Feb 2024 00:00:00") == invalidDay);
     Require(sceRtcParseDateTime(&tick, "Thu Feb 29 12:34:56 2024") == 0 && tick.tick == leapDayTick - 789000ull);
     Require(sceRtcParseDateTime(&tick, "Thu Jan  1 00:00:00 1970") == 0 && tick.tick == unixEpochTick);
-    Require(sceRtcParseDateTime(&tick, "Thu Feb 30 00:00:00 2024") == invalidDay);
-    const char* unparseable[] = {
-        "2024-02-29",
-        "2024/02/29T12:34:56",
-        "2024-02-29T12:34:56Zjunk",
-        "2024-02-29T12:34:56+99:99",
-        "2024-02-29T12:34:56.",
-        "Thu, 29 Feb 2024 12:34:56 +01:30",
-        "Thu, 29 Feb 2024 12:34:56 PST",
-        "Thu, 29 Xyz 2024 12:34:56",
-        "Xyz, 29 Feb 2024 12:34:56",
-        "Thu, 29 Feb 2024 12:34:56 +2400",
-        "Thu Feb 29 12:34:56 2024\n",
-        "Thu Feb 29 12:34:56 24",
-        "Thu Feb  29 12:34:56 2024",
+    const auto at = [](int year, int month, int day, int hour, int minute, int second) {
+        const RtcDateTime time{static_cast<std::uint16_t>(year), static_cast<std::uint16_t>(month), static_cast<std::uint16_t>(day),
+            static_cast<std::uint16_t>(hour), static_cast<std::uint16_t>(minute), static_cast<std::uint16_t>(second), 0};
+        RtcTick result{};
+        Require(sceRtcGetTick(&time, &result) == 0);
+        return result.tick;
     };
-    for (const char* text : unparseable) {
-        bool thrown = false;
-        try {
-            sceRtcParseDateTime(&tick, text);
-        } catch (const std::exception&) {
-            thrown = true;
-        }
-        Require(thrown);
+    constexpr std::uint64_t untouched = 123;
+    const std::uint64_t march = at(2024, 3, 1, 12, 34, 56);
+    const struct {
+        const char* text;
+        int result;
+        std::uint64_t local;
+        std::int64_t minutes;
+    } dateTimes[] = {
+        {"thursday,29-feb-24 12:34:56", 0, leapDayTick - 789000ull, 0},
+        {"Mon 29 February 2024 12:34:56 -0130", 0, leapDayTick - 789000ull, -90},
+        {" \tFri, 01 Mar 2024 12:34:56 GMT", 0, march, 0},
+        {"Thu, 1-Mar 2024 12:34:56 -9999", 0, march, -6039},
+        {"Thu, 01 Mar 2024 12:34:56 +01:30", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34:56 +0130x", 0, march, 90},
+        {"Thu, 01 Mar 2024 12:34:56 PST8PDT", 0, march, -480},
+        {"Thu, 01 Mar 2024 12:34:56 nzdt", 0, march, 780},
+        {"Thu, 01 Mar 2024 12:34:56 KST", 0, march, 540},
+        {"Thu, 01 Mar 2024 12:34:56 HST", 0, march, 420},
+        {"Thu, 01 Mar 2024 12:34:56 Jt", 0, march, 450},
+        {"Thu, 01 Mar 2024 12:34:56 ut", 0, march, -420},
+        {"Thu, 01 Mar 2024 12:34:56 xT", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34:56 Ux", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34:56 B", 0, march, 60},
+        {"Thu, 01 Mar 2024 12:34:56 m", 0, march, 720},
+        {"Thu, 01 Mar 2024 12:34:56 N", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34:56 y", 0, march, -660},
+        {"Thu, 01 Mar 2024 12:34:56 Z", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34:56 J", badParse, untouched, 0},
+        {"Thu, 01 Mar 2024 12:34:56  +0100", badParse, untouched, 0},
+        {"Thu, 01 Mar 2024 12:34:56 (UTC)", badParse, untouched, 0},
+        {"Thu, 01 Mar 2024 12:34:56\tEST", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34:56 ", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34:567 EST", 0, march, 0},
+        {"Thu, 01 Mar 2024 12:34 EST", 0, at(2024, 3, 1, 12, 34, 0), 0},
+        {"Thu, 01 Mar 2024 12:34EST", badParse, untouched, 0},
+        {"Thu, 01 Mar 2024 1:2:3 EST", 0, at(2024, 3, 1, 1, 2, 3), -300},
+        {"Thu, 01 Mar 2024 26:00:00 GMT", badParse, untouched, 0},
+        {"Thu, 01 Mar 2024 25:00:00 +0100", 0, untouched, 60},
+        {"Thu, 29 Feb 2023 12:34:56 EST", 0, untouched, -300},
+        {"Thu, 01 Mar 49 12:34:56 GMT", 0, at(2049, 3, 1, 12, 34, 56), 0},
+        {"Thu, 01 Mar 50 12:34:56 GMT", 0, at(1950, 3, 1, 12, 34, 56), 0},
+        {"Mon, 01 Jan 0001 00:00:00 +0100", 0, 0, 60},
+        {"Thu, 01 Mar 024 12:34:56 GMT", badParse, untouched, 0},
+        {"Thu, 01 Mar 10000 12:34:56 GMT", badParse, untouched, 0},
+        {"Thu, 001 Mar 2024 12:34:56 GMT", badParse, untouched, 0},
+        {"Thu, 01  Mar 2024 12:34:56 GMT", badParse, untouched, 0},
+        {"Thu, 01 Mar 2024\t12:34:56 GMT", badParse, untouched, 0},
+        {"Thu, 01 Sept 2024 12:34:56 GMT", badParse, untouched, 0},
+        {"Thurs, 01 Mar 2024 12:34:56 GMT", badParse, untouched, 0},
+        {"Thu , 01 Mar 2024 12:34:56 GMT", badParse, untouched, 0},
+        {", 01 Mar 2024 12:34:56 GMT", badParse, untouched, 0},
+        {"\nThu, 01 Mar 2024 12:34:56 GMT", badParse, untouched, 0},
+        {"THURSDAY february  9 1:2:3 2024 +0100", 0, at(2024, 2, 9, 1, 2, 3), 0},
+        {"ThuMar  1 12:34:56 10000", 0, at(1000, 3, 1, 12, 34, 56), 0},
+        {"Thu,\tFeb 29 12:34:56 2024", 0, leapDayTick - 789000ull, 0},
+        {"Thu Feb 29 99:99:99 2024", 0, untouched, 0},
+        {"Thu Feb  29 12:34:56 2024", badParse, untouched, 0},
+        {"Thu Feb 29 12:34 2024", badParse, untouched, 0},
+        {"Thu Feb 29 12:34:56 24", badParse, untouched, 0},
+        {"Thu Feb 29 12:34:56\t2024", badParse, untouched, 0},
+        {"Feb 29 12:34:56 2024", badParse, untouched, 0},
+        {"\n2024-02-29T12:34:56Z", badParse, untouched, 0},
+        {"+2024-02-29T12:34:56Z", badParse, untouched, 0},
+        {"", badParse, untouched, 0},
+    };
+    for (const auto& dateTime : dateTimes) {
+        tick.tick = untouched;
+        Require(sceRtcParseDateTime(&tick, dateTime.text) == dateTime.result);
+        Require(tick.tick == dateTime.local - static_cast<std::uint64_t>(dateTime.minutes * 60000000));
     }
 
     RtcTick source{leapDayTick};

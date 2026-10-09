@@ -33,56 +33,6 @@ ExportTargetKind exportTargetKindFromTarget(std::uint32_t target, std::uint32_t&
     return ExportTargetKind::Unknown;
 }
 
-std::uint32_t getDstSel(std::uint32_t dstSelXYZW, std::uint32_t component) {
-    return (dstSelXYZW >> (component * 3u)) & 0x7u;
-}
-
-bool isIntegerBufferFormat(IrBufferFormat format) {
-    switch (format) {
-        case IrBufferFormat::Format8UInt:
-        case IrBufferFormat::Format8SInt:
-        case IrBufferFormat::Format16UInt:
-        case IrBufferFormat::Format16SInt:
-        case IrBufferFormat::Format8_8UInt:
-        case IrBufferFormat::Format8_8SInt:
-        case IrBufferFormat::Format32UInt:
-        case IrBufferFormat::Format32SInt:
-        case IrBufferFormat::Format16_16UInt:
-        case IrBufferFormat::Format16_16SInt:
-        case IrBufferFormat::Format11_11_10UInt:
-        case IrBufferFormat::Format11_11_10SInt:
-        case IrBufferFormat::Format10_11_11UInt:
-        case IrBufferFormat::Format10_11_11SInt:
-        case IrBufferFormat::Format2_10_10_10UInt:
-        case IrBufferFormat::Format2_10_10_10SInt:
-        case IrBufferFormat::Format10_10_10_2UInt:
-        case IrBufferFormat::Format10_10_10_2SInt:
-        case IrBufferFormat::Format8_8_8_8UInt:
-        case IrBufferFormat::Format8_8_8_8SInt:
-        case IrBufferFormat::Format32_32UInt:
-        case IrBufferFormat::Format32_32SInt:
-        case IrBufferFormat::Format16_16_16_16UInt:
-        case IrBufferFormat::Format16_16_16_16SInt:
-        case IrBufferFormat::Format32_32_32UInt:
-        case IrBufferFormat::Format32_32_32SInt:
-        case IrBufferFormat::Format32_32_32_32UInt:
-        case IrBufferFormat::Format32_32_32_32SInt:
-            return true;
-        default:
-            return false;
-    }
-}
-
-std::uint32_t formattedConstantBits(IrBufferFormat format, std::uint32_t selector) {
-    if (selector == 0u) {
-        return 0u;
-    }
-    if (selector == 1u) {
-        return isIntegerBufferFormat(format) ? 1u : std::bit_cast<std::uint32_t>(1.0f);
-    }
-    throw std::runtime_error("reserved buffer destination selector");
-}
-
 }
 
 void TranslateAttributeInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const TranslateOptions& options) {
@@ -143,6 +93,40 @@ void TranslationContext::vInterpMovF32(const RdnaInstruction& inst) {
     writeOperand(inst.destination, &value);
 }
 
+IrF32 TranslationContext::interpolationParameterF16(const RdnaInstruction& inst, std::uint32_t mode) {
+    if (!fragmentShaderBarycentricEnabled) {
+        throw std::runtime_error("16-bit interpolation of pixel input " + std::to_string(inst.source1.value) + " requires fragmentShaderBarycentric");
+    }
+    if (pixelInput == nullptr || !pixelInput->InputIsFp16(inst.source1.value)) {
+        throw std::runtime_error("pixel input " + std::to_string(inst.source1.value) + " is read with 16-bit interpolation without FP16_INTERP_MODE");
+    }
+    return IrF32(ir.Emit(IrOpcode::GetInterpolationParameterF16, IrType::F32, {&ir.Constant(inst.source1.value), &ir.Constant(inst.source2.value), &ir.Constant(mode), &ir.Constant(inst.source1.opSel ? 1u : 0u)}));
+}
+
+std::uint32_t TranslationContext::interpolationModeF16(const RdnaInstruction& inst) const {
+    if (!floatMode.has_value()) return 0u;
+    const auto mode = floatMode->floatMode;
+    const auto denorm32 = (mode >> 4u) & 3u;
+    const auto denorm16 = (mode >> 6u) & 3u;
+    if ((mode & 0xfu) != 0u || (denorm32 != 0u && denorm32 != 3u) || (denorm16 != 0u && denorm16 != 3u)) {
+        throw std::runtime_error("16-bit interpolation at pc " + std::to_string(inst.programCounter) + " in FLOAT_MODE " + std::to_string(mode) + " is not measured");
+    }
+    return (floatMode->ieeeMode ? InterpolationQuiet : 0u) | (denorm32 == 0u ? InterpolationFlush32 : 0u) | (denorm16 == 0u ? InterpolationFlush16 : 0u);
+}
+
+void TranslationContext::vInterpP1F16(const RdnaInstruction& inst) {
+    const auto mode = interpolationModeF16(inst);
+    const IrF32 delta = interpolationParameterF16(inst, 0u);
+    const IrF32 origin = inst.op == RdnaOpcode::VInterpP1lvF16 ? readF16AsF32(inst.source3) : interpolationParameterF16(inst, 2u);
+    writeOperand(inst.destination, &ir.Emit(IrOpcode::FPInterpolateF32, IrType::F32, {&delta.Value(), readOperand(inst.source0, IrType::F32), &origin.Value(), &ir.Constant(mode)}));
+}
+
+void TranslationContext::vInterpP2F16(const RdnaInstruction& inst) {
+    const auto mode = interpolationModeF16(inst);
+    const IrF32 delta = interpolationParameterF16(inst, 1u);
+    writeF16(inst.destination, IrF32(ir.Emit(IrOpcode::FPInterpolateF16, IrType::F32, {&delta.Value(), readOperand(inst.source0, IrType::F32), readOperand(inst.source3, IrType::F32), &ir.Constant(mode)})));
+}
+
 void TranslationContext::eXP(const RdnaInstruction& inst) {
     std::uint32_t index = 0u;
     if (exportTargetKindFromTarget(inst.exportTarget, index) == ExportTargetKind::Unknown) {
@@ -159,7 +143,8 @@ void TranslationContext::eXP(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::emitInterpolation(const RdnaInstruction& inst) {
-    if ((inst.op == RdnaOpcode::VInterpP1F32 || inst.op == RdnaOpcode::VInterpP2F32) && pixelInput != nullptr && pixelInput->InputIsCustom(inst.source1.value)) {
+    const bool interpolates = inst.op == RdnaOpcode::VInterpP1F32 || inst.op == RdnaOpcode::VInterpP2F32 || inst.op == RdnaOpcode::VInterpP1llF16 || inst.op == RdnaOpcode::VInterpP1lvF16 || inst.op == RdnaOpcode::VInterpP2F16;
+    if (interpolates && pixelInput != nullptr && pixelInput->InputIsCustom(inst.source1.value)) {
         throw std::runtime_error("pixel input " + std::to_string(inst.source1.value) + " passes its vertices through unchanged but is read with v_interp_p1/p2");
     }
     switch (inst.op) {
@@ -172,28 +157,24 @@ bool TranslationContext::emitInterpolation(const RdnaInstruction& inst) {
         case RdnaOpcode::VInterpMovF32:
             vInterpMovF32(inst);
             return true;
+        case RdnaOpcode::VInterpP1llF16:
+        case RdnaOpcode::VInterpP1lvF16:
+            vInterpP1F16(inst);
+            return true;
+        case RdnaOpcode::VInterpP2F16:
+            vInterpP2F16(inst);
+            return true;
         default:
             return false;
     }
 }
 
-void TranslationContext::TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t componentCount, const ShaderBufferResource& resource) {
-    const auto format = static_cast<IrBufferFormat>((resource.fields[3] >> 12u) & 0x7Fu);
-    const std::uint32_t dstSel = resource.fields[3] & 0xFFFu;
-    for (std::uint32_t component = 0u; component < componentCount; ++component) {
-        const std::uint32_t selector = instruction.formatted && !instruction.typed ? getDstSel(dstSel, component) : component + 4u;
-        IrValue* value = nullptr;
-        if (selector <= 1u) {
-            value = &ir.Constant(formattedConstantBits(format, selector));
-        } else if (selector >= 4u && selector <= 7u) {
-            const std::uint32_t memoryComponent = selector - 4u;
-            value = &ir.Emit(IrOpcode::GetAttribute, IrType::U32, {&ir.Constant(attribute), &ir.Constant(memoryComponent)});
-            std::uint8_t& required = program.Info().vertexFetchComponents[attribute];
-            required = static_cast<std::uint8_t>(std::max<std::uint32_t>(required, memoryComponent + 1u));
-        } else {
-            throw std::runtime_error("invalid embedded fetch component selector");
-        }
-        writeOperand(offsetOperand(instruction.destination, component), value);
+void TranslationContext::TranslateEmbeddedFetch(const RdnaInstruction& instruction, std::uint32_t attribute, std::uint32_t components) {
+    if (!instruction.formatted || instruction.typed || components == 0u || components > 4u) throw std::runtime_error("invalid prepared vertex fetch");
+    for (std::uint32_t component = 0; component < components; ++component) {
+        auto& value = ir.Emit(IrOpcode::GetAttribute, IrType::U32, {&ir.Constant(attribute), &ir.Constant(component)});
+        value.SetFlags<std::uint32_t>(1u);
+        writeOperand(offsetOperand(instruction.destination, component), &value);
     }
 }
 

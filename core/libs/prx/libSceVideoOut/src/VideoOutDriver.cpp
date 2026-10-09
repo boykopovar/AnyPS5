@@ -16,10 +16,14 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#if APS5_ENABLE_TIMING_LOG
+#include "prx/libSceVideoOut/include/FrameTimingLog.hpp"
+#endif
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
 namespace {
@@ -464,7 +468,13 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
 
 void VideoOutDriver::presentLoop(std::stop_token token) {
     std::shared_ptr<FlipRequest> current;
+#if APS5_ENABLE_TIMING_LOG
+    std::unique_ptr<FrameTimingLog> timingLog;
+#endif
     try {
+#if APS5_ENABLE_TIMING_LOG
+        timingLog = std::make_unique<FrameTimingLog>();
+#endif
         PadInput padInput;
         MouseInput mouseInput;
         KeyboardInput keyboardInput;
@@ -506,7 +516,9 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
                     if (previous != AgcDriver::FrameTiming::Clock::time_point{}) interval = finished - previous;
                     current->cfg->lastTimingFlip = finished;
                 }
-                current->timing->Print(current->outputHandle, current->index, current->flipArg, finished, interval);
+#if APS5_ENABLE_TIMING_LOG
+                timingLog->Enqueue(current->timing->Capture(current->outputHandle, current->index, current->flipArg, finished, interval));
+#endif
             }
             if (current) {
                 current.reset();
@@ -523,6 +535,15 @@ void VideoOutDriver::presentLoop(std::stop_token token) {
         std::fflush(stderr);
         std::terminate();
     }
+#if APS5_ENABLE_TIMING_LOG
+    try {
+        timingLog->Finish();
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[videoout] frame timing log failed: %s\n", error.what());
+        std::fflush(stderr);
+        std::terminate();
+    }
+#endif
     current.reset();
     {
         std::list<std::shared_ptr<FlipRequest>> cancelled;
@@ -541,9 +562,10 @@ void VideoOutDriver::vblankLoop(std::stop_token token) {
     try {
         for (int64_t frame = 1; !token.stop_requested(); ++frame) {
             const auto next = start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(Frame(frame));
+            const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(next - std::chrono::steady_clock::now()).count();
+            if (remaining > 0) PreciseSleepUs(static_cast<unsigned long long>(remaining));
             {
-                std::unique_lock lock(flipQueue->mutex);
-                flipQueue->changed.wait_until(lock, next, [&] { return token.stop_requested() || flipQueue->failure; });
+                std::lock_guard lock(flipQueue->mutex);
                 if (token.stop_requested() || flipQueue->failure) return;
             }
             vblankEnd();

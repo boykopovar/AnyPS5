@@ -18,6 +18,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace AgcDriver { class VulkanDevice; }
+
 namespace AgcDriver::Graphics {
 
 class Recorder;
@@ -227,6 +229,8 @@ public:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> PresyncSurfaces() const;
 
 private:
+    friend class AgcDriver::VulkanDevice;
+    bool refreshData(VkCommandBuffer commands, const CompiledShader& shader, Recorder* recorder);
     struct DescribedRange {
         const char* kind;
         std::uint64_t address;
@@ -412,6 +416,7 @@ private:
     std::vector<bool> storageAtomic;
     std::vector<bool> storageAtomic64;
     std::vector<std::shared_ptr<Sampler>> samplers;
+    std::shared_ptr<Sampler> paddingSampler;
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
@@ -432,6 +437,7 @@ private:
     // still to look up (index into `bindings`; the DescriptorBinding lives in the compiled shader),
     // the descriptor counts the set was sized for, and the compute stage of a deferred build.
     std::vector<Binding> bindings;
+    std::vector<std::uint32_t> refreshResourceKey;
     struct DeferredImages {
         const ShaderRecompiler::DescriptorBinding* binding;
         std::size_t index;

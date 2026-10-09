@@ -5,6 +5,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
+#include "PipelineSpecialization.hpp"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -197,6 +198,38 @@ std::uint32_t EmitInterpolationParameterValue(SpirvEmitterState& state, std::uin
     const auto bits = state.module.AllocateId();
     state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
     return bits;
+}
+
+std::uint32_t EmitInterpolationParameterF16Value(SpirvEmitterState& state, std::uint32_t attr, std::uint32_t chan, std::uint32_t mode, bool high) {
+    const auto& pixel = *state.inputInfo.pixel;
+    if (pixel.InputHalfIsDefault(attr, high)) {
+        return ConstantF32(state, mode == 2u ? pixel.InputHalfDefaultBits(attr, chan & 3u, high) : 0u);
+    }
+    const auto* input = SpirvInputBindingForParameter(state, attr);
+    if (input == nullptr || !input->perVertex) {
+        throw std::runtime_error("16-bit interpolation parameter is not read per vertex");
+    }
+    const auto loadVertex = [&](std::uint32_t vertex) {
+        const auto pointer = state.module.AllocateId();
+        const auto value = state.module.AllocateId();
+        auto bits = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeF32(state)), pointer, input->variableId, ConstantU32(state, vertex), ConstantU32(state, chan & 3u));
+        state.module.AddFunction(spv::OpLoad, TypeF32(state), value, pointer);
+        state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
+        if (high) {
+            const auto shifted = state.module.AllocateId();
+            state.module.AddFunction(spv::OpShiftRightLogical, TypeU32(state), shifted, bits, ConstantU32(state, 16u));
+            bits = shifted;
+        }
+        return EmitF16BitsToF32(state, bits);
+    };
+    const auto value = loadVertex((mode + 1u) % 3u);
+    if (mode == 2u) {
+        return value;
+    }
+    const auto delta = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFSub, TypeF32(state), delta, value, loadVertex(0u));
+    return EmitF16BitsToF32(state, EmitConvertF16F32(state, delta));
 }
 
 std::uint32_t MrtOutputMode(const SpirvEmitterState& state, const ExportInfo& exp) {
@@ -1065,11 +1098,27 @@ std::uint32_t EmitGetBuiltin(SpirvValueEmitContext& ctx, const IrValue* kind, co
 }
 
 std::uint32_t EmitGetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    if (inst.Flags<std::uint32_t>() == 1u) {
+        auto& state = ctx.state;
+        const auto attribute = inst.Argument(0)->ImmediateU32();
+        const auto component = inst.Argument(1)->ImmediateU32();
+        if (state.inputInfo.vertex == nullptr || !state.inputInfo.vertex->fetchEmbedded || component >= 4u) ctx.Fail(inst, "invalid prepared vertex attribute");
+        const auto first = PipelineSpecialization::VertexBase + attribute * PipelineSpecialization::VertexWords;
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), first + component, component + 4u);
+        const auto one = state.module.SpecializationConstant(TypeU32(state), first + 4u, 0x3f800000u);
+        auto value = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 1u)), one, ConstantU32(state, 0u));
+        for (std::uint32_t channel = 0; channel < 4u; ++channel) value = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, channel + 4u)), EmitAttributeValue(state, attribute, channel), value);
+        return value;
+    }
     return EmitAttributeValue(ctx.state, inst.Argument(0)->ImmediateU32(), inst.Argument(1)->ImmediateU32());
 }
 
 std::uint32_t EmitGetInterpolationParameter(SpirvValueEmitContext& ctx, const IrValue& inst) {
     return EmitInterpolationParameterValue(ctx.state, inst.Argument(0)->ImmediateU32(), inst.Argument(1)->ImmediateU32(), inst.Argument(2)->ImmediateU32());
+}
+
+std::uint32_t EmitGetInterpolationParameterF16(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return EmitInterpolationParameterF16Value(ctx.state, inst.Argument(0)->ImmediateU32(), inst.Argument(1)->ImmediateU32(), inst.Argument(2)->ImmediateU32(), inst.Argument(3)->ImmediateU32() != 0u);
 }
 
 void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
@@ -1120,13 +1169,17 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
         const bool uintOutput = MrtOutputMode(state, exp) == 7u;
         const auto vectorType = uintOutput ? TypeU32Vector(state, 4u) : TypeF32Vector(state, 4u);
         auto value = ExportVector(ctx, data, exp, uintOutput);
-        if (state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt && exp.index < state.inputInfo.pixel->targetExportMapping.size()) {
-            const auto& mapping = state.inputInfo.pixel->targetExportMapping.at(exp.index);
-            if (!mapping.IsIdentity()) {
-                const auto mapped = state.module.AllocateId();
-                state.module.AddFunction(spv::OpVectorShuffle, vectorType, mapped, value, value, mapping.Map(0), mapping.Map(1), mapping.Map(2), mapping.Map(3));
-                value = mapped;
+        if (state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt) {
+            if (exp.index >= 8u) throw std::runtime_error("fragment export target exceeds the runtime mapping table");
+            std::array<std::uint32_t, 4> components{};
+            for (std::uint32_t component = 0; component < components.size(); ++component) {
+                const auto index = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ExportBase + exp.index * 4u + component, component);
+                components[component] = state.module.AllocateId();
+                state.module.AddFunction(spv::OpVectorExtractDynamic, uintOutput ? TypeU32(state) : TypeF32(state), components[component], value, index);
             }
+            const auto mapped = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, vectorType, mapped, components[0], components[1], components[2], components[3]);
+            value = mapped;
         }
         if (exp.kind == ExportTargetKind::Position) {
             if (state.inputInfo.vertex == nullptr) {
@@ -1170,7 +1223,7 @@ std::uint32_t EmitReadClock(SpirvValueEmitContext& ctx, const IrValue& inst, spv
 }
 
 std::uint32_t EmitShaderClock(SpirvValueEmitContext& ctx, const IrValue& inst) {
-    return EmitReadClock(ctx, inst, spv::ScopeSubgroup);
+    return EmitReadClock(ctx, inst, ctx.state.narrowSubgroupClock ? spv::ScopeDevice : spv::ScopeSubgroup);
 }
 
 std::uint32_t EmitRealtimeClock(SpirvValueEmitContext& ctx, const IrValue& inst) {

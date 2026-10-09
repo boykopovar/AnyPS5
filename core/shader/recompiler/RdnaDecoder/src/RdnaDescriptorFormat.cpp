@@ -13,7 +13,7 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 79> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 80> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, false, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
@@ -38,6 +38,7 @@ constexpr std::array<FormatInfo, 79> kFormatInfoTable {{
     {IrBufferFormat::Format11_11_10UNorm, true, true, false},
     {IrBufferFormat::Format11_11_10UInt, true, true, false},
     {IrBufferFormat::Format11_11_10Float, true, false, false},
+    {IrBufferFormat::Format10_11_11Float, true, true, false},
     {IrBufferFormat::Format10_10_10_2UNorm, true, false, false},
     {IrBufferFormat::Format10_10_10_2UInt, true, true, false},
     {IrBufferFormat::Format8_8_8_8UNorm, true, false, false},
@@ -120,7 +121,7 @@ IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format) {
 }
 
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
-    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format11_11_10UInt ? IrBufferFormat::Format32UInt : format;
+    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
 }
 
 std::uint32_t DepthBitsTextureWidth(std::uint32_t word1, std::uint32_t word3) {
@@ -134,6 +135,32 @@ std::uint32_t DepthBitsTextureWidth(std::uint32_t word1, std::uint32_t word3) {
 
 bool IsDepthBitsTexture(std::uint32_t word1, std::uint32_t word3) {
     return DepthBitsTextureWidth(word1, word3) != 0u;
+}
+
+IrTextureNumericClass VertexInputNumericClass(IrBufferFormat format) {
+    switch (format) {
+    case IrBufferFormat::Format8UInt:
+    case IrBufferFormat::Format16UInt:
+    case IrBufferFormat::Format8_8UInt:
+    case IrBufferFormat::Format32UInt:
+    case IrBufferFormat::Format16_16UInt:
+    case IrBufferFormat::Format8_8_8_8UInt:
+    case IrBufferFormat::Format32_32UInt:
+    case IrBufferFormat::Format16_16_16_16UInt:
+    case IrBufferFormat::Format32_32_32UInt:
+    case IrBufferFormat::Format32_32_32_32UInt: return IrTextureNumericClass::Uint;
+    case IrBufferFormat::Format8SInt:
+    case IrBufferFormat::Format16SInt:
+    case IrBufferFormat::Format8_8SInt:
+    case IrBufferFormat::Format32SInt:
+    case IrBufferFormat::Format16_16SInt:
+    case IrBufferFormat::Format8_8_8_8SInt:
+    case IrBufferFormat::Format32_32SInt:
+    case IrBufferFormat::Format16_16_16_16SInt:
+    case IrBufferFormat::Format32_32_32SInt:
+    case IrBufferFormat::Format32_32_32_32SInt: return IrTextureNumericClass::Sint;
+    default: return IrTextureNumericClass::Float;
+    }
 }
 
 }

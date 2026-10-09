@@ -28,7 +28,8 @@ public:
         return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
     }
 
-    void Commit(void* address, std::size_t bytes, DWORD protection, std::size_t granule, bool watched) {
+    std::vector<std::pair<std::uintptr_t, std::size_t>> Commit(void* address, std::size_t bytes, DWORD protection, std::size_t granule, bool watched) {
+        std::vector<std::pair<std::uintptr_t, std::size_t>> created;
         std::lock_guard lock(mutex);
         const auto end = reinterpret_cast<std::uintptr_t>(address) + bytes;
         for (auto cursor = reinterpret_cast<std::uintptr_t>(address); cursor < end;) {
@@ -46,6 +47,8 @@ public:
                 reset(cursor, size);
                 const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
                 if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
+                if (!created.empty() && created.back().first + created.back().second == cursor) created.back().second += size;
+                else created.emplace_back(cursor, size);
                 cursor += size;
             } else {
                 if (memory.State != MEM_COMMIT) throw std::runtime_error("guest memory is not committed");
@@ -60,6 +63,7 @@ public:
                 cursor = stop;
             }
         }
+        return created;
     }
 
     void Reset(void* address, std::size_t bytes) {

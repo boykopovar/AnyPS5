@@ -155,7 +155,7 @@ void ExpectNear(std::uint32_t tid, std::uint32_t index, std::uint32_t actual, st
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::string Hex(std::uint32_t value) {
@@ -186,6 +186,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();

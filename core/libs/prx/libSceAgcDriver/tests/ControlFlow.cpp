@@ -285,7 +285,7 @@ void verifyNullSwappc() {
     verifyLongBranch("backward long branch", LongBranchBack, 0x24u, 0x08u);
     const std::array<std::uint32_t, 3> call{0xbe8c1f00u, 0xbe8e210cu, 0xbf810000u};
     const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
-        {"s_swappc_b64 with a return address", {call.begin(), call.end()}, "unsupported SOP1 opcode 33"},
+        {"s_swappc_b64 with a return address", {call.begin(), call.end()}, "unclosable scalar call/return pairing"},
         {"index rewritten after the bound", patched(DwordTableGetpcFirst, 5, {0xbe9203ffu, 0x00000040u}), "unsupported dynamic s_setpc_b64"},
         {"index scaled for two-dword entries", patched(DwordTableGetpcFirst, 7, {0x8f128312u}), "unsupported dynamic s_setpc_b64"},
         {"entry rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8e0380u}), "unsupported dynamic s_setpc_b64"},

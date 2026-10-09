@@ -30,6 +30,7 @@ int APS5_VABI close_nid_postfix(int);
 int APS5_VABI stat_nid_postfix(const char*, FileStat*);
 int APS5_VABI unlink_nid_postfix(const char*);
 int APS5_VABI rmdir_nid_postfix(const char*);
+int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
 int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
 int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelStat(const char*, FileStat*);
@@ -88,7 +89,10 @@ int main() {
     Require(close_nid_postfix(descriptors[0]) == 0);
     const auto root = std::filesystem::path("anyps5-filesystem-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+    Require(mkdir_nid_postfix(root.string().c_str(), 0700) == 0);
+    Require(mkdir_nid_postfix(root.string().c_str(), 0700) == -1 && *__error_nid_postfix() == 17);
+    Require(mkdir_nid_postfix((root / "missing" / "child").string().c_str(), 0700) == -1 && *__error_nid_postfix() == 2);
+    Require(mkdir_nid_postfix(nullptr, 0700) == -1 && *__error_nid_postfix() == 14);
     const auto file = root / "file.txt";
     { std::ofstream stream(file); stream << "retained until removal"; }
     Require(remove_nid_postfix(root.string().c_str()) == -1);

@@ -289,7 +289,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWo
         }
     }
     const auto address = reinterpret_cast<std::uintptr_t>(Buffer.data());
-    const std::array<std::uint32_t, 4> buffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(Buffer.size() * 4u), 0x01016facu};
+    const std::array<std::uint32_t, 4> buffer{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(Buffer.size() * 4u), 0x31016facu};
     const auto texture = TextureDescriptor(type, height, depth);
     const std::array<std::uint32_t, 4> sampler{0x92u, (4u * 256u) << 12u, (1u << 22u) | (1u << 26u), 0u};
     std::vector<std::uint32_t> userData(16, 0u);

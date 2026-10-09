@@ -158,6 +158,15 @@ std::uint32_t SpirvModule::declareDecoratedType(std::uint32_t opcode, std::vecto
     return id;
 }
 
+std::uint32_t SpirvModule::SpecializationConstant(std::uint32_t type, std::uint32_t constantId, std::uint32_t defaultValue) {
+    if (const auto found = specializationIds.find(constantId); found != specializationIds.end()) return found->second;
+    const auto id = AllocateId();
+    appendInstruction(declarations, spv::OpSpecConstant, type, id, defaultValue);
+    AddAnnotation(spv::OpDecorate, id, spv::DecorationSpecId, constantId);
+    specializationIds.emplace(constantId, id);
+    return id;
+}
+
 std::uint32_t SpirvModule::declareConstant(std::uint32_t opcode, std::vector<std::uint32_t> key) {
     if (const auto it = declarationIds.find(key); it != declarationIds.end()) {
         return it->second;

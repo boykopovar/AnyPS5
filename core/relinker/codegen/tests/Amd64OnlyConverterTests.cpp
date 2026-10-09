@@ -168,6 +168,9 @@ void decoderRipRelative() {
     }
     for (const auto& instruction : kRegisterVectorOperations)
         require(!decoder.DecodeInstruction(instruction.data(), instruction.size()).HasRipRelativeDisp, "Vector instruction without a RIP-relative operand was reported as RIP-relative");
+    const Bytes ud1 = {0x0F, 0xB9, 0x05, 0x10, 0x00, 0x00, 0x00};
+    const auto trap = decoder.DecodeInstruction(ud1.data(), ud1.size());
+    require(trap.Length == ud1.size() && trap.FlowKind == Codegen::ControlFlowKind::Trap && trap.HasRipRelativeDisp && read<std::int32_t>(ud1, trap.RipRelativeDispOffset) == 0x10, "UD1 was not decoded as a trap with its RIP-relative operand");
 }
 
 void decoderTwoByteOpcodeLengths() {
@@ -721,6 +724,19 @@ void rewriterStrayRex() {
     const auto rewritten = Codegen::X64InstructionRewriter{}.Rewrite(code, {7, {0x66, 0x90}});
     const Bytes expected = {0x48, 0x2E, 0xE9, 0x02, 0x00, 0x00, 0x00, 0x66, 0x90, 0xC3};
     require(rewritten.Bytes == expected, "Branch with a stray REX was not adjusted by a length-changing rewrite");
+}
+
+void rewriterReferenceSites() {
+    const std::vector<std::tuple<Bytes, std::uint64_t, Bytes>> cases = {
+        {{0x90, 0x48, 0xB8, 0x05, 0xF0, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xC3}, 0,
+         {0x66, 0x90, 0x48, 0xB8, 0x05, 0xF0, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xC3}},
+        {{0xC5, 0xF9, 0x6F, 0x05, 0x01, 0x00, 0x00, 0x00, 0x90, 0xC3}, 8,
+         {0xC5, 0xF9, 0x6F, 0x05, 0x02, 0x00, 0x00, 0x00, 0x66, 0x90, 0xC3}},
+        {{0x66, 0x0F, 0x38, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x90, 0xC3}, 9,
+         {0x66, 0x0F, 0x38, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00, 0x66, 0x90, 0xC3}},
+        {{0xE2, 0x01, 0x90, 0xC3}, 2, {0xE2, 0x02, 0x66, 0x90, 0xC3}}};
+    for (const auto& [code, offset, expected] : cases)
+        require(Codegen::X64InstructionRewriter{}.Rewrite(code, {offset, {0x66, 0x90}}).Bytes == expected, "Length-changing rewrite adjusted an immediate or missed a VEX, three-byte or LOOP reference");
 }
 
 void converterFailureOffsets() {
@@ -1323,6 +1339,7 @@ int main() {
         converterReciprocal();
         converterStrayRex();
         rewriterStrayRex();
+    rewriterReferenceSites();
         converterFailureOffsets();
         linuxPlacement();
         linuxRipRelativePlacement();

@@ -41,6 +41,7 @@ struct ColorTarget {
     // DCC metadata of a compressed target (CB_COLOR_INFO DCC_ENABLE), or 0 (see DccMetadata.hpp).
     std::uint64_t dccAddress = 0;
     bool dccAlphaOnMsb = false;
+    bool dccPipeAligned = false;
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
     std::uint64_t surfaceAddress = 0;
@@ -91,6 +92,7 @@ struct State {
     VkViewport viewport;
     bool negativeOneToOne;
     bool depthClamp = false;
+    VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkFrontFace frontFace;
@@ -103,6 +105,7 @@ State DecodeState(const QueueState& queue);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
+std::uint32_t ColorWriteMask(const Registers& context);
 
 struct ColorMetadataPass {
     enum class Mode { EliminateFastClear, DccDecompress };
@@ -110,6 +113,7 @@ struct ColorMetadataPass {
     std::vector<ColorTarget> targets;
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
+std::string DepthMaintenanceRejection(const QueueState& queue);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
 // this precheck covers, evaluated without exceptions before the draw is decoded; empty when they
 // pass (DecodeState still checks everything). A register a rule needs that is absent is no verdict.

@@ -392,13 +392,27 @@ std::size_t DccKeyBytes(std::uint64_t surfaceBytes) {
     return static_cast<std::size_t>(surfaceBytes / KeyBytes);
 }
 
+std::size_t DccKeyCount(TextureTileMode tileMode, std::uint32_t elementBytes, std::uint32_t width, std::uint32_t height, std::uint64_t surfaceBytes) {
+    const auto keys = DccKeyBytes(surfaceBytes);
+    if (tileMode != TextureTileMode::kR64KBX || elementBytes != 4) return keys;
+    constexpr std::uint64_t MetaBlockEdge = 512;
+    constexpr std::uint64_t MetaBlockBytes = 4096;
+    const auto console = (width + MetaBlockEdge - 1) / MetaBlockEdge * ((height + MetaBlockEdge - 1) / MetaBlockEdge) * MetaBlockBytes;
+    return std::max(keys, static_cast<std::size_t>(console));
+}
+
+std::size_t DccKeyCount(const GuestTextureResource& surface, std::uint64_t surfaceBytes) {
+    const bool single = surface.mipCount == 1 && surface.baseArray == 0 && surface.depthOrLastArray == 0 && (surface.dimension == TextureDimension::k2D || surface.dimension == TextureDimension::k2DArray);
+    if (!single || !surface.dccPipeAligned || surface.tileMode != TextureTileMode::kR64KBX) return DccKeyBytes(surfaceBytes);
+    return DccKeyCount(surface.tileMode, BytesPerElement(surface.format), surface.width, surface.height, surfaceBytes);
+}
+
 namespace {
 
 // ReadDccKeys, saying in `memoized` whether the answer came from the pending-store memo rather
 // than the bytes.
-DccKeys readDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, bool& memoized) {
+DccKeys readDccKeys(std::uint64_t metaAddress, std::size_t count, bool& memoized) {
     memoized = false;
-    const auto count = static_cast<std::size_t>(surfaceBytes / KeyBytes);
     if (metaAddress == 0 || count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(metaAddress), count)) return DccKeys::Unreadable;
     // A driver store still pending on the GPU is not in the bytes yet.
     if (const auto memo = MemoizedKeys(metaAddress, metaAddress + count)) {
@@ -430,7 +444,7 @@ DccKeys readDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, bool&
 DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, bool& memoized) {
     memoized = false;
     if (resource.dccAddress == 0) return DccKeys::Uncompressed;
-    const auto keys = readDccKeys(resource.dccAddress, guestBytes, memoized);
+    const auto keys = readDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
     if (keys == DccKeys::Uncompressed) return keys;
     if (IsConvertedTextureFormat(resource.format) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110)) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(resource.format) + " is not implemented");
     std::byte probe[16]{};
@@ -444,15 +458,7 @@ DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
     return keys;
 }
 
-}
-
-DccKeys ReadDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
-    bool memoized = false;
-    return readDccKeys(metaAddress, surfaceBytes, memoized);
-}
-
-DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
-    const auto count = static_cast<std::size_t>(surfaceBytes / KeyBytes);
+DccKeys currentDccKeys(std::uint64_t metaAddress, std::size_t count) {
     if (metaAddress != 0 && count != 0 && GuestMemory::GpuMutex().HeldByThisThread()) {
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(metaAddress, count)) {
             if (const auto keys = PendingStoreKeys(*recorder, metaAddress, count)) return *keys;
@@ -460,7 +466,35 @@ DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
             recorder->SyncThrough(metaAddress, count);
         }
     }
-    return ReadDccKeys(metaAddress, surfaceBytes);
+    bool memoized = false;
+    return readDccKeys(metaAddress, count, memoized);
+}
+
+std::size_t StoredKeyCount(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount) {
+    const auto keys = DccKeyBytes(surfaceBytes);
+    Require(keyCount >= keys, "a DCC key range covers fewer keys than one per 256 surface bytes");
+    if (metaAddress == 0 || keyCount == 0) return 0;
+    if (GuestMemory::Accessible(reinterpret_cast<const void*>(metaAddress), keyCount, true)) return keyCount;
+    if (keyCount == keys) return 0;
+    char message[256];
+    std::snprintf(message, sizeof(message), "AGC graphics: DCC metadata 0x%llx is not writable over the 0x%zx key bytes of its surface (0x%zx at one per 256 bytes): metadata smaller than the console's DCC extent is not modeled", static_cast<unsigned long long>(metaAddress), keyCount, keys);
+    throw std::runtime_error(message);
+}
+
+}
+
+DccKeys ReadDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
+    bool memoized = false;
+    return readDccKeys(metaAddress, DccKeyBytes(surfaceBytes), memoized);
+}
+
+DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
+    return currentDccKeys(metaAddress, DccKeyBytes(surfaceBytes));
+}
+
+DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount) {
+    Require(keyCount >= DccKeyBytes(surfaceBytes), "a DCC key range covers fewer keys than one per 256 surface bytes");
+    return currentDccKeys(metaAddress, keyCount);
 }
 
 bool IsDccClear(DccKeys keys) {
@@ -468,8 +502,12 @@ bool IsDccClear(DccKeys keys) {
 }
 
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
-    const auto count = static_cast<std::size_t>(surfaceBytes / KeyBytes);
-    if (metaAddress == 0 || count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(metaAddress), count, true)) return;
+    MarkDccUncompressed(metaAddress, surfaceBytes, DccKeyBytes(surfaceBytes));
+}
+
+void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount) {
+    const auto count = StoredKeyCount(metaAddress, surfaceBytes, keyCount);
+    if (count == 0) return;
     // The bytes are trusted only when no recorded work writes them (lock-free, with or without
     // GuestMemory::GpuMutex); otherwise the store runs and waits through the flush hook. A pending
     // GPU store of the driver's own is no reason to skip: a title kernel recorded into the same
@@ -479,8 +517,12 @@ void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes) 
 }
 
 void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
-    const auto count = static_cast<std::size_t>(surfaceBytes / KeyBytes);
-    if (metaAddress == 0 || count == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(metaAddress), count, true)) return;
+    MarkDccUncompressed(context, metaAddress, surfaceBytes, DccKeyBytes(surfaceBytes));
+}
+
+void MarkDccUncompressed(const Context& context, std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount) {
+    const auto count = StoredKeyCount(metaAddress, surfaceBytes, keyCount);
+    if (count == 0) return;
     auto* recorder = CpuKeysOnly() || !GuestMemory::GpuMutex().HeldByThisThread() ? nullptr : Recorder::Active();
     // The bytes are scanned only when no recorded work writes them: a pending clear kernel's keys are
     // not in memory yet, so the bytes could read as uncompressed while the kernel will store a clear

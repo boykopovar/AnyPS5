@@ -14,78 +14,20 @@ X64InstructionRewriter::ReferenceSite X64InstructionRewriter::ClassifyInstructio
     const std::uint8_t* data,
     std::size_t length
 ) {
-    std::size_t pos = 0;
+    const auto info = X64InstructionDecoder{}.DecodeInstruction(data, length);
 
-    while (pos < length) {
-        const std::uint8_t b = data[pos];
-        if ((b >= RexMin && b <= RexMax) ||
-            b == PrefixLock || b == PrefixRepne || b == PrefixRep ||
-            b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs ||
-            b == PrefixSegEs || b == PrefixSegFs || b == PrefixSegGs ||
-            b == PrefixOperandSize || b == PrefixAddressSize) {
-            pos += 1;
-            continue;
-        }
-        break;
+    if (info.HasRipRelativeDisp) {
+        return {ReferenceKind::RipRelativeDisp32, info.RipRelativeDispOffset};
     }
 
-    if (pos >= length) {
+    if (!info.HasBranchTarget) {
         return {ReferenceKind::None, 0};
     }
 
-    std::uint8_t opcode = data[pos];
-    const std::size_t opcodeOffset = pos;
-    pos += 1;
-    bool twoByteOpcode = false;
-
-    if (opcode == TwoByteOpcodeEscape) {
-        if (pos >= length) {
-            return {ReferenceKind::None, 0};
-        }
-        twoByteOpcode = true;
-        opcode = data[pos];
-        pos += 1;
-    }
-
-    if (!twoByteOpcode) {
-        if (opcode == OneByteCallRel32 || opcode == OneByteJmpRel32) {
-            if (length >= opcodeOffset + Rel32InstructionLength) {
-                return {ReferenceKind::Rel32Branch, pos};
-            }
-            return {ReferenceKind::None, 0};
-        }
-
-        if (opcode == OneByteJmpRel8 || (opcode >= OneByteJccRel8Min && opcode <= OneByteJccRel8Max)) {
-            if (length >= pos + Disp8Size) {
-                return {ReferenceKind::Rel8Branch, pos};
-            }
-            return {ReferenceKind::None, 0};
-        }
-    } else {
-        if (opcode >= TwoByteJccRel32Min && opcode <= TwoByteJccRel32Max) {
-            if (length >= pos + Disp32Size) {
-                return {ReferenceKind::Rel32Branch, pos};
-            }
-            return {ReferenceKind::None, 0};
-        }
-    }
-
-    if (pos >= length) {
-        return {ReferenceKind::None, 0};
-    }
-
-    const std::uint8_t modrm = data[pos];
-    const std::uint8_t mod = static_cast<std::uint8_t>((modrm >> ModRmModShift) & ModRmModMask);
-    const std::uint8_t rm = static_cast<std::uint8_t>(modrm & ModRmRmMask);
-
-    if (mod == ModRmModIndirect && rm == ModRmRmRipRelative) {
-        const std::size_t dispOffset = pos + 1;
-        if (length >= dispOffset + Disp32Size) {
-            return {ReferenceKind::RipRelativeDisp32, dispOffset};
-        }
-    }
-
-    return {ReferenceKind::None, 0};
+    const bool rel32 = info.IsTwoByteOpcode || info.Opcode == OneByteCallRel32 || info.Opcode == OneByteJmpRel32;
+    return rel32
+        ? ReferenceSite{ReferenceKind::Rel32Branch, info.Length - Disp32Size}
+        : ReferenceSite{ReferenceKind::Rel8Branch, info.Length - Disp8Size};
 }
 
 std::int32_t X64InstructionRewriter::ReadInt32(const std::uint8_t* data) {

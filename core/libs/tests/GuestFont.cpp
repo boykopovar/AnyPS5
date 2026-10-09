@@ -16,6 +16,9 @@ int APS5_VABI sceFontDestroyLibrary(FontLibrary*);
 int APS5_VABI sceFontCreateRenderer(const FontMemory*, const void*, FontRenderer*);
 int APS5_VABI sceFontDestroyRenderer(FontRenderer*);
 int APS5_VABI sceFontGetPixelResolution(FontLibrary, std::uint32_t*);
+int APS5_VABI sceFontAttachDeviceCacheBuffer(FontLibrary, void*, std::uint32_t);
+int APS5_VABI sceFontClearDeviceCache(FontLibrary);
+int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary, void**, std::uint32_t*);
 int APS5_VABI sceFontSupportSystemFonts(FontLibrary);
 int APS5_VABI sceFontSupportExternalFonts(FontLibrary, std::uint32_t, std::uint32_t);
 int APS5_VABI sceFontOpenFontSet(FontLibrary, std::uint32_t, std::uint32_t, const FontOpenDetail*, FontHandle*);
@@ -143,6 +146,32 @@ int main() {
     coarseDriver.pixel_resolution = nullptr;
     Require(sceFontGetPixelResolution(coarseLibrary, &subPixelCount) == SCE_FONT_ERROR_INVALID_LIBRARY && subPixelCount == 0);
     Require(sceFontDestroyLibrary(&coarseLibrary) == SCE_FONT_OK && coarseLibrary == nullptr);
+
+    void* cacheBuffer = nullptr;
+    std::uint32_t cacheSize = 0;
+    Require(sceFontDettachDeviceCacheBuffer(nullptr, &cacheBuffer, &cacheSize) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontDettachDeviceCacheBuffer(&notALibrary, &cacheBuffer, &cacheSize) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontClearDeviceCache(library) == SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER);
+    Require(sceFontDettachDeviceCacheBuffer(library, &cacheBuffer, &cacheSize) == SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER);
+
+    std::vector<unsigned char> callerCache(0x2000);
+    Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), 0x1000) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), static_cast<std::uint32_t>(callerCache.size())) == SCE_FONT_OK);
+    Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), static_cast<std::uint32_t>(callerCache.size())) == SCE_FONT_ERROR_ALREADY_ATTACHED);
+    Require(sceFontClearDeviceCache(library) == SCE_FONT_OK);
+    Require(sceFontDettachDeviceCacheBuffer(library, &cacheBuffer, &cacheSize) == SCE_FONT_OK && cacheBuffer == callerCache.data() && cacheSize == callerCache.size());
+    Require(sceFontDettachDeviceCacheBuffer(library, &cacheBuffer, &cacheSize) == SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER);
+
+    Require(sceFontAttachDeviceCacheBuffer(library, nullptr, 0x2000) == SCE_FONT_OK);
+    cacheBuffer = nullptr;
+    cacheSize = 0;
+    Require(sceFontDettachDeviceCacheBuffer(library, &cacheBuffer, &cacheSize) == SCE_FONT_OK && cacheBuffer != nullptr && cacheSize == 0x2000);
+    Release(nullptr, cacheBuffer);
+    Require(sceFontDettachDeviceCacheBuffer(library, &cacheBuffer, &cacheSize) == SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER);
+
+    Require(sceFontAttachDeviceCacheBuffer(library, nullptr, 0x2000) == SCE_FONT_OK);
+    Require(sceFontDettachDeviceCacheBuffer(library, nullptr, nullptr) == SCE_FONT_OK);
+    Require(sceFontDettachDeviceCacheBuffer(library, nullptr, nullptr) == SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER);
 
     FontHandle font = reinterpret_cast<FontHandle>(&memory);
     Require(sceFontOpenFontSet(library, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FUNCTION && font == nullptr);

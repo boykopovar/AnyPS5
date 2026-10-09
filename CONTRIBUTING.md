@@ -13,10 +13,13 @@
 - The relinker uses only the C++20 standard library.
 - Third-party code is added as a submodule under `3rdparty/` and built from source, not found on the system.
 - Don't add tests that only check that a symbol is exported: a missing export already fails at startup.
+- Each test finishes in 30 s on the CI runners, Vulkan tests included (Linux runs them on lavapipe), counting the first run with no shader cache. ctest runs in parallel there, so a slow test competes for the cores and times out on some runs and not others. Split or shrink a test that gets close instead of raising its timeout. CI reports every test over 30 s as a warning on the pull request.
 
 ## Build and test
 
 Toolchains are listed in the [build instructions](docs/dev/BUILD.md).
+
+For relinker changes, use the [relinker-only build](docs/dev/BUILD.md#relinker-only) to build and test without third-party submodules, system libraries or a GPU. It also works on macOS. Changes to system libraries or shaders still need the full build and relevant runtime tests.
 
 ```
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON

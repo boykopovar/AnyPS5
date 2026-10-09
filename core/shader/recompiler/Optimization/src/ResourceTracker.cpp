@@ -1,6 +1,7 @@
 #include "Optimization/ResourceTracker.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
+#include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 
@@ -798,19 +799,20 @@ private:
         DescriptorSource descriptor;
         MakeSource(*handle, 4u, false, false, descriptor);
         std::uint32_t badDword = 0;
-        if (ValidateSource(descriptor, badDword)) {
-            return false;
-        }
-        const auto op = inst.Opcode();
-        const bool load = op == IrOpcode::LoadBufferU32 || op == IrOpcode::LoadBufferU32x2 || op == IrOpcode::LoadBufferU32x3 || op == IrOpcode::LoadBufferU32x4 || op == IrOpcode::ReadConstBuffer;
-        const bool store = op == IrOpcode::StoreBufferU32 || op == IrOpcode::StoreBufferU32x2 || op == IrOpcode::StoreBufferU32x3 || op == IrOpcode::StoreBufferU32x4;
         auto& memory = m_program.Resources().memoryInfo[memoryIndex];
-        if ((!load && !store) || memory.formatted || memory.typed || memory.dataBits != 32u) {
-            return false;
+        const auto access = BufferAccessOf(inst.Opcode());
+        if (ValidateSource(descriptor, badDword)) {
+            const auto source = InternSource(descriptor);
+            const auto resource = AddBuffer(source, memory, inst.Opcode(), inst.Flags<MemoryFlags>().pc);
+            if (resource == std::numeric_limits<std::uint32_t>::max()) fail("buffer resource limit exceeded");
+            AddMemoryPatch(memoryIndex, resource, 0u, false);
+            memory.gpuDescriptor = false;
+            m_info.usesDma = m_info.usesDma || access == BufferAccess::Atomic;
+            return true;
         }
         memory.gpuDescriptor = true;
         m_info.usesDma = true;
-        m_info.bdaWrites = m_info.bdaWrites || store;
+        m_info.bdaWrites = m_info.bdaWrites || access == BufferAccess::Write || access == BufferAccess::Atomic;
         return true;
     }
 
@@ -849,6 +851,13 @@ private:
         resource.written = resource.written || write;
         resource.atomic = resource.atomic || atomic;
         resource.formatted = resource.formatted || memory.formatted;
+        resource.descriptorFormatted = resource.descriptorFormatted || (memory.formatted && !memory.typed);
+        if (memory.formatted && memory.typed) {
+            const auto format = GetFormatInfo(DecodeTBufferFormat(memory.dataFormat, memory.numberFormat));
+            if (format.byteSize == 0u) fail("typed buffer instruction has an invalid format");
+            resource.typedAlignment = std::max(resource.typedAlignment, static_cast<std::uint8_t>(std::min(format.byteSize, 4u)));
+        }
+        if (memory.formatted && !memory.typed && !write) resource.formattedReadMask |= (1u << std::min(memory.dataDwords, 4u)) - 1u;
         resource.scalar = resource.scalar || op == IrOpcode::ReadConstBuffer || memory.kind == ResourceKind::ScalarBuffer;
     }
 
@@ -858,8 +867,8 @@ private:
         const bool depth = (memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0;
         for (std::uint32_t i = 0; i < m_info.images.size(); i++) {
             auto& image = m_info.images[i];
-            if (image.source == source && image.resourceClass == resourceClass && image.dimension == memory.imageDimension && image.mipMode == mip && image.depthCompare == depth && image.r128 == memory.imageR128 && image.packed == memory.imagePacked) {
-                Merge(image, op, pc);
+            if (image.source == source && image.resourceClass == resourceClass && image.dimension == memory.imageDimension && image.mipMode == mip && image.depthCompare == depth && image.r128 == memory.imageR128 && image.packed == memory.imagePacked && image.byElements == memory.imageByElements && image.byComponents == (memory.imageByElements != 0u ? memory.dataDwords / memory.imageByElements : 0u)) {
+                Merge(image, memory, op, pc);
                 return i;
             }
         }
@@ -875,12 +884,14 @@ private:
         image.depthCompare = depth;
         image.r128 = memory.imageR128;
         image.packed = memory.imagePacked;
-        Merge(image, op, pc);
+        image.byElements = memory.imageByElements;
+        image.byComponents = memory.imageByElements != 0u ? memory.dataDwords / memory.imageByElements : 0u;
+        Merge(image, memory, op, pc);
         m_info.images.push_back(image);
         return static_cast<std::uint32_t>(m_info.images.size() - 1);
     }
 
-    static void Merge(ImageResource& image, IrOpcode op, std::uint32_t pc) {
+    static void Merge(ImageResource& image, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
         const auto access = ImageOpcodeInfoOf(op).access;
         const bool atomic = access == ImageAccess::Atomic;
         const bool write = access == ImageAccess::Write || atomic;
@@ -893,6 +904,14 @@ private:
         image.read = image.read || !write || atomic;
         image.written = image.written || write;
         image.atomic = image.atomic || atomic;
+        image.srgbDecodeCompatible = image.srgbDecodeCompatible && !ImageOpcodeInfoOf(op).needsSampler;
+        image.fmaskCompatible = image.fmaskCompatible && op == IrOpcode::ImageRead && memory.dataBits == 32u;
+        image.depthBitsCompatible = image.depthBitsCompatible && memory.dataBits == 32u;
+        if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
+            constexpr auto unsupported = RdnaImageSampleFlagLod | RdnaImageSampleFlagDerivative;
+            if (op == IrOpcode::ImageGatherRaw || (memory.imageSampleFlags & unsupported) != 0u) image.emulatedCompare |= EmulatedCompare::Unsupported;
+            if ((memory.imageSampleFlags & RdnaImageSampleFlagLevelZero) == 0u) image.emulatedCompare |= EmulatedCompare::RequiresSingleLevel;
+        }
     }
 
     std::uint32_t AddSampler(std::uint32_t source, std::uint32_t pc) {
@@ -979,13 +998,7 @@ private:
         std::uint32_t resource = 0;
 
         if (buffer != BufferAccess::None) {
-            if (TakeGpuDescriptor(inst, flags.index)) {
-                return;
-            }
-            GetHandle(inst.Argument(0), IrOpcode::GetBufferResource, 4, handle, source);
-            resource = AddBuffer(source, memory, op, flags.pc);
-            AddHandlePatch(handle, resource);
-            AddMemoryPatch(flags.index, resource, 0, false);
+            if (!TakeGpuDescriptor(inst, flags.index)) fail("buffer operation requires a four-dword runtime V#");
             return;
         }
         if (addressInfo.access != AddressAccess::None) {

@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILER_CACHEKEY_HPP
 
 #include "Recompiler.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdlib>
 #include <stdexcept>
@@ -13,6 +14,7 @@ class RecompileCacheKey {
 public:
     static void Build(const RecompileRequest& request, std::vector<std::uint64_t>& key) {
         key.clear();
+        append(key, RuntimeAbi::Version);
         append(key, request.shader.stage);
         // The code enters as a hash rather than word by word: the key is built, hashed and compared
         // on every dispatch and draw. The cache verifies a match against the code it stored.
@@ -24,17 +26,14 @@ public:
         } else {
             append(key, request.shader.code);
         }
-        append(key, request.context.waveSize);
-        append(key, request.context.userDataBaseRegister);
-        append(key, request.context.userData.size());
-        append(key, request.context.compute);
-        append(key, request.context.pixel);
-        append(key, request.context.vertex);
-        appendMesh(key, request);
-        append(key, request.target);
-        append(key, DebugProbeActive());
-        append(key, RayTracingStrict());
-        append(key, RayTracingMiss());
+        appendInterface(key, request);
+    }
+
+    static void BuildInterface(const RecompileRequest& request, std::vector<std::uint64_t>& key) {
+        key.clear();
+        append(key, RuntimeAbi::Version);
+        append(key, request.shader.stage);
+        appendInterface(key, request);
     }
 
     // A hash over every field Build appends except the code, the target and the probe flag: the
@@ -44,6 +43,7 @@ public:
         struct ContextKeyStorage {};
         auto& key = HostThreadLocal<std::vector<std::uint64_t>, ContextKeyStorage>();
         key.clear();
+        append(key, RuntimeAbi::Version);
         append(key, request.shader.stage);
         append(key, request.context.waveSize);
         append(key, request.context.userDataBaseRegister);
@@ -51,7 +51,9 @@ public:
         append(key, request.context.compute);
         append(key, request.context.pixel);
         append(key, request.context.vertex);
+        append(key, request.context.floatMode);
         appendMesh(key, request);
+        appendTessellation(key, request);
         std::uint64_t hash = 0xcbf29ce484222325ull;
         for (const auto value : key) {
             hash ^= value;
@@ -74,12 +76,36 @@ public:
     }
 
 private:
+    static void appendInterface(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        append(key, request.context.waveSize);
+        append(key, request.context.userDataBaseRegister);
+        append(key, request.context.userData.size());
+        append(key, request.context.compute);
+        append(key, request.context.pixel);
+        append(key, request.context.vertex);
+        append(key, request.context.floatMode);
+        appendMesh(key, request);
+        appendTessellation(key, request);
+        append(key, request.target);
+        append(key, DebugProbeActive());
+        append(key, RayTracingStrict());
+        append(key, RayTracingMiss());
+    }
+
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
         if (request.shader.stage != ShaderStage::Mesh) return;
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
         for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize}) append(key, value);
+    }
+
+    static void appendTessellation(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        if (request.shader.stage != ShaderStage::Local && request.shader.stage != ShaderStage::TessellationControl && request.shader.stage != ShaderStage::TessellationEvaluation) return;
+        const auto* tessellation = request.graphics && request.graphics->tessellation ? &*request.graphics->tessellation : nullptr;
+        append(key, tessellation != nullptr);
+        if (tessellation == nullptr) return;
+        for (const auto value : {tessellation->inputControlPoints, tessellation->outputControlPoints, tessellation->domain, tessellation->partitioning, tessellation->outputTopology}) append(key, value);
     }
 
     template<typename TValue>
@@ -107,6 +133,13 @@ private:
     static void append(std::vector<std::uint64_t>& key, std::string_view value) {
         append(key, value.size());
         for (const unsigned char byte : value) append(key, byte);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const ShaderFloatMode& value) {
+        append(key, value.floatMode);
+        append(key, value.dx10Clamp);
+        append(key, value.ieeeMode);
+        append(key, value.fp16Overflow);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderComputeStageInfo& value) {
@@ -144,7 +177,6 @@ private:
         append(key, value.conservativeZExport);
         append(key, value.orderedPixelShader);
         append(key, value.targetOutputMode);
-        append(key, value.targetExportMapping);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderVertexResourceDestination& value) {
@@ -155,15 +187,16 @@ private:
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderVertexStageInfo& value) {
-        append(key, value.resourcesNum);
         append(key, value.fetchAttribReg);
         append(key, value.fetchBufferReg);
         append(key, value.fetchEmbedded);
         if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
+        append(key, value.resourcesNum);
         for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {
-            append(key, value.resources[i].fields[1] & 0xffff0000u);
-            append(key, value.resources[i].fields[3]);
-            append(key, value.resourcesDst[i]);
+            if (!value.fetchEmbedded) append(key, VertexInputNumericClass(static_cast<IrBufferFormat>((value.resources[i].fields[3] >> 12u) & 0x7fu)));
+            auto destination = value.resourcesDst[i];
+            if (value.fetchEmbedded) destination.fetchIndex = 0;
+            append(key, destination);
         }
     }
 
@@ -204,6 +237,7 @@ private:
         append(key, value.tessellation);
         append(key, value.nonConstantImageOffsets);
         append(key, value.srgbDecodeFormats);
+        append(key, value.narrowSubgroupClock);
     }
 };
 

@@ -4,6 +4,9 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include <cstring>
+#include <atomic>
+#include <exception>
+#include <thread>
 #include <array>
 #include <algorithm>
 #include <utility>
@@ -24,6 +27,49 @@ void reject(TAction action) {
     throw std::runtime_error("expected guest allocation ownership rejection");
 }
 
+}
+
+void RunGuestLeaseWaitTests() {
+    std::array<std::byte, 128> memory{};
+    const auto address = reinterpret_cast<std::uintptr_t>(memory.data());
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory.data(), 64, true, true);
+        mutation.Add(memory.data() + 64, 64, true, true);
+    }
+    auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    std::erase_if(lease, [&](const auto& range) { return range->address != address; });
+    std::atomic<bool> mutationEntered = false;
+    std::atomic<bool> lookupFinished = false;
+    std::exception_ptr failure;
+    bool unmapped = false;
+    std::jthread mutator([&] {
+        try {
+            GuestAllocations::Mutation mutation;
+            mutationEntered.store(true);
+            mutationEntered.notify_one();
+            mutation.Unmap(memory.data(), 64, [&](const void*, std::size_t, const void*, bool) {
+                Require(lookupFinished.load(), "the allocation was unmapped before its lease holder finished");
+                unmapped = true;
+            });
+        } catch (...) { failure = std::current_exception(); }
+    });
+    mutationEntered.wait(false);
+    auto other = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    std::erase_if(other, [&](const auto& range) { return range->address != address + 64; });
+    const bool found = other.size() == 1 && other.front()->address == address + 64;
+    lookupFinished.store(true);
+    lease.clear();
+    mutator.join();
+    other.clear();
+    {
+        GuestAllocations::Mutation mutation;
+        if (!unmapped) mutation.Remove(memory.data());
+        mutation.Remove(memory.data() + 64);
+    }
+    Require(found, "a lease holder could not query another allocation during an unmap wait");
+    if (failure) std::rethrow_exception(failure);
+    Require(unmapped, "waiting unmap did not resume after the lease was released");
 }
 
 void RunGuestAllocationTests() {

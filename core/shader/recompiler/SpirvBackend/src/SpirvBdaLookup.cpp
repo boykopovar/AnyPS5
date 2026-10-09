@@ -102,7 +102,7 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
     fail(binary(spv::OpINotEqual, boolean, BdaLoadWord(state, at(7)), constant(0)), BdaAbi::FaultReason::InvalidTable);
     fail(binary(spv::OpUGreaterThanEqual, boolean, begin, finish), BdaAbi::FaultReason::InvalidTable);
     fail(binary(spv::OpUGreaterThan, boolean, end, finish), BdaAbi::FaultReason::Unmapped);
-    fail(binary(spv::OpIEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(permission)), constant(0)), BdaAbi::FaultReason::Permission);
+    fail(binary(spv::OpINotEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(permission)), constant(permission)), BdaAbi::FaultReason::Permission);
     fail(binary(spv::OpIEqual, boolean, base, BdaConstant(state, 0)), BdaAbi::FaultReason::InvalidTable);
     const auto offset = binary(spv::OpISub, u64, address, begin);
     const auto result = binary(spv::OpIAdd, u64, base, offset);
@@ -164,6 +164,7 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
     DefineBdaDwordReadFunctions(state);
     if (state.program.Info().bdaWrites) {
         state.bdaWritePointerFunction = DefineBdaLookup(state, "get_bda_write_pointer", true, BdaAbi::Write);
+        state.bdaAtomicPointerFunction = DefineBdaLookup(state, "get_bda_atomic_pointer", true, BdaAbi::Read | BdaAbi::Write);
         state.bdaNoteWriteFunction = DefineBdaNoteWrite(state);
     }
 }

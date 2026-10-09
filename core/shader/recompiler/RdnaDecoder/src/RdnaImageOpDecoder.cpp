@@ -87,6 +87,8 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x58u, RdnaOpcode::ImageGather4CO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset, false, true, false},
     {0x5fu, RdnaOpcode::ImageGather4CLzO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x61u, RdnaOpcode::ImageGather4h, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
+    {0x62u, RdnaOpcode::ImageGather4hPck, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
+    {0x63u, RdnaOpcode::ImageGather8hPck, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
     {0x50u, RdnaOpcode::ImageGather4O, nullptr, RdnaImageSampleFlagOffset, false, true, false},
     {0x54u, RdnaOpcode::ImageGather4LO, nullptr, RdnaImageSampleFlagLod | RdnaImageSampleFlagOffset, false, true, false},
     {0x44u, RdnaOpcode::ImageGather4L, nullptr, RdnaImageSampleFlagLod, false, true, false},
@@ -132,6 +134,22 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x0au, RdnaOpcode::ImageStorePck, nullptr, 0, false, false, false},
     {0x0bu, RdnaOpcode::ImageStoreMipPck, nullptr, 0, false, false, false},
     {0x0eu, RdnaOpcode::ImageGetResinfo, nullptr, 0, false, false, false},
+    {0x42u, RdnaOpcode::ImageLoadBy2, nullptr, 0, false, false, false},
+    {0x43u, RdnaOpcode::ImageLoadBy4, nullptr, 0, false, false, false},
+    {0x4au, RdnaOpcode::ImageLoadMipBy2, nullptr, 0, false, false, false},
+    {0x4bu, RdnaOpcode::ImageLoadMipBy4, nullptr, 0, false, false, false},
+    {0x52u, RdnaOpcode::ImageStoreBy2, nullptr, 0, false, false, false},
+    {0x53u, RdnaOpcode::ImageStoreBy4, nullptr, 0, false, false, false},
+    {0x5au, RdnaOpcode::ImageStoreMipBy2, nullptr, 0, false, false, false},
+    {0x5bu, RdnaOpcode::ImageStoreMipBy4, nullptr, 0, false, false, false},
+    {0x70u, RdnaOpcode::ImageLoadPck2, nullptr, 0, false, false, false},
+    {0x71u, RdnaOpcode::ImageLoadPck4, nullptr, 0, false, false, false},
+    {0x73u, RdnaOpcode::ImageLoadMipPck2, nullptr, 0, false, false, false},
+    {0x74u, RdnaOpcode::ImageLoadMipPck4, nullptr, 0, false, false, false},
+    {0x76u, RdnaOpcode::ImageStorePck2, nullptr, 0, false, false, false},
+    {0x77u, RdnaOpcode::ImageStorePck4, nullptr, 0, false, false, false},
+    {0x79u, RdnaOpcode::ImageStoreMipPck2, nullptr, 0, false, false, false},
+    {0x7au, RdnaOpcode::ImageStoreMipPck4, nullptr, 0, false, false, false},
     {0x80u, RdnaOpcode::ImageMsaaLoad, nullptr, 0, false, false, false},
     {0x60u, RdnaOpcode::ImageGetLod, nullptr, 0, false, false, false},
     {0xe6u, RdnaOpcode::ImageBvhIntersectRay, "image_bvh_intersect_ray", 0, false, false, false},
@@ -315,7 +333,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
     const auto& info = lookupOpcode(opcode);
     const bool samplerOp = info.sample || info.gather || opcode == 0x60u;
-    const auto texelStatusBits = samplerOp ? 0x00010000u : opcode <= 0x0eu ? 0x00030000u : 0u;
+    const auto texelStatusBits = info.sample || info.gather || opcode <= 0x0eu ? 0x00030000u : samplerOp ? 0x00010000u : 0u;
     const auto reservedWord0 = (info.sample || info.gather ? 0x00035040u : info.atomic ? 0x000340C0u : 0x00034040u) & ~texelStatusBits;
     if ((word0 & reservedWord0) != 0u || (word1 & 0x3C000000u) != 0u) {
         char message[96];
@@ -347,10 +365,20 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     }
     validateFlags(flags);
     const auto dmask = (word0 >> 8u) & 15u;
+    const bool pckGather = opcode == 0x62u || opcode == 0x63u;
+    const bool by = opcode == 0x42u || opcode == 0x43u || opcode == 0x4au || opcode == 0x4bu || opcode == 0x52u || opcode == 0x53u || opcode == 0x5au || opcode == 0x5bu;
+    if (by && ((dmask != 15u && (dmask != 3u || (opcode & 1u) != 0u)) || a16 || d16 || dimension != RdnaImageDimension::Dim2D || (word0 & 0x8000u) != 0u)) {
+        throw std::runtime_error("MIMG BY2/BY4 requires a data mask that covers every element (BY2 0x3 or 0xf, BY4 0xf), 32-bit addresses and data, a 2D image and a full descriptor");
+    }
+    const bool pckN = opcode >= 0x70u && opcode <= 0x7au && opcode != 0x72u && opcode != 0x75u && opcode != 0x78u;
+    const bool pckNMip = opcode == 0x73u || opcode == 0x74u || opcode == 0x79u || opcode == 0x7au;
+    if (pckN && (dmask != 1u || a16 || d16 || dimension != RdnaImageDimension::Dim2D || (word0 & 0x8000u) != 0u)) {
+        throw std::runtime_error("MIMG PCK2/PCK4 requires data mask 0x1, 32-bit addresses and data, a 2D image and a full descriptor");
+    }
     const bool compareSwap = info.opcode == RdnaOpcode::ImageAtomicCmpswap || info.opcode == RdnaOpcode::ImageAtomicFcmpswap;
     const bool floatAtomic = info.opcode == RdnaOpcode::ImageAtomicFcmpswap || info.opcode == RdnaOpcode::ImageAtomicFmin || info.opcode == RdnaOpcode::ImageAtomicFmax;
     const bool atomic64 = info.atomic && !floatAtomic && !d16 && dmask == (compareSwap ? 15u : 3u);
-    if (dmask == 0u || (!atomic64 && (compareSwap ? dmask != 3u : (info.gather || info.atomic || msaaLoad) && !std::has_single_bit(dmask)))) {
+    if (dmask == 0u || (!atomic64 && (compareSwap ? dmask != 3u : ((info.gather && !pckGather) || info.atomic || msaaLoad) && !std::has_single_bit(dmask)))) {
         throw std::runtime_error("invalid MIMG data mask");
     }
     if (d16 && !(info.sample || info.gather || opcode == 0u || opcode == 1u || opcode == 8u || opcode == 9u)) {
@@ -359,7 +387,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     const bool rayQuery64 = info.opcode == RdnaOpcode::ImageBvh64IntersectRay;
     const bool rayQuery = rayQuery64 || info.opcode == RdnaOpcode::ImageBvhIntersectRay;
     std::uint32_t components = rayQuery ? (a16 ? 8u : 11u) + (rayQuery64 ? 1u : 0u) : opcode == 0x0Eu ? 1u : coordinateCount(dimension);
-    if (opcode == 1u || opcode == 4u || opcode == 5u || opcode == 9u || opcode == 0x0bu) {
+    if (opcode == 1u || opcode == 4u || opcode == 5u || opcode == 9u || opcode == 0x0bu || (by && (opcode & 8u) != 0u) || pckNMip) {
         ++components;
     }
     if (info.sample || info.gather) {
@@ -378,7 +406,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     if (nsa == 0u && addressDwords > 256u - vaddr) {
         throw std::runtime_error("MIMG address register range overflow");
     }
-    const auto dataComponents = info.gather || msaaLoad ? 4u : static_cast<std::uint32_t>(std::popcount(dmask));
+    const auto dataComponents = pckGather ? static_cast<std::uint32_t>(std::popcount(dmask)) : info.gather || msaaLoad ? 4u : static_cast<std::uint32_t>(std::popcount(dmask));
     const auto dataDwords = d16 ? (dataComponents + 1u) / 2u : dataComponents;
     const auto statusDwords = (word0 & 0x00010000u) != 0u ? 1u : 0u;
     if (dataDwords + statusDwords > 256u - vdata) {

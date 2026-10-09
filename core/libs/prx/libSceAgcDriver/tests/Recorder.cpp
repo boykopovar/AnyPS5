@@ -16,6 +16,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "ResidentPresent.hpp"
 #include "SampleLod_spv.h"
+#include "SampleArray_spv.h"
 #include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -188,6 +189,7 @@ public:
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
             pool.queueFamilyIndex = family;
             Check(context.Function<PFN_vkCreateCommandPool>("vkCreateCommandPool")(context.device, &pool, nullptr, &context.pool), "vkCreateCommandPool");
         } catch (...) {
@@ -1170,6 +1172,10 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         std::cout << "host import of the watched block refused: draw snapshot reuse not tested\n";
         return;
     }
+    if (!AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "host imports are compared, not watched: draw snapshot reuse not tested\n";
+        return;
+    }
     const auto element = address + 4096;
     constexpr std::size_t elementBytes = 1024;
     ShaderRecompiler::RecompileResult program;
@@ -1686,8 +1692,8 @@ void importWatchTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
 #ifdef _WIN32
-    static_cast<void>(context);
-    std::cout << "import watch decisions: Linux write watch only\n";
+    Require(PrepareImportWatch(context) == ImportWatch::Unwatch, "Windows host imports stayed watched by default");
+    std::cout << "import watch decisions: Windows host imports use comparisons\n";
 #else
     if (context.hostImportAlignment == 0 || !WriteWatched()) {
         std::cout << "host imports or write watching unavailable: import watch decisions not tested\n";
@@ -2217,6 +2223,18 @@ void pendingKeyStoreTests(const Device& device, Recorder& recorder) {
     recorder.NotePendingWrite(address, 2 * keyCount);
     Require(CurrentDccKeys(address, surfaceBytes) == DccKeys::Uncompressed && !recorder.PendingWriteOverlaps(address, keyCount), "a later wider writer over a pending fill was not waited for");
     recorder.Sync();
+    constexpr std::uint64_t displayBytes = 15u * 9u * 65536u;
+    constexpr std::size_t consoleKeys = 49152;
+    const auto displayKeys = DccKeyCount(TextureTileMode::kR64KBX, 4, 1920, 1080, displayBytes);
+    std::memset(keys, 0x00, consoleKeys);
+    MarkDccUncompressed(context, address, displayBytes, displayKeys);
+    Require(recorder.PendingWriteOverlaps(address, consoleKeys) && keys[consoleKeys - 1] == 0x00, "the uncompressed key store over a 1920x1080 surface did not stay pending");
+    Require(CurrentDccKeys(address + displayBytes / 256, (consoleKeys - displayBytes / 256) * 256) == DccKeys::Uncompressed && recorder.PendingWriteOverlaps(address, consoleKeys), "the keys past one per 256 bytes of a pending 1920x1080 store did not read as uncompressed without a wait");
+    Require(CurrentDccKeys(address, displayBytes, displayKeys) == DccKeys::Uncompressed && recorder.PendingWriteOverlaps(address, consoleKeys), "the keys of a pending 1920x1080 store did not read as uncompressed over the console's extent without a wait");
+    recorder.NotePendingWrite(address + 40000, 1);
+    Require(CurrentDccKeys(address, displayBytes, displayKeys) == DccKeys::Uncompressed && !recorder.PendingWriteOverlaps(address + 40000, 1), "a later writer of key 40000 over a pending 1920x1080 store was not waited for");
+    Require(std::all_of(keys, keys + consoleKeys, [](std::uint8_t key) { return key == 0xff; }), "the uncompressed key store over a 1920x1080 surface did not land on all 49152 keys");
+    recorder.Sync();
 }
 
 void sampleDumpTests(const Device& device, Recorder& recorder) {
@@ -2333,6 +2351,7 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
     color.tileMode = ColorTileMode::RenderTarget;
     color.elementBytes = 4;
     color.dccAddress = address + surfaceBytes;
+    color.dccPipeAligned = true;
     color.clearWords = {0x80402010u, 0};
     const ColorMetadataPass pass{ColorMetadataPass::Mode::EliminateFastClear, {color}};
     const auto memoryHolds = [&](std::array<std::uint8_t, 4> texel) {
@@ -2348,13 +2367,15 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
         return true;
     };
     const auto keysUncompressed = [&] { return ReadDccKeys(color.dccAddress, surfaceBytes) == DccKeys::Uncompressed; };
+    const auto extent = DccKeyCount(TextureTileMode::kR64KBX, 4, side, side, surfaceBytes);
     std::memset(texels, 0x55, surfaceBytes);
-    std::memset(keys, 0x20, keyCount);
+    std::memset(keys, 0x20, extent);
     RunColorMetadataPass(context, pass);
     Require(StorageTexture::FindPending(address, surfaceBytes) != nullptr && texels[0] == 0x55, "the register fast clear eliminate did not stay in the resident image");
     Require(keysUncompressed(), "the register fast clear eliminate left the keys compressed");
+    Require(CurrentDccKeys(color.dccAddress, surfaceBytes, extent) == DccKeys::Uncompressed, "the register fast clear eliminate did not store uncompressed keys over the target's console DCC extent");
     Require(memoryHolds({0x10, 0x20, 0x40, 0x80}), "the register fast clear eliminate did not store CB_COLOR_CLEAR_WORD");
-    Require(std::all_of(keys, keys + keyCount, [](std::uint8_t key) { return key == 0xff; }), "the stored keys are not uncompressed");
+    Require(std::all_of(keys, keys + extent, [](std::uint8_t key) { return key == 0xff; }), "the stored keys are not uncompressed");
     std::memset(keys, 0xc0, keyCount);
     RunColorMetadataPass(context, {ColorMetadataPass::Mode::DccDecompress, {color}});
     Require(StorageTexture::FindPending(address, surfaceBytes) != nullptr, "the DCC decompress did not stay in the resident image");
@@ -2451,6 +2472,17 @@ void dataRefreshTests(const Device& device, Recorder& recorder) {
     Require(resources.RefreshData(recorder.Commands(), original, &recorder), "the refresh back recorded nothing");
     Require(resources.DataWordsHash() == ShaderResources::DataWordsHash(original), "the refreshed template's hash is not the original words'");
     Require(!resources.RefreshData(recorder.Commands(), original, &recorder), "a refresh with equal words recorded");
+    auto replaced = patched;
+    replaced.bindings[0].role = ShaderRecompiler::DescriptorRole::GuestSamplers;
+    replaced.bindings[0].kind = ShaderRecompiler::DescriptorKind::Sampler;
+    const CompiledShader changedResources{ShaderRecompiler::ShaderStage::Compute, &replaced, 0};
+    bool rejected = false;
+    try {
+        static_cast<void>(resources.RefreshData(recorder.Commands(), changedResources, &recorder));
+    } catch (const std::exception& error) {
+        rejected = std::string_view(error.what()).find("cannot replace bound resources") != std::string_view::npos;
+    }
+    Require(rejected && resources.DataWordsHash() == ShaderResources::DataWordsHash(original), "a data refresh changed the bound resources");
     recorder.Submit();
     device.WaitQueue();
     recorder.Sync();
@@ -2460,7 +2492,7 @@ void dataRefreshTests(const Device& device, Recorder& recorder) {
 
 class SampleProgram {
 public:
-    SampleProgram(const Context& context, Recorder& recorder) : context(context), recorder(recorder), result(context, sizeof(float) * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+    SampleProgram(const Context& context, Recorder& recorder, std::span<const std::uint32_t> code = SAMPLE_LOD_SPV) : context(context), recorder(recorder), result(context, sizeof(float) * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
         VkDescriptorSetLayoutBinding bindings[2]{};
         bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
         bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -2468,7 +2500,7 @@ public:
         layoutInfo.bindingCount = 2;
         layoutInfo.pBindings = bindings;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &setLayout), "vkCreateDescriptorSetLayout");
-        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float)};
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float) * 2};
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &setLayout;
@@ -2476,8 +2508,8 @@ public:
         pipelineLayoutInfo.pPushConstantRanges = &push;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(SAMPLE_LOD_SPV);
-        moduleInfo.pCode = SAMPLE_LOD_SPV;
+        moduleInfo.codeSize = code.size_bytes();
+        moduleInfo.pCode = code.data();
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
@@ -2509,7 +2541,7 @@ public:
     SampleProgram(const SampleProgram&) = delete;
     SampleProgram& operator=(const SampleProgram&) = delete;
 
-    float Red(VkImageView view, VkImageLayout layout, float lod) {
+    float Red(VkImageView view, VkImageLayout layout, float lod, float layer = 0) {
         VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         allocateInfo.descriptorPool = pool;
         allocateInfo.descriptorSetCount = 1;
@@ -2534,7 +2566,8 @@ public:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
-        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(lod), &lod);
+        const float parameters[]{lod, layer};
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), parameters);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         recorder.Submit();
@@ -2612,6 +2645,35 @@ void minLodTests(const Device& device, Recorder& recorder) {
     expectRed(sample(0xfff, 0.0f), unorm(3), "minimum LOD clamp: MIN_LOD past the last level reads the last level");
     expectRed(sample(0x200, 0.0f, 1), unorm(2), "minimum LOD clamp: MIN_LOD 2 over a view from level 1 reads level 2");
     expectRed(sample(0x100, 0.0f, 1), unorm(1), "minimum LOD clamp: MIN_LOD at the view's base level reads its base level");
+}
+
+void singleCubeTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    SampleProgram program(context, recorder, SAMPLE_ARRAY_SPV);
+    const VkComponentMapping identity{};
+    for (const auto first : {0u, 5u, 6u}) {
+        std::array<std::uint32_t, 8> words{0x1000u, (56u << 20u) | (3u << 30u), 15u | (63u << 14u), 0xb0000facu, first | (first << 16u), 0, 0, 0};
+        auto resource = DecodeTextureResource(words);
+        const auto geometry = DescribeSurface(resource);
+        std::vector<std::byte> memory(static_cast<std::size_t>(geometry.guestBytes) + 256);
+        auto* surface = reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(memory.data()) + 255) & ~std::uintptr_t{255});
+        for (std::uint32_t layer = 0; layer < geometry.imageLayers; ++layer) {
+            std::memset(surface + geometry.GuestLayerOffset(layer), 16 * (layer + 1), static_cast<std::size_t>(geometry.layerBytes));
+        }
+        resource.baseAddress = reinterpret_cast<std::uint64_t>(surface);
+        const std::span<const std::byte> snapshot(surface, static_cast<std::size_t>(geometry.guestBytes));
+        Texture texture(context, detiler, resource, identity, snapshot);
+        auto storage = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+        recorder.Keep(storage);
+        Texture storageView(context, storage, resource, identity);
+        for (std::uint32_t face = 0; face < 6; ++face) {
+            const auto expected = 16.0f * (first + face + 1) / 255.0f;
+            expectRed(program.Red(texture.View(), texture.Layout(), 0, face), expected, "single cube snapshot sampled the wrong face");
+            expectRed(program.Red(storageView.View(), storageView.Layout(), 0, face), expected, "single cube storage view sampled the wrong face");
+        }
+    }
 }
 
 void firstLayerViewTests(const Device& device, Recorder& recorder) {
@@ -2812,13 +2874,18 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         Device device;
         std::lock_guard gpu(GpuMutex());
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
+            singleCubeTests(device, recorder);
+            std::cout << "Single cube snapshot and storage sampling tests passed\n";
+            return 0;
+        }
         readTrackingTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
@@ -2853,6 +2920,7 @@ int main() {
         dataRefreshTests(device, recorder);
         minLodTests(device, recorder);
         firstLayerViewTests(device, recorder);
+        singleCubeTests(device, recorder);
         atomicViewTests(device, recorder);
         metadataPassTests(device, recorder);
         pendingKeyStoreTests(device, recorder);

@@ -24,7 +24,7 @@ alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
 alignas(256) constexpr std::array<std::uint32_t, 101> Code{
-    0x34020084, 0x34060086, 0xbe900300, 0xbe910301, 0xbe920302, 0xbe9303ff, 0x01001244, 0x7e1402ff,
+    0x34020084, 0x34060086, 0xbe900300, 0xbe910301, 0xbe920302, 0xbe9303ff, 0x31001244, 0x7e1402ff,
     0xdead0000, 0x7e1602ff, 0xdead0000, 0x7e1802ff, 0xdead0000, 0x7e1a02ff, 0xdead0000, 0x7e1c02ff,
     0xdead0000, 0x7e1e02ff, 0xdead0000, 0x7e2002ff, 0xdead0000, 0x7e2202ff, 0xdead0000, 0x7e2402ff,
     0xdead0000, 0x7e2602ff, 0xdead0000, 0x7e2802ff, 0xbeefbeef, 0x7e2a02ff, 0xbeefbeef, 0x7e2c02ff,
@@ -115,7 +115,7 @@ void Fill(std::uint32_t tid, std::uint32_t* words) {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::string Hex(std::uint32_t value) {

@@ -37,6 +37,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::LaneId:
     case IrOpcode::GetAttribute:
     case IrOpcode::GetInterpolationParameter:
+    case IrOpcode::GetInterpolationParameterF16:
     case IrOpcode::GetTessellationAttribute:
     case IrOpcode::DppMoveU32:
     case IrOpcode::DppUpdateU32:
@@ -332,21 +333,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
                 requirements.coherentBuffers = requirements.coherentBuffers || (memory.coherent && !memory.gpuDescriptor);
-                if (memory.gpuDescriptor) {
-                    if (program.Resources().stage != IrShaderStage::Compute) {
-                        throw std::runtime_error("GPU-selected buffer descriptors outside compute shaders are not implemented");
-                    }
-                    requirements.subgroupLocalInvocationId = true;
-                } else if (memory.kind == ResourceKind::Buffer) {
-                    if (memory.resource >= program.Info().buffers.size()) {
-                        throw std::runtime_error("buffer operation has invalid resource metadata");
-                    }
-                    if ((program.Info().buffers.at(memory.resource).packedStride & (1u << 20u)) != 0u) {
-                        if (program.Resources().stage != IrShaderStage::Compute) {
-                            throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
-                        }
-                        requirements.subgroupLocalInvocationId = true;
-                    }
+                if (!memory.planningOnly) {
+                    requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage == IrShaderStage::Compute;
                 }
             }
             const auto sharedAccess = SharedAccessOf(inst->Opcode());

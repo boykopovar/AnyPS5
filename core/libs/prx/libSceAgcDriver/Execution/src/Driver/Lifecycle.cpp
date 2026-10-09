@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 
 namespace AgcDriver::DriverDetail {
@@ -44,6 +45,7 @@ void Driver::stop() {
     device.Reset();
     replacedDevices.clear();
     Graphics::ShutdownGuestBufferWorkers();
+    ProfileOutput_nid_no_patch().Stop();
     stopped = true;
 }
 

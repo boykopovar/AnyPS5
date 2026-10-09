@@ -105,6 +105,13 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
                 if (libraries[index] == "libc.prx" && import.Library != "libc.prx") order.push_back(CheckedRva(index));
             }
+            if (import.Library == "libSceLibcInternal.prx") {
+                for (std::size_t index = 0; index < guestModules.size(); ++index) {
+                    const auto& names = guestModules[index].Names;
+                    if (std::find(names.begin(), names.end(), "libc.prx") != names.end())
+                        order.push_back(CheckedRva(index));
+                }
+            }
         }
         Io::AlignBuffer(data, 4);
         platformTlsResolvers.push_back(std::none_of(order.begin(), order.end(), [&](auto index) {

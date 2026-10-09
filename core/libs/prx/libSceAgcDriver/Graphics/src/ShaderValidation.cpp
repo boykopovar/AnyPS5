@@ -1,5 +1,6 @@
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -132,6 +133,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     using Stage = ShaderRecompiler::ShaderStage;
     Require(compiled.program != nullptr, "missing compiled shader");
     const auto& shader = *compiled.program;
+    PipelineSpecialization::Validate(shader);
     const auto stage = compiled.stage;
     const bool vertex = stage == Stage::Vertex || stage == Stage::Local;
     const bool fragment = stage == Stage::Fragment;
@@ -181,6 +183,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     case spv::CapabilityGroupNonUniform: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT; break;
                     case spv::CapabilityGroupNonUniformBallot: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT; break;
                     case spv::CapabilityGroupNonUniformShuffle: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT; break;
+                    case spv::CapabilityGroupNonUniformArithmetic: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT; break;
                     default: break;
                 }
                 const bool isSubgroupCapability = subgroupOperations != 0;
@@ -219,6 +222,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilityImageQuery ||
                     (fragment && geometryShader && capability == spv::CapabilityGeometry) ||
                     (fragment && sampleRateShading && capability == spv::CapabilitySampleRateShading) ||
+                    capability == spv::CapabilityImageMSArray ||
+                    capability == spv::CapabilityStorageImageMultisample ||
                     capability == spv::CapabilityStorageImageWriteWithoutFormat ||
                     capability == spv::CapabilityStorageImageReadWithoutFormat ||
                     capability == spv::CapabilityInt64 ||
@@ -276,7 +281,6 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             case spv::OpDecorationGroup:
             case spv::OpGroupDecorate:
             case spv::OpGroupMemberDecorate:
-            case spv::OpSpecConstant:
             case spv::OpSpecConstantTrue:
             case spv::OpSpecConstantFalse:
             case spv::OpSpecConstantComposite:
@@ -353,6 +357,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 break;
             case spv::OpConstant:
                 if (count == 4) module.constants.emplace(instruction[2], instruction[3]);
+                break;
+            case spv::OpSpecConstant:
                 break;
             default: break;
         }
@@ -460,6 +466,11 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
             Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
             Require(binding->kind == ShaderRecompiler::DescriptorKind::Sampler || binding->kind == ShaderRecompiler::DescriptorKind::SampledImage || binding->kind == ShaderRecompiler::DescriptorKind::StorageImage, "SPIR-V descriptor type disagrees with recompiler binding metadata");
+            Require(type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray, "typed heap must be declared as a descriptor array");
+            const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding->binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
+            const auto capacity = ShaderRecompiler::RuntimeAbi::HeapCapacity(heap);
+            const auto count = module.constants.find(type[3]);
+            Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
@@ -528,7 +539,12 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         if (i != 0) {
             for (const auto& [location, signature] : current.inputs) {
                 const auto output = previous.outputs.find(location);
-                Require(output != previous.outputs.end() && output->second == signature, "graphics interfaces disagree at location " + std::to_string(location));
+                if (output == previous.outputs.end() || output->second != signature) {
+                    Require(false, "graphics interfaces disagree at location " + std::to_string(location) +
+                        " (stage " + std::to_string(i - 1) + " output " +
+                        (output == previous.outputs.end() ? "missing" : output->second) +
+                        ", stage " + std::to_string(i) + " input " + signature + ")");
+                }
             }
         }
         previous = current;
