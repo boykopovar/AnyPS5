@@ -157,6 +157,9 @@ int main(int argc, char** argv) {
         require(ApplicationHeapPosixAlign_nid_no_patch(&aligned, 256, 99) == 0);
         require(reinterpret_cast<std::uintptr_t>(aligned) % 256 == 0);
         ApplicationHeapFree_nid_no_patch(aligned);
+        void* refused = nullptr;
+        require(ApplicationHeapPosixAlign_nid_no_patch(&refused, 256, SIZE_MAX) == 12 && refused == nullptr);
+        require(posix_memalign_nid_postfix(&refused, 4096, SIZE_MAX - 4096) == 12 && refused == nullptr);
         ApplicationHeapFree_nid_no_patch(nullptr);
         reject([] { ApplicationHeapCalloc_nid_no_patch(SIZE_MAX, 2); });
         reject([] { ApplicationHeapAlign_nid_no_patch(3, 16); });

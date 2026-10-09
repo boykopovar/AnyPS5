@@ -47,6 +47,7 @@ int APS5_VABI defaultPosixAlign(void** pointer, std::size_t alignment, std::size
     if (pointer == nullptr || alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) return 22;
     try { *pointer = defaultAlign(alignment, bytes); return 0; }
     catch (const std::bad_alloc&) { return 12; }
+    catch (const std::length_error&) { return 12; }
 }
 
 std::array<void*, 10> defaultApi() {
