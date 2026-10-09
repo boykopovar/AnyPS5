@@ -334,6 +334,10 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             gnuHashOffset = static_cast<std::size_t>(shdr.sh_offset);
             gnuHashSize = static_cast<std::size_t>(shdr.sh_size);
             gnuHashSymOffset = Read<std::uint32_t>(elf, gnuHashOffset + 4u);
+            if (Read<std::uint32_t>(elf, gnuHashOffset) == 0u)
+                throw std::runtime_error(".gnu.hash has no buckets");
+            if (Read<std::uint32_t>(elf, gnuHashOffset + 8u) == 0u)
+                throw std::runtime_error(".gnu.hash has no bloom filter words");
         }
         if (shdr.sh_type == kShtGnuVersym)
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);

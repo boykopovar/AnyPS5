@@ -98,6 +98,8 @@ if(BUILD_TESTING)
             ${LIBS_INCLUDE_DIR}/nid/tests/test_dynamic_strings.py $<TARGET_FILE:guest_module_fixture>)
         add_test(NAME nid_patcher_symbol_versions COMMAND ${Python3_EXECUTABLE}
             ${LIBS_INCLUDE_DIR}/nid/tests/test_symbol_versions.py $<TARGET_FILE:nid_patcher>)
+        add_test(NAME nid_patcher_gnu_hash COMMAND ${Python3_EXECUTABLE}
+            ${LIBS_INCLUDE_DIR}/nid/tests/test_gnu_hash.py $<TARGET_FILE:nid_patcher>)
     endif()
     add_test_executable(guest_dynamic_loader_tests ${LIBS_INCLUDE_DIR}/tests/GuestDynamicLoader.cpp)
     target_include_directories(guest_dynamic_loader_tests PRIVATE ${LIBS_INCLUDE_DIR})
