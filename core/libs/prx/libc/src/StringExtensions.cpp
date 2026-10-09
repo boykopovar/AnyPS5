@@ -30,6 +30,19 @@ std::size_t APS5_VABI strnlen_s_nid_postfix(const char* text, std::size_t limit)
     return text ? strnlen_nid_postfix(text, limit) : 0;
 }
 
+char* APS5_VABI strsep_nid_postfix(char** text, const char* delimiters) {
+    char* token = *text;
+    if (token == nullptr) return nullptr;
+    char* end = token + std::strcspn(token, delimiters);
+    if (*end == '\0') {
+        *text = nullptr;
+    } else {
+        *end = '\0';
+        *text = end + 1;
+    }
+    return token;
+}
+
 char* APS5_VABI strncat_nid_postfix(char* destination, const char* source, std::size_t limit) {
     return std::strncat(destination, source, limit);
 }
