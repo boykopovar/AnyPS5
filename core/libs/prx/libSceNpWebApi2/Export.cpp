@@ -124,6 +124,12 @@ int APS5_VABI sceNpWebApi2SendRequest(int64_t request_id, const void* data, size
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
+int APS5_VABI sceNpWebApi2SetRequestTimeout(int64_t request_id, uint32_t timeout) {
+    (void)timeout;
+    if (request_id <= 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    return 0;
+}
+
 int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
     (void)lib_ctx_id;
     return 0;
@@ -150,11 +156,6 @@ int APS5_VABI sceNpWebApi2PushEventUnregisterCallback() {
 }
 
 int APS5_VABI sceNpWebApi2PushEventUnregisterPushContextCallback() {
-    return 0;
-}
-
-int APS5_VABI sceNpWebApi2SetRequestTimeout() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
