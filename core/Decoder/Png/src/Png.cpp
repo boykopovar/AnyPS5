@@ -138,9 +138,9 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> png) {
     while (png.size() - offset >= CHUNK_OVERHEAD) {
         const std::uint32_t length = readBigEndian32(&png[offset]);
         const std::uint8_t* type = &png[offset + 4];
+        if (length > png.size() - offset - CHUNK_OVERHEAD) break;
         if (isChunkType(type, "tRNS")) header.hasTransparency = true;
         if (isChunkType(type, "tRNS") || isChunkType(type, "IDAT") || isChunkType(type, "IEND")) break;
-        if (length > png.size() - offset - CHUNK_OVERHEAD) break;
         offset += CHUNK_OVERHEAD + length;
     }
     return header;

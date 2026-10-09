@@ -153,6 +153,12 @@ int main() {
     Require(paletteHeader.has_value());
     Require(paletteHeader->width == 2 && paletteHeader->height == 2 && paletteHeader->bitDepth == 2);
     Require(paletteHeader->colorType == Decoder::Png::ColorType::Palette && paletteHeader->hasTransparency);
+    for (const std::size_t size : {std::size_t{69}, std::size_t{71}}) {
+        const auto truncated = Decoder::Png::ParseHeader(std::span<const std::uint8_t>(PALETTE_TRNS, size));
+        Require(truncated.has_value() && !truncated->hasTransparency);
+    }
+    const auto completeTransparency = Decoder::Png::ParseHeader(std::span<const std::uint8_t>(PALETTE_TRNS, 73));
+    Require(completeTransparency.has_value() && completeTransparency->hasTransparency);
     const auto palette = Decoder::Png::Decode(PALETTE_TRNS);
     Require(palette.has_value());
     Require(palette->pixels == std::vector<std::uint8_t>({255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128}));
