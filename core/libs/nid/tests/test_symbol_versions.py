@@ -198,10 +198,58 @@ def test_unversioned_library_is_still_patched(patcher):
     assert len({entry[0] for entry in after if entry[0]}) == len([entry for entry in after if entry[0]])
 
 
+def test_invalid_gnu_hash_metadata_is_rejected(patcher):
+    sym_count = len(symbols(False))
+    cases = [
+        ("symoffset past symbols", HASH_OFFSET + 4, "<I", sym_count + 1, "symoffset"),
+        ("maximum symoffset", HASH_OFFSET + 4, "<I", 0xFFFFFFFF, "symoffset"),
+        ("32-bit bloom shift", HASH_OFFSET + 12, "<I", 32, "bloom_shift"),
+        ("64-bit bloom shift", HASH_OFFSET + 12, "<I", 64, "bloom_shift"),
+        ("maximum bloom shift", HASH_OFFSET + 12, "<I", 0xFFFFFFFF, "bloom_shift"),
+        ("short hash header", SHOFF + 3 * 64 + 32, "<Q", 15, "header too small"),
+        ("hash section past file", SHOFF + 3 * 64 + 24, "<Q", 0xFFF, "out of bounds"),
+        ("overflowing hash offset", SHOFF + 3 * 64 + 24, "<Q", 0xFFFFFFFFFFFFFFFF, "out of bounds"),
+        ("overflowing hash size", SHOFF + 3 * 64 + 32, "<Q", 0xFFFFFFFFFFFFFFFF, "out of bounds"),
+    ]
+    for label, offset, encoding, value, error in cases:
+        image = build_image(symbols(False), False)
+        struct.pack_into(encoding, image, offset, value)
+        result, on_disk = patch(patcher, bytes(image), SONAME)
+        assert result.returncode == 2, (label, result.returncode, result.stderr)
+        message = result.stderr.decode("utf-8", errors="replace")
+        assert message.startswith("FAIL: ") and error in message, (label, message)
+        assert result.stdout == b"", (label, result.stdout)
+        assert on_disk == image, (label, "rejected input was modified")
+
+
+def test_empty_gnu_hash_chain_is_patched(patcher):
+    image = build_image(symbols(False), False)
+    struct.pack_into("<I", image, HASH_OFFSET + 4, len(symbols(False)))
+    result, patched = patch(patcher, bytes(image), SONAME)
+    assert result.returncode == 0, result.stderr
+    assert read_dynsym(patched) != read_dynsym(image)
+    assert struct.unpack_from("<4I", patched, HASH_OFFSET + 24) == (0, 0, 0, 0)
+
+
+def test_highest_gnu_hash_bloom_shift_is_patched(patcher):
+    image = build_image(symbols(False), False)
+    struct.pack_into("<I", image, HASH_OFFSET + 12, 31)
+    result, patched = patch(patcher, bytes(image), SONAME)
+    assert result.returncode == 0, result.stderr
+    expected_bloom = 0
+    for name, _, _ in read_dynsym(patched)[HASHED_FROM:]:
+        value = gnu_hash(name)
+        expected_bloom |= (1 << (value % 64)) | (1 << ((value >> 31) % 64))
+    assert struct.unpack_from("<Q", patched, HASH_OFFSET + 16)[0] == expected_bloom
+
+
 def main():
     patcher = Path(sys.argv[1]).resolve()
     test_versioned_library_is_rejected(patcher)
     test_unversioned_library_is_still_patched(patcher)
+    test_invalid_gnu_hash_metadata_is_rejected(patcher)
+    test_empty_gnu_hash_chain_is_patched(patcher)
+    test_highest_gnu_hash_bloom_shift_is_patched(patcher)
     print("NID patcher symbol version tests passed")
 
 

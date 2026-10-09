@@ -333,7 +333,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (shdr.sh_type == kShtGnuHash) {
             gnuHashOffset = static_cast<std::size_t>(shdr.sh_offset);
             gnuHashSize = static_cast<std::size_t>(shdr.sh_size);
+            if (gnuHashSize < 16u || gnuHashOffset > elf.size() || gnuHashSize > elf.size() - gnuHashOffset)
+                throw std::runtime_error("gnu.hash section out of bounds or header too small");
             gnuHashSymOffset = Read<std::uint32_t>(elf, gnuHashOffset + 4u);
+            if (Read<std::uint32_t>(elf, gnuHashOffset + 12u) >= 32u)
+                throw std::runtime_error("gnu.hash bloom_shift must be less than 32");
         }
         if (shdr.sh_type == kShtGnuVersym)
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);
@@ -345,6 +349,8 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     const std::size_t symCount = dynSymSize / sizeof(Elf64_Sym);
     if (symCount == 0u) throw std::runtime_error(".dynsym is empty");
+    if (gnuHashOffset != 0u && gnuHashSymOffset > symCount)
+        throw std::runtime_error("gnu.hash symoffset exceeds .dynsym symbol count");
 
     const std::size_t dynStrSectionLink = [&]() -> std::size_t {
         for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
