@@ -5,14 +5,21 @@
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <stdexcept>
+#include <string>
 #include <string_view>
-#include <thread>
 
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
 static std::atomic<int> g_nextHandle{1};
+static std::mutex g_epollsMutex;
+static std::condition_variable g_epollDestroyed;
+static std::map<HttpEpollHandle, uint64_t> g_epolls;
+static uint64_t g_nextEpollSerial = 1;
 
 extern "C" {
 
@@ -49,6 +56,8 @@ int APS5_VABI sceHttpCreateEpoll(int http_ctx_id, HttpEpollHandle* eh) {
     (void)http_ctx_id;
     if (!eh) return ERROR_INVALID_VALUE;
     *eh = new HttpEpoll{};
+    std::lock_guard lock(g_epollsMutex);
+    g_epolls[*eh] = g_nextEpollSerial++;
     return 0;
 }
 
@@ -93,6 +102,11 @@ int APS5_VABI sceHttpDeleteTemplate(int tmpl_id) {
 
 int APS5_VABI sceHttpDestroyEpoll(int http_ctx_id, HttpEpollHandle eh) {
     (void)http_ctx_id;
+    {
+        std::lock_guard lock(g_epollsMutex);
+        g_epolls.erase(eh);
+    }
+    g_epollDestroyed.notify_all();
     delete eh;
     return 0;
 }
@@ -153,7 +167,6 @@ int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, 
 int APS5_VABI sceHttpSetCookieEnabled(int id, int enable) {
     (void)id;
     if (static_cast<uint32_t>(enable) > 1) return ERROR_INVALID_VALUE;
-    if (enable != 0) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -243,9 +256,22 @@ int APS5_VABI sceHttpUnsetEpoll(int id) {
 
 int APS5_VABI sceHttpWaitRequest(HttpEpollHandle eh, HttpNBEvent* nbev, int maxevents, int timeout) {
     if (!eh || !nbev || maxevents <= 0) return ERROR_INVALID_VALUE;
-    if (timeout < 0) NotImplemented_nid_no_patch(__func__);
-    std::this_thread::sleep_for(std::chrono::microseconds(timeout));
-    return 0;
+    std::unique_lock lock(g_epollsMutex);
+    const auto epoll = g_epolls.find(eh);
+    if (epoll == g_epolls.end()) throw std::runtime_error(std::string(__func__) + ": unknown epoll handle");
+    const uint64_t serial = epoll->second;
+    const auto destroyed = [eh, serial] {
+        const auto current = g_epolls.find(eh);
+        return current == g_epolls.end() || current->second != serial;
+    };
+    if (timeout >= 0) {
+        if (g_epollDestroyed.wait_for(lock, std::chrono::microseconds(timeout), destroyed)) {
+            throw std::runtime_error(std::string(__func__) + ": epoll handle destroyed during a wait");
+        }
+        return 0;
+    }
+    g_epollDestroyed.wait(lock, destroyed);
+    throw std::runtime_error(std::string(__func__) + ": epoll handle destroyed during a wait");
 }
 
 int APS5_VABI sceHttpCreateRequestWithURL(int conn_id, int method, const char* url, uint64_t content_length) {

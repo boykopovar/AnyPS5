@@ -13,6 +13,7 @@
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
 static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
+static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static std::atomic<int> g_nextHandle{1};
 static std::mutex g_poolsMutex;
 static std::map<int, size_t> g_pools;
@@ -241,7 +242,8 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
     (void)timeout;
-    if (result == nullptr || option != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (result == nullptr) return ERROR_NULL_POINTER;
+    if (option != nullptr) NotImplemented_nid_no_patch(__func__);
     std::lock_guard lock(g_completionsMutex);
     const auto pending = g_completions.find(req_id);
     if (pending == g_completions.end() || pending->second.empty()) NotImplemented_nid_no_patch("sceHttp2WaitAsync: waiting for an operation that has not completed");

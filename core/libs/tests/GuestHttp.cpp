@@ -1,14 +1,19 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <thread>
 
 extern "C" {
 int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
 int APS5_VABI sceHttpUriMerge(char*, const char*, const char*, std::size_t*, std::size_t, std::uint32_t);
 int APS5_VABI sceHttpSetInflateGZIPEnabled(int, int);
+int APS5_VABI sceHttpSetCookieEnabled(int, int);
 int APS5_VABI sceHttpUriBuild(char*, std::size_t*, std::size_t, const SceHttpUriElement*, std::uint32_t);
 int APS5_VABI sceHttpUriEscape(char*, std::size_t*, std::size_t, const char*);
 int APS5_VABI sceHttpUriUnescape(char*, std::size_t*, std::size_t, const char*);
@@ -35,6 +40,16 @@ int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, st
 static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
+
+template <typename TCall>
+static bool Throws(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
 
 static int AuthInfo(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*) { std::abort(); }
 
@@ -192,9 +207,38 @@ int main() {
     HttpNBEvent events[2]{};
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
     Require(sceHttpWaitRequest(epoll, events, 2, 1000) == 0);
+    const auto waitStart = std::chrono::steady_clock::now();
+    Require(sceHttpWaitRequest(epoll, events, 2, 20000) == 0);
+    Require(std::chrono::steady_clock::now() - waitStart >= std::chrono::milliseconds(20));
     Require(sceHttpWaitRequest(epoll, nullptr, 2, 0) == invalidValue);
     Require(sceHttpWaitRequest(epoll, events, 0, 0) == invalidValue);
     Require(sceHttpWaitRequest(nullptr, events, 2, 0) == invalidValue);
+    Require(sceHttpWaitRequest(nullptr, events, 2, -1) == invalidValue);
+    Require(sceHttpWaitRequest(epoll, nullptr, 2, -1) == invalidValue);
+    Require(sceHttpWaitRequest(epoll, events, 0, -1) == invalidValue);
+    HttpEpoll unknownEpoll{};
+    Require(Throws([&] { sceHttpWaitRequest(&unknownEpoll, events, 2, -1); }));
+    Require(Throws([&] { sceHttpWaitRequest(&unknownEpoll, events, 2, 0); }));
+    const auto waitUntilDestroyed = [&](int timeout) {
+        std::atomic<int> waitOutcome{0};
+        std::thread waiter([&, waited = epoll] {
+            try {
+                sceHttpWaitRequest(waited, events, 2, timeout);
+                waitOutcome = 1;
+            } catch (const std::runtime_error&) {
+                waitOutcome = 2;
+            }
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        Require(waitOutcome == 0);
+        Require(sceHttpDestroyEpoll(1, epoll) == 0);
+        waiter.join();
+        Require(waitOutcome == 2);
+        Require(sceHttpCreateEpoll(1, &epoll) == 0 && epoll != nullptr);
+    };
+    waitUntilDestroyed(-1);
+    waitUntilDestroyed(10000000);
+    Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
     Require(sceHttpDestroyEpoll(1, epoll) == 0);
 
     char data[16];
@@ -205,6 +249,11 @@ int main() {
     Require(sceHttpSetInflateGZIPEnabled(1, 1) == 0);
     Require(sceHttpSetInflateGZIPEnabled(1, 2) == invalidValue);
     Require(sceHttpSetInflateGZIPEnabled(1, -1) == invalidValue);
+    Require(sceHttpSetCookieEnabled(1, 0) == 0);
+    Require(sceHttpSetCookieEnabled(1, 1) == 0);
+    Require(sceHttpSetCookieEnabled(1, 2) == invalidValue);
+    Require(sceHttpSetCookieEnabled(1, -1) == invalidValue);
+    Require(sceHttpReadData(1, data, sizeof(data)) == network);
     Require(sceHttpsEnableOption(1, 0) == 0);
     Require(sceHttpsLoadCert(1, 0, nullptr, nullptr, nullptr) == 0);
     Require(sceHttpsUnloadCert(1) == 0);

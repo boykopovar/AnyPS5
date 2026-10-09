@@ -86,6 +86,7 @@ int main() {
     Require(sceKernelGetEventId(&event) == static_cast<uintptr_t>(request));
     Require(sceKernelGetEventUserData(&event) == &tag);
     Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(request, nullptr, nullptr, nullptr) == static_cast<int>(0x817B1225));
     Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == 0);
     Require(result.req_id == request && result.result == static_cast<int>(0x80436063));
     Require(Throws([&] { sceHttp2WaitAsync(request, &result, nullptr, nullptr); }));

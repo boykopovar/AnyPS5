@@ -29,13 +29,7 @@ int main() {
     constexpr int network = static_cast<int>(0x80431063);
     Require(sceHttpSetCookieEnabled(1, 0) == 0);
     Require(sceHttpSendRequest(1, nullptr, 0) == network);
-    bool cookieUnsupported = false;
-    try {
-        sceHttpSetCookieEnabled(1, 1);
-    } catch (const std::runtime_error& error) {
-        cookieUnsupported = std::string_view(error.what()) == "sceHttpSetCookieEnabled not implemented";
-    }
-    Require(cookieUnsupported);
+    Require(sceHttpSetCookieEnabled(1, 1) == 0);
     for (int enabled : {-1, 2, 0x100}) {
         Require(sceHttpSetCookieEnabled(1, enabled) == invalidValue);
     }
