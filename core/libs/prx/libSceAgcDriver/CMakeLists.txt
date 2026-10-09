@@ -201,6 +201,7 @@ target_link_libraries(libSceAgcDriver PRIVATE
         libc
         libkernel
 )
+target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-libs,$<TARGET_FILE_NAME:decoder_png>)
 
 set_target_properties(libSceAgcDriver PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceAgcDriver)
