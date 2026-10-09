@@ -126,6 +126,15 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         nextRva = AlignRva(nextRva + tlsExports.Data.size());
         sections.push_back(std::move(tlsExports));
     }
+    if (runtime.DeferInitialization) {
+        PeSection lifecycle{".ginit", nextRva, SectionRead | 0x40u, {}};
+        Io::AppendU32(lifecycle.Data, guest.Init == 0 ? 0 : image.GetRva(guest.Init));
+        Io::AppendU32(lifecycle.Data, CheckedRva(guest.InitArray.size()));
+        for (const auto slot : guest.InitArray) Io::AppendU32(lifecycle.Data, image.GetRva(slot, 8));
+        if (!exports.emplace(Relinker::GuestInitializeExport, nextRva).second) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
+        nextRva = AlignRva(nextRva + lifecycle.Data.size());
+        sections.push_back(std::move(lifecycle));
+    }
     if (exports.size() > 65535) throw Domain::RelinkerException("Too many guest PE exports");
     PeSection exportSection{".edata", nextRva, SectionRead | 0x40u, std::vector<std::uint8_t>(40)};
     auto& data = exportSection.Data;
