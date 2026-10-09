@@ -30,9 +30,10 @@ std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1100(void* context, void*
  return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsrGetSharedResourcesInitRequirement() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrGetSharedResourcesInitRequirement(void* requirement, const void* param) {
+ (void)requirement;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI scePsmlMfsrInit() {
@@ -40,14 +41,16 @@ int APS5_VABI scePsmlMfsrInit() {
  return 0;
 }
 
-int APS5_VABI scePsmlMfsrGetDispatchMfsrPacketSizeInDwords() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacketSizeInDwords(const void* context, std::uint32_t* sizeInDwords) {
+ (void)context;
+ (void)sizeInDwords;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3_2() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3_2(void* requirement, const void* param) {
+ (void)requirement;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI scePsmlMfsrSelectConfig() {
@@ -60,14 +63,14 @@ int APS5_VABI scePsmlMfsrGetMipmapBias() {
  return 0;
 }
 
-int APS5_VABI scePsmlMfsrRequestCapture() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrRequestCapture(const void* object) {
+ (void)object;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsrReleaseContext() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrReleaseContext(void* context) {
+ (void)context;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI scePsmlMfsrIsCaptureInProgress() {
@@ -75,24 +78,28 @@ int APS5_VABI scePsmlMfsrIsCaptureInProgress() {
  return 0;
 }
 
-int APS5_VABI scePsmlMfsrGetDispatchMfsrPacket900() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket900(void* context, void* commandBuffer, const void* param) {
+ (void)context;
+ (void)commandBuffer;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsrCreateSharedResources() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrCreateSharedResources(void* sharedResources, const void* param) {
+ (void)sharedResources;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsrCreateContext800M3_2() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrCreateContext800M3_2(void* context, const void* param) {
+ (void)context;
+ (void)param;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI scePsmlMfsrReleaseSharedResources() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+std::int32_t APS5_VABI scePsmlMfsrReleaseSharedResources(void* sharedResources) {
+ (void)sharedResources;
+ return SCE_PSML_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI scePsmlMfsr2ReleaseSharedResources() {
