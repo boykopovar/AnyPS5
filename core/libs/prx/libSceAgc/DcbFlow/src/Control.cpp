@@ -13,8 +13,7 @@
 extern "C" {
 
 // unknown signature
-APS5_EXPORT("zARR5aCmkoY", sceAgcDcbA_zARR5aCmkoY);
-void* APS5_VABI sceAgcDcbA_zARR5aCmkoY(void) {
+void* APS5_VABI sceAgcDcbAtomicGds_0900(void) {
  NotImplemented_nid_no_patch(__func__);
  return nullptr;
 }
