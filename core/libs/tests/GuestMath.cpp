@@ -37,6 +37,14 @@ double APS5_VABI frexp_nid_postfix(double, int*);
 float APS5_VABI frexpf_nid_postfix(float, int*);
 std::int64_t APS5_VABI lround_nid_postfix(double);
 std::div_t APS5_VABI div_nid_postfix(int, int);
+double APS5_VABI sinh_nid_postfix(double);
+double APS5_VABI cosh_nid_postfix(double);
+float APS5_VABI coshf_nid_postfix(float);
+double APS5_VABI asinh_nid_postfix(double);
+float APS5_VABI asinhf_nid_postfix(float);
+double APS5_VABI acosh_nid_postfix(double);
+float APS5_VABI acoshf_nid_postfix(float);
+double APS5_VABI atanh_nid_postfix(double);
 std::int64_t APS5_VABI lroundf_nid_postfix(float);
 std::int64_t APS5_VABI llround_nid_postfix(double);
 int APS5_VABI __isfinitef_nid_postfix(float);
@@ -140,6 +148,30 @@ static void CheckIntegerConversions() {
     *__error_nid_postfix() = 0;
 }
 
+static bool Near(double value, double expected, double tolerance) { return std::abs(value - expected) <= tolerance * std::abs(expected); }
+
+static void CheckHyperbolic() {
+    const double infinity = std::numeric_limits<double>::infinity();
+    Require(sinh_nid_postfix(0.) == 0. && std::signbit(sinh_nid_postfix(-0.)));
+    Require(cosh_nid_postfix(0.) == 1. && coshf_nid_postfix(0.f) == 1.f);
+    Require(asinh_nid_postfix(0.) == 0. && std::signbit(asinh_nid_postfix(-0.)) && std::signbit(asinhf_nid_postfix(-0.f)));
+    Require(acosh_nid_postfix(1.) == 0. && acoshf_nid_postfix(1.f) == 0.f);
+    Require(atanh_nid_postfix(0.) == 0. && atanh_nid_postfix(1.) == infinity && atanh_nid_postfix(-1.) == -infinity);
+    Require(std::isnan(acosh_nid_postfix(0.5)) && std::isnan(acoshf_nid_postfix(0.5f)) && std::isnan(atanh_nid_postfix(2.)));
+    Require(Near(sinh_nid_postfix(1.), 1.1752011936438014, 1e-15));
+    Require(Near(cosh_nid_postfix(1.), 1.5430806348152437, 1e-15));
+    Require(Near(coshf_nid_postfix(1.f), 1.5430806348152437, 1e-6));
+    Require(Near(asinh_nid_postfix(1.), 0.881373587019543, 1e-15));
+    Require(Near(asinhf_nid_postfix(1.f), 0.881373587019543, 1e-6));
+    Require(Near(acosh_nid_postfix(2.), 1.3169578969248166, 1e-15));
+    Require(Near(acoshf_nid_postfix(2.f), 1.3169578969248166, 1e-6));
+    Require(Near(atanh_nid_postfix(0.5), 0.5493061443340549, 1e-15));
+    Require(sinh_nid_postfix(1e-300) == 1e-300 && asinh_nid_postfix(1e-300) == 1e-300 && atanh_nid_postfix(1e-300) == 1e-300);
+    Require(std::isfinite(cosh_nid_postfix(710.4)) && std::isfinite(sinh_nid_postfix(-710.4)) && sinh_nid_postfix(-710.4) < 0.);
+    Require(Near(asinh_nid_postfix(-1e300), -691.4686750787736, 1e-15));
+    Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
+}
+
 static void CheckFloatClassification() {
     Require(_FInf_nid_postfix.bits[0] == 0x7f800000u && _FNan_nid_postfix.bits[0] == 0x7fc00000u);
     for (int word = 1; word < 4; ++word) Require(_FInf_nid_postfix.bits[word] == 0 && _FNan_nid_postfix.bits[word] == 0);
@@ -230,4 +262,5 @@ int main() {
     Require(negativeDenominator.quot == -3 && negativeDenominator.rem == 1);
     const auto minimum = div_nid_postfix(std::numeric_limits<int>::min(), 10);
     Require(minimum.quot == -214748364 && minimum.rem == -8);
+    CheckHyperbolic();
 }
