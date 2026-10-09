@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -139,7 +140,7 @@ void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, con
     Require(actual == expected, std::string("vop3 cube clamp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::optional<ShaderRecompiler::ShaderFloatMode> floatMode = std::nullopt) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
@@ -154,6 +155,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = floatMode;
     return ShaderRecompiler::Recompile(request);
 }
 
@@ -166,16 +168,32 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void CheckOmodRefused(AgcDriver::VulkanDevice& device) {
-    for (const std::uint32_t opcode : {0x144u, 0x145u, 0x146u, 0x147u}) {
-        alignas(256) const std::array<std::uint32_t, 3> code{0xd400000au | (opcode << 16u), 0x0c1a0b04u, 0xbf810000u};
-        std::string refusal;
-        try {
-            static_cast<void>(Compile(device, code));
-        } catch (const std::exception& error) {
-            refusal = error.what();
+void CheckOutputModifiers(AgcDriver::VulkanDevice& device, const ShaderRecompiler::ShaderFloatMode& floatMode, bool clamp) {
+    constexpr std::array<std::uint32_t, 5> rows{1u, 13u, 16u, 26u, 27u};
+    alignas(256) auto code = Code;
+    for (std::uint32_t i = 0; i < Results; ++i) {
+        code[5u + 2u * i] = 0xd4000000u | ((0x144u + i % 4u) << 16u) | (clamp ? 0x8000u : 0u) | (10u + i);
+        code[6u + 2u * i] = 0x041a0b04u | ((i / 4u) << 27u);
+    }
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        std::copy_n(Rows[rows[tid % rows.size()]], Inputs, &Input[tid * Inputs]);
+    }
+    Output.fill(0xdeadbeefu);
+    const auto result = Compile(device, code, floatMode);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    const bool scaling = !floatMode.ieeeMode && (floatMode.floatMode & 0x20u) == 0u;
+    constexpr std::array<int, 4> shifts{0, 1, 2, -1};
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        for (std::uint32_t i = 0; i < Results; ++i) {
+            const auto original = Expected[rows[tid % rows.size()]][i % 4u];
+            float expected = std::bit_cast<float>(original);
+            if (scaling && i / 4u != 0u) {
+                expected = expected == 0.0f ? 0.0f : std::ldexp(expected, shifts[i / 4u]);
+            }
+            if (clamp) expected = expected <= 0.0f ? 0.0f : std::min(expected, 1.0f);
+            Expect(tid, Output[tid * Results + i], std::bit_cast<std::uint32_t>(expected), "output modifier");
         }
-        Require(refusal.find("VOP3 source modifiers are not implemented") != std::string::npos, "VOP3 opcode " + Hex(opcode) + " with omod was not refused");
     }
 }
 
@@ -197,7 +215,10 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device);
         Check();
-        CheckOmodRefused(*device);
+        for (const auto mode : {ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false}, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false}}) {
+            CheckOutputModifiers(*device, mode, false);
+            CheckOutputModifiers(*device, mode, true);
+        }
         std::puts("vop3 cube clamp tests passed");
         return 0;
     } catch (const std::exception& error) {

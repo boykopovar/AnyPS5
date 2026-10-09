@@ -1928,6 +1928,9 @@ bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
     if (isVop1FloatResultOpcode(opcode)) {
         return true;
     }
+    if (isCubeOpcode(opcode)) {
+        return true;
+    }
     switch (opcode) {
         case RdnaOpcode::VAddF32:
         case RdnaOpcode::VSubF32:
