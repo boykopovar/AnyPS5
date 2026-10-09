@@ -256,17 +256,19 @@ IrU32 TranslationContext::normF32(IrU32 bits, bool signedValue) {
     const IrU1 nan(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7f800000u)));
     const IrU1 saturated(ir.Emit(IrOpcode::UGreaterThanEqual32, IrType::U1, {&magnitude.Value(), &ir.Constant(0x3f800000u)}));
     const std::uint32_t scale = signedValue ? 32767u : 65535u;
-    const IrU32 exponent(ir.ShiftRightLogical(magnitude.Value(), ir.Constant(23u)));
-    const IrU32 mantissa(ir.BitwiseOr(ir.BitwiseAnd(magnitude.Value(), ir.Constant(0x7fffffu)), ir.Constant(0x800000u)));
-    const IrU32 shift(ir.Emit(IrOpcode::UMin32, IrType::U32, {&ir.ISub(ir.Constant(149u), exponent.Value()), &ir.Constant(63u)}));
-    const IrU64 product(ir.Emit(IrOpcode::IMul64, IrType::U64, {&ir.ConstructU64(mantissa.Value(), ir.Constant(0u)), &ir.ConstantU64(scale)}));
-    const IrU64 halves(ir.Emit(IrOpcode::ShiftRightLogical64, IrType::U64, {&product.Value(), &shift.Value()}));
-    const IrU1 sticky(ir.Emit(IrOpcode::INotEqual64, IrType::U1, {&ir.Emit(IrOpcode::ShiftLeftLogical64, IrType::U64, {&halves.Value(), &shift.Value()}), &product.Value()}));
-    const IrU32 doubled = extractU64(halves)[0];
-    const IrU32 truncated(ir.ShiftRightLogical(doubled.Value(), ir.Constant(1u)));
-    const IrU1 roundUp(ir.LogicalAnd(ir.INotEqual(ir.BitwiseAnd(doubled.Value(), ir.Constant(1u)), ir.Constant(0u)),
-        ir.LogicalOr(sticky.Value(), ir.INotEqual(ir.BitwiseAnd(truncated.Value(), ir.Constant(1u)), ir.Constant(0u)))));
-    IrU32 value(ir.Select(saturated.Value(), ir.Constant(scale), ir.IAdd(truncated.Value(), ir.Select(roundUp.Value(), ir.Constant(1u), ir.Constant(0u)))));
+    IrValue& absolute = ir.BitCastF32(ir.Select(ir.LogicalOr(saturated.Value(), nan.Value()), ir.Constant(0u), magnitude.Value()));
+    IrValue& factor = ir.ConstantF32(static_cast<float>(scale));
+    IrValue& product = ir.Emit(IrOpcode::FPMul32, IrType::F32, {&absolute, &factor});
+    IrValue& error = ir.Emit(IrOpcode::FPFma32, IrType::F32, {&absolute, &factor, &ir.Emit(IrOpcode::FPNeg32, IrType::F32, {&product})});
+    IrValue& floored = ir.Emit(IrOpcode::FPFloor32, IrType::F32, {&product});
+    IrValue& tie = ir.Emit(IrOpcode::FPOrdEqual32, IrType::U1, {&ir.Emit(IrOpcode::FPSub32, IrType::F32, {&product, &floored}), &ir.ConstantF32(0.5f)});
+    IrValue& zero = ir.ConstantF32(0.0f);
+    IrValue& tieDown = ir.LogicalAnd(tie, ir.Emit(IrOpcode::FPOrdLessThan32, IrType::U1, {&error, &zero}));
+    IrValue& tieUp = ir.LogicalAnd(tie, ir.Emit(IrOpcode::FPOrdGreaterThan32, IrType::U1, {&error, &zero}));
+    IrValue& nearest = ir.Emit(IrOpcode::FPRoundEven32, IrType::F32, {&product});
+    IrValue& roundedDown = ir.Emit(IrOpcode::SelectF32, IrType::F32, {&tieDown, &floored, &nearest});
+    IrValue& rounded = ir.Emit(IrOpcode::SelectF32, IrType::F32, {&tieUp, &ir.Emit(IrOpcode::FPAdd32, IrType::F32, {&floored, &ir.ConstantF32(1.0f)}), &roundedDown});
+    IrU32 value(ir.Select(saturated.Value(), ir.Constant(scale), ir.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&rounded})));
     if (signedValue) {
         value = IrU32(ir.Select(negative.Value(), ir.ISub(ir.Constant(0u), value.Value()), value.Value()));
     } else {
