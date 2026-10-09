@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -126,6 +127,8 @@ public:
     VkImageAspectFlags pendingClear = 0;
     float clearDepth = 0.0f;
     std::uint8_t clearStencil = 0;
+    std::uint64_t htileAddress = 0;
+    std::uint64_t htileGeneration = 0;
     const Context context;
     const DepthTarget target;
     VkImage image = VK_NULL_HANDLE;
@@ -160,6 +163,33 @@ std::vector<std::unique_ptr<DepthSurface>>& surfaces() {
     return *list;
 }
 
+std::uint32_t expandedHtileWord(std::uint32_t word, bool stencilInHtile, VkImageAspectFlags cleared) {
+    if (!stencilInHtile) return (cleared & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 ? 0xfffc000fu : word;
+    if ((cleared & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) word = (word & 0x3f0u) | 0xfffff00fu;
+    if ((cleared & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) word |= 0x3f0u;
+    return word;
+}
+
+void noteHtileWrites(DepthSurface& surface, const DepthTarget& target) {
+    if (target.htileAddress == 0) return;
+    const auto tiles = static_cast<std::size_t>((target.extent.width + 7u) / 8u) * ((target.extent.height + 7u) / 8u);
+    const auto bytes = tiles * 4u;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(target.htileAddress), bytes, true)) return;
+    const auto collected = GuestMemory::CollectWrites(target.htileAddress, bytes);
+    if (surface.htileAddress == target.htileAddress && surface.htileGeneration != 0 && GuestMemory::UnchangedSince(target.htileAddress, bytes, surface.htileGeneration)) return;
+    std::vector<std::uint32_t> words(tiles);
+    GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(words)), 4);
+    surface.htileAddress = target.htileAddress;
+    surface.htileGeneration = collected;
+    VkImageAspectFlags cleared = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+    for (const auto word : words) cleared &= HtileFillClears(word, target.htileStencil);
+    if (cleared == 0) return;
+    surface.pendingClear |= cleared;
+    for (auto& word : words) word = expandedHtileWord(word, target.htileStencil, cleared);
+    GuestMemory::Write(target.htileAddress, std::as_bytes(std::span(words)), 4);
+    surface.htileGeneration = GuestMemory::CollectWrites(target.htileAddress, bytes);
+}
+
 }
 
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
@@ -172,16 +202,15 @@ std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
 
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) {
     std::lock_guard lock(surfacesMutex());
-    for (const auto& surface : surfaces()) {
-        if (surface->context.device == context.device && sameSurface(surface->target, target)) {
-            surface->clearDepth = target.clearDepth;
-            surface->clearStencil = target.clearStencil;
-            surface->ApplyFastClear();
-            return surface->view;
-        }
-    }
-    surfaces().push_back(std::make_unique<DepthSurface>(context, target));
-    return surfaces().back()->view;
+    auto& list = surfaces();
+    auto found = std::find_if(list.begin(), list.end(), [&](const auto& surface) { return surface->context.device == context.device && sameSurface(surface->target, target); });
+    if (found == list.end()) found = list.insert(list.end(), std::make_unique<DepthSurface>(context, target));
+    auto& surface = **found;
+    surface.clearDepth = target.clearDepth;
+    surface.clearStencil = target.clearStencil;
+    noteHtileWrites(surface, target);
+    surface.ApplyFastClear();
+    return surface.view;
 }
 
 void ClearDepthSurfaces(VkDevice device) {
