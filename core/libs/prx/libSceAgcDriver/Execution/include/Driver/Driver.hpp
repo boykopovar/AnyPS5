@@ -49,6 +49,7 @@ public:
     void WaitIdle();
     void CheckFailure();
     void ReportFailure(std::exception_ptr error);
+    void ReportFailure(std::exception_ptr error, const Submission& executing);
     void Submit(const Packet* packet, std::uint32_t queue);
     void SuspendPoint();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);

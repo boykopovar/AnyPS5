@@ -79,11 +79,16 @@ void Driver::CheckFailure() {
 }
 
 void Driver::ReportFailure(std::exception_ptr error) {
+    ReportFailure(error, Submission{});
+}
+
+void Driver::ReportFailure(std::exception_ptr error, const Submission& executing) {
     require(error != nullptr, "null asynchronous failure");
     {
         std::lock_guard lock(mutex);
         if (!failure) failure = error;
         failed.store(true, std::memory_order_release);
+        for (const auto& [offset, flip] : executing.flips) flip->Fail(failure);
         for (const auto& [handle, output] : outputs) output->Fail(failure);
         for (auto& [queue, worker] : workers) {
             for (const auto& item : worker.pending) {
