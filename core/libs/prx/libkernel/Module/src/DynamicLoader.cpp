@@ -1,4 +1,5 @@
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <filesystem>
@@ -32,6 +33,13 @@ struct Module {
     ~Module() {
         if (owned && native) {
 #ifdef _WIN32
+            try {
+                GuestAllocations::Mutation mutation;
+                mutation.UnregisterImage(native);
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "[dlclose] module %p stays loaded: %s\n", native, error.what());
+                return;
+            }
             FreeLibrary(static_cast<HMODULE>(native));
 #else
             ::dlclose(native);

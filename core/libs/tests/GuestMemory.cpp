@@ -7,6 +7,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <array>
+#include <atomic>
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstring>
@@ -71,6 +72,9 @@ int APS5_VABI sceKernelAioDeleteRequest(std::int32_t, std::int32_t*);
 int APS5_VABI sceKernelMlock_nid_postfix(void*, std::uint64_t);
 int APS5_VABI sceKernelGetDirectMemoryType(std::int64_t, int*, std::int64_t*, std::int64_t*);
 int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry*, int, int*, int);
+void* APS5_VABI dlopen_nid_postfix(const char*, int);
+void* APS5_VABI dlsym_nid_postfix(void*, const char*);
+int APS5_VABI dlclose_nid_postfix(void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -541,15 +545,28 @@ static DWORD ImageProtection(const void* pointer) {
     return memory.Protect & 0xffu;
 }
 
-static void CheckGuestModuleImageProtection() {
-    constexpr std::size_t page = 0x4000;
-    const auto module = LoadLibraryA(GUEST_MEMORY_MODULE);
-    Require(module != nullptr);
-    auto* data = reinterpret_cast<unsigned char*>(GetProcAddress(module, "guestMemoryModuleData"));
+static unsigned char* GuestModulePage(void* module, std::size_t page) {
+    auto* data = static_cast<unsigned char*>(dlsym_nid_postfix(module, "guestMemoryModuleData"));
     Require(data != nullptr);
     auto* target = reinterpret_cast<unsigned char*>((reinterpret_cast<std::uintptr_t>(data) + page - 1) & ~(page - 1));
     Require(target + page <= data + 0x10000);
+    return target;
+}
+
+static bool RegisteredGuestRange(const void* pointer, std::size_t bytes) {
+    GuestAllocations::Mutation mutation;
+    return mutation.Overlaps(pointer, bytes);
+}
+
+static void CheckGuestModuleImageProtection() {
+    constexpr std::size_t page = 0x4000;
+    const auto path = std::filesystem::relative(GUEST_MEMORY_MODULE).generic_string();
+    void* module = dlopen_nid_postfix(path.c_str(), 2);
+    Require(module != nullptr);
+    auto* target = GuestModulePage(module, page);
+    Require(!RegisteredGuestRange(target, page));
     Require(sceKernelMprotect(target, page, 1) == 0);
+    Require(RegisteredGuestRange(target, page));
     Require(ImageProtection(target) == PAGE_READONLY);
     Require(sceKernelMprotect(target, page, 3) == 0);
     Require(ImageProtection(target) == PAGE_READWRITE || ImageProtection(target) == PAGE_WRITECOPY);
@@ -557,6 +574,35 @@ static void CheckGuestModuleImageProtection() {
     Require(target[1] == 7);
     Require(sceKernelMprotect(target, page, 1) == 0);
     Require(ImageProtection(target) == PAGE_READONLY);
+
+    auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    std::atomic<bool> closed{false};
+    std::thread closer([&] {
+        Require(dlclose_nid_postfix(module) == 0);
+        closed = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Require(!closed);
+    Require(ImageProtection(target) == PAGE_READONLY);
+    lease.clear();
+    closer.join();
+    Require(!RegisteredGuestRange(target, page));
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(target, page, true, true);
+        mutation.Remove(target);
+    }
+
+    module = dlopen_nid_postfix(path.c_str(), 2);
+    Require(module != nullptr);
+    target = GuestModulePage(module, page);
+    Require(!RegisteredGuestRange(target, page));
+    Require(sceKernelMprotect(target, page, 1) == 0);
+    Require(ImageProtection(target) == PAGE_READONLY);
+    Require(RegisteredGuestRange(target, page));
+    Require(dlclose_nid_postfix(module) == 0);
+    Require(!RegisteredGuestRange(target, page));
+
     bool rejected = false;
     try {
         sceKernelMprotect(GetModuleHandleA("kernel32.dll"), page, 1);

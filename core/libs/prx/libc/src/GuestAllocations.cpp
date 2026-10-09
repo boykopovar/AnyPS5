@@ -8,7 +8,6 @@
 #include <limits>
 #include <iterator>
 #include <map>
-#include <set>
 #include <stdexcept>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -35,7 +34,7 @@ struct Registry {
     std::mutex mutex;
     std::map<std::uint64_t, std::shared_ptr<const Range>> ranges;
     bool mainImageRegistered = false;
-    std::set<std::uintptr_t> registeredImages;
+    std::map<std::uintptr_t, std::uintptr_t> registeredImages;
 };
 
 Registry& registry() {
@@ -168,7 +167,7 @@ void registerImage(const void* image) {
     }
     require(registered, "guest image has no committed pages");
     state.ranges.swap(replacement);
-    state.registeredImages.insert(reinterpret_cast<std::uintptr_t>(image));
+    state.registeredImages.emplace(reinterpret_cast<std::uintptr_t>(image), cursor);
 }
 }
 
@@ -184,6 +183,17 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
 void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
     require(image != nullptr, "cannot register a guest image without a base");
     registerImage(image);
+}
+
+void GuestAllocationsUnregisterImage_nid_postfix(void* mutation, const void* image) {
+    auto& state = registry();
+    const auto found = state.registeredImages.find(reinterpret_cast<std::uintptr_t>(image));
+    if (found == state.registeredImages.end()) return;
+    const auto [begin, end] = *found;
+    GuestAllocationsRequireUnpinned_nid_postfix(mutation, image, end - begin);
+    recordChange(mutation, image, end - begin);
+    std::erase_if(state.ranges, [&](const auto& entry) { return !entry.second->releasable && entry.second->allocationAddress >= begin && entry.second->allocationAddress < end; });
+    state.registeredImages.erase(found);
 }
 #else
 void GuestAllocationsRegisterMainImage_nid_postfix(void*) {

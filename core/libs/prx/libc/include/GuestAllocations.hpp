@@ -27,6 +27,7 @@ void* GuestAllocationsBegin_nid_postfix();
 void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation);
 #ifdef _WIN32
 void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image);
+void GuestAllocationsUnregisterImage_nid_postfix(void* mutation, const void* image);
 #endif
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept;
 void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable);
@@ -63,6 +64,7 @@ public:
     void RegisterMainImage() { GuestAllocationsRegisterMainImage_nid_postfix(handle); }
 #ifdef _WIN32
     void RegisterImage(const void* image) { GuestAllocationsRegisterImage_nid_postfix(handle, image); }
+    void UnregisterImage(const void* image) { GuestAllocationsUnregisterImage_nid_postfix(handle, image); }
 #endif
     void Add(void* pointer, std::size_t bytes, bool readable, bool writable) { GuestAllocationsAdd_nid_postfix(handle, pointer, bytes, readable, writable); }
     void RequireUnpinned(const void* pointer, std::size_t bytes) const { GuestAllocationsRequireUnpinned_nid_postfix(handle, pointer, bytes); }
