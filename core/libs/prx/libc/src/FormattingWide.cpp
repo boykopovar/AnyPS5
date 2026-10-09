@@ -214,6 +214,13 @@ int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const ch
     }
 }
 
+int APS5_VABI swprintf_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vswprintf_nid_postfix(buffer, size, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
+    return result;
+}
+
 int APS5_VABI snwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
     constexpr std::size_t RsizeMax = SIZE_MAX >> 1;
     int result = -1;

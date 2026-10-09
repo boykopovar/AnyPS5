@@ -50,6 +50,32 @@ std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value
     return 1;
 }
 
+std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16_t** source, std::size_t count, void* state) {
+    constexpr auto Failed = static_cast<std::size_t>(-1);
+    const auto* wide = *source;
+    char bytes[MB_LEN_MAX];
+    std::size_t written = 0;
+    while (!destination || written < count) {
+        const auto length = wcrtomb_nid_postfix(bytes, *wide, state);
+        if (length == Failed) {
+            if (destination) *source = wide;
+            return Failed;
+        }
+        if (destination) {
+            if (length > count - written) break;
+            std::memcpy(destination + written, bytes, length);
+        }
+        if (*wide == 0) {
+            if (destination) *source = nullptr;
+            return written;
+        }
+        written += length;
+        ++wide;
+    }
+    *source = wide;
+    return written;
+}
+
 int APS5_VABI wcsrtombs_s_nid_postfix(
     std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t** source, std::size_t limit,
     void* state

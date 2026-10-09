@@ -18,7 +18,6 @@
 #ifdef _WIN32
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/WindowsScanning.hpp"
-#include "prx/libc/include/WindowsWideFormatting.hpp"
 #endif
 
 namespace {
@@ -141,21 +140,6 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
 }
 
 extern "C" {
-
-int APS5_VABI swprintf_nid_postfix(wchar_t* output, size_t capacity, const wchar_t* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWideWindows(output, capacity, format, args);
-    __builtin_sysv_va_end(args);
-#else
-    std::va_list args;
-    va_start(args, format);
-    const int result = std::vswprintf(output, capacity, format, args);
-    va_end(args);
-#endif
-    return result;
-}
 
 int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaList* args) {
     if (!destination) { errno = 22; return -1; }

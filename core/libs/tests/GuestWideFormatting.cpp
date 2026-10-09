@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 extern "C" int APS5_VABI vswprintf_nid_postfix(char16_t*, std::size_t, const char16_t*, VaList*);
 extern "C" int APS5_VABI snwprintf_s_nid_postfix(char16_t*, std::size_t, const char16_t*, ...);
+extern "C" int APS5_VABI swprintf_nid_postfix(char16_t*, std::size_t, const char16_t*, ...);
 
 static int APS5_VABI Format(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
 #ifdef _WIN32
@@ -111,9 +113,22 @@ static void CheckCount() {
     Require(Format(buffer, 16, u"a%n", nullCount) < 0, "vswprintf null %n argument");
 }
 
+static void CheckSwprintf() {
+    char16_t buffer[16];
+    std::memset(buffer, 0x55, sizeof(buffer));
+    Require(swprintf_nid_postfix(buffer, 16, u"%d-%ls-%s-%c", 42, u"\u00e9b", "\xc3\xa8", 'z') == 9, "swprintf length");
+    Require(buffer == std::u16string(u"42-\u00e9b-\u00e8-z") && buffer[10] == 0x5555, "swprintf output");
+    Require(swprintf_nid_postfix(buffer, 16, u"%lc%5.1f|%-3x|", 0x263a, 2.25, 0xau) == 11, "swprintf wide character and widths");
+    Require(buffer == std::u16string(u"\u263a  2.2|a  |"), "swprintf wide character and widths output");
+    Require(swprintf_nid_postfix(buffer, 4, u"%ls", u"abcd") < 0 && buffer == std::u16string(u"abc"), "swprintf truncation");
+    buffer[0] = u'x';
+    Require(swprintf_nid_postfix(buffer, 0, u"a") < 0 && buffer[0] == u'x', "swprintf zero size");
+}
+
 int main() {
     CheckBounded();
     CheckCount();
+    CheckSwprintf();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
     Check(u"%.1s", "\xc3\xa9\xc3\xa8", u"\u00e9");
     Check(u"%.0s", "\xc3\xa9", u"");
