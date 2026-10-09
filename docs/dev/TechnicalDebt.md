@@ -129,7 +129,6 @@ Throughout the project, every function at every stage either **does exactly what
 - [sceVoiceQoSInit](../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - the error codes are unknown: a null or empty memory block, an app type other than 0x20000000 (PPSA14632) or 0x10000000 (PPSA26344) and a second initialization throw. The minimum memory size is unknown; the app type and the block are not used, as no endpoint is implemented
 - AudioIn and NpSessionSignaling exports added without an implementation have assumed signatures
 - [vieBRwlh1Lw](../../core/libs/prx/libSceAgc/Unimplemented.cpp) (libSceAgc) - unknown name, signature
-- [fCWdlnmB1Ks](../../core/libs/prx/libScePad/Export.cpp) (libScePad) - unknown name, signature
 - [sceKernelGetOperationMode](../../core/libs/prx/libkernel/System/src/Process.cpp) (libkernel) - the signature `(int* mode, int* submode)` comes from PPSA12544, which logs both values after the call; the values are unknown and 0 is reported for both, as in the [prosper](https://github.com/mattias800/prosper/pull/4153) reimplementation. Null outputs throw
 - Font, Http2, Net, Ssl, SystemService and libkernel exports imported by PPSA12544 and added without an implementation have unknown signatures
 - [libSceVrSetupDialog](../../core/libs/prx/libSceVrSetupDialog/Export.cpp), and the Share, NpTrophy2, NpEntitlementAccess and WebBrowserDialog exports imported by PPSA12544's Unity plugins and added without an implementation, have unknown signatures

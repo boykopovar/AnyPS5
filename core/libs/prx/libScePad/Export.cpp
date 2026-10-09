@@ -243,10 +243,10 @@ int APS5_VABI scePadVrControllerRead() {
  return 0;
 }
 
-APS5_EXPORT("fCWdlnmB1Ks", scePadUnknown_fCWdlnmB1Ks);
-int APS5_VABI scePadUnknown_fCWdlnmB1Ks(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI scePadIsRemoteController(int handle, bool* isRemote) {
+    if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+    if (isRemote == nullptr) return PAD_ERROR_INVALID_ARG;
+    *isRemote = false;
+    return PAD_OK;
 }
-
 }

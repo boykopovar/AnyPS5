@@ -17,6 +17,7 @@ int APS5_VABI scePadReadState(int, PadData*);
 int APS5_VABI scePadSetTiltCorrectionState(int, bool);
 int APS5_VABI scePadResetOrientation(int);
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int, bool);
+int APS5_VABI scePadIsRemoteController(int, bool*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -88,6 +89,12 @@ int main() {
     Require(scePadClose_nid_postfix(handle) == 0);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
     Require(scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(true) == 0);
+    bool isRemote = true;
+    Require(scePadIsRemoteController(0, &isRemote) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadIsRemoteController(handle + 1, &isRemote) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadIsRemoteController(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadIsRemoteController(handle, &isRemote) == PAD_OK);
+    Require(!isRemote);
     Require(scePadSetAngularVelocityDeadbandState(handle, false) == 0);
     Require(scePadSetAngularVelocityDeadbandState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
 }
