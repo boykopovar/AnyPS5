@@ -3,12 +3,14 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+constexpr int REMOTEPLAY_CONNECTION_STATUS_DISCONNECT = 0;
+
 extern "C" {
 
-int APS5_VABI RemotePlayGetConnectionStatus(int user_id, int* status) {
- (void)user_id;
- (void)status;
- NotImplemented_nid_no_patch(__func__);
+int APS5_VABI RemotePlayGetConnectionStatus(int userId, int* status) {
+ (void)userId;
+ if (!status) APS5_INVALID_ARG_EX;
+ *status = REMOTEPLAY_CONNECTION_STATUS_DISCONNECT;
  return 0;
 }
 

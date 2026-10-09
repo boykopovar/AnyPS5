@@ -1,0 +1,15 @@
+add_library(libReactNative.Modules.Vsh SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libReactNative.Modules.Vsh PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libReactNative.Modules.Vsh)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_react_native_vsh_tests ${LIBS_INCLUDE_DIR}/tests/GuestReactNativeVsh.cpp)
+    target_include_directories(guest_react_native_vsh_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_react_native_vsh_tests PRIVATE libReactNative.Modules.Vsh libc)
+    configure_windows_unwind(guest_react_native_vsh_tests)
+    add_test(NAME guest_react_native_vsh COMMAND guest_react_native_vsh_tests)
+    if(WIN32)
+        set_tests_properties(guest_react_native_vsh PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libReactNative.Modules.Vsh>")
+    endif()
+endif()
