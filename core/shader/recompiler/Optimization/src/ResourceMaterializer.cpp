@@ -91,7 +91,7 @@ RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaIm
         case ImageType::Cube:
             return RdnaImageDimension::Dim2DArray;
         case ImageType::Color2DArray:
-            return wantArray ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
+            return wantArray || requested == RdnaImageDimension::Dim3D ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
         case ImageType::Color2DMsaaArray:
             return wantArray ? RdnaImageDimension::Dim2DMsaaArray : RdnaImageDimension::Dim2DMsaa;
         case ImageType::Color2D:
@@ -627,6 +627,13 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             auto volume = mode;
             volume.dimension = RdnaImageDimension::Dim3D;
             modes.push_back(volume);
+        }
+        if (image.dimension == RdnaImageDimension::Dim3D && !storage && !image.atomic && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
+            for (const auto dimension : {RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray}) {
+                auto planar = mode;
+                planar.dimension = dimension;
+                modes.push_back(planar);
+            }
         }
         if (image.dimension == RdnaImageDimension::Dim1DArray || image.dimension == RdnaImageDimension::Dim2DArray || image.dimension == RdnaImageDimension::Dim2DMsaaArray) {
             auto plain = mode;
