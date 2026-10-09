@@ -30,6 +30,7 @@ static constexpr int KERNEL_IOV_MAX = 1024;
 
 #ifdef _WIN32
 #include <windows.h>
+#include <winternl.h>
 #include <io.h>
 #include <fcntl.h>
 #include <direct.h>
@@ -106,20 +107,37 @@ static std::int64_t NativePositioned(int descriptor, void* buf, std::size_t nbyt
         errno = EBADF;
         return -1;
     }
-    LARGE_INTEGER position{};
-    if (::GetFileType(handle) != FILE_TYPE_DISK || !::SetFilePointerEx(handle, LARGE_INTEGER{}, &position, FILE_CURRENT)) {
+    if (::GetFileType(handle) != FILE_TYPE_DISK) {
         errno = ESPIPE;
+        return -1;
+    }
+    using QueryObject = NTSTATUS (NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+    static const auto queryObject = reinterpret_cast<QueryObject>(reinterpret_cast<void*>(
+        ::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQueryObject")));
+    PUBLIC_OBJECT_BASIC_INFORMATION information{};
+    if (!queryObject || queryObject(handle, ObjectBasicInformation, &information, sizeof(information), nullptr) < 0) {
+        throw std::runtime_error("NativePositioned: cannot query file access");
+    }
+    const DWORD access = write ? FILE_WRITE_DATA : FILE_READ_DATA;
+    if ((information.GrantedAccess & access) == 0) {
+        errno = EBADF;
+        return -1;
+    }
+    const HANDLE positioned = ::ReOpenFile(handle, access | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+    if (positioned == INVALID_HANDLE_VALUE) {
+        errno = EIO;
         return -1;
     }
     OVERLAPPED overlapped{};
     overlapped.Offset = static_cast<DWORD>(offset);
     overlapped.OffsetHigh = static_cast<DWORD>(static_cast<std::uint64_t>(offset) >> 32u);
     DWORD done = 0;
-    const BOOL ok = write ? ::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped)
-                          : ::ReadFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped);
+    const BOOL ok = write ? ::WriteFile(positioned, buf, static_cast<DWORD>(nbytes), &done, &overlapped)
+                          : ::ReadFile(positioned, buf, static_cast<DWORD>(nbytes), &done, &overlapped);
     const DWORD error = ok ? ERROR_SUCCESS : ::GetLastError();
-    if (!::SetFilePointerEx(handle, position, nullptr, FILE_BEGIN)) {
-        throw std::runtime_error("NativePositioned: cannot restore the file offset");
+    if (!::CloseHandle(positioned)) {
+        throw std::runtime_error("NativePositioned: cannot close the positioned handle");
     }
     if (!ok) {
         if (!write && error == ERROR_HANDLE_EOF) return 0;
