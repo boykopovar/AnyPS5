@@ -134,6 +134,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DepthSurface.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTarget.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetTransfer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
@@ -507,6 +508,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         tests/TextureDetiler.cpp
         Graphics/src/Draw.cpp
         Graphics/src/DepthSurface.cpp
+        Graphics/src/MultisampleTarget.cpp
         Graphics/src/Pipeline.cpp
         Graphics/src/State.cpp
         Graphics/src/ColorTargetLayout.cpp
@@ -733,6 +735,7 @@ if(AGC_BUILD_VISUAL_TEST)
             Execution/src/ShaderDeviceProfile.cpp
             Graphics/src/Draw.cpp
             Graphics/src/DepthSurface.cpp
+            Graphics/src/MultisampleTarget.cpp
             Graphics/src/ColorTargetLayout.cpp
             Graphics/src/ColorTargetTransfer.cpp
             Graphics/src/Pipeline.cpp
