@@ -116,6 +116,36 @@ int main() {
     Require(remove_nid_postfix(file.string().c_str()) == 0);
     Require(!std::filesystem::exists(file));
     Require(remove_nid_postfix(file.string().c_str()) == -1 && *__error_nid_postfix() == 2);
+    {
+        const auto area = root / "rename";
+        std::filesystem::create_directories(area / "full");
+        { std::ofstream stream(area / "full" / "entry"); stream << "x"; }
+        std::filesystem::create_directories(area / "folder" / "inner");
+        std::filesystem::create_directories(area / "empty");
+        { std::ofstream stream(area / "file"); stream << "contents"; }
+        const auto at = [&](const char* name) { return (area / name).string(); };
+
+        Require(rename_nid_postfix(at("missing").c_str(), at("target").c_str()) == -1 &&
+                *__error_nid_postfix() == 2);
+        Require(rename_nid_postfix(at("file").c_str(), at("missing/target").c_str()) == -1 &&
+                *__error_nid_postfix() == 2);
+        Require(rename_nid_postfix(at("file").c_str(), at("full/entry/child").c_str()) == -1 &&
+                *__error_nid_postfix() == 20);
+        Require(rename_nid_postfix(at("folder").c_str(), at("file").c_str()) == -1 &&
+                *__error_nid_postfix() == 20);
+        Require(rename_nid_postfix(at("file").c_str(), at("empty").c_str()) == -1 &&
+                *__error_nid_postfix() == 21);
+        Require(rename_nid_postfix(at("folder").c_str(), at("full").c_str()) == -1 &&
+                *__error_nid_postfix() == 66);
+        Require(rename_nid_postfix(at("folder").c_str(), at("folder/inner/moved").c_str()) == -1 &&
+                *__error_nid_postfix() == 22);
+        Require(std::filesystem::is_directory(area / "folder" / "inner") &&
+                std::filesystem::is_regular_file(area / "full" / "entry"));
+        Require(rename_nid_postfix(at("folder").c_str(), at("empty").c_str()) == 0);
+        Require(!std::filesystem::exists(area / "folder") &&
+                std::filesystem::is_directory(area / "empty" / "inner"));
+        std::filesystem::remove_all(area);
+    }
     const auto sized = root / "sized.txt";
     { std::ofstream stream(sized); stream << "0123456789abcdef"; }
     Require(sceKernelChmod_nid_postfix(sized.string().c_str(), 0600) == 0);
