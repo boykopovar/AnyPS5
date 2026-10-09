@@ -9,6 +9,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_ampr_tests PRIVATE libSceAmpr libkernel libc)
     configure_windows_unwind(guest_ampr_tests)
     add_test(NAME guest_ampr_markers COMMAND guest_ampr_tests)
+    set_tests_properties(guest_ampr_markers PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_ampr_markers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAmpr>")

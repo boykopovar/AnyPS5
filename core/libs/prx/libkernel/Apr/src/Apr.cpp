@@ -15,6 +15,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
+#include <deque>
+#include <future>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -513,7 +516,7 @@ void _readResolved(Apr::Opcode opcode, Apr::ReadFileCommand command, ReadCursor&
     read = {true, command.fileId, command.destination + command.size, command.offset + command.size};
 }
 
-void _execute(const Apr::CommandBufferObject& buffer) {
+void _execute(const Apr::CommandBufferObject& buffer, std::stop_token stop = {}) {
     std::uint32_t cursor = 0;
     ReadCursor read;
     while (cursor < buffer.offset) {
@@ -585,7 +588,10 @@ void _execute(const Apr::CommandBufferObject& buffer) {
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
             };
             const std::uint64_t reference = (command.reference & command.mask) << unused;
-            while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) std::this_thread::sleep_for(std::chrono::microseconds(50));
+            while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) {
+                if (stop.stop_requested()) return;
+                std::this_thread::sleep_for(std::chrono::microseconds(50));
+            }
             break;
         }
         case Apr::Opcode::WriteKernelEventQueue: {
@@ -611,6 +617,107 @@ void _execute(const Apr::CommandBufferObject& buffer) {
         }
         cursor += header.bytes;
     }
+}
+
+class AprQueue {
+    struct Job {
+        std::vector<std::uint8_t> commands;
+        std::uint32_t id;
+        bool observable;
+        std::promise<void> completion;
+    };
+
+    std::mutex lock;
+    std::condition_variable ready;
+    std::deque<Job> jobs;
+    std::map<std::uint32_t, std::shared_future<void>> pending;
+    std::map<std::uint32_t, std::exception_ptr> failures;
+    std::uint32_t lastId = 0;
+    std::jthread worker;
+
+    void run(std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            Job job;
+            {
+                std::unique_lock guard(lock);
+                ready.wait(guard, [&]() { return stop.stop_requested() || !jobs.empty(); });
+                if (stop.stop_requested()) return;
+                job = std::move(jobs.front());
+                jobs.pop_front();
+            }
+            std::exception_ptr failure;
+            try {
+                const auto bytes = static_cast<std::uint32_t>(job.commands.size());
+                _execute({job.commands.data(), bytes, bytes, 0, Apr::BufferType::Apr, 0}, stop);
+                if (stop.stop_requested()) return;
+            } catch (...) {
+                failure = std::current_exception();
+                if (!job.observable) std::terminate();
+            }
+            {
+                const std::lock_guard guard(lock);
+                if (failure) failures.emplace(job.id, failure);
+                if (failure) job.completion.set_exception(failure);
+                else job.completion.set_value();
+                pending.erase(job.id);
+            }
+        }
+    }
+
+public:
+    AprQueue() : worker([this](std::stop_token stop) { run(stop); }) {}
+
+    ~AprQueue() {
+        const std::lock_guard guard(lock);
+        worker.request_stop();
+        ready.notify_all();
+    }
+
+    std::uint32_t Submit(const Apr::CommandBufferObject& buffer, bool observable) {
+        Job job;
+        if (buffer.offset) job.commands.assign(buffer.base, buffer.base + buffer.offset);
+        job.observable = observable;
+        auto completion = job.completion.get_future().share();
+        const std::lock_guard guard(lock);
+        if (lastId == UINT32_MAX) throw std::overflow_error("APR: submission IDs exhausted");
+        job.id = lastId + 1;
+        jobs.push_back(std::move(job));
+        try {
+            pending.emplace(lastId + 1, std::move(completion));
+        } catch (...) {
+            jobs.pop_back();
+            throw;
+        }
+        ++lastId;
+        ready.notify_one();
+        return lastId;
+    }
+
+    int Wait(std::uint32_t id) {
+        std::shared_future<void> completion;
+        {
+            const std::lock_guard guard(lock);
+            if (!id || id > lastId) return _fail(GUEST_EINVAL);
+            if (const auto failure = failures.find(id); failure != failures.end()) std::rethrow_exception(failure->second);
+            if (const auto job = pending.find(id); job != pending.end()) completion = job->second;
+        }
+        if (completion.valid()) completion.get();
+        return 0;
+    }
+};
+
+AprQueue& _aprQueue() {
+#ifdef _WIN32
+    static AprQueue* queue = new AprQueue();
+    return *queue;
+#else
+    static AprQueue queue;
+    return queue;
+#endif
+}
+
+bool _validAprBuffer(const Apr::CommandBufferObject* buffer) {
+    return buffer && buffer->type == Apr::BufferType::Apr && buffer->offset <= buffer->size && (!buffer->offset || buffer->base);
 }
 
 }
@@ -704,17 +811,16 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
 
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
     (void)priority;
-    if (!buffer || buffer->type != Apr::BufferType::Apr) return _fail(GUEST_EINVAL);
-    _execute(*buffer);
+    if (!_validAprBuffer(buffer)) return _fail(GUEST_EINVAL);
+    _aprQueue().Submit(*buffer, false);
     return 0;
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
     if (!id) return _fail(GUEST_EINVAL);
-    const int result = sceKernelAprSubmitCommandBuffer(buffer, priority);
-    if (result != 0) return result;
-    static std::atomic<uint32_t> nextId{1};
-    *id = nextId.fetch_add(1);
+    (void)priority;
+    if (!_validAprBuffer(buffer)) return _fail(GUEST_EINVAL);
+    *id = _aprQueue().Submit(*buffer, true);
     return 0;
 }
 
@@ -727,8 +833,7 @@ int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBuff
 }
 
 int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {
-    (void)id;
-    return 0;
+    return _aprQueue().Wait(id);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsToIdsForEach(const char** paths, uint32_t count, uint32_t* ids, int* results) {
