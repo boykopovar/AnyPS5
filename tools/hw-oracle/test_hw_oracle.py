@@ -122,6 +122,44 @@ class FloatModeTests(unittest.TestCase):
         self.assertEqual(assemble.call_args.kwargs, MODES)
 
 
+class RowTests(unittest.TestCase):
+    def test_invalid_rows_fail_before_assembly(self):
+        valid = (0, 0, 0, 0)
+        for rows, index in (([(-1, 0, 0, 0)], 0), ([(1 << 32, 0, 0, 0)], 0), ([(0, 0, 0)], 0), ([(0, 0, 0, 0, 0)], 0),
+                            ([(0.5, 0, 0, 0)], 0), ([("1", 0, 0, 0)], 0), ([valid, (0, 0, 0, -1)], 1)):
+            with self.subTest(rows=rows), patch.object(hw_oracle, "assemble") as assemble:
+                with self.assertRaisesRegex(ValueError, f"row {index} "):
+                    hw_oracle.run("s_nop 0", rows, **MODES)
+                assemble.assert_not_called()
+
+    def test_cli_reports_the_invalid_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body = Path(tmp) / "body.s"
+            rows = Path(tmp) / "rows.txt"
+            body.write_text("s_nop 0")
+            argv = ["hw_oracle.py", str(body), str(rows)]
+            argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+            for line in ("-1 0 0 0", "0x100000000 0 0 0", "1 2 3", "1 2 3 4 5", "1 2 x 4", "010 0 0 0"):
+                rows.write_text(f"1 2 3 4\n\n{line}\n")
+                with self.subTest(line=line), patch("sys.argv", argv), patch.object(hw_oracle, "run") as run:
+                    with self.assertRaises(SystemExit) as error:
+                        hw_oracle.main()
+                    self.assertIn(f"{rows}:3:", str(error.exception.code))
+                    run.assert_not_called()
+
+    def test_cli_accepts_dword_bounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body = Path(tmp) / "body.s"
+            rows = Path(tmp) / "rows.txt"
+            body.write_text("s_nop 0")
+            rows.write_text("0 0xffffffff 4294967295 0X0\n")
+            argv = ["hw_oracle.py", str(body), str(rows)]
+            argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+            with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run:
+                hw_oracle.main()
+            run.assert_called_once_with("s_nop 0", [(0, 0xffffffff, 0xffffffff, 0)], b"", False, False, **MODES)
+
+
 class AssemblyTests(unittest.TestCase):
     def test_condition_operands_match_wave_size(self):
         for name in ("clang", "ld.lld"):

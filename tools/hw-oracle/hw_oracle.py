@@ -11,6 +11,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get("HW_ORACLE_CACHE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "anyps5-hw-oracle")
 ROWS_PER_DISPATCH = 1024
+DWORD = range(1 << 32)
 
 
 def rocm_root():
@@ -74,6 +75,9 @@ def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round3
 
 def run(body, rows, extra=b"", wave64=False, coarse=False, *, ieee, denorm32, denorm16, dx10_clamp, round32, round16, fp16_overflow):
     rows = [tuple(r) for r in rows]
+    for index, row in enumerate(rows):
+        if len(row) != 4 or not all(isinstance(value, int) and value in DWORD for value in row):
+            raise ValueError(f"row {index} must hold 4 integers from 0 to 0xffffffff")
     wave = 64 if wave64 else 32
     padded = rows + [(0, 0, 0, 0)] * (-len(rows) % wave)
     env = dict(os.environ)
@@ -110,9 +114,17 @@ def main():
     parser.add_argument("--extra", type=Path, help="bytes appended after the rows")
     parser.add_argument("--outs", type=int, choices=range(1, 17), default=16, metavar="N", help="print v10..v(10+N-1)")
     args = parser.parse_args()
-    rows = [tuple(int(v, 0) for v in line.split()) for line in args.rows.read_text().splitlines() if line.strip()]
-    if any(len(r) != 4 for r in rows):
-        sys.exit("every row needs 4 values")
+    rows = []
+    for number, line in enumerate(args.rows.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = tuple(int(v, 0) for v in line.split())
+        except ValueError:
+            row = ()
+        if len(row) != 4 or any(v not in DWORD for v in row):
+            sys.exit(f"{args.rows}:{number}: every row needs 4 u32 values, decimal or 0x hex")
+        rows.append(row)
     extra = args.extra.read_bytes() if args.extra else b""
     for result in run(args.body.read_text(), rows, extra, args.wave64, args.coarse,
                       ieee=args.ieee, denorm32=args.denorm32, denorm16=args.denorm16,
