@@ -95,6 +95,10 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 
 The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.
 
+### Write tracking of imported memory on Windows
+
+On Windows, memory imported into Vulkan is compared byte by byte instead of write-watched, because a driver can mark imported pages written after the import ([TechnicalDebt](../dev/TechnicalDebt.md)). A title that renders into large imported targets then uploads and stores them again at each use, which can cost most of the frame time. `APS5_WRITE_WATCH_IMPORTS=watch` keeps imported memory watched; a late driver mark is then taken for a CPU store and can drop GPU results. `probe` and `unwatch` keep the comparison on Windows. Any other value fails at start-up.
+
 ## Exit codes
 
 `0`: conversion succeeded. `1`: invalid arguments. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.
