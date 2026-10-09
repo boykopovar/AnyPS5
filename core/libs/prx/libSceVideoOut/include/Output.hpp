@@ -26,6 +26,8 @@ int APS5_VABI sceVideoOutLatencyControlWaitBeforeInput(int handle);
 int APS5_VABI sceVideoOutLatencyMeasureSetStartPoint(int handle, uint32_t point);
 int APS5_VABI sceVideoOutColorSettingsSetGamma(VideoOutColorSettings* settings, float gamma);
 int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* settings);
+int APS5_VABI sceVideoOutVrrPegToFixedRate(int handle, uint64_t arg1, uint64_t arg2);
+int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle);
 
 }
 
