@@ -107,19 +107,22 @@ void CheckPreservedAborts() {
     Require(threw, "unknown abort flags were accepted");
 }
 
-void CheckReuseBeforeOldCompletion() {
+void CheckBusyUntilCompletion(NetResolver::LookupKind kind) {
     NetResolver::State state;
-    int oldOutput = 19;
-    int newOutput = 23;
-    const int newError = static_cast<int>(0x804101e1u);
-    const int result = BlockedLookup(state, NetResolver::LookupKind::Ntoa, oldOutput, [&] {
-        Require(state.Abort(0) == 0, "abort before reuse failed");
-        Require(state.Run(NetResolver::LookupKind::Aton, [] { return 0; }, [&] { newOutput = 31; return 0; }) == 0, "resolver reuse failed");
-        Require(state.Run(NetResolver::LookupKind::Ntoa, [&] { return newError; }, [] { return 0; }) == newError, "new error was lost");
+    int output = 19;
+    int calls = 0;
+    const int result = BlockedLookup(state, kind, output, [&] {
+        Require(state.Abort(0) == 0 && state.Abort(3) == 0, "abort failed");
+        const auto work = [&] { ++calls; return 0; };
+        Require(state.Run(NetResolver::LookupKind::Ntoa, work, [] { return 0; }) == NetResolver::Busy, "aborted host lookup allowed Ntoa reuse before completion");
+        Require(state.Run(NetResolver::LookupKind::Aton, work, [] { return 0; }) == NetResolver::Busy, "aborted host lookup allowed Aton reuse before completion");
+        Require(calls == 0, "busy lookup invoked host work");
     });
     int status = 0;
-    Require(result == NetResolver::Interrupted && oldOutput == 19 && newOutput == 31, "old lookup overwrote reused output");
-    Require(state.GetError(status) == 0 && status == newError, "old lookup overwrote new status");
+    Require(result == NetResolver::Interrupted && output == 19, "aborted completion published output");
+    Require(state.GetError(status) == 0 && status == NetResolver::Interrupted, "aborted completion changed status");
+    Require(state.Run(NetResolver::LookupKind::Ntoa, [] { return 0; }, [&] { output = 31; return 0; }) == 0, "Ntoa reuse failed after completion");
+    Require(state.Run(NetResolver::LookupKind::Aton, [] { return 0; }, [] { return 0; }) == 0 && output == 31, "Aton reuse failed after completion");
 }
 
 void CheckDestroy(NetResolver::LookupKind kind) {
@@ -131,40 +134,6 @@ void CheckDestroy(NetResolver::LookupKind kind) {
     Require(state.GetError(status) == NetResolver::Invalid && status == 23, "destroyed status touched output");
     Require(state.Abort(0) == NetResolver::Invalid, "destroyed resolver accepted abort");
     Require(state.Run(kind, [] { return 0; }, [] { return 0; }) == NetResolver::Invalid, "destroyed resolver accepted lookup");
-}
-
-void CheckOldCompletionWhileReusedLookupRuns() {
-    NetResolver::State state;
-    Gate oldGate;
-    Gate newGate;
-    int oldResult = 0;
-    int newResult = 0;
-    int output = 19;
-    std::thread oldWorker([&] {
-        oldResult = state.Run(NetResolver::LookupKind::Ntoa, [&] { oldGate.Enter(); return 0; }, [&] { output = 77; return 0; });
-    });
-    std::thread newWorker;
-    bool stillBusy = false;
-    try {
-        oldGate.Wait();
-        Require(state.Abort(0) == 0, "overlapping abort failed");
-        newWorker = std::thread([&] {
-            newResult = state.Run(NetResolver::LookupKind::Aton, [&] { newGate.Enter(); return 0; }, [&] { output = 31; return 0; });
-        });
-        newGate.Wait();
-        oldGate.Release();
-        oldWorker.join();
-        stillBusy = state.Run(NetResolver::LookupKind::Ntoa, [] { return 0; }, [] { return 0; }) == NetResolver::Busy;
-    } catch (...) {
-        oldGate.Release();
-        newGate.Release();
-        if (oldWorker.joinable()) oldWorker.join();
-        if (newWorker.joinable()) newWorker.join();
-        throw;
-    }
-    newGate.Release();
-    newWorker.join();
-    Require(stillBusy && oldResult == NetResolver::Interrupted && newResult == 0 && output == 31, "old completion cleared the new active lookup");
 }
 
 void CheckFailureAndException() {
@@ -188,8 +157,8 @@ int main() {
         CheckActiveAbort(NetResolver::LookupKind::Ntoa);
         CheckActiveAbort(NetResolver::LookupKind::Aton);
         CheckUnknownFlagsDuringLookup();
-        CheckReuseBeforeOldCompletion();
-        CheckOldCompletionWhileReusedLookupRuns();
+        CheckBusyUntilCompletion(NetResolver::LookupKind::Ntoa);
+        CheckBusyUntilCompletion(NetResolver::LookupKind::Aton);
         CheckDestroy(NetResolver::LookupKind::Ntoa);
         CheckDestroy(NetResolver::LookupKind::Aton);
         CheckFailureAndException();

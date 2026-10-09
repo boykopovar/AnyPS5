@@ -21,7 +21,6 @@ public:
         if ((flags & ~3u) != 0u) throw std::runtime_error("sceNetResolverAbort: unsupported flags");
         if (active) {
             active->cancelled = true;
-            active.reset();
             status = Interrupted;
         } else {
             pendingAbort |= flags;
@@ -68,9 +67,9 @@ public:
             throw;
         }
         std::lock_guard lock(mutex);
+        active.reset();
         if (destroyed) return Invalid;
         if (operation->cancelled) return Interrupted;
-        active.reset();
         if (result == 0) result = deliver();
         status = result;
         return result;
