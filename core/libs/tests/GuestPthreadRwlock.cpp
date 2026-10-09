@@ -11,6 +11,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
 int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock);
+int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr);
 int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock);
@@ -18,6 +19,8 @@ int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
 int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
+int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr);
+int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr);
 }
 
 using TimedLock = int (APS5_VABI *)(PthreadRwlock*, const KernelTimespec*);
@@ -75,7 +78,32 @@ static void ExpectTimeout(TimedLock lock, PthreadRwlock* rwlock) {
     Require(lock(rwlock, &negative) == GUEST_EINVAL);
 }
 
+static void CheckAttributes() {
+    Require(pthread_rwlockattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlockattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    PthreadRwlockattr empty = nullptr;
+    Require(pthread_rwlockattr_destroy_nid_postfix(&empty) == GUEST_EINVAL);
+
+    PthreadRwlockattr attr = nullptr;
+    Require(pthread_rwlockattr_init_nid_postfix(&attr) == 0);
+    Require(attr != nullptr);
+    Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
+
+    Require(pthread_rwlockattr_init_nid_postfix(&attr) == 0);
+    PthreadRwlock rwlock = nullptr;
+    Require(pthread_rwlock_init_nid_postfix(&rwlock, &attr) == 0);
+    Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_rwlock_rdlock_nid_postfix(&rwlock) == 0);
+    Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+    Require(pthread_rwlock_wrlock_nid_postfix(&rwlock) == 0);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == GUEST_EBUSY);
+    Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+    Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
+}
+
 int main() {
+    CheckAttributes();
     const KernelTimespec invalid{0, NANOS_PER_SECOND};
     PthreadRwlock fresh[4] = {};
     Require(pthread_rwlock_tryrdlock_nid_postfix(&fresh[0]) == 0);
