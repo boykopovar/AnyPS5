@@ -9,6 +9,7 @@ uint32_t Need_sceLibc = 1;
 extern "C" {
 
     int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(int*, int (APS5_VABI *)(void*, void*, void**), void*);
+    unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t*, char16_t**, int);
 
     int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg) {
         return _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(flag, func, arg);
@@ -66,16 +67,8 @@ std::uint64_t APS5_VABI libcCyberUnknown07(void) {
     return 0;
 }
 
-APS5_EXPORT("H+8UBOwfScI", libcCyberUnknown08);
-std::uint64_t APS5_VABI libcCyberUnknown08(void) {
-    NotImplemented_nid_no_patch("H+8UBOwfScI");
-    return 0;
-}
-
-APS5_EXPORT("JhVR7D4Ax6Y", libcCyberUnknown09);
-std::uint64_t APS5_VABI libcCyberUnknown09(void) {
-    NotImplemented_nid_no_patch("JhVR7D4Ax6Y");
-    return 0;
+unsigned long long APS5_VABI _WStoul_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
+    return wcstoul_nid_postfix(str, endptr, base);
 }
 
 APS5_EXPORT("SreZybSRWpU", libcCyberUnknown10);
