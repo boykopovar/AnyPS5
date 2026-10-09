@@ -305,7 +305,8 @@ int main() {
     Require(sceNetEpollControl(epoll, 1, accepted, &registration) == 0);
     const char request[] = "guest tcp loopback";
     char response[sizeof(request)]{};
-    Require(sceNetSend(client, request, sizeof(request), 0) == sizeof(request));
+    Require(Failed(sceNetSend(client, request, sizeof(request), 1), 45));
+    Require(sceNetSend(client, request, sizeof(request), 0x20000) == sizeof(request));
     Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
     const int ready_count = waiter.get();
     Require(ready_count == 1 && (ready.events & 1) && ready.ident == static_cast<std::uint64_t>(accepted) && ready.data.u32 == 77);
@@ -329,6 +330,11 @@ int main() {
     Require(Failed(sceNetSend(accepted, request, sizeof(request), 0), 32));
     Require(sceNetEpollDestroy(epoll) == 0);
     Require(sceNetSocketClose(accepted) == 0);
+#ifndef _WIN32
+    std::int64_t sent = 0;
+    for (int i = 0; i < 100 && sent >= 0; ++i) sent = sceNetSend(client, request, sizeof(request), 0x20000);
+    Require(sent == static_cast<int>(0x80410120u) && *sceNetErrnoLoc() == 32);
+#endif
     bool send_failed = false;
     for (int attempt = 0; attempt < 100 && !send_failed; ++attempt) {
         send_failed = sceNetSend(client, request, sizeof(request), 0) < 0;
@@ -348,7 +354,7 @@ int main() {
     Require(sceNetGetsockname(udp_receiver, address.data(), &address_size) == 0);
     const char datagram[] = "guest udp loopback";
     char datagram_result[sizeof(datagram)]{};
-    Require(sceNetSendto(udp_sender, datagram, sizeof(datagram), 0, address.data(), address.size()) == sizeof(datagram));
+    Require(sceNetSendto(udp_sender, datagram, sizeof(datagram), 0x20000, address.data(), address.size()) == sizeof(datagram));
     std::array<std::uint8_t, 16> source{};
     address_size = source.size();
     Require(sceNetRecvfrom(udp_receiver, datagram_result, sizeof(datagram_result), 0,
