@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <limits>
 #include <string>
+#include <cerrno>
 
 #include "prx/libc/include/General.hpp"
 
@@ -438,8 +439,32 @@ size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size
     return std::strxfrm(destination, source, count);
 }
 
-size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const wchar_t** source, size_t count, mbstate_t* state) {
-    return std::wcsrtombs(destination, source, count, state);
+size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const char16_t** source, size_t count, mbstate_t*) {
+    if (source == nullptr || *source == nullptr) {
+        errno = 22;
+        return static_cast<size_t>(-1);
+    }
+    const char16_t* input = *source;
+    size_t converted = 0;
+    while (destination == nullptr || converted < count) {
+        const char16_t value = *input;
+        if (value == 0) {
+            if (destination == nullptr) return converted;
+            destination[converted] = '\0';
+            *source = nullptr;
+            return converted;
+        }
+        if (value > 255) {
+            if (destination != nullptr) *source = input;
+            errno = 86;
+            return static_cast<size_t>(-1);
+        }
+        if (destination != nullptr) destination[converted] = static_cast<char>(value);
+        ++converted;
+        ++input;
+    }
+    *source = input;
+    return converted;
 }
 
 }
