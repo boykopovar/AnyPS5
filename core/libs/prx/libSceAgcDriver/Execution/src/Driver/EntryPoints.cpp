@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include <mutex>
 
 namespace AgcDriver {
@@ -76,6 +77,10 @@ extern "C" void AgcDriverUnlockVulkanLoader_nid_postfix() {
 
 extern "C" void AgcDriverShutdown_nid_postfix() {
     AgcDriver::Shutdown();
+}
+
+extern "C" void AgcDriverRequestScreenshot_nid_postfix() {
+    AgcDriver::Screenshot::Request();
 }
 
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {

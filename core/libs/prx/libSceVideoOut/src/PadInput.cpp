@@ -9,6 +9,7 @@
 #include "SDL.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -254,6 +255,9 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         if (binding.control == Pad::InputControl::ToggleFullscreen) {
             if (keyboard && down && !pressed[index] && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
         }
+        if (binding.control == Pad::InputControl::Screenshot) {
+            if (keyboard && down && !pressed[index] && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverRequestScreenshot_nid_postfix();
+        }
         if (binding.control == Pad::InputControl::ToggleMouse && down && !pressed[index]) setMouseMode(!mouseEnabled);
         pressed[index] = down;
     }
@@ -334,6 +338,7 @@ void PadInput::publish() {
             case Pad::InputControl::TouchRight: state.touchRight = true; break;
             case Pad::InputControl::ToggleMouse: break;
             case Pad::InputControl::ToggleFullscreen: break;
+            case Pad::InputControl::Screenshot: break;
         }
     }
     for (std::size_t axis = 0; axis < state.sticks.size(); ++axis) {

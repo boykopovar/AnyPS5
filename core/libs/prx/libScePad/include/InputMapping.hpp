@@ -17,6 +17,7 @@ inline constexpr double MouseSensitivity = 1.0;
 
 inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_F11, MouseButton::None, InputControl::ToggleFullscreen},
+    InputBinding{SDL_SCANCODE_F12, MouseButton::None, InputControl::Screenshot},
     InputBinding{SDL_SCANCODE_RETURN, MouseButton::None, InputControl::Button, PadButton::Cross},
     InputBinding{SDL_SCANCODE_SPACE, MouseButton::None, InputControl::Button, PadButton::Cross},
     InputBinding{SDL_SCANCODE_ESCAPE, MouseButton::None, InputControl::Button, PadButton::Options},
