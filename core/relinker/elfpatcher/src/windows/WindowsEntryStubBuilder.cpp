@@ -57,20 +57,20 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
     const auto programPath = reserve(PathCapacity);
     const auto modulePath = reserve(PathCapacity);
+    const auto commandLine = reserve(PathCapacity);
     const auto argumentBlock = reserve(8);
     const auto argumentCount = reserve(4);
     const auto wideArguments = reserve(8);
     const auto shellHandle = reserve(8);
-    const auto crtHandle = reserve(8);
-    const auto iobFunction = reserve(8);
-    const auto freopenFunction = reserve(8);
+    const auto relaunchNeeded = reserve(4);
+    const auto relaunchEnvironment = reserve(2);
+    const auto securityAttributes = reserve(24);
+    const auto startupInfo = reserve(104);
+    const auto processInfo = reserve(24);
     const auto shellLibrary = addString("shell32.dll");
     const auto nulDevice = addString("NUL");
-    const auto crtLibrary = addString("ucrtbase.dll");
-    const auto iobName = addString("__acrt_iob_func");
-    const auto freopenName = addString("freopen");
-    const auto readBinary = addString("rb");
-    const auto writeBinary = addString("wb");
+    const auto relaunchVariable = addString("APS5_WINDOWS_GUI_CHILD");
+    const auto relaunchValue = addString("1");
     const auto parseArguments = addString("CommandLineToArgvW");
     const auto handles = reserve(libraries.size() * 8);
     const auto guestFinished = reserve(4);
@@ -170,11 +170,6 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
     const auto call = [&](const std::string& name) { code.Rip({0xff, 0x15}, nativeImports.Functions.at(name)); };
 
-    const auto callPointer = [&](const std::uint32_t pointer) {
-        code.Emit({0xff, 0x15});
-        code.Rip({}, pointer);
-    };
-
     const auto ensureStandardHandle = [&](const std::uint32_t standard) {
         code.Emit({0xb9});
         code.U32(standard);
@@ -187,25 +182,18 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Rip({0x48, 0x8d, 0x0d}, nulDevice);
         code.Emit({0xba});
         code.U32(0xc0000000u);
-        code.Emit({0x41, 0xb8, 3, 0, 0, 0, 0x45, 0x31, 0xc9});
+        code.Emit({0x41, 0xb8, 3, 0, 0, 0});
+        code.Rip({0x4c, 0x8d, 0x0d}, securityAttributes);
         code.Emit({0x48, 0xc7, 0x44, 0x24, 0x20, 3, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x28, 0x80, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x30, 0, 0, 0, 0});
         call("CreateFileA");
         code.Emit({0x48, 0x89, 0xc2, 0xb9});
         code.U32(standard);
         call("SetStdHandle");
+        code.Emit({0xb8, 1, 0, 0, 0});
+        code.Rip({0x89, 0x05}, relaunchNeeded);
         const auto end = code.GetRva();
         code.PatchBranch(createFromNull, create);
         code.PatchBranch(done, end);
-    };
-
-    const auto reopenStandardStream = [&](const std::uint32_t index, const std::uint32_t mode) {
-        code.Emit({0xb9});
-        code.U32(index);
-        callPointer(iobFunction);
-        code.Emit({0x49, 0x89, 0xc0});
-        code.Rip({0x48, 0x8d, 0x0d}, nulDevice);
-        code.Rip({0x48, 0x8d, 0x15}, mode);
-        callPointer(freopenFunction);
     };
 
     const auto raise = [&](const std::uint32_t status) {
@@ -294,24 +282,83 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     };
 
     code.Emit({0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x48, 0x83, 0xec, 0x60});
+    code.Emit({0xb8, 24, 0, 0, 0});
+    code.Rip({0x89, 0x05}, securityAttributes);
+    code.Emit({0xb8, 1, 0, 0, 0});
+    code.Rip({0x89, 0x05}, securityAttributes + 16);
     ensureStandardHandle(0xfffffff6u);
     ensureStandardHandle(0xfffffff5u);
     ensureStandardHandle(0xfffffff4u);
-    code.Rip({0x48, 0x8d, 0x0d}, crtLibrary);
-    code.Emit({0x31, 0xd2, 0x45, 0x31, 0xc0});
-    call("LoadLibraryExA");
-    code.Rip({0x48, 0x89, 0x05}, crtHandle);
-    code.Emit({0x48, 0x89, 0xc1});
-    code.Rip({0x48, 0x8d, 0x15}, iobName);
-    call("GetProcAddress");
-    code.Rip({0x48, 0x89, 0x05}, iobFunction);
-    code.Rip({0x48, 0x8b, 0x0d}, crtHandle);
-    code.Rip({0x48, 0x8d, 0x15}, freopenName);
-    call("GetProcAddress");
-    code.Rip({0x48, 0x89, 0x05}, freopenFunction);
-    reopenStandardStream(0, readBinary);
-    reopenStandardStream(1, writeBinary);
-    reopenStandardStream(2, writeBinary);
+    code.Rip({0x8b, 0x05}, relaunchNeeded);
+    code.Emit({0x85, 0xc0});
+    const auto skipRelaunch = code.Branch({0x0f, 0x84});
+    code.Rip({0x48, 0x8d, 0x0d}, relaunchVariable);
+    code.Rip({0x48, 0x8d, 0x15}, relaunchEnvironment);
+    code.Emit({0x41, 0xb8, 2, 0, 0, 0});
+    call("GetEnvironmentVariableA");
+    code.Emit({0x48, 0x85, 0xc0});
+    const auto relaunchChild = code.Branch({0x0f, 0x85});
+    code.Rip({0x48, 0x8d, 0x0d}, relaunchVariable);
+    code.Rip({0x48, 0x8d, 0x15}, relaunchValue);
+    call("SetEnvironmentVariableA");
+    code.Emit({0x31, 0xc9});
+    code.Rip({0x48, 0x8d, 0x15}, programPath);
+    code.Emit({0x41, 0xb8});
+    code.U32(PathCapacity);
+    call("GetModuleFileNameA");
+    requireNonzero(0, 0xc000000du);
+    code.Emit({0x3d});
+    code.U32(PathCapacity);
+    const auto relaunchPathFits = code.Branch({0x0f, 0x82});
+    fail(1, 0xc0000106u);
+    code.PatchBranch(relaunchPathFits, code.GetRva());
+    call("GetCommandLineA");
+    code.Emit({0x48, 0x89, 0xc6, 0x48, 0x89, 0xc1});
+    call("lstrlenA");
+    code.Emit({0x3d});
+    code.U32(PathCapacity);
+    const auto relaunchCommandFits = code.Branch({0x0f, 0x82});
+    fail(1, 0xc0000106u);
+    code.PatchBranch(relaunchCommandFits, code.GetRva());
+    code.Emit({0x89, 0xc1, 0x48, 0xff, 0xc1});
+    code.Rip({0x48, 0x8d, 0x3d}, commandLine);
+    code.Emit({0xfc, 0xf3, 0xa4});
+    code.Emit({0xb8, 104, 0, 0, 0});
+    code.Rip({0x89, 0x05}, startupInfo);
+    code.Emit({0xb8, 0, 1, 0, 0});
+    code.Rip({0x89, 0x05}, startupInfo + 60);
+    code.Emit({0xb9});
+    code.U32(0xfffffff6u);
+    call("GetStdHandle");
+    code.Rip({0x48, 0x89, 0x05}, startupInfo + 80);
+    code.Emit({0xb9});
+    code.U32(0xfffffff5u);
+    call("GetStdHandle");
+    code.Rip({0x48, 0x89, 0x05}, startupInfo + 88);
+    code.Emit({0xb9});
+    code.U32(0xfffffff4u);
+    call("GetStdHandle");
+    code.Rip({0x48, 0x89, 0x05}, startupInfo + 96);
+    code.Rip({0x48, 0x8d, 0x0d}, programPath);
+    code.Rip({0x48, 0x8d, 0x15}, commandLine);
+    code.Emit({0x45, 0x31, 0xc0, 0x45, 0x31, 0xc9});
+    code.Emit({0x48, 0xc7, 0x44, 0x24, 0x20, 1, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x28, 0, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x30, 0, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x38, 0, 0, 0, 0});
+    code.Rip({0x48, 0x8d, 0x05}, startupInfo);
+    code.Emit({0x48, 0x89, 0x44, 0x24, 0x40});
+    code.Rip({0x48, 0x8d, 0x05}, processInfo);
+    code.Emit({0x48, 0x89, 0x44, 0x24, 0x48});
+    call("CreateProcessA");
+    requireNonzero(0, 0xc000000du);
+    code.Rip({0x48, 0x8b, 0x0d}, processInfo + 8);
+    call("CloseHandle");
+    code.Rip({0x48, 0x8b, 0x0d}, processInfo);
+    call("CloseHandle");
+    code.Emit({0x31, 0xc9});
+    call("ExitProcess");
+    code.Emit({0x0f, 0x0b});
+    const auto resumeStartup = code.GetRva();
+    code.PatchBranch(skipRelaunch, resumeStartup);
+    code.PatchBranch(relaunchChild, resumeStartup);
     code.Emit({0x31, 0xc9});
     code.Rip({0x48, 0x8d, 0x15}, programPath);
     code.Emit({0x41, 0xb8});
@@ -336,6 +383,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Emit({0x49, 0xff, 0xcc, 0x41, 0x80, 0x3c, 0x24, 0x5c});
     code.Rip({0x0f, 0x85}, findSeparator);
     code.Emit({0x49, 0xff, 0xc4});
+    code.Emit({0x41, 0xc6, 0x04, 0x24, 0, 0x48, 0x89, 0xd9});
+    call("SetCurrentDirectoryA");
+    requireNonzero(2, 0xc000000du);
 
     for (std::size_t index = 0; index < libraries.size(); ++index) {
         if (absolutePath && index >= guestModules.size()) {
