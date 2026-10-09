@@ -130,11 +130,12 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     if (value == 0x66) hasOperandSizePrefix = true;
                     else if (value != 0x64 && !(prefix + 1 == position && value >= 0x40 && value <= 0x4f)) supportedPrefixes = false;
                 }
-                const auto loadRegister = info.Length - position == 7 ? static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1)) : std::uint8_t{4};
-                const bool loadValue = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && bytes[position] == 0x8b && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
-                const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
-                const bool aluRead = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && info.Length - position == 7 && isAluReadOpcode(bytes[position]) && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
                 const bool wide = (info.RexPrefix & 8) != 0;
+                const auto loadRegister = info.Length - position == 7 ? static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1)) : std::uint8_t{4};
+                const bool supportedRex = (wide || !hasOperandSizePrefix) && (info.RexPrefix == 0 || info.RexPrefix == 0x40 || info.RexPrefix == 0x44 || info.RexPrefix == 0x48 || info.RexPrefix == 0x4c);
+                const bool loadValue = supportedPrefixes && supportedRex && loadRegister != 4 && bytes[position] == 0x8b && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
+                const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
+                const bool aluRead = supportedPrefixes && supportedRex && loadRegister != 4 && info.Length - position == 7 && isAluReadOpcode(bytes[position]) && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
                 const auto address = supportedPrefixes && !loadValue && !aluRead && bytes[position] == 0x8b && (wide || !hasOperandSizePrefix) ? registerAddress(bytes, position, info.Length, info.RexPrefix) : std::nullopt;
                 const auto addressRegister = static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1));
                 if (address && addressRegister != 4) {
@@ -160,7 +161,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     message << ')';
                     throw Domain::RelinkerException(message.str(), header.Offset + offset);
                 }
-                accesses.push_back({rva, header.Offset + offset, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3), aluRead ? bytes[position] : std::uint8_t{0}});
+                accesses.push_back({rva, header.Offset + offset, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3), aluRead ? bytes[position] : std::uint8_t{0}, {}, wide});
             }
         }
     }
@@ -250,20 +251,36 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             code.Emit({0x52});
             code.Emit({0x50});
             loadPointer();
-            code.Emit({0x48, 0x8b, 0x90});
+            if (access.Wide) {
+                code.Emit({0x48, 0x8b, 0x90});
+            } else {
+                code.Emit({0x8b, 0x90});
+            }
             code.U32(access.Displacement);
             code.Emit({0x58});
-            code.Emit({0x48, access.AluOpcode, 0xc2});
+            if (access.Wide) {
+                code.Emit({0x48, access.AluOpcode, 0xc2});
+            } else {
+                code.Emit({access.AluOpcode, 0xc2});
+            }
             code.Emit({0x5a});
             code.Emit({0x59});
         } else if (access.AluOpcode != 0 && access.Register == 1) {
             code.Emit({0x51});
             code.Emit({0x50});
             loadPointer();
-            code.Emit({0x48, 0x8b, 0x80});
+            if (access.Wide) {
+                code.Emit({0x48, 0x8b, 0x80});
+            } else {
+                code.Emit({0x8b, 0x80});
+            }
             code.U32(access.Displacement);
             code.Emit({0x48, 0x8b, 0x4c, 0x24, 0x08});
-            code.Emit({0x48, access.AluOpcode, 0xc8});
+            if (access.Wide) {
+                code.Emit({0x48, access.AluOpcode, 0xc8});
+            } else {
+                code.Emit({access.AluOpcode, 0xc8});
+            }
             code.Emit({0x58});
             code.Emit({0x48, 0x8d, 0x64, 0x24, 0x08});
         } else {
@@ -273,18 +290,34 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             if (preserveAccumulator) code.Emit({0x50});
             loadPointer();
             if (access.AluOpcode != 0) {
-                code.Emit({0x48, 0x8b, 0x80});
+                if (access.Wide) {
+                    code.Emit({0x48, 0x8b, 0x80});
+                } else {
+                    code.Emit({0x8b, 0x80});
+                }
                 code.U32(access.Displacement);
-                code.Emit({static_cast<std::uint8_t>(0x48 | ((access.Register >> 3) << 2)), access.AluOpcode, static_cast<std::uint8_t>(0xc0 | ((access.Register & 7) << 3))});
+                const auto rex = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | ((access.Register >> 3) << 2));
+                if (rex != 0x40)
+                    code.Emit({rex});
+                code.Emit({access.AluOpcode, static_cast<std::uint8_t>(0xc0 | ((access.Register & 7) << 3))});
             } else if (!access.StoreImmediate && access.Displacement != 0) {
-                code.Emit({0x48, 0x8b, 0x80});
+                if (access.Wide) {
+                    code.Emit({0x48, 0x8b, 0x80});
+                } else {
+                    code.Emit({0x8b, 0x80});
+                }
                 code.U32(access.Displacement);
+            } else if (!access.StoreImmediate && !access.Wide && access.Register == 0) {
+                code.Emit({0x89, 0xc0});
             }
             if (access.StoreImmediate) {
                 code.Emit({0xc7, 0x40, 0x28});
                 code.U32(access.Immediate);
             } else if (access.AluOpcode == 0 && access.Register != 0) {
-                code.Emit({static_cast<std::uint8_t>(0x48 | (access.Register >> 3)), 0x89, static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
+                const auto rex = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | (access.Register >> 3));
+                if (rex != 0x40)
+                    code.Emit({rex});
+                code.Emit({0x89, static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
             }
             if (preserveAccumulator) code.Emit({0x58});
             if (preserveCounter) code.Emit({0x59});

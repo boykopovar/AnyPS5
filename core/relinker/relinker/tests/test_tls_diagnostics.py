@@ -8,7 +8,7 @@ from test_guest_tls import guest_with_tls
 from test_tls_function_coverage import TLS_LOAD, make_image
 
 
-TLS_INSTRUCTION = bytes.fromhex("64 8b 04 25 28 00 00 00")
+TLS_INSTRUCTION = bytes.fromhex("64 ff 04 25 28 00 00 00")
 
 
 def main():
