@@ -118,6 +118,28 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
     const std::uint32_t rawLimit = ((edataSection.SizeOfRawData + fileAlignment - 1u) / fileAlignment) * fileAlignment;
 
+    struct ForwarderRange {
+        std::size_t Start;
+        std::size_t End;
+    };
+    std::vector<ForwarderRange> forwarders;
+    if (exportTable.NumberOfFunctions != 0u) {
+        const auto functionsArrayOffset = RvaToOffset(pe, exportTable.AddressOfFunctions, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        for (std::size_t i = 0; i < exportTable.NumberOfFunctions; ++i) {
+            const auto rva = Read<std::uint32_t>(pe, functionsArrayOffset + i * sizeof(std::uint32_t));
+            if (rva < exportDir.VirtualAddress || rva - exportDir.VirtualAddress >= exportDir.Size) continue;
+            const auto offset = RvaToOffset(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+            const auto bytes = ReadCStr(pe, offset).size() + 1u;
+            if (rva < edataSection.VirtualAddress || rva - edataSection.VirtualAddress >= edataSection.SizeOfRawData
+                || bytes > edataSection.SizeOfRawData - (rva - edataSection.VirtualAddress)
+                || bytes > exportDir.Size - (rva - exportDir.VirtualAddress) || bytes > pe.size() - offset)
+                throw std::runtime_error("export forwarder string out of bounds");
+            const std::size_t start = rva - edataSection.VirtualAddress;
+            forwarders.push_back({start, start + bytes});
+        }
+        std::sort(forwarders.begin(), forwarders.end(), [](const ForwarderRange& left, const ForwarderRange& right) { return left.Start < right.Start; });
+    }
+
     std::vector<std::string> finalNames(exportTable.NumberOfNames);
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
         const auto it = nidMap.find(names[i]);
@@ -125,15 +147,28 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         finalNames[i] = it->second;
     }
 
-    std::uint32_t requiredSize = stringsRegionStart;
-    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i)
-        requiredSize += static_cast<std::uint32_t>(finalNames[i].size()) + 1u;
+    std::vector<std::uint32_t> nameOffsets;
+    nameOffsets.reserve(finalNames.size());
+    std::size_t requiredSize = stringsRegionStart;
+    std::size_t forwarderIndex = 0;
+    for (const auto& name : finalNames) {
+        const auto bytes = name.size() + 1u;
+        while (forwarderIndex < forwarders.size()) {
+            const auto& range = forwarders[forwarderIndex];
+            if (requiredSize < range.End) {
+                if (requiredSize <= range.Start && bytes <= range.Start - requiredSize) break;
+                requiredSize = range.End;
+            }
+            ++forwarderIndex;
+        }
+        if (requiredSize > rawLimit || bytes > rawLimit - requiredSize)
+            throw std::runtime_error("not enough raw space in edata section to repack export names");
+        nameOffsets.push_back(static_cast<std::uint32_t>(requiredSize));
+        requiredSize += bytes;
+    }
 
-    if (requiredSize > rawLimit)
-        throw std::runtime_error("not enough raw space in edata section to repack export names");
-
-    std::uint32_t writeOffset = stringsRegionStart;
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
+        const auto writeOffset = nameOffsets[i];
         const std::uint32_t newNameRva = edataSection.VirtualAddress + writeOffset;
         const std::size_t newNameFileOffset = static_cast<std::size_t>(edataSection.PointerToRawData) + writeOffset;
 
@@ -143,10 +178,16 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         std::memcpy(pe.data() + newNameFileOffset, finalNames[i].data(), finalNames[i].size());
         pe[newNameFileOffset + finalNames[i].size()] = 0u;
         Write(pe, namesArrayOffset + i * 4u, newNameRva);
-        writeOffset += static_cast<std::uint32_t>(finalNames[i].size()) + 1u;
     }
 
-    const std::uint32_t newVirtualSize = std::max(edataSection.VirtualSize, writeOffset);
+    const auto exportEndRva = static_cast<std::uint64_t>(edataSection.VirtualAddress) + requiredSize;
+    if (exportEndRva > std::numeric_limits<std::uint32_t>::max() || exportEndRva < exportDir.VirtualAddress)
+        throw std::runtime_error("repacked export names exceed RVA range");
+    auto patchedExportDir = exportDir;
+    patchedExportDir.Size = std::max(exportDir.Size, static_cast<std::uint32_t>(exportEndRva - exportDir.VirtualAddress));
+    Write(pe, dataDirectoryOffset, patchedExportDir);
+
+    const std::uint32_t newVirtualSize = std::max(edataSection.VirtualSize, static_cast<std::uint32_t>(requiredSize));
     auto patchedSection = edataSection;
     patchedSection.VirtualSize = newVirtualSize;
     Write(pe, edataSectionOffset, patchedSection);
