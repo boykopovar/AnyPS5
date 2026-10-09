@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -121,6 +123,63 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
     throw std::runtime_error("source type must be KEY, MOUSE or WHEEL");
 }
 
+enum class InputSetting {
+    LeftStickDeadzone,
+    RightStickDeadzone,
+    MouseSensitivity
+};
+
+struct InputSettingName {
+    std::string_view name;
+    InputSetting setting;
+};
+
+constexpr auto settingNames = std::array{
+    InputSettingName{"LeftStickDeadzone", InputSetting::LeftStickDeadzone},
+    InputSettingName{"RightStickDeadzone", InputSetting::RightStickDeadzone},
+    InputSettingName{"MouseSensitivity", InputSetting::MouseSensitivity}
+};
+
+const InputSettingName* findSetting(std::string_view name) {
+    const auto normalized = upper(name);
+    for (const auto& setting : settingNames) {
+        if (upper(setting.name) == normalized) return &setting;
+    }
+    return nullptr;
+}
+
+int parseDeadzonePercent(std::string_view value) {
+    int parsed = 0;
+    const auto end = value.data() + value.size();
+    const auto result = std::from_chars(value.data(), end, parsed);
+    if (result.ec != std::errc{} || result.ptr != end || parsed < 0 || parsed > Pad::MaxStickDeadzonePercent) {
+        throw std::runtime_error("deadzone must be a whole percentage from 0 to " + std::to_string(Pad::MaxStickDeadzonePercent));
+    }
+    return parsed;
+}
+
+double parseMouseSensitivity(std::string_view value) {
+    double parsed = 0.0;
+    const auto end = value.data() + value.size();
+    const auto result = std::from_chars(value.data(), end, parsed);
+    if (result.ec != std::errc{} || result.ptr != end || !(parsed > 0.0) || parsed > Pad::MaxMouseSensitivity) {
+        throw std::runtime_error("mouse sensitivity must be a number greater than 0 and at most 10");
+    }
+    return parsed;
+}
+
+void applySetting(Pad::InputSettings& settings, InputSetting setting, std::string_view value) {
+    switch (setting) {
+        case InputSetting::LeftStickDeadzone: settings.leftStickDeadzonePercent = parseDeadzonePercent(value); break;
+        case InputSetting::RightStickDeadzone: settings.rightStickDeadzonePercent = parseDeadzonePercent(value); break;
+        case InputSetting::MouseSensitivity: settings.mouseSensitivity = parseMouseSensitivity(value); break;
+    }
+}
+
+std::uint8_t stickByte(std::int32_t axis) {
+    return static_cast<std::uint8_t>(((axis + 32768) * 255 + 32767) / 65535);
+}
+
 [[noreturn]] void invalidLine(const std::filesystem::path& path, std::size_t line, const std::string& reason) {
     throw std::runtime_error("Pad: invalid input mapping " + path.string() + ":" + std::to_string(line) + ": " + reason);
 }
@@ -133,8 +192,24 @@ std::filesystem::path defaultConfigPath() {
 
 }
 
-std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
-    std::vector<InputBinding> bindings(InputMapping.begin(), InputMapping.end());
+std::array<std::uint8_t, 2> Pad::StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent) {
+    if (deadzonePercent < 0 || deadzonePercent > MaxStickDeadzonePercent) throw std::invalid_argument("Pad: stick deadzone out of range");
+    if (deadzonePercent == 0) return {stickByte(x), stickByte(y)};
+    const double normalizedX = std::max(x / 32767.0, -1.0);
+    const double normalizedY = std::max(y / 32767.0, -1.0);
+    const double magnitude = std::hypot(normalizedX, normalizedY);
+    const double deadzone = deadzonePercent / 100.0;
+    if (magnitude <= deadzone) return {stickByte(0), stickByte(0)};
+    const double scale = (magnitude - deadzone) / (1.0 - deadzone) / magnitude;
+    const auto axis = [scale](double value) {
+        return stickByte(static_cast<std::int32_t>(std::lround(std::clamp(value * scale, -1.0, 1.0) * 32767.0)));
+    };
+    return {axis(normalizedX), axis(normalizedY)};
+}
+
+Pad::InputConfiguration Pad::LoadInputMapping() {
+    InputConfiguration configuration{{InputMapping.begin(), InputMapping.end()}, {}};
+    auto& bindings = configuration.bindings;
     const char* configuredPath = std::getenv("ANYPS5_INPUT_CONFIG");
     const bool explicitPath = configuredPath != nullptr && configuredPath[0] != '\0';
     const std::filesystem::path path = explicitPath ? configuredPath : defaultConfigPath();
@@ -143,10 +218,11 @@ std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
         if (explicitPath || std::filesystem::exists(path)) {
             throw std::runtime_error("Pad: cannot read input mapping '" + path.string() + "'");
         }
-        return bindings;
+        return configuration;
     }
 
     std::unordered_set<std::string> overriddenActions;
+    std::array<bool, settingNames.size()> configuredSettings{};
     std::string line;
     std::size_t lineNumber = 0;
     while (std::getline(file, line)) {
@@ -160,6 +236,17 @@ std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
 
         const auto actionName = trim(content.substr(0, separator));
         const auto source = trim(content.substr(separator + 1));
+        if (const auto* setting = findSetting(actionName)) {
+            auto& configured = configuredSettings[static_cast<std::size_t>(setting->setting)];
+            if (configured) invalidLine(path, lineNumber, std::string(setting->name) + " is set more than once");
+            configured = true;
+            try {
+                applySetting(configuration.settings, setting->setting, source);
+            } catch (const std::runtime_error& error) {
+                invalidLine(path, lineNumber, error.what());
+            }
+            continue;
+        }
         const auto* action = findAction(actionName);
         if (action == nullptr) invalidLine(path, lineNumber, "unknown action '" + std::string(actionName) + "'");
         if (source.empty()) invalidLine(path, lineNumber, "source is empty");
@@ -182,5 +269,5 @@ std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
     }
     if (file.bad()) throw std::runtime_error("Pad: cannot read input mapping '" + path.string() + "'");
 
-    return bindings;
+    return configuration;
 }

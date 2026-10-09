@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "SDL.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
@@ -13,8 +14,11 @@
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-PadInput::PadInput()
-    : bindings(Pad::LoadInputMapping()), pressed(bindings.size()), wheelReleaseTimes(bindings.size()) {
+PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
+}
+
+PadInput::PadInput(Pad::InputConfiguration configuration)
+    : bindings(std::move(configuration.bindings)), settings(configuration.settings), pressed(bindings.size()), wheelReleaseTimes(bindings.size()) {
     openFirstAvailableController();
 }
 
@@ -153,16 +157,12 @@ PadInputState PadInput::sampleController() const {
     if (result.analogButtonsL2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::L2);
     if (result.analogButtonsR2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::R2);
 
-    const auto stickValue = [this](SDL_GameControllerAxis axis) {
-        const auto value = static_cast<std::int32_t>(SDL_GameControllerGetAxis(controller, axis)) + 32768;
-        return static_cast<std::uint8_t>((value * 255 + 32767) / 65535);
+    const auto stick = [this](SDL_GameControllerAxis xAxis, SDL_GameControllerAxis yAxis, int deadzonePercent) {
+        return Pad::StickWithDeadzone(SDL_GameControllerGetAxis(controller, xAxis), SDL_GameControllerGetAxis(controller, yAxis), deadzonePercent);
     };
-    result.sticks = {
-        stickValue(SDL_CONTROLLER_AXIS_LEFTX),
-        stickValue(SDL_CONTROLLER_AXIS_LEFTY),
-        stickValue(SDL_CONTROLLER_AXIS_RIGHTX),
-        stickValue(SDL_CONTROLLER_AXIS_RIGHTY)
-    };
+    const auto left = stick(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY, settings.leftStickDeadzonePercent);
+    const auto right = stick(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY, settings.rightStickDeadzonePercent);
+    result.sticks = {left[0], left[1], right[0], right[1]};
     switch (SDL_GameControllerGetType(controller)) {
         case SDL_CONTROLLER_TYPE_PS5: result.deviceKind = 1; break;
         case SDL_CONTROLLER_TYPE_PS4: result.deviceKind = 2; break;
@@ -292,7 +292,7 @@ void PadInput::Update() {
     mouseStick = {128, 128};
     if (deltaX != 0 || deltaY != 0) {
         const double distance = std::hypot(deltaX, deltaY);
-        const double scale = std::clamp(distance * Pad::MouseSensitivity + 16.0, 64.0, 128.0) / distance;
+        const double scale = std::clamp(distance * settings.mouseSensitivity + 16.0, 64.0, 128.0) / distance;
         const auto mapAxis = [scale](int delta) { return static_cast<std::uint8_t>(std::clamp(128L + std::lround(delta * scale), 0L, 255L)); };
         mouseStick = {mapAxis(deltaX), mapAxis(deltaY)};
     }

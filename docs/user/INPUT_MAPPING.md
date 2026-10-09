@@ -30,4 +30,17 @@ R2 = MOUSE:Right
 ToggleMouse = MOUSE:Middle
 ```
 
+The same file also accepts these settings, each at most once, in the form `Setting = Value`:
+
+| Setting | Value | Default |
+|---------|-------|---------|
+| `LeftStickDeadzone`, `RightStickDeadzone` | Whole percentage from 0 to 90 of the controller stick's travel that reads as centered. Outside it the travel is rescaled, so the stick still reaches its full range. Keyboard and mouse stick bindings are not affected. | `0` |
+| `MouseSensitivity` | Number greater than 0 and at most 10 that scales mouse movement on the right stick while the mouse is captured (`ToggleMouse`). | `1` |
+
+```ini
+LeftStickDeadzone = 12
+RightStickDeadzone = 8
+MouseSensitivity = 2.5
+```
+
 An invalid line reports the file and line number and stops input initialization. If the configured file does not exist or cannot be read, AnyPS5 reports an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
