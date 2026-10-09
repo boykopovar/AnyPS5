@@ -950,7 +950,11 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto& dimensionInfo = RdnaImageDimensionInfoFor(access.image.dimension);
     const auto numericClass = access.image.numericClass;
-    const auto condition = ctx.Arg(access.inst, 2);
+    auto condition = ctx.Arg(access.inst, 2);
+    if (access.mem.imageDimension == RdnaImageDimension::Dim3D && access.image.dimension == RdnaImageDimension::Dim2D) {
+        if (access.mem.imageAddressComponents < 3u) ctx.Fail(access.inst, "has an image address with too few coordinate components");
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
+    }
     ctx.Define(access.inst, EmitValueOrDefaultIfCondition(state, condition, TypeU32Vector(state, 4), ConstantU32CompositeZero(state, 4), [&]() {
         const auto descriptor = LoadSampledImageDescriptor(state, access.mem.resource, access.slot);
         const auto color = state.module.AllocateId();
