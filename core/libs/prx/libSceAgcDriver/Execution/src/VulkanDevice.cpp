@@ -1388,6 +1388,40 @@ bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
     return true;
 }
 
+bool VulkanDevice::CopyMemoryOnGpu(std::uint64_t destination, std::uint64_t source, std::size_t bytes) {
+    if (!state->recorder || bytes == 0) return false;
+    auto& recorder = *state->recorder;
+    if (recorder.Idle()) return false;
+    const auto completionStore = [&](std::uint64_t address) { return state->CopiedWriterOverlaps(address, bytes) || (Graphics::Recorder::PendingCompletionLabels() != 0 && recorder.CompletionLabelIn(address, bytes)); };
+    if (completionStore(source) || completionStore(destination)) return false;
+    const auto context = graphicsContext();
+    Graphics::StorageTexture::FlushPending(source, bytes, nullptr, "DMA copy source", Graphics::PublishScope::Whole);
+    Graphics::StorageTexture::FlushPending(destination, bytes, nullptr, "DMA copy destination", Graphics::PublishScope::PartialUnits);
+    const auto* destinationImport = Graphics::HostImportFor(context, destination, bytes);
+    const auto* sourceImport = destinationImport != nullptr ? Graphics::HostImportFor(context, source, bytes) : nullptr;
+    if (destinationImport == nullptr || sourceImport == nullptr) return false;
+    if (Graphics::AnyShadowedOverlaps(source, bytes)) Graphics::PublishShadow(source, bytes, Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
+    if (Graphics::AnyShadowedOverlaps(destination, bytes)) Graphics::PublishShadow(destination, bytes, Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
+    recorder.FlushKeyStoresOverlapping(source, bytes);
+    recorder.FlushKeyStoresOverlapping(destination, bytes);
+    recorder.FlushStoresOverlapping(source, bytes);
+    recorder.FlushStoresOverlapping(destination, bytes);
+    using CommandClass = Graphics::Recorder::CommandClass;
+    const auto commands = recorder.Commands();
+    constexpr VkAccessFlags transferAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, transferAccess);
+    const VkBufferCopy region{source - sourceImport->base, destination - destinationImport->base, bytes};
+    context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, sourceImport->buffer, destinationImport->buffer, 1, &region);
+    constexpr VkAccessFlags copiedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, copiedAccess);
+    Graphics::Recorder::CountBarriers(CommandClass::Copy, 2);
+    recorder.MarkCovered(copiedAccess);
+    recorder.NotePendingRead(source, bytes, Graphics::Recorder::ReadKind::CopySource);
+    recorder.NotePendingWrite(destination, bytes);
+    GuestMemory::MarkWritten(destination, bytes);
+    return true;
+}
+
 bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::span<const std::uint32_t, 4> pattern) {
     if (!state->recorder || bytes == 0 || bytes % 16 != 0 || address % 16 != 0) return false;
     auto& recorder = *state->recorder;
