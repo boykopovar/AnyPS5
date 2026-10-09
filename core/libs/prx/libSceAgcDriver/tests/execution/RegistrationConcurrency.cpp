@@ -4,7 +4,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include <array>
-#include <barrier>
 #include <chrono>
 #include <future>
 #include <iostream>
@@ -106,6 +105,9 @@ void DeferredOperations() {
 }
 
 void PreparationWhilePublicationBlocked() {
+    ComputeFixture warm;
+    warm.header.registers[2].value = 8;
+    AgcDriverRegisterShader_nid_postfix(&warm.header.shader);
     ComputeFixture invalid;
     invalid.header.registers[2].value = 0;
     std::future<void> worker;
@@ -138,21 +140,29 @@ void NestedFailure() {
 void ConcurrentRegistrations() {
     std::array<ComputeFixture, 4> fixtures;
     constexpr std::size_t workerCount = 8;
-    std::barrier start(workerCount);
+    std::promise<void> start;
+    const auto started = start.get_future().share();
     std::vector<std::future<void>> workers;
+    workers.reserve(workerCount);
     for (std::size_t index = 0; index < fixtures.size(); ++index) {
         fixtures[index].header.registers[2].value = static_cast<std::uint32_t>(index + 1);
     }
-    for (std::size_t worker = 0; worker < workerCount; ++worker) {
-        const auto index = worker % fixtures.size();
-        workers.push_back(std::async(std::launch::async, [&, index] {
-            start.arrive_and_wait();
-            const auto* shader = &fixtures[index].header.shader;
-            AgcDriverRegisterShader_nid_postfix(shader);
-            AgcDriverResolveShaderAbi_nid_postfix(shader, {}, {});
-            AgcDriverRegisterShader_nid_postfix(shader);
-        }));
+    try {
+        for (std::size_t worker = 0; worker < workerCount; ++worker) {
+            const auto index = worker % fixtures.size();
+            workers.push_back(std::async(std::launch::async, [&, index] {
+                started.wait();
+                const auto* shader = &fixtures[index].header.shader;
+                AgcDriverRegisterShader_nid_postfix(shader);
+                AgcDriverResolveShaderAbi_nid_postfix(shader, {}, {});
+                AgcDriverRegisterShader_nid_postfix(shader);
+            }));
+        }
+    } catch (...) {
+        start.set_value();
+        throw;
     }
+    start.set_value();
     for (auto& worker : workers) worker.get();
     std::vector<std::uint32_t> commands;
     for (const auto& fixture : fixtures) {
