@@ -9,6 +9,84 @@ import progress
 
 
 class ProgressTests(unittest.TestCase):
+    def scan(self, text):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(text, encoding="utf-8")
+            return progress.scan_library(library)
+
+    def test_comments_and_literals_do_not_declare_exports(self):
+        definition = "int APS5_VABI Imaginary() { return 0; }"
+        samples = [
+            "// " + definition + "\n",
+            "/* first line\n" + definition + "\n*/",
+            'const char* text = "' + definition + '";',
+            'const char* text = u8R"tag("\n' + definition + '\n")tag";',
+            "// continued " + "\\\n" + definition + "\n",
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                group = self.scan(sample + "\nint APS5_VABI Ready() { return 0; }\n")
+                self.assertEqual(group["done_names"], ["Ready"])
+                self.assertEqual(group["todo_names"], [])
+
+    def test_comments_and_literals_do_not_end_or_extend_function_bodies(self):
+        samples = [
+            '// }\n',
+            '/* { } } */',
+            'const char* text = "}";',
+            'const char* text = "{";',
+            r'const char* text = "escaped \" }";',
+            "const char brace = '}';",
+            "const wchar_t brace = L'{';",
+            r"const char quote = '\'';",
+            'const char* text = R"tag(" } /* //\n)wrong" {\n)tag";',
+            "const int value = 1'000 + 2'000;",
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                group = self.scan(
+                    "int APS5_VABI Ready() { " + sample + "\nreturn 0; }\n"
+                    "int APS5_VABI Pending() { " + sample + "\nNotImplemented_nid_no_patch(__func__); }\n"
+                    "int APS5_VABI Later() { return 1; }\n")
+                self.assertEqual(group["done_names"], ["Later", "Ready"])
+                self.assertEqual(group["todo_names"], ["Pending"])
+
+    def test_only_stub_calls_mark_exports_pending(self):
+        group = self.scan(r'''
+static void missing() { NotImplemented_nid_no_patch(__func__); }
+static void ordinary() { const char* text = "NotImplemented_nid_no_patch()"; }
+int APS5_VABI Ready() {
+    const char* text = "NotImplemented_nid_no_patch() missing()";
+    /* NotImplemented_nid_no_patch(__func__); missing(); */
+    // missing(); NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI Similar() { not_missing(); return 0; }
+int APS5_VABI Identifier() { return NotImplemented_nid_no_patch_count; }
+int APS5_VABI Ordinary() { ordinary(); return 0; }
+int APS5_VABI Pending() { NotImplemented_nid_no_patch /* reason */ (__func__); }
+int APS5_VABI Wrapped() { missing /* reason */ (); }
+int APS5_VABI Multiline() { missing
+    (); }
+int APS5_VABI Spliced() { NotImplemented_nid_no_\
+patch(__func__); }
+''')
+        self.assertEqual(group["done_names"], ["Identifier", "Ordinary", "Ready", "Similar"])
+        self.assertEqual(group["todo_names"], ["Multiline", "Pending", "Spliced", "Wrapped"])
+
+    def test_ignored_stub_wrappers_do_not_mark_exports_pending(self):
+        group = self.scan(r'''
+// static void ordinary() { NotImplemented_nid_no_patch(__func__); }
+const char* text = R"(static void another() { NotImplemented_nid_no_patch(__func__); })";
+static void missing() { const char* brace = "}"; NotImplemented_nid_no_patch(__func__); }
+int APS5_VABI Ready() { ordinary(); another(); return 0; }
+int APS5_VABI Pending() { missing(); }
+''')
+        self.assertEqual(group["done_names"], ["Ready"])
+        self.assertEqual(group["todo_names"], ["Pending"])
+
     def test_test_sources_do_not_change_library_progress(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "tests" / "prx"

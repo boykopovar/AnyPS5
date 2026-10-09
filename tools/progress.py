@@ -13,6 +13,11 @@ SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/A
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 STUB = "NotImplemented_nid_no_patch"
 STUB_WRAPPER = re.compile(r"\bstatic\s+(?:\[\[noreturn\]\]\s+)?void\s+(\w+)\s*\([^;{]*\)\s*\{")
+NON_CODE = re.compile(
+    r'//[^\n]*|/\*.*?\*/|'
+    r'\b(?:u8|u|U|L)?R"(?P<delimiter>[^\s()\\]{0,16})\(.*?\)(?P=delimiter)"|'
+    r'"(?:\\.|[^"\\])*"|'
+    r"(?<![\w'])(?:u8|u|U|L)?'(?:\\.|[^'\\\n])*'", re.S)
 FLAT_SEGMENTS = ("GLOBAL_", "SCRATCH_")
 OPCODE_SENTINELS = {"Invalid", "Count", "Unknown", "Unsupported"}
 OPCODE_ALIASES = {
@@ -59,6 +64,11 @@ PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
 
 
+def source_code(text):
+    text = re.sub(r"\\\r?\n", "", text)
+    return NON_CODE.sub(lambda match: re.sub(r"[^\n]", " ", match[0]), text)
+
+
 def body_end(text, start):
     depth = 0
     for i in range(start, len(text)):
@@ -73,10 +83,11 @@ def body_end(text, start):
 
 def stub_calls(text):
     calls = [STUB]
+    direct = re.compile(rf"\b{STUB}\s*\(")
     for match in STUB_WRAPPER.finditer(text):
-        if STUB in text[match.end() - 1:body_end(text, match.end() - 1)]:
-            calls.append(match.group(1) + "(")
-    return calls
+        if direct.search(text[match.end() - 1:body_end(text, match.end() - 1)]):
+            calls.append(match.group(1))
+    return re.compile(r"\b(?:" + "|".join(re.escape(name) for name in calls) + r")\s*\(")
 
 
 def scan_library(path):
@@ -84,14 +95,14 @@ def scan_library(path):
     for source in path.rglob("*.cpp"):
         if "tests" in source.relative_to(path).parts:
             continue
-        text = source.read_text(errors="ignore")
+        text = source_code(source.read_text(errors="ignore"))
         calls = stub_calls(text)
         for match in DEFINITION.finditer(text):
             name = match.group(1)
             if name.endswith("_nid_no_patch"):
                 continue
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
-            (todo if any(call in body for call in calls) else done).add(name)
+            (todo if calls.search(body) else done).add(name)
     todo -= done
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
              "done_names": sorted(done), "todo_names": sorted(todo)}
