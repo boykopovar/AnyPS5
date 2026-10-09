@@ -1090,6 +1090,21 @@ void cmaskTests() {
     Require(texels(0x5a5a5a5au), "a refused pass changed the texels of a DCC target");
 }
 
+void uint16ExportTests() {
+    auto queue = makeState();
+    queue.context[0x1c5] = 7;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 7");
+    queue.context[0x31c] = (queue.context[0x31c] & ~0x77cu) | 0x404u;
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.hasColorTarget && state.color.format == VK_FORMAT_R8_UINT && state.color.uintExport, "a UINT16_ABGR export into an unsigned integer target did not decode");
+    Require(!AgcDriver::Graphics::DecodeState(makeState()).color.uintExport, "a float export was marked unsigned integer");
+    auto blended = queue;
+    blended.context[0x1e0] = 1u << 30u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(blended); }, "blending into an unsigned integer target");
+    queue.context[0x1c5] = 8;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 8");
+}
+
 void DepthClipTests() {
     auto queue = makeState();
     const auto direct = AgcDriver::Graphics::DecodeState(queue);
@@ -2576,6 +2591,15 @@ void validationTests() {
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability");
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, true);
     }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        vertex.spirv = makeModule({});
+        vertex.spirv.insert(vertex.spirv.begin() + 5, {(2u << 16u) | spv::OpCapability, static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)});
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability 12");
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, true);
+    }
     for (const auto capability : {spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle}) {
         ShaderRecompiler::RecompileResult vertex;
         vertex.spirv = makeModule({});
@@ -2844,6 +2868,7 @@ int main() {
         ReversedComponentOrderTests();
         metadataPassTests();
         cmaskTests();
+        uint16ExportTests();
         ShaderStageTests();
         TuningFieldTests();
         PixelInputLayoutTests();

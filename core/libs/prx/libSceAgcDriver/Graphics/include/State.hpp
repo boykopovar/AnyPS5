@@ -54,6 +54,7 @@ struct ColorTarget {
     std::uint32_t depth = 1;
     std::uint32_t depthSlice = 0;
     std::uint32_t exportIndex = 0;
+    bool uintExport = false;
 };
 
 struct DepthTarget {
