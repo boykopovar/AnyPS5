@@ -44,6 +44,7 @@ int APS5_VABI __isnormal_nid_postfix(double);
 int APS5_VABI __isnormalf_nid_postfix(float);
 int APS5_VABI __isinff_nid_postfix(float);
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
+int APS5_VABI abs_nid_postfix(int);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -55,6 +56,11 @@ static void CheckIntegerConversions() {
             Require(result.quot * denominator + result.rem == numerator);
         }
     }
+    Require(abs_nid_postfix(0) == 0);
+    Require(abs_nid_postfix(42) == 42);
+    Require(abs_nid_postfix(-42) == 42);
+    Require(abs_nid_postfix(2147483647) == 2147483647);
+    Require(abs_nid_postfix(-2147483647) == 2147483647);
     struct SignedCase {
         const char* text;
         int base;
