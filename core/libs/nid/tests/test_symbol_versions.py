@@ -157,6 +157,65 @@ def patch(patcher, image, filename):
         return result, path.read_bytes()
 
 
+def test_invalid_elf_symbol_tables_are_rejected(patcher):
+    sym_count = len(symbols(False))
+    cases = [
+        ("short section header", 0x3A, "<H", 63, "section header entry size"),
+        ("oversized section header", 0x3A, "<H", 65, "section header entry size"),
+        ("section table past file", 0x28, "<Q", 0xFFF, "section header table"),
+        ("overflowing section table", 0x28, "<Q", 0xFFFFFFFFFFFFFFC0, "section header table"),
+        ("excess section count", 0x3C, "<H", 0xFFFF, "section header table"),
+        ("symbol table past file", SHOFF + 64 + 24, "<Q", 0xFFF, ".dynsym section"),
+        ("overflowing symbol offset", SHOFF + 64 + 24, "<Q", 0xFFFFFFFFFFFFFFFF, ".dynsym section"),
+        ("excess symbol size", SHOFF + 64 + 32, "<Q", 0xFFFFFFFFFFFFFFF0, ".dynsym section"),
+        ("partial symbol", SHOFF + 64 + 32, "<Q", sym_count * 24 + 1, "entry size or section size"),
+        ("bad symbol entry size", SHOFF + 64 + 56, "<Q", 23, "entry size or section size"),
+        ("missing string table link", SHOFF + 64 + 40, "<I", 4, "string table link"),
+        ("maximum string table link", SHOFF + 64 + 40, "<I", 0xFFFFFFFF, "string table link"),
+        ("link to non-string section", SHOFF + 64 + 40, "<I", 3, "does not name a string table"),
+        ("strings past file", SHOFF + 2 * 64 + 24, "<Q", 0xFFF, ".dynstr section"),
+        ("overflowing string offset", SHOFF + 2 * 64 + 24, "<Q", 0xFFFFFFFFFFFFFFFF, ".dynstr section"),
+        ("overflowing string size", SHOFF + 2 * 64 + 32, "<Q", 0xFFFFFFFFFFFFFFFF, ".dynstr section"),
+        ("missing symbol name", DYNSYM_OFFSET + 24, "<I", 0xFFFFFFFF, "name offset"),
+    ]
+    for label, offset, encoding, value, error in cases:
+        image = build_image(symbols(False), False)
+        struct.pack_into(encoding, image, offset, value)
+        result, on_disk = patch(patcher, bytes(image), SONAME)
+        assert result.returncode == 2, (label, result.returncode, result.stderr)
+        message = result.stderr.decode("utf-8", errors="replace")
+        assert message.startswith("FAIL: ") and error in message, (label, message)
+        assert result.stdout == b"", (label, result.stdout)
+        assert on_disk == image, (label, "rejected input was modified")
+
+    image = build_image(symbols(False), False)
+    strings = sections(image)[2]
+    image[strings[4] + strings[5] - 1] = ord("A")
+    result, on_disk = patch(patcher, bytes(image), SONAME)
+    assert result.returncode == 2 and b"unterminated .dynstr name" in result.stderr, result.stderr
+    assert on_disk == image, "unterminated name input was modified"
+
+
+def test_elf_tables_at_file_end_are_patched(patcher):
+    for section_index in (1, 2):
+        image = build_image(symbols(False), False)
+        section = sections(image)[section_index]
+        offset = len(image) - section[5]
+        image[offset:] = image[section[4]:section[4] + section[5]]
+        struct.pack_into("<Q", image, SHOFF + section_index * 64 + 24, offset)
+        result, patched = patch(patcher, bytes(image), SONAME)
+        assert result.returncode == 0, result.stderr
+        assert read_dynsym(patched) != read_dynsym(image)
+
+    image = build_image(symbols(False), False)
+    table_size = len(sections(image)) * 64
+    image[-table_size:] = image[SHOFF:SHOFF + table_size]
+    struct.pack_into("<Q", image, 0x28, len(image) - table_size)
+    result, patched = patch(patcher, bytes(image), SONAME)
+    assert result.returncode == 0, result.stderr
+    assert read_dynsym(patched) != read_dynsym(image)
+
+
 def test_versioned_library_is_rejected(patcher):
     image = bytes(build_image(symbols(True), True))
     assert any(section[1] == SHT_GNU_VERDEF for section in sections(image))
@@ -200,6 +259,8 @@ def test_unversioned_library_is_still_patched(patcher):
 
 def main():
     patcher = Path(sys.argv[1]).resolve()
+    test_invalid_elf_symbol_tables_are_rejected(patcher)
+    test_elf_tables_at_file_end_are_patched(patcher)
     test_versioned_library_is_rejected(patcher)
     test_unversioned_library_is_still_patched(patcher)
     print("NID patcher symbol version tests passed")

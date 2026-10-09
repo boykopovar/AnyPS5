@@ -316,6 +316,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     if (elf[4] != 2) throw std::runtime_error("not ELF64");
 
     const auto ehdr = Read<Elf64_Ehdr>(elf, 0u);
+    if (ehdr.e_shentsize != sizeof(Elf64_Shdr))
+        throw std::runtime_error("unsupported ELF section header entry size");
+    if (ehdr.e_shoff > elf.size() ||
+        static_cast<std::size_t>(ehdr.e_shnum) * sizeof(Elf64_Shdr) > elf.size() - ehdr.e_shoff)
+        throw std::runtime_error("ELF section header table out of bounds");
 
     std::size_t dynSymOffset = 0u, dynSymSize = 0u;
     std::size_t gnuHashOffset = 0u, gnuHashSize = 0u;
@@ -326,6 +331,12 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
         if (shdr.sh_type == kShtDynsym) {
+            if (shdr.sh_entsize != sizeof(Elf64_Sym) || shdr.sh_size % sizeof(Elf64_Sym) != 0u)
+                throw std::runtime_error("invalid .dynsym entry size or section size");
+            if (shdr.sh_offset > elf.size() || shdr.sh_size > elf.size() - shdr.sh_offset)
+                throw std::runtime_error(".dynsym section out of bounds");
+            if (shdr.sh_link >= ehdr.e_shnum)
+                throw std::runtime_error(".dynsym string table link out of bounds");
             dynSymOffset = static_cast<std::size_t>(shdr.sh_offset);
             dynSymSize = static_cast<std::size_t>(shdr.sh_size);
             dynSymSectionIndex = i;
@@ -359,6 +370,10 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     {
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + dynStrSectionLink * sizeof(Elf64_Shdr);
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
+        if (shdr.sh_type != 3u)
+            throw std::runtime_error(".dynsym link does not name a string table");
+        if (shdr.sh_offset > elf.size() || shdr.sh_size > elf.size() - shdr.sh_offset)
+            throw std::runtime_error(".dynstr section out of bounds");
         dynStrOffset = static_cast<std::size_t>(shdr.sh_offset);
         dynStrSize = static_cast<std::size_t>(shdr.sh_size);
     }
@@ -369,6 +384,12 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset),
         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize)
     );
+    const auto readOriginalName = [&](std::uint32_t offset) {
+        if (offset >= origDynStr.size()) throw std::runtime_error(".dynstr name offset out of bounds");
+        if (std::find(origDynStr.begin() + offset, origDynStr.end(), 0u) == origDynStr.end())
+            throw std::runtime_error("unterminated .dynstr name");
+        return ReadCStr(origDynStr, offset);
+    };
 
     std::vector<std::string> exportedNames;
     for (std::size_t i = 1u; i < symCount; ++i) {
@@ -377,7 +398,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (sym.st_name == 0u) continue;
         const std::uint8_t binding = sym.st_info >> 4u;
         if (binding == kStbLocal || sym.st_shndx == kShnUndef) continue;
-        const std::string symName = ReadCStr(origDynStr, sym.st_name);
+        const std::string symName = readOriginalName(sym.st_name);
         if (symName.empty()) continue;
         exportedNames.push_back(symName);
     }
@@ -399,7 +420,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         const std::uint8_t binding = sym.st_info >> 4u;
         const bool isPatchable = binding != kStbLocal && sym.st_shndx != kShnUndef;
 
-        const std::string symName = ReadCStr(origDynStr, sym.st_name);
+        const std::string symName = readOriginalName(sym.st_name);
         if (symName.empty()) continue;
 
         std::string newValue = symName;
@@ -436,7 +457,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     std::vector<std::uint32_t> preservedOffsets = CollectDynamicNameOffsets(elf, ehdr);
     const std::vector<std::uint32_t> verneedOffsets = CollectVerneedNameOffsets(elf, ehdr);
     preservedOffsets.insert(preservedOffsets.end(), verneedOffsets.begin(), verneedOffsets.end());
-    for (const auto oldOffset : preservedOffsets) addName(oldOffset, ReadCStr(origDynStr, oldOffset));
+    for (const auto oldOffset : preservedOffsets) addName(oldOffset, readOriginalName(oldOffset));
 
     std::vector<std::string> values;
     for (const auto& name : names) values.push_back(name.second);
