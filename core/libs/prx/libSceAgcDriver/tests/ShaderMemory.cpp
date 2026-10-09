@@ -927,12 +927,12 @@ void verifyPixelRequestSerialization() {
     minimal.context.waveSize = 64;
     minimal.context.pixel = ShaderPixelStageInfo{};
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQQ0AAAA=", "new requests did not use serialization version 13");
+    require(requestPrefix(encoded, 8u) == "NVNQQQ4AAAA=", "new requests did not use serialization version 14");
     constexpr std::size_t mappingOffset = 8u + 37u + 18u + 163u;
     for (std::size_t bytes = 0; bytes < 8u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated version-12 pixel mapping was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQQ4AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQQ8AAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
 }
@@ -1358,6 +1358,59 @@ void verifyInt64AtomicCapabilities() {
     require(declares(compile(bufferAtomic, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 does not declare Int64Atomics");
     expectFailure([&] { static_cast<void>(compile(imageAtomic, spv::CapabilityShader)); }, "64-bit image atomics need VK_EXT_shader_image_atomic_int64", "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics");
     require(declares(compile(imageAtomic, spv::CapabilityInt64ImageEXT), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
+}
+
+void verifyRobustBufferLoads() {
+    using namespace ShaderRecompiler;
+    alignas(256) static std::array<std::uint32_t, 256> input{};
+    alignas(256) static std::array<std::uint32_t, 64> output{};
+    const auto inputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(input.data()));
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 8> userData{
+        static_cast<std::uint32_t>(inputAddress), static_cast<std::uint32_t>((inputAddress >> 32u) & 0xffffu), 1024u, 0x31016facu,
+        static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 256u, 0x31016facu};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    std::vector<std::uint32_t> code{0x34020082u};
+    for (std::uint32_t load = 0; load < 4u; ++load) code.insert(code.end(), {0xe0301000u | (load * 64u), 0x80000001u | ((2u + load) << 8)});
+    code.insert(code.end(), {0xbf8c0070u, 0x4a040702u, 0x4a040902u, 0x4a040b02u, 0xe0701000u, 0x80010201u, 0xbf810000u});
+    struct Counts {
+        std::size_t merges = 0;
+        std::size_t loads = 0;
+    };
+    const auto compile = [&](bool robust) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x5c000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.target.robustBufferAccess = robust;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        const auto words = Recompile(request).spirv;
+        Counts counts;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "robust buffer loads: truncated SPIR-V instruction");
+            const auto opcode = words[cursor] & 0xffffu;
+            if (opcode == spv::OpSelectionMerge) ++counts.merges;
+            if (opcode == spv::OpLoad) ++counts.loads;
+            cursor += count;
+        }
+        return counts;
+    };
+    const auto branched = compile(false);
+    const auto branchless = compile(true);
+    require(branchless.merges + 4u <= branched.merges, "robust buffer loads: buffer_load_dword still branches with robustBufferAccess");
+    require(branchless.loads >= 4u && branched.loads >= 4u, "robust buffer loads: a buffer_load_dword lost its load");
 }
 
 void verifyUnnormalizedSamplers() {
@@ -2025,6 +2078,7 @@ int main(int argc, char** argv) {
         verifyComputedTexelOffsets();
         verifyShaderClockScopes();
         verifyInt64AtomicCapabilities();
+        verifyRobustBufferLoads();
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyWaveUniformValues();

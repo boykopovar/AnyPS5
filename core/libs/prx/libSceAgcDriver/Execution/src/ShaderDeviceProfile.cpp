@@ -68,6 +68,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     Require(!target.mesh || meshEnabled, "shader device profile exposes disabled mesh shaders");
     Require(!target.nonConstantImageOffsets || (maintenance8 != nullptr && maintenance8->maintenance8 == VK_TRUE), "shader device profile exposes disabled maintenance8");
     Require(!target.tessellation || core.tessellationShader == VK_TRUE, "shader device profile exposes disabled tessellation");
+    Require(!target.robustBufferAccess || core.robustBufferAccess == VK_TRUE, "shader device profile exposes disabled robustBufferAccess");
     for (const auto extension : target.supportedExtensions) extensions.emplace_back(extension);
     std::ranges::sort(extensions);
     extensions.erase(std::unique(extensions.begin(), extensions.end()), extensions.end());
