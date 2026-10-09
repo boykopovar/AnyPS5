@@ -267,6 +267,32 @@ int main() {
     info = {};
     Require(sceJpegEncEncode(handle, &rgba, &info) == 0);
     Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x21}});
+    std::vector<std::uint8_t> swapped = expected;
+    for (std::size_t i = 0; i < swapped.size(); i += 3) std::swap(swapped[i], swapped[i + 2]);
+    Require(AverageError(swapped, DecodeOutput(info)) < 6);
+
+    alignas(4) static unsigned char stripes[16 * 16 * 4];
+    std::vector<std::uint8_t> stripeSource(16 * 16 * 3);
+    for (std::uint32_t y = 0; y < 16; ++y) {
+        for (std::uint32_t x = 0; x < 16; ++x) {
+            const std::uint8_t color[3] = {static_cast<std::uint8_t>(y % 2 ? 40 : 200), 40, static_cast<std::uint8_t>(y % 2 ? 200 : 40)};
+            unsigned char* pixel = stripes + (y * 16 + x) * 4;
+            pixel[3] = 255;
+            for (int c = 0; c < 3; ++c) {
+                pixel[c] = color[c];
+                stripeSource[(y * 16 + x) * 3 + c] = color[c];
+            }
+        }
+    }
+    JpegEncEncodeParam striped = ValidEncodeParam();
+    striped.image = stripes;
+    striped.image_size = sizeof(stripes);
+    striped.sampling_type = 1;
+    striped.compression_ratio = 0;
+    info = {};
+    Require(sceJpegEncEncode(handle, &striped, &info) == 0);
+    Require(ReadFrame(jpeg, info.size) == std::pair{3, std::uint8_t{0x21}});
+    Require(AverageError(stripeSource, DecodeOutput(info)) < 6);
 
     std::memset(jpeg, 0, sizeof(jpeg));
     Require(sceJpegEncEncode(handle, &rgba, nullptr) == 0);
