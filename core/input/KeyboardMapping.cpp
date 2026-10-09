@@ -1,8 +1,9 @@
-#include "prx/libScePad/include/InputMapping.hpp"
+#include "InputConfiguration.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -17,11 +18,7 @@
 
 namespace {
 
-struct InputAction {
-    std::string_view name;
-    Pad::InputControl control;
-    Pad::PadButton button;
-};
+using InputAction = InputConfig::Action;
 
 constexpr auto actions = std::array{
     InputAction{"Cross", Pad::InputControl::Button, Pad::PadButton::Cross},
@@ -99,6 +96,14 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
     const auto value = trim(source.substr(separator + 1));
     if (value.empty()) throw std::runtime_error("source value is empty");
 
+    if (type == "SCANCODE") {
+        int numeric = 0;
+        const auto parsed = std::from_chars(value.data(), value.data() + value.size(), numeric);
+        if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || numeric <= SDL_SCANCODE_UNKNOWN || numeric >= SDL_NUM_SCANCODES || SDL_GetScancodeName(static_cast<SDL_Scancode>(numeric))[0] == '\0') {
+            throw std::runtime_error("invalid SDL scancode '" + std::string(value) + "'");
+        }
+        return {static_cast<SDL_Scancode>(numeric), Pad::MouseButton::None, action.control, action.button, 0};
+    }
     if (type == "KEY") {
         const std::string keyName(value);
         const auto key = SDL_GetScancodeFromName(keyName.c_str());
@@ -118,7 +123,7 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         if (direction == "DOWN") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, -1};
         throw std::runtime_error("mouse wheel direction must be UP or DOWN");
     }
-    throw std::runtime_error("source type must be KEY, MOUSE or WHEEL");
+    throw std::runtime_error("source type must be KEY, SCANCODE, MOUSE or WHEEL");
 }
 
 [[noreturn]] void invalidLine(const std::filesystem::path& path, std::size_t line, const std::string& reason) {
@@ -133,14 +138,12 @@ std::filesystem::path defaultConfigPath() {
 
 }
 
-std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
+std::vector<Pad::InputBinding> InputConfig::LoadKeyboard(const std::filesystem::path& path, bool required) {
+    using namespace Pad;
     std::vector<InputBinding> bindings(InputMapping.begin(), InputMapping.end());
-    const char* configuredPath = std::getenv("ANYPS5_INPUT_CONFIG");
-    const bool explicitPath = configuredPath != nullptr && configuredPath[0] != '\0';
-    const std::filesystem::path path = explicitPath ? configuredPath : defaultConfigPath();
     std::ifstream file(path);
     if (!file) {
-        if (explicitPath || std::filesystem::exists(path)) {
+        if (required || std::filesystem::exists(path)) {
             throw std::runtime_error("Pad: cannot read input mapping '" + path.string() + "'");
         }
         return bindings;
@@ -165,10 +168,15 @@ std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
         if (source.empty()) invalidLine(path, lineNumber, "source is empty");
 
         try {
-            auto binding = parseBinding(*action, source);
+            const bool disabled = upper(source) == "NONE";
+            auto binding = disabled ? InputBinding{} : parseBinding(*action, source);
             const auto normalizedAction = upper(action->name);
             if (overriddenActions.insert(normalizedAction).second) {
                 std::erase_if(bindings, [action](const InputBinding& existing) { return matchesAction(existing, *action); });
+            }
+            if (disabled) {
+                std::erase_if(bindings, [action](const InputBinding& existing) { return matchesAction(existing, *action); });
+                continue;
             }
             const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const InputBinding& existing) {
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
@@ -183,4 +191,60 @@ std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
     if (file.bad()) throw std::runtime_error("Pad: cannot read input mapping '" + path.string() + "'");
 
     return bindings;
+}
+
+std::filesystem::path InputConfig::ResolvePath() {
+    const char* configuredPath = std::getenv("ANYPS5_INPUT_CONFIG");
+    return configuredPath != nullptr && configuredPath[0] != '\0' ? std::filesystem::path(configuredPath) : defaultConfigPath();
+}
+
+std::span<const InputConfig::Action> InputConfig::Actions() {
+    return actions;
+}
+
+std::string InputConfig::BindingName(const Pad::InputBinding& binding) {
+    if (binding.key != SDL_SCANCODE_UNKNOWN) {
+        const std::string_view name = SDL_GetScancodeName(binding.key);
+        if (name.empty()) throw std::runtime_error("Input: unknown SDL scancode");
+        if (name.find_first_of("#;\r\n") != name.npos || SDL_GetScancodeFromName(std::string(name).c_str()) != binding.key) return "SCANCODE:" + std::to_string(binding.key);
+        return std::string("KEY:") + std::string(name);
+    }
+    if (binding.wheelDirection != 0) return binding.wheelDirection > 0 ? "WHEEL:Up" : "WHEEL:Down";
+    switch (binding.mouseButton) {
+        case Pad::MouseButton::Left: return "MOUSE:Left";
+        case Pad::MouseButton::Middle: return "MOUSE:Middle";
+        case Pad::MouseButton::Right: return "MOUSE:Right";
+        case Pad::MouseButton::X1: return "MOUSE:X1";
+        case Pad::MouseButton::X2: return "MOUSE:X2";
+        default: throw std::runtime_error("Input: binding has no source");
+    }
+}
+
+Pad::InputBinding InputConfig::ParseBinding(const Action& action, std::string_view source) {
+    return parseBinding(action, source);
+}
+
+bool InputConfig::Matches(const Pad::InputBinding& binding, const Action& action) {
+    return matchesAction(binding, action);
+}
+
+std::string InputConfig::SerializeKeyboard(const std::vector<Pad::InputBinding>& bindings) {
+    std::string text;
+    for (const auto& action : actions) {
+        bool found = false;
+        for (const auto& binding : bindings) {
+            if (!matchesAction(binding, action)) continue;
+            const auto name = BindingName(binding);
+            static_cast<void>(parseBinding(action, name));
+            text += std::string(action.name) + " = " + name + "\n";
+            found = true;
+        }
+        if (!found) text += std::string(action.name) + " = NONE\n";
+    }
+    return text;
+}
+
+std::vector<Pad::InputBinding> Pad::LoadInputMapping() {
+    const char* configuredPath = std::getenv("ANYPS5_INPUT_CONFIG");
+    return InputConfig::LoadKeyboard(InputConfig::ResolvePath(), configuredPath != nullptr && configuredPath[0] != '\0');
 }

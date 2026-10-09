@@ -9,6 +9,7 @@ Each non-empty line has the form `Action = Type:Value`. Action names are case-in
 Supported input sources are:
 
 - `KEY:Return`, `KEY:Space`, or another key name accepted by SDL.
+- `SCANCODE:51` for an SDL scancode whose key name contains a comment marker, such as semicolon.
 - `MOUSE:Left`, `MOUSE:Middle`, `MOUSE:Right`, `MOUSE:X1`, or `MOUSE:X2`.
 - `WHEEL:Up` or `WHEEL:Down` for pad buttons.
 
@@ -31,3 +32,35 @@ ToggleMouse = MOUSE:Middle
 ```
 
 An invalid line reports the file and line number and stops input initialization. If the configured file does not exist or cannot be read, AnyPS5 reports an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
+
+## Native configuration editor
+
+Run `anyps5-input-config` (`anyps5-input-config.exe` on Windows) without a game, or press F10 in the game window. Both open the same native editor in a separate window. F10 is reserved for opening the editor. The game continues running while the editor is open, but pad, keyboard and mouse input is withheld. Closing the editor does not close the game.
+
+The editor uses `ANYPS5_INPUT_CONFIG`, or `anyps5-input.ini` beside its executable. To configure a game from the standalone tool, pass its input file explicitly:
+
+```sh
+anyps5-input-config --config /path/to/game/anyps5-input.ini
+```
+
+The Windows equivalent is `anyps5-input-config.exe --config "C:\Games\Title\anyps5-input.ini"`. The destination directory must exist. Controller profiles and SDL mappings use files in the same directory as the input file.
+
+**Keyboard / Mouse** lists the supported PS5 actions and their alternate bindings. Remove an entry or capture another key, mouse button or wheel direction. Default restores the action's built-in bindings. Saving writes the complete effective configuration. `Action = NONE` clears an action's keyboard and mouse bindings; a later binding for that action adds an input again. Existing files retain their previous interpretation.
+
+**PS5 Commands** selects a controller and edits its logical SDL button and axis sources. Axis inversion, disabled controls and an analog preview are available. Profiles are stored in `anyps5-controller.ini` under a `[GUID]` section. Controllers with the same SDL GUID share a profile. Targets omitted from a profile retain their standard bindings. For example:
+
+```ini
+[030000005e0400008e02000000000000]
+Cross = BUTTON:b
+Circle = BUTTON:a
+LeftStickY = AXIS:lefty:inverted
+TouchPad = NONE
+```
+
+Button targets are Cross, Circle, Square, Triangle, L1, R1, Options, L3, R3, Up, Right, Down, Left and TouchPad. Axis targets are LeftStickX, LeftStickY, RightStickX, RightStickY, L2 and R2. Sources use SDL controller names. `NONE` disables a target.
+
+The default TouchPad binding also accepts Back/View on non-PlayStation controllers. A touchpad press on these controllers supplies a center contact when no real finger contact is available. DualShock 4 and DualSense retain their physical touchpad and Share/Create behavior. Assigning another TouchPad source replaces the Back/View fallback; `TouchPad = NONE` disables it.
+
+**SDL Mapping** creates physical mappings, including for joysticks not recognized as game controllers. Release the controls before capture. Move a stick right or down, or press a trigger fully when prompted. The assistant samples resting axes, detects buttons, axes and cardinal hat directions, and requires confirmation for each input. Skip controls absent from the device. Save writes `anyps5-gamecontrollerdb.txt` using SDL mapping records with the current platform. The database is loaded before controller detection. Unfinished mappings are retained while selecting or reconnecting devices within the same editor session.
+
+Save applies only to the current tab. During gameplay, saved changes apply immediately; SDL mapping changes reopen the active controller. Closing with unsaved edits requires confirmation. Invalid configuration or a failed write reports an error; failed writes leave the destination file intact. Saving normalizes the file and does not preserve comments. Finger touch data, sensors and controller output remain handled by the existing SDL runtime.

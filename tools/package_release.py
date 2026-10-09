@@ -20,18 +20,24 @@ def package(platform, build, output, version):
         runtime = Path("C:/winlibs/mingw64/bin")
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
     binary = build / "core/relinker" / executable
-    for file in [*files, binary]:
+    input_executable = "anyps5-input-config.exe" if platform == "windows" else "anyps5-input-config"
+    input_binary = build / "core/input" / input_executable
+    for file in [*files, binary, input_binary]:
         if not file.is_file() or file.stat().st_size == 0:
             raise RuntimeError(f"Missing or empty release file: {file}")
     output.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output / f"prx-{platform}-{version}.zip", "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        archive.write(input_binary, arcname=input_executable)
         for file in files:
             archive.write(file, arcname=f"libs/{file.name}")
     with tarfile.open(output / f"prx-{platform}-{version}.tar.gz", "w:gz", compresslevel=9) as archive:
+        archive.add(input_binary, arcname=input_executable)
         for file in files:
             archive.add(file, arcname=f"libs/{file.name}")
     asset = f"relinker-{version}.exe" if platform == "windows" else f"relinker-{version}"
     shutil.copy2(binary, output / asset)
+    input_asset = f"anyps5-input-config-{version}.exe" if platform == "windows" else f"anyps5-input-config-{version}"
+    shutil.copy2(input_binary, output / input_asset)
 
 
 def collect_docs(source, output):

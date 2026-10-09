@@ -35,6 +35,7 @@ git submodule update --init --recursive
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
 cmake --build build --parallel
 cmake --build build --target libs --parallel
+cmake --build build --target anyps5-input-config --parallel
 ```
 
 `libs` is a custom target: every library under [core/libs/prx](../../core/libs/prx) is built with
@@ -77,3 +78,5 @@ Set `APS5_PIPELINE_STATS=1` to capture and print driver statistics for each newl
 ## Shader recompiler
 
 The shader recompilation logic in [core/shader/recompiler](../../core/shader/recompiler) is isolated from the rest of the project and is a pure function of its input data, designed for integration into any other project. The current CMake target also includes cache support and links a supplied runtime target, glslang, and optionally SPIRV-Tools.
+
+The native input editor uses the pinned Dear ImGui submodule with SDL2 and the SDL software renderer. It does not require a Vulkan device. The default build includes `anyps5-input-config`; release archives contain the tool alongside the patched libraries.

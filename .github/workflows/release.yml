@@ -115,11 +115,11 @@ jobs:
       - name: Check release files and collect documentation
         shell: bash
         run: |
-          for file in "prx-windows-$RELEASE_TAG.zip" "prx-windows-$RELEASE_TAG.tar.gz" "prx-linux-$RELEASE_TAG.zip" "prx-linux-$RELEASE_TAG.tar.gz" "relinker-$RELEASE_TAG.exe" "relinker-$RELEASE_TAG"; do
+          for file in "prx-windows-$RELEASE_TAG.zip" "prx-windows-$RELEASE_TAG.tar.gz" "prx-linux-$RELEASE_TAG.zip" "prx-linux-$RELEASE_TAG.tar.gz" "relinker-$RELEASE_TAG.exe" "relinker-$RELEASE_TAG" "anyps5-input-config-$RELEASE_TAG.exe" "anyps5-input-config-$RELEASE_TAG"; do
             test -s "dist/$file"
           done
           python tools/package_release.py --docs docs/user --output dist
-          chmod +x "dist/relinker-$RELEASE_TAG"
+          chmod +x "dist/relinker-$RELEASE_TAG" "dist/anyps5-input-config-$RELEASE_TAG"
       - name: Create draft and upload files
         run: gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
       - name: Publish complete release

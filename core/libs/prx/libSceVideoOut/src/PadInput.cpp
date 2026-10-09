@@ -15,6 +15,8 @@
 
 PadInput::PadInput()
     : bindings(Pad::LoadInputMapping()), pressed(bindings.size()), wheelReleaseTimes(bindings.size()) {
+    controllerProfiles = InputConfig::LoadControllers(InputConfig::ResolvePath().parent_path() / "anyps5-controller.ini");
+    InputConfig::ApplyDatabase(InputConfig::LoadDatabase(InputConfig::ResolvePath().parent_path() / "anyps5-gamecontrollerdb.txt"));
     openFirstAvailableController();
 }
 
@@ -46,6 +48,8 @@ void PadInput::openController(int deviceIndex) {
         APS5_LOG_ERR("Pad: could not open game controller %d: %s", deviceIndex, SDL_GetError());
         return;
     }
+    const auto guid = InputConfig::Guid(SDL_GameControllerGetJoystick(controller));
+    controllerProfile = controllerProfiles.contains(guid) ? controllerProfiles.at(guid) : InputConfig::ControllerProfile{};
     const char* name = SDL_GameControllerName(controller);
     APS5_LOG_OUT("Pad: connected game controller: %s (type %d, sensors accel=%d gyro=%d, touchpads=%d, led=%d, trigger rumble=%d)",
         name != nullptr ? name : "unknown", static_cast<int>(SDL_GameControllerGetType(controller)),
@@ -118,51 +122,8 @@ void PadInput::setMouseMode(bool enabled) {
 }
 
 PadInputState PadInput::sampleController() const {
-    PadInputState result;
+    auto result = InputConfig::SampleController(controller, controllerProfile);
     if (controller == nullptr) return result;
-    const auto readButton = [this](SDL_GameControllerButton button) {
-        return SDL_GameControllerGetButton(controller, button) != 0;
-    };
-    const auto addButton = [&result, &readButton](SDL_GameControllerButton source, Pad::PadButton button) {
-        if (readButton(source)) result.buttons |= static_cast<std::uint32_t>(button);
-    };
-    addButton(SDL_CONTROLLER_BUTTON_A, Pad::PadButton::Cross);
-    addButton(SDL_CONTROLLER_BUTTON_B, Pad::PadButton::Circle);
-    addButton(SDL_CONTROLLER_BUTTON_X, Pad::PadButton::Square);
-    addButton(SDL_CONTROLLER_BUTTON_Y, Pad::PadButton::Triangle);
-    addButton(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, Pad::PadButton::L1);
-    addButton(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, Pad::PadButton::R1);
-    const auto type = SDL_GameControllerGetType(controller);
-    const bool viewPressed = type != SDL_CONTROLLER_TYPE_PS4 && type != SDL_CONTROLLER_TYPE_PS5 && readButton(SDL_CONTROLLER_BUTTON_BACK);
-    if (viewPressed) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
-    addButton(SDL_CONTROLLER_BUTTON_START, Pad::PadButton::Options);
-    addButton(SDL_CONTROLLER_BUTTON_LEFTSTICK, Pad::PadButton::L3);
-    addButton(SDL_CONTROLLER_BUTTON_RIGHTSTICK, Pad::PadButton::R3);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_UP, Pad::PadButton::Up);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, Pad::PadButton::Right);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_DOWN, Pad::PadButton::Down);
-    addButton(SDL_CONTROLLER_BUTTON_DPAD_LEFT, Pad::PadButton::Left);
-    addButton(SDL_CONTROLLER_BUTTON_TOUCHPAD, Pad::PadButton::TouchPad);
-
-    const auto triggerValue = [this](SDL_GameControllerAxis axis) {
-        const auto value = std::clamp<int>(SDL_GameControllerGetAxis(controller, axis), 0, 32767);
-        return static_cast<std::uint8_t>((value * 255 + 16383) / 32767);
-    };
-    result.analogButtonsL2 = triggerValue(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-    result.analogButtonsR2 = triggerValue(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-    if (result.analogButtonsL2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::L2);
-    if (result.analogButtonsR2 != 0) result.buttons |= static_cast<std::uint32_t>(Pad::PadButton::R2);
-
-    const auto stickValue = [this](SDL_GameControllerAxis axis) {
-        const auto value = static_cast<std::int32_t>(SDL_GameControllerGetAxis(controller, axis)) + 32768;
-        return static_cast<std::uint8_t>((value * 255 + 32767) / 65535);
-    };
-    result.sticks = {
-        stickValue(SDL_CONTROLLER_AXIS_LEFTX),
-        stickValue(SDL_CONTROLLER_AXIS_LEFTY),
-        stickValue(SDL_CONTROLLER_AXIS_RIGHTX),
-        stickValue(SDL_CONTROLLER_AXIS_RIGHTY)
-    };
     switch (SDL_GameControllerGetType(controller)) {
         case SDL_CONTROLLER_TYPE_PS5: result.deviceKind = 1; break;
         case SDL_CONTROLLER_TYPE_PS4: result.deviceKind = 2; break;
@@ -175,21 +136,6 @@ PadInputState PadInput::sampleController() const {
             result.hasMotion = true;
             for (int i = 0; i < 3; ++i) { result.accel[i] = accel[i]; result.gyro[i] = gyro[i]; }
         }
-    }
-    if (SDL_GameControllerGetNumTouchpads(controller) > 0) {
-        for (int finger = 0; finger < 2; ++finger) {
-            Uint8 down = 0;
-            float x = 0.0f;
-            float y = 0.0f;
-            float pressure = 0.0f;
-            if (SDL_GameControllerGetTouchpadFinger(controller, 0, finger, &down, &x, &y, &pressure) != 0 || down == 0) continue;
-            result.touch[finger].active = true;
-            result.touch[finger].x = static_cast<std::uint16_t>(std::clamp(x, 0.0f, 1.0f) * 1919.0f);
-            result.touch[finger].y = static_cast<std::uint16_t>(std::clamp(y, 0.0f, 1.0f) * 942.0f);
-        }
-    }
-    if (viewPressed && !result.touch[0].active && !result.touch[1].active) {
-        result.touch[0] = {true, 960, 471, 0};
     }
     return result;
 }
@@ -208,6 +154,12 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         }
         return;
     }
+    if (suspended) return;
+    if (window.Handle() != nullptr && event.type == SDL_KEYDOWN && event.key.windowID != SDL_GetWindowID(window.Handle())) return;
+    if (window.Handle() != nullptr && event.type == SDL_KEYUP && event.key.windowID != SDL_GetWindowID(window.Handle())) return;
+    if (window.Handle() != nullptr && event.type == SDL_MOUSEBUTTONDOWN && event.button.windowID != SDL_GetWindowID(window.Handle())) return;
+    if (window.Handle() != nullptr && event.type == SDL_MOUSEBUTTONUP && event.button.windowID != SDL_GetWindowID(window.Handle())) return;
+    if (window.Handle() != nullptr && event.type == SDL_MOUSEWHEEL && event.wheel.windowID != SDL_GetWindowID(window.Handle())) return;
     if (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP ||
         event.type == SDL_CONTROLLERAXISMOTION || event.type == SDL_CONTROLLERDEVICEREMAPPED) {
         publish();
@@ -263,6 +215,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
 void PadInput::Update() {
     if (controller != nullptr) SDL_GameControllerUpdate();
     applyOutput();
+    if (suspended) { publish(); return; }
     if (controller != nullptr) {
         controllerState = sampleController();
         publish();
@@ -300,6 +253,7 @@ void PadInput::Update() {
 }
 
 void PadInput::publish() {
+    if (suspended) { PadPublishInput_nid_postfix(PadInputState{}); return; }
     PadInputState state;
     state.buttons = controllerState.buttons;
     state.sticks = controllerState.sticks;
@@ -346,4 +300,28 @@ void PadInput::publish() {
     if (state.analogButtonsL2 != 0) state.buttons |= static_cast<std::uint32_t>(Pad::PadButton::L2);
     if (state.analogButtonsR2 != 0) state.buttons |= static_cast<std::uint32_t>(Pad::PadButton::R2);
     PadPublishInput_nid_postfix(state);
+}
+
+void PadInput::SetSuspended(bool value) {
+    suspended = value;
+    std::fill(pressed.begin(), pressed.end(), false);
+    std::fill(wheelReleaseTimes.begin(), wheelReleaseTimes.end(), std::chrono::steady_clock::time_point{});
+    if (mouseEnabled) setMouseMode(false);
+    controllerState = value ? PadInputState{} : sampleController();
+    publish();
+}
+
+void PadInput::Reload(bool keyboard, bool database) {
+    const auto path = InputConfig::ResolvePath();
+    auto newBindings = keyboard ? Pad::LoadInputMapping() : bindings;
+    auto newProfiles = InputConfig::LoadControllers(path.parent_path() / "anyps5-controller.ini");
+    auto mappings = database ? InputConfig::LoadDatabase(path.parent_path() / "anyps5-gamecontrollerdb.txt") : std::vector<std::string>{};
+    if (database) InputConfig::ApplyDatabase(mappings);
+    bindings = std::move(newBindings);
+    pressed.assign(bindings.size(), false);
+    wheelReleaseTimes.assign(bindings.size(), {});
+    controllerProfiles = std::move(newProfiles);
+    closeController();
+    openFirstAvailableController();
+    publish();
 }
