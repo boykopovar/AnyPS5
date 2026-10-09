@@ -44,6 +44,8 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 - Keep the branch up to date with `main` and resolve conflicts yourself; rebasing and force-pushing is fine.
 - If a pull request needs another one first, say so in the description (`Depends on #N`).
 - Run the tests before opening the pull request and describe what was tested (OS, title or homebrew).
+- Pull requests from first-time fork contributors may show no checks until a maintainer approves the workflow run; this means CI is queued, not skipped.
+- While waiting, contributors can run the same Build workflow in their fork with `gh workflow run build.yml -R <user>/AnyPS5 --ref <branch>` and link that run in the pull request.
 - Investigation notes, reports, screenshots and logs go in the pull request, not in the repository. Images for documentation go in the [gist](https://gist.github.com/boykopovar/0e53f2e1426f29ecd41e3b51540b8a90) comments.
 - Say whether the change was written with AI assistance. The author of the pull request is responsible for every line of it.
 
