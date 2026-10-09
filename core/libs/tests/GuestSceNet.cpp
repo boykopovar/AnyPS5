@@ -36,6 +36,8 @@ int APS5_VABI sceNetResolverStartNtoa(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverDestroy(int);
 int APS5_VABI sceNetResolverGetError(int, int*);
+int APS5_VABI sceNetResolverAbort(int, int);
+int APS5_VABI sceNetResolverStartAton(int, const void*, char*, int, int, int, int);
 int APS5_VABI sceNetCtlGetState(int*);
 int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
 int* APS5_VABI __error_nid_postfix();
@@ -79,6 +81,48 @@ static void Require(bool condition) {
 
 static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
+}
+
+static void CheckResolverAbort() {
+    const int resolver = sceNetResolverCreate("abort", 0, 0);
+    Require(resolver > 0);
+    Require(Failed(sceNetResolverAbort(-1, 0), 9));
+    Require(sceNetResolverAbort(resolver, 0) == 0);
+    std::array<std::uint8_t, 4> address{19, 19, 19, 19};
+    const auto unchanged = address;
+    Require(sceNetResolverAbort(resolver, 3) == 0);
+    Require(Failed(sceNetResolverStartNtoa(resolver, nullptr, address.data(), 0, 0, 0), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "127.0.0.1", address.data(), 0, 0, 0), 4) && address == unchanged);
+    int status = 0;
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == static_cast<int>(0x80410104u));
+    Require(sceNetResolverStartNtoa(resolver, "127.0.0.1", address.data(), 0, 0, 0) == 0);
+    Require((address == std::array<std::uint8_t, 4>{127, 0, 0, 1}));
+    std::array<char, 256> name{};
+    name.fill('x');
+    const auto unchangedName = name;
+    Require(Failed(sceNetResolverStartAton(resolver, address.data(), name.data(), static_cast<int>(name.size()), 0, 0, 0), 4));
+    Require(name == unchangedName);
+    Require(sceNetResolverStartAton(resolver, address.data(), name.data(), static_cast<int>(name.size()), 0, 0, 0) == 0);
+    Require(name[0] != 'x' && name[0] != '\0');
+    Require(sceNetResolverAbort(resolver, 1) == 0);
+    std::array<std::uint8_t, 512> records{};
+    records.fill(0xa5);
+    const auto unchangedRecords = records;
+    Require(Failed(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "127.0.0.1", records.data(), 0, 0, 0), 4));
+    Require(records == unchangedRecords);
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "127.0.0.1", records.data(), 0, 0, 0) == 0);
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == 0);
+    bool threw = false;
+    try { sceNetResolverAbort(resolver, 4); } catch (const std::runtime_error&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { sceNetResolverStartNtoa(resolver, "127.0.0.1", address.data(), 0, 0, 1); } catch (const std::runtime_error&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { sceNetResolverStartAton(resolver, address.data(), name.data(), static_cast<int>(name.size()), 0, 0, 1); } catch (const std::runtime_error&) { threw = true; }
+    Require(threw);
+    Require(sceNetResolverDestroy(resolver) == 0);
+    Require(Failed(sceNetResolverAbort(resolver, 0), 9));
 }
 
 static void CheckPoolStats() {
@@ -210,6 +254,7 @@ int main() {
     }
     Require(sceNetInit_nid_postfix() == 0);
     CheckPoolStats();
+    CheckResolverAbort();
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
     CheckAddressText(28, "::1");
