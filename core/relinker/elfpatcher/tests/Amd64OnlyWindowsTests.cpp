@@ -10,6 +10,7 @@
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <iostream>
@@ -59,6 +60,7 @@ struct alignas(16) State {
     std::uint64_t RspBefore;
     std::uint64_t RspAfter;
     std::uint8_t RedZone[128];
+    std::uint8_t Ymm[16][32];
 };
 
 constexpr std::uint64_t kCanary = 0xA5C3E17B9D24F608ull;
@@ -94,6 +96,11 @@ void movdquXmmRsp(Bytes& code, const std::uint8_t reg, const bool store, const s
     emitU32(code, offset);
 }
 
+void vmovdquYmmRbx(Bytes& code, const std::uint8_t reg, const bool store) {
+    emit(code, {0xC4, static_cast<std::uint8_t>(reg >= 8 ? 0x61 : 0xE1), 0x7E, static_cast<std::uint8_t>(store ? 0x7F : 0x6F), static_cast<std::uint8_t>(0x83 | ((reg & 7) << 3))});
+    emitU32(code, static_cast<std::uint32_t>(offsetof(State, Ymm)) + reg * 32);
+}
+
 class Harness {
 public:
     Harness() : _memory(VirtualAlloc(nullptr, kSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)) {
@@ -104,7 +111,7 @@ public:
         VirtualFree(_memory, 0, MEM_RELEASE);
     }
 
-    void Run(const Bytes& body, const std::size_t returnBranchOffset, State& state) const {
+    void Run(const Bytes& body, const std::size_t returnBranchOffset, State& state, const bool wide = false) const {
         Bytes code;
         emit(code, {0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x81, 0xEC, 0xA8, 0x00, 0x00, 0x00});
         for (std::uint8_t reg = 6; reg < 16; ++reg) movdquXmmRsp(code, reg, true, (reg - 6) * 16);
@@ -115,7 +122,12 @@ public:
         for (int slot = 0; slot < 16; ++slot) emit(code, {0x48, 0x89, 0x44, 0x24, static_cast<std::uint8_t>(-128 + slot * 8)});
         emit(code, {0x48, 0x89, 0xA3});
         emitU32(code, kRspBeforeOffset);
-        for (std::uint8_t reg = 0; reg < 16; ++reg) movdquXmmRbx(code, reg, false);
+        for (std::uint8_t reg = 0; reg < 16; ++reg) {
+            if (wide)
+                vmovdquYmmRbx(code, reg, false);
+            else
+                movdquXmmRbx(code, reg, false);
+        }
         code.push_back(0xE9);
         const auto jumpOffset = code.size();
         emitU32(code, 0);
@@ -129,6 +141,8 @@ public:
         emit(code, {0x9C, 0x8F, 0x83});
         emitU32(code, kFlagsOutOffset);
         for (std::uint8_t reg = 0; reg < 16; ++reg) movdquXmmRbx(code, reg, true);
+        if (wide)
+            for (std::uint8_t reg = 0; reg < 16; ++reg) vmovdquYmmRbx(code, reg, true);
         for (std::uint8_t reg = 6; reg < 16; ++reg) movdquXmmRsp(code, reg, false, (reg - 6) * 16);
         emit(code, {0x48, 0x81, 0xC4, 0xA8, 0x00, 0x00, 0x00, 0x41, 0x5F, 0x41, 0x5E, 0x41, 0x5D, 0x41, 0x5C, 0x5F, 0x5E, 0x5D, 0x5B, 0xC3});
         code.resize(Io::AlignUp(code.size(), std::size_t{16}), 0xCC);
@@ -216,6 +230,69 @@ void requireEnvironment(const State& input, const State& state, const std::uint1
         std::uint64_t value;
         std::memcpy(&value, state.RedZone + slot * 8, 8);
         require(value == kCanary, "Lowered sequence wrote into the red zone: " + description);
+    }
+}
+
+void reciprocalExecution() {
+    const Harness harness;
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const bool wide = __builtin_cpu_supports("avx");
+    const float inputs[][4] = {
+        {1.0f, 4.0f, 0.25f, 2.0f},
+        {0.0f, -0.0f, INFINITY, -1.0f},
+        {1.00000012f, 0.99999994f, 3.0e-38f, 1.0e30f},
+        {NAN, -INFINITY, -4.0f, 16.0f}};
+    for (const bool vex : {false, true}) {
+        if (vex && !wide)
+            continue;
+        for (const std::uint8_t opcode : {std::uint8_t{0x52}, std::uint8_t{0x53}}) {
+            for (const std::uint8_t destination : {std::uint8_t{0}, std::uint8_t{2}, std::uint8_t{9}, std::uint8_t{15}}) {
+                for (const std::uint8_t source : {destination, std::uint8_t{0}, std::uint8_t{5}, std::uint8_t{14}}) {
+                    Bytes site;
+                    if (vex) {
+                        emit(site, {0xC4, static_cast<std::uint8_t>((destination >= 8 ? 0 : 0x80) | 0x40 | (source >= 8 ? 0 : 0x20) | 1), 0x78});
+                    } else {
+                        const auto rex = static_cast<std::uint8_t>(0x40 | (destination >= 8 ? 4 : 0) | (source >= 8 ? 1 : 0));
+                        if (rex != 0x40)
+                            site.push_back(rex);
+                        site.push_back(0x0F);
+                    }
+                    emit(site, {opcode, static_cast<std::uint8_t>(0xC0 | ((destination & 7) << 3) | (source & 7))});
+                    const auto match = matcher->Match(site.data(), site.size());
+                    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Packed reciprocal was not lowered");
+                    for (const auto& lanes : inputs) {
+                        State input{};
+                        for (std::size_t reg = 0; reg < 16; ++reg) {
+                            for (std::size_t byte = 0; byte < 16; ++byte) {
+                                input.Xmm[reg][byte] = static_cast<std::uint8_t>(reg * 16 + byte);
+                                input.Ymm[reg][byte + 16] = static_cast<std::uint8_t>(reg * 16 + byte + 1);
+                            }
+                        }
+                        std::memcpy(input.Xmm[source], lanes, sizeof(lanes));
+                        for (std::size_t reg = 0; reg < 16; ++reg)
+                            std::memcpy(input.Ymm[reg], input.Xmm[reg], 16);
+                        input.FlagsIn = 0xAC7;
+                        State state = input;
+                        harness.Run(match->StubBody, match->ReturnBranchOffset, state, wide);
+                        ++g_executions;
+                        float actual[4];
+                        std::memcpy(actual, state.Xmm[destination], sizeof(actual));
+                        for (std::size_t lane = 0; lane < 4; ++lane) {
+                            const float expected = opcode == 0x52 ? 1.0f / std::sqrt(lanes[lane]) : 1.0f / lanes[lane];
+                            require(std::isnan(expected) ? std::isnan(actual[lane]) : std::memcmp(&expected, &actual[lane], sizeof(float)) == 0, "Packed reciprocal result differs from division and square root");
+                        }
+                        requireEnvironment(input, state, static_cast<std::uint16_t>(1u << destination), "packed reciprocal");
+                        if (wide) {
+                            const std::uint8_t zero[16] = {};
+                            for (std::size_t reg = 0; reg < 16; ++reg) {
+                                const auto* expected = vex && reg == destination ? zero : input.Ymm[reg] + 16;
+                                require(std::memcmp(state.Ymm[reg] + 16, expected, 16) == 0, "Packed reciprocal changed the wrong upper YMM bits");
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -642,6 +719,7 @@ void peBuilder() {
 int main() {
     try {
         cpuExecution();
+        reciprocalExecution();
         peBuilder();
         std::cout << "AMD64-only Windows tests passed (" << g_executions << " lowered sequences executed)\n";
     } catch (const std::exception& error) {

@@ -46,11 +46,15 @@ void ReciprocalLowering::EmitOutOfLine(StubBodyBuilder& body, const ReciprocalOp
         body.SsePlain({0x0F, kSqrtps}, scratch, operands.Source);
         body.RipOperand({0x0F, kMovaps}, dst, _ones());
         body.SsePlain({0x0F, kDivps}, dst, scratch);
-        _vexMovaps(body, dst, dst);
+        if (operands.Vex)
+            _vexMovaps(body, dst, dst);
     } else {
         body.RipOperand({0x0F, kMovaps}, scratch, _ones());
         body.SsePlain({0x0F, kDivps}, scratch, operands.Source);
-        _vexMovaps(body, dst, scratch);
+        if (operands.Vex)
+            _vexMovaps(body, dst, scratch);
+        else
+            body.SsePlain({0x0F, kMovaps}, dst, scratch);
     }
     body.Restore(scratch);
 }

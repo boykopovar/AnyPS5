@@ -41,6 +41,8 @@ const Entry& _sse4aEntry(const Sse4aOperands& operands) {
 }
 
 const Entry& _reciprocalEntry(const ReciprocalOperands& operands) {
+    if (!operands.Vex)
+        return operands.Operation == ReciprocalOperation::ReciprocalSquareRoot ? kRsqrtps : kRcpps;
     return operands.Operation == ReciprocalOperation::ReciprocalSquareRoot ? kVrsqrtps : kVrcpps;
 }
 
@@ -207,7 +209,7 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
             if (name == nullptr)
                 name = kClzero.Name;
             _clzeroLowering.EmitOutOfLine(body, operands);
-        } else if (const auto reciprocal = DecodeVexReciprocal(instr.Data, instr.Length)) {
+        } else if (const auto reciprocal = DecodeReciprocal(instr.Data, instr.Length)) {
             if (name == nullptr)
                 name = _reciprocalEntry(*reciprocal).Name;
             _reciprocalLowering.EmitOutOfLine(body, *reciprocal);
@@ -217,7 +219,7 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
         body.Advance(instr.Length);
     }
     _moveTrailing(body, trailing);
-    const bool optional = DecodeVexReciprocal(instructions.front().data(), instructions.front().size()).has_value();
+    const bool optional = DecodeReciprocal(instructions.front().data(), instructions.front().size()).has_value();
     return _trampoline(name, instructions.front().size(), body.Finish(), optional);
 }
 
@@ -252,7 +254,7 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
     if (instr.IsMwaitx())
         return _validWait(instr) ? _inPlace(kMwaitx, length, std::vector<std::uint8_t>(kPause.Bytes, kPause.Bytes + kPause.Size)) : _unsupported(kMwaitx, length);
 
-    if (const auto reciprocal = DecodeVexReciprocal(data, length)) {
+    if (const auto reciprocal = DecodeReciprocal(data, length)) {
         return _trampoline(_reciprocalEntry(*reciprocal).Name, length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { _reciprocalLowering.EmitOutOfLine(body, *reciprocal); }), true);
     }
 
