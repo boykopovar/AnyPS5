@@ -53,7 +53,7 @@ struct SelectedDevice {
     VkPhysicalDeviceType type = VK_PHYSICAL_DEVICE_TYPE_OTHER;
 };
 
-SelectedDevice SelectDevice() {
+SelectedDevice SelectDevice(const std::string& name) {
 #ifdef _WIN32
     void* library = SDL_LoadObject("vulkan-1.dll");
 #else
@@ -77,25 +77,16 @@ SelectedDevice SelectDevice() {
         Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
         devices.resize(count);
         const auto properties = InstanceFunction<PFN_vkGetPhysicalDeviceProperties>(resolve, instance, "vkGetPhysicalDeviceProperties");
-        const auto queues = InstanceFunction<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(resolve, instance, "vkGetPhysicalDeviceQueueFamilyProperties");
-        constexpr auto graphicsCompute = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
         VkPhysicalDevice selected = VK_NULL_HANDLE;
-        int selectedRank = -1;
         for (const auto physical : devices) {
             VkPhysicalDeviceProperties described{};
             properties(physical, &described);
-            const int rank = described.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : described.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : described.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? 1 : 0;
-            if (described.apiVersion < VK_API_VERSION_1_1 || rank <= selectedRank) continue;
-            std::uint32_t familyCount = 0;
-            queues(physical, &familyCount, nullptr);
-            std::vector<VkQueueFamilyProperties> families(familyCount);
-            queues(physical, &familyCount, families.data());
-            if (std::none_of(families.begin(), families.end(), [](const VkQueueFamilyProperties& family) { return family.queueCount != 0 && (family.queueFlags & graphicsCompute) == graphicsCompute; })) continue;
+            if (name != described.deviceName) continue;
             selected = physical;
-            selectedRank = rank;
             chosen.type = described.deviceType;
+            break;
         }
-        Require(selected != VK_NULL_HANDLE, "no Vulkan 1.1 graphics and compute device");
+        Require(selected != VK_NULL_HANDLE, "no Vulkan device named " + name);
         InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>(resolve, instance, "vkGetPhysicalDeviceMemoryProperties")(selected, &chosen.memory);
     } catch (...) {
         if (instance != VK_NULL_HANDLE) InstanceFunction<PFN_vkDestroyInstance>(resolve, instance, "vkDestroyInstance")(instance, nullptr);
@@ -154,7 +145,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto selected = SelectDevice();
+        const auto selected = SelectDevice(device->DeviceName());
         const auto budget = AgcDriver::Graphics::TextureCacheBudget(selected.memory);
         std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
