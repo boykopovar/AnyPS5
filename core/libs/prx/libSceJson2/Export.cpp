@@ -573,6 +573,7 @@ void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { (void)se
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) { ++self->it; return self; }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) { return &*self->it; }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) { return self->it != other->it; }
+bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return self->items->empty(); }
 std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items->size(); }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }

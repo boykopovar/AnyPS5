@@ -109,12 +109,36 @@ struct TextureCache {
     std::mutex mutex;
     std::list<CachedTexture> entries;
     std::unordered_map<TextureKey, std::list<CachedTexture>::iterator, TextureKeyHash> index;
+    std::unordered_multimap<const StorageTexture*, std::list<CachedTexture>::iterator> views;
     std::uint64_t bytes = 0;
+    VkPhysicalDevice budgetDevice = VK_NULL_HANDLE;
+    std::chrono::steady_clock::time_point budgetRead{};
+    std::uint64_t budget = 0;
+    std::uint64_t reportedBudget = 0;
+    std::chrono::steady_clock::time_point reportedAt{};
 };
 
 TextureCache& Textures() {
     static TextureCache cache;
     return cache;
+}
+
+struct UncachedImages {
+    std::mutex mutex;
+    std::vector<std::weak_ptr<StorageTexture>> images;
+    std::atomic<bool> any{false};
+};
+
+UncachedImages& Uncached() {
+    static UncachedImages uncached;
+    return uncached;
+}
+
+void noteUncached(const std::shared_ptr<StorageTexture>& image) {
+    auto& uncached = Uncached();
+    std::lock_guard lock(uncached.mutex);
+    uncached.images.push_back(image);
+    uncached.any.store(true, std::memory_order_release);
 }
 
 bool TextureHashEnabled() {
@@ -135,8 +159,32 @@ std::list<CachedTexture>::iterator findTexture(TextureCache& cache, const Textur
 
 void eraseTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
     cache.bytes -= it->accounted;
+    if (it->source != nullptr) {
+        for (auto [view, last] = cache.views.equal_range(it->source.get()); view != last; ++view) {
+            if (view->second == it) {
+                cache.views.erase(view);
+                break;
+            }
+        }
+    }
     cache.index.erase(it->key);
     cache.entries.erase(it);
+}
+
+void dropUncachedViews(TextureCache& cache) {
+    auto& uncached = Uncached();
+    if (!uncached.any.load(std::memory_order_acquire)) return;
+    std::vector<std::weak_ptr<StorageTexture>> images;
+    {
+        std::lock_guard lock(uncached.mutex);
+        images.swap(uncached.images);
+        uncached.any.store(false, std::memory_order_release);
+    }
+    for (const auto& weak : images) {
+        const auto image = weak.lock();
+        if (image == nullptr) continue;
+        for (auto view = cache.views.find(image.get()); view != cache.views.end(); view = cache.views.find(image.get())) eraseTexture(cache, view->second);
+    }
 }
 
 // Moves an entry to the front (most recently used).
@@ -212,6 +260,10 @@ void logLookup(const LookupRecord& record) {
 
 std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip, std::uint64_t guestBytes = 0);
 
+std::uint64_t heldBytes(const StorageTexture& image) {
+    return std::max<std::uint64_t>(image.AllocationBytes(), image.GuestBytes());
+}
+
 bool MetadataMoved(const StorageTexture& image, const GuestTextureResource& resource) {
     return resource.dccAddress != 0 && image.Descriptor().dccAddress != resource.dccAddress && !image.ServesKeysAt(resource.dccAddress);
 }
@@ -279,6 +331,55 @@ std::shared_ptr<StorageTexture> sampledStorageSource(const Context& context, con
         if (failures.generations.size() < 4096 && failures.generations.emplace(surface, generation).second) std::fprintf(stderr, "[textures] sampled texture 0x%llx (%ux%u format %u) keeps the snapshot path: %s\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, error.what());
         return nullptr;
     }
+}
+
+std::uint64_t storageCacheBytes();
+
+std::optional<std::uint32_t> largestDeviceLocalHeap(const VkPhysicalDeviceMemoryProperties& memory) {
+    std::optional<std::uint32_t> heap;
+    for (std::uint32_t i = 0; i < std::min<std::uint32_t>(memory.memoryHeapCount, VK_MAX_MEMORY_HEAPS); ++i) {
+        if ((memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 && (!heap || memory.memoryHeaps[i].size > memory.memoryHeaps[*heap].size)) heap = i;
+    }
+    return heap;
+}
+
+std::uint64_t forcedCacheBudget() {
+    static const std::uint64_t forced = [] {
+        const char* text = std::getenv("APS5_TEXTURE_CACHE_MIB");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) << 20u : 0u;
+    }();
+    return forced;
+}
+
+std::uint64_t storageBudget(const Context& context) {
+    const auto forced = forcedCacheBudget();
+    return forced != 0 ? forced : TextureCacheBudget(context.memory);
+}
+
+std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
+    if (const auto forced = forcedCacheBudget(); forced != 0) return forced;
+    if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return TextureCacheBudget(context.memory);
+    const auto now = std::chrono::steady_clock::now();
+    if (cache.budgetDevice == context.physical && now - cache.budgetRead < std::chrono::seconds(1)) return cache.budget;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    properties.pNext = &reported;
+    context.memoryProperties2(context.physical, &properties);
+    const auto sampled = SampledTextureMemory();
+    const auto storage = storageCacheBytes();
+    const auto budget = SampledTextureBudget(context.memory, &reported, sampled + storage);
+    const bool fresh = cache.budgetDevice != context.physical;
+    if (const auto heap = largestDeviceLocalHeap(context.memory); heap && (fresh || SampledBudgetReportDue(cache.reportedBudget, budget, now - cache.reportedAt))) {
+        char was[48] = "";
+        if (!fresh) std::snprintf(was, sizeof(was), " (was %llu MiB)", static_cast<unsigned long long>(cache.reportedBudget >> 20u));
+        std::fprintf(stderr, "[gpu] sampled texture cache budget %llu MiB%s: device-local heap %u has a VK_EXT_memory_budget budget of %llu MiB and uses %llu MiB, %llu MiB of it sampled textures (%llu MiB in the cache) and %llu MiB cached storage images; storage image cache budget %llu MiB\n", static_cast<unsigned long long>(budget >> 20u), was, *heap, static_cast<unsigned long long>(reported.heapBudget[*heap] >> 20u), static_cast<unsigned long long>(reported.heapUsage[*heap] >> 20u), static_cast<unsigned long long>(sampled >> 20u), static_cast<unsigned long long>(cache.bytes >> 20u), static_cast<unsigned long long>(storage >> 20u), static_cast<unsigned long long>(TextureCacheBudget(context.memory) >> 20u));
+        cache.reportedBudget = budget;
+        cache.reportedAt = now;
+    }
+    cache.budgetDevice = context.physical;
+    cache.budgetRead = now;
+    cache.budget = budget;
+    return budget;
 }
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
@@ -387,6 +488,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     auto& cache = Textures();
     const auto key = MakeTextureKey(context.device, words, components, depthCompare);
     std::lock_guard lock(cache.mutex);
+    dropUncachedViews(cache);
     if (auto it = findTexture(cache, key); it != cache.entries.end()) {
         if (it->source != nullptr) {
             // The view follows the storage image, whatever the GPU wrote to it since; guest memory
@@ -422,11 +524,11 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         eraseTexture(cache, it);
     }
     CachedTexture entry{key, address, std::vector<std::byte>(source != nullptr ? 0u : bytes), nullptr, *keys, generation};
-    entry.accounted = guestBytes;
     if (source != nullptr) {
         entry.source = source;
         entry.sourceVersion = source->Version();
         entry.texture = std::make_shared<Texture>(context, source, resource, components);
+        entry.accounted = source->Cached() ? 0u : heldBytes(*source);
         counters.fromStorage.fetch_add(1, std::memory_order_relaxed);
     } else {
         // Snapshot before the upload so a write racing with it is caught by the next comparison.
@@ -439,15 +541,17 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, entry.bytes.size() / 64);
         }
         entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, entry.bytes, depthCompare);
+        entry.accounted = entry.texture->AllocationBytes();
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
     }
-    constexpr std::uint64_t budget = 2048ull << 20u;
+    const auto budget = sampledBudget(context, cache);
     while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) eraseTexture(cache, std::prev(cache.entries.end()));
     cache.bytes += entry.accounted;
     auto texture = entry.texture;
     logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
     cache.entries.push_front(std::move(entry));
     cache.index[key] = cache.entries.begin();
+    if (source != nullptr) cache.views.emplace(source.get(), cache.entries.begin());
     reportTextureCounters();
     if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
     return texture;
@@ -471,6 +575,7 @@ struct CachedStorageTexture {
     StorageKey key;
     std::uint32_t mip;
     std::shared_ptr<StorageTexture> texture;
+    std::uint64_t accounted = 0;
 };
 
 // As TextureCache: use order with a hash index by key, plus one by image for StorageImageCached.
@@ -479,12 +584,16 @@ struct StorageTextureCache {
     std::list<CachedStorageTexture> entries;
     std::unordered_map<StorageKey, std::list<CachedStorageTexture>::iterator, StorageKeyHash> index;
     std::unordered_map<const StorageTexture*, std::list<CachedStorageTexture>::iterator> byImage;
-    std::uint64_t bytes = 0;
+    std::atomic<std::uint64_t> bytes{0};
 };
 
 StorageTextureCache& StorageTextures() {
     static StorageTextureCache cache;
     return cache;
+}
+
+std::uint64_t storageCacheBytes() {
+    return StorageTextures().bytes.load(std::memory_order_relaxed);
 }
 
 std::list<CachedStorageTexture>::iterator findStorage(StorageTextureCache& cache, const StorageKey& key) {
@@ -512,8 +621,9 @@ std::list<CachedStorageTexture>::iterator findStorageByImage(StorageTextureCache
 // Evicts an entry: its pending results go to guest memory first (the image may die with the entry).
 void evictStorage(StorageTextureCache& cache, std::list<CachedStorageTexture>::iterator it) {
     it->texture->SetCached(false);
+    noteUncached(it->texture);
     it->texture->Flush();
-    cache.bytes -= it->texture->GuestBytes();
+    cache.bytes -= it->accounted;
     cache.index.erase(it->key);
     cache.byImage.erase(it->texture.get());
     cache.entries.erase(it);
@@ -609,9 +719,10 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     // APS5_NO_KEEP_NEW_STORAGE=1 leaves the image to its cache entry alone, as before.
     static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
     if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
-    constexpr std::uint64_t budget = 2048ull << 20u;
-    while (!cache.entries.empty() && cache.bytes + entry.texture->GuestBytes() > budget) evictStorage(cache, std::prev(cache.entries.end()));
-    cache.bytes += entry.texture->GuestBytes();
+    entry.accounted = heldBytes(*entry.texture);
+    const auto budget = storageBudget(context);
+    while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) evictStorage(cache, std::prev(cache.entries.end()));
+    cache.bytes += entry.accounted;
     auto texture = entry.texture;
     cache.entries.push_front(std::move(entry));
     cache.index[key] = cache.entries.begin();
@@ -622,6 +733,49 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     return texture;
 }
 
+}
+
+std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory) {
+    const auto heap = largestDeviceLocalHeap(memory);
+    return std::max<std::uint64_t>(2048ull << 20u, heap ? memory.memoryHeaps[*heap].size / 4u : 0u);
+}
+
+std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes) {
+    const auto heap = largestDeviceLocalHeap(memory);
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
+    const auto budget = reported->heapBudget[*heap];
+    const auto usage = reported->heapUsage[*heap];
+    const auto reserved = usage - std::min<std::uint64_t>(usage, textureBytes) + TextureCacheBudget(memory) + budget / 8u;
+    return std::max<std::uint64_t>(2048ull << 20u, budget > reserved ? budget - reserved : 0u);
+}
+
+bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport) {
+    const auto change = budget > reported ? budget - reported : reported - budget;
+    return change > reported / 10u && sinceReport >= std::chrono::seconds(10);
+}
+
+TextureCacheUse TextureCacheUsage() {
+    TextureCacheUse use;
+    {
+        auto& sampled = Textures();
+        std::lock_guard lock(sampled.mutex);
+        dropUncachedViews(sampled);
+        use.sampledEntries = sampled.entries.size();
+        use.sampledBytes = sampled.bytes;
+    }
+    use.storageBytes = storageCacheBytes();
+    return use;
+}
+
+std::uint64_t SampledTextureCacheBudget(const Context& context) {
+    auto& cache = Textures();
+    std::lock_guard lock(cache.mutex);
+    return sampledBudget(context, cache);
+}
+
+std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words) {
+    const auto resource = DecodeTextureResource(words);
+    return cachedTexture(context, words, resource, ViewComponents(resource));
 }
 
 void FlushCachedTextures(VkDevice device) {
@@ -652,7 +806,8 @@ void ClearCachedTextures(VkDevice device) {
             continue;
         }
         it->texture->SetCached(false);
-        storage.bytes -= it->texture->GuestBytes();
+        noteUncached(it->texture);
+        storage.bytes -= it->accounted;
         storage.index.erase(it->key);
         storage.byImage.erase(it->texture.get());
         it = storage.entries.erase(it);

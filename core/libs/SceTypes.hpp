@@ -1221,6 +1221,7 @@ using HttpEpollHandle = HttpEpoll*;
 using HttpsCallback = int (*)(int, unsigned int, void* const*, int, void*);
 using HttpRedirectCallback = int (*)(int, std::int32_t, std::int32_t*, const char*, void*);
 using HttpCookieRecvCallback = int (*)(int, const char*, const char*, std::uint64_t, void*);
+using HttpAuthInfoCallback = int (*)(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*);
 
 struct HttpNBEvent { std::uint8_t opaque[64]; };
 

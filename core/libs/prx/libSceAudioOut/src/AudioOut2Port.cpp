@@ -28,6 +28,9 @@ static constexpr std::uint32_t FORMAT_CHANNELS_SHIFT = 8;
 static constexpr std::uint32_t FORMAT_CHANNELS_MASK = 0xFu;
 static constexpr std::uint32_t FORMAT_TYPE_MASK = 0x7Fu;
 static constexpr std::uint32_t FORMAT_FIELDS_MASK = 0xFFFu;
+static constexpr std::uint16_t PORT_TYPE_MAIN = 0;
+static constexpr int PORT_ERROR_FORMAT_FLAG_WITHOUT_8_CHANNELS = static_cast<int>(0x80268001);
+static constexpr int PORT_ERROR_UNSUPPORTED_FORMAT = static_cast<int>(0x8026800E);
 
 static std::mutex g_portsLock;
 // Grows on demand: the title opens its bed ports plus max_object_ports object ports at once.
@@ -158,6 +161,19 @@ extern "C" {
 int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) {
     if (!ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    const auto channels = (params->data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
+    const auto sampleType = params->data_format & FORMAT_TYPE_MASK;
+    const auto* fold = StereoFoldFor(channels);
+    if (params->port_type == PORT_TYPE_MAIN) {
+        if ((params->data_format & 0x80u) != 0 && channels != 8) {
+            *port = static_cast<AudioOut2PortHandle>(-1);
+            return PORT_ERROR_FORMAT_FLAG_WITHOUT_8_CHANNELS;
+        }
+        if (fold == nullptr || channels == 6 || sampleType > 1) {
+            *port = static_cast<AudioOut2PortHandle>(-1);
+            return PORT_ERROR_UNSUPPORTED_FORMAT;
+        }
+    }
     std::lock_guard lock(g_portsLock);
     std::size_t index = 0;
     while (index < g_ports.size() && g_ports[index].used) index++;
@@ -171,10 +187,9 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     entry.dataFormat = params->data_format;
     entry.samplingFreq = params->sampling_freq;
     entry.flags = params->flags;
-    entry.channels = (params->data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
-    const auto sampleType = params->data_format & FORMAT_TYPE_MASK;
-    entry.fold = StereoFoldFor(entry.channels);
-    if (entry.fold == nullptr || sampleType > 1 || (params->data_format & ~FORMAT_FIELDS_MASK) != 0) {
+    entry.channels = channels;
+    entry.fold = fold;
+    if (entry.fold == nullptr || sampleType > 1 || (params->port_type != PORT_TYPE_MAIN && (params->data_format & ~FORMAT_FIELDS_MASK) != 0)) {
         entry = AudioOut2Port{};
         throw std::runtime_error("sceAudioOut2PortCreate: data format 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%x", params->data_format); return std::string(text); }() + " is not implemented");
     }

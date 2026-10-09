@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <random>
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -11,7 +12,7 @@ static void Require(bool value, const char* what) {
 }
 
 static std::uint64_t Parse(const char* text) {
-    const auto path = std::filesystem::temp_directory_path() / "anyps5_cpu_topology_test_cpus";
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5_cpu_topology_test_cpus-" + std::to_string(std::random_device{}()));
     {
         std::ofstream file(path, std::ios::trunc);
         file << text;

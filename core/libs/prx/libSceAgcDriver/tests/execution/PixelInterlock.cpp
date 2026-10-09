@@ -27,7 +27,6 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
 constexpr std::uint32_t Layers = 64;
-constexpr std::uint32_t PixelInterlockCapability = 5378;
 constexpr std::size_t GuestBytes = 65536;
 constexpr std::uint32_t FaultColumns = 8;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
@@ -215,8 +214,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto capabilities = device->Target().supportedCapabilities;
-        if (std::find(capabilities.begin(), capabilities.end(), PixelInterlockCapability) == capabilities.end()) {
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFragmentShaderPixelInterlockEXT)) {
             std::puts("skipped, the device lacks fragmentShaderPixelInterlock");
             return VulkanTestSkipped;
         }

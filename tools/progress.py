@@ -82,6 +82,8 @@ def stub_calls(text):
 def scan_library(path):
     done, todo = set(), set()
     for source in path.rglob("*.cpp"):
+        if "tests" in source.relative_to(path).parts:
+            continue
         text = source.read_text(errors="ignore")
         calls = stub_calls(text)
         for match in DEFINITION.finditer(text):

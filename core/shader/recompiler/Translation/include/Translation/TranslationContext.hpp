@@ -4,6 +4,7 @@
 #include "Translation/InstructionTranslator.hpp"
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <utility>
 
 namespace ShaderRecompiler {
@@ -61,6 +62,8 @@ private:
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
+    IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr);
+    IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);

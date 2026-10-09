@@ -1299,6 +1299,56 @@ void verifyShaderClockScopes() {
     require(scope(Memrealtime, false) == spv::ScopeDevice && scope(Memrealtime, true) == spv::ScopeDevice, "shader clock: s_memrealtime does not read the device clock");
 }
 
+void verifyInt64AtomicCapabilities() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Format32_32UInt = 62;
+    constexpr std::uint32_t Type2D = 9;
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    alignas(256) static std::array<std::uint32_t, 64> buffer{};
+    alignas(4096) static std::array<std::uint32_t, 512> texels{};
+    const auto bufferAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(buffer.data()));
+    const auto texelAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels.data()));
+    const std::array<std::uint32_t, 16> userData{
+        0u, 0u, 0u, 0u,
+        static_cast<std::uint32_t>(bufferAddress), static_cast<std::uint32_t>((bufferAddress >> 32u) & 0xffffu), 256u, 0x01016facu,
+        static_cast<std::uint32_t>(texelAddress >> 8u), static_cast<std::uint32_t>((texelAddress >> 40u) & 0xffu) | (Format32_32UInt << 20u) | (3u << 30u), 7u | (7u << 14u), 0xfacu | (Type2D << 28u),
+        0u, 0u, 0u, 0u};
+    const std::vector<std::uint32_t> bufferAtomic{0xe1705000u, 0x80012803u, 0xbf810000u};
+    const std::vector<std::uint32_t> imageAtomic{0xf03c0308u, 0x00020a08u, 0xbf810000u};
+    const auto compile = [&](const std::vector<std::uint32_t>& code, spv::Capability added) {
+        const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, static_cast<std::uint32_t>(added)};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x58000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv;
+    };
+    const auto declares = [](const std::vector<std::uint32_t>& words, spv::Capability capability) {
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "64-bit atomics: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == spv::OpCapability && words[cursor + 1] == static_cast<std::uint32_t>(capability)) return true;
+            cursor += count;
+        }
+        return false;
+    };
+    expectFailure([&] { static_cast<void>(compile(bufferAtomic, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics");
+    require(declares(compile(bufferAtomic, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 does not declare Int64Atomics");
+    expectFailure([&] { static_cast<void>(compile(imageAtomic, spv::CapabilityShader)); }, "64-bit image atomics need VK_EXT_shader_image_atomic_int64", "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics");
+    require(declares(compile(imageAtomic, spv::CapabilityInt64ImageEXT), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
+}
+
 void verifyUnnormalizedSamplers() {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
@@ -1787,6 +1837,7 @@ int main(int argc, char** argv) {
         verifyF16PixelParameterSlots();
         verifyComputedTexelOffsets();
         verifyShaderClockScopes();
+        verifyInt64AtomicCapabilities();
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyWaveUniformValues();

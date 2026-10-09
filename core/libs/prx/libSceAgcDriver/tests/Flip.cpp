@@ -193,7 +193,7 @@ void testReset(bool compute) {
     if (compute) sceAgcDriverSubmitAcb(0x20, &packet);
     else sceAgcDriverSubmitDcb(&packet);
     const auto message = expectFailure([] { AgcDriverWaitIdle_nid_postfix(); });
-    check(message.find(compute ? "registered" : "required shader register") != std::string::npos, "suspend reset wrong queue state");
+    check(message.find(compute ? "not readable" : "required shader register") != std::string::npos, "suspend reset wrong queue state");
 }
 
 }
@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
         if (argc == 2) testReset(std::string(argv[1]) == "compute");
         else { testFlipAndBoundary(); testFailure(); }
         const auto shutdown = expectFailure([] { LibcRunShutdown_nid_postfix(); });
-        check(shutdown.find(argc == 2 ? (std::string(argv[1]) == "compute" ? "registered" : "required shader register") : "intentional flip failure") != std::string::npos, "shutdown lost worker failure");
+        check(shutdown.find(argc == 2 ? (std::string(argv[1]) == "compute" ? "not readable" : "required shader register") : "intentional flip failure") != std::string::npos, "shutdown lost worker failure");
         std::puts("AGC flip and suspend tests passed");
         return 0;
     } catch (const std::exception& error) {

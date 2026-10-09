@@ -123,6 +123,9 @@ int APS5_VABI sceUltFinalize() {
     std::vector<std::shared_ptr<UltSemaphoreState>> semaphores;
     {
         std::lock_guard<std::mutex> lock(gMutex);
+        if (!gUlthreads.empty()) {
+            return ULT_ERROR_BUSY;
+        }
         semaphores.reserve(gSemaphores.size());
         for (auto& entry : gSemaphores) {
             auto& state = entry.second;
@@ -143,7 +146,6 @@ int APS5_VABI sceUltFinalize() {
         gQueues.clear();
         gQueueDataPools.clear();
         gRuntimes.clear();
-        gUlthreads.clear();
     }
     for (const auto& state : semaphores) {
         state->_available.notify_all();

@@ -27,6 +27,8 @@ extern "C" int APS5_VABI sceSystemServicePowerTick(void);
 extern "C" int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info);
 extern "C" int APS5_VABI sceSystemServiceDisableMusicPlayer(void);
 extern "C" int APS5_VABI sceSystemServiceReenableMusicPlayer(void);
+extern "C" int APS5_VABI sceSystemServiceDisableMediaPlay(void);
+extern "C" int APS5_VABI sceSystemServiceReenableMediaPlay(void);
 
 int main() {
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
@@ -38,6 +40,10 @@ int main() {
     Require(sceSystemServiceDisableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReenableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReenableMusicPlayer() == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceDisableMediaPlay() == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceDisableMediaPlay() == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceReenableMediaPlay() == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceReenableMediaPlay() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceGetHdrToneMapLuminance(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceHdrToneMapLuminance luminance{-1.0f, -1.0f, -1.0f};
     Require(sceSystemServiceGetHdrToneMapLuminance(&luminance) == SYSTEM_SERVICE_OK);

@@ -53,6 +53,7 @@ public:
     void SuspendPoint();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
+    void AttachWindow(const PresentationWindow& window);
     void Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque, void (*gpuReady)(void*), void* context);
     void ReleaseWindow(void* window);
     void RegisterShader(const Shader* shader);

@@ -25,6 +25,18 @@ uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
 void* APS5_VABI sceKernelGetEventUserData(const KernelEvent* ev);
 }
 
+struct Http2MemoryPoolStats {
+    std::size_t pool_size;
+    std::size_t max_inuse_size;
+    std::size_t current_inuse_size;
+    std::int32_t reserved;
+};
+
+extern "C" {
+int APS5_VABI sceHttp2GetMemoryPoolStats(int, Http2MemoryPoolStats*);
+int APS5_VABI sceHttp2SetResolveRetry(int, std::int32_t);
+}
+
 static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
@@ -40,11 +52,15 @@ static bool Throws(TCall call) {
 int main() {
     const int context = sceHttp2Init(1, 1, 0x10000, 4);
     Require(context > 0);
+    Http2MemoryPoolStats stats{1, 1, 1, 1};
+    Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
+    Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
     const int box = sceHttp2CreateCookieBox(context);
     const int other = sceHttp2CreateCookieBox(context);
     Require(box > 0 && other > 0 && box != other && box != context);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 2, 0);
     Require(tmpl > 0 && tmpl != box && tmpl != other);
+    Require(sceHttp2SetResolveRetry(tmpl, 3) == 0);
     Require(sceHttp2SetCookieBox(tmpl, box) == 0);
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
     const int request = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://example.com/", 16);

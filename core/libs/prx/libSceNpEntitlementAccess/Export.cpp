@@ -160,23 +160,19 @@ int APS5_VABI sceNpEntitlementAccessGetPftFlag(void) {
 }
 
 int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfoList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfoList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfoList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 }

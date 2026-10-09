@@ -75,6 +75,7 @@ Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value*, const Str
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value*, std::size_t);
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
+bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object*);
 std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object*);
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value*, std::int32_t);
@@ -222,7 +223,9 @@ static void ObjectsAndArrays() {
     String alpha{}, beta{};
     _ZN3sce4Json6StringC1EPKc(&alpha, "alpha");
     _ZN3sce4Json6StringC1EPKc(&beta, "beta");
+    Require(_ZNK3sce4Json6Object5emptyEv(&object));
     Value* first = _ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &alpha);
+    Require(!_ZNK3sce4Json6Object5emptyEv(&object));
     Require(_ZNK3sce4Json5Value7getTypeEv(first) == TypeNull);
     Require(_ZN3sce4Json5Value3setEl(first, 1) == 0);
     Require(_ZN3sce4Json5Value3setEPKc(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &beta), "b") == 0);

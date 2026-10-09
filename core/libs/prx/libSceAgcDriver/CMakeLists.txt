@@ -242,6 +242,7 @@ target_include_directories(agc_driver_tests PRIVATE
         ${LIBS_INCLUDE_DIR}
         ${CMAKE_SOURCE_DIR}/core/shader/recompiler
         ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+        ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
 )
 
 target_link_libraries(agc_driver_tests PRIVATE
@@ -600,6 +601,7 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
             ${LIBS_INCLUDE_DIR}
             ${CMAKE_SOURCE_DIR}/core/shader/recompiler
             ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+            ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
     )
     target_link_libraries(${agcExecutionTest} PRIVATE libSceAgcDriver SDL2-static libc)
     set_target_properties(${agcExecutionTest} PROPERTIES CXX_EXTENSIONS OFF)
@@ -624,7 +626,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_shader_bindless PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests ${agcExecutionTests})
+    foreach(agcTest IN ITEMS agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests ${agcExecutionTests})
         if(agcTest STREQUAL "agc_driver_constant_store_tests")
             continue()
         endif()
@@ -638,10 +640,22 @@ if(BUILD_TESTING)
         endif()
     endforeach()
     set_tests_properties(agc_driver_flat_store PROPERTIES RUN_SERIAL TRUE)
+    add_test(NAME agc_driver_sampled_cache_budget_memory COMMAND agc_driver_sampled_cache_budget_tests memory)
+    set_tests_properties(agc_driver_sampled_cache_budget_memory PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77)
+    if(WIN32)
+        set_tests_properties(agc_driver_sampled_cache_budget_memory PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_pm4_failure COMMAND agc_driver_pm4_tests failure)
     set_tests_properties(agc_driver_pm4_failure PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(agc_driver_pm4_failure PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_flip_compute COMMAND agc_driver_flip_tests compute)
+    set_tests_properties(agc_driver_flip_compute PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77)
+    if(WIN32)
+        set_tests_properties(agc_driver_flip_compute PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 

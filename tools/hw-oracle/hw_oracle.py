@@ -36,12 +36,15 @@ def oracle():
     if binary.exists() and binary.stat().st_mtime >= source.stat().st_mtime:
         return binary
     CACHE.mkdir(parents=True, exist_ok=True)
-    command = [os.environ.get("CC", "cc"), "-O1", str(source), "-o", str(binary)]
-    root = rocm_root()
-    if root:
-        lib = root / "lib"
-        command += [f"-I{root / 'include'}", f"-L{lib}", f"-Wl,-rpath,{lib}"]
-    subprocess.run(command + ["-lhsa-runtime64"], check=True)
+    with tempfile.TemporaryDirectory(dir=CACHE) as tmp:
+        output = Path(tmp) / "oracle"
+        command = [os.environ.get("CC", "cc"), "-O1", str(source), "-o", str(output)]
+        root = rocm_root()
+        if root:
+            lib = root / "lib"
+            command += [f"-I{root / 'include'}", f"-L{lib}", f"-Wl,-rpath,{lib}"]
+        subprocess.run(command + ["-lhsa-runtime64"], check=True)
+        output.replace(binary)
     return binary
 
 
@@ -64,7 +67,7 @@ def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round3
                        ("@FP16_OVERFLOW@", str(int(fp16_overflow))), ("@BODY@", body)):
         text = text.replace(key, value)
     (work / "k.s").write_text(text)
-    subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={target()}", "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True)
+    subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={target()}", *(["-mwavefrontsize64"] if wave64 else []), "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True)
     subprocess.run([tool("ld.lld"), "-shared", str(work / "k.o"), "-o", str(work / "k.co")], check=True)
     return work / "k.co"
 

@@ -4,6 +4,7 @@
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <algorithm>
@@ -272,7 +273,7 @@ void testControls() {
     LibcRunShutdown_nid_postfix();
 }
 
-void testPresentation(bool expectUnavailable) {
+void testPresentation() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::vector<std::byte> allocation(6 * 65536 + 65535);
@@ -298,16 +299,6 @@ void testPresentation(bool expectUnavailable) {
         sceVideoOutSubmitFlip(handle, index, 1, -123456789);
         std::unique_lock lock(cfg->mutex);
         check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == target; }), "presentation did not complete");
-        if (expectUnavailable) {
-            check(cfg->failure != nullptr && cfg->flipStatus.count == 0 && cfg->bufferPending[0] == 0, "failed presentation was marked complete or retained its buffer");
-            const auto error = cfg->failure;
-            lock.unlock();
-            const auto message = expectFailure([&] { std::rethrow_exception(error); });
-            check(message.find("required instance extension missing") != std::string::npos, "unexpected presentation failure");
-            check(expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }) == message, "AGC lost presentation failure");
-            check(expectFailure([] { LibcRunShutdown_nid_postfix(); }) == message, "shutdown lost presentation failure");
-            return;
-        }
         if (cfg->failure) std::rethrow_exception(cfg->failure);
         check(cfg->flipStatus.flipArg == -123456789 && cfg->flipStatus.currentBuffer == index && cfg->flipStatus.flipPendingNum == 0, "presentation status is wrong");
         check(cfg->lastFlipVblank >= previousVblank + 3, "flip rate did not wait for its interval");
@@ -318,6 +309,13 @@ void testPresentation(bool expectUnavailable) {
     }
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
+void testUnavailable() {
+    const auto message = expectFailure([] { sceVideoOutOpen(255, 0, 0, nullptr); });
+    check(expectFailure([] { sceVideoOutOpen(255, 0, 0, nullptr); }) == message, "a second open lost the presentation failure");
+    std::printf("presentation unavailable: %s\n", message.c_str());
     LibcRunShutdown_nid_postfix();
 }
 
@@ -379,6 +377,49 @@ void testBackToBack() {
     LibcRunShutdown_nid_postfix();
 }
 
+std::uint32_t busyLoopResult(std::uint32_t iterations) {
+    std::uint32_t value = 1;
+    for (std::uint32_t i = 0; i < iterations; ++i) value = value * value + 1u;
+    return value;
+}
+
+struct BusyLoop {
+    volatile std::uint32_t* result;
+    volatile std::uint32_t* label;
+    std::vector<std::uint32_t> commands;
+};
+
+BusyLoop prepareBusyLoop(std::uint32_t iterations) {
+    alignas(256) static const std::array<std::uint32_t, 12> code{
+        0xbe850380, 0x7e040281, 0xd5690002, 0x00020502, 0x4a040481, 0x80058105,
+        0xbf070405, 0xbf85fffa, 0x7e020280, 0xe0701000, 0x80000201, 0xbf810000};
+    static Shader shader{};
+    shader.file_header = 0x34333231;
+    shader.version = 0x18;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(code);
+    shader.code = code.data();
+    AgcDriverRegisterShader_nid_postfix(&shader);
+    std::int64_t physical = 0;
+    void* mapped = nullptr;
+    check(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, 65536, 65536, 0, &physical) == 0, "direct memory allocation failed");
+    check(sceKernelMapDirectMemory(&mapped, 65536, 0x33, 0, physical, 65536) == 0, "direct memory mapping failed");
+    auto* result = &static_cast<volatile std::uint32_t*>(mapped)[0];
+    auto* label = &static_cast<volatile std::uint32_t*>(mapped)[64];
+    *result = 0;
+    *label = 0;
+    const auto program = reinterpret_cast<std::uintptr_t>(code.data());
+    const auto output = reinterpret_cast<std::uintptr_t>(result);
+    const auto target = reinterpret_cast<std::uintptr_t>(label);
+    return {result, label, {
+        0xc0027600, 0x20c, static_cast<std::uint32_t>(program >> 8u), static_cast<std::uint32_t>(program >> 40u),
+        0xc0017600, 0x213, 5u << 1u,
+        0xc0037600, 0x207, 32, 1, 1,
+        0xc0057600, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u) & 0xffffu, 4, 0x31016fac, iterations,
+        0xc0031500, 1, 1, 1, 0x8041,
+        0xc0064900, 0x514, 1u << 29u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u), 1, 0, 0}};
+}
+
 void testReleaseVblank() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
@@ -390,24 +431,20 @@ void testReleaseVblank() {
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
     sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
     check(sceVideoOutSetFlipRate(handle, 2) == 0, "flip rate was not applied");
+    auto busy = prepareBusyLoop(100000000u);
+    Packet packet{busy.commands.data(), static_cast<std::uint32_t>(busy.commands.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the GPU work was not accepted");
     sceVideoOutSubmitFlip(handle, 0, 1, 1);
     {
         std::unique_lock lock(cfg->mutex);
         const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
         if (cfg->failure) std::rethrow_exception(cfg->failure);
         check(done, "the flip did not complete");
-        check(cfg->vblankStatus.count > 3, "the first presentation did not outlast the vblank it was released at");
-        check(cfg->lastFlipVblank == 3, "the next flip is not paced from the vblank this flip was released at");
+        check(cfg->lastFlipVblank >= 3 && cfg->vblankStatus.count >= cfg->lastFlipVblank + 3, "the next flip is not paced from the vblank this flip was released at");
     }
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
     LibcRunShutdown_nid_postfix();
-}
-
-std::uint32_t busyLoopResult(std::uint32_t iterations) {
-    std::uint32_t value = 1;
-    for (std::uint32_t i = 0; i < iterations; ++i) value = value * value + 1u;
-    return value;
 }
 
 void testFlipAfterGpuWork() {
@@ -420,36 +457,11 @@ void testFlipAfterGpuWork() {
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
     sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
-    alignas(256) static const std::array<std::uint32_t, 12> code{
-        0xbe850380, 0x7e040281, 0xd5690002, 0x00020502, 0x4a040481, 0x80058105,
-        0xbf070405, 0xbf85fffa, 0x7e020280, 0xe0701000, 0x80000201, 0xbf810000};
-    Shader shader{};
-    shader.file_header = 0x34333231;
-    shader.version = 0x18;
-    shader.header_size = sizeof(Shader);
-    shader.shader_size = sizeof(code);
-    shader.code = code.data();
-    AgcDriverRegisterShader_nid_postfix(&shader);
-    std::int64_t physical = 0;
-    void* mapped = nullptr;
-    check(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, 65536, 65536, 0, &physical) == 0, "direct memory allocation failed");
-    check(sceKernelMapDirectMemory(&mapped, 65536, 0x33, 0, physical, 65536) == 0, "direct memory mapping failed");
-    auto& result = static_cast<volatile std::uint32_t*>(mapped)[0];
-    auto& label = static_cast<volatile std::uint32_t*>(mapped)[64];
-    result = 0;
-    label = 0;
     constexpr std::uint32_t iterations = 100000000u;
-    const auto program = reinterpret_cast<std::uintptr_t>(code.data());
-    const auto output = reinterpret_cast<std::uintptr_t>(&result);
-    const auto target = reinterpret_cast<std::uintptr_t>(&label);
-    std::vector<std::uint32_t> commands{
-        0xc0027600, 0x20c, static_cast<std::uint32_t>(program >> 8u), static_cast<std::uint32_t>(program >> 40u),
-        0xc0017600, 0x213, 5u << 1u,
-        0xc0037600, 0x207, 32, 1, 1,
-        0xc0057600, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u) & 0xffffu, 4, 0x31016fac, iterations,
-        0xc0031500, 1, 1, 1, 0x8041,
-        0xc0064900, 0x514, 1u << 29u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u), 1, 0, 0};
-    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    auto busy = prepareBusyLoop(iterations);
+    auto& result = *busy.result;
+    auto& label = *busy.label;
+    Packet packet{busy.commands.data(), static_cast<std::uint32_t>(busy.commands.size()), 0, {}};
     check(sceVideoOutSubmitFlip(handle, 0, 1, 4) == 0, "the first flip was not accepted");
     {
         std::unique_lock lock(cfg->mutex);
@@ -485,18 +497,50 @@ void testFlipAfterGpuWork() {
     LibcRunShutdown_nid_postfix();
 }
 
+void testOneDevice() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::vector<std::byte> allocation(6 * 65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    fillBuffer(storage, 259, 137);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    constexpr std::uint32_t iterations = 1000u;
+    auto busy = prepareBusyLoop(iterations);
+    Packet packet{busy.commands.data(), static_cast<std::uint32_t>(busy.commands.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the GPU work was not accepted");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (*busy.label != 1 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    check(*busy.label == 1 && *busy.result == busyLoopResult(iterations), "the GPU work did not run");
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 1) == 0, "the flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(30), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip did not complete");
+    }
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+    const AgcDriver::VulkanDevice next;
+    check(next.Serial() == 2, "the GPU work and the flip used more than one device");
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "decode") testDecode();
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
-        else if (argc == 2 && std::string(argv[1]) == "present") testPresentation(false);
+        else if (argc == 2 && std::string(argv[1]) == "present") testPresentation();
         else if (argc == 2 && std::string(argv[1]) == "backtoback") testBackToBack();
         else if (argc == 2 && std::string(argv[1]) == "dcc") testCompressedPresentation();
         else if (argc == 2 && std::string(argv[1]) == "pacing") testReleaseVblank();
         else if (argc == 2 && std::string(argv[1]) == "aftergpu") testFlipAfterGpuWork();
-        else if (argc == 2 && std::string(argv[1]) == "unavailable") testPresentation(true);
+        else if (argc == 2 && std::string(argv[1]) == "unavailable") testUnavailable();
+        else if (argc == 2 && std::string(argv[1]) == "onedevice") testOneDevice();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;

@@ -214,6 +214,7 @@ struct VulkanDevice::State {
     bool occlusionQueryPrecise = false;
     VkDeviceSize hostImportAlignment = 0;
     bool dmaBufImport = false;
+    bool memoryBudget = false;
     bool depthRangeUnrestricted = false;
     bool samplerAnisotropy = false;
     bool textureCompressionBC = false;
@@ -856,6 +857,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     // without it resolves such draws on the CPU.
     state->drawIndirectCount = hasExtension(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
     if (state->drawIndirectCount) deviceExtensions.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+    state->memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     // Guest memory is host memory: importing it lets address-based shaders use it in place instead of
     // copying every registered allocation per draw.
     if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) && std::getenv("APS5_NO_HOST_IMPORT") == nullptr) {
@@ -2539,6 +2541,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.imageViewMinLod = state->imageViewMinLod;
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;
     context.srgbDecodeFormats = state->srgbDecodeFormats;
+    context.memoryProperties2 = state->memoryBudget ? state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2") : nullptr;
     return context;
 }
 

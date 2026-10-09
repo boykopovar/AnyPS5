@@ -14,11 +14,11 @@ MARKER = "<!-- pr-overlap -->"
 
 
 def git(*args):
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
 
 
 def gh(*args):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
 
 
 def upstream():
@@ -46,7 +46,7 @@ def fetch(base, prs):
 
 def merge(*args):
     result = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", *args],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding="utf-8")
     lines = result.stdout.splitlines()
     if result.returncode not in (0, 1) or not lines:
         raise RuntimeError(f"git merge-tree {' '.join(args)} failed: {result.stderr.strip()}")

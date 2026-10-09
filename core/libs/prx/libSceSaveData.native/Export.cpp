@@ -482,7 +482,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     g_slots[slot].real_path = real_path;
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
     mount_result->required_blocks = 0;
-    mount_result->mount_status = (create || create2) ? 1u : 0u;
+    mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
     return SAVE_DATA_OK;
 }
 

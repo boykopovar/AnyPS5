@@ -15,10 +15,12 @@ int main() {
     Require(*__error_nid_postfix() == 13);
     Require(std::strcmp(strerror_nid_postfix(78), "Function not implemented") == 0);
     char* parent = strerror_nid_postfix(22);
+    Require(*__error_nid_postfix() == 13);
     std::thread worker([] {
         Require(std::strcmp(strerror_nid_postfix(45), "Operation not supported") == 0);
     });
     worker.join();
+    *__error_nid_postfix() = 13;
     Require(std::strcmp(parent, "Invalid argument") == 0);
     char buffer[128];
     for (int error = 0; error <= 96; ++error) {

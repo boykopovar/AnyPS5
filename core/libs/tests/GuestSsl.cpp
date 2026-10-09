@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 
 extern "C" {
@@ -7,6 +8,15 @@ int APS5_VABI sceSslInit_nid_postfix(std::size_t);
 int APS5_VABI sceSslGetCaCerts(int, void*);
 int APS5_VABI sceSslFreeCaCerts(int, void*);
 }
+
+struct SslMemoryPoolStats {
+    std::size_t pool_size;
+    std::size_t max_inuse_size;
+    std::size_t current_inuse_size;
+    std::int32_t reserved;
+};
+
+extern "C" int APS5_VABI sceSslGetMemoryPoolStats(int, SslMemoryPoolStats*);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -23,6 +33,9 @@ int main() {
 
     const int context = sceSslInit_nid_postfix(0x10000);
     Require(context > 0);
+    SslMemoryPoolStats stats{1, 1, 1, 1};
+    Require(sceSslGetMemoryPoolStats(context, &stats) == 0);
+    Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
     Require(sceSslGetCaCerts(context, nullptr) == invalidArg);
     Require(sceSslFreeCaCerts(context, nullptr) == invalidArg);
 

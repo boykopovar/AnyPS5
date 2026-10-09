@@ -286,6 +286,27 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x00400000u))) : bits;
 }
 
+IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct) {
+    const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
+    IrValue* bits = &ir.BitCastU32(*result);
+    bits = &ir.Select(isNan(*bits), ir.Constant(0xffc00000u), *bits);
+    for (auto source = sources.end(); source != sources.begin();) {
+        --source;
+        IrValue& sourceBits = ir.BitCastU32(**source);
+        IrValue* selected = &isNan(sourceBits);
+        if (invalidProduct != nullptr && source + 1 == sources.end() && sources.size() == 3u) selected = &ir.LogicalAnd(*selected, ir.LogicalNot(*invalidProduct));
+        bits = &ir.Select(*selected, quietNan32(IrU32(sourceBits)).Value(), *bits);
+    }
+    return &ir.BitCastF32(*bits);
+}
+
+IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
+    IrValue& lhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*lhs), ir.Constant(0x7fffffffu));
+    IrValue& rhsMagnitude = ir.BitwiseAnd(ir.BitCastU32(*rhs), ir.Constant(0x7fffffffu));
+    const auto infZero = [&](IrValue& inf, IrValue& zero) -> IrValue& { return ir.LogicalAnd(ir.IEqual(inf, ir.Constant(0x7f800000u)), ir.IEqual(zero, ir.Constant(0u))); };
+    return ir.LogicalOr(infZero(lhsMagnitude, rhsMagnitude), infZero(rhsMagnitude, lhsMagnitude));
+}
+
 IrU32 TranslationContext::quietNan16(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x0200u))) : bits;
 }

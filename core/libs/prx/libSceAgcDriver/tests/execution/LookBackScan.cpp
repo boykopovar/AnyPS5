@@ -25,7 +25,6 @@ alignas(256) constexpr std::array<std::uint32_t, 43> ScanCode{
 };
 
 constexpr std::uint32_t Lanes = 64;
-constexpr std::uint32_t Int64AtomicsCapability = 12;
 constexpr std::uint32_t Blocks = 4096;
 
 alignas(256) std::array<std::uint32_t, 4> Counter{};
@@ -106,8 +105,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto capabilities = device->Target().supportedCapabilities;
-        if (std::find(capabilities.begin(), capabilities.end(), Int64AtomicsCapability) == capabilities.end()) {
+        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
             std::puts("skipped, the device has no shaderBufferInt64Atomics");
             return VulkanTestSkipped;
         }
