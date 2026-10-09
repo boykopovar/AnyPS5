@@ -8,7 +8,7 @@
 
 namespace Elfpatcher {
 
-std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath) const {
+std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestImage& image, const std::vector<std::string>& dependencies, const std::string& runPath, const bool deferInitialization) const {
     auto bytes = image.Bytes;
     std::vector<Domain::ProgramHeader> headers;
     std::uint64_t end = 0;
@@ -43,6 +43,27 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         }
         if (symbol.Section == 0 && (symbol.Info >> 4) == 2) symbols[index * 24 + 4] = static_cast<std::uint8_t>(0x10 | (symbol.Info & 15));
     }
+    if (deferInitialization) {
+        const auto rva = [](const std::uint64_t value) {
+            if (value > std::numeric_limits<std::uint32_t>::max()) throw Domain::RelinkerException("Guest initializer address exceeds 32 bits");
+            return static_cast<std::uint32_t>(value);
+        };
+        for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
+            if (image.Symbols[index].Name == Relinker::GuestInitializeExport) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
+        }
+        const auto tableAddress = address();
+        Io::AppendU32(bytes, rva(image.Init));
+        Io::AppendU32(bytes, rva(image.InitArray.size()));
+        for (const auto slot : image.InitArray) Io::AppendU32(bytes, rva(slot));
+        const auto tableSize = address() - tableAddress;
+        Io::AlignBuffer(bytes, 8);
+        Io::AppendU32(symbols, addString(Relinker::GuestInitializeExport));
+        symbols.push_back(0x11);
+        symbols.push_back(0);
+        Io::AppendU16(symbols, 1);
+        Io::AppendU64(symbols, tableAddress);
+        Io::AppendU64(symbols, tableSize);
+    }
     std::vector<std::uint64_t> needed;
     for (const auto& dependency : dependencies) needed.push_back(addString(dependency));
     if (needsTlsResolver) needed.push_back(addString("ld-linux-x86-64.so.2"));
@@ -54,7 +75,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     const auto symAddress = address();
     bytes.insert(bytes.end(), symbols.begin(), symbols.end());
     const auto hashAddress = address();
-    const auto count = static_cast<std::uint32_t>(image.Symbols.size());
+    const auto count = static_cast<std::uint32_t>(symbols.size() / 24);
     Io::AppendU32(bytes, 1);
     Io::AppendU32(bytes, count);
     Io::AppendU32(bytes, count > 1 ? 1 : 0);
@@ -73,8 +94,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU32(bytes, static_cast<std::uint32_t>(displacement));
         return start;
     };
-    const auto init = lifecycle(image.Init);
-    const auto fini = lifecycle(image.Fini);
+    const auto init = deferInitialization ? 0 : lifecycle(image.Init);
+    const auto fini = deferInitialization ? 0 : lifecycle(image.Fini);
     Io::AlignBuffer(bytes, 8);
     const auto dynamicOffset = bytes.size();
     const auto dynamicAddress = address();
@@ -98,8 +119,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         tag(20, 7);
         tag(3, image.Got);
     }
-    if (!image.InitArray.empty()) { tag(25, image.InitArray.front()); tag(27, image.InitArray.size() * 8); }
-    if (!image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
+    if (!deferInitialization && !image.InitArray.empty()) { tag(25, image.InitArray.front()); tag(27, image.InitArray.size() * 8); }
+    if (!deferInitialization && !image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
     if (init != 0) tag(12, init);
     if (fini != 0) tag(13, fini);
     tag(30, 8);

@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 
-from test_guest_intel_trampolines import main_fixture, pe_sections
+from test_guest_intel_trampolines import elf_loads, main_fixture, pe_sections
 from test_guest_module_directories import module_with_symbol
 
 
@@ -31,6 +31,44 @@ def pe_export_names(data):
         start = offset(name_rva)
         result.append(data[start:data.index(0, start)].decode())
     return result
+
+
+def with_initializers(image):
+    image = bytearray(image)
+    tags = [struct.unpack_from("<qQ", image, 0x600 + index * 16) for index in range(8)]
+    tags += [(12, 0x1000), (25, 0x2380), (27, 8), (13, 0x1010), (0, 0)]
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", image, 0x600 + index * 16, *tag)
+    struct.pack_into("<QQ", image, 176 + 32, len(tags) * 16, len(tags) * 16)
+    return image
+
+
+def elf_dynamic(data):
+    loads = elf_loads(data)
+
+    def offset(address):
+        for _, _, file_offset, mapped, _, file_size, _, _ in loads:
+            if mapped <= address < mapped + file_size:
+                return file_offset + address - mapped
+        raise AssertionError(f"Unmapped address: {address:#x}")
+
+    phoff, = struct.unpack_from("<Q", data, 32)
+    size, count = struct.unpack_from("<HH", data, 54)
+    dynamic = next(header for header in (struct.unpack_from("<IIQQQQQQ", data, phoff + index * size) for index in range(count))
+                   if header[0] == 2)
+    tags = {}
+    for position in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+        tag, value = struct.unpack_from("<qQ", data, position)
+        if tag == 0:
+            break
+        tags[tag] = value
+    strings = offset(tags[5])
+    _, symbol_count = struct.unpack_from("<II", data, offset(tags[4]))
+    symbols = {}
+    for index in range(1, symbol_count):
+        name, info, _, section, value, symbol_size = struct.unpack_from("<IBBHQQ", data, offset(tags[6]) + index * 24)
+        symbols[data[strings + name:data.index(0, strings + name)].decode()] = (info, section, value, symbol_size)
+    return tags, symbols, offset
 
 
 def main():
@@ -65,6 +103,23 @@ def main():
             if windows and os.name == "nt":
                 run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
                 assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
+            if not windows:
+                (plugins / "plugin.prx").write_bytes(with_initializers(module_with_symbol(True)))
+                (case / "sce_module" / "bundled.prx").write_bytes(with_initializers(module_with_symbol(True)).replace(b"shared#A#B", b"bundle#A#B"))
+                result, output = convert(case, windows, ["--module-dir", "Media/Plugins"])
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                data = artifact.read_bytes()
+                tags, symbols, offset = elf_dynamic(data)
+                assert not set(tags) & {12, 13, 25, 26, 27, 28}, sorted(tags)
+                info, section, value, size = symbols["__aps5_guest_initialize"]
+                assert info == 0x11 and section != 0 and size == 12, (info, section, size)
+                assert struct.unpack_from("<III", data, offset(value)) == (0x1000, 1, 0x2380)
+                bundled = case / "app0" / "sce_module" / "bundled.prx.guest.prx"
+                tags, symbols, _ = elf_dynamic(bundled.read_bytes())
+                assert "__aps5_guest_initialize" not in symbols
+                assert {12, 13, 25, 27} <= set(tags), sorted(tags)
+                (case / "sce_module" / "bundled.prx").unlink()
+                (plugins / "plugin.prx").write_bytes(module_with_symbol(True))
             if windows:
                 assert "__aps5_guest_initialize" in pe_export_names(artifact.read_bytes())
                 (case / "sce_module" / "bundled.prx").write_bytes(module_with_symbol(True))

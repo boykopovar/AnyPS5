@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <set>
 #include <vector>
@@ -104,25 +105,61 @@ char* APS5_VABI dlerror_nid_postfix() {
     pendingError = false;
     return loaderError.data();
 }
-#ifdef _WIN32
-static void InitializeDeferredModule(HMODULE native, std::size_t args, const void* argp, int* result) {
+static void RunDeferredInitialization(const std::uint32_t* table, std::uint8_t* base, std::size_t args, const void* argp, int* result) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
     using Initializer = void (APS5_VABI *)(int, char**, char**);
-    static std::mutex initializedLock;
-    static std::set<HMODULE> initialized;
-    const auto* table = reinterpret_cast<const std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
-    if (!table) return;
-    {
-        std::lock_guard lock(initializedLock);
-        if (!initialized.insert(native).second) return;
-    }
-    auto* base = reinterpret_cast<std::uint8_t*>(native);
     const int started = table[0] != 0 ? reinterpret_cast<Entry>(base + table[0])(args, argp, nullptr) : 0;
     if (result) *result = started;
     for (std::uint32_t index = 0; index < table[1]; ++index) {
         const auto initializer = *reinterpret_cast<Initializer*>(base + table[2 + index]);
         if (initializer) initializer(0, nullptr, nullptr);
     }
+}
+
+static bool FirstInitialization(const void* native) {
+    static std::mutex initializedLock;
+    static std::set<const void*> initialized;
+    std::lock_guard lock(initializedLock);
+    return initialized.insert(native).second;
+}
+
+#ifdef _WIN32
+static void InitializeDeferredModule(HMODULE native, std::size_t args, const void* argp, int* result) {
+    const auto* table = reinterpret_cast<const std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
+    if (!table || !FirstInitialization(native)) return;
+    RunDeferredInitialization(table, reinterpret_cast<std::uint8_t*>(native), args, argp, result);
+}
+#else
+static std::uintptr_t LoadBias(const void* address) {
+    struct Scan {
+        std::uintptr_t address = 0;
+        std::uintptr_t bias = 0;
+        bool found = false;
+    };
+    Scan scan{reinterpret_cast<std::uintptr_t>(address)};
+    ::dl_iterate_phdr(
+        [](dl_phdr_info* info, size_t, void* data) {
+            auto* scan = static_cast<Scan*>(data);
+            for (ElfW(Half) index = 0; index < info->dlpi_phnum; ++index) {
+                const auto& header = info->dlpi_phdr[index];
+                const auto start = info->dlpi_addr + header.p_vaddr;
+                if (header.p_type == PT_LOAD && scan->address >= start && scan->address - start < header.p_memsz) {
+                    scan->bias = info->dlpi_addr;
+                    scan->found = true;
+                    return 1;
+                }
+            }
+            return 0;
+        },
+        &scan);
+    if (!scan.found) throw std::runtime_error("dlopen: deferred initializer table is outside every loaded module");
+    return scan.bias;
+}
+
+static void InitializeDeferredModule(void* native, std::size_t args, const void* argp, int* result) {
+    const auto* table = static_cast<const std::uint32_t*>(::dlsym(native, "__aps5_guest_initialize"));
+    if (!table || !FirstInitialization(native)) return;
+    RunDeferredInitialization(table, reinterpret_cast<std::uint8_t*>(LoadBias(table)), args, argp, result);
 }
 #endif
 
@@ -161,6 +198,7 @@ static void* OpenModule(const char* path, int flags, std::size_t args, const voi
             ((flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL);
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
         if (!module->native) { Error(::dlerror()); return nullptr; }
+        if (path) InitializeDeferredModule(module->native, args, argp, result);
 #endif
         std::lock_guard lock(modulesMutex);
         const auto handle = nextHandle++;
@@ -173,9 +211,6 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
 }
 
 void* GuestLoadStartModule_nid_no_patch(const char* path, int flags, std::size_t args, const void* argp, int* result) {
-#ifndef _WIN32
-    if (args != 0 || argp != nullptr) NotImplemented_nid_no_patch("sceKernelLoadStartModule with start arguments");
-#endif
     return OpenModule(path, flags, args, argp, result);
 }
 

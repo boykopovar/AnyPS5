@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,7 @@ int APS5_VABI dlclose_nid_postfix(void*);
 char* APS5_VABI dlerror_nid_postfix();
 int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void*);
 int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void*);
+void* GuestLoadStartModule_nid_no_patch(const char* path, int flags, std::size_t args, const void* argp, int* result);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 #ifndef _WIN32
@@ -29,7 +31,11 @@ static bool ThrowsRuntimeError(TFunction function) {
     return false;
 }
 int main(int argc, char** argv) {
+#ifdef _WIN32
     Require(argc == 2);
+#else
+    Require(argc == 3);
+#endif
     Require(dlerror_nid_postfix() == nullptr);
     Require(dlopen_nid_postfix(argv[1], 0x2000) == nullptr);
     Require(dlerror_nid_postfix() != nullptr);
@@ -110,5 +116,26 @@ int main(int argc, char** argv) {
     Require(dlsym_nid_postfix(nullptr, "GuestModuleAdd") == hostAdd);
     Require(dlsym_nid_postfix(nullptr, "malloc") == nullptr);
     Require(::dlclose(host) == 0);
+
+    using DeferredState = void (*)(int*, std::size_t*, const void**, int*);
+    static const char startArguments[] = "start arguments";
+    int startResult = -1;
+    void* deferred = GuestLoadStartModule_nid_no_patch(argv[2], 2, sizeof(startArguments), startArguments, &startResult);
+    Require(deferred != nullptr && startResult == 7);
+    auto state = reinterpret_cast<DeferredState>(dlsym_nid_postfix(deferred, "DeferredModuleState"));
+    Require(state != nullptr);
+    int calls = 0;
+    std::size_t args = 0;
+    const void* argp = nullptr;
+    int initializers = 0;
+    state(&calls, &args, &argp, &initializers);
+    Require(calls == 1 && args == sizeof(startArguments) && argp == startArguments && initializers == 1);
+    startResult = -1;
+    void* again = GuestLoadStartModule_nid_no_patch(argv[2], 2, 0, nullptr, &startResult);
+    Require(again != nullptr && startResult == -1);
+    state(&calls, &args, &argp, &initializers);
+    Require(calls == 1 && initializers == 1);
+    Require(dlclose_nid_postfix(again) == 0);
+    Require(dlclose_nid_postfix(deferred) == 0);
 #endif
 }

@@ -282,7 +282,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 needed.push_back("$ORIGIN/" + dependencyPath.lexically_relative(image.SourcePath.parent_path()).generic_string());
             }
             needed.insert(needed.end(), hostLibraries.begin(), hostLibraries.end());
-            output = Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath);
+            output = Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath, runtime.DeferInitialization);
         }
         if (windows) {
             for (const auto& [name, provider] : guestNames) {
