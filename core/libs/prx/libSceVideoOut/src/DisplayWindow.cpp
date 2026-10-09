@@ -6,9 +6,11 @@
 #include "Decoder/Png.hpp"
 #include "SDL_vulkan.h"
 #include <cstdio>
+#include <cstdlib>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #ifdef _WIN32
 #include "SDL_syswm.h"
@@ -31,6 +33,13 @@ void applyAppIcon(SDL_Window* window) {
     require(icon != nullptr, SDL_GetError());
     SDL_SetWindowIcon(window, icon);
     SDL_FreeSurface(icon);
+}
+
+Uint32 initialFullscreenFlag() {
+    const char* value = std::getenv("ANYPS5_FULLSCREEN");
+    if (value == nullptr || value[0] == '\0' || std::string_view(value) == "0") return 0;
+    if (std::string_view(value) == "1") return SDL_WINDOW_FULLSCREEN_DESKTOP;
+    throw std::runtime_error(std::string("DisplayWindow: ANYPS5_FULLSCREEN must be 0 or 1, not '") + value + "'");
 }
 
 #ifdef _WIN32
@@ -59,8 +68,9 @@ void DisplayWindow::create(std::uint32_t sourceWidth, std::uint32_t sourceHeight
     const auto initialSize = AgcDriver::ComputeContainSize_nid_postfix(sourceWidth, sourceHeight, boundsWidth, boundsHeight, true);
     require(initialSize.width >= DisplayWindowMinimumWidth && initialSize.height >= DisplayWindowMinimumHeight, "initial window extent is smaller than the minimum");
     const auto title = GetAppTitle_nid_postfix();
+    const auto fullscreen = initialFullscreenFlag();
     AgcDriverLockVulkanLoader_nid_postfix();
-    window = SDL_CreateWindow(title.value, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, static_cast<int>(initialSize.width), static_cast<int>(initialSize.height), SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    window = SDL_CreateWindow(title.value, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, static_cast<int>(initialSize.width), static_cast<int>(initialSize.height), SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | fullscreen);
     AgcDriverUnlockVulkanLoader_nid_postfix();
     require(window != nullptr, SDL_GetError());
     SDL_SetWindowMinimumSize(window, static_cast<int>(DisplayWindowMinimumWidth), static_cast<int>(DisplayWindowMinimumHeight));
