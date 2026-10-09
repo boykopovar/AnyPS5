@@ -198,10 +198,40 @@ def test_unversioned_library_is_still_patched(patcher):
     assert len({entry[0] for entry in after if entry[0]}) == len([entry for entry in after if entry[0]])
 
 
+def test_zero_nbuckets_is_rejected(patcher):
+    image = bytearray(build_image(symbols(False), False))
+    struct.pack_into("<I", image, HASH_OFFSET, 0)
+    image_bytes = bytes(image)
+
+    result, on_disk = patch(patcher, image_bytes, SONAME)
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    message = result.stderr.decode("utf-8", errors="replace")
+    assert message.startswith("FAIL: "), message
+    assert "nbuckets" in message, message
+    assert result.stdout == b"", result.stdout
+    assert on_disk == image_bytes, "the rejected library was written back modified"
+
+
+def test_zero_bloom_size_is_rejected(patcher):
+    image = bytearray(build_image(symbols(False), False))
+    struct.pack_into("<I", image, HASH_OFFSET + 8, 0)
+    image_bytes = bytes(image)
+
+    result, on_disk = patch(patcher, image_bytes, SONAME)
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    message = result.stderr.decode("utf-8", errors="replace")
+    assert message.startswith("FAIL: "), message
+    assert "bloom_size" in message, message
+    assert result.stdout == b"", result.stdout
+    assert on_disk == image_bytes, "the rejected library was written back modified"
+
+
 def main():
     patcher = Path(sys.argv[1]).resolve()
     test_versioned_library_is_rejected(patcher)
     test_unversioned_library_is_still_patched(patcher)
+    test_zero_nbuckets_is_rejected(patcher)
+    test_zero_bloom_size_is_rejected(patcher)
     print("NID patcher symbol version tests passed")
 
 

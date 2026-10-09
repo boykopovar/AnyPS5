@@ -51,12 +51,14 @@ void ReorderDynSymForGnuHash(
     for (std::uint32_t i = symOffset; i < symCount; ++i)
         movableIndices.push_back(i);
 
-    std::stable_sort(
-        movableIndices.begin(), movableIndices.end(),
-        [&](const std::uint32_t lhs, const std::uint32_t rhs) {
-            return GnuHash(symbolNames[lhs]) % bucketCount < GnuHash(symbolNames[rhs]) % bucketCount;
-        }
-    );
+    if (bucketCount != 0u) {
+        std::stable_sort(
+            movableIndices.begin(), movableIndices.end(),
+            [&](const std::uint32_t lhs, const std::uint32_t rhs) {
+                return GnuHash(symbolNames[lhs]) % bucketCount < GnuHash(symbolNames[rhs]) % bucketCount;
+            }
+        );
+    }
 
     std::vector<Elf64_Sym> reorderedSyms(symCount);
     std::vector<std::string> reorderedNames(symCount);
@@ -124,6 +126,10 @@ void RebuildGnuHash(
     using namespace Internal;
 
     const GnuHashLayout layout = ReadGnuHashLayout(elf, sectionOffset);
+    if (layout.NBuckets == 0u)
+        throw std::runtime_error("gnu.hash nbuckets cannot be zero");
+    if (layout.BloomSize == 0u)
+        throw std::runtime_error("gnu.hash bloom_size cannot be zero");
 
     const std::size_t chainCount = symCount - layout.SymOffset;
     const std::size_t requiredSize = layout.ChainOffset - sectionOffset + chainCount * 4u;
