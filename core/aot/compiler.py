@@ -7,7 +7,7 @@ import subprocess
 from collections import deque
 from pathlib import Path
 
-from capstone import Cs, CS_AC_WRITE, CS_ARCH_X86, CS_MODE_64
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 from elftools.elf.elffile import ELFFile
 import abi
@@ -221,6 +221,7 @@ class Function:
         self.successors = {}
         self.tail_calls = {}
         self.states = {}
+        self.memory_writes = {}
         self.lines = []
         self.serial = 0
         self.depth = 128
@@ -327,6 +328,7 @@ class Function:
             state['native_pointers'].discard(name)
             state.setdefault('constants', {}).pop(name, None)
         elif operand.type == X86_OP_MEM:
+            self.memory_writes[ins.address] = (operand,)
             self.read_operand(ins, state, operand)
             clean = state.get('tail_stack_clean', frozenset())
             base_name = ins.reg_name(operand.mem.base)
@@ -582,9 +584,7 @@ class Function:
         image = original['image_pointers'].copy()
         callback_memory_unmodified = original['callback_memory_unmodified']
         op, args = ins.mnemonic, ins.operands
-        for operand in args:
-            if operand.type != X86_OP_MEM or not operand.access & CS_AC_WRITE:
-                continue
+        for operand in self.memory_writes.get(ins.address, ()):
             origin = self.memory_origin(ins, original, operand)
             if origin is None or origin[0] != 'frame':
                 callback_memory_unmodified = False

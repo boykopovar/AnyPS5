@@ -41,8 +41,7 @@ def _define(function, ins, state, operand, bits=128, zero_upper=False):
         name = ins.reg_name(operand.reg)
         state['known'][name] = MASK128 if zero_upper else state['known'].get(name, 0) | ((1 << bits) - 1)
     elif operand.type == X86_OP_MEM:
-        function.read_operand(ins, state, operand)
-        function.invalidate_stack_aliases(state)
+        function.define(ins, state, operand)
     elif operand.type == X86_OP_REG and bits <= 64:
         function.define(ins, state, operand)
     else:
