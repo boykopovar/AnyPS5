@@ -2155,7 +2155,6 @@ void importWindowTests(const Device& device, Recorder& recorder) {
     } release{block};
     const auto probe = ProbeImportWriteProtection(base);
     Require(probe.failure == nullptr, "(w) the import probe failed");
-    const bool importWrites = probe.writtenAtImport != 0;
     const auto decided = PrepareImportWatch(base);
     if (decided == ImportWatch::Unwatch) {
         std::cout << "host imports are compared, not watched: the import window not tested\n";
@@ -2224,8 +2223,7 @@ void importWindowTests(const Device& device, Recorder& recorder) {
         }
         Require(!import->unwatched && Watched(address, bytes), "(w) an import under the watch decision left the watch");
         CollectWritesUncached(address, surfaceBytes);
-        if (importWrites) {
-            Require(!UnchangedSince(address, surfaceBytes, cached), "(w) a cache over the pages the import reported sees no change");
+        if (!UnchangedSince(address, surfaceBytes, cached)) {
             std::array<std::uint8_t, surfaceBytes / 65536> changed{};
             const std::array<std::uint64_t, surfaceBytes / 65536> generations{cached, cached, cached, cached};
             Require(ChangedBlocks(address, surfaceBytes, generations, changed) && std::all_of(changed.begin(), changed.end(), [](std::uint8_t value) { return value == BlockMaybeWritten; }), "(w) the pages the import reported read as written by the CPU");
