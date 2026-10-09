@@ -17,6 +17,7 @@
 extern "C" {
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
 int APS5_VABI sceKernelClose(int d);
+std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
 int APS5_VABI sceKernelAioDeleteRequest(std::int32_t id, std::int32_t* ret);
 int APS5_VABI sceKernelAioInitializeImpl(void* param, std::int32_t size);
 void APS5_VABI sceKernelAioInitializeParam(void* param);
@@ -99,6 +100,7 @@ int main() {
     Check(sceKernelAioDeleteRequest(id, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     const int batchFd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDWR, 0);
     Check(batchFd >= 0);
+    Check(sceKernelLseek(batchFd, 2, 0) == 2);
     std::array<char, 4> patch = {'W', 'X', 'Y', 'Z'};
     KernelAioResult patchResult{-1, 0};
     KernelAioResult badResult{-1, 0};
@@ -108,6 +110,7 @@ int main() {
     };
     std::int32_t writeIds[2] = {0, 0};
     Check(sceKernelAioSubmitWriteCommandsMultiple(writeBatch, 2, 0, writeIds) == 0);
+    Check(sceKernelLseek(batchFd, 0, 1) == 2);
     Check(writeIds[0] > 0 && writeIds[1] > 0 && writeIds[0] != writeIds[1]);
     Check(patchResult.state == 3 && patchResult.return_value == 4);
     Check(badResult.state == 4 && badResult.return_value == SCE_KERNEL_ERROR_EBADF);

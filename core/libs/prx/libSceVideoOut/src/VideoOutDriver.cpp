@@ -576,7 +576,12 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             cancelled.swap(flipQueue->requests);
         }
     }
-    AgcDriverShutdown_nid_postfix();
+    try {
+        AgcDriverShutdown_nid_postfix();
+    } catch (...) {
+        std::lock_guard lock(flipQueue->mutex);
+        if (!flipQueue->failure) flipQueue->failure = std::current_exception();
+    }
     window.Destroy();
 }
 
