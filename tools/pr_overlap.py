@@ -169,5 +169,19 @@ if __name__ == "__main__":
         print(report(rows[0], blob) or "No overlap with open pull requests.", end="")
         raise SystemExit
     args.out.mkdir(parents=True, exist_ok=True)
+    with_overlap = []
     for number, found in rows.items():
-        (args.out / f"{number}.md").write_text(report(found, blob))
+        body = report(found, blob)
+        (args.out / f"{number}.md").write_text(body)
+        if body:
+            with_overlap.append(number)
+    print(
+        f"pr_overlap: repo={REPO} base={args.base} open_prs={len(rows)} "
+        f"with_overlap_table={len(with_overlap)}",
+        flush=True,
+    )
+    if with_overlap:
+        print(
+            "pr_overlap: " + " ".join(f"#{n}" for n in sorted(with_overlap)),
+            flush=True,
+        )

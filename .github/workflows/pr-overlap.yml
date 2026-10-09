@@ -26,22 +26,52 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          set -e
           out=$RUNNER_TEMP/overlap
           python3 tools/pr_overlap.py --base "${{ github.event.repository.default_branch }}" --out "$out"
           marker='<!-- pr-overlap -->'
+          created=0 updated=0 deleted=0 unchanged=0 clean=0
           for file in "$out"/*.md; do
             pr=$(basename "$file" .md)
             comment=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
               --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1)
             id=$(jq -r '.[0] // empty' <<< "${comment:-null}")
             if [ -s "$file" ]; then
-              [ "$(jq -r '.[1]' <<< "${comment:-null}")" = "$(cat "$file")" ] && continue
+              if [ "$(jq -r '.[1]' <<< "${comment:-null}")" = "$(cat "$file")" ]; then
+                unchanged=$((unchanged + 1))
+                continue
+              fi
               if [ -n "$id" ]; then
                 gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$file" > /dev/null
+                updated=$((updated + 1))
+                echo "pr_overlap sync: updated comment on PR #$pr"
               else
                 gh pr comment "$pr" --body-file "$file"
+                created=$((created + 1))
+                echo "pr_overlap sync: created comment on PR #$pr"
               fi
             elif [ -n "$id" ]; then
-              gh api -X DELETE "repos/$GH_REPO/issues/comments/$id"
+              gh api -X DELETE "repos/$GH_REPO/issues/comments/$id" > /dev/null
+              deleted=$((deleted + 1))
+              echo "pr_overlap sync: deleted stale comment on PR #$pr"
+            else
+              clean=$((clean + 1))
             fi
           done
+          echo "pr_overlap sync: created=$created updated=$updated deleted=$deleted unchanged=$unchanged clean=$clean"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## PR overlap"
+              echo ""
+              echo "- **Repo:** \`$GH_REPO\`"
+              echo "- **Base:** \`${{ github.event.repository.default_branch }}\`"
+              echo ""
+              echo "| Sync | Count |"
+              echo "|---|---:|"
+              echo "| Created | $created |"
+              echo "| Updated | $updated |"
+              echo "| Deleted | $deleted |"
+              echo "| Unchanged | $unchanged |"
+              echo "| Clean (no comment) | $clean |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
