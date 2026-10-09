@@ -33,13 +33,6 @@ struct Module {
     ~Module() {
         if (owned && native) {
 #ifdef _WIN32
-            try {
-                GuestAllocations::Mutation mutation;
-                mutation.UnregisterImage(native);
-            } catch (const std::exception& error) {
-                std::fprintf(stderr, "[dlclose] module %p stays loaded: %s\n", native, error.what());
-                return;
-            }
             FreeLibrary(static_cast<HMODULE>(native));
 #else
             ::dlclose(native);
@@ -179,12 +172,32 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
 int APS5_VABI dlclose_nid_postfix(void* handle) {
+    const auto key = reinterpret_cast<std::uintptr_t>(handle);
     std::shared_ptr<Module> module;
+#ifdef _WIN32
+    bool lastReference = true;
+#endif
     {
         std::lock_guard lock(modulesMutex);
-        auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
+        auto found = modules.find(key);
         if (found == modules.end()) { Error("dlclose: invalid module handle"); return -1; }
-        module = std::move(found->second);
+        module = found->second;
+#ifdef _WIN32
+        for (const auto& [other, entry] : modules) {
+            if (other != key && entry->native == module->native) lastReference = false;
+        }
+#endif
+    }
+#ifdef _WIN32
+    if (module->owned && module->native && lastReference) {
+        GuestAllocations::Mutation mutation;
+        mutation.UnregisterImage(module->native);
+    }
+#endif
+    {
+        std::lock_guard lock(modulesMutex);
+        auto found = modules.find(key);
+        if (found == modules.end()) { Error("dlclose: invalid module handle"); return -1; }
         modules.erase(found);
     }
     // Unload outside the registry lock: module destructors may call loader APIs.

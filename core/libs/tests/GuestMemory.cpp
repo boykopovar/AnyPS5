@@ -575,6 +575,20 @@ static void CheckGuestModuleImageProtection() {
     Require(sceKernelMprotect(target, page, 1) == 0);
     Require(ImageProtection(target) == PAGE_READONLY);
 
+    {
+        auto held = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        bool failed = false;
+        try {
+            dlclose_nid_postfix(module);
+        } catch (const std::runtime_error&) {
+            failed = true;
+        }
+        Require(failed);
+        Require(GuestModulePage(module, page) == target);
+        Require(RegisteredGuestRange(target, page));
+        Require(ImageProtection(target) == PAGE_READONLY);
+    }
+
     auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     std::atomic<bool> closed{false};
     std::thread closer([&] {
@@ -1375,6 +1389,9 @@ static void CheckVirtualQueryPartialMunmap() {
 }
 
 int main() {
+#ifdef _WIN32
+    _putenv_s("APS5_PIN_WAIT_MS", "1000");
+#endif
     CheckVirtualQuerySplitFlexibleRanges();
     CheckVirtualQueryForNonReadableGuestRange();
     CheckReleaseFlexibleMemory();
