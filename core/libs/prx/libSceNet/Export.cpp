@@ -588,6 +588,9 @@ int64_t APS5_VABI sceNetRecv(int s, void* buf, size_t len, int flags) {
     }
     const int native_flags = flags == 2 ? MSG_PEEK : 0;
     const int result = ::recv(socket.native->value, static_cast<char*>(buf), static_cast<int>(len), native_flags);
+#ifdef _WIN32
+    if (result < 0 && WSAGetLastError() == WSAESHUTDOWN) return 0;
+#endif
     return result >= 0 ? result : fail(native_error());
 }
 
@@ -608,6 +611,12 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
     const int native_flags = flags == 2 ? MSG_PEEK : 0;
     const int result = ::recvfrom(socket.native->value, static_cast<char*>(buf), static_cast<int>(len),
         native_flags, from ? reinterpret_cast<sockaddr*>(&peer) : nullptr, from ? &peer_length : nullptr);
+#ifdef _WIN32
+    if (result < 0 && WSAGetLastError() == WSAESHUTDOWN) {
+        if (from) *fromlen = 0;
+        return 0;
+    }
+#endif
     if (result < 0) return fail(native_error());
     if (from && !native_to_guest_address(peer, from, fromlen)) return fail(NET_EAFNOSUPPORT);
     return result;
@@ -696,6 +705,12 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
         flags == NET_MSG_PEEK ? MSG_PEEK : 0, reinterpret_cast<sockaddr*>(&peer), &peer_length);
     if (received < 0) {
 #ifdef _WIN32
+        if (WSAGetLastError() == WSAESHUTDOWN) {
+            if (msg->name) msg->name_length = 0;
+            msg->control_length = 0;
+            msg->flags = flags;
+            return 0;
+        }
         if (!datagram || WSAGetLastError() != WSAEMSGSIZE) return fail(native_error());
         received = static_cast<std::int64_t>(buffer.size());
 #else

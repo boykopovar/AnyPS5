@@ -484,6 +484,9 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
     if (!buffer && length) return Fail(14);
     const auto result = ::recv(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
         flags & 2 ? MSG_PEEK : 0);
+#ifdef _WIN32
+    if (result < 0 && WSAGetLastError() == WSAESHUTDOWN) return 0;
+#endif
     return result < 0 ? Fail(NativeError()) : result;
 }
 int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
@@ -574,6 +577,12 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     socklen_t size = sizeof(native);
     const auto result = ::recvfrom(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
         flags & 2 ? MSG_PEEK : 0, reinterpret_cast<sockaddr*>(&native), &size);
+#ifdef _WIN32
+    if (result < 0 && WSAGetLastError() == WSAESHUTDOWN) {
+        if (address) *addressLength = 0;
+        return 0;
+    }
+#endif
     if (result < 0) return Fail(NativeError());
     if (address && socket->family == GuestUnix) {
         if (socket->type == 1) *addressLength = 0; else UnnamedAddress(address, addressLength);
@@ -645,6 +654,12 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
         flags & 2 ? MSG_PEEK : 0, reinterpret_cast<sockaddr*>(&native), &size);
     if (received < 0) {
 #ifdef _WIN32
+        if (WSAGetLastError() == WSAESHUTDOWN) {
+            if (message->name) message->nameLength = 0;
+            message->controlLength = 0;
+            message->flags = flags;
+            return 0;
+        }
         if (!datagram || WSAGetLastError() != WSAEMSGSIZE) return Fail(NativeError());
         received = static_cast<std::int64_t>(buffer.size());
 #else
