@@ -55,8 +55,9 @@ Counts Count(std::span<const std::uint32_t> words) {
     return counts;
 }
 
-Counts Compile(std::size_t loads, bool formattedStores = false) {
+Counts Compile(std::size_t loads, bool formattedStores = false, bool gpu = false) {
     std::vector<std::uint32_t> code;
+    if (gpu) code.push_back(0x7e160500u);
     for (std::uint32_t load = 0; load < loads; ++load) code.insert(code.end(), {0xe0000000u | (load * 4u), 0x80020000u | ((10u + load) << 8u)});
     code.push_back(0xbf8c3f70u);
     for (std::uint32_t load = 0; load < loads; ++load) code.insert(code.end(), {(formattedStores ? 0xe0100000u : 0xe0700000u) | (load * 4u), 0x80010000u | ((10u + load) << 8u)});
@@ -93,7 +94,12 @@ int main() {
         Check(storeOne.functions == none.functions + 2 && storeOne.calls == none.calls + 2, "formatted buffer once: a formatted load and a formatted store to another resource emitted " + std::to_string(storeOne.functions - none.functions) + " functions and " + std::to_string(storeOne.calls - none.calls) + " calls more than none, expected one function and one call each");
         Check(storeThree.functions == storeOne.functions && storeThree.calls == storeOne.calls + 4 && storeThree.switches == storeOne.switches, "formatted buffer once: two more formatted loads and stores emitted " + std::to_string(storeThree.functions - storeOne.functions) + " functions, " + std::to_string(storeThree.calls - storeOne.calls) + " calls and " + std::to_string(storeThree.switches - storeOne.switches) + " switches more, expected four calls only");
         Check(three.words - one.words < one.words / 10u, "formatted buffer once: 2 more formatted loads added " + std::to_string(three.words - one.words) + " SPIR-V words to a " + std::to_string(one.words) + "-word module");
-        std::printf("formatted buffer once tests passed (%zu words for 1 load, %zu for 3)\n", one.words, three.words);
+        const auto gpuOne = Compile(1, false, true);
+        const auto gpuThree = Compile(3, false, true);
+        Check(gpuThree.functions == gpuOne.functions && gpuThree.calls > gpuOne.calls, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.functions - gpuOne.functions) + " more functions, expected calls to the shared one");
+        Check(gpuThree.switches == gpuOne.switches, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.switches - gpuOne.switches) + " more format switches");
+        Check(gpuThree.words - gpuOne.words < gpuOne.words / 10u, "formatted buffer once: 2 more formatted loads from a GPU-selected descriptor added " + std::to_string(gpuThree.words - gpuOne.words) + " SPIR-V words to a " + std::to_string(gpuOne.words) + "-word module");
+        std::printf("formatted buffer once tests passed (%zu words for 1 load, %zu for 3; GPU-selected %zu and %zu)\n", one.words, three.words, gpuOne.words, gpuThree.words);
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
