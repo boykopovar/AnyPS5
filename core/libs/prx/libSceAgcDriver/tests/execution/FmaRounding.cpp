@@ -21,14 +21,15 @@ constexpr std::uint32_t Results = 16;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 55> FmaCode{
+alignas(256) constexpr std::array<std::uint32_t, 59> FmaCode{
     0x34020083, 0x34060084, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
     0xe030200c, 0x80000701, 0xe0302010, 0x80000801, 0xbf8c3f70, 0xd54b000a, 0x041a0b04, 0x7e160306,
-    0x56160b04, 0x5a180f04, 0x3f8ccccd, 0x581a1104, 0x3f8ccccd, 0xd541000e, 0x041a0b04, 0x7e1e0306,
-    0x3e1e0b04, 0x42200f04, 0x3f8ccccd, 0x40221104, 0x3f8ccccd, 0x10240b04, 0x06240d12, 0x7e260306,
-    0xd51f0013, 0x00020b04, 0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03,
-    0xe070200c, 0x80010d03, 0xe0702010, 0x80010e03, 0xe0702014, 0x80010f03, 0xe0702018, 0x80011003,
-    0xe070201c, 0x80011103, 0xe0702020, 0x80011203, 0xe0702024, 0x80011303, 0xbf810000,
+    0x56160b04, 0x5a180f04, 0x3f8ccccd, 0x581a1104, 0x3f8ccccd, 0xcc200014, 0x041a0b04, 0xd541000e,
+    0x041a0b04, 0x7e1e0306, 0x3e1e0b04, 0x42200f04, 0x3f8ccccd, 0x40221104, 0x3f8ccccd, 0x10240b04,
+    0x06240d12, 0x7e260306, 0xd51f0013, 0x00020b04, 0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03,
+    0xe0702008, 0x80010c03, 0xe070200c, 0x80010d03, 0xe0702010, 0x80011403, 0xe0702014, 0x80010e03,
+    0xe0702018, 0x80010f03, 0xe070201c, 0x80011003, 0xe0702020, 0x80011103, 0xe0702024, 0x80011203,
+    0xe0702028, 0x80011303, 0xbf810000,
 };
 
 struct Row {
@@ -142,8 +143,8 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Check() {
-    constexpr std::array<const char*, 10> names{
-        "v_fma_f32", "v_fmac_f32", "v_fmaak_f32", "v_fmamk_f32", "v_mad_f32", "v_mac_f32", "v_madak_f32", "v_madmk_f32", "v_mul_f32 + v_add_f32", "v_mac_f32_e64",
+    constexpr std::array<const char*, 11> names{
+        "v_fma_f32", "v_fmac_f32", "v_fmaak_f32", "v_fmamk_f32", "v_fma_mix_f32", "v_mad_f32", "v_mac_f32", "v_madak_f32", "v_madmk_f32", "v_mul_f32 + v_add_f32", "v_mac_f32_e64",
     };
     bool hostFuses = false;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -154,10 +155,10 @@ void Check() {
     }
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto& row = Rows[tid];
-        const std::array<std::uint32_t, 10> expected{
-            row.fused, row.fused, row.fusedAk, row.fusedMk, row.separate, row.separate, row.separateAk, row.separateMk, row.separate, row.separate,
+        const std::array<std::uint32_t, 11> expected{
+            row.fused, row.fused, row.fusedAk, row.fusedMk, row.fused, row.separate, row.separate, row.separateAk, row.separateMk, row.separate, row.separate,
         };
-        for (std::uint32_t j = hostFuses ? 0u : 4u; j < expected.size(); ++j) {
+        for (std::uint32_t j = hostFuses ? 0u : 5u; j < expected.size(); ++j) {
             const auto actual = Output[tid * Results + j];
             Require(actual == expected[j], std::string("fma rounding: lane ") + std::to_string(tid) + " " + names[j] + " is " + Hex(actual) + ", expected " + Hex(expected[j]));
         }

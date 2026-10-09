@@ -1724,6 +1724,63 @@ void descriptorCacheTests() {
     Require(mock.live == 0, "the descriptor cache leaked a pool or layout");
 }
 
+void textureCacheBudgetTests() {
+    using AgcDriver::Graphics::TextureCacheBudget;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    Require(TextureCacheBudget(memory) == 2 * GiB, "a device without memory heaps does not keep 2 GiB of cached textures");
+    memory.memoryHeapCount = 3;
+    memory.memoryHeaps[0] = {256ull << 20u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[1] = {32 * GiB, 0};
+    memory.memoryHeaps[2] = {16 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT | VK_MEMORY_HEAP_MULTI_INSTANCE_BIT};
+    Require(TextureCacheBudget(memory) == 4 * GiB, "a 16 GiB device-local heap does not give 4 GiB of cached textures");
+    memory.memoryHeaps[2].size = 6 * GiB;
+    Require(TextureCacheBudget(memory) == 2 * GiB, "a 6 GiB device-local heap does not keep the 2 GiB floor");
+    memory.memoryHeaps[2].size = 24 * GiB;
+    memory.memoryHeapCount = 2;
+    Require(TextureCacheBudget(memory) == 2 * GiB, "a heap past memoryHeapCount or a host heap counted toward the texture caches");
+    memory.memoryHeapCount = 3;
+    Require(TextureCacheBudget(memory) == 6 * GiB, "a 24 GiB device-local heap does not give 6 GiB of cached textures");
+}
+
+void sampledTextureBudgetTests() {
+    using AgcDriver::Graphics::SampledTextureBudget;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = 3;
+    memory.memoryHeaps[0] = {256 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[1] = {32 * GiB, 0};
+    memory.memoryHeaps[2] = {16 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    Require(SampledTextureBudget(memory, nullptr, 0) == 4 * GiB, "without VK_EXT_memory_budget the sampled texture cache does not keep a quarter of the 16 GiB heap");
+    reported.heapBudget[0] = 100 * GiB;
+    reported.heapBudget[1] = 100 * GiB;
+    Require(SampledTextureBudget(memory, &reported, 0) == 4 * GiB, "a zero budget for the largest device-local heap did not fall back to a quarter of the heap");
+    reported.heapBudget[2] = 15 * GiB;
+    reported.heapUsage[2] = 9 * GiB;
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 5 * GiB + 128 * MiB, "a 15 GiB budget with 4 GiB used outside the texture caches does not leave 5 GiB 128 MiB after the 4 GiB storage cache and 1 GiB 896 MiB of headroom");
+    reported.heapUsage[2] = 3 * GiB;
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 9 * GiB + 128 * MiB, "usage below the cached bytes is not read as no other device memory in use");
+    reported.heapUsage[2] = 12 * GiB;
+    Require(SampledTextureBudget(memory, &reported, 1 * GiB) == 2 * GiB, "a heap whose other users leave no room does not keep the 2 GiB floor");
+    memory.memoryHeaps[0].flags = 0;
+    memory.memoryHeaps[2].flags = 0;
+    Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
+}
+
+void sampledBudgetReportTests() {
+    using AgcDriver::Graphics::SampledBudgetReportDue;
+    using std::chrono::seconds;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    Require(SampledBudgetReportDue(0, 2048 * MiB, seconds(10)), "a budget never reported is not due");
+    Require(!SampledBudgetReportDue(4000 * MiB, 4400 * MiB, seconds(60)), "a budget 10% above the reported one is due, not only one more than 10% away");
+    Require(!SampledBudgetReportDue(4000 * MiB, 3600 * MiB, seconds(60)), "a budget 10% below the reported one is due, not only one more than 10% away");
+    Require(SampledBudgetReportDue(4000 * MiB, 4401 * MiB, seconds(10)), "a budget more than 10% above the reported one is not due after 10 s");
+    Require(SampledBudgetReportDue(4000 * MiB, 3599 * MiB, seconds(10)), "a budget more than 10% below the reported one is not due after 10 s");
+    Require(!SampledBudgetReportDue(4000 * MiB, 2048 * MiB, seconds(9)), "a budget change is reported again within 10 s of the last report");
+}
+
 void misalignedShaderDataTests() {
     mock = MockVulkan{};
     auto context = mockContext();
@@ -2776,6 +2833,9 @@ int main() {
         descriptorCacheTests();
         misalignedShaderDataTests();
         debugBranchTests();
+        textureCacheBudgetTests();
+        sampledTextureBudgetTests();
+        sampledBudgetReportTests();
         meshArgumentTests();
         meshIndexBufferTests();
         validationTests();

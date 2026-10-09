@@ -29,4 +29,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_service PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_system_kill_app_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemKillApp.cpp)
+    target_include_directories(guest_system_kill_app_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_kill_app_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_kill_app_tests)
+    add_test(NAME guest_system_kill_app_parameters COMMAND guest_system_kill_app_tests)
+    add_test(NAME guest_system_kill_app COMMAND guest_system_kill_app_tests --kill)
+    add_test(NAME guest_system_kill_app_status COMMAND guest_system_kill_app_tests --kill)
+    set_tests_properties(guest_system_kill_app PROPERTIES
+        PASS_REGULAR_EXPRESSION "Guest shutdown and atexit completed")
+    if(WIN32)
+        set_tests_properties(guest_system_kill_app guest_system_kill_app_status guest_system_kill_app_parameters PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()

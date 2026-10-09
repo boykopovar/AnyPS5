@@ -26,6 +26,17 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
+std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
+std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes);
+bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
+struct TextureCacheUse {
+    std::size_t sampledEntries = 0;
+    std::uint64_t sampledBytes = 0;
+    std::uint64_t storageBytes = 0;
+};
+TextureCacheUse TextureCacheUsage();
+std::uint64_t SampledTextureCacheBudget(const Context& context);
+std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.

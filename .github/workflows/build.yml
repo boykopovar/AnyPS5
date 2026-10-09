@@ -1,6 +1,8 @@
 name: Build
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
@@ -15,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.event_name }}-pr-${{ github.event.pull_request.number || inputs.pr }}
+  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -43,6 +45,16 @@ jobs:
           PR_NUMBER: ${{ inputs.pr }}
         with:
           script: |
+            if (context.eventName === 'push') {
+              if (context.ref !== 'refs/heads/main') {
+                throw new Error('Automatic full builds only run on main');
+              }
+              core.setOutput('sha', context.sha);
+              core.setOutput('relinker', true);
+              core.setOutput('full', true);
+              await core.summary.addRaw(`Building main at ${context.sha}: all builds and tests enabled`).write();
+              return;
+            }
             const { owner, repo } = context.repo;
             const manual = context.eventName === 'workflow_dispatch';
             if (manual) {
@@ -60,12 +72,19 @@ jobs:
             if (!Number.isSafeInteger(pull_number) || pull_number < 1) {
               throw new Error('Invalid pull request number');
             }
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            let { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            for (let attempt = 0; pr.mergeable === null && attempt < 10; ++attempt) {
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+              ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number }));
+            }
             if (pr.state !== 'open' || pr.base.ref !== 'main') {
               throw new Error('The pull request must be open and target main');
             }
             if (!manual && pr.head.sha !== context.payload.pull_request.head.sha) {
               throw new Error('The pull request has newer commits; use the latest run');
+            }
+            if (pr.mergeable !== true || !pr.merge_commit_sha) {
+              throw new Error('The pull request does not merge cleanly into main; rebase it first');
             }
             let relinker = manual;
             if (!manual) {
@@ -74,11 +93,11 @@ jobs:
               });
               relinker = commits.length > 0;
             }
-            core.setOutput('sha', pr.head.sha);
+            core.setOutput('sha', pr.merge_commit_sha);
             core.setOutput('relinker', relinker);
             core.setOutput('full', manual);
             await core.summary.addRaw(
-              `PR #${pull_number} at ${pr.head.sha}: full builds ${manual ? 'enabled' : 'disabled'}, ` +
+              `PR #${pull_number} at ${pr.head.sha} merged into main as ${pr.merge_commit_sha}: full builds ${manual ? 'enabled' : 'disabled'}, ` +
               `relinker ${relinker ? 'enabled' : 'skipped because the author has no commit in main'}`
             ).write();
 
@@ -126,7 +145,7 @@ jobs:
 
   linux:
     needs: eligibility
-    if: ${{ github.event_name == 'workflow_dispatch' && needs.eligibility.outputs.full == 'true' }}
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -161,7 +180,7 @@ jobs:
 
   windows:
     needs: eligibility
-    if: ${{ github.event_name == 'workflow_dispatch' && needs.eligibility.outputs.full == 'true' }}
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:

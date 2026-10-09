@@ -34,6 +34,7 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
 // Whether a storage image of the guest format takes DCC clear `keys` as a GPU clear (see
 // StorageTexture::upload); false for integer formats and non-clear keys.
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
+std::uint64_t SampledTextureMemory();
 
 // A sampled texture's own VkImage with its memory, shared with the recorder while a recorded upload
 // still writes it (see the snapshot constructor), so the texture may go before the batch completes.
@@ -101,6 +102,7 @@ private:
     ViewRange firstLayerRange{};
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
+    VkDeviceSize countedBytes = 0;
     VkFormat viewFormat = VK_FORMAT_UNDEFINED;
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<StorageTexture> storageSource;
@@ -290,6 +292,7 @@ public:
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
     std::uint64_t GuestBytes() const;
+    VkDeviceSize AllocationBytes() const { return memoryBytes; }
 
 private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
@@ -297,6 +300,8 @@ private:
     // Uploads the surface, or only the tracked layers `layers` selects (the direct path; the others
     // upload everything).
     void upload(const std::vector<bool>* layers = nullptr);
+    void captureGuestBytes(const std::vector<bool>* layers);
+    bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block
     // units asked for in pieces too often are all stored at once for a while (the hysteresis:
@@ -425,6 +430,7 @@ private:
     std::uint64_t sliceLinearBytes = 0;
     SurfaceGeometry geometry;
     std::vector<std::byte> original;
+    mutable std::array<std::uint64_t, 4> comparedGuestBytes{};
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
@@ -457,6 +463,7 @@ private:
     bool lent = false;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize memoryBytes = 0;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;

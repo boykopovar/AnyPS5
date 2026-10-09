@@ -16,6 +16,7 @@ extern "C" {
 int APS5_VABI sceAmprCommandBufferConstructor(Apr::CommandBufferObject*);
 int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*);
 int APS5_VABI sceAmprCommandBufferSetBuffer(Apr::CommandBufferObject*, void*, std::uint32_t);
+void* APS5_VABI sceAmprCommandBufferClearBuffer(Apr::CommandBufferObject*);
 std::uint32_t APS5_VABI sceAmprCommandBufferGetCurrentOffset(const Apr::CommandBufferObject*);
 std::uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferObject*);
 int APS5_VABI sceAmprCommandBufferWriteAddressOnCompletion(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint64_t);
@@ -444,6 +445,15 @@ void TestVersionedCounters() {
     Require(sceAmprMeasureCommandSizeWriteCounter_04_00(128, size4, 0, store) == rejected);
     Require(sceAmprMeasureCommandSizeWriteCounter_04_00(0, 8, 0, store) == rejected);
     Require(sceAmprMeasureCommandSizeWriteCounter_04_00(0, size4, 0, 5) == rejected);
+}
+
+void TestClearBuffer() {
+    Recorder recorder;
+    Require(sceAmprCommandBufferNop(&recorder.buffer, 1) == 0);
+    Require(recorder.Offset() != 0 && recorder.Commands() == 1);
+    Require(sceAmprCommandBufferClearBuffer(&recorder.buffer) == recorder.memory.data());
+    Require(recorder.buffer.base == nullptr && recorder.buffer.size == 0 && recorder.Offset() == 0 && recorder.Commands() == 0);
+    Require(sceAmprCommandBufferClearBuffer(&recorder.buffer) == nullptr);
 }
 
 void TestConstructed() {
@@ -937,6 +947,7 @@ int main() {
     TestNops();
     TestVersionedCommands();
     TestVersionedCounters();
+    TestClearBuffer();
     TestConstructed();
     TestGatherScatter();
     TestAmm();

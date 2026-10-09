@@ -45,7 +45,7 @@ void Driver::stop() {
     device.Reset();
     replacedDevices.clear();
     Graphics::ShutdownGuestBufferWorkers();
-    ProfileOutput_nid_no_patch().Stop();
+    StopProfileOutput_nid_no_patch();
     stopped = true;
 }
 

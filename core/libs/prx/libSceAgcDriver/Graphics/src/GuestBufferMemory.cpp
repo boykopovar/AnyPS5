@@ -289,7 +289,7 @@ void decideImportWatch(const Context& context, HostImports& state) {
     state.watchDevice = context.device;
     state.unwatchImports = true;
     state.unwatchDmaBufImports = false;
-    if (context.hostImportAlignment != 0 && GuestMemory::WriteWatched()) std::fprintf(stderr, "[write-watch] host imports are compared on Windows because driver writes can arrive after the import window\n");
+    if (context.hostImportAlignment != 0 && GuestMemory::WriteWatched()) std::fprintf(stderr, "[write-watch] Windows direct host imports use comparisons; separate shared aliases retain guest write tracking\n");
 #else
     const auto request = importWatchRequest();
     state.watchDevice = context.device;
@@ -412,6 +412,9 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         return step == nullptr;
     });
     entry.unwatched = step == nullptr && (entry.dmaBuf ? state.unwatchDmaBufImports : state.unwatchImports);
+#ifdef _WIN32
+    if (entry.alias != nullptr) entry.unwatched = false;
+#endif
     if (entry.unwatched) GuestMemory::Unwatch(base, bytes);
     if (step != nullptr) {
 #ifdef _WIN32
