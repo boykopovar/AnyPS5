@@ -62,8 +62,8 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
     for (const auto* candidate : supported) if (std::strcmp(mode, candidate) == 0) valid = true;
     if (!valid) { errno = 22; return nullptr; }
     try {
-        const auto path = *filename ? ResolvePath_nid_no_patch(filename).string() : std::string{};
-        if (stream->Reopen(path.c_str(), NativeFileMode(mode).c_str())) {
+        const auto path = *filename ? ResolvePath_nid_no_patch(filename) : std::filesystem::path{};
+        if (stream->Reopen(path, NativeFileMode(mode).c_str())) {
             if (!path.empty() && WritesFile(mode)) RecordWrittenPath_nid_no_patch(path);
             return stream;
         }
@@ -79,7 +79,7 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
     if (!filename || !mode) throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_NULL_ARG);
     const std::filesystem::path fpath = ResolvePath_nid_no_patch(filename);
     const auto abs_path = fpath.string();
-    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(abs_path.c_str(), NativeFileMode(mode).c_str()), std::fclose);
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(OpenNativeFile(fpath, NativeFileMode(mode).c_str()), std::fclose);
     if (!handle) {
         const int error = errno;
         if (error == ENOENT) {

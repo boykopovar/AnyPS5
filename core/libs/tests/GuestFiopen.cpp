@@ -10,6 +10,7 @@
 extern "C" {
 FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char*, int, int);
 FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
+FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
 int APS5_VABI fclose_nid_postfix(FileStream*);
 std::int64_t APS5_VABI ftello_nid_postfix(FileStream*);
 }
@@ -130,6 +131,17 @@ int main() {
     stream = Open(file, In | 0x100 | 0x8000);
     Require(stream != nullptr && std::fgetc(stream->GetHandle()) == 'k');
     fclose_nid_postfix(stream);
+
+    const auto* utf8 = reinterpret_cast<const char*>(u8"guest_fiopen_dir/セーブ");
+    Write(fopen_nid_postfix(utf8, "w"), "save");
+    Require(std::filesystem::exists(dir / std::filesystem::path(u8"セーブ")));
+    Require(Contents(utf8) == "save");
+    const auto* reopened = reinterpret_cast<const char*>(u8"guest_fiopen_dir/café");
+    stream = fopen_nid_postfix(file, "r");
+    Require(stream != nullptr);
+    Write(freopen_nid_postfix(reopened, "w", stream), "reopened");
+    Require(std::filesystem::exists(dir / std::filesystem::path(u8"café")));
+    Require(Contents(reopened) == "reopened");
 
     std::filesystem::remove_all(dir);
     return 0;

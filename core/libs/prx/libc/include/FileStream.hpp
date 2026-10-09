@@ -2,7 +2,9 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 
 #include <cstdio>
+#include <filesystem>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <cstdint>
 #include <cstddef>
@@ -31,6 +33,22 @@ static constexpr const char* FOPEN_EXT_VERT = ".vert";
 static constexpr const char* FOPEN_MSG_NULL_ARG = "null argument";
 static constexpr const char* FOPEN_MSG_NOT_FOUND = "file not found";
 static constexpr const char* FOPEN_MSG_OPEN_FAILED = "open failed";
+
+#ifdef _WIN32
+inline std::wstring NativeWideMode(const char* mode) {
+    std::wstring result;
+    for (; *mode; ++mode) result += static_cast<wchar_t>(static_cast<unsigned char>(*mode));
+    return result;
+}
+#endif
+
+inline std::FILE* OpenNativeFile(const std::filesystem::path& path, const char* mode) {
+#ifdef _WIN32
+    return ::_wfopen(path.c_str(), NativeWideMode(mode).c_str());
+#else
+    return std::fopen(path.c_str(), mode);
+#endif
+}
 
 class FileStream {
     // Only the macro-accessed FreeBSD prefix is exposed. The remaining guest
@@ -66,11 +84,15 @@ public:
     }
 
     GuestFilePrefix& GuestState() { return _guest; }
-    bool Reopen(const char* filename, const char* mode) {
+    bool Reopen(const std::filesystem::path& filename, const char* mode) {
         auto* previous = GetHandle();
         _guest = {};
         encodingError = false;
-        _handle = std::freopen(filename, mode, previous);
+#ifdef _WIN32
+        _handle = ::_wfreopen(filename.c_str(), NativeWideMode(mode).c_str(), previous);
+#else
+        _handle = std::freopen(filename.c_str(), mode, previous);
+#endif
         if (!_handle) return false;
         _guest.flags = 0x10;
 #ifdef _WIN32
