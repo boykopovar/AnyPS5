@@ -17,7 +17,10 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = list(libraries)
     if platform == "windows":
-        runtime = Path("C:/winlibs/mingw64/bin")
+        compiler = re.search(r"^CMAKE_CXX_COMPILER:(?:FILEPATH|STRING)=(.+)$", (build / "CMakeCache.txt").read_text(encoding="utf-8"), re.MULTILINE)
+        if compiler is None:
+            raise RuntimeError("CMAKE_CXX_COMPILER is missing from the build's CMakeCache.txt")
+        runtime = Path(compiler[1]).parent
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
     binary = build / "core/relinker" / executable
     for file in [*files, binary]:
