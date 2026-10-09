@@ -60,6 +60,9 @@ int main() {
     }
 
     const std::vector<std::uint8_t> rgbJpeg = Decoder::Jpeg::Encode(rgb, width, height, 3, 90);
+    const auto rgbHeader = Decoder::Jpeg::ParseHeader(rgbJpeg);
+    Require(rgbHeader.has_value());
+    Require(rgbHeader->width == width && rgbHeader->height == height && rgbHeader->channels == 3);
     Require(IsJpeg(rgbJpeg));
     Require(ReadFrame(rgbJpeg).components == 3 && ReadFrame(rgbJpeg).sampling == 0x11);
     const auto rgbImage = Decoder::Jpeg::Decode(rgbJpeg);
@@ -75,6 +78,9 @@ int main() {
         for (std::uint32_t x = 0; x < width; ++x) gray[y * width + x] = static_cast<std::uint8_t>((x + y) * 4);
     }
     const std::vector<std::uint8_t> grayJpeg = Decoder::Jpeg::Encode(gray, width, height, 1, 90);
+    const auto grayHeader = Decoder::Jpeg::ParseHeader(grayJpeg);
+    Require(grayHeader.has_value());
+    Require(grayHeader->width == width && grayHeader->height == height && grayHeader->channels == 1);
     Require(IsJpeg(grayJpeg));
     Require(ReadFrame(grayJpeg).components == 1);
     const auto grayImage = Decoder::Jpeg::Decode(grayJpeg);
@@ -104,8 +110,10 @@ int main() {
     Require(ThrowsInvalidArgument([&] { Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv444, 0x10000, 0); }));
     Require(ThrowsInvalidArgument([&] { Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv444, 0, 0x10000); }));
 
+    const std::vector<std::uint8_t> garbage{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    Require(!Decoder::Jpeg::ParseHeader({}).has_value());
+    Require(!Decoder::Jpeg::ParseHeader(garbage).has_value());
     Require(!Decoder::Jpeg::Decode({}).has_value());
-    const std::vector<std::uint8_t> garbage{1, 2, 3, 4, 5, 6, 7, 8};
     Require(!Decoder::Jpeg::Decode(garbage).has_value());
 
     return 0;
