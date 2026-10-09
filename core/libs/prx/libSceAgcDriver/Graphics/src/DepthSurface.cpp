@@ -29,7 +29,7 @@ public:
         const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         try {
             VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-            if ((context.sampleLocationSampleCounts & target.samples) != 0) info.flags = VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT;
+            if (SampleLocationsCompatibleDepth(context, target.format, target.samples)) info.flags = VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT;
             info.imageType = VK_IMAGE_TYPE_2D;
             info.format = target.format;
             info.extent = {target.extent.width, target.extent.height, 1};
@@ -190,6 +190,16 @@ std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
     const auto width = static_cast<std::uint64_t>((extent.width + blockWidth - 1) / blockWidth * blockWidth);
     const auto height = static_cast<std::uint64_t>((extent.height + blockHeight - 1) / blockHeight * blockHeight);
     return width * height * bytesPerTexel;
+}
+
+bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std::uint32_t samples) {
+    if (samples <= 1 || (context.sampleLocationSampleCounts & samples) == 0) return false;
+    VkImageFormatProperties properties{};
+    const auto result = context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT, &properties);
+    if (result == VK_ERROR_FORMAT_NOT_SUPPORTED) return false;
+    Check(result, "vkGetPhysicalDeviceImageFormatProperties sample locations depth");
+    return (properties.sampleCounts & samples) != 0;
 }
 
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) {

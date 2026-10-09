@@ -1407,6 +1407,18 @@ void uint16ExportTests() {
     queue.context[0x1c5] = 8;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 8");
 
+VkSampleCountFlags depthSampleCounts = VK_SAMPLE_COUNT_4_BIT;
+VkResult depthSampleResult = VK_SUCCESS;
+std::uint32_t depthSampleQueries = 0;
+
+VKAPI_ATTR VkResult VKAPI_CALL sampleLocationDepthProperties(VkPhysicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
+    Require(format == VK_FORMAT_D32_SFLOAT && type == VK_IMAGE_TYPE_2D && tiling == VK_IMAGE_TILING_OPTIMAL, "sample location query changed the depth image format or type");
+    Require(usage == (VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) && flags == VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT, "sample location query differs from depth image creation");
+    ++depthSampleQueries;
+    properties->sampleCounts = depthSampleCounts;
+    return depthSampleResult;
+}
+
 void multisampleTests() {
     using AgcDriver::Graphics::ColorMetadataPass;
     using AgcDriver::Graphics::DecodeColorMetadataPass;
@@ -1443,9 +1455,34 @@ void multisampleTests() {
     expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state); }, "sample count");
     sampleContext.sampleLocationSampleCounts |= VK_SAMPLE_COUNT_4_BIT;
     AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state);
+    sampleContext.imageFormatProperties = sampleLocationDepthProperties;
+    using AgcDriver::Graphics::SampleLocationsCompatibleDepth;
+    Require(SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4), "supported custom sample depth format was refused");
+    state.depth = AgcDriver::Graphics::DepthTarget{};
+    state.depth->format = VK_FORMAT_D32_SFLOAT;
+    state.depth->samples = 4;
+    Require(AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state), "supported custom depth sample locations were disabled");
+    depthSampleCounts = VK_SAMPLE_COUNT_2_BIT;
+    Require(!SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4), "unsupported custom sample depth count was accepted");
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state); }, "compatible depth format and sample count");
+    depthSampleCounts = VK_SAMPLE_COUNT_4_BIT;
+    depthSampleResult = VK_ERROR_FORMAT_NOT_SUPPORTED;
+    Require(!SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4), "unsupported custom sample depth format was accepted");
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state); }, "compatible depth format and sample count");
+    state.customSampleLocations = false;
+    Require(!AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state), "standard locations did not fall back for an incompatible depth format");
+    depthSampleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+    expectFailure([&] { SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4); }, "Vulkan result");
+    depthSampleResult = VK_SUCCESS;
+    const auto queries = depthSampleQueries;
+    Require(!SampleLocationsCompatibleDepth({}, VK_FORMAT_D32_SFLOAT, 4) && !SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 1), "sample location depth compatibility requires the extension and multisampling");
+    Require(depthSampleQueries == queries, "ineligible sample location depth formats were queried");
     for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x622ae6ae;
     state = DecodeState(queue);
     Require(!state.customSampleLocations, "standard sample locations require the extension");
+    const auto standard = AgcDriver::Graphics::SampleLocations(state);
+    const std::array<VkSampleLocationEXT, 4> expectedStandard{{{0.375f, 0.125f}, {0.875f, 0.375f}, {0.125f, 0.625f}, {0.625f, 0.875f}}};
+    for (std::size_t sample = 0; sample < expectedStandard.size(); ++sample) Require(standard[sample].x == expectedStandard[sample].x && standard[sample].y == expectedStandard[sample].y, "standard sample coordinate scale or Y direction changed");
     AgcDriver::Graphics::ValidateSampleLocations({}, state);
     for (const auto samples : {2u, 8u}) {
         queue = multisampled();

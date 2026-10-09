@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <algorithm>
@@ -99,8 +100,10 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
     }
 }
 
-void ValidateSampleLocations(const Context& context, const State& state) {
-    Require(!state.customSampleLocations || (context.sampleLocationSampleCounts & state.samples) != 0, "custom sample locations require VK_EXT_sample_locations support for the draw's sample count");
+bool ValidateSampleLocations(const Context& context, const State& state) {
+    const bool enabled = (context.sampleLocationSampleCounts & state.samples) != 0 && (!state.depth || SampleLocationsCompatibleDepth(context, state.depth->format, state.depth->samples));
+    Require(!state.customSampleLocations || enabled, "custom sample locations require a compatible depth format and sample count");
+    return enabled;
 }
 
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
@@ -114,7 +117,7 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
-    ValidateSampleLocations(context, state);
+    sampleLocationsEnabled = ValidateSampleLocations(context, state);
     // A cached pipeline may outlive its device's teardown (see ClearCachedPipelines); it must not keep
     // the buffer pool, which is reset with the device, alive past it.
     this->context.bufferPool.reset();
@@ -255,7 +258,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         VkPipelineSampleLocationsStateCreateInfoEXT sampleLocations{VK_STRUCTURE_TYPE_PIPELINE_SAMPLE_LOCATIONS_STATE_CREATE_INFO_EXT};
         sampleLocations.sampleLocationsEnable = VK_TRUE;
         sampleLocations.sampleLocationsInfo = {VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, samples.rasterizationSamples, {1, 1}, state.samples, locations.data()};
-        if ((context.sampleLocationSampleCounts & state.samples) != 0) samples.pNext = &sampleLocations;
+        if (sampleLocationsEnabled) samples.pNext = &sampleLocations;
         VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         depthStencil.depthTestEnable = state.depthTest;
         depthStencil.depthWriteEnable = state.depthWrite;
@@ -399,7 +402,7 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     sampleLocations.pAttachmentInitialSampleLocations = state.depth ? &initial : nullptr;
     sampleLocations.postSubpassSampleLocationsCount = 1;
     sampleLocations.pPostSubpassSampleLocations = &post;
-    if ((context.sampleLocationSampleCounts & state.samples) != 0) begin.pNext = &sampleLocations;
+    if (sampleLocationsEnabled) begin.pNext = &sampleLocations;
     context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
     Continue(commands, state);
 }
