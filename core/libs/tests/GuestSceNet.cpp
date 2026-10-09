@@ -33,6 +33,7 @@ int APS5_VABI sceNetEpollDestroy(int);
 extern const std::uint32_t sce_net_in6addr_any[4];
 int APS5_VABI sceNetResolverCreate(const char*, int, int);
 int APS5_VABI sceNetResolverStartNtoa(int, const char*, void*, int, int, int);
+int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverDestroy(int);
 int APS5_VABI sceNetResolverGetError(int, int*);
@@ -79,6 +80,51 @@ static void Require(bool condition) {
 
 static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
+}
+
+static void CheckMultipleRecords(int resolver) {
+    alignas(8) std::array<std::uint8_t, 400> records;
+    records.fill(0xA5);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "127.0.0.1", records.data(), 5000000, 1, 0) == 0);
+    std::int32_t count = 0;
+    std::int32_t count4 = 0;
+    std::int32_t family = 0;
+    std::memcpy(&count, records.data() + 320, sizeof(count));
+    std::memcpy(&count4, records.data() + 324, sizeof(count4));
+    std::memcpy(&family, records.data() + 16, sizeof(family));
+    Require(count == 1 && count4 == 1 && family == 2);
+    Require(records[0] == 127 && records[1] == 0 && records[2] == 0 && records[3] == 1);
+    Require(std::all_of(records.begin() + 4, records.begin() + 16, [](std::uint8_t byte) { return byte == 0; }));
+    Require(std::all_of(records.begin() + 20, records.begin() + 320, [](std::uint8_t byte) { return byte == 0; }));
+    Require(std::all_of(records.begin() + 328, records.begin() + 384, [](std::uint8_t byte) { return byte == 0; }));
+    Require(std::all_of(records.begin() + 384, records.end(), [](std::uint8_t byte) { return byte == 0xA5; }));
+    int status = -1;
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == 0);
+    const auto resolved = records;
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(resolver, nullptr, records.data(), 5000000, 1, 0), 22));
+    Require(records == resolved);
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(resolver, "127.0.0.1", nullptr, 5000000, 1, 0), 22));
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(-1, "127.0.0.1", records.data(), 5000000, 1, 0), 9));
+    Require(records == resolved);
+    for (const int flags : {1, -1}) {
+        bool threw = false;
+        try {
+            sceNetResolverStartNtoaMultipleRecords(resolver, "127.0.0.1", records.data(), 5000000, 1, flags);
+        } catch (const std::runtime_error& error) {
+            threw = true;
+            Require(std::strstr(error.what(), "sceNetResolverStartNtoaMultipleRecords: flags") != nullptr);
+        }
+        Require(threw && records == resolved);
+    }
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "guest-sce-net.invalid", records.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x804101E1) && records == resolved);
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == static_cast<int>(0x804101E1));
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", records.data(), 5000000, 1, 0) == 0);
+    Require(records[0] == 127);
+    std::memcpy(&count, records.data() + 320, sizeof(count));
+    std::memcpy(&count4, records.data() + 324, sizeof(count4));
+    Require(count >= 1 && count <= 10 && count4 == count);
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == 0);
 }
 
 static void CheckPoolStats() {
@@ -316,6 +362,7 @@ int main() {
 
     const int resolver = sceNetResolverCreate("guest-sce-net", 0, 0);
     Require(resolver >= 0);
+    CheckMultipleRecords(resolver);
     int resolver_error = -1;
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     std::array<std::uint8_t, 4> ipv4{};
@@ -359,6 +406,8 @@ int main() {
     resolver_error = -1;
     Require(sceNetResolverGetError(resolver, &resolver_error) == static_cast<int>(0x80410109) &&
         *sceNetErrnoLoc() == 9 && resolver_error == -1);
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", records.data(), 5000000, 1, 0), 9));
+    Require(records == resolved);
     Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", records.data(), 5000000, 1, 0) ==
         static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9 && records == resolved);
 

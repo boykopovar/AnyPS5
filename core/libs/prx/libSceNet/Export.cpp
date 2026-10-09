@@ -1197,9 +1197,10 @@ int APS5_VABI sceNetResolverAbort(void) {
     return 0;
 }
 
-int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int rid, const char* hostname, NetResolverInfo* info, int timeout,
+    int retry, int flags) {
+    if (flags != 0) throw std::runtime_error("sceNetResolverStartNtoaMultipleRecords: flags " + std::to_string(flags) + " are not supported");
+    return sceNetResolverStartNtoaMultipleRecordsEx(rid, hostname, info, timeout, retry, flags);
 }
 
 extern const std::uint8_t in6addr_any_nid_postfix[16] = {};
