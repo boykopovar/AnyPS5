@@ -1533,6 +1533,19 @@ struct ContentExportInitParam2 {
     std::int64_t reserved1;
 };
 
+struct ContentExportParam {
+    char title[257];
+    char reserved[257];
+    char content_type[65];
+};
+
+using ContentExportMalloc = void* (APS5_VABI*)(std::size_t size, void* userData);
+using ContentExportFree = void (APS5_VABI*)(void* pointer, void* userData);
+using ContentExportDataProvideFunction = int (APS5_VABI*)(void** data, std::size_t* size, void* userData);
+
+static_assert(sizeof(ContentExportParam) == 579);
+static_assert(offsetof(ContentExportParam, content_type) == 514);
+
 struct ContentSearchInitParam { std::size_t memory_size; };
 
 struct PngEncCreateParam {
