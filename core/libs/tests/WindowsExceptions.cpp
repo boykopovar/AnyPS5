@@ -4,9 +4,14 @@
 #include <atomic>
 #include <array>
 #include <exception>
+#include <cstdint>
+#include <string>
 #include <thread>
 #include <cstddef>
 #include <typeinfo>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "../prx/libc/include/general/VabiMacros.hpp"
 
 extern "C" {
@@ -52,6 +57,112 @@ static void TestTypeInfoVtables() {
 }
 
 extern "C" void NotImplemented_nid_no_patch(const char*);
+
+#ifdef _WIN32
+extern "C" void WindowsExceptionTestFault();
+extern "C" unsigned char WindowsExceptionTestFaultSite;
+extern "C" unsigned char WindowsExceptionTestFaultAfter;
+static std::atomic<unsigned> recoveredFaults{0};
+
+asm(R"(
+.text
+.globl WindowsExceptionTestFault
+.def WindowsExceptionTestFault; .scl 2; .type 32; .endef
+WindowsExceptionTestFault:
+    xor %rax, %rax
+.globl WindowsExceptionTestFaultSite
+WindowsExceptionTestFaultSite:
+    movq (%rax), %rax
+.globl WindowsExceptionTestFaultAfter
+WindowsExceptionTestFaultAfter:
+    ret
+)");
+
+static LONG WINAPI RecoverTestFault(EXCEPTION_POINTERS* info) {
+    const auto* record = info->ExceptionRecord;
+    if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record->NumberParameters < 2 ||
+        record->ExceptionInformation[0] != 0 || record->ExceptionInformation[1] != 0 ||
+        info->ContextRecord->Rip != reinterpret_cast<std::uintptr_t>(&WindowsExceptionTestFaultSite)) return EXCEPTION_CONTINUE_SEARCH;
+    info->ContextRecord->Rip = reinterpret_cast<std::uintptr_t>(&WindowsExceptionTestFaultAfter);
+    recoveredFaults.fetch_add(1, std::memory_order_relaxed);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static int RunRepeatedFaultChild() {
+    const auto handler = AddVectoredExceptionHandler(0, RecoverTestFault);
+    if (!handler) return 20;
+    WindowsExceptionTestFault();
+    WindowsExceptionTestFault();
+    RemoveVectoredExceptionHandler(handler);
+    return recoveredFaults.load(std::memory_order_relaxed) == 2 ? 0 : 21;
+}
+
+static void TestRepeatedFirstChanceExceptions() {
+    std::wstring image(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, image.data(), static_cast<DWORD>(image.size()));
+    if (length == 0 || length >= image.size()) throw std::runtime_error("cannot find the exception test executable");
+    image.resize(length);
+    std::wstring command = L"\"" + image + L"\" --recover-repeated-av";
+    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+    HANDLE outputRead = nullptr;
+    HANDLE outputWrite = nullptr;
+    if (!CreatePipe(&outputRead, &outputWrite, &security, 0)) throw std::runtime_error("cannot create the exception test pipe");
+    if (!SetHandleInformation(outputRead, HANDLE_FLAG_INHERIT, 0)) {
+        CloseHandle(outputRead);
+        CloseHandle(outputWrite);
+        throw std::runtime_error("cannot protect the exception test pipe");
+    }
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = outputWrite;
+    startup.hStdError = outputWrite;
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+        CloseHandle(outputRead);
+        CloseHandle(outputWrite);
+        throw std::runtime_error("cannot start the repeated exception child");
+    }
+    CloseHandle(outputWrite);
+    std::string output;
+    std::array<char, 1024> buffer{};
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    DWORD wait = WAIT_TIMEOUT;
+    for (;;) {
+        wait = WaitForSingleObject(process.hProcess, 0);
+        DWORD available = 0;
+        if (!PeekNamedPipe(outputRead, nullptr, 0, nullptr, &available, nullptr)) break;
+        if (available != 0) {
+            DWORD read = 0;
+            const DWORD size = available < buffer.size() ? available : static_cast<DWORD>(buffer.size());
+            if (!ReadFile(outputRead, buffer.data(), size, &read, nullptr) || read == 0) break;
+            output.append(buffer.data(), read);
+            continue;
+        }
+        if (wait == WAIT_OBJECT_0 || GetTickCount64() >= deadline) break;
+        Sleep(10);
+    }
+    const bool completed = wait == WAIT_OBJECT_0;
+    DWORD stopped = wait;
+    if (!completed) {
+        TerminateProcess(process.hProcess, 22);
+        stopped = WaitForSingleObject(process.hProcess, 5000);
+    }
+    DWORD exitCode = 23;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    CloseHandle(outputRead);
+    if (stopped != WAIT_OBJECT_0) throw std::runtime_error("could not stop the repeated exception child");
+    if (!completed) throw std::runtime_error("repeated first-chance exceptions stalled the child");
+    if (exitCode != 0) throw std::runtime_error("repeated first-chance exceptions were not dispatched to the recovery handler");
+    constexpr char firstChance[] = "EXCEPTION: first-chance 0xc0000005";
+    const auto first = output.find(firstChance);
+    if (first == std::string::npos || output.find(firstChance, first + sizeof(firstChance) - 1) != std::string::npos)
+        throw std::runtime_error("first-chance exceptions were logged incorrectly");
+}
+#endif
 
 static int destroyed;
 struct Guard { ~Guard() { ++destroyed; } };
@@ -105,9 +216,15 @@ static void testExceptionPointer() {
     if (std::current_exception()) throw std::runtime_error("stale current exception");
 }
 
-int main() {
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    if (argc == 2 && std::strcmp(argv[1], "--recover-repeated-av") == 0) return RunRepeatedFaultChild();
+#endif
     TestTypeInfoVtables();
     testExceptionPointer();
+#ifdef _WIN32
+    TestRepeatedFirstChanceExceptions();
+#endif
     try {
         Rethrow();
         return 1;

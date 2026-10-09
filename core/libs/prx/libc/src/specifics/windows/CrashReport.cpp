@@ -246,10 +246,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
     if (!IsFatal(record->ExceptionCode)) return EXCEPTION_CONTINUE_SEARCH;
-    if (reported.exchange(true)) {
-        // Another thread is already reporting; let it finish before this fault ends the process.
-        Sleep(INFINITE);
-    }
+    if (reported.exchange(true)) return EXCEPTION_CONTINUE_SEARCH;
     const auto* context = info->ContextRecord;
     char line[MAX_PATH + 64];
     char threadName[128] = "";
@@ -258,7 +255,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName), nullptr, nullptr);
         LocalFree(description);
     }
-    Report("\nFATAL: unhandled exception 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(), threadName);
+    Report("\nEXCEPTION: first-chance 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(), threadName);
     DescribeAddress(context->Rip, line, sizeof(line));
     Report("  rip %s\n", line);
     if (record->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) {
