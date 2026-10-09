@@ -37,14 +37,11 @@ int APS5_VABI sceGameUpdateDeleteRequest(int request_id) {
 
 int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t service_label, const void* entitlement_label, GameUpdateAddcontVersionInfo* info) {
     (void)service_label;
-    if (!g_initialized.load()) {
-        return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
-    }
-    if (info == nullptr) {
+    if (entitlement_label == nullptr || info == nullptr) {
         return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     }
-    if (entitlement_label == nullptr) {
-        NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load()) {
+        return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
     }
     if (info->size < sizeof(GameUpdateAddcontVersionInfo)) {
         return SCE_GAME_UPDATE_ERROR_INVALID_SIZE;

@@ -102,10 +102,12 @@ static void Validation() {
     try { sceUltQueueCreate(&extra, nullptr, 8, nullptr, &fixture.pool, &extra, 0); }
     catch (const std::runtime_error&) { rejected = true; }
     CHECK(rejected);
+    CHECK(sceUltQueueTryPop(&extra, &value) == State);
     rejected = false;
     try { sceUltQueueDataResourcePoolCreate(&extra, nullptr, 1, 8, 1, nullptr, nullptr, &extra, 0); }
     catch (const std::runtime_error&) { rejected = true; }
     CHECK(rejected);
+    CHECK(sceUltQueueDataResourcePoolDestroy(&extra) == State);
     overflow = false;
     try { sceUltQueueDataResourcePoolGetWorkAreaSize(UINT32_MAX, UINT64_MAX / 2, 1); }
     catch (const std::out_of_range&) { overflow = true; }

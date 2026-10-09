@@ -56,6 +56,21 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_video_out_vrr_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutVrr.cpp)
+    target_include_directories(guest_video_out_vrr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_vrr_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+    configure_windows_unwind(guest_video_out_vrr_tests)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_video_out_vrr)
+    add_test(NAME guest_video_out_vrr COMMAND guest_video_out_vrr_tests)
+    set_tests_properties(guest_video_out_vrr PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_video_out_vrr)
+    if(WIN32)
+        set_tests_properties(guest_video_out_vrr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_buffer_reuse_tests ${LIBS_INCLUDE_DIR}/tests/GuestBufferReuse.cpp)
     target_include_directories(guest_buffer_reuse_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_buffer_reuse_tests PRIVATE libc)
