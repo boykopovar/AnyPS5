@@ -9,6 +9,7 @@
 #endif
 #include <windows.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -46,6 +48,24 @@ alignas(256) constexpr std::array<std::uint32_t, 12> VccAddtidCode{
     0xbeea0400, 0x340c0085, 0x4a0c0cff, 0x00001000, 0xdc588600, 0x056a0000, 0xbf8c3f70, 0xdc708018,
     0x006a0506, 0xdc5c8400, 0x006a0500, 0xbf810000,
 };
+
+std::vector<std::uint32_t> BaseKernel(const std::string& group) {
+    if (group == "all") return {VccBaseCode.begin(), VccBaseCode.end()};
+    std::vector<std::uint32_t> code(VccBaseCode.begin(), VccBaseCode.begin() + 8);
+    const auto append = [&](std::size_t begin, std::size_t end) {
+        code.insert(code.end(), VccBaseCode.begin() + begin, VccBaseCode.begin() + end);
+    };
+    if (group == "dword") append(8, 10);
+    else if (group == "vector") append(12, 14);
+    else if (group == "atomic") append(10, 12);
+    else throw std::invalid_argument("global vcc base: invalid instruction group");
+    code.push_back(VccBaseCode[14]);
+    if (group == "dword") append(17, 19);
+    else if (group == "vector") append(15, 17);
+    else append(19, 21);
+    code.push_back(VccBaseCode.back());
+    return code;
+}
 
 class GuestBlock {
 public:
@@ -89,15 +109,19 @@ std::vector<std::uint32_t> Initial() {
     return memory;
 }
 
-std::vector<std::uint32_t> ExpectedBase() {
+std::vector<std::uint32_t> ExpectedBase(const std::string& group) {
     const auto initial = Initial();
     auto memory = initial;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         auto* out = &memory[OutputBase + tid * OutputDwords];
-        for (std::uint32_t component = 0; component < 4u; ++component) out[component] = initial[VectorBase + tid * 4u + component];
-        out[4] = initial[DwordBase + tid];
-        out[5] = initial[AtomicBase + tid];
-        memory[AtomicBase + tid] = initial[AtomicBase + tid] + tid * 16u;
+        if (group == "all" || group == "vector") {
+            for (std::uint32_t component = 0; component < 4u; ++component) out[component] = initial[VectorBase + tid * 4u + component];
+        }
+        if (group == "all" || group == "dword") out[4] = initial[DwordBase + tid];
+        if (group == "all" || group == "atomic") {
+            out[5] = initial[AtomicBase + tid];
+            memory[AtomicBase + tid] = initial[AtomicBase + tid] + tid * 16u;
+        }
     }
     return memory;
 }
@@ -166,23 +190,40 @@ void CheckRejections(const AgcDriver::VulkanDevice& device) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const std::string mode = argc == 1 ? "all" : argv[1];
+        const std::array<std::string, 12> modes{
+            "base-dword-wave32", "base-dword-wave64", "base-dword-split",
+            "base-vector-wave32", "base-vector-wave64", "base-vector-split",
+            "base-atomic-wave32", "base-atomic-wave64", "base-atomic-split",
+            "addtid-wave32", "addtid-wave64", "addtid-split"
+        };
+        Require(argc <= 2 && (mode == "all" || std::find(modes.begin(), modes.end(), mode) != modes.end()), "global vcc base: invalid test mode");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        CheckRejections(*device);
+        if (mode == "all" || mode == "base-dword-wave32") CheckRejections(*device);
         GuestBlock guest;
-        const auto base = ExpectedBase();
-        Run(*device, guest, VccBaseCode, 32, device->Target(), base, "wave32");
-        Run(*device, guest, VccBaseCode, 64, device->Target(), base, "wave64");
-        Run(*device, guest, VccBaseCode, 64, device->ComputeTarget(32), base, "wave64 split");
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("addtid cases skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
-        } else {
-            Run(*device, guest, VccAddtidCode, 32, device->Target(), ExpectedAddtid(32), "addtid wave32");
-            Run(*device, guest, VccAddtidCode, 64, device->Target(), ExpectedAddtid(64), "addtid wave64");
-            Run(*device, guest, VccAddtidCode, 64, device->ComputeTarget(32), ExpectedAddtid(64), "addtid wave64 split");
+        std::size_t checked = 0;
+        for (const auto& candidate : modes) {
+            if (mode != "all" && mode != candidate) continue;
+            const bool addtid = candidate.starts_with("addtid");
+            if (addtid && device->Target().subgroupSize < 32u) {
+                std::printf("%s skipped, the device's subgroups are narrower than a wave (%u lanes)\n", candidate.c_str(), device->Target().subgroupSize);
+                continue;
+            }
+            const std::uint32_t waveSize = candidate.ends_with("wave32") ? 32u : 64u;
+            const auto target = candidate.ends_with("split") ? device->ComputeTarget(32) : device->Target();
+            if (addtid) Run(*device, guest, VccAddtidCode, waveSize, target, ExpectedAddtid(waveSize), candidate);
+            else {
+                const auto separator = candidate.find('-', 5u);
+                const auto group = candidate.substr(5u, separator - 5u);
+                const auto code = BaseKernel(group);
+                Run(*device, guest, code, waveSize, target, ExpectedBase(group), candidate);
+            }
+            ++checked;
         }
+        if (checked == 0u) return VulkanTestSkipped;
         std::puts("global vcc base tests passed");
         return 0;
     } catch (const std::exception& error) {

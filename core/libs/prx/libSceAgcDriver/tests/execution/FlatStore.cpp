@@ -15,6 +15,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -36,6 +37,26 @@ alignas(256) constexpr std::array<std::uint32_t, 45> FlatStoreCode{
     0x0000080e, 0xdc748400, 0x0000080e, 0xdc7c8800, 0x0000090e, 0xdc308000, 0x0f000001, 0xdc708500,
     0x00000f01, 0x7da80090, 0xdc708300, 0x00000a01, 0xbf810000,
 };
+
+std::vector<std::uint32_t> Kernel(const std::string& group) {
+    if (group == "all") return {FlatStoreCode.begin(), FlatStoreCode.end()};
+    std::vector<std::uint32_t> code(FlatStoreCode.begin(), FlatStoreCode.begin() + 19);
+    const auto append = [&](std::size_t begin, std::size_t end) {
+        code.insert(code.end(), FlatStoreCode.begin() + begin, FlatStoreCode.begin() + end);
+    };
+    if (group == "scalar") append(19, 25);
+    else if (group == "feedback") {
+        append(19, 21);
+        append(37, 44);
+    } else if (group == "narrow") append(25, 29);
+    else if (group == "unaligned") append(29, 31);
+    else if (group == "vector4") append(31, 33);
+    else if (group == "vector3") append(35, 37);
+    else if (group == "vector2") append(33, 35);
+    else throw std::invalid_argument("flat store: invalid instruction group");
+    code.push_back(FlatStoreCode.back());
+    return code;
+}
 
 class GuestBlock {
 public:
@@ -64,34 +85,47 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-std::vector<std::uint8_t> Expected() {
+std::vector<std::uint8_t> Expected(const std::string& group) {
     std::vector<std::uint8_t> image(CheckedBytes, Fill);
     const auto put = [&](std::uint32_t offset, std::uint32_t value, std::uint32_t bytes) {
         for (std::uint32_t byte = 0; byte < bytes; ++byte) image.at(offset + byte) = static_cast<std::uint8_t>(value >> (byte * 8u));
     };
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::array<std::uint32_t, 4> data{0xa1b2c300u + tid, 0x51000000u + tid * 4u, 0x00c0ffeeu + tid * 16u, 0x7e570000u + tid * 8u};
-        put(0x000u + tid * 4u, data[0], 4);
-        put(0x100u + tid * 4u, data[1], 4);
-        put(0x200u + tid * 4u, data[2], 4);
-        if (tid < MaskedThreads) put(0x300u + tid * 4u, data[2], 4);
-        put(0x400u + tid, data[0], 1);
-        put(0x480u + tid * 2u, data[1], 2);
-        put(0x500u + tid * 4u, data[0], 4);
-        put(0x601u + tid * 8u, data[3], 4);
-        for (std::uint32_t dword = 0; dword < 3; ++dword) put(0x800u + tid * 16u + dword * 4u, data[dword + 1u], 4);
-        for (std::uint32_t dword = 0; dword < 4; ++dword) put(0x1000u + tid * 16u + dword * 4u, data[dword], 4);
-        for (std::uint32_t dword = 0; dword < 2; ++dword) put(0x1400u + tid * 16u + dword * 4u, data[dword], 4);
+        if (group == "all" || group == "scalar" || group == "feedback") put(0x000u + tid * 4u, data[0], 4);
+        if (group == "all" || group == "scalar") {
+            put(0x100u + tid * 4u, data[1], 4);
+            put(0x200u + tid * 4u, data[2], 4);
+        }
+        if (group == "all" || group == "feedback") {
+            if (tid < MaskedThreads) put(0x300u + tid * 4u, data[2], 4);
+            put(0x500u + tid * 4u, data[0], 4);
+        }
+        if (group == "all" || group == "narrow") {
+            put(0x400u + tid, data[0], 1);
+            put(0x480u + tid * 2u, data[1], 2);
+        }
+        if (group == "all" || group == "unaligned") put(0x601u + tid * 8u, data[3], 4);
+        if (group == "all" || group == "vector3") {
+            for (std::uint32_t dword = 0; dword < 3; ++dword) put(0x800u + tid * 16u + dword * 4u, data[dword + 1u], 4);
+        }
+        if (group == "all" || group == "vector4") {
+            for (std::uint32_t dword = 0; dword < 4; ++dword) put(0x1000u + tid * 16u + dword * 4u, data[dword], 4);
+        }
+        if (group == "all" || group == "vector2") {
+            for (std::uint32_t dword = 0; dword < 2; ++dword) put(0x1400u + tid * 16u + dword * 4u, data[dword], 4);
+        }
     }
     return image;
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std::uint8_t* base) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std::uint8_t* base, const std::string& group) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
     std::vector<std::uint32_t> userData(8, 0u);
     userData[0] = static_cast<std::uint32_t>(address);
     userData[1] = static_cast<std::uint32_t>(address >> 32u);
-    const std::span<const std::uint32_t> code(FlatStoreCode);
+    const auto kernel = Kernel(group);
+    const std::span<const std::uint32_t> code(kernel);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -106,18 +140,18 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std
     device.WaitIdle();
 }
 
-void RunStores(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize) {
+void RunStores(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize, const std::string& group) {
     guest.Clear();
-    Dispatch(device, waveSize, guest.Data());
-    const auto expected = Expected();
+    Dispatch(device, waveSize, guest.Data(), group);
+    const auto expected = Expected(group);
     for (std::uint32_t offset = 0; offset < CheckedBytes; ++offset) {
         const auto actual = guest.Data()[offset];
         Require(actual == expected[offset], "flat store: wave" + std::to_string(waveSize) + " byte " + std::to_string(offset) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[offset]));
     }
 }
 
-void RunReadOnly(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
-    Dispatch(device, 32, guest.Data());
+void RunReadOnly(AgcDriver::VulkanDevice& device, const GuestBlock& guest, const std::string& group) {
+    Dispatch(device, 32, guest.Data(), group);
     for (std::uint32_t offset = 0; offset < CheckedBytes; ++offset) {
         Require(guest.Data()[offset] == Fill, "flat store: a store into a read-only range changed byte " + std::to_string(offset));
     }
@@ -125,15 +159,28 @@ void RunReadOnly(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        std::string mode = argc == 1 ? "all" : argv[1];
+        std::string group = "all";
+        for (const std::string candidate : {"scalar", "feedback", "narrow", "unaligned", "vector2", "vector3", "vector4"}) {
+            if (!mode.starts_with(candidate + "-")) continue;
+            group = candidate;
+            mode.erase(0, candidate.size() + 1u);
+            break;
+        }
+        Require(argc <= 2 && (mode == "all" || mode == "wave32" || mode == "wave64" || mode == "read-only"), "flat store: invalid test mode");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        GuestBlock writable(true);
-        const GuestBlock readOnly(false);
-        RunStores(*device, writable, 32);
-        RunStores(*device, writable, 64);
-        RunReadOnly(*device, readOnly);
+        if (mode != "read-only") {
+            GuestBlock writable(true);
+            if (mode == "all" || mode == "wave32") RunStores(*device, writable, 32, group);
+            if (mode == "all" || mode == "wave64") RunStores(*device, writable, 64, group);
+        }
+        if (mode == "all" || mode == "read-only") {
+            const GuestBlock readOnly(false);
+            RunReadOnly(*device, readOnly, group);
+        }
         std::puts("flat store tests passed");
         return 0;
     } catch (const std::exception& error) {
