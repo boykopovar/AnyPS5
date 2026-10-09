@@ -47,6 +47,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaDescriptorFormat.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/ControlFlowGraph.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/GraphBuilder.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/UserDataCalls.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/Structurizer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/RequestSerializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/src/IrType.cpp
@@ -206,6 +207,7 @@ function(add_shader_recompiler target runtimeTarget)
     string(TOUPPER "${CMAKE_BUILD_TYPE}" shaderCacheBuildType)
     set(shaderCacheExtra "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} ${CMAKE_BUILD_TYPE} spirv-tools=${ANYPS5_ENABLE_SPIRV_TOOLS} ${CMAKE_SYSTEM_PROCESSOR} flags=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${shaderCacheBuildType}}")
     set(shaderCacheReviewedNames
+            AnalyzeUserDataCalls
             BuildPreparedShaderKey
             BuildRectListShaders
             CaptureResources
@@ -222,11 +224,13 @@ function(add_shader_recompiler target runtimeTarget)
             RecompileResult
             PrepareShader
             GetPreparedCode
+            GetPreparedCalls
             PreparedShaderInvocation::TryCreate
             MatchesPreparedShader
             GetPreparedArtifact
             MaterializeShader
             ResolveSource
+            ResolveUserDataCalls
             ResourceMaterializer::SpecializationNanoseconds
             RuntimeAbi::RequireVersion
             RuntimeAbi::HeapCapacity

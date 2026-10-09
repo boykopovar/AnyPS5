@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/LogMacros.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/UserDataCalls.hpp"
 #include "ControlFlow/Structurizer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -175,9 +176,11 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
     }
-    if (snapshot.header.empty()) {
-        if (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
-        APS5_LOG_ERR("Compute shader 0x%llx was not registered; preparing its artifact at dispatch", static_cast<unsigned long long>(snapshot.codeAddress));
+    if (snapshot.header.empty() || !request.shader.capturedCalls.empty()) {
+        if (snapshot.header.empty()) {
+            if (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
+            APS5_LOG_ERR("Compute shader 0x%llx was not registered; preparing its artifact at dispatch", static_cast<unsigned long long>(snapshot.codeAddress));
+        }
         auto handle = ShaderRecompiler::PrepareShader(request);
         snapshot.prepared->entries.push_back({codeOffset, handle});
         return handle;
@@ -202,26 +205,33 @@ ShaderRecompiler::RectListShaders PreparedRectangle(const ShaderSnapshot& snapsh
     throw std::runtime_error("AGC driver: prepared rectangle artifacts are missing");
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderMemory* memory) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
     auto invocationRequest = request;
+    ShaderRecompiler::CapturedCallProgram captured;
     struct PreparedKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
-    ShaderRecompiler::BuildPreparedShaderKey(request, key);
     std::lock_guard lock(snapshot.prepared->mutex);
+    const bool captureCalls = std::ranges::none_of(snapshot.prepared->entries, [&](const auto& entry) { return entry.codeOffset == codeOffset; }) || std::ranges::any_of(snapshot.prepared->entries, [&](const auto& entry) {
+        return entry.codeOffset == codeOffset && !ShaderRecompiler::GetPreparedCalls(*entry.handle).empty();
+    });
+    if (memory != nullptr && captureCalls && request.shader.stage == ShaderRecompiler::ShaderStage::Compute) {
+        captured = memory->ResolveCalls(request);
+        if (!captured.calls.empty()) {
+            invocationRequest.shader.code = captured.code;
+            invocationRequest.shader.capturedCalls = captured.calls;
+        }
+    }
+    ShaderRecompiler::BuildPreparedShaderKey(invocationRequest, key);
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset) continue;
-        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
         if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
     }
-    if (snapshot.header.empty()) {
-        if (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
-        APS5_LOG_ERR("Compute shader 0x%llx was not registered; preparing its artifact at dispatch", static_cast<unsigned long long>(snapshot.codeAddress));
-        auto handle = ShaderRecompiler::PrepareShader(request);
-        invocationRequest = request;
-        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+    if (snapshot.header.empty() || !captured.calls.empty()) {
+        if (snapshot.header.empty() && (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute)) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
+        auto handle = ShaderRecompiler::PrepareShader(invocationRequest);
         auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
         if (!invocation.has_value()) throw std::runtime_error("AGC driver: raw compute artifact does not match its invocation");
         snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
@@ -366,6 +376,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     std::vector<std::uint32_t> userData(userCount);
     if (stage != Stage::Compute && stage != Stage::Fragment && snapshot.type != 6) vertex = Graphics::DecodeVertexStageInfo(snapshot.header, snapshot.headerAddress, userData, nullptr, true);
     const ShaderRecompiler::SwappcInfo swappc{vertex.has_value(), firstUser, userCount};
+    if (stage == Stage::Compute && !ShaderRecompiler::AnalyzeUserDataCalls(decoded, swappc).empty()) return {};
     auto graph = ShaderRecompiler::GraphBuilder{}.Build(decoded, &swappc);
     ShaderRecompiler::Structurizer{}.Structurize(graph);
     const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}};

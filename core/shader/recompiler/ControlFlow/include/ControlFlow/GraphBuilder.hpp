@@ -3,6 +3,7 @@
 
 #include "ControlFlow/ControlFlowGraph.hpp"
 #include "RdnaDecoder/RdnaProgram.hpp"
+#include "Recompiler.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -12,6 +13,7 @@ struct SwappcInfo {
     bool fetchCallAllowed = false;
     std::uint32_t userDataBaseRegister = 0;
     std::uint32_t userDataCount = 0;
+    std::span<const CapturedShaderCall> capturedCalls{};
 };
 
 struct SwappcCall {
@@ -22,7 +24,16 @@ struct SwappcCall {
     std::uint32_t targetProgramCounter = 0;
     std::uint32_t returnIndex = 0;
     std::uint32_t returnTargetProgramCounter = 0;
+    bool captured = false;
 };
+
+struct UserDataCall {
+    std::uint32_t callIndex;
+    std::uint32_t userDataIndex;
+};
+
+[[nodiscard]] std::vector<UserDataCall> AnalyzeUserDataCalls(const RdnaProgram& program, const SwappcInfo& swappc);
+[[nodiscard]] bool WritesScalarRegister(const RdnaInstruction& instruction, std::uint32_t index);
 
 class GraphBuilder {
 public:

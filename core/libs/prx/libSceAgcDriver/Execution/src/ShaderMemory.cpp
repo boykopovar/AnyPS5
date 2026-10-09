@@ -4,6 +4,7 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "ControlFlow/UserDataCalls.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -219,6 +220,21 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(c
     return capture(invocation.Request(), nullptr, &invocation);
 }
 
+ShaderRecompiler::CapturedCallProgram ShaderMemory::ResolveCalls(const ShaderRecompiler::RecompileRequest& request) {
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Capture);
+    const auto reader = [](void* context, std::uint64_t address, std::uint32_t* value) {
+        auto& memory = *static_cast<ShaderMemory*>(context);
+        const auto next = memory.initial.upper_bound(address);
+        if (next != memory.initial.begin()) {
+            const auto previous = std::prev(next);
+            if (address - previous->first < previous->second.size()) throw std::runtime_error("AGC driver: captured callee code aliases a registered shader snapshot");
+        }
+        memory.callCodeReads.push_back(address);
+        return read(context, address, value);
+    };
+    return ShaderRecompiler::ResolveUserDataCalls(request, reader, this);
+}
+
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation) {
     // The capture's word and page reads (through `read`) are attributed to it ([hooksync], [guestmem]).
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Capture);
@@ -234,6 +250,14 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.readMemory = &read;
     runtime.readSpecializationMemory = &read;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
+    if (!callCodeReads.empty()) {
+        auto traced = std::make_shared<ShaderRecompiler::ResourceCapture>(*capture);
+        auto& reads = traced->readTrace.otherReads;
+        reads.insert(reads.end(), callCodeReads.begin(), callCodeReads.end());
+        std::sort(reads.begin(), reads.end());
+        reads.erase(std::unique(reads.begin(), reads.end()), reads.end());
+        capture = std::move(traced);
+    }
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
         totals.resolveNanoseconds += capture->sourceNanoseconds;

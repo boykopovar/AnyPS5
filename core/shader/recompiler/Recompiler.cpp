@@ -18,6 +18,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/UserDataCalls.hpp"
 #include "ControlFlow/include/ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrProgram.hpp"
@@ -95,20 +96,39 @@ ShaderStageInputInfo RequestInputInfo(const RecompileRequest& request) {
     return BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request), mesh, tessellation);
 }
 
+bool capturedCallsMatchUserData(std::span<const CapturedShaderCall> calls, std::span<const std::uint32_t> userData) {
+    for (const auto& call : calls) {
+        if (call.userDataIndex >= userData.size() || userData.size() - call.userDataIndex < 2u) return false;
+        const auto address = static_cast<std::uint64_t>(userData[call.userDataIndex]) | (static_cast<std::uint64_t>(userData[call.userDataIndex + 1u]) << 32u);
+        if (address != call.targetAddress) return false;
+    }
+    return true;
+}
+
 }
 
 IrProgram PrepareResourceProgram(const RecompileRequest& request) {
+    if (!capturedCallsMatchUserData(request.shader.capturedCalls, request.context.userData)) throw std::invalid_argument("captured scalar call targets do not match invocation user data");
     const auto stageKind = toShaderStageKind(request.shader.stage);
     const auto inputInfo = RequestInputInfo(request);
 
-    constexpr RdnaInstructionDecoder decoder;
-    const auto decoded = decoder.Decode(request.shader.code);
+    const auto decoded = DecodeShaderProgram(request.shader);
 
     constexpr GraphBuilder graphBuilder;
     SwappcInfo swappcInfo;
     swappcInfo.fetchCallAllowed = inputInfo.vertex != nullptr;
     swappcInfo.userDataBaseRegister = request.context.userDataBaseRegister;
     swappcInfo.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
+    swappcInfo.capturedCalls = request.shader.capturedCalls;
+    if (!request.shader.capturedCalls.empty()) {
+        const auto targets = AnalyzeUserDataCalls(decoded, swappcInfo);
+        if (targets.size() != request.shader.capturedCalls.size()) throw std::invalid_argument("captured scalar call provenance does not match the program");
+        for (std::size_t index = 0; index < targets.size(); ++index) {
+            if (decoded.instructions[targets[index].callIndex].programCounter != request.shader.capturedCalls[index].callProgramCounter || targets[index].userDataIndex != request.shader.capturedCalls[index].userDataIndex) {
+                throw std::invalid_argument("captured scalar call provenance does not match the call site");
+            }
+        }
+    }
     auto cfg = graphBuilder.Build(decoded, &swappcInfo);
 
     constexpr Structurizer structurizer;
@@ -206,6 +226,7 @@ struct SourceEntry {
     // accepted only when its code matches word for word. Owned here because the request's span
     // points into a registration the driver may replace while the entry lives on.
     std::vector<std::uint32_t> code;
+    std::vector<CapturedShaderCall> capturedCalls;
     std::shared_ptr<const IrResourcePlan> plan;
     // A plan build that threw (an unsupported resource chain or control flow) is remembered and
     // rethrown: the front end ran every pass before failing, ~13 ms per dispatch of a shader the
@@ -249,6 +270,7 @@ bool FailureMemo() {
 }
 
 std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
+    if (!capturedCallsMatchUserData(request.shader.capturedCalls, request.context.userData)) throw std::invalid_argument("captured scalar call targets do not match invocation user data");
     static std::shared_mutex mutex;
     // Entries whose code hashes alike share a bucket; the code comparison picks the right one.
     static std::unordered_map<std::vector<std::uint64_t>, std::vector<std::shared_ptr<SourceEntry>>, SourceKeyHash> sources;
@@ -275,6 +297,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
         if (source == nullptr) {
             source = std::make_shared<SourceEntry>();
             source->code.assign(request.shader.code.begin(), request.shader.code.end());
+            source->capturedCalls.assign(request.shader.capturedCalls.begin(), request.shader.capturedCalls.end());
             auto& bucket = sources[key];
             if (!bucket.empty()) {
                 // A second entry under one key is a code hash collision (or the unhashed key with
@@ -959,6 +982,7 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
 }
 
 std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime) {
+    if (!capturedCallsMatchUserData(request.shader.capturedCalls, runtime.userData)) throw std::invalid_argument("captured scalar call targets do not match capture user data");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // Validates the stage inputs once per request, as GetResourcePlan and Recompile(request) do.
@@ -1008,6 +1032,7 @@ void BuildPreparedShaderKey(const RecompileRequest& request, std::vector<std::ui
 }
 
 bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle, std::span<const std::uint64_t> key) {
+    if (!capturedCallsMatchUserData(request.shader.capturedCalls, request.context.userData)) return false;
     if (handle.source == nullptr || handle.artifact == nullptr) return false;
     const auto& layout = request.layout;
     const auto& prepared = handle.artifact->bindings.layout;
@@ -1025,7 +1050,15 @@ std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle) {
     return handle.source->code;
 }
 
-PreparedShaderInvocation::PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) : request(request), handle(handle) {}
+std::span<const CapturedShaderCall> GetPreparedCalls(const SourceHandle& handle) {
+    if (handle.source == nullptr || handle.artifact == nullptr) throw std::runtime_error("ShaderRecompiler: prepared artifact is missing");
+    return handle.source->capturedCalls;
+}
+
+PreparedShaderInvocation::PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) : request(request), handle(handle) {
+    this->request.shader.code = handle->source->code;
+    this->request.shader.capturedCalls = handle->source->capturedCalls;
+}
 
 std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) {
     struct PreparedKeyStorage {};
@@ -1041,6 +1074,7 @@ std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(cons
 }
 
 std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const SrtRuntime& runtime) const {
+    if (!capturedCallsMatchUserData(handle->source->capturedCalls, runtime.userData)) throw std::invalid_argument("captured scalar call targets do not match capture user data");
     auto capture = std::make_shared<ResourceCapture>();
     capture->source = handle->source;
     capture->plan = handle->source->plan;
@@ -1049,6 +1083,7 @@ std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const S
 }
 
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(const ResourceCapture& capture) const {
+    if (!capturedCallsMatchUserData(handle->source->capturedCalls, request.context.userData)) throw std::invalid_argument("captured scalar call targets do not match invocation user data");
     if (capture.source != handle->source || capture.plan != handle->source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr);
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot));
@@ -1072,6 +1107,7 @@ std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest&
 
 std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime, const SourceHandle& handle) {
     if (handle.source == nullptr) throw std::runtime_error("ShaderRecompiler: source handle is missing");
+    if (!capturedCallsMatchUserData(handle.source->capturedCalls, runtime.userData)) throw std::invalid_argument("captured scalar call targets do not match capture user data");
     if (handle.artifact != nullptr && !MatchesPreparedShader(request, handle)) throw std::runtime_error("ShaderRecompiler: prepared artifact does not match the static ABI");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

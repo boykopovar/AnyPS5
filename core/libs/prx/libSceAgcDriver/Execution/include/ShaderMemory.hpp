@@ -14,6 +14,7 @@
 
 namespace ShaderRecompiler {
 struct SourceHandle;
+struct CapturedCallProgram;
 class PreparedShaderInvocation;
 }
 
@@ -63,6 +64,7 @@ public:
     // resolution.
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle = nullptr);
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> Capture(const ShaderRecompiler::PreparedShaderInvocation& invocation);
+    ShaderRecompiler::CapturedCallProgram ResolveCalls(const ShaderRecompiler::RecompileRequest& request);
     [[nodiscard]] std::vector<ShaderRecompiler::MemoryRegion> Regions() const;
     // The page regions read since the previous call (or construction), a word read again
     // included, the initial regions excluded: one stage's own reads on the draw path's shared
@@ -91,6 +93,7 @@ private:
     // the caller keeps them alive for as long as the capture is used.
     std::map<std::uint64_t, std::span<const std::byte>> initial;
     std::map<std::uint64_t, Page> pages;
+    std::vector<std::uint64_t> callCodeReads;
     PendingWriteQuery pendingWrite = nullptr;
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;

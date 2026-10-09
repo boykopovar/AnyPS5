@@ -14,6 +14,7 @@ namespace ShaderRecompiler {
         std::vector<std::uint32_t> code;
         std::vector<std::byte> header;
         std::vector<std::uint32_t> userData;
+        std::vector<CapturedShaderCall> calls;
     };
 
     struct DeserializedGraphicsCompileContext {
@@ -27,6 +28,7 @@ namespace ShaderRecompiler {
     struct DeserializedRequest {
         std::vector<std::uint32_t> shaderCode;
         std::vector<std::byte> shaderHeader;
+        std::vector<CapturedShaderCall> calls;
         std::vector<std::uint32_t> userData;
         std::optional<ShaderComputeStageInfo> compute;
         std::optional<ShaderPixelStageInfo> pixel;

@@ -31,12 +31,25 @@ struct MemoryRegion {
     std::span<const std::byte> bytes;
 };
 
+inline constexpr std::uint32_t MaxCapturedShaderCalls = 64;
+
+struct CapturedShaderCall {
+    std::uint32_t callProgramCounter;
+    std::uint32_t targetProgramCounter;
+    std::uint32_t returnProgramCounter;
+    std::uint64_t targetAddress;
+    std::uint32_t userDataIndex;
+
+    bool operator==(const CapturedShaderCall&) const = default;
+};
+
 struct ShaderBinary {
     ShaderStage stage;
     std::uint64_t codeAddress;
     std::span<const std::uint32_t> code;
     std::uint64_t headerAddress;
     std::span<const std::byte> header;
+    std::span<const CapturedShaderCall> capturedCalls{};
 };
 
 struct ShaderComputeStageInfo {

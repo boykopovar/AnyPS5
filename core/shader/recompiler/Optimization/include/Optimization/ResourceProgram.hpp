@@ -54,6 +54,7 @@ private:
     std::shared_ptr<const SourceHandle> handle;
 };
 [[nodiscard]] std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle);
+[[nodiscard]] std::span<const CapturedShaderCall> GetPreparedCalls(const SourceHandle& handle);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle);
 void BuildPreparedShaderKey(const RecompileRequest& request, std::vector<std::uint64_t>& key);

@@ -619,6 +619,7 @@ target_link_libraries(agc_driver_interpolation_modes_tests PRIVATE shader_recomp
 target_include_directories(agc_driver_prepared_shaders_tests PRIVATE
         $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
 )
+target_include_directories(agc_driver_user_data_swappc_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 if(BUILD_TESTING)
     add_test(NAME agc_shader_bindless COMMAND agc_shader_memory_tests --bindless)
@@ -952,6 +953,16 @@ if(BUILD_TESTING)
     add_test(NAME scalar_swappc COMMAND scalar_swappc_tests)
     if(WIN32)
         set_tests_properties(scalar_swappc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(user_data_swappc_tests ${LIBS_INCLUDE_DIR}/tests/UserDataSwappc.cpp)
+    target_link_libraries(user_data_swappc_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(user_data_swappc_tests)
+    add_test(NAME user_data_swappc COMMAND user_data_swappc_tests)
+    set_tests_properties(user_data_swappc PROPERTIES TIMEOUT 30)
+    set_tests_properties(agc_driver_user_data_swappc PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(user_data_swappc PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(scalar_bitcount64_tests ${LIBS_INCLUDE_DIR}/tests/ScalarBitCount64.cpp)
