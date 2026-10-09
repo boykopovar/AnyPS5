@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -708,6 +709,8 @@ void DepthStencilTests() {
     queue.context[0x011] = 0x20000181;
     for (const auto offset : {0x012u, 0x014u}) queue.context[offset] = 0x100;
     for (const auto offset : {0x013u, 0x015u}) queue.context[offset] = 0x200;
+    queue.context[0x005] = 0x300;
+    queue.context[0x01e] = 0x1;
     queue.context[0x10b] = 0x00050050;
     queue.context[0x10c] = 0x01ffff01;
     queue.context[0x10d] = 0x01000001;
@@ -721,7 +724,28 @@ void DepthStencilTests() {
     queue.context[0x1b4] = 2;
     const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
     Require(rejection.empty(), "precheck rejected a stencil draw with a surface: " + rejection);
-    Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7, "depth surface decode changed");
+    Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7 && state.depth->htileAddress == 0x10000030000ull && !state.depth->htileStencil, "depth surface decode changed");
+    {
+        queue.context[0x011] &= ~(1u << 29u);
+        const auto stencilTiled = AgcDriver::Graphics::DecodeState(queue);
+        Require(stencilTiled.depth && stencilTiled.depth->htileStencil, "HTILE holds the stencil state without TILE_STENCIL_DISABLE");
+        queue.context[0x011] |= 1u << 29u;
+        queue.context[0x010] &= ~(1u << 29u);
+        const auto untiled = AgcDriver::Graphics::DecodeState(queue);
+        Require(untiled.depth && untiled.depth->htileAddress == 0, "HTILE must be ignored without TILE_SURFACE_ENABLE");
+        queue.context[0x010] |= 1u << 29u;
+        using AgcDriver::Graphics::HtileFillClears;
+        using AgcDriver::Graphics::HtileFillCovers;
+        constexpr VkImageAspectFlags both = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        Require(HtileFillClears(0x0003fff0u, false) == VK_IMAGE_ASPECT_DEPTH_BIT, "a depth-only HTILE fill with ZMask 0 clears the depth");
+        Require(HtileFillClears(0x000000f0u, true) == both, "a depth and stencil fast clear (ZMask 0, SMem 0) clears both aspects");
+        Require(HtileFillClears(0x000003f0u, true) == VK_IMAGE_ASPECT_DEPTH_BIT, "SMem 3 leaves the stencil uncleared");
+        Require(HtileFillClears(0xfffff0ffu, true) == VK_IMAGE_ASPECT_STENCIL_BIT, "ZMask 0xf with SMem 0 clears only the stencil");
+        Require(HtileFillClears(0xffffffffu, true) == 0 && HtileFillClears(0xffffffffu, false) == 0, "an expanded fill clears nothing");
+        const VkExtent2D extent{16, 8};
+        Require(HtileFillCovers(0x1000, extent, 0x1000, 8) && HtileFillCovers(0x1000, extent, 0xff0, 0x20), "a fill over every HTILE word covers the surface");
+        Require(!HtileFillCovers(0x1000, extent, 0x1000, 4) && !HtileFillCovers(0x1000, extent, 0x1004, 8) && !HtileFillCovers(0, extent, 0, 64), "a partial fill, one starting past the HTILE base, or no HTILE covers nothing");
+    }
     Require(state.renderExtent.width == 4 && state.renderExtent.height == 2, "render extent ignores the depth surface");
     Require(!state.depthTest && !state.depthWrite && state.stencilTest, "depth/stencil enables changed");
     const auto& front = state.stencilFront;
