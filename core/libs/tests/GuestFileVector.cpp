@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #ifdef _WIN32
 #include <fcntl.h>
@@ -47,6 +48,17 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+template <typename TFunction>
+static void RequireThrows(TFunction function) {
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw);
+}
 
 static constexpr std::int64_t ErrorEbadf = static_cast<int>(0x80020009u);
 static constexpr std::int64_t ErrorEnoent = static_cast<int>(0x80020002u);
@@ -136,7 +148,13 @@ int main() {
     Require(sceKernelWrite(file, "!", 1) == 1);
     Require(sceKernelLseek(file, 13, 0) == 13);
     Require(sceKernelRead(file, first, 1) == 1 && first[0] == '!');
-    Require(sceKernelLseek(file, 0, 3) == ErrorEinval);
+    Require(sceKernelLseek(file, 0, 5) == ErrorEinval);
+    Require(sceKernelLseek(file, 0, -1) == ErrorEinval);
+    Require(sceKernelLseek(file, 0, 0) == 0);
+    RequireThrows([&] { sceKernelLseek(file, 0, 3); });
+    Require(sceKernelLseek(file, 0, 1) == 0);
+    RequireThrows([&] { sceKernelLseek(file, 0, 4); });
+    Require(sceKernelLseek(file, 0, 1) == 0);
     Require(sceKernelLseek(-1, 0, 0) == ErrorEbadf);
     Require(sceKernelRead(-1, first, sizeof(first)) == ErrorEbadf);
     Require(sceKernelWrite(-1, "x", 1) == ErrorEbadf);

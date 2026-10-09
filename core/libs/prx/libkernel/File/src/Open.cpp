@@ -205,7 +205,8 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
 }
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
-    if (whence < 0 || whence > 2) return SceErrorFromErrno(EINVAL);
+    if (whence < 0 || whence > 4) return SceErrorFromErrno(EINVAL);
+    if (whence == 3 || whence == 4) NotImplemented_nid_no_patch(__func__);
     std::int64_t result = NativeLseek(d, offset, whence);
     return result < 0 ? SceErrorFromErrno(errno) : result;
 }
