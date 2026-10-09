@@ -231,7 +231,7 @@ void RunGuestSamplerResourceTests() {
     Require(result.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "clamp mode 2 must decode to clamp-to-edge");
     Require(!result.anisotropyEnable && result.maxAnisotropy == 1.0f, "non-anisotropic filter must leave anisotropy disabled");
     Require(nearlyEqual(result.maxLod, 12.0f), "max LOD decoded incorrectly");
-    Require(result.borderColor == VK_BORDER_COLOR_INT_TRANSPARENT_BLACK, "border color type 0 must decode to transparent black");
+    Require(result.borderColor == VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, "border color type 0 must decode to transparent black");
 
     Fields nearest = base;
     nearest.xyMagFilter = 0;
@@ -303,7 +303,7 @@ void RunGuestSamplerResourceTests() {
     requireUnnormalized(unnormalized, "captured unnormalized S#");
     Require(unnormalized.magFilter == VK_FILTER_LINEAR && unnormalized.minFilter == VK_FILTER_LINEAR, "captured unnormalized S# filters decoded incorrectly");
     Require(unnormalized.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && unnormalized.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "captured unnormalized S# clamp modes decoded incorrectly");
-    Require(unnormalized.borderColor == VK_BORDER_COLOR_INT_TRANSPARENT_BLACK, "captured unnormalized S# border color decoded incorrectly");
+    Require(unnormalized.borderColor == VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, "captured unnormalized S# border color decoded incorrectly");
     Require(!DecodeSamplerResource(pack(base)).unnormalizedCoordinates, "a normalized S# decoded to unnormalized coordinates");
 
     Fields unnormalizedBase = base;
@@ -314,7 +314,7 @@ void RunGuestSamplerResourceTests() {
     const auto point = DecodeSamplerResource(pack(unnormalizedPoint), true);
     requireUnnormalized(point, "unnormalized point S#");
     Require(point.magFilter == VK_FILTER_NEAREST && point.minFilter == VK_FILTER_NEAREST, "unnormalized point S# filters decoded incorrectly");
-    const std::array borders{VK_BORDER_COLOR_INT_TRANSPARENT_BLACK, VK_BORDER_COLOR_INT_OPAQUE_BLACK, VK_BORDER_COLOR_INT_OPAQUE_WHITE};
+    const std::array borders{VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK, VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE};
     for (std::uint32_t type = 0; type < borders.size(); ++type) {
         Fields border = unnormalizedBase;
         border.clampX = 6;
@@ -423,10 +423,13 @@ void RunGuestSamplerResourceTests() {
 
     Fields opaqueBlack = base;
     opaqueBlack.borderColorType = 1;
-    Require(DecodeSamplerResource(pack(opaqueBlack)).borderColor == VK_BORDER_COLOR_INT_OPAQUE_BLACK, "border color type 1 must decode to opaque black");
+    Require(DecodeSamplerResource(pack(opaqueBlack)).borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK, "border color type 1 must decode to opaque black");
+    Require(DecodeSamplerResource(pack(opaqueBlack), false, true).borderColor == VK_BORDER_COLOR_INT_OPAQUE_BLACK, "border color type 1 of a sampler for integer images must decode to integer opaque black");
     Fields opaqueWhite = base;
     opaqueWhite.borderColorType = 2;
-    Require(DecodeSamplerResource(pack(opaqueWhite)).borderColor == VK_BORDER_COLOR_INT_OPAQUE_WHITE, "border color type 2 must decode to opaque white");
+    Require(DecodeSamplerResource(pack(opaqueWhite)).borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, "border color type 2 must decode to opaque white");
+    Require(DecodeSamplerResource(pack(opaqueWhite), false, true).borderColor == VK_BORDER_COLOR_INT_OPAQUE_WHITE, "border color type 2 of a sampler for integer images must decode to integer opaque white");
+    Require(DecodeSamplerResource(pack(base), false, true).borderColor == VK_BORDER_COLOR_INT_TRANSPARENT_BLACK, "border color type 0 of a sampler for integer images must decode to integer transparent black");
 
     Fields positiveBias = base;
     positiveBias.lodBiasRaw = 256;

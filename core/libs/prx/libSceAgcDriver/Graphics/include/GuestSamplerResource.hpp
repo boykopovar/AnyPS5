@@ -29,7 +29,7 @@ struct GuestSamplerResource {
     bool unnormalizedCoordinates = false;
 };
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false);
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false, bool integerBorder = false);
 
 }
 

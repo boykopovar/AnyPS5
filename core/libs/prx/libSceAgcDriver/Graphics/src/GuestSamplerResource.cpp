@@ -54,7 +54,7 @@ float toSignedLodBias(std::uint32_t raw) {
 
 }
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven) {
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool integerBorder) {
     Require(words.size() == 4, "guest sampler descriptor must contain 4 dwords");
 
     const auto clampX = (words[0] >> 0u) & 0x7u;
@@ -136,12 +136,12 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
 
     VkBorderColor border;
     switch (borderColorType) {
-        case 0: border = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK; break;
-        case 1: border = VK_BORDER_COLOR_INT_OPAQUE_BLACK; break;
-        case 2: border = VK_BORDER_COLOR_INT_OPAQUE_WHITE; break;
+        case 0: border = integerBorder ? VK_BORDER_COLOR_INT_TRANSPARENT_BLACK : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK; break;
+        case 1: border = integerBorder ? VK_BORDER_COLOR_INT_OPAQUE_BLACK : VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK; break;
+        case 2: border = integerBorder ? VK_BORDER_COLOR_INT_OPAQUE_WHITE : VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; break;
         default:
             if (readsBorderColor(clampX) || readsBorderColor(clampY) || readsBorderColor(clampZ)) throw std::runtime_error("AGC graphics: guest sampler descriptor uses a border color table which is not implemented");
-            border = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
+            border = integerBorder ? VK_BORDER_COLOR_INT_TRANSPARENT_BLACK : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
             break;
     }
 

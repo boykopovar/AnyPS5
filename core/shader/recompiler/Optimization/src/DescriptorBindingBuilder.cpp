@@ -295,13 +295,20 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({PipelineSpecialization::ExportBase + target * 4u + component, (exportMappings[target] >> (component * 2u)) & 3u});
     }
     std::vector<std::uint32_t> samplerModes(info.samplers.size(), 0u);
+    std::vector<std::uint32_t> samplerIntegerModes(info.samplers.size(), 0u);
+    std::vector<std::uint32_t> samplerFloatModes(info.samplers.size(), 0u);
     const auto samplerMode = [](const ImageResource& image) { return image.numericClass == IrTextureNumericClass::Sint || image.conversionFormat != IrBufferFormat::Invalid || image.depthBits ? 2u : 1u; };
+    const auto pairSampler = [&](std::uint32_t sampler, const ImageResource& image) {
+        const auto mode = samplerMode(image);
+        samplerModes.at(sampler) |= mode;
+        (image.numericClass == IrTextureNumericClass::Uint || image.numericClass == IrTextureNumericClass::Sint ? samplerIntegerModes : samplerFloatModes).at(sampler) |= mode;
+    };
     for (const auto& pair : info.sampledPairs) {
         const auto& image = info.images.at(pair.image);
-        if (image.indirectRoot == ImageResource::NoIndirectImage) samplerModes.at(pair.sampler) |= samplerMode(info.runtimeImageModes.at(pair.image).at(imageModes[pair.image]));
+        if (image.indirectRoot == ImageResource::NoIndirectImage) pairSampler(pair.sampler, info.runtimeImageModes.at(pair.image).at(imageModes[pair.image]));
         else {
             const auto& root = info.images.at(image.indirectRoot);
-            for (const auto slot : root.indirectResources) samplerModes.at(pair.sampler) |= samplerMode(info.runtimeImageModes.at(slot).at(imageModes[slot]));
+            for (const auto slot : root.indirectResources) pairSampler(pair.sampler, info.runtimeImageModes.at(slot).at(imageModes[slot]));
         }
     }
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
@@ -407,6 +414,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 for (const auto& pair : info.sampledPairs) if (pair.sampler == resource) compare |= info.images.at(pair.image).depthCompare && compareStates.at(pair.image) == 0u;
                 physical.samplerDepthCompare.push_back(compare);
                 physical.samplerUnnormalized.push_back(unnormalized.samplers.at(resource));
+                const auto mode = 1u << (originals[element] & 1u);
+                physical.samplerIntegerBorder.push_back((samplerIntegerModes.at(resource) & mode) != 0u && (samplerFloatModes.at(resource) & mode) == 0u);
                 if ((originals[element] & 1u) != 0u) entry.samplerFilterElements.push_back(element);
             }
         } else if (physical.role == DescriptorRole::ShaderData && layout.UsesPushData()) {
