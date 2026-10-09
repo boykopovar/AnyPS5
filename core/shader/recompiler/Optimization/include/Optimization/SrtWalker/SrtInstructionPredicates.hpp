@@ -6,6 +6,7 @@
 namespace ShaderRecompiler::Detail {
 
 bool IsRawRead(const IrResourcePlan& program, const IrValue& inst);
+bool LoadedFromMemory(const IrValue& handle);
 bool IsDescriptorHandle(IrOpcode opcode);
 bool IsRuntimeSelect(IrOpcode opcode);
 bool IsRuntimeUniformOp(IrOpcode opcode);

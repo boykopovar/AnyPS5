@@ -88,7 +88,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
         std::uint64_t unstable = 0, mismatches = 0;
         for (std::size_t i = 0; i < programs.size(); ++i) {
             const auto& stageCapture = stageCaptures[i];
-            if (stageCapture.compiled == nullptr) continue;
+            if (stageCapture.compiled == nullptr || !CacheableResult(*stageCapture.compiled)) continue;
             auto variant = std::make_shared<DispatchVariant>();
             variant->compiled = stageCapture.compiled;
             variant->shader = programs[i].snapshot;

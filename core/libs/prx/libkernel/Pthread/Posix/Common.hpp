@@ -10,6 +10,8 @@ extern "C" int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* 
 
 namespace PosixThread {
 
+constexpr int GUEST_ESRCH = 3;
+constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;
 constexpr int GUEST_ETIMEDOUT = 60;
 

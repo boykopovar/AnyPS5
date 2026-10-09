@@ -18,6 +18,7 @@ static constexpr std::uint8_t COMMAND_TYPE_FLOAT = 1;
 static constexpr std::uint8_t COMMAND_TYPE_INT = 3;
 static constexpr std::uint8_t COMMAND_TYPE_UINT = 4;
 static constexpr std::uint8_t COMMAND_TYPE_FLOAT_ARRAY = 0x11;
+static constexpr float MAX_MATRIX_LEVEL = 4.0f;
 
 void Ngs2Voice::SetEvent(std::uint32_t eventId) {
     switch (eventId) {
@@ -34,6 +35,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
         case SCE_NGS2_VOICE_EVENT_STOP_IMM:
         case SCE_NGS2_VOICE_EVENT_KILL:
             state = Ngs2PlayState::Empty;
+            Ngs2ClearReverb(*this);
             break;
         case SCE_NGS2_VOICE_EVENT_PAUSE:
             if (state == Ngs2PlayState::Playing) state = Ngs2PlayState::Paused;
@@ -92,10 +94,12 @@ static Ngs2Port& PortAt(Ngs2Voice& voice, std::uint32_t port) {
 }
 
 static void SetMatrixLevels(Ngs2Voice& voice, std::uint32_t matrixId, const float* levels, std::uint32_t numLevels) {
-    if (matrixId >= voice.matrices.size() || numLevels > NGS2_MAX_CHANNELS * NGS2_MAX_CHANNELS || (levels == nullptr && numLevels != 0)) {
+    if (matrixId >= voice.matrices.size() || numLevels == 0 || numLevels > NGS2_MAX_CHANNELS * NGS2_MAX_CHANNELS || levels == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    voice.matrices[matrixId].assign(levels, levels + numLevels);
+    auto& matrix = voice.matrices[matrixId];
+    matrix.resize(numLevels);
+    for (std::uint32_t i = 0; i < numLevels; i++) matrix[i] = std::clamp(levels[i], -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
 }
 
 static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t matrixId) {
@@ -304,6 +308,21 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             if (ParamAs<Ngs2SubmixerVoiceSetupParam>(param).flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
             SetupMixer(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);
             return;
+        case SCE_NGS2_RACK_ID_REVERB:
+            if (param.id == SCE_NGS2_REVERB_VOICE_PARAM_SETUP) {
+                const auto& setup = ParamAs<Ngs2ReverbVoiceSetupParam>(param);
+                if (setup.flags != 0) throw std::runtime_error("NGS2: reverb setup flags are not implemented");
+                if (setup.num_input_channels != setup.num_output_channels) throw std::runtime_error("NGS2: reverb channel conversion is not implemented");
+                if (setup.num_output_channels != 1 && setup.num_output_channels != 2 && setup.num_output_channels != 6 && setup.num_output_channels != 8) APS5_INVALID_ARG_EX;
+                SetupMixer(voice, setup.num_output_channels);
+                Ngs2SetupReverb(voice);
+                return;
+            }
+            if (param.id == SCE_NGS2_REVERB_VOICE_PARAM_I3DL2) {
+                Ngs2SetReverbParams(voice, ParamAs<Ngs2ReverbVoiceI3DL2Param>(param).i3dl2);
+                return;
+            }
+            break;
         case SCE_NGS2_RACK_ID_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP) {
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
@@ -384,6 +403,12 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             sampler.decoded_data_size = voice.decodedBytes;
             sampler.user_data = voice.blocks.empty() ? 0 : voice.blocks.front().info.user_data;
             sampler.waveform_data = voice.WaveformData();
+            return SCE_NGS2_OK;
+        }
+        case SCE_NGS2_RACK_ID_REVERB: {
+            if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            *state = {};
+            state->state_flags = voice.stateFlags;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_SUBMIXER: {

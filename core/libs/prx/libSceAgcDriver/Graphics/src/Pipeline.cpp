@@ -558,7 +558,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     store.entries.push_back({context.device, context.bufferPool, hash, key, pipeline});
     store.index[hash] = std::prev(store.entries.end());
-    constexpr std::size_t bound = 256;
+    constexpr std::size_t bound = 1024;
     while (store.entries.size() > bound) {
         // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
         const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });

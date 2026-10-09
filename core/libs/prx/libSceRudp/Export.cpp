@@ -52,9 +52,13 @@ int APS5_VABI sceRudpActivate() {
 }
 
 int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
-    (void)status;
-    (void)size;
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (status != nullptr && size != 0) {
+        std::memset(status, 0, size);  // state 0 = idle, no connections
+    }
     return 0;
 }
 

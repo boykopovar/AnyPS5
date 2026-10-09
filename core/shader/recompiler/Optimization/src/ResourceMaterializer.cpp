@@ -444,7 +444,7 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
 
     std::vector<DescriptorValue> values;
     std::vector<std::uint8_t> activeSources;
-    walker.EvaluateRuntimeSources(plan, plan.materializationSources, runtime, values, snapshot.flattenedSrt, plan.cleanFlatSlots, activeSources);
+    walker.EvaluateRuntimeSources(plan, plan.materializationSources, runtime, values, snapshot.flattenedSrt, plan.cleanFlatSlots, activeSources, &snapshot.srtPoison);
 
     std::size_t cursor = 0;
     if (values.size() < plan.info.buffers.size()) {
@@ -590,6 +590,19 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot, c
         }
         snapshot.flattenedSrt.resize(mappingOffset + 1u + 2u * slots, 0u);
         snapshot.images.insert(snapshot.images.end(), table.slots.begin() + 1u, table.slots.end());
+    }
+}
+
+void materializeSrtGuards(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
+    const auto& guarded = plan.guardedSrtSlots;
+    const auto flags = snapshot.flattenedSrt.size();
+    snapshot.flattenedSrt.resize(flags + guarded.size(), 0u);
+    for (std::uint32_t record = 0u; record < snapshot.srtPoison.size(); ++record) {
+        const auto& poison = snapshot.srtPoison[record];
+        const auto found = std::lower_bound(guarded.begin(), guarded.end(), poison.slot);
+        if (found == guarded.end() || *found != poison.slot) throw std::runtime_error("SRT read at flat offset " + std::to_string(poison.slot) + " reads inaccessible memory but has no guard");
+        snapshot.flattenedSrt[flags + static_cast<std::size_t>(found - guarded.begin())] = record + 1u;
+        snapshot.flattenedSrt.insert(snapshot.flattenedSrt.end(), {poison.pc, static_cast<std::uint32_t>(poison.address), static_cast<std::uint32_t>(poison.address >> 32u)});
     }
 }
 
@@ -780,6 +793,9 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
         sampler.depthCompare = sampler.depthCompare || images[pair.image].depthCompare;
     }
     resources.info.images = std::move(images);
+    resources.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(resources);
+    resources.srtGuardOffset = mappingOffset;
+    if (!resources.guardedSrtSlots.empty()) resources.info.usesFaultBuffer = true;
     PrepareImageModes(resources.info);
 }
 
@@ -893,6 +909,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     }
     for (const auto& sampler : plan.info.samplers) addSource(sampler.source);
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
+    plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
     return plan;
 }
 
@@ -915,6 +932,7 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
     }
     const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     materializeTables(plan, nextSnapshot, tables);
+    materializeSrtGuards(plan, nextSnapshot);
     if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     snapshot = std::move(nextSnapshot);
     reportBindless();

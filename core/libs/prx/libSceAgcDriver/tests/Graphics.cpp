@@ -1178,6 +1178,10 @@ struct MockVulkan {
     std::map<VkDeviceMemory, VkMemoryAllocateFlags> allocationFlags;
     std::map<VkBuffer, VkDeviceMemory> bufferMemory;
     std::map<VkDeviceMemory, std::vector<std::byte>> memories;
+    std::map<VkDeviceMemory, VkDeviceSize> allocationSizes;
+    VkDeviceSize allocatedBytes = 0;
+    std::optional<VkDeviceSize> memoryLimit;
+    std::uint64_t allocationAttempts = 0;
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
     std::vector<VkDescriptorPoolSize> poolSizes;
     std::uint32_t poolMaxSets = 0;
@@ -1217,8 +1221,12 @@ VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer bu
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
+    ++mock.allocationAttempts;
+    if (mock.memoryLimit.has_value() && mock.allocatedBytes + info->allocationSize > *mock.memoryLimit) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     *memory = makeHandle<VkDeviceMemory>();
     mock.memories[*memory] = std::vector<std::byte>(info->allocationSize);
+    mock.allocationSizes[*memory] = info->allocationSize;
+    mock.allocatedBytes += info->allocationSize;
     if (info->pNext != nullptr) {
         const auto* flags = static_cast<const VkMemoryAllocateFlagsInfo*>(info->pNext);
         mock.allocationFlags[*memory] = flags->flags;
@@ -1246,7 +1254,11 @@ VKAPI_ATTR void VKAPI_CALL mockDestroyBuffer(VkDevice, VkBuffer, const VkAllocat
     --mock.live;
 }
 
-VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory, const VkAllocationCallbacks*) {
+VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const VkAllocationCallbacks*) {
+    if (const auto found = mock.allocationSizes.find(memory); found != mock.allocationSizes.end()) {
+        mock.allocatedBytes -= found->second;
+        mock.allocationSizes.erase(found);
+    }
     --mock.live;
 }
 
@@ -1298,6 +1310,12 @@ VKAPI_ATTR void VKAPI_CALL mockCmdBindDescriptorSets(VkCommandBuffer, VkPipeline
     mock.boundPoint = point;
     mock.boundFirst = first;
     mock.boundSets = count;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockGetMemoryHostPointerProperties(VkDevice, VkExternalMemoryHandleTypeFlagBits type, const void* pointer, VkMemoryHostPointerPropertiesEXT* properties) {
+    Require(type == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT && pointer != nullptr, "invalid host pointer import query");
+    properties->memoryTypeBits = 1;
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const VkBufferDeviceAddressInfo* info) {
@@ -1369,6 +1387,7 @@ VKAPI_ATTR void VKAPI_CALL mockCmdUpdateBuffer(VkCommandBuffer, VkBuffer buffer,
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkGetBufferDeviceAddressKHR", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferDeviceAddress)},
+        {"vkGetMemoryHostPointerPropertiesEXT", reinterpret_cast<PFN_vkVoidFunction>(mockGetMemoryHostPointerProperties)},
         {"vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCreateBuffer)},
         {"vkGetBufferMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferMemoryRequirements)},
         {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(mockAllocateMemory)},
@@ -2772,8 +2791,10 @@ void vertexCopyTests() {
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
+    _putenv_s("APS5_HEAP_MIRROR_MIB", "4");
 #else
     setenv("APS5_PIN_WAIT_MS", "200", 1);
+    setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
         {
@@ -2858,7 +2879,11 @@ int main() {
                 const auto offset = address - 0x100000000000ULL;
                 const auto buffer = reinterpret_cast<VkBuffer>(offset / 0x10000);
                 return std::span<std::byte>(mock.memories.at(mock.bufferMemory.at(buffer))).subspan(offset % 0x10000);
-            }
+            },
+            [](std::optional<VkDeviceSize> headroom) {
+                mock.memoryLimit = headroom.has_value() ? std::optional<VkDeviceSize>(mock.allocatedBytes + *headroom) : std::nullopt;
+            },
+            [] { return mock.allocationAttempts; }
         });
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();

@@ -110,8 +110,7 @@ int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader*
 
 extern "C" {
 
-APS5_EXPORT("HV4j+E0MBHE", sceAgcCreateInterpolantMapping);
-int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
     return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValue);
 }
 

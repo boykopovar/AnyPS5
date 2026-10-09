@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -760,7 +761,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x10:
             switch ((packet[0] >> 2u) & 0x3fu) {
                 case 0: return;
-                case 0x09: queue = QueueState{}; return;
+                case 0x09: queue = std::move(*std::make_unique<QueueState>()); return;
                 case 0x0b: queue.markers.emplace_back(reinterpret_cast<const char*>(packet.data() + 1)); return;
                 case 0x0c:
                     require(!queue.markers.empty(), "marker stack underflow");

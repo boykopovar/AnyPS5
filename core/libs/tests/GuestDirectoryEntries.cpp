@@ -18,6 +18,9 @@ std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 int APS5_VABI sceKernelLseek(int, std::int64_t, int);
 int APS5_VABI sceKernelGetdents(int, char*, int);
 int APS5_VABI sceKernelGetdirentries(int, char*, int, std::int64_t*);
+int APS5_VABI getdents_nid_postfix(int, char*, int);
+int APS5_VABI getdirentries_nid_postfix(int, char*, int, std::int64_t*);
+int* APS5_VABI __error_nid_postfix();
 std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
 std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
 }
@@ -100,7 +103,32 @@ int main() {
     const int readAll = sceKernelGetdents(directory, large.data(), static_cast<int>(large.size()));
     Require(readAll > 0 && Collect(large.data(), readAll, all) == 6);
     Require(sceKernelGetdents(directory, large.data(), static_cast<int>(large.size())) == 0);
+
+    Require(sceKernelLseek(directory, 0, 0) == 0);
+    Require(getdents_nid_postfix(directory, tooSmall.data(), static_cast<int>(tooSmall.size())) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(getdents_nid_postfix(directory, nullptr, 64) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(getdirentries_nid_postfix(directory, small.data(), 0, nullptr) == -1 && *__error_nid_postfix() == 22);
+    std::int64_t posixBase = -1;
+    *__error_nid_postfix() = 1234;
+    const int firstPart = getdirentries_nid_postfix(directory, small.data(), static_cast<int>(small.size()), &posixBase);
+    Require(firstPart > 0 && posixBase == 0 && *__error_nid_postfix() == 1234);
+    const int secondPart = getdirentries_nid_postfix(directory, small.data(), static_cast<int>(small.size()), &posixBase);
+    Require(secondPart > 0 && posixBase > 0 && *__error_nid_postfix() == 1234);
+    Require(sceKernelLseek(directory, 0, 0) == 0);
+    std::map<std::string, Entry> posix;
+    const int posixRead = getdirentries_nid_postfix(directory, large.data(), static_cast<int>(large.size()), &posixBase);
+    Require(posixRead == readAll && posixBase == 0 && Collect(large.data(), posixRead, posix) == 6);
+    Require(getdents_nid_postfix(directory, large.data(), static_cast<int>(large.size())) == 0);
+    Require(sceKernelLseek(directory, 0, 0) == 0);
+    std::map<std::string, Entry> dents;
+    const int dentsRead = getdents_nid_postfix(directory, large.data(), static_cast<int>(large.size()));
+    Require(dentsRead == readAll && Collect(large.data(), dentsRead, dents) == 6);
     Require(sceKernelClose(directory) == 0);
+    Require(getdents_nid_postfix(directory, large.data(), static_cast<int>(large.size())) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(getdirentries_nid_postfix(directory, large.data(), static_cast<int>(large.size()), nullptr) == -1 && *__error_nid_postfix() == 9);
 
     const int file = sceKernelOpen((root / "data.bin").string().c_str(), SCE_KERNEL_O_RDWR, 0);
     Require(file >= 0);

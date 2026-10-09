@@ -16,6 +16,7 @@ public:
 
 private:
     static bool ReadGuestMemory(void* userContext, std::uint64_t address, std::uint32_t* value);
+    static bool Covered(void* userContext, std::uint64_t address, std::uint64_t bytes);
 
     std::vector<MemoryRegion> regions;
 };

@@ -57,6 +57,12 @@ struct Ngs2Atrac9 {
     std::uint32_t windowStart = 0;
 };
 
+struct Ngs2ReverbState;
+
+struct Ngs2ReverbDeleter {
+    void operator()(Ngs2ReverbState* reverb) const;
+};
+
 struct Ngs2Voice;
 
 struct Ngs2FilterHistory {
@@ -98,6 +104,7 @@ struct Ngs2Voice {
     std::uint32_t sampleRate = 0;
     std::uint32_t waveformType = 0;
     Ngs2Atrac9 atrac9;
+    std::unique_ptr<Ngs2ReverbState, Ngs2ReverbDeleter> reverb;
     float pitch = 1.0f;
     std::uint64_t phase = 0;
     std::deque<Ngs2Block> blocks;
@@ -180,6 +187,10 @@ void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
+void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params);
+void Ngs2SetupReverb(Ngs2Voice& voice);
+void Ngs2ClearReverb(Ngs2Voice& voice);
+bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 

@@ -112,14 +112,49 @@ class FloatModeTests(unittest.TestCase):
             argv += [item for name, value in modes.items() for item in ["--" + name.replace("_", "-"), str(value)]]
             with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run:
                 hw_oracle.main()
-            run.assert_called_once_with("s_nop 0", [(1, 2, 3, 4)], b"", True, True, **modes)
+            run.assert_called_once_with("s_nop 0", [(1, 2, 3, 4)], b"", True, True, **modes, lds=4096)
 
     def test_run_forwards_modes_to_assembler(self):
         with patch.object(hw_oracle, "assemble") as assemble:
             hw_oracle.run("s_nop 0", [], wave64=True, **MODES)
         self.assertEqual(assemble.call_args.args[0], "s_nop 0")
         self.assertTrue(assemble.call_args.args[2])
-        self.assertEqual(assemble.call_args.kwargs, MODES)
+        self.assertEqual(assemble.call_args.kwargs, MODES | {"lds": 4096})
+
+
+class GroupSegmentTests(unittest.TestCase):
+    def test_cli_forwards_lds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body = Path(tmp) / "body.s"
+            rows = Path(tmp) / "rows.txt"
+            body.write_text("s_nop 0")
+            rows.write_text("1 2 3 4\n")
+            argv = ["hw_oracle.py", str(body), str(rows), "--lds", "8192"]
+            argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+            with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run:
+                hw_oracle.main()
+            self.assertEqual(run.call_args.kwargs["lds"], 8192)
+
+    def test_run_forwards_lds_to_assembler(self):
+        with patch.object(hw_oracle, "assemble") as assemble:
+            hw_oracle.run("s_nop 0", [], lds=65536, **MODES)
+        self.assertEqual(assemble.call_args.kwargs["lds"], 65536)
+
+    def test_invalid_lds_fails_before_tool_lookup(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target") as target:
+            for value in (-1, 65537, 0.5, "4096"):
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "lds"):
+                    hw_oracle.assemble("s_nop 0", Path(tmp), False, lds=value, **MODES)
+            target.assert_not_called()
+
+    def test_template_takes_lds(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target", return_value="gfx1036"), \
+                patch.object(hw_oracle.subprocess, "run"), patch.object(hw_oracle, "tool", return_value="clang"):
+            hw_oracle.assemble("s_nop 0", Path(tmp), False, lds=8192, **MODES)
+            text = (Path(tmp) / "k.s").read_text()
+        self.assertIn(".amdhsa_group_segment_fixed_size 8192", text)
+        self.assertIn(".group_segment_fixed_size: 8192", text)
+        self.assertNotIn("@LDS@", text)
 
 
 class AssemblyTests(unittest.TestCase):

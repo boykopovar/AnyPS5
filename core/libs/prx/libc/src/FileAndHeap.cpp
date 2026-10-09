@@ -232,6 +232,10 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     return 0;
 }
 
+int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
+    return ApplicationHeapStatsFast_nid_no_patch(stats);
+}
+
 void* APS5_VABI malloc_nid_postfix(size_t size) {
     return ApplicationHeapAllocate_nid_no_patch(size);
 }

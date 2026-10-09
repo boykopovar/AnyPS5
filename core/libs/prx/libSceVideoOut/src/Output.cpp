@@ -156,6 +156,27 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatus* status) try {
+    if (status == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    if (cfg == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+    }
+    std::unique_lock lock(cfg->mutex);
+    cfg->Check();
+    *status = VideoOutResolutionStatus{};
+    status->fullWidth = cfg->width;
+    status->fullHeight = cfg->height;
+    status->paneWidth = cfg->width;
+    status->paneHeight = cfg->height;
+    status->refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 int APS5_VABI sceVideoOutIsFlipPending(int handle) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
@@ -290,20 +311,9 @@ int APS5_VABI sceVideoOutVrrPegToFixedRate() try {
     LibcAwaitExit_nid_postfix();
 }
 
-APS5_EXPORT("kP2L8t3j-aM", sceVideoOutUnknown00);
-int APS5_VABI sceVideoOutUnknown00() try {
-    NotImplemented_nid_no_patch(__func__);
+APS5_EXPORT("kP2L8t3j-aM", sceVideoOutAddVrrStatusFlagsPrivilege);
+int APS5_VABI sceVideoOutAddVrrStatusFlagsPrivilege() {
     return 0;
-} catch (const ProcessShutdown&) {
-    LibcAwaitExit_nid_postfix();
-}
-
-APS5_EXPORT("LibwuIonIBw", sceVideoOutUnknown01);
-int APS5_VABI sceVideoOutUnknown01() try {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-} catch (const ProcessShutdown&) {
-    LibcAwaitExit_nid_postfix();
 }
 
 }

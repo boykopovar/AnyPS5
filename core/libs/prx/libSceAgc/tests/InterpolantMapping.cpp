@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <span>
 
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps);
+extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 extern "C" int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 
 namespace {
@@ -100,7 +100,7 @@ void testMapping() {
     checkIdentity(split, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 
     auto regular = filled();
-    check(sceAgcCreateInterpolantMapping(regular.data(), &gs, &ps) == 0, "mapping failed");
+    check(sceAgcCreateInterpolantMapping_0100(regular.data(), &gs, &ps) == 0, "mapping failed");
     check(std::memcmp(regular.data(), preparedMapping.data(), sizeof(regular)) == 0, "prepared mapping differs from published registers");
     check(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
     checkIdentity(regular, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
@@ -115,7 +115,7 @@ void testRejections() {
     std::array<ShaderRegister, 64> regs{};
     std::memset(regs.data(), 0xcc, sizeof(regs));
     const auto saved = regs;
-    expectFailure([&] { sceAgcCreateInterpolantMapping(regs.data(), &gs, &ps); });
+    expectFailure([&] { sceAgcCreateInterpolantMapping_0100(regs.data(), &gs, &ps); });
     expectFailure([&] { sceAgcUnknownCreateInterpolantMapping(regs.data(), &gs, &ps); });
     check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected mapping wrote registers");
     ps.num_input_semantics = 1;

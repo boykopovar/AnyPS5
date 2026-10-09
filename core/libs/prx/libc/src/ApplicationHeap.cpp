@@ -22,6 +22,7 @@ using Align = void* (APS5_VABI *)(std::size_t, std::size_t);
 using Realign = void* (APS5_VABI *)(void*, std::size_t, std::size_t);
 using PosixAlign = int (APS5_VABI *)(void**, std::size_t, std::size_t);
 using Initialize = void (APS5_VABI *)();
+using Stats = int (APS5_VABI *)(void*);
 
 std::mutex heapMutex;
 std::array<void*, 10> heapApi{};
@@ -232,4 +233,18 @@ int ApplicationHeapPosixAlign_nid_no_patch(void** pointer, std::size_t alignment
     if (reinterpret_cast<std::uintptr_t>(result) % alignment != 0) throw std::runtime_error("application heap: allocator returned a misaligned pointer");
     *pointer = result;
     return 0;
+}
+
+int ApplicationHeapStatsFast_nid_no_patch(void* stats) {
+    Stats statsFast;
+    {
+        std::lock_guard lock(heapMutex);
+        if (heapFailure) std::rethrow_exception(heapFailure);
+        if (heapFinalized) throw std::runtime_error("application heap: allocator has been finalized");
+        if (heapApi[0] == nullptr) throw std::runtime_error("application heap: allocator API is not registered");
+        if (heapApi[8] == nullptr) throw std::runtime_error("malloc_stats_fast: implemented only for an application allocator that provides it");
+        std::memcpy(&statsFast, &heapApi[8], sizeof(statsFast));
+    }
+    CallbackScope scope;
+    return statsFast(stats);
 }

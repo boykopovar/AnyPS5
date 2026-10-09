@@ -65,14 +65,14 @@ namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(CompiledShaderArtifact) == 184, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 104, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(ShaderInvocation) == 112, "ShaderInvocation changed: update the invocation encoder");
 static_assert(sizeof(RecompileResult) == 296, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 448, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 12, "FragmentParameter changed: update the parameter encoder");
-static_assert(sizeof(CompiledShaderInfo) == 336, "CompiledShaderInfo changed: update the info encoder");
-static_assert(sizeof(ShaderInfo) == 224, "ShaderInfo changed: update the info encoder");
+static_assert(sizeof(CompiledShaderInfo) == 344, "CompiledShaderInfo changed: update the info encoder");
+static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 112, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 16, "SamplerResource changed: update the info encoder");
@@ -374,6 +374,7 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
         out.Value(attribute.fetchIndex);
         out.Value(attribute.formatComponents);
     });
+    writer.Value(invocation.poisonedSrtReads);
 }
 
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
@@ -394,6 +395,7 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
         in.Value(attribute.fetchIndex);
         in.Value(attribute.formatComponents);
     });
+    reader.Value(invocation.poisonedSrtReads);
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
@@ -518,6 +520,7 @@ void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {
     writer.Value(info.hasBitwiseXor);
     writer.Value(info.usesDma);
     writer.Value(info.bdaWrites);
+    writer.Value(info.usesFaultBuffer);
     writer.Value(info.dispatchThreadLimit);
     encodeLayout(writer, compiled.bindings);
 }
@@ -620,6 +623,7 @@ void decodeInfo(Reader& reader, CompiledShaderInfo& compiled) {
     reader.Value(info.hasBitwiseXor);
     reader.Value(info.usesDma);
     reader.Value(info.bdaWrites);
+    reader.Value(info.usesFaultBuffer);
     reader.Value(info.dispatchThreadLimit);
     decodeLayout(reader, compiled.bindings);
 }

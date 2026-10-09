@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from html import escape
 from pathlib import Path
 
@@ -333,6 +334,8 @@ def report(base, head):
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--root", type=Path, help="source tree to measure instead of the one containing this script")
@@ -340,7 +343,7 @@ if __name__ == "__main__":
                         help="print a markdown report of the changes between two progress.json files")
     args = parser.parse_args()
     if args.compare:
-        base, head = (json.loads(path.read_text()) for path in args.compare)
+        base, head = (json.loads(path.read_text(encoding="utf-8")) for path in args.compare)
         print(report(base, head), end="")
         raise SystemExit
     if not args.output:

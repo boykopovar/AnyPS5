@@ -9,10 +9,10 @@ import pr_overlap
 
 
 def pull_requests(body):
-    response = [{"number": number, "author": {"login": "contributor"}, "headRefOid": str(number) * 40,
+    response = [{"number": number, "user": {"login": "contributor"}, "head": {"sha": str(number) * 40},
                  "body": body if number == 1 else "Depends on: none"} for number in (1, 2)]
     with patch.object(pr_overlap, "REPO", "owner/repo", create=True), \
-            patch.object(pr_overlap, "gh", return_value=json.dumps(response)):
+            patch.object(pr_overlap, "gh", return_value=json.dumps([response])):
         return pr_overlap.open_prs("main")
 
 

@@ -157,8 +157,8 @@ static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
 }
 
 void DefineGetBdaPointer(SpirvEmitterState& state) {
+    if (state.faultBufferVariable != 0) DefineBdaFaultFunction(state);
     if (!state.program.Info().usesDma) return;
-    DefineBdaFaultFunction(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
     if (!BdaByteReadsForced()) state.bdaProbeFunction = DefineBdaLookup(state, "probe_bda_pointer", false);
     DefineBdaDwordReadFunctions(state);

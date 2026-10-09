@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEULT_SCEULTTYPES_HPP
 #define CORE_LIBS_PRX_LIBSCEULT_SCEULTTYPES_HPP
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
@@ -70,6 +71,8 @@ struct UltUlthreadState {
     UltUlthreadEntry _entry = nullptr;
     std::uint64_t _arg = 0;
     Pthread _thread = nullptr;
+    void* _runtime = nullptr;
+    std::atomic<bool> _exited{false};
 };
 
 #endif

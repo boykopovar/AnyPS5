@@ -180,6 +180,15 @@ bool GuestSockets::IsOpen(int descriptor) {
     std::lock_guard lock(socketsMutex);
     return sockets.contains(descriptor);
 }
+int GuestSockets::Family(int descriptor) {
+    std::lock_guard lock(socketsMutex);
+    const auto found = sockets.find(descriptor);
+    return found == sockets.end() ? -1 : found->second->family;
+}
+
+extern "C" bool GuestSocketIsOpen_nid_no_patch(int descriptor) {
+    return GuestSockets::IsOpen(descriptor);
+}
 
 namespace {
 #ifdef _WIN32

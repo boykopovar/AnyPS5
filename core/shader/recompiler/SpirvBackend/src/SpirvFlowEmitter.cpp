@@ -85,7 +85,8 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         const auto pc = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), pc, state.loopGuardPc);
         EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), pc, ConstantU32(state, 0u)), [&] {
-            RecordBdaFault(state, BdaConstant(state, state.program.Resources().shaderHash), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
+            const auto hash = state.program.Resources().shaderHash;
+            RecordBdaFaultWords(state, ConstantU32(state, static_cast<std::uint32_t>(hash)), ConstantU32(state, static_cast<std::uint32_t>(hash >> 32u)), ConstantU32(state, state.loopGuardLimit), EmitBinaryU32(state, spv::OpISub, pc, ConstantU32(state, 1u)), BdaAbi::FaultReason::LoopLimit);
         });
     }
     if (OrderedPixelShader(state)) {

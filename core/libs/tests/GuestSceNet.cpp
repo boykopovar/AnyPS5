@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -169,6 +170,8 @@ static void CheckAddressText(int family, const char* text) {
     Require(sceNetInetNtop(family, address.data(), nullptr, output.size()) == nullptr && *sceNetErrnoLoc() == 22);
 }
 
+static bool ipv6Unavailable = false;
+
 static void CheckUnspecifiedIpv6() {
     std::array<std::uint8_t, 16> unspecified{};
     Require(sceNetInetPton(28, "::", unspecified.data()) == 1);
@@ -178,6 +181,10 @@ static void CheckUnspecifiedIpv6() {
     Require(std::strcmp(text, "::") == 0 && text[3] == 'x');
 
     const int receiver = sceNetSocket("ipv6-any", 28, 2, 17);
+    if (receiver < 0 && *sceNetErrnoLoc() == 47) {
+        ipv6Unavailable = true;
+        return;
+    }
     const int sender = sceNetSocket("ipv6-loopback", 28, 2, 17);
     Require(receiver >= 0 && sender >= 0);
     std::array<std::uint8_t, 28> address{28, 28};
@@ -269,6 +276,9 @@ int main() {
     NetMsghdr reply_receive{reply_name.data(), 16, reply_in, 1, nullptr, 0, -1};
     Require(sceNetRecvmsg(client, &reply_receive, 0) == sizeof(reply));
     Require(std::strcmp(reply, reply_result) == 0 && reply_receive.flags == 0 && reply_receive.name_length == 0);
+    Require(sceNetSend(client, request, sizeof(request), 0) == sizeof(request));
+    ready = {};
+    Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1 && (ready.events & 1) && ready.ident == static_cast<std::uint64_t>(accepted));
     Require(sceNetEpollDestroy(epoll) == 0);
     Require(sceNetSocketClose(accepted) == 0);
     bool send_failed = false;
@@ -371,4 +381,8 @@ int main() {
     int state = -1;
     Require(sceNetCtlGetState(&state) == 0);
     Require(state == 0 || state == 3);
+    if (ipv6Unavailable) {
+        std::puts("skipped the IPv6 socket checks, the host has no IPv6");
+        return 77;
+    }
 }

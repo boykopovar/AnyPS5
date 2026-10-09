@@ -44,7 +44,7 @@ const DescriptorSource* Source(const IrResourcePlan& program, std::uint32_t sour
 
 }
 
-bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources) {
+bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources, std::vector<SrtReadPoison>* poison) {
     failureReason().clear();
     static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
     if (debug) {
@@ -117,8 +117,14 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
         evaluated.push_back(value);
     }
     std::vector<std::uint32_t> flattened;
+    std::vector<SrtReadPoison> poisoned;
     if (evaluateFlat) {
         flattened.resize(program.srtReads.size());
+        InaccessibleRead inaccessible;
+        if (poison != nullptr) {
+            evaluator.ReportInaccessibleReads(&inaccessible);
+            cleanEvaluator.ReportInaccessibleReads(&inaccessible);
+        }
         for (const auto& read : program.srtReads) {
             const bool clean = read.flatOffset < cleanFlatSlots.size() && cleanFlatSlots[read.flatOffset] != 0u;
             auto& selected = clean ? cleanEvaluator : evaluator;
@@ -131,8 +137,15 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
                 trace->leaf = read.value->Resolve();
                 trace->leafSlot = read.flatOffset;
             }
+            inaccessible = {};
             const bool evaluated = read.flatOffset < flattened.size() && selected.Evaluate(read.value, flattened[read.flatOffset]);
             if (pure) trace->leaf = nullptr;
+            if (!evaluated && inaccessible.read != nullptr) {
+                if (debug) std::fprintf(stderr, "[srt] flat offset %u reads inaccessible 0x%llx at pc 0x%x: poisoned\n", read.flatOffset, static_cast<unsigned long long>(inaccessible.address), inaccessible.read->Flags<MemoryFlags>().pc);
+                flattened[read.flatOffset] = 0u;
+                poisoned.push_back({read.flatOffset, inaccessible.read->Flags<MemoryFlags>().pc, inaccessible.address});
+                continue;
+            }
             if (!evaluated) {
                 return Fail(std::string(clean ? "clean " : "") + "SRT read at flat offset " + std::to_string(read.flatOffset) + ": " + DescribeValue(read.value, 4));
             }
@@ -142,6 +155,9 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
     activeSources = std::move(active);
     if (evaluateFlat) {
         flat = std::move(flattened);
+    }
+    if (poison != nullptr) {
+        *poison = std::move(poisoned);
     }
     return true;
 }

@@ -161,6 +161,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     }
     if (info.usesDma) {
         addBinding(next, DescriptorBindingKind::BdaPagetable);
+    }
+    if (info.usesDma || info.usesFaultBuffer) {
         addBinding(next, DescriptorBindingKind::FaultBuffer);
     }
 

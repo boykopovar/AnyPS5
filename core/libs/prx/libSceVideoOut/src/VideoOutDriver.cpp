@@ -342,10 +342,12 @@ bool VideoOutDriver::close(int handle) {
     removeEvents(cfg->vblankEvents, VIDEO_OUT_EVENT_VBLANK);
     removeEvents(cfg->preVblankEvents, VIDEO_OUT_EVENT_PRE_VBLANK_START);
     removeEvents(cfg->outputModeEvents, VIDEO_OUT_EVENT_SET_MODE);
+    removeEvents(cfg->vrrStatusEvents, VIDEO_OUT_EVENT_VRR_STATUS);
     cfg->flipEvents.clear();
     cfg->vblankEvents.clear();
     cfg->preVblankEvents.clear();
     cfg->outputModeEvents.clear();
+    cfg->vrrStatusEvents.clear();
     cfg->vblankCond.notify_all();
     flipQueue->changed.notify_all();
     return true;

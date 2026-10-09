@@ -79,6 +79,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(sameBindings(left.bindings, right.bindings), prefix + "bindings differ");
     require(left.pushConstants == right.pushConstants, prefix + "push constants differ");
     require(left.specialization == right.specialization, prefix + "specialization constants differ");
+    require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
     require(left.vertexAttributes.size() == right.vertexAttributes.size(), prefix + "vertex attribute count differs");
     for (std::size_t i = 0; i < left.vertexAttributes.size(); ++i) {
         const auto& a = left.vertexAttributes[i];
@@ -149,6 +150,7 @@ RecompileResult sampleResult() {
     result.instanceOffsetConflict = true;
     result.parameterExports = {0, 3, 7};
     result.fragmentParameters = {{0, 1, true, false, true}, {2, 3, false, true}};
+    result.poisonedSrtReads = 3;
     result.variantId = 99;
     return result;
 }
@@ -220,6 +222,7 @@ CompiledVariant sampleVariant() {
     info.info.vertexOffsetSgpr = 6;
     info.info.hasBitwiseXor = true;
     info.info.usesDma = true;
+    info.info.usesFaultBuffer = true;
     info.bindings.pushDataStartDword = 2;
     info.bindings.memoryOffsetDword = 1;
     info.bindings.memoryOffsetCount = 5;
@@ -1033,8 +1036,10 @@ int main(int argc, char** argv) {
         verifyVertexTypeSpecialization();
         verifyBuiltinSpecialization();
         verifySpecializationLiveness();
+        ShaderRecompiler::ShaderDiskCache::Flush();
         std::error_code error;
         std::filesystem::remove_all(directory, error);
+        require(!error, "cannot remove the shader cache test directory: " + error.message());
         std::cout << "shader disk cache tests passed\n";
         return 0;
     } catch (const std::exception& error) {

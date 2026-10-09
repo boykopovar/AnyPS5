@@ -3,11 +3,11 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
-#include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <span>
@@ -16,19 +16,18 @@
 
 namespace {
 
-using AgcDriver::Graphics::Check;
 using AgcDriver::Graphics::Require;
 using AgcDriver::Graphics::StorageTexture;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Side = 4096;
+constexpr std::uint32_t Side = 512;
 constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint64_t SurfaceBytes = std::uint64_t{Side} * Side * 4u;
 constexpr std::uint64_t Stride = 0x10000;
-constexpr std::uint64_t FixedBudget = 2048ull << 20u;
-constexpr std::uint64_t EvictionLimit = 4ull << 30u;
+constexpr std::uint64_t FixedBudget = 16ull << 20u;
+constexpr std::uint64_t TestBudget = 32ull << 20u;
 constexpr std::uint32_t MaxSurfaces = 80;
 
 alignas(256) constexpr std::array<std::uint32_t, 10> LoadStoreCode{
@@ -39,72 +38,6 @@ alignas(256) std::array<std::uint32_t, 64> Output{};
 
 std::uint32_t Marker(std::uint32_t surface) {
     return 0x5a000000u | surface;
-}
-
-template<typename TFunction>
-TFunction InstanceFunction(PFN_vkGetInstanceProcAddr resolve, VkInstance instance, const char* name) {
-    const auto result = reinterpret_cast<TFunction>(resolve(instance, name));
-    Require(result != nullptr, name);
-    return result;
-}
-
-struct SelectedDevice {
-    VkPhysicalDeviceMemoryProperties memory{};
-    VkPhysicalDeviceType type = VK_PHYSICAL_DEVICE_TYPE_OTHER;
-};
-
-SelectedDevice SelectDevice() {
-#ifdef _WIN32
-    void* library = SDL_LoadObject("vulkan-1.dll");
-#else
-    void* library = SDL_LoadObject("libvulkan.so.1");
-#endif
-    Require(library != nullptr, "cannot load Vulkan");
-    const auto resolve = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr"));
-    VkInstance instance = VK_NULL_HANDLE;
-    SelectedDevice chosen;
-    try {
-        Require(resolve != nullptr, "missing Vulkan instance resolver");
-        VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        application.apiVersion = VK_API_VERSION_1_1;
-        VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
-        info.pApplicationInfo = &application;
-        Check(InstanceFunction<PFN_vkCreateInstance>(resolve, VK_NULL_HANDLE, "vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
-        const auto enumerate = InstanceFunction<PFN_vkEnumeratePhysicalDevices>(resolve, instance, "vkEnumeratePhysicalDevices");
-        std::uint32_t count = 0;
-        Check(enumerate(instance, &count, nullptr), "vkEnumeratePhysicalDevices");
-        std::vector<VkPhysicalDevice> devices(count);
-        Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-        devices.resize(count);
-        const auto properties = InstanceFunction<PFN_vkGetPhysicalDeviceProperties>(resolve, instance, "vkGetPhysicalDeviceProperties");
-        const auto queues = InstanceFunction<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(resolve, instance, "vkGetPhysicalDeviceQueueFamilyProperties");
-        constexpr auto graphicsCompute = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
-        VkPhysicalDevice selected = VK_NULL_HANDLE;
-        int selectedRank = -1;
-        for (const auto physical : devices) {
-            VkPhysicalDeviceProperties described{};
-            properties(physical, &described);
-            const int rank = described.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : described.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : described.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU ? 1 : 0;
-            if (described.apiVersion < VK_API_VERSION_1_1 || rank <= selectedRank) continue;
-            std::uint32_t familyCount = 0;
-            queues(physical, &familyCount, nullptr);
-            std::vector<VkQueueFamilyProperties> families(familyCount);
-            queues(physical, &familyCount, families.data());
-            if (std::none_of(families.begin(), families.end(), [](const VkQueueFamilyProperties& family) { return family.queueCount != 0 && (family.queueFlags & graphicsCompute) == graphicsCompute; })) continue;
-            selected = physical;
-            selectedRank = rank;
-            chosen.type = described.deviceType;
-        }
-        Require(selected != VK_NULL_HANDLE, "no Vulkan 1.1 graphics and compute device");
-        InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>(resolve, instance, "vkGetPhysicalDeviceMemoryProperties")(selected, &chosen.memory);
-    } catch (...) {
-        if (instance != VK_NULL_HANDLE) InstanceFunction<PFN_vkDestroyInstance>(resolve, instance, "vkDestroyInstance")(instance, nullptr);
-        SDL_UnloadObject(library);
-        throw;
-    }
-    InstanceFunction<PFN_vkDestroyInstance>(resolve, instance, "vkDestroyInstance")(instance, nullptr);
-    SDL_UnloadObject(library);
-    return chosen;
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(std::uint64_t address) {
@@ -152,10 +85,14 @@ std::shared_ptr<StorageTexture> Load(AgcDriver::VulkanDevice& device, std::uint6
 
 int main() {
     try {
+#ifdef _WIN32
+        Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
+#else
+        Require(setenv("APS5_TEXTURE_CACHE_MIB", "32", 1) == 0, "cannot set the test cache budget");
+#endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto selected = SelectDevice();
-        const auto budget = AgcDriver::Graphics::TextureCacheBudget(selected.memory);
+        const auto budget = TestBudget;
         std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
         for (std::uint32_t surface = 0; surface < MaxSurfaces; ++surface) texels[surface * Stride / 4u] = Marker(surface);
@@ -175,12 +112,8 @@ int main() {
             Require(first != nullptr, "surface 0 has no cached storage image");
             const auto held = std::max<std::uint64_t>(first->AllocationBytes(), first->GuestBytes());
             const auto reused = static_cast<std::uint32_t>(FixedBudget / held) + 1u;
-            std::printf("texture cache budget %llu MiB; each 4096x4096 32_UINT surface holds %llu MiB; cyclic set of %u surfaces (%llu MiB)\n", static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(held >> 20u), reused, static_cast<unsigned long long>((reused * held) >> 20u));
-            if (budget < reused * held) {
-                std::printf("skipped, the device-local heap gives the texture caches less than the cyclic set\n");
-                release();
-                return VulkanTestSkipped;
-            }
+            std::printf("texture cache budget %llu MiB; each 512x512 32_UINT surface holds %llu MiB; cyclic set of %u surfaces (%llu MiB)\n", static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(held >> 20u), reused, static_cast<unsigned long long>((reused * held) >> 20u));
+            Require(budget >= reused * held, "the cyclic set exceeds the test cache budget");
             std::vector<std::weak_ptr<StorageTexture>> images(reused);
             images[0] = first;
             for (std::uint32_t surface = 1; surface < reused; ++surface) images[surface] = Load(*device, base, surface);
@@ -191,14 +124,11 @@ int main() {
             }
             Require(remade == 0, std::to_string(remade) + " of " + std::to_string(reused) + " storage images were made again on the second pass over a " + std::to_string((reused * held) >> 20u) + " MiB cyclic set under a " + std::to_string(budget >> 20u) + " MiB budget");
             const auto capacity = static_cast<std::uint32_t>(budget / held);
-            if (selected.type == VK_PHYSICAL_DEVICE_TYPE_CPU || budget > EvictionLimit || capacity + 2u > MaxSurfaces) {
-                std::printf("eviction past the budget not tested on a CPU device or over a 4 GiB budget\n");
-            } else {
-                for (std::uint32_t surface = reused; surface < capacity + 2u; ++surface) Load(*device, base, surface);
-                for (std::uint32_t surface = 0; surface < capacity + 2u; ++surface) {
-                    const bool cached = StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr;
-                    Require(cached == (surface >= 2u), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(capacity + 2u) + " surfaces under a budget of " + std::to_string(capacity) + " of them");
-                }
+            Require(capacity + 2u <= MaxSurfaces, "the eviction set exceeds the test storage");
+            for (std::uint32_t surface = reused; surface < capacity + 2u; ++surface) Load(*device, base, surface);
+            for (std::uint32_t surface = 0; surface < capacity + 2u; ++surface) {
+                const bool cached = StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr;
+                Require(cached == (surface >= 2u), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(capacity + 2u) + " surfaces under a budget of " + std::to_string(capacity) + " of them");
             }
         } catch (...) {
             release();

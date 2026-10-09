@@ -1020,6 +1020,41 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
     if (state.flattenedSrtVariable == 0) {
         ctx.Fail(inst, "requires the flattened SRT descriptor");
     }
+    const auto& resources = state.program.Resources();
+    const auto& guarded = resources.guardedSrtSlots;
+    if (!guarded.empty()) {
+        const IrValue* slot = inst.Argument(1)->Resolve();
+        if (!slot->HasImmediate()) {
+            ctx.Fail(inst, "reads the flattened SRT at a runtime slot while some slots are guarded");
+        }
+        const auto found = std::lower_bound(guarded.begin(), guarded.end(), slot->ImmediateU32());
+        if (found != guarded.end() && *found == slot->ImmediateU32()) {
+            if (state.faultBufferVariable == 0) {
+                ctx.Fail(inst, "reads a guarded SRT slot without a fault buffer");
+            }
+            const auto u32 = TypeU32(state);
+            const auto load = [&](std::uint32_t index) {
+                const auto pointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, ConstantU32(state, 0u), index);
+                const auto value = state.module.AllocateId();
+                state.module.AddFunction(spv::OpLoad, u32, value, pointer);
+                return value;
+            };
+            const auto guard = static_cast<std::uint32_t>(found - guarded.begin());
+            const auto flag = load(ConstantU32(state, resources.srtGuardOffset + guard));
+            const auto poisoned = Binary(state, spv::OpINotEqual, TypeBool(state), flag, ConstantU32(state, 0u));
+            EmitIfCondition(state, poisoned, [&] {
+                const auto records = resources.srtGuardOffset + static_cast<std::uint32_t>(guarded.size());
+                const auto record = Binary(state, spv::OpIAdd, u32, ConstantU32(state, records), Binary(state, spv::OpIMul, u32, Binary(state, spv::OpISub, u32, flag, ConstantU32(state, 1u)), ConstantU32(state, 3u)));
+                const auto word = [&](std::uint32_t offset) { return load(Binary(state, spv::OpIAdd, u32, record, ConstantU32(state, offset))); };
+                const auto pc = word(0u);
+                const auto low = word(1u);
+                const auto high = word(2u);
+                RecordBdaFaultWords(state, low, high, ConstantU32(state, 4u), pc, BdaAbi::FaultReason::Unmapped);
+            });
+            StopBdaInvocationIf(state, poisoned);
+        }
+    }
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, ConstantU32(state, 0u), ctx.Arg(inst, 1));
     const auto value = state.module.AllocateId();

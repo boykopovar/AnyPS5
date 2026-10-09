@@ -29,16 +29,20 @@ std::uint32_t BdaLoadAddress(SpirvEmitterState& state, std::uint32_t index) {
 
 void DefineBdaFaultFunction(SpirvEmitterState& state) {
     const auto u32 = TypeU32(state);
-    const auto u64 = TypeScalarU64(state);
+    const bool words = !state.program.Info().usesDma;
+    const auto addressType = words ? u32 : TypeScalarU64(state);
     state.bdaFaultFunction = state.module.AllocateId();
     state.module.AddName(state.bdaFaultFunction, "record_bda_fault");
-    state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.bdaFaultFunction, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, TypeVoid(state), u32, u64, u32, u32));
+    const auto type = words ? state.module.Type(spv::OpTypeFunction, TypeVoid(state), u32, addressType, u32, u32, u32) : state.module.Type(spv::OpTypeFunction, TypeVoid(state), u32, addressType, u32, u32);
+    state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.bdaFaultFunction, spv::FunctionControlDontInlineMask, type);
     const auto reason = state.module.AllocateId();
     const auto address = state.module.AllocateId();
+    const auto addressHigh = words ? state.module.AllocateId() : 0u;
     const auto bytes = state.module.AllocateId();
     const auto instruction = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionParameter, u32, reason);
-    state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+    state.module.AddFunction(spv::OpFunctionParameter, addressType, address);
+    if (words) state.module.AddFunction(spv::OpFunctionParameter, u32, addressHigh);
     state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
     state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
     EmitLabel(state, state.module.AllocateId());
@@ -53,8 +57,8 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
             state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
         };
         store(1, reason);
-        store(2, Unary(state, spv::OpUConvert, TypeU32(state), address));
-        store(3, Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u))));
+        store(2, words ? address : Unary(state, spv::OpUConvert, TypeU32(state), address));
+        store(3, words ? addressHigh : Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u))));
         store(4, bytes);
         store(5, ConstantU32(state, static_cast<std::uint32_t>(state.program.Resources().stage)));
         store(6, instruction);
@@ -67,8 +71,19 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
 }
 
 void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason) {
-    if (state.bdaFaultFunction == 0) throw std::runtime_error("BDA fault function is missing");
+    if (state.bdaFaultFunction == 0 || !state.program.Info().usesDma) throw std::runtime_error("BDA fault function is missing");
     state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.bdaFaultFunction, ConstantU32(state, static_cast<std::uint32_t>(reason)), address, bytes, instruction);
+}
+
+void RecordBdaFaultWords(SpirvEmitterState& state, std::uint32_t addressLow, std::uint32_t addressHigh, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason) {
+    if (state.program.Info().usesDma) {
+        const auto u64 = TypeScalarU64(state);
+        const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, addressHigh), BdaConstant(state, 32u));
+        RecordBdaFault(state, Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, addressLow), high), bytes, instruction, reason);
+        return;
+    }
+    if (state.bdaFaultFunction == 0) throw std::runtime_error("BDA fault function is missing");
+    state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.bdaFaultFunction, ConstantU32(state, static_cast<std::uint32_t>(reason)), addressLow, addressHigh, bytes, instruction);
 }
 
 void ReturnBdaFailureIf(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason) {
