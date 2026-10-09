@@ -330,21 +330,13 @@ bool Matches(std::uint32_t column, std::uint32_t actual, std::uint32_t expected)
     return column >= 9u && IsNan32(actual) && IsNan32(expected);
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t count) {
-    Input.fill(0u);
-    for (std::uint32_t lane = 0; lane < count; ++lane) {
-        const auto& vector = Vectors[first + lane];
-        Input[lane * Inputs] = vector.a;
-        Input[lane * Inputs + 1] = vector.b;
-        Input[lane * Inputs + 2] = vector.c;
-    }
+void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, bool ieee = false) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(MiscCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -354,9 +346,55 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t cou
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    if (ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+}
+
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t count) {
+    Input.fill(0u);
+    for (std::uint32_t lane = 0; lane < count; ++lane) {
+        const auto& vector = Vectors[first + lane];
+        Input[lane * Inputs] = vector.a;
+        Input[lane * Inputs + 1] = vector.b;
+        Input[lane * Inputs + 2] = vector.c;
+    }
+    Dispatch(device, MiscCode);
+}
+
+void CheckPackedMinMax(AgcDriver::VulkanDevice& device) {
+    alignas(256) constexpr std::array<std::uint32_t, 16> code{
+        0x34020082, 0x34060084, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xbf8c3f70,
+        0xcc11400a, 0x18020b04, 0xcc12400b, 0x18020b04,
+        0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xbf810000,
+    };
+    constexpr std::array<std::array<std::uint32_t, 4>, 10> vectors{{
+        {0x7e017e01u, 0x40003c00u, 0x40003c00u, 0x40003c00u},
+        {0x40003c00u, 0xfe55ff55u, 0x40003c00u, 0x40003c00u},
+        {0x7e00fe00u, 0x40003c00u, 0x40003c00u, 0x40003c00u},
+        {0x40003c00u, 0xfe007e00u, 0x40003c00u, 0x40003c00u},
+        {0x7c017dffu, 0x40003c00u, 0x7e017fffu, 0x7e017fffu},
+        {0x40003c00u, 0xfc01fdffu, 0xfe01ffffu, 0xfe01ffffu},
+        {0x7c017dffu, 0xfc01fdffu, 0x7e017fffu, 0x7e017fffu},
+        {0x00008000u, 0x80000000u, 0x80008000u, 0x00000000u},
+        {0x40003c00u, 0x3c004000u, 0x3c003c00u, 0x40004000u},
+        {0xfc007c00u, 0x40003c00u, 0xfc003c00u, 0x40007c00u},
+    }};
+    Input.fill(0u);
+    for (std::size_t lane = 0; lane < vectors.size(); ++lane) {
+        Input[lane * Inputs] = vectors[lane][0];
+        Input[lane * Inputs + 1u] = vectors[lane][1];
+    }
+    Dispatch(device, code, true);
+    for (std::size_t lane = 0; lane < vectors.size(); ++lane) {
+        for (std::size_t column = 0; column < 2u; ++column) {
+            const auto actual = Output[lane * Results + column];
+            const auto expected = vectors[lane][column + 2u];
+            Require(actual == expected, std::string("packed f16 min/max: vector ") + std::to_string(lane) +
+                " column " + std::to_string(column) + " is " + Hex(actual) + ", expected " + Hex(expected));
+        }
+    }
 }
 
 void Check(std::uint32_t first, std::uint32_t count) {
@@ -378,6 +416,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        CheckPackedMinMax(*device);
         constexpr std::uint32_t total = sizeof(Vectors) / sizeof(Vectors[0]);
         for (std::uint32_t first = 0; first < total; first += Threads) {
             const auto count = std::min(Threads, total - first);
