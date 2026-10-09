@@ -10,6 +10,8 @@
 #include <chrono>
 #include <atomic>
 #include <algorithm>
+#include <bit>
+#include <emmintrin.h>
 #include <functional>
 #include <cstdio>
 #include <cstdlib>
@@ -1813,28 +1815,29 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
     const TimedAccess timed(CounterChangedWrite, current.size());
     auto* destination = reinterpret_cast<std::byte*>(address);
     CheckRange(destination, current.size(), 1, true);
-    constexpr std::size_t block = 256;
     const auto size = current.size();
-    const auto differs = [&](std::size_t at) {
-        const auto length = std::min(block, size - at);
-        return std::memcmp(current.data() + at, original.data() + at, length) != 0;
-    };
     // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
     storeOwn(address, size, [&] {
         std::size_t firstChanged = size;
         std::size_t lastChanged = 0;
-        for (std::size_t at = 0; at < size; at += block) {
-            if (!differs(at)) continue;
-            const auto blockEnd = std::min(at + block, size);
-            for (std::size_t run = at; run < blockEnd;) {
-                if (current[run] == original[run]) { ++run; continue; }
-                auto runEnd = run + 1;
-                while (runEnd < blockEnd && current[runEnd] != original[runEnd]) ++runEnd;
-                std::memcpy(destination + run, current.data() + run, runEnd - run);
-                firstChanged = std::min(firstChanged, run);
-                lastChanged = std::max(lastChanged, runEnd);
-                run = runEnd;
-            }
+        std::size_t at = 0;
+        for (; at + 16 <= size; at += 16) {
+            const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(current.data() + at));
+            const auto same = _mm_cmpeq_epi8(bytes, _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at)));
+            const auto equal = static_cast<std::uint32_t>(_mm_movemask_epi8(same));
+            if (equal == 0xffffu) continue;
+            if (equal == 0) _mm_storeu_si128(reinterpret_cast<__m128i*>(destination + at), bytes);
+            else _mm_maskmoveu_si128(bytes, _mm_xor_si128(same, _mm_set1_epi8(-1)), reinterpret_cast<char*>(destination + at));
+            const auto changed = ~equal & 0xffffu;
+            firstChanged = std::min(firstChanged, at + static_cast<std::size_t>(std::countr_zero(changed)));
+            lastChanged = std::max(lastChanged, at + 32 - static_cast<std::size_t>(std::countl_zero(changed)));
+        }
+        _mm_sfence();
+        for (; at < size; ++at) {
+            if (current[at] == original[at]) continue;
+            destination[at] = current[at];
+            firstChanged = std::min(firstChanged, at);
+            lastChanged = std::max(lastChanged, at + 1);
         }
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });
