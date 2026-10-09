@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvModule.hpp"
+#include "SpirvBackend/SpirvSpecialization.hpp"
 #include <cstdio>
 #include <map>
 #include <set>
@@ -184,7 +185,46 @@ void testEmittedWordsAreStable() {
 
 }
 
+void testStructExtractsAreNotShuffled() {
+    const auto op = [](std::uint32_t count, spv::Op code) { return (count << 16u) | static_cast<std::uint32_t>(code); };
+    for (const bool vectorSource : {false, true}) {
+        const std::vector<std::uint32_t> words{
+            spv::MagicNumber, 0x00010300u, 0u, 20u, 0u,
+            op(2, spv::OpCapability), spv::CapabilityShader,
+            op(3, spv::OpMemoryModel), spv::AddressingModelLogical, spv::MemoryModelGLSL450,
+            op(6, spv::OpEntryPoint), spv::ExecutionModelGLCompute, 10u, 0x6e69616du, 0u, 9u,
+            op(6, spv::OpExecutionMode), 10u, spv::ExecutionModeLocalSize, 1u, 1u, 1u,
+            op(2, spv::OpTypeVoid), 1u,
+            op(4, spv::OpTypeInt), 2u, 32u, 0u,
+            vectorSource ? op(4, spv::OpTypeVector) : op(4, spv::OpTypeStruct), 3u, 2u, 2u,
+            op(4, spv::OpTypeVector), 4u, 2u, 4u,
+            op(4, spv::OpTypePointer), 5u, spv::StorageClassPrivate, 4u,
+            op(3, spv::OpTypeFunction), 6u, 1u,
+            op(4, spv::OpConstant), 2u, 7u, 1u,
+            op(4, spv::OpConstant), 2u, 8u, 2u,
+            op(4, spv::OpVariable), 5u, 9u, spv::StorageClassPrivate,
+            op(5, spv::OpFunction), 1u, 10u, 0u, 6u,
+            op(2, spv::OpLabel), 11u,
+            op(5, spv::OpCompositeConstruct), 3u, 12u, 7u, 8u,
+            op(5, spv::OpCompositeExtract), 2u, 13u, 12u, 0u,
+            op(5, spv::OpCompositeExtract), 2u, 14u, 12u, 1u,
+            op(7, spv::OpCompositeConstruct), 4u, 15u, 13u, 14u, 13u, 13u,
+            op(3, spv::OpStore), 9u, 15u,
+            op(1, spv::OpReturn),
+            op(1, spv::OpFunctionEnd),
+        };
+        const auto specialized = ShaderRecompiler::SpecializeSpirv(words);
+        bool shuffled = false;
+        for (std::size_t cursor = 5; cursor < specialized.size(); cursor += specialized[cursor] >> 16u) {
+            if ((specialized[cursor] >> 16u) == 0u) break;
+            if ((specialized[cursor] & 0xffffu) == spv::OpVectorShuffle) shuffled = true;
+        }
+        check(shuffled == vectorSource, vectorSource ? "extracts of one vector were not folded into a shuffle" : "extracts of a struct were folded into a vector shuffle");
+    }
+}
+
 int main() {
+    testStructExtractsAreNotShuffled();
     testRepeatedTypesShareOneId();
     testOperandShapesDoNotCollide();
     testOperandKindsAgree();
