@@ -53,6 +53,14 @@ if(ANYPS5_RELINKER_ONLY)
     return()
 endif()
 
+if(BUILD_TESTING)
+    find_program(NODE_EXECUTABLE node)
+    if(NODE_EXECUTABLE)
+        add_test(NAME input_mapper COMMAND ${NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_input_mapper.js)
+    endif()
+endif()
+
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST OFF CACHE BOOL "" FORCE)

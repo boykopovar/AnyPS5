@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Edit the AnyPS5 keyboard and mouse bindings and save them as anyps5-input.ini.">
+<title>AnyPS5 input mapping</title>
+<style>
+:root {
+    color-scheme: light dark;
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1c2230;
+    --muted: #5c6475;
+    --border: #d9dee6;
+    --chip: #eef1f5;
+    --accent: #2563d9;
+    --accent-soft: #e6eefc;
+    --on-accent: #ffffff;
+    --warn: #a35a00;
+    --warn-soft: #fff3e0;
+    --error: #b42318;
+    --error-soft: #fdecea;
+    --cross: #3b6fd8;
+    --circle: #d6453d;
+    --triangle: #1f9d74;
+    --square: #c2549b;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #101318;
+        --surface: #181c23;
+        --text: #e5e8ee;
+        --muted: #9aa2b1;
+        --border: #2b323d;
+        --chip: #232933;
+        --accent: #6b9bf2;
+        --accent-soft: #1d2a42;
+        --on-accent: #0d1420;
+        --warn: #f2a541;
+        --warn-soft: #2e2414;
+        --error: #ff7a6e;
+        --error-soft: #331a18;
+        --cross: #7ea4f5;
+        --circle: #f07f78;
+        --triangle: #5cc9a4;
+        --square: #e48ac3;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+code, pre, .key-name {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+}
+
+a {
+    color: var(--accent);
+}
+
+h1, h2 {
+    margin: 0;
+    line-height: 1.2;
+}
+
+button {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    border-color: var(--accent);
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+button:focus-visible, input:focus-visible, pre:focus-visible, .capture-zone:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+}
+
+.page {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+}
+
+.page-header {
+    margin-bottom: 24px;
+}
+
+.page-header h1 {
+    font-size: 1.6rem;
+}
+
+.page-header p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    max-width: 70ch;
+}
+
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 24px;
+    align-items: start;
+}
+
+.groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 16px;
+    align-items: start;
+}
+
+.group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 10px 8px;
+}
+
+.group h2 {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 8px 6px;
+}
+
+.group ul, .bindings {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.action {
+    padding: 8px;
+    border-radius: 8px;
+    border-left: 3px solid transparent;
+}
+
+.action + .action {
+    margin-top: 2px;
+}
+
+.action.changed {
+    border-left-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.action-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-height: 28px;
+}
+
+.glyph {
+    width: 1.2em;
+    text-align: center;
+    font-weight: 700;
+}
+
+.glyph-Cross { color: var(--cross); }
+.glyph-Circle { color: var(--circle); }
+.glyph-Triangle { color: var(--triangle); }
+.glyph-Square { color: var(--square); font-size: 1.25em; line-height: 1; }
+
+.action-label {
+    font-weight: 600;
+}
+
+.key-name {
+    font-size: 0.78rem;
+    color: var(--muted);
+}
+
+.action-head .reset {
+    margin-left: auto;
+    padding: 2px 8px;
+    font-size: 0.8rem;
+}
+
+.bindings {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.binding {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: var(--chip);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1px 2px 1px 8px;
+    font-size: 0.875rem;
+}
+
+.binding.conflict {
+    background: var(--warn-soft);
+    border-color: var(--warn);
+}
+
+.binding button {
+    border: none;
+    background: transparent;
+    padding: 0 6px;
+    line-height: 1.6;
+    color: var(--muted);
+}
+
+.binding button:hover:not(:disabled) {
+    color: var(--error);
+}
+
+.empty {
+    color: var(--muted);
+    font-size: 0.875rem;
+    font-style: italic;
+}
+
+.add {
+    padding: 1px 10px;
+    font-size: 0.875rem;
+    border-style: dashed;
+    color: var(--muted);
+}
+
+.output {
+    position: sticky;
+    top: 16px;
+    display: grid;
+    gap: 12px;
+}
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+}
+
+.output-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.output-head h2 {
+    font-size: 1rem;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.summary {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.preview {
+    margin: 12px 0;
+    padding: 12px;
+    min-height: 5.5em;
+    max-height: 45vh;
+    overflow: auto;
+    background: var(--chip);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    white-space: pre;
+}
+
+.preview.placeholder {
+    color: var(--muted);
+    font-family: inherit;
+    white-space: normal;
+}
+
+.buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.buttons + .buttons {
+    margin-top: 8px;
+}
+
+.buttons .primary {
+    flex: 1;
+}
+
+.status {
+    min-height: 1.45em;
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--muted);
+}
+
+.problems:empty {
+    display: none;
+}
+
+.problem {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+}
+
+.problem p {
+    margin: 0;
+}
+
+.problem ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+}
+
+.problem.error {
+    background: var(--error-soft);
+    border: 1px solid var(--error);
+}
+
+.problem.warning {
+    background: var(--warn-soft);
+    border: 1px solid var(--warn);
+}
+
+.notes {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.notes p {
+    margin: 0 0 8px;
+}
+
+.notes p:last-child {
+    margin-bottom: 0;
+}
+
+dialog {
+    width: min(460px, calc(100vw - 32px));
+    padding: 22px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
+}
+
+dialog::backdrop {
+    background: rgba(10, 14, 20, 0.55);
+}
+
+dialog h2 {
+    font-size: 1.15rem;
+    margin-bottom: 14px;
+}
+
+.capture-zone {
+    display: grid;
+    gap: 4px;
+    place-items: center;
+    padding: 30px 16px;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.capture-zone:focus {
+    border-style: solid;
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.capture-zone strong {
+    font-size: 1.1rem;
+}
+
+.capture-zone span {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.capture-message {
+    min-height: 1.45em;
+    margin: 10px 0;
+    color: var(--error);
+    font-size: 0.9rem;
+}
+
+.capture-name label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.9rem;
+    color: var(--muted);
+}
+
+.inline {
+    display: flex;
+    gap: 8px;
+}
+
+.inline input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+.dialog-buttons {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 18px;
+}
+
+body.dragging .layout {
+    outline: 2px dashed var(--accent);
+    outline-offset: 8px;
+    border-radius: 12px;
+}
+
+@media (max-width: 960px) {
+    .layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .output {
+        position: static;
+        order: -1;
+    }
+}
+
+@media (max-width: 420px) {
+    .groups {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+</style>
+</head>
+<body>
+<div class="page">
+    <header class="page-header">
+        <h1>AnyPS5 input mapping</h1>
+        <p>Change the keyboard and mouse bindings and save them as <code>anyps5-input.ini</code>. Game controllers are mapped automatically and do not use this file.</p>
+    </header>
+    <main class="layout">
+        <section id="groups" class="groups" aria-label="Actions"></section>
+        <aside class="output">
+            <section class="card" aria-labelledby="output-title">
+                <div class="output-head">
+                    <h2 id="output-title">anyps5-input.ini</h2>
+                    <span id="summary" class="summary"></span>
+                </div>
+                <pre id="preview" class="preview" tabindex="0" aria-label="File contents"></pre>
+                <div class="buttons">
+                    <button id="download" class="primary" type="button">Download</button>
+                    <button id="copy" type="button">Copy</button>
+                </div>
+                <div class="buttons">
+                    <button id="open" type="button">Open existing file</button>
+                    <button id="reset-all" type="button">Reset all</button>
+                    <input id="file" type="file" accept=".ini,text/plain" hidden>
+                </div>
+                <p id="status" class="status" role="status"></p>
+                <div id="problems" class="problems"></div>
+            </section>
+            <section class="card notes" aria-label="Notes">
+                <p>Save the file beside the converted game executable, or set <code>ANYPS5_INPUT_CONFIG</code> to its path.</p>
+                <p>Actions left out of the file keep their built-in bindings. Keys are matched by their position and named as on a US keyboard.</p>
+                <p>File format: <a href="https://github.com/boykopovar/AnyPS5/blob/main/docs/user/INPUT_MAPPING.md">INPUT_MAPPING.md</a>.</p>
+            </section>
+        </aside>
+    </main>
+</div>
+<dialog id="capture" aria-labelledby="capture-title">
+    <h2 id="capture-title"></h2>
+    <div id="capture-zone" class="capture-zone" tabindex="0" role="button" aria-describedby="capture-help">
+        <strong>Press a key</strong>
+        <span id="capture-help"></span>
+        <span>Escape cancels</span>
+    </div>
+    <p id="capture-message" class="capture-message" role="alert"></p>
+    <form id="capture-name" class="capture-name">
+        <label for="key-name">Or type an SDL key name, such as Escape</label>
+        <div class="inline">
+            <input id="key-name" list="key-names" autocomplete="off" spellcheck="false">
+            <button type="submit">Add</button>
+        </div>
+    </form>
+    <datalist id="key-names"></datalist>
+    <div class="dialog-buttons">
+        <button id="capture-cancel" type="button">Cancel</button>
+    </div>
+</dialog>
+<script src="mapper.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
