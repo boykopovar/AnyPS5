@@ -27,6 +27,7 @@ int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const void*);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI _open_nid_postfix(const char*, int, ...);
 int APS5_VABI close_nid_postfix(int);
+int APS5_VABI dup_nid_postfix(int);
 int APS5_VABI stat_nid_postfix(const char*, FileStat*);
 int APS5_VABI unlink_nid_postfix(const char*);
 int APS5_VABI rmdir_nid_postfix(const char*);
@@ -87,6 +88,21 @@ int main() {
     Require(std::memcmp(received, payload, sizeof(payload)) == 0);
     Require(read_nid_postfix(descriptors[0], received, sizeof(received)) == 0);
     Require(close_nid_postfix(descriptors[0]) == 0);
+
+    Require(pipe_nid_postfix(descriptors) == 0);
+    const int duplicate = dup_nid_postfix(descriptors[1]);
+    Require(duplicate >= 0 && duplicate != descriptors[0] && duplicate != descriptors[1]);
+    Require(write_nid_postfix(duplicate, "D", 1) == 1);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(write_nid_postfix(descriptors[1], "O", 1) == 1);
+    Require(close_nid_postfix(descriptors[1]) == 0);
+    char duplicated[3]{};
+    Require(read_nid_postfix(descriptors[0], duplicated, 2) == 2 && std::memcmp(duplicated, "DO", 2) == 0);
+    Require(read_nid_postfix(descriptors[0], duplicated, 2) == 0);
+    Require(close_nid_postfix(descriptors[0]) == 0);
+    Require(dup_nid_postfix(descriptors[0]) == -1 && *__error_nid_postfix() == 9);
+    Require(dup_nid_postfix(-1) == -1 && *__error_nid_postfix() == 9);
+    Require(dup_nid_postfix(0x10000000) == -1 && *__error_nid_postfix() == 9);
     const auto root = std::filesystem::path("anyps5-filesystem-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(mkdir_nid_postfix(root.string().c_str(), 0700) == 0);

@@ -35,6 +35,14 @@ static constexpr int KERNEL_IOV_MAX = 1024;
 #include <direct.h>
 #include <sys/stat.h>
 #include <sys/utime.h>
+extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
+static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
+static int NativeDup(int descriptor) {
+    const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
+    const int result = ::_dup(descriptor);
+    _set_thread_local_invalid_parameter_handler(previous);
+    return result;
+}
 static int NativeRmdir(const std::filesystem::path& path) {
     return ::_wrmdir(path.wstring().c_str());
 }
@@ -152,6 +160,9 @@ static std::int64_t NativePwrite(int descriptor, const void* buf, std::size_t nb
 #include <dirent.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+static int NativeDup(int descriptor) {
+    return ::dup(descriptor);
+}
 static int NativeRmdir(const std::filesystem::path& path) {
     return ::rmdir(path.c_str());
 }
@@ -266,6 +277,18 @@ int APS5_VABI close_nid_postfix(int d) {
 
 int APS5_VABI _close_nid_postfix(int descriptor) {
     return close_nid_postfix(descriptor);
+}
+
+int APS5_VABI dup_nid_postfix(int d) {
+    if (d >= GuestSockets::FirstDescriptor) {
+        if (!GuestSockets::IsOpen(d)) return PosixFailure(GUEST_EBADF);
+        NotImplemented_nid_no_patch("dup: socket descriptors");
+    }
+#ifdef _WIN32
+    if (File::DirectoryDescriptorPath(d)) NotImplemented_nid_no_patch("dup: directory descriptors");
+#endif
+    const int result = NativeDup(d);
+    return result < 0 ? PosixFailure(SceErrorFromErrno(errno) & 0xffff) : result;
 }
 
 int APS5_VABI flock_nid_postfix(int d, int operation) {
