@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #ifdef _WIN32
@@ -162,6 +163,11 @@ int main() {
     Require(sceKernelWrite(file, nullptr, 1) == ErrorEfault);
     Require(sceKernelRead(file, nullptr, 0) == 0);
     Require(sceKernelWrite(file, nullptr, 0) == 0);
+#ifdef _WIN32
+    const auto beyondNativeLimit = static_cast<std::size_t>(std::numeric_limits<int>::max()) + 1;
+    RequireThrows([&] { sceKernelRead(file, first, beyondNativeLimit); });
+    RequireThrows([&] { sceKernelWrite(file, first, beyondNativeLimit); });
+#endif
     Require(sceKernelLseek(file, -1, 0) == ErrorEinval);
 
     Require(sceKernelClose(file) == 0);

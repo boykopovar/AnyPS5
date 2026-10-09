@@ -1,0 +1,68 @@
+name: PR intake
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened]
+
+permissions: {}
+
+concurrency:
+  group: pr-intake-${{ github.event.pull_request.number }}
+
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            if (pr.state !== 'open' || pr.base.ref !== 'main') {
+              return;
+            }
+            const minimumMergedPRs = 20;
+            const { data: mergedPRs } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:pr is:merged base:main author:${pr.user.login}`,
+              per_page: 1
+            });
+            if (mergedPRs.incomplete_results || !Number.isSafeInteger(mergedPRs.total_count) || mergedPRs.total_count < 0) {
+              throw new Error('Could not reliably count merged pull requests');
+            }
+            if (mergedPRs.total_count >= minimumMergedPRs) {
+              return;
+            }
+            const name = 'intake paused';
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              try {
+                await github.rest.issues.createLabel({
+                  owner, repo, name, color: 'd93f0b',
+                  description: 'Closed while PR intake is limited to authors with at least 20 PRs merged into main'
+                });
+              } catch (createError) {
+                if (createError.status !== 422) {
+                  throw createError;
+                }
+                await github.rest.issues.getLabel({ owner, repo, name });
+              }
+            }
+            await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: [name] });
+            const body = 'Thank you for your interest in the project! We are sorry, but we cannot accept more PRs while we work through the existing backlog. This PR has been automatically closed and labeled "intake paused". This is not a judgment of the quality of your changes.';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: pull_number, per_page: 100
+            });
+            if (!comments.some((comment) => comment.user.login === 'github-actions[bot]' && comment.body === body)) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
+            }
+            await github.rest.pulls.update({ owner, repo, pull_number, state: 'closed' });

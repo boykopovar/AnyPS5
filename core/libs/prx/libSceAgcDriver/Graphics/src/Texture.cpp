@@ -1252,6 +1252,7 @@ bool StorageTexture::Refresh() {
     bool unchanged = true;
     bool stamped = true;
     bool tracked = true;
+    bool compared = false;
     bool keysChanged = false;
     bool cpuWrote = false;
     bool direct = false;
@@ -1267,6 +1268,8 @@ bool StorageTexture::Refresh() {
             stampedBlocks.assign(generations.size(), 0);
             cpuBlocks.assign(generations.size(), 0);
             tracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks);
+            compared = !tracked && compareUntracked(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), stampedBlocks, true);
+            if (compared) cpuBlocks = stampedBlocks;
         };
         const auto keysStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         keys = ProvedKeys();
@@ -1302,8 +1305,16 @@ bool StorageTexture::Refresh() {
         }
         // "cpu" names a CPU store in both models; a block without a generation (untracked) says
         // nothing about who wrote it.
+        if (compared && !keysChanged) {
+            for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+                const auto first = layerBegin(layer) / 65536 - descriptor.baseAddress / 65536;
+                const auto last = (layerBegin(layer) + layerBytes(layer) - 1) / 65536 - descriptor.baseAddress / 65536;
+                changed[layer] = std::any_of(stampedBlocks.begin() + first, stampedBlocks.begin() + last + 1, [](auto value) { return value != GuestMemory::BlockUnchanged; });
+            }
+            unchanged = std::none_of(changed.begin(), changed.end(), [](bool value) { return value; });
+        }
         for (std::size_t k = 0; k < cpuBlocks.size(); ++k) {
-            if (tracked && cpuBlocks[k] != 0 && generations[k] != 0) cpuWrote = true;
+            if (cpuBlocks[k] != 0 && (compared || (tracked && generations[k] != 0))) cpuWrote = true;
         }
         // Unchanged bytes rescue an upload only when nothing else moved: with the keys changed
         // the same bytes read differently, and a changed unit holding pending results must take
@@ -1373,6 +1384,7 @@ bool StorageTexture::Refresh() {
     // unit's stamps say nothing, so it is stored.
     const auto droppable = [&](std::uint32_t unit) {
         if (keysChanged && IsDccClear(keys)) return true;
+        if (compared) return stampedBlocks.at(unit) == GuestMemory::BlockWritten;
         if (!tracked || layerGeneration[unit] == 0 || unit >= stampedBlocks.size() || stampedBlocks[unit] != GuestMemory::BlockWritten) return false;
         const auto begin = layerBegin(unit);
         const auto bytes = layerBytes(unit);
@@ -1490,6 +1502,55 @@ void traceKeyStore(const char* path, const GuestTextureResource& descriptor, std
 
 }
 
+void StorageTexture::captureGuestBytes(const std::vector<bool>* layers) {
+    comparedGuestBytes = {};
+    const bool complete = layers == nullptr || std::all_of(layers->begin(), layers->end(), [](bool selected) { return selected; });
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (layers != nullptr && !(*layers)[layer]) continue;
+        const auto offset = static_cast<std::size_t>(layerBegin(layer) - descriptor.baseAddress);
+        GuestMemory::ReadCommitted(layerBegin(layer), std::span(original).subspan(offset, static_cast<std::size_t>(layerBytes(layer))));
+    }
+    originalValid = originalValid || complete;
+}
+
+bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize) const {
+    if (!originalValid) return false;
+    struct Exempt {
+        const StorageTexture* previous;
+        ~Exempt() { refreshing = previous; }
+    } exempt{refreshing};
+    refreshing = this;
+    Require(address >= descriptor.baseAddress && bytes <= guestBytes && address - descriptor.baseAddress <= guestBytes - bytes, "texture comparison exceeds its snapshot");
+    Require(original.size() == guestBytes, "texture comparison has no complete snapshot");
+    GuestMemory::FlushGpuWrites(address, bytes);
+    if (!originalValid) return false;
+    constexpr std::uint64_t blockBytes = 65536;
+    const auto end = address + bytes;
+    const auto first = address / blockBytes;
+    Require(changed.size() == (end - 1) / blockBytes - first + 1, "texture comparison block count differs");
+    const auto* recorder = Recorder::Active();
+    const std::array<std::uint64_t, 4> stamp{GuestMemory::CollectEpoch(), GuestMemory::TrackerGeneration(), GuestMemory::ForgetSerial(), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    const bool cacheable = memoize && stamp[0] != 0 && (stamp[2] & 1u) == 0 && address == descriptor.baseAddress && bytes == guestBytes;
+    if (cacheable && comparedGuestBytes == stamp) {
+        std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
+        return true;
+    }
+    const auto saved = std::span(original).subspan(static_cast<std::size_t>(address - descriptor.baseAddress), bytes);
+    if (GuestMemory::EqualsCommittedUnsynced(address, saved)) {
+        std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
+        if (cacheable) comparedGuestBytes = stamp;
+        return true;
+    }
+    comparedGuestBytes = {};
+    for (std::size_t index = 0; index < changed.size(); ++index) {
+        const auto begin = std::max(address, (first + index) * blockBytes);
+        const auto stop = std::min(end, (first + index + 1) * blockBytes);
+        const auto saved = std::span(original).subspan(static_cast<std::size_t>(begin - descriptor.baseAddress), static_cast<std::size_t>(stop - begin));
+        changed[index] = GuestMemory::EqualsCommittedUnsynced(begin, saved) ? GuestMemory::BlockUnchanged : GuestMemory::BlockWritten;
+    }
+    return true;
+}
+
 void StorageTexture::upload(const std::vector<bool>* layers) {
     CaptureTrace::Log("upload image=%llx bytes=%llu generation=%llu reason=%s partial=%d", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), uploadReason, layers != nullptr);
     const bool profile = LookupOutcomes::Profiled();
@@ -1515,7 +1576,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         // The clear is recorded into the open batch like a direct upload (the image kept by it): a
         // batch of its own submitted the recorder's work first and waited for all of it, 25-40 ms
         // under the GPU mutex at the movie stage. APS5_NO_RECORDED_CLEAR=1 waits as before.
-        originalValid = false;
+        captureGuestBytes(nullptr);
         forgetBorrowed(0, trackedLayers);
         stampLayers(false);
         static const bool recordClear = std::getenv("APS5_NO_RECORDED_CLEAR") == nullptr;
@@ -1563,9 +1624,8 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         return;
     }
     if (const auto* import = uploadedKeys == DccKeys::Uncompressed ? HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) : nullptr) {
-        // The surface lives in host-imported memory: the detiler reads it in place, no guest bytes
-        // are copied, and write tracking alone validates the image (a change re-runs this).
-        originalValid = false;
+        if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) originalValid = false;
+        else captureGuestBytes(layers);
         stampLayers(true);
         // A whole-surface upload of a block-unit image goes through the windows too when a unit
         // shadow holds part of the surface (the detile then reads the slabs; a new image has no
@@ -2225,6 +2285,22 @@ bool StorageTexture::overlaps(std::uint64_t address, std::size_t bytes) const {
     return address < descriptor.baseAddress + guestBytes && descriptor.baseAddress < address + bytes;
 }
 
+bool StorageTexture::overlapsLive(std::uint64_t address, std::size_t bytes) const {
+    return !released && guestBytes != 0 && overlaps(address, bytes);
+}
+
+// A fill of this image's DCC keys starts at the dccAddress and is at least one key per 256 guest
+// bytes. While any live image overlaps the fill (`overlapped`), it must also stay inside the key extent
+// (DccKeyCount, the pipe-aligned count, at least guestBytes / 256): the bytes past the keys may be
+// memory the overlapping image owns, so a longer fill is not a key fill. The bound is inferred, not
+// measured (docs/dev/TechnicalDebt.md). With nothing overlapping, the length rule alone decides, as
+// it did before the bound.
+bool StorageTexture::keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const {
+    constexpr std::uint64_t keyBytes = 256;
+    if (released || descriptor.dccAddress != address || guestBytes / keyBytes == 0 || bytes < guestBytes / keyBytes) return false;
+    return !overlapped || bytes <= DccKeyCount(descriptor, guestBytes);
+}
+
 void StorageTexture::MarkDirty() {
     if (descriptor.dccAddress != 0 && IsDccClear(uploadedKeys) && !IsDccClear(filledKeys)) {
         traceKeyStore("first write", descriptor, guestBytes);
@@ -2702,7 +2778,7 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
     std::lock_guard lock(live.mutex);
     std::vector<StorageTexture*> overlapping;
     for (auto* texture : live.textures) {
-        if (!texture->released && texture->guestBytes != 0 && texture->overlaps(address, bytes)) overlapping.push_back(texture);
+        if (texture->overlapsLive(address, bytes)) overlapping.push_back(texture);
     }
     const auto end = address + bytes;
     StorageTexture* covered = nullptr;
@@ -2743,14 +2819,11 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
                 if (texture->descriptor.baseAddress >= address && texture->descriptor.baseAddress + texture->guestBytes <= end) ++coverage.inside;
             }
         }
-    } else if (overlapping.empty()) {
-        constexpr std::uint64_t keyBytes = 256;
-        for (const auto* texture : live.textures) {
-            if (!texture->released && texture->descriptor.dccAddress == address && texture->guestBytes / keyBytes != 0 && bytes >= texture->guestBytes / keyBytes) coverage.cover = FillCover::Keys;
-        }
+    } else if (std::any_of(live.textures.begin(), live.textures.end(), [&](const StorageTexture* texture) { return texture->keysFillMatches(address, bytes, !overlapping.empty()); })) {
+        coverage.cover = FillCover::Keys;
     } else if (overlapping.size() > 1) {
         coverage.cover = FillCover::Several;
-    } else {
+    } else if (overlapping.size() == 1) {
         auto* single = overlapping.front();
         const auto begin = single->descriptor.baseAddress;
         const auto stop = begin + single->guestBytes;
@@ -2788,13 +2861,13 @@ std::size_t StorageTexture::NoteKeysFill(std::uint64_t address, std::size_t byte
         case 0xff: keys = DccKeys::Uncompressed; break;
         default: return 0;
     }
-    constexpr std::uint64_t keyBytes = 256;
     static const bool traceKeys = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
     auto& live = Live();
     std::lock_guard lock(live.mutex);
+    const bool overlapped = std::any_of(live.textures.begin(), live.textures.end(), [&](const StorageTexture* texture) { return texture->overlapsLive(address, bytes); });
     std::size_t covered = 0;
     for (auto* texture : live.textures) {
-        if (texture->released || texture->descriptor.dccAddress != address || texture->guestBytes / keyBytes == 0 || bytes < texture->guestBytes / keyBytes) continue;
+        if (!texture->keysFillMatches(address, bytes, overlapped)) continue;
         texture->filledKeys = keys;
         ++covered;
         if (traceKeys && IsDccClear(keys)) std::fprintf(stderr, "[dcc-keys] %s key fill over 0x%llx+0x%llx (uploaded %s, dirty %d)\n", DccKeysName(keys), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), DccKeysName(texture->uploadedKeys), texture->dirty ? 1 : 0);
@@ -2816,13 +2889,13 @@ std::size_t StorageTexture::ClearByKeysFill(std::uint64_t address, std::size_t b
         case 0x20: keys = DccKeys::ClearRegister; break;
         default: return 0;
     }
-    constexpr std::uint64_t keyBytes = 256;
     std::vector<std::shared_ptr<StorageTexture>> covered;
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
+        const bool overlapped = std::any_of(live.textures.begin(), live.textures.end(), [&](const StorageTexture* texture) { return texture->overlapsLive(address, bytes); });
         for (auto* texture : live.textures) {
-            if (texture->released || texture->descriptor.dccAddress != address || texture->guestBytes / keyBytes == 0 || bytes < texture->guestBytes / keyBytes) continue;
+            if (!texture->keysFillMatches(address, bytes, overlapped)) continue;
             if (auto shared = texture->weak_from_this().lock()) covered.push_back(std::move(shared));
         }
     }
@@ -3420,11 +3493,12 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     }
     std::vector<std::uint8_t> changedBlocks(spanBlocks);
     const bool tracked = GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks);
+    const bool compared = !tracked && compareUntracked(firstStored, static_cast<std::size_t>(lastStored - firstStored), changedBlocks);
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layers[layer]) continue;
         const auto begin = layerBegin(layer);
         const auto end = begin + layerBytes(layer);
-        if (!tracked || layerGeneration[layer] == 0) {
+        if (!compared && (!tracked || layerGeneration[layer] == 0)) {
             keep.emplace_back(begin, end);
             continue;
         }
@@ -3433,7 +3507,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             const auto to = std::min(at + block, end);
             if (from >= to) continue;
             const bool edge = from != at || to != at + block;
-            if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten && (!edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), layerGeneration[layer]))) {
+            if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten && (compared || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), layerGeneration[layer]))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
                 ++skipped;

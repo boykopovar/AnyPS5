@@ -2,6 +2,7 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
+#include <iostream>
 #include <string>
 
 namespace Elfpatcher {
@@ -131,10 +132,19 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     const ProgramHeaderLayoutRequest& request
 ) const {
     std::uint16_t keptCount = 0;
+    std::uint16_t frameCount = 0;
     for (const auto& ph : request.OriginalHeaders) {
         if (_segmentFilter->ShouldSkip(ph))
             continue;
         keptCount++;
+        if (ph.Type == PT_GNU_EH_FRAME)
+            frameCount++;
+    }
+
+    const bool keepFrames = keptCount + kSyntheticProgramHeaderCount < request.PhNum;
+    if (!keepFrames && frameCount > 0) {
+        keptCount -= frameCount;
+        std::cerr << "WARNING: No free program header slot for PT_GNU_EH_FRAME; C++ exceptions thrown in the executable cannot be caught.\n";
     }
 
     const std::uint16_t neededPh = keptCount + kSyntheticProgramHeaderCount;
@@ -175,7 +185,7 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     writtenPh++;
 
     for (const auto& ph : request.OriginalHeaders) {
-        if (_segmentFilter->ShouldSkip(ph))
+        if (_segmentFilter->ShouldSkip(ph) || (!keepFrames && ph.Type == PT_GNU_EH_FRAME))
             continue;
         const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
         if (ph.Type == PT_LOAD) {

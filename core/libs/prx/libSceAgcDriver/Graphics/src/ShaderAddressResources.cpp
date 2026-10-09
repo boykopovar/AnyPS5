@@ -15,8 +15,8 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
             if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable) ++tables;
             else ++faults;
         }
-        const bool rectListFault = shader.stage == ShaderRecompiler::ShaderStage::TessellationControl && tables == 0 && faults == 1;
-        Require((tables == faults || rectListFault) && tables <= 1 && faults <= 1, "invalid BDA table and fault descriptors");
+        const bool faultOnly = tables == 0 && faults == 1 && shader.program->bdaAbiVersion == ShaderRecompiler::BdaAbi::Version;
+        Require((tables == faults || faultOnly) && tables <= 1 && faults <= 1, "invalid BDA table and fault descriptors");
         Require(shader.program->bdaAbiVersion == (faults == 0 ? 0u : ShaderRecompiler::BdaAbi::Version), "incompatible BDA ABI version");
         // Rect-list validation needs a fault buffer, but never accesses guest addresses.
         usesBda = usesBda || tables != 0;

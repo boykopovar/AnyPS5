@@ -55,10 +55,21 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     bytes.insert(bytes.end(), symbols.begin(), symbols.end());
     const auto hashAddress = address();
     const auto count = static_cast<std::uint32_t>(image.Symbols.size());
-    Io::AppendU32(bytes, 1);
+    const auto bucketCount = std::max<std::uint32_t>(count, 1);
+    std::vector<std::uint32_t> buckets(bucketCount), chains(count);
+    for (std::uint32_t index = count; index-- > 1;) {
+        std::uint32_t hash = 0;
+        for (auto offset = Io::ReadU32(symbols, index * 24); offset < strings.size() && strings[offset] != 0; ++offset) {
+            hash = (hash << 4u) + strings[offset];
+            hash = (hash ^ ((hash & 0xf0000000u) >> 24u)) & 0x0fffffffu;
+        }
+        chains[index] = buckets[hash % bucketCount];
+        buckets[hash % bucketCount] = index;
+    }
+    Io::AppendU32(bytes, bucketCount);
     Io::AppendU32(bytes, count);
-    Io::AppendU32(bytes, count > 1 ? 1 : 0);
-    for (std::uint32_t index = 0; index < count; ++index) Io::AppendU32(bytes, index != 0 && index + 1 < count ? index + 1 : 0);
+    for (const auto bucket : buckets) Io::AppendU32(bytes, bucket);
+    for (const auto chain : chains) Io::AppendU32(bytes, chain);
     Io::AlignBuffer(bytes, 8);
     const auto relaAddress = address();
     bytes.insert(bytes.end(), image.Dynamic.RelaData.begin(), image.Dynamic.RelaData.end());

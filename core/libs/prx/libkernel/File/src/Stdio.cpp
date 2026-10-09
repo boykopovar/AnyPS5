@@ -400,6 +400,13 @@ int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
     return PosixResult(sceKernelStat(path, sb));
 }
 
+int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
+    if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
+    if (const int error = PathError(path)) return PosixFailure(error);
+    if (!File::FillLinkStat(ResolvePath_nid_no_patch(path), sb)) return PosixResult(SceErrorFromErrno(errno));
+    return 0;
+}
+
 int APS5_VABI unlink_nid_postfix(const char* path) {
     if (const int error = PathError(path)) return PosixFailure(error);
     return PosixResult(sceKernelUnlink(path));
@@ -495,6 +502,14 @@ int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
 }
 
 #endif
+
+int APS5_VABI getdirentries_nid_postfix(int fd, char* buf, int nbytes, int64_t* basep) {
+    return PosixResult(sceKernelGetdirentries(fd, buf, nbytes, basep));
+}
+
+int APS5_VABI getdents_nid_postfix(int fd, char* buf, int nbytes) {
+    return PosixResult(sceKernelGetdents(fd, buf, nbytes));
+}
 
 int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
     (void)mode;
@@ -714,6 +729,16 @@ int APS5_VABI futimes_nid_postfix(int d, const KernelTimeval* times) {
 
 int APS5_VABI fsync_nid_postfix(int fd) {
     if (sceKernelFsync(fd) != 0) return PosixFailure(errno);
+    return 0;
+}
+
+int APS5_VABI fdatasync_nid_postfix(int fd) {
+    if (fd >= GuestSockets::FirstDescriptor) return PosixFailure(GuestSockets::IsOpen(fd) ? GUEST_EINVAL : GUEST_EBADF);
+#ifdef _WIN32
+    if (::_commit(fd) != 0) return PosixResult(SceErrorFromErrno(errno));
+#else
+    if (::fdatasync(fd) != 0) return PosixResult(SceErrorFromErrno(errno));
+#endif
     return 0;
 }
 

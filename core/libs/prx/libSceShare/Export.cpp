@@ -118,8 +118,10 @@ int APS5_VABI sceShareGetRunningStatus(uint32_t* status) {
     return 0;
 }
 
-int APS5_VABI sceShareSetContentParamForApplicationTitle(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* application_title) {
+    if (application_title == nullptr) {
+        return ERROR_INVALID_PARAM;
+    }
     return 0;
 }
 

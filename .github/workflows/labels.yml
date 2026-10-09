@@ -19,10 +19,12 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - run: |
-          label() { gh label create "$1" --color "$2" --description "$3"; }
+          existing=$(gh label list --limit 1000 --json name --jq '.[].name')
+          label() { grep -qixF -- "$1" <<< "$existing" || gh label create "$1" --color "$2" --description "$3"; }
           force_label() { gh label create "$1" --color "$2" --description "$3" --force; }
 
           force_label 'needs rebase' b60205 'Conflicts with main, rebase needed'
+          force_label 'intake paused' d93f0b 'Closed while PR intake is limited to authors with at least 20 PRs merged into main'
           force_label ci            5319e7 '.github'
           force_label agc           1d76db 'libSceAgc*'
           force_label shader        1d76db 'core/shader'

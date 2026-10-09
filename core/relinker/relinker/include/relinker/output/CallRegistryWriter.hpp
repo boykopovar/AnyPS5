@@ -8,6 +8,7 @@ namespace Relinker {
 class CallRegistryWriter : public ICallRegistryWriter {
 public:
     std::string WriteCallRegistry(const std::vector<CallRegistryEntry>& entries) override;
+    std::string WriteModuleImports(const std::vector<CallRegistryEntry>& entries) override;
 };
 
 }

@@ -216,7 +216,7 @@ def allowed_notes(path):
 
 def function_body(lines, start):
     text = "\n".join(lines[start:start + 400])
-    text = re.sub(r"//.*|/\*.*?\*/", "", STRINGS.sub('""', text), flags=re.S)
+    text = re.sub(r"//[^\r\n]*|/\*.*?\*/", "", STRINGS.sub('""', text), flags=re.S)
     brace, semicolon = text.find("{"), text.find(";")
     if brace < 0 or 0 <= semicolon < brace:
         return None

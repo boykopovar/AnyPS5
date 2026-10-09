@@ -1131,7 +1131,39 @@ std::uint32_t EmitFAbsValue(SpirvEmitterState& state, std::uint32_t arg0) {
     return EmitGlsl<GLSLstd450FAbs, IrType::F32>(state, arg0);
 }
 
+static bool NativeF16Rte(const SpirvEmitterState& state) {
+    const auto supported = [&](spv::Capability capability) {
+        return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
+    };
+    return supported(spv::CapabilityFloat16) && supported(spv::CapabilityRoundingModeRTE) && supported(spv::CapabilityDenormPreserve);
+}
+
+static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value) {
+    state.module.EmitCapability(spv::CapabilityFloat16);
+    state.module.EmitCapability(spv::CapabilityRoundingModeRTE);
+    state.module.EmitCapability(spv::CapabilityDenormPreserve);
+    if (!state.nativeF16ModesEmitted) {
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeRoundingModeRTE, 16u);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormPreserve, 16u);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 16u);
+        state.nativeF16ModesEmitted = true;
+    }
+    const auto u32 = TypeU32(state);
+    const auto f16 = state.module.Type(spv::OpTypeFloat, 16u);
+    const auto half = Unary(state, spv::OpFConvert, f16, value);
+    const auto pair = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, state.module.Type(spv::OpTypeVector, f16, 2u), pair, half, state.module.Constant(spv::OpConstant, f16, 0u));
+    const auto bits = Unary(state, spv::OpBitcast, u32, pair);
+    const auto source = Unary(state, spv::OpBitcast, u32, value);
+    const auto magnitude = Binary(state, spv::OpBitwiseAnd, u32, source, ConstantU32(state, 0x7fffffffu));
+    const auto sign = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, source, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
+    const auto payload = Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, magnitude, ConstantU32(state, 0x7fffffu)), ConstantU32(state, 13u));
+    const auto nan = Binary(state, spv::OpBitwiseOr, u32, sign, Binary(state, spv::OpBitwiseOr, u32, ConstantU32(state, 0x7e00u), payload));
+    return Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u)), nan, bits);
+}
+
 std::uint32_t EmitF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value) {
+    if (NativeF16Rte(state)) return EmitNativeF32ToF16BitsRte(state, value);
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
     const auto constant = [&](std::uint32_t bits) { return ConstantU32(state, bits); };

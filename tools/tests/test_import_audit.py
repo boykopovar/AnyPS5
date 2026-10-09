@@ -273,6 +273,22 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("game.json: entry 0 has an invalid NID 'short'", err)
 
+    def test_unreadable_library_and_unwritable_json_exit_two(self):
+        work = self.work
+        library = work.libs / "libSceA.prx"
+        library.write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        code, out, err = work.run(registry, "--json", str(work.modules))
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("FAIL: ", err)
+        self.assertIn(str(work.modules), err)
+        denied = PermissionError(13, "Permission denied", str(library))
+        with patch.object(Path, "read_bytes", side_effect=denied):
+            code, out, err = work.run(registry)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(f"FAIL: Permission denied: {library}", err)
+
 
 if __name__ == "__main__":
     unittest.main()

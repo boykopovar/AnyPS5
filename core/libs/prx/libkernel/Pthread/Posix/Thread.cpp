@@ -15,6 +15,7 @@ int APS5_VABI scePthreadDetach(Pthread thread);
 void APS5_VABI scePthreadExit(void* retval);
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 int APS5_VABI scePthreadRename(Pthread thread, const char* name);
+int APS5_VABI scePthreadGetname(Pthread thread, char* name);
 Pthread APS5_VABI scePthreadSelf();
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state);
 void APS5_VABI scePthreadTestcancel();
@@ -68,12 +69,26 @@ int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
     return PosixThread::ToErrno(scePthreadRename(thread, name));
 }
 
+int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name) {
+    if (!thread) return PosixThread::GUEST_ESRCH;
+    if (!name) return PosixThread::GUEST_EFAULT;
+    return PosixThread::ToErrno(scePthreadGetname(thread, name));
+}
+
 Pthread APS5_VABI pthread_self_nid_postfix(void) {
     return scePthreadSelf();
 }
 
 int APS5_VABI pthread_equal_nid_postfix(Pthread first, Pthread second) {
     return first == second;
+}
+
+int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId) {
+    constexpr int guestFault = 14;
+    if (!thread) return PosixThread::GUEST_EINVAL;
+    if (!clockId) return guestFault;
+    *clockId = GuestThreadCpuClockId(thread);
+    return 0;
 }
 
 int APS5_VABI sched_yield_nid_postfix(void) {

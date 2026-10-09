@@ -6,6 +6,10 @@
 
 namespace AgcDriver::DriverDetail {
 
+bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled) {
+    return compiled.poisonedSrtReads == 0u;
+}
+
 void Driver::insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming) {
     if (!noDispatchCache) {
         auto fresh = std::make_shared<DispatchVariant>();

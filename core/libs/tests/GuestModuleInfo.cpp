@@ -45,7 +45,10 @@ int main(int argc, char** argv) {
             executable = (segment.prot & 5) == 5;
     }
     Require(executable);
-    Require(info.eh_frame_hdr_addr != 0 && info.eh_frame_hdr_size != 0 && info.eh_frame_addr != 0 && info.eh_frame_size != 0);
+    Require(info.eh_frame_addr != 0 && info.eh_frame_size != 0);
+#ifndef _WIN32
+    Require(info.eh_frame_hdr_addr != 0 && info.eh_frame_hdr_size != 0);
+#endif
     Require(info.init_proc_addr == 0 || info.init_proc_addr >= info.segments[0].address);
     const auto self = Query(reinterpret_cast<const void*>(&Require), 0);
     Require(self.id != info.id && Query(reinterpret_cast<const void*>(&Query), 0).id == self.id);

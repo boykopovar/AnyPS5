@@ -62,4 +62,23 @@ std::string CallRegistryWriter::WriteCallRegistry(const std::vector<CallRegistry
     return out.str();
 }
 
+std::string CallRegistryWriter::WriteModuleImports(const std::vector<CallRegistryEntry>& entries) {
+    std::ostringstream out;
+    out << "[\n";
+
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto& e = entries[i];
+        out << "  {\n";
+        out << "    \"nid\": " << _jsonString(e.Nid) << ",\n";
+        out << "    \"library\": " << _jsonString(e.Library) << ",\n";
+        out << "    \"targetOffset\": " << _hexOffset(e.TargetOffset) << "\n";
+        out << "  }";
+        if (i + 1 < entries.size()) out << ",";
+        out << "\n";
+    }
+
+    out << "]\n";
+    return out.str();
+}
+
 }

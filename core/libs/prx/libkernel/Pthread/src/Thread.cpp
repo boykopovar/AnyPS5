@@ -17,6 +17,7 @@
 #include <system_error>
 
 #ifndef _WIN32
+#include <cerrno>
 #include <csetjmp>
 #include <pthread.h>
 #endif
@@ -119,6 +120,90 @@ bool GuestThreadStack(std::uintptr_t address, std::uintptr_t* start, std::uintpt
     }
     return false;
 }
+
+struct CpuClockRegistry {
+    std::mutex lock;
+    std::map<int, PthreadPrivate*> threads;
+    int nextThread = 100000;
+};
+
+static CpuClockRegistry& CpuClocks() {
+    static auto* registry = new CpuClockRegistry();
+    return *registry;
+}
+
+PthreadPrivate::PthreadPrivate() : _finished(false), _retval(nullptr), _detached(false), _adopted(false) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    if (registry.nextThread > static_cast<int>(CPU_CLOCK_ID_MASK))
+        throw std::runtime_error("Guest thread CPU clock identifiers are exhausted");
+    cpuClockThread = registry.nextThread++;
+    registry.threads.emplace(cpuClockThread, this);
+}
+
+PthreadPrivate::~PthreadPrivate() {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    registry.threads.erase(cpuClockThread);
+}
+
+static void BindHostCpuClock(PthreadPrivate* self) {
+#ifdef _WIN32
+    (void)self;
+#else
+    clockid_t clock{};
+    const int error = pthread_getcpuclockid(pthread_self(), &clock);
+    if (error != 0)
+        throw std::system_error(error, std::generic_category(), "Querying the guest thread CPU clock");
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    self->hostCpuClock = clock;
+    self->hostCpuClockBound = true;
+#endif
+}
+
+int GuestThreadCpuClockId(const PthreadPrivate* thread) {
+    return static_cast<int>(CPU_CLOCK_BIT | static_cast<std::uint32_t>(thread->cpuClockThread));
+}
+
+bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    const auto found = registry.threads.find(cpuClockThread);
+    if (found == registry.threads.end())
+        return false;
+    PthreadPrivate* thread = found->second;
+    if (thread->_finished.load(std::memory_order_acquire))
+        return false;
+#ifdef _WIN32
+    if (thread->nativeHandle == nullptr) {
+        *nanos = 0;
+        return true;
+    }
+    if (WaitForSingleObject(thread->nativeHandle, 0) == WAIT_OBJECT_0)
+        return false;
+    FILETIME creation{};
+    FILETIME exitTime{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (!GetThreadTimes(thread->nativeHandle, &creation, &exitTime, &kernel, &user))
+        throw std::system_error(GetLastError(), std::system_category(), "Querying guest thread CPU time");
+    const auto toTicks = [](const FILETIME& time) {
+        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    *nanos = (toTicks(user) + toTicks(kernel)) * 100ULL;
+#else
+    if (!thread->hostCpuClockBound) {
+        *nanos = 0;
+        return true;
+    }
+    struct timespec time{};
+    if (clock_gettime(thread->hostCpuClock, &time) != 0)
+        throw std::system_error(errno, std::generic_category(), "Querying guest thread CPU time");
+    *nanos = static_cast<std::uint64_t>(time.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(time.tv_nsec);
+#endif
+    return true;
+}
 #ifndef _WIN32
 static thread_local std::unique_ptr<PthreadPrivate> adoptedThread;
 // pthread_exit force-unwinds through guest frames, whose personality resolves to
@@ -174,6 +259,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     const auto entry = args->entry;
     void* arg = args->arg;
     PthreadPrivate* self = args->self;
+    BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     if (!self->stackAddress) SetStackFromHost(self);
     currentThread = self;
@@ -417,6 +503,7 @@ Pthread APS5_VABI scePthreadSelf() {
         adoptedThread = std::make_unique<PthreadPrivate>();
         adoptedThread->_detached = true;
         adoptedThread->_adopted = true;
+        BindHostCpuClock(adoptedThread.get());
         adoptedThread->threadId = std::this_thread::get_id();
         SetStackFromHost(adoptedThread.get());
         currentThread = adoptedThread.get();

@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <cstdint>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +15,7 @@ char* APS5_VABI strncat_nid_postfix(char*, const char*, std::size_t);
 char* APS5_VABI strpbrk_nid_postfix(const char*, const char*);
 std::size_t APS5_VABI strcspn_nid_postfix(const char*, const char*);
 std::size_t APS5_VABI strlcat_nid_postfix(char*, const char*, std::size_t);
+char* APS5_VABI stpcpy_nid_postfix(char*, const char*);
 char* APS5_VABI strtok_r_nid_postfix(char*, const char*, char**);
 char* APS5_VABI strtok_nid_postfix(char*, const char*);
 char* APS5_VABI strcasestr_nid_postfix(const char*, const char*);
@@ -25,6 +28,8 @@ int APS5_VABI memset_s_nid_postfix(void*, std::size_t, int, std::size_t);
 char* APS5_VABI strnstr_nid_postfix(const char*, const char*, std::size_t);
 int APS5_VABI snprintf_s_nid_postfix(char*, std::size_t, const char*, ...);
 int APS5_VABI sscanf_s_nid_postfix(const char*, const char*, ...);
+int APS5_VABI __inet_aton_nid_postfix(const char*, void*);
+std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char*);
 }
 
 static void Require(bool condition) {
@@ -132,11 +137,53 @@ int main() {
     Require(strlcat_nid_postfix(buffer, "xyz", 0) == 3);
     buffer[0] = '\0';
     Require(strlcat_nid_postfix(buffer, "x", 1) == 1 && buffer[0] == '\0');
+    char chained[8] = "zzzzzzz";
+    char* end = stpcpy_nid_postfix(chained, "ab");
+    Require(end == chained + 2 && *end == '\0' && chained[3] == 'z');
+    end = stpcpy_nid_postfix(end, "cd");
+    Require(end == chained + 4 && std::strcmp(chained, "abcd") == 0);
+    Require(stpcpy_nid_postfix(end, "") == end && chained[5] == 'z');
     Require(strncat_nid_postfix(buffer, "xyz", 2) == buffer);
     Require(std::strcmp(buffer, "xy") == 0);
     Require(strpbrk_nid_postfix(buffer, "ay") == buffer + 1);
     Require(strpbrk_nid_postfix(buffer, "") == nullptr);
     Require(strcspn_nid_postfix(buffer, "y") == 1);
+    const auto inetAton = [](const char* text, const char* expected) {
+        unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
+        if (__inet_aton_nid_postfix(text, address) != 1) return false;
+        char formatted[16];
+        std::snprintf(formatted, sizeof(formatted), "%u.%u.%u.%u", address[0], address[1], address[2], address[3]);
+        return std::strcmp(formatted, expected) == 0;
+    };
+    Require(inetAton("192.0.2.42", "192.0.2.42"));
+    Require(inetAton("10.1.2", "10.1.0.2"));
+    Require(inetAton("127.1", "127.0.0.1"));
+    Require(inetAton("3232235777", "192.168.1.1"));
+    Require(inetAton("0x7f.0.0.0x1", "127.0.0.1"));
+    Require(inetAton("0377.0.0.010", "255.0.0.8"));
+    Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
+    Require(inetAton("1.2.3.4\n", "1.2.3.4"));
+    Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    for (const char* invalid : {"", " 1.2.3.4", "1.2.3.4.5", "256.1.1.1", "1.2.3.256", "1.2.65536", "08", "1..2", "a.b.c.d",
+             "1.2.3.4x", "0x", "1.2.3.", "-1"}) {
+        unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
+        Require(__inet_aton_nid_postfix(invalid, address) == 0);
+        Require(address[0] == 0xA5 && address[3] == 0xA5);
+        Require(__inet_addr_nid_postfix(invalid) == 0xffffffff);
+    }
+    const auto inetAddr = [](const char* text, std::array<unsigned char, 4> expected) {
+        const std::uint32_t value = __inet_addr_nid_postfix(text);
+        std::array<unsigned char, 4> bytes{};
+        std::memcpy(bytes.data(), &value, sizeof(value));
+        return bytes == expected;
+    };
+    Require(inetAddr("192.0.2.42", {192, 0, 2, 42}));
+    Require(inetAddr("127.1", {127, 0, 0, 1}));
+    Require(inetAddr("0x7f.0.0.0x1", {127, 0, 0, 1}));
+    Require(inetAddr("0.0.0.0", {0, 0, 0, 0}));
+    Require(inetAddr("255.255.255.255", {255, 255, 255, 255}));
+    Require(inetAddr("4294967296", {0, 0, 0, 0}));
+    Require(inetAddr("18446744073709551617", {0, 0, 0, 1}));
     char first[] = ",a,,b,";
     char second[] = "x:y";
     char* firstState = nullptr;

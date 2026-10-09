@@ -62,6 +62,7 @@ inline constexpr std::uint32_t PT_DYNAMIC = 2;
 inline constexpr std::uint32_t PT_INTERP = 3;
 inline constexpr std::uint32_t PT_NOTE = 4;
 inline constexpr std::uint32_t PT_PHDR = 6;
+inline constexpr std::uint32_t PT_GNU_EH_FRAME = 0x6474e550;
 inline constexpr std::uint32_t PT_GNU_RELRO = 0x6474e552;
 inline constexpr std::uint32_t PF_X = 0x1;
 inline constexpr std::uint32_t PF_W = 0x2;

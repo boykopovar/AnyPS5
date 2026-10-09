@@ -376,12 +376,16 @@ int APS5_VABI sceRtcGetCurrentClockLocalTime(RtcDateTime* time) {
 
 int APS5_VABI sceRtcConvertUtcToLocalTime(const RtcTick* utc, RtcTick* local_time) {
     if (!utc || !local_time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (utc->tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     return addTicks(local_time, utc, localOffsetSeconds(utc->tick), TICKS_PER_SECOND);
 }
 
 int APS5_VABI sceRtcConvertLocalTimeToUtc(const RtcTick* local_time, RtcTick* utc) {
     if (!local_time || !utc) return SCE_RTC_ERROR_INVALID_POINTER;
-    const std::int64_t offset = localOffsetSeconds(local_time->tick - static_cast<std::uint64_t>(localOffsetSeconds(local_time->tick) * TICKS_PER_SECOND));
+    if (local_time->tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
+    RtcTick estimate{};
+    if (const int result = addTicks(&estimate, local_time, -localOffsetSeconds(local_time->tick), TICKS_PER_SECOND); result != 0) return result;
+    const std::int64_t offset = localOffsetSeconds(estimate.tick);
     return addTicks(utc, local_time, -offset, TICKS_PER_SECOND);
 }
 
@@ -460,6 +464,7 @@ int APS5_VABI sceRtcFormatRFC3339(char* date_time, const RtcTick* utc, int time_
 
 int APS5_VABI sceRtcFormatRFC3339LocalTime(char* date_time, const RtcTick* utc) {
     if (!date_time || !utc) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (utc->tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     return sceRtcFormatRFC3339(date_time, utc, localOffsetMinutes(*utc));
 }
 
@@ -477,6 +482,7 @@ int APS5_VABI sceRtcFormatRFC2822(char* date_time, const RtcTick* utc, int time_
 
 int APS5_VABI sceRtcFormatRFC2822LocalTime(char* date_time, const RtcTick* utc) {
     if (!date_time || !utc) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (utc->tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     return sceRtcFormatRFC2822(date_time, utc, localOffsetMinutes(*utc));
 }
 

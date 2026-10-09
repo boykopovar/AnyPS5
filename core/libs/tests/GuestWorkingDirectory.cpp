@@ -26,6 +26,7 @@ int main() {
     char tiny[] = "xyz";
     Require(getcwd_nid_postfix(tiny, 2) == nullptr && *__error_nid_postfix() == 34);
     Require(std::strcmp(tiny, "xyz") == 0);
+    Require(getcwd_nid_postfix(path, 0) == nullptr && *__error_nid_postfix() == 22);
     char* allocated = getcwd_nid_postfix(nullptr, 0);
     Require(allocated && std::strcmp(allocated, path) == 0);
     GuestHeap::GuestHeapFree_nid_postfix(allocated);

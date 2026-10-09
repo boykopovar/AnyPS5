@@ -130,7 +130,12 @@ void CheckUnwatch() {
     Require(!Watched(imported, Block) && !UnchangedSince(imported, Block, before), "unwatch kept trusting import stamps");
     Require(CollectWrites(base, 3 * Block) == 0 && CollectWritesUncached(imported, Block) == 0, "unwatch did not invalidate a cached collect");
     Require(Watched(base, Block) && Watched(base + 2 * Block, Block), "unwatch disabled unrelated memory");
+    const auto beforeDriverWrite = TrackerGeneration();
     Require(MarkWritten(imported, Block) == 0, "an unwatched import still produces trusted stamps");
+    Require(TrackerGeneration() > beforeDriverWrite, "an unwatched driver write did not invalidate byte comparisons");
+    const auto beforeOwnWrite = TrackerGeneration();
+    StoreOwnBytes(imported, 1, [&] { *reinterpret_cast<std::uint8_t*>(imported) = 0x42; });
+    Require(TrackerGeneration() > beforeOwnWrite, "an unwatched CPU store did not invalidate byte comparisons");
     std::array<std::uint64_t, 1> generations{before};
     std::array<std::uint8_t, 1> changed{};
     Require(!ChangedBlocks(imported, Block, generations, changed), "an unwatched import still uses block stamps");

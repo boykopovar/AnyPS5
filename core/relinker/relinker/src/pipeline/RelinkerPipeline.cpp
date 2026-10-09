@@ -216,7 +216,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             }
 
             const FileByteOffset symOff = dynSymTabOffset + static_cast<FileByteOffset>(symIdx) * symEntSize;
-            if (symOff + 4 > raw.size())
+            if (symOff < dynSymTabOffset || symOff > raw.size() || raw.size() - symOff < 4)
                 throw RelinkerException("Symbol table entry out of bounds", symOff);
 
             std::uint32_t nameOff = 0;

@@ -163,6 +163,47 @@ void RunBdaExecutionTests(const Context& context) {
             read(guest + 1, 4, coherent, stops, 0x55443322, true);
         }
     }
+    Buffer wide(context, 32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    for (std::uint32_t dword = 0; dword < 8u; ++dword) {
+        const std::uint32_t value = 0xa0b0c000u + dword;
+        std::memcpy(wide.Bytes().data() + dword * 4u, &value, sizeof(value));
+    }
+    constexpr std::uint64_t spanGuest = 0x7fff56780000ULL;
+    const std::array<Abi::Range, 3> spanRanges{{ranges[0], ranges[1], {spanGuest, spanGuest + 32, wide.DeviceAddress(), Abi::Read, 0}}};
+    Buffer spanTable(context, sizeof(Abi::Header) + sizeof(spanRanges), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const auto span = [&](std::uint64_t address, std::int32_t offset, std::uint32_t extracted, bool coherent, bool stops, std::array<std::uint32_t, 4> values, Abi::FaultReason reason = {}, std::uint64_t faultAddress = 0, std::uint32_t faultBytes = 0) {
+        const Abi::Header header{Abi::Version, 3, sizeof(Abi::Range), 0};
+        std::memcpy(spanTable.Bytes().data(), &header, sizeof(header));
+        std::memcpy(spanTable.Bytes().data() + sizeof(header), spanRanges.data(), sizeof(spanRanges));
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        const std::array<std::uint32_t, 4> sentinel{0xdeadbeef, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
+        std::memcpy(words.Bytes().data(), sentinel.data(), sizeof(sentinel));
+        Pipeline pipeline(context, MakeBdaSpanReadTestShader(address, static_cast<std::uint32_t>(offset), extracted, coherent, stops), {&spanTable, &fault, &words});
+        pipeline.Run(1);
+        Abi::Fault report{};
+        std::array<std::uint32_t, 4> result{};
+        std::memcpy(&report, fault.Bytes().data(), sizeof(report));
+        std::memcpy(result.data(), words.Bytes().data(), sizeof(result));
+        const bool faults = static_cast<std::uint32_t>(reason) != 0u;
+        if (faults) {
+            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.instruction == 0x1234, "BDA span read did not publish its first fault");
+        } else {
+            Require(report.state == Abi::FaultState::Empty, "mapped BDA span read published a fault");
+        }
+        Require(result == (faults && stops ? sentinel : values), faults && stops ? "faulting BDA span read continued to output a substitute value" : "BDA span read produced incorrect data");
+    };
+    const auto at = [&](std::uint32_t dword) { return 0xa0b0c000u + dword; };
+    for (const bool stops : {true, false}) {
+        for (const bool coherent : {false, true}) {
+            span(spanGuest + 16, -12, 0b1010u, coherent, stops, {0, at(2), 0, at(4)});
+            span(spanGuest, 4, 0b0101u, coherent, stops, {at(1), 0, at(3), 0});
+            span(spanGuest + 24, 0, 0b0011u, coherent, stops, {at(6), at(7), 0, 0});
+            span(spanGuest + 20, 8, 0b0001u, coherent, stops, {at(7), 0, 0, 0});
+            span(spanGuest + 28, 0, 0b0101u, coherent, stops, {at(7), 0, 0, 0}, Abi::FaultReason::Unmapped, spanGuest + 36, 1);
+            span(guest, 1, 0b1001u, coherent, stops, {0x55443322, 0, 0, 0}, Abi::FaultReason::Unmapped, guest + 13, 1);
+            span(4, -8, 0b0001u, coherent, stops, {0, 0, 0, 0}, Abi::FaultReason::Overflow, 4, 0);
+        }
+    }
     ranges[0].permissions = 0;
     run(guest, 8, 0, Abi::FaultReason::Permission);
 }

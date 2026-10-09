@@ -610,7 +610,7 @@ void TestMultichannelAt9(std::uint32_t context) {
     const std::uint8_t validationBitSet[4] = {0x30, 0x73, 0xE1, 0x7E};
     Require(sceAjmDecAt9ParseConfigData(validationBitSet, &parsed) == invalidParameter);
 
-    const SyntheticAt9Channel channels[2] = {{0x00, 0x07, 27}, {0x01, 0x0E, 22}};
+    const SyntheticAt9Channel channels[2] = {{0x00, 0xA5, 27}, {0x01, 0x0E, 22}};
     const std::uint8_t mono[4] = {0xFE, 0x70, 0x0B, 0xF0};
     std::vector<std::int16_t> reference[2];
     for (std::size_t channel = 0; channel < 2; ++channel) {

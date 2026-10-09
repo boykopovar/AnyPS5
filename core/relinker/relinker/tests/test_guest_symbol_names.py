@@ -85,6 +85,27 @@ def module_symbols(image):
     return [symbol_name(image, tags, index) for index in range(1, count)]
 
 
+def elf_hash(name):
+    value = 0
+    for byte in name.encode():
+        value = (value << 4) + byte
+        value = (value ^ ((value & 0xF0000000) >> 24)) & 0x0FFFFFFF
+    return value
+
+
+def check_hash_table(image):
+    tags = dynamic_tags(image)
+    table = file_offset(image, tags[4])
+    buckets, count = struct.unpack_from("<II", image, table)
+    assert buckets == count, (buckets, count)
+    for index in range(1, count):
+        name = symbol_name(image, tags, index)
+        found, = struct.unpack_from("<I", image, table + 8 + elf_hash(name) % buckets * 4)
+        while found not in (0, index):
+            found, = struct.unpack_from("<I", image, table + 8 + (buckets + found) * 4)
+        assert found == index, name
+
+
 def imported_symbols(image):
     tags = dynamic_tags(image)
     names = set()
@@ -123,6 +144,8 @@ def main():
         assert libc == ["AAAAAAAAAAA#guest", "BBBBBBBBBBB#guest", "CCCCCCCCCCC", "EEEEEEEEEEE#guest"], libc
         other = module_symbols((modules / "other.prx.guest.prx").read_bytes())
         assert other == ["BBBBBBBBBBB#guest", "EEEEEEEEEEE#guest"], other
+        check_hash_table((modules / "libc.prx.guest.prx").read_bytes())
+        check_hash_table((modules / "other.prx.guest.prx").read_bytes())
         imports = imported_symbols(output.read_bytes())
         assert imports == {"AAAAAAAAAAA#guest", "DDDDDDDDDDD"}, imports
     print("Guest symbol name tests passed")

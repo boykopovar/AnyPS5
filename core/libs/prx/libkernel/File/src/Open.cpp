@@ -29,8 +29,7 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
 }
 static int NativeRead(int fd, void* buf, std::size_t n) {
     if (n > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        errno = EINVAL;
-        return -1;
+        throw std::runtime_error("sceKernelRead: nbytes exceeds platform limit");
     }
     char empty = 0;
     if (buf == nullptr) buf = &empty;
@@ -41,8 +40,7 @@ static int NativeRead(int fd, void* buf, std::size_t n) {
 }
 static int NativeWrite(int fd, const void* buf, std::size_t n) {
     if (n > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        errno = EINVAL;
-        return -1;
+        throw std::runtime_error("sceKernelWrite: nbytes exceeds platform limit");
     }
     char empty = 0;
     if (buf == nullptr) buf = &empty;

@@ -16,6 +16,7 @@ union RackOptions {
     Ngs2SamplerRackOption sampler;
     Ngs2SubmixerRackOption submixer;
     Ngs2MasteringRackOption mastering;
+    Ngs2ReverbRackOption reverb;
     Ngs2CustomSubmixerRackOption customSubmixer;
 };
 
@@ -24,6 +25,7 @@ static std::size_t RackOptionSize(std::uint32_t rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: return sizeof(Ngs2SamplerRackOption);
         case SCE_NGS2_RACK_ID_SUBMIXER: return sizeof(Ngs2SubmixerRackOption);
         case SCE_NGS2_RACK_ID_MASTERING: return sizeof(Ngs2MasteringRackOption);
+        case SCE_NGS2_RACK_ID_REVERB: return sizeof(Ngs2ReverbRackOption);
         case SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER: return sizeof(Ngs2CustomSubmixerRackOption);
         default: throw std::runtime_error("NGS2: rack id " + Ngs2Hex(rackId) + " is not implemented");
     }
@@ -59,6 +61,10 @@ static RackOptions DefaultRackOption(std::uint32_t rackId) {
             options.submixer.max_inputs = 1;
             options.submixer.num_peak_meter_blocks = 8;
             break;
+        case SCE_NGS2_RACK_ID_REVERB:
+            options.reverb.max_channels = 8;
+            options.reverb.reverb_size = 1;
+            break;
         default:
             common.max_matrices = 0;
             common.max_ports = 0;
@@ -72,6 +78,7 @@ static RackOptions DefaultRackOption(std::uint32_t rackId) {
 static std::uint32_t RackMaxChannels(std::uint32_t rackId, const RackOptions& options) {
     if (rackId == SCE_NGS2_RACK_ID_SUBMIXER) return options.submixer.max_channels;
     if (rackId == SCE_NGS2_RACK_ID_MASTERING) return options.mastering.max_channels;
+    if (rackId == SCE_NGS2_RACK_ID_REVERB) return options.reverb.max_channels;
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) return options.customSubmixer.max_channels;
     return NGS2_MAX_CHANNELS;
 }
@@ -87,6 +94,9 @@ static RackOptions CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption*
         throw std::invalid_argument("NGS2: invalid rack voice or channel count");
     }
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) Ngs2CheckCustomRack(options.customSubmixer.custom_rack_option);
+    if (rackId == SCE_NGS2_RACK_ID_REVERB && options.reverb.reverb_size != 1) {
+        throw std::runtime_error("NGS2: reverb rack size " + std::to_string(options.reverb.reverb_size) + " is not implemented");
+    }
     return options;
 }
 

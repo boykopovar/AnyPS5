@@ -8,6 +8,7 @@
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Module/EhFrame.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
@@ -21,53 +22,18 @@
 
 #ifdef _WIN32
 namespace {
-std::uint64_t ReadEncoded(const std::uint8_t*& p, std::uint8_t encoding) {
-  const auto application = encoding & 0x70;
-  if ((encoding & 0x80) != 0 || (application != 0x00 && application != 0x10)) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame_ptr encoding other than absptr or pcrel");
-  std::uint64_t value = 0;
-  const auto* at = p;
-  switch (encoding & 0x0f) {
-  case 0x03: { std::uint32_t v; std::memcpy(&v, p, 4); value = v; p += 4; break; }
-  case 0x0b: { std::int32_t v; std::memcpy(&v, p, 4); value = static_cast<std::uint64_t>(static_cast<std::int64_t>(v)); p += 4; break; }
-  case 0x04: case 0x0c: std::memcpy(&value, p, 8); p += 8; break;
-  default: NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame_ptr value format");
-  }
-  if (application == 0x10) value += reinterpret_cast<std::uint64_t>(at);
-  return value;
-}
-
 void FillGuestUnwindInfo(const std::uint8_t* base, ModuleInfoForUnwind* info) {
   const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
   if (dos->e_magic != IMAGE_DOS_SIGNATURE) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: image without a DOS header");
   const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
   if (nt->Signature != IMAGE_NT_SIGNATURE) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: image without an NT header");
-  const auto* sections = IMAGE_FIRST_SECTION(nt);
-  for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
-    if (std::memcmp(sections[i].Name, ".ehmeta", 8) != 0) continue;
-    std::uint32_t rva = 0;
-    std::memcpy(&rva, base + sections[i].VirtualAddress, 4);
-    const auto* header = base + rva;
-    if (header[0] != 1) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame_hdr version other than 1");
-    const auto* p = header + 4;
-    const auto frames = ReadEncoded(p, header[1]);
-    const auto* record = reinterpret_cast<const std::uint8_t*>(frames);
-    const auto* end = base + nt->OptionalHeader.SizeOfImage;
-    if (record < base || record >= end) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: eh_frame_ptr outside the image");
-    for (;;) {
-      if (record + 4 > end) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: eh_frame has no terminator inside the image");
-      std::uint32_t length = 0;
-      std::memcpy(&length, record, 4);
-      if (length == 0) break;
-      if (length == 0xffffffffu) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame record with a 64-bit length");
-      record += 4 + length;
-    }
-    info->eh_frame_hdr_addr = reinterpret_cast<std::uint64_t>(header);
-    info->eh_frame_addr = frames;
-    info->eh_frame_size = static_cast<std::uint64_t>(record - reinterpret_cast<const std::uint8_t*>(frames));
-    info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
-    info->seg0_size = nt->OptionalHeader.SizeOfImage;
-    return;
-  }
+  EhFrame::Tables tables;
+  if (!EhFrame::ReadEhmeta(reinterpret_cast<std::uintptr_t>(base), *nt, "sceKernelGetModuleInfoForUnwind", tables)) return;
+  info->eh_frame_hdr_addr = tables.header;
+  info->eh_frame_addr = tables.frames;
+  info->eh_frame_size = tables.framesSize;
+  info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
+  info->seg0_size = nt->OptionalHeader.SizeOfImage;
 }
 }
 #endif
