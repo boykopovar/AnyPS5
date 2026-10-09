@@ -1062,8 +1062,38 @@ static void CheckDirectMemoryWriteWatch() {
 }
 #endif
 
+static void CheckVirtualQueryPartialMunmap() {
+    constexpr std::size_t page = 0x4000;
+    const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    void* raw = mmap_nid_postfix(nullptr, page * 3, 3, 0x1002, -1, 0);
+    Require(raw != failed);
+    auto* memory = static_cast<unsigned char*>(raw);
+    VirtualQueryInfo before{};
+    Require(sceKernelVirtualQuery(memory, 0, &before, sizeof(before)) == 0);
+    Require(before.start == reinterpret_cast<std::uintptr_t>(memory));
+    Require(before.end == reinterpret_cast<std::uintptr_t>(memory) + page * 3);
+    Require(munmap_nid_postfix(memory + page, page) == 0);
+    VirtualQueryInfo first{};
+    Require(sceKernelVirtualQuery(memory, 0, &first, sizeof(first)) == 0);
+    Require(first.start == reinterpret_cast<std::uintptr_t>(memory));
+    Require(first.end == reinterpret_cast<std::uintptr_t>(memory) + page);
+    VirtualQueryInfo middle{};
+    Require(sceKernelVirtualQuery(memory + page, 0, &middle, sizeof(middle)) == SCE_KERNEL_ERROR_EACCES);
+    VirtualQueryInfo next{};
+    Require(sceKernelVirtualQuery(memory + page, 1, &next, sizeof(next)) == 0);
+    Require(next.start == reinterpret_cast<std::uintptr_t>(memory) + page * 2);
+    Require(next.end == reinterpret_cast<std::uintptr_t>(memory) + page * 3);
+    VirtualQueryInfo tail{};
+    Require(sceKernelVirtualQuery(memory + page * 2, 0, &tail, sizeof(tail)) == 0);
+    Require(tail.start == reinterpret_cast<std::uintptr_t>(memory) + page * 2);
+    Require(tail.end == reinterpret_cast<std::uintptr_t>(memory) + page * 3);
+    Require(munmap_nid_postfix(memory, page) == 0);
+    Require(munmap_nid_postfix(memory + page * 2, page) == 0);
+}
+
 int main() {
     CheckReleaseFlexibleMemory();
+    CheckVirtualQueryPartialMunmap();
     CheckNamedAndHintedMappings();
     CheckInternalNamedFlexibleMapping();
     CheckBatchMapStopsAtInvalidEntry();

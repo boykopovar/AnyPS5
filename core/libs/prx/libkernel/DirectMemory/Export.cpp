@@ -242,14 +242,14 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
  const GuestAllocations::Range* best = nullptr;
  for (const auto& range : lease) {
-  const auto begin = range->allocationAddress;
-  const auto end = begin + range->allocationBytes;
+  const auto begin = range->address;
+  const auto end = begin + range->bytes;
   if (address >= begin && address < end) { best = range.get(); break; }
-  if ((flags & findNext) != 0 && begin > address && (best == nullptr || begin < best->allocationAddress)) best = range.get();
+  if ((flags & findNext) != 0 && begin > address && (best == nullptr || begin < best->address)) best = range.get();
  }
  if (best != nullptr) {
-  info->start = best->allocationAddress;
-  info->end = best->allocationAddress + best->allocationBytes;
+  info->start = best->address;
+  info->end = best->address + best->bytes;
   info->protection = (best->readable ? 1 : 0) | (best->writable ? 2 : 0) | (!best->releasable ? 4 : 0);
   int recorded = 0;
   if (GuestProtection(std::max<uintptr_t>(address, info->start), &recorded)) info->protection = recorded;
