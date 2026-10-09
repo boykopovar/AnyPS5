@@ -883,11 +883,33 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     std::vector<VertexFetch> fetches;
     fetches.reserve(attributes.size());
-    for (const auto& attribute : attributes) {
-        // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
-        const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
+    std::vector<std::size_t> fetchOf(attributes.size(), attributes.size());
+    std::vector<std::shared_ptr<Buffer>> shortBuffers(attributes.size());
+    for (std::size_t index = 0; index < attributes.size(); ++index) {
+        const auto& attribute = attributes[index];
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
+        if (const auto inRange = ShortRawVertexBufferBytes(attribute)) {
+            const auto elementBytes = DecodeVertexFormat(attribute).bytes;
+            std::shared_ptr<Buffer> buffer;
+            if (*inRange != 0) {
+                Require(!state.hasColorTarget || address + *inRange <= state.color.address || state.color.address + state.color.bytes <= address, "vertex buffer aliases the render target");
+                GuestMemory::CheckRange(reinterpret_cast<const void*>(address), *inRange, 1);
+                auto copy = CopyDrawInput(context, context.recorder, address, *inRange, 1, Recorder::SnapshotUse::Vertex);
+                KeepDrawInput(context.recorder, address, copy, Recorder::SnapshotUse::Vertex, 0);
+                buffer = std::move(copy.buffer);
+            }
+            if (*inRange != elementBytes) {
+                auto element = std::make_shared<Buffer>(context, elementBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                std::fill(element->Bytes().begin(), element->Bytes().end(), std::byte{0});
+                if (buffer != nullptr) std::copy_n(buffer->Bytes().begin(), *inRange, element->Bytes().begin());
+                buffer = std::move(element);
+            }
+            shortBuffers[index] = std::move(buffer);
+            continue;
+        }
+        const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
+        fetchOf[index] = fetches.size();
         Require(!state.hasColorTarget || address + bytes <= state.color.address || state.color.address + state.color.bytes <= address, "vertex buffer aliases the render target");
         fetches.push_back({address, address + bytes, (fields[1] >> 16u) & 0x3fffu, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
     }
@@ -900,8 +922,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.vertexBuffers.push_back(std::move(copy.buffer));
     }
     for (std::size_t i = 0; i < attributes.size(); ++i) {
-        inputs.vertexHandles.push_back(inputs.vertexBuffers[plan.copyOf[i]]->Handle());
-        inputs.vertexOffsets[i] = plan.offsets[i];
+        if (shortBuffers[i] != nullptr) {
+            inputs.vertexHandles.push_back(shortBuffers[i]->Handle());
+            inputs.vertexOffsets[i] = 0;
+            inputs.vertexBuffers.push_back(std::move(shortBuffers[i]));
+            continue;
+        }
+        inputs.vertexHandles.push_back(inputs.vertexBuffers[plan.copyOf[fetchOf[i]]]->Handle());
+        inputs.vertexOffsets[i] = plan.offsets[fetchOf[i]];
     }
     timer.phase(PhaseVertex);
     return inputs;
