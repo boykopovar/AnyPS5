@@ -736,6 +736,7 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
     }
     bit += mainDataBits;
     std::size_t at = 4 + std::min<std::size_t>((bit + 7) / 8, available);
+    constexpr std::size_t vbriOffset = 36;
 
     if (at + 8 <= end && (std::memcmp(stream + at, "Xing", 4) == 0 || std::memcmp(stream + at, "Info", 4) == 0)) {
         const std::uint8_t flags = stream[at + 7];
@@ -766,10 +767,8 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
             frame->encoder_delay = frame->samples_per_channel + delay + 529;
             frame->ofl_type = MP3_OFL_LAME;
         }
-    } else if (at != 36 && end >= 40 && std::memcmp(stream + 36, "VBRI", 4) == 0) {
-        NotImplemented_nid_no_patch("sceAjmDecMp3ParseFrame (VBRI header outside MPEG-1 stereo)");
-    } else if (at + 26 <= end && std::memcmp(stream + at, "VBRI", 4) == 0) {
-        frame->encoder_delay = ReadBigEndian(stream + at + 6, 2);
+    } else if (vbriOffset + 26 <= end && std::memcmp(stream + vbriOffset, "VBRI", 4) == 0) {
+        frame->encoder_delay = ReadBigEndian(stream + vbriOffset + 6, 2);
         frame->ofl_type = MP3_OFL_VBRI;
         if (frame->frame_size <= streamSize) {
             AjmDecMp3ParseFrame next{};

@@ -307,9 +307,24 @@ void TestMp3ParseOfl() {
     auto layer2 = stereo;
     layer2[1] = 0xFD;
     Require(OflThrows(layer2));
+    for (const auto version : {0xFB, 0xF3, 0xE3}) {
+        for (const auto channels : {0x04, 0xC4}) {
+            auto frame = Mp3Frame(VBRI_FRAME, sizeof(VBRI_FRAME), 417);
+            frame[1] = static_cast<std::uint8_t>(version);
+            frame[2] = version == 0xE3 ? 0x80 : 0x90;
+            frame[3] = static_cast<std::uint8_t>(channels);
+            Require(OflParsesTo(frame, 417, 0, 576, 0, 2));
+            for (const auto size : {39u, 40u, 43u, 61u}) {
+                const std::vector<std::uint8_t> truncated(frame.begin(), frame.begin() + size);
+                Require(OflParsesTo(truncated, size, 0, 0, 0, 0));
+            }
+            Require(OflParsesTo(frame, 62, 0, 576, 0, 2));
+        }
+    }
     auto monoVbri = Mp3Frame(VBRI_FRAME, sizeof(VBRI_FRAME), 417);
     monoVbri[3] = 0xC4;
-    Require(OflThrows(monoVbri));
+    monoVbri.insert(monoVbri.end(), fgh.begin(), fgh.end());
+    Require(OflParsesTo(monoVbri, 834, 0, 576 + 1105, 441000, 4));
 }
 
 struct GaplessDecode {
