@@ -11,6 +11,8 @@
 #include <cerrno>
 #include <limits>
 #include <stdexcept>
+#include <exception>
+#include "HevcMetadata.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -115,6 +117,8 @@ struct Picture {
     std::uint64_t dts = 0;
     std::uint64_t attached = 0;
     bool idr = false;
+    Videodec2::HevcPictureInfo hevc{};
+    std::exception_ptr hevcError;
 };
 
 struct FrameDeleter {
@@ -123,6 +127,7 @@ struct FrameDeleter {
 using FramePointer = std::unique_ptr<AVFrame, FrameDeleter>;
 
 struct Decoder {
+    std::uint64_t id = 0;
     std::uint32_t codec = 0;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
@@ -138,6 +143,7 @@ struct Decoder {
     std::deque<FramePointer> ready;
     std::vector<std::uint8_t> annexB;
     bool flushing = false;
+    HevcMetadata hevcMetadata;
 
     ~Decoder() {
         sws_freeContext(scaler);
@@ -147,6 +153,7 @@ struct Decoder {
 
 std::mutex lock;
 std::map<std::uint64_t, std::shared_ptr<Decoder>> decoders;
+std::map<const void*, std::uint64_t> hevcPictureOwners;
 std::uint64_t nextDecoder = 1;
 std::uint64_t nextQueue = 1;
 
@@ -302,6 +309,12 @@ void EmitDecoded(Decoder& decoder, FrameBuffer* frame, OutputInfo* output) {
         output->framePitchInBytes = pitch;
     }
     decoder.pictures[frame->frameBuffer] = timestamps;
+    {
+        std::lock_guard guard(lock);
+        hevcPictureOwners.erase(frame->frameBuffer);
+        if (decoder.codec == CodecHevc && decoders.contains(decoder.id))
+            hevcPictureOwners.emplace(frame->frameBuffer, decoder.id);
+    }
 }
 
 }
@@ -350,6 +363,7 @@ int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* con
     OpenCodec(*decoder);
     std::lock_guard guard(lock);
     *handle = nextDecoder++;
+    decoder->id = *handle;
     decoders.emplace(*handle, decoder);
     std::fprintf(stderr, "[videodec2] decoder %llu: codec=%u max %dx%d (%s)\n", static_cast<unsigned long long>(*handle), config->codecType, config->maxFrameWidth, config->maxFrameHeight, decoder->context->codec->long_name);
     return 0;
@@ -358,6 +372,7 @@ int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* con
 int APS5_VABI sceVideodec2DeleteDecoder_nid_postfix(std::uint64_t handle) {
     std::lock_guard guard(lock);
     if (decoders.erase(handle) == 0) throw std::runtime_error("Videodec2: invalid decoder handle");
+    std::erase_if(hevcPictureOwners, [handle](const auto& owner) { return owner.second == handle; });
     return 0;
 }
 
@@ -369,11 +384,21 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     std::lock_guard guard(decoder.mutex);
     if (Trace() && decoder.decoded < 3) std::fprintf(stderr, "[videodec2] Decode input=%llu frame=%llu output=%llu au=%llu pts=%llu size=%ux%u fb=%p/%llu\n", static_cast<unsigned long long>(input->thisSize), static_cast<unsigned long long>(frame ? frame->thisSize : 0), static_cast<unsigned long long>(output->thisSize), static_cast<unsigned long long>(input->auSize), static_cast<unsigned long long>(input->ptsData), decoder.width, decoder.height, frame ? frame->frameBuffer : nullptr, static_cast<unsigned long long>(frame ? frame->frameBufferSize : 0));
     ++decoder.decoded;
-    const Picture picture{input->ptsData, input->dtsData, input->attachedData};
+    Picture picture{input->ptsData, input->dtsData, input->attachedData};
     if (decoder.flushing) throw std::runtime_error("Videodec2: reset required after flushing");
     if (!input->auData || input->auSize == 0 || input->auSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Videodec2: invalid access unit");
     if (decoder.codec == CodecVp9) decoder.annexB.assign(input->auData, input->auData + input->auSize);
     const auto* unit = decoder.codec == CodecVp9 ? &decoder.annexB : ToAnnexB(decoder, input->auData, static_cast<std::size_t>(input->auSize));
+    if (decoder.codec == CodecHevc) {
+        try {
+            picture.hevc = decoder.hevcMetadata.Read(*unit);
+            picture.hevc.ptsData = input->ptsData;
+            picture.hevc.dtsData = input->dtsData;
+            picture.hevc.attachedData = input->attachedData;
+        } catch (const std::runtime_error&) {
+            picture.hevcError = std::current_exception();
+        }
+    }
     AVPacket* packet = av_packet_alloc();
     if (!packet) throw std::runtime_error("Videodec2: cannot allocate packet");
     const auto freePacket = [](AVPacket* value) { av_packet_free(&value); };
@@ -407,14 +432,54 @@ int APS5_VABI sceVideodec2Reset_nid_postfix(std::uint64_t handle) {
     auto& decoder = *found;
     std::lock_guard guard(decoder.mutex);
     decoder.pictures.clear();
+    {
+        std::lock_guard globalGuard(lock);
+        std::erase_if(hevcPictureOwners, [handle](const auto& owner) { return owner.second == handle; });
+    }
     avcodec_flush_buffers(decoder.context);
+    decoder.hevcMetadata.Reset();
     decoder.ready.clear();
     decoder.inputs.clear();
     decoder.flushing = false;
     return 0;
 }
 
-int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, AvcPictureInfo* first, void* second) {
+int APS5_VABI sceVideodec2GetHevcPictureInfo_nid_postfix(const OutputInfo* output, Videodec2::HevcPictureInfo* info) {
+    if (!output || !info) throw std::runtime_error("Videodec2: invalid argument pointer");
+    if ((output->thisSize != 48 && output->thisSize != sizeof(OutputInfo)) || info->thisSize != sizeof(*info))
+        throw std::runtime_error("Videodec2: invalid HEVC picture info structure size");
+    if (!output->isValid || output->pictureCount == 0) {
+        info->isValid = false;
+        return 0;
+    }
+    if (output->codecType != CodecHevc || output->pictureCount != 1)
+        throw std::runtime_error("Videodec2: expected one HEVC picture");
+    std::shared_ptr<Decoder> decoder;
+    {
+        std::lock_guard guard(lock);
+        const auto owner = hevcPictureOwners.find(output->frameBuffer);
+        if (owner != hevcPictureOwners.end()) {
+            const auto found = decoders.find(owner->second);
+            if (found != decoders.end()) decoder = found->second;
+        }
+    }
+    if (decoder) {
+        std::lock_guard guard(decoder->mutex);
+        const auto found = decoder->pictures.find(output->frameBuffer);
+        if (found != decoder->pictures.end()) {
+            if (found->second.hevcError) std::rethrow_exception(found->second.hevcError);
+            *info = found->second.hevc;
+            return 0;
+        }
+    }
+    info->isValid = false;
+    return 0;
+}
+
+int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, void* firstInfo, void* second) {
+    if (output && output->codecType == CodecHevc)
+        return sceVideodec2GetHevcPictureInfo_nid_postfix(output, static_cast<Videodec2::HevcPictureInfo*>(firstInfo));
+    auto* first = static_cast<AvcPictureInfo*>(firstInfo);
     (void)second;
     if (!output || !first) throw std::runtime_error("Videodec2: invalid argument pointer");
     std::vector<std::shared_ptr<Decoder>> all;
@@ -446,6 +511,8 @@ int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, A
 }
 
 int APS5_VABI sceVideodec2GetAvcPictureInfo_nid_postfix(const OutputInfo* output, AvcPictureInfo* first, AvcPictureInfo* second) {
+    if (output && output->codecType == CodecHevc)
+        throw std::runtime_error("Videodec2: expected an H.264 picture");
     return sceVideodec2GetPictureInfo_nid_postfix(output, first, second);
 }
 

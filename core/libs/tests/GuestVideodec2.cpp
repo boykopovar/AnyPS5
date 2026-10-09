@@ -2,10 +2,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceVideodec2/HevcPictureInfo.hpp"
+#include "prx/libSceVideodec2/HevcMetadata.hpp"
 
 struct DecoderConfigInfo {
     std::uint64_t thisSize;
@@ -82,8 +85,9 @@ int APS5_VABI sceVideodec2DeleteDecoder_nid_postfix(std::uint64_t);
 int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t, const InputData*, FrameBuffer*, OutputInfo*);
 int APS5_VABI sceVideodec2Flush_nid_postfix(std::uint64_t, FrameBuffer*, OutputInfo*);
 int APS5_VABI sceVideodec2Reset_nid_postfix(std::uint64_t);
-int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo*, AvcPictureInfo*, void*);
+int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo*, void*, void*);
 int APS5_VABI sceVideodec2GetAvcPictureInfo_nid_postfix(const OutputInfo*, AvcPictureInfo*, AvcPictureInfo*);
+int APS5_VABI sceVideodec2GetHevcPictureInfo_nid_postfix(const OutputInfo*, Videodec2::HevcPictureInfo*);
 }
 
 namespace {
@@ -484,41 +488,327 @@ std::vector<std::vector<std::uint8_t>> ivfFrames() {
     return frames;
 }
 
-void testClip(std::uint32_t codec, std::uint32_t profile, const std::vector<std::vector<std::uint8_t>>& units, const std::array<std::uint64_t, 6>& hashes) {
+constexpr std::array<std::uint64_t, 6> HevcDisplayOrderUnits{0, 3, 2, 1, 5, 4};
+
+void checkHevcInfo(const OutputInfo& output, std::size_t index) {
+    using Videodec2::HevcPictureInfo;
+    struct Guarded {
+        HevcPictureInfo info;
+        std::array<std::uint8_t, 16> guard;
+    } result;
+    std::memset(&result, 0xa5, sizeof(result));
+    result.info.thisSize = sizeof(HevcPictureInfo);
+    auto& info = result.info;
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info) == 0 && info.isValid, "HEVC picture info missing");
+    check(std::all_of(result.guard.begin(), result.guard.end(), [](auto byte) { return byte == 0xa5; }), "HEVC info overwrote the destination");
+    const auto unit = HevcDisplayOrderUnits[index];
+    check(info.thisSize == sizeof(info) && info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit, "HEVC metadata lost display-order timestamps");
+    check(info.picWidthInLumaSamples == Width && info.picHeightInLumaSamples == Height && info.bitDepthLumaMinus8 == 0 && info.bitDepthChromaMinus8 == 0, "HEVC coded geometry mismatch");
+    check(info.generalProfileIdc == 1 && info.generalLevelIdc == 30 && info.maxDecPicBufferingMinus1 == 4, "HEVC SPS profile or buffering mismatch");
+    check(info.timingInfoPresentFlag == 1 && info.numUnitsInTick == 1 && info.timeScale == 30, "HEVC VUI timing mismatch");
+    check(info.videoParameterSetPresentFlag == (index == 0) && info.sequenceParameterSetPresentFlag == (index == 0) && info.pictureParameterSetPresentFlag == (index == 0) && info.auDelimiterPresentFlag == 1, "HEVC access-unit flags leaked across pictures");
+    check(info.idrPictureFlag == (index == 0) && info.irapPictureFlag == (index == 0), "HEVC IDR/IRAP flags mismatch");
+    check(info.subLayerProfilePresentFlag == 0 && info.subLayerLevelPresentFlag == 0 && info.conformanceWindowFlag == 0 && info.frameCroppingFlag == 0 && info.frameCropBottomOffset == 0, "unexpected HEVC layer or crop metadata");
+    HevcPictureInfo generic{sizeof(HevcPictureInfo)};
+    check(sceVideodec2GetPictureInfo_nid_postfix(&output, &generic, nullptr) == 0 && generic.isValid && generic.ptsData == info.ptsData && generic.picWidthInLumaSamples == Width && generic.timeScale == 30, "generic picture query did not dispatch HEVC");
+    auto modifiedOutput = output;
+    modifiedOutput.thisSize = 48;
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&modifiedOutput, &generic) == 0 && generic.isValid, "HEVC query rejected the older output layout");
+    modifiedOutput = output;
+    modifiedOutput.frameWidth = modifiedOutput.frameHeight = 1;
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&modifiedOutput, &generic) == 0 && generic.picWidthInLumaSamples == Width && generic.picHeightInLumaSamples == Height, "HEVC query trusted caller geometry instead of the saved SPS");
+    for (const auto size : {std::uint64_t{0}, std::uint64_t{8}, std::uint64_t{40}, std::uint64_t{183}, std::uint64_t{185}}) {
+        info.thisSize = size;
+        std::array<std::uint8_t, sizeof(result)> before;
+        std::memcpy(before.data(), &result, sizeof(result));
+        checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info); });
+        check(std::memcmp(before.data(), &result, sizeof(result)) == 0, "invalid HEVC info size changed the destination");
+    }
+    info.thisSize = sizeof(info);
+    modifiedOutput.thisSize = 47;
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&modifiedOutput, &info); });
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(nullptr, &info); });
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&output, nullptr); });
+    AvcPictureInfo avc{sizeof(AvcPictureInfo)};
+    checkThrows([&] { sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &avc, nullptr); });
+    modifiedOutput = output;
+    modifiedOutput.codecType = CodecVp9;
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&modifiedOutput, &info); });
+    modifiedOutput = output;
+    modifiedOutput.pictureCount = 2;
+    checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&modifiedOutput, &info); });
+    modifiedOutput.pictureCount = 0;
+    info.isValid = true;
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&modifiedOutput, &info) == 0 && !info.isValid, "HEVC zero-picture output returned stale metadata");
+    modifiedOutput = output;
+    modifiedOutput.isValid = false;
+    info.isValid = true;
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&modifiedOutput, &info) == 0 && !info.isValid, "HEVC invalid output returned stale metadata");
+}
+
+void testClip(std::uint32_t codec, std::uint32_t profile, const std::vector<std::vector<std::uint8_t>>& units, const std::array<std::uint64_t, 6>& hashes, bool unsupportedInfo = false) {
     const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, codec, profile, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
     DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
     std::uint64_t handle = 0;
     check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
-    std::vector<std::uint8_t> buffer(memory.maxFrameBufferSize);
+    std::array<std::vector<std::uint8_t>, 7> buffers;
+    for (auto& buffer : buffers) buffer.resize(memory.maxFrameBufferSize);
+    std::vector<OutputInfo> outputs;
     std::size_t pictures = 0;
     const auto take = [&](const OutputInfo& output, const FrameBuffer& frame) {
         check(output.isValid == frame.isAccepted, "frame buffer acceptance disagrees with the output");
         if (!output.isValid) return false;
         check(pictures < hashes.size(), "more pictures than access units");
+        const auto& buffer = buffers[pictures];
         check(output.codecType == codec && !output.isErrorFrame && output.frameWidth == Width && output.frameHeight == Height && output.framePitch == 256 && output.frameBuffer == buffer.data(), "unexpected picture geometry");
-        AvcPictureInfo info{sizeof(AvcPictureInfo)};
-        checkThrows([&] { sceVideodec2GetPictureInfo_nid_postfix(&output, &info, nullptr); });
+        if (codec == CodecHevc) {
+            if (unsupportedInfo) {
+                Videodec2::HevcPictureInfo info{sizeof(Videodec2::HevcPictureInfo)};
+                checkThrows([&] { sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info); });
+                checkThrows([&] { sceVideodec2GetPictureInfo_nid_postfix(&output, &info, nullptr); });
+            } else {
+                checkHevcInfo(output, pictures);
+            }
+        } else {
+            AvcPictureInfo info{sizeof(AvcPictureInfo)};
+            checkThrows([&] { sceVideodec2GetPictureInfo_nid_postfix(&output, &info, nullptr); });
+        }
         check(hashNv12(buffer.data(), output.framePitch) == hashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
+        outputs.push_back(output);
         ++pictures;
         return true;
     };
     check(units.size() == hashes.size(), "unexpected access unit count");
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0};
+        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        auto& buffer = buffers[pictures];
         FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
         OutputInfo output{sizeof(OutputInfo)};
         check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output) == 0, "decode failed");
         take(output, frame);
     }
     for (;;) {
+        auto& buffer = buffers[pictures];
         FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
         OutputInfo output{sizeof(OutputInfo)};
         check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "flush failed");
         if (!take(output, frame)) break;
     }
     check(pictures == hashes.size(), "missing pictures after flush");
+    if (codec == CodecHevc) {
+        if (!unsupportedInfo)
+            for (std::size_t index = 0; index < outputs.size(); ++index) checkHevcInfo(outputs[index], index);
+        check(sceVideodec2Reset_nid_postfix(handle) == 0, "HEVC reset failed");
+        for (const auto& output : outputs) {
+            Videodec2::HevcPictureInfo info{sizeof(Videodec2::HevcPictureInfo), true};
+            check(sceVideodec2GetHevcPictureInfo_nid_postfix(&output, &info) == 0 && !info.isValid, "HEVC reset retained picture metadata");
+        }
+    }
     check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+    if (codec == CodecHevc) {
+        Videodec2::HevcPictureInfo info{sizeof(Videodec2::HevcPictureInfo), true};
+        check(sceVideodec2GetHevcPictureInfo_nid_postfix(&outputs.front(), &info) == 0 && !info.isValid, "deleted HEVC decoder retained picture metadata");
+    }
+}
+
+class HevcTestBits {
+    std::vector<std::uint8_t> bytes;
+    unsigned position = 0;
+
+public:
+    void Put(std::uint32_t value, unsigned count) {
+        for (unsigned bit = count; bit > 0; --bit) {
+            if (position % 8 == 0) bytes.push_back(0);
+            bytes.back() |= ((value >> (bit - 1)) & 1) << (7 - position % 8);
+            ++position;
+        }
+    }
+
+    void Exp(std::uint32_t value) {
+        const auto code = value + 1;
+        unsigned width = 0;
+        for (auto remaining = code; remaining; remaining >>= 1) ++width;
+        Put(0, width - 1);
+        Put(code, width);
+    }
+
+    std::vector<std::uint8_t> Finish() {
+        Put(1, 1);
+        return bytes;
+    }
+};
+
+std::vector<std::uint8_t> hevcNal(unsigned type, const std::vector<std::uint8_t>& rbsp) {
+    std::vector<std::uint8_t> nal{0, 0, 1, static_cast<std::uint8_t>(type << 1), 1};
+    unsigned zeros = 0;
+    for (const auto byte : rbsp) {
+        if (zeros == 2 && byte <= 3) {
+            nal.push_back(3);
+            zeros = 0;
+        }
+        nal.push_back(byte);
+        zeros = byte == 0 ? zeros + 1 : 0;
+    }
+    return nal;
+}
+
+std::vector<std::uint8_t> hevcSequence(bool vui, bool crop = false) {
+    HevcTestBits bits;
+    bits.Put(1, 8);
+    bits.Put(1, 8);
+    bits.Put(0x60000000, 32);
+    bits.Put(9, 4);
+    bits.Put(0, 32);
+    bits.Put(0, 12);
+    bits.Put(120, 8);
+    bits.Exp(0);
+    bits.Exp(1);
+    bits.Exp(80);
+    bits.Exp(48);
+    bits.Put(crop, 1);
+    if (crop) {
+        bits.Exp(0);
+        bits.Exp(1);
+        bits.Exp(0);
+        bits.Exp(1);
+    }
+    bits.Exp(0);
+    bits.Exp(0);
+    bits.Exp(4);
+    bits.Put(1, 1);
+    bits.Exp(5);
+    bits.Exp(2);
+    bits.Exp(0);
+    for (const auto value : {0u, 3u, 0u, 3u, 0u, 0u}) bits.Exp(value);
+    bits.Put(0, 4);
+    bits.Exp(0);
+    bits.Put(0, 3);
+    bits.Put(vui, 1);
+    if (vui) {
+        bits.Put(1, 1);
+        bits.Put(255, 8);
+        bits.Put(4, 16);
+        bits.Put(3, 16);
+        bits.Put(0, 1);
+        bits.Put(1, 1);
+        bits.Put(5, 3);
+        bits.Put(1, 1);
+        bits.Put(1, 1);
+        bits.Put(9, 8);
+        bits.Put(16, 8);
+        bits.Put(9, 8);
+        bits.Put(1, 1);
+        bits.Exp(2);
+        bits.Exp(3);
+        bits.Put(0, 1);
+        bits.Put(0, 1);
+        bits.Put(1, 1);
+        bits.Put(0, 1);
+        bits.Put(1, 1);
+        bits.Put(1001, 32);
+        bits.Put(60000, 32);
+        bits.Put(0, 3);
+    }
+    bits.Put(0, 1);
+    return bits.Finish();
+}
+
+std::vector<std::uint8_t> hevcMetadataUnit(const std::vector<std::uint8_t>& sps, unsigned pictureType = 19) {
+    auto unit = hevcNal(33, sps);
+    const auto pps = hevcNal(34, {0xe0});
+    unit.insert(unit.end(), pps.begin(), pps.end());
+    const auto slice = hevcNal(pictureType, {0xb0});
+    unit.insert(unit.end(), slice.begin(), slice.end());
+    return unit;
+}
+
+void testHevcMetadataParser() {
+    HevcMetadata parser;
+    const auto sps = hevcSequence(true);
+    const auto first = parser.Read(hevcMetadataUnit(sps));
+    check(first.isValid && first.picWidthInLumaSamples == 80 && first.picHeightInLumaSamples == 48, "HEVC metadata SPS dimensions mismatch");
+    check(first.generalProfileIdc == 1 && first.generalLevelIdc == 120 && first.generalProgressiveSourceFlag == 1 && first.generalInterlacedSourceFlag == 0 && first.generalFrameOnlyConstraintFlag == 1, "HEVC PTL fields mismatch");
+    check(first.aspectRatioInfoPresentFlag == 1 && first.aspectRatioIdc == 255 && first.sarWidth == 4 && first.sarHeight == 3, "HEVC extended SAR mismatch");
+    check(first.videoSignalTypePresentFlag == 1 && first.videoFormat == 5 && first.videoFullRangeFlag == 1 && first.colourDescriptionPresentFlag == 1 && first.colourPrimaries == 9 && first.transferCharacteristics == 16 && first.matrixCoeffs == 9, "HEVC colour description mismatch");
+    check(first.chromaLocInfoPresentFlag == 1 && first.chromaSampleLocTypeTopField == 2 && first.chromaSampleLocTypeBottomField == 3 && first.frameFieldInfoPresentFlag == 1 && first.fieldSeqFlag == 0, "HEVC chroma location mismatch");
+    check(first.timingInfoPresentFlag == 1 && first.numUnitsInTick == 1001 && first.timeScale == 60000 && first.maxDecPicBufferingMinus1 == 5, "HEVC timing or DPB mismatch");
+    const auto cra = parser.Read(hevcNal(21, {0xb0}));
+    check(cra.idrPictureFlag == 0 && cra.irapPictureFlag == 1 && cra.sequenceParameterSetPresentFlag == 0 && cra.pictureParameterSetPresentFlag == 0, "HEVC CRA was mistaken for IDR");
+    const auto noVui = parser.Read(hevcMetadataUnit(hevcSequence(false)));
+    check(noVui.timingInfoPresentFlag == 0 && noVui.timeScale == 0 && noVui.videoSignalTypePresentFlag == 0 && noVui.videoFormat == 5 && noVui.colourPrimaries == 2 && noVui.aspectRatioInfoPresentFlag == 0, "HEVC SPS replacement kept old VUI fields");
+    check(first.timeScale == 60000 && first.videoFullRangeFlag == 1, "HEVC metadata snapshot changed after SPS replacement");
+    HevcTestBits lastPps;
+    lastPps.Exp(63);
+    lastPps.Exp(0);
+    auto lastPpsUnit = hevcNal(34, lastPps.Finish());
+    HevcTestBits lastSlice;
+    lastSlice.Put(2, 2);
+    lastSlice.Exp(63);
+    const auto lastPpsSlice = hevcNal(19, lastSlice.Finish());
+    lastPpsUnit.insert(lastPpsUnit.end(), lastPpsSlice.begin(), lastPpsSlice.end());
+    check(parser.Read(lastPpsUnit).picWidthInLumaSamples == 80, "HEVC maximum PPS id did not fit the bounded slice-header reader");
+    for (std::size_t length = 0; length < sps.size(); ++length) {
+        HevcMetadata fresh;
+        checkThrows([&] { fresh.Read(hevcMetadataUnit({sps.begin(), sps.begin() + static_cast<std::ptrdiff_t>(length)})); });
+    }
+    HevcMetadata fresh;
+    checkThrows([&] { fresh.Read(hevcNal(19, {0xb0})); });
+    checkThrows([&] { parser.Read(hevcMetadataUnit(hevcSequence(true, true))); });
+    checkThrows([&] { parser.Read(hevcNal(34, {0, 0, 0, 0, 0x80})); });
+    checkThrows([&] { parser.Read(std::array<std::uint8_t, 4>{0, 0, 1, 0x42}); });
+    auto layered = hevcMetadataUnit(sps);
+    layered[4] = 2;
+    checkThrows([&] { parser.Read(layered); });
+    for (const auto type : {1u, 45u, 147u}) {
+        auto unit = hevcMetadataUnit(sps);
+        const auto sei = hevcNal(39, {static_cast<std::uint8_t>(type), 1, 0, 0x80});
+        unit.insert(unit.end(), sei.begin(), sei.end());
+        HevcMetadata seiParser;
+        checkThrows([&] { seiParser.Read(unit); });
+        if (type == 45 || type == 147) {
+            checkThrows([&] { seiParser.Read(hevcMetadataUnit(sps)); });
+            seiParser.Reset();
+            check(seiParser.Read(hevcMetadataUnit(sps)).isValid, "HEVC reset did not clear unsupported persistent SEI");
+        } else {
+            check(seiParser.Read(hevcMetadataUnit(sps)).isValid, "picture-local SEI invalidated later metadata");
+        }
+    }
+    auto unit = hevcMetadataUnit(sps);
+    const auto sei = hevcNal(39, {5, 200, 0x80});
+    unit.insert(unit.end(), sei.begin(), sei.end());
+    checkThrows([&] { parser.Read(unit); });
+}
+
+void testHevcBufferOwnership() {
+    const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, CodecHevc, 1, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
+    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "HEVC memory query failed");
+    std::uint64_t first = 0, second = 0;
+    check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &first) == 0, "first HEVC decoder creation failed");
+    check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &second) == 0, "second HEVC decoder creation failed");
+    std::vector<std::uint8_t> buffer(memory.maxFrameBufferSize);
+    const auto units = hevcUnits(HevcStream.data(), HevcStream.size());
+    const auto decode = [&](std::uint64_t handle, std::uint64_t timestamp) {
+        OutputInfo output{sizeof(OutputInfo)};
+        FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+        for (std::size_t index = 0; index < units.size(); ++index) {
+            const InputData input{sizeof(InputData), units[index].data(), units[index].size(), timestamp + index, index, timestamp};
+            check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output) == 0, "HEVC ownership decode failed");
+            if (output.isValid) return output;
+        }
+        throw std::runtime_error("HEVC ownership fixture produced no picture");
+    };
+    const auto firstOutput = decode(first, 1000);
+    Videodec2::HevcPictureInfo info{sizeof(Videodec2::HevcPictureInfo)};
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&firstOutput, &info) == 0 && info.isValid && info.ptsData == 1000, "first HEVC buffer owner mismatch");
+    const auto secondOutput = decode(second, 2000);
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&secondOutput, &info) == 0 && info.isValid && info.ptsData == 2000 && info.attachedData == 2000, "HEVC query returned the previous decoder's buffer metadata");
+    check(sceVideodec2DeleteDecoder_nid_postfix(first) == 0, "first HEVC delete failed");
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&secondOutput, &info) == 0 && info.isValid && info.ptsData == 2000, "deleting the previous decoder invalidated the current owner");
+    check(sceVideodec2Reset_nid_postfix(second) == 0, "second HEVC reset failed");
+    check(sceVideodec2GetHevcPictureInfo_nid_postfix(&secondOutput, &info) == 0 && !info.isValid, "HEVC reset retained buffer ownership");
+    check(sceVideodec2DeleteDecoder_nid_postfix(second) == 0, "second HEVC delete failed");
 }
 
 void testTenBit() {
@@ -592,6 +882,8 @@ void testDecode(bool lengthPrefixed) {
 
 int main() {
     try {
+        testHevcMetadataParser();
+        testHevcBufferOwnership();
         testFailures();
         testDecode(false);
         testDecode(true);
@@ -617,6 +909,19 @@ int main() {
             hevcLengthPrefixed.push_back(std::move(converted));
         }
         testClip(CodecHevc, 1, hevcLengthPrefixed, HevcHashes);
+        auto withUnsupportedSei = hevc;
+        auto& firstUnit = withUnsupportedSei.front();
+        bool inserted = false;
+        for (std::size_t index = 0; index + 4 < firstUnit.size(); ++index) {
+            if (firstUnit[index] == 0 && firstUnit[index + 1] == 0 && firstUnit[index + 2] == 1 && (firstUnit[index + 3] >> 1) <= 31) {
+                const auto sei = hevcNal(39, {147, 1, 18, 0x80});
+                firstUnit.insert(firstUnit.begin() + static_cast<std::ptrdiff_t>(index), sei.begin(), sei.end());
+                inserted = true;
+                break;
+            }
+        }
+        check(inserted, "HEVC fixture has no slice");
+        testClip(CodecHevc, 1, withUnsupportedSei, HevcHashes, true);
         testClip(CodecVp9, 0, ivfFrames(), Vp9Hashes);
         testTenBit();
         std::puts("Videodec2 tests passed");
