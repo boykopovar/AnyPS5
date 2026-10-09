@@ -11,6 +11,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Multibyte.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ExtendedMath.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
@@ -37,6 +38,9 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
 )
 
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/ExtendedMath.cpp
+        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
+
 target_include_directories(libc PRIVATE
         ${LIBS_INCLUDE_DIR}
 )
@@ -46,6 +50,18 @@ if(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_extended_math_tests ${LIBS_INCLUDE_DIR}/tests/GuestExtendedMath.cpp)
+    target_include_directories(guest_extended_math_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_extended_math_tests PRIVATE libc)
+    configure_windows_unwind(guest_extended_math_tests)
+    set_source_files_properties(${LIBS_INCLUDE_DIR}/tests/GuestExtendedMath.cpp
+            PROPERTIES COMPILE_OPTIONS "-frounding-math")
+    add_test(NAME guest_extended_math COMMAND guest_extended_math_tests)
+    if(WIN32)
+        set_tests_properties(guest_extended_math PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_time_conversion_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimeConversion.cpp)
     target_include_directories(guest_time_conversion_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_time_conversion_tests PRIVATE libc)
