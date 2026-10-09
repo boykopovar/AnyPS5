@@ -31,6 +31,18 @@ long double CheckRange_nid_no_patch(long double input, long double result) {
     return result;
 }
 
+long double CheckNeighbor_nid_no_patch(long double from, long double to, long double result) {
+    if (from == to || std::isnan(result)) return result;
+    if (std::isfinite(from) && std::isinf(result)) {
+        errno = ERANGE;
+        std::feraiseexcept(FE_OVERFLOW | FE_INEXACT);
+    } else if (result == 0.L || std::fpclassify(result) == FP_SUBNORMAL) {
+        errno = ERANGE;
+        std::feraiseexcept(FE_UNDERFLOW | FE_INEXACT);
+    }
+    return result;
+}
+
 }
 
 extern "C" {
@@ -76,8 +88,14 @@ long double APS5_VABI hypotl_nid_postfix(long double x, long double y) { return 
 long double APS5_VABI fabsl_nid_postfix(long double value) { return std::fabs(value); }
 long double APS5_VABI copysignl_nid_postfix(long double magnitude, long double sign) { return std::copysign(magnitude, sign); }
 long double APS5_VABI fdiml_nid_postfix(long double x, long double y) { return std::fdim(x, y); }
-long double APS5_VABI fmaxl_nid_postfix(long double x, long double y) { return std::fmax(x, y); }
-long double APS5_VABI fminl_nid_postfix(long double x, long double y) { return std::fmin(x, y); }
+long double APS5_VABI fmaxl_nid_postfix(long double x, long double y) {
+    if (x == 0.L && y == 0.L) return std::signbit(x) ? y : x;
+    return std::fmax(x, y);
+}
+long double APS5_VABI fminl_nid_postfix(long double x, long double y) {
+    if (x == 0.L && y == 0.L) return std::signbit(x) ? x : y;
+    return std::fmin(x, y);
+}
 long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double z) { return std::fma(x, y, z); }
 
 long double APS5_VABI ceill_nid_postfix(long double value) { return std::ceil(value); }
@@ -90,8 +108,8 @@ long double APS5_VABI nearbyintl_nid_postfix(long double value) { return std::ne
 long double APS5_VABI fmodl_nid_postfix(long double x, long double y) { return std::fmod(x, y); }
 long double APS5_VABI remainderl_nid_postfix(long double x, long double y) { return std::remainder(x, y); }
 long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quotient) { return std::remquo(x, y, quotient); }
-long double APS5_VABI nextafterl_nid_postfix(long double from, long double to) { return std::nextafter(from, to); }
-long double APS5_VABI nexttowardl_nid_postfix(long double from, long double to) { return std::nexttoward(from, to); }
+long double APS5_VABI nextafterl_nid_postfix(long double from, long double to) { return CheckNeighbor_nid_no_patch(from, to, std::nextafter(from, to)); }
+long double APS5_VABI nexttowardl_nid_postfix(long double from, long double to) { return CheckNeighbor_nid_no_patch(from, to, std::nexttoward(from, to)); }
 
 long double APS5_VABI frexpl_nid_postfix(long double value, int* exponent) { return std::frexp(value, exponent); }
 long double APS5_VABI ldexpl_nid_postfix(long double value, int exponent) { return std::ldexp(value, exponent); }

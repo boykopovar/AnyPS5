@@ -132,6 +132,8 @@ void CheckArithmetic() {
     Require(fdiml_nid_postfix(1.L, value) == 0 && !std::signbit(fdiml_nid_postfix(1.L, value)), "fdiml positive zero");
     Require(std::isnan(fdiml_nid_postfix(nan, 1.L)), "fdiml NaN");
     Require(fmaxl_nid_postfix(1.L, value) == value && fminl_nid_postfix(1.L, value) == 1.L, "min/max precision");
+    Require(!std::signbit(fmaxl_nid_postfix(0.L, -0.L)) && !std::signbit(fmaxl_nid_postfix(-0.L, 0.L)), "fmaxl signed-zero ordering");
+    Require(std::signbit(fminl_nid_postfix(0.L, -0.L)) && std::signbit(fminl_nid_postfix(-0.L, 0.L)), "fminl signed-zero ordering");
     for (const auto function : {fmaxl_nid_postfix, fminl_nid_postfix}) {
         Require(function(nan, value) == value && function(value, nan) == value, "min/max one NaN");
         Require(std::isnan(function(nan, nan)), "min/max both NaN");
@@ -193,6 +195,12 @@ void CheckRemaindersAndNeighbors() {
         Require(function(1.L, 2.L) == 1.L + 0x1p-63L, "next value above one");
         Require(function(1.L, 0.L) == 1.L - 0x1p-64L, "next value below one");
         Require(function(0.L, 1.L) == std::numeric_limits<long double>::denorm_min(), "next value above zero");
+        std::feclearexcept(FE_ALL_EXCEPT);
+        (void)function(0.L, 1.L);
+        Require(std::fetestexcept(FE_UNDERFLOW) != 0, "neighbor underflow flag");
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(function(std::numeric_limits<long double>::max(), infinity) == infinity, "neighbor overflow result");
+        Require(std::fetestexcept(FE_OVERFLOW) != 0, "neighbor overflow flag");
         Require(std::signbit(function(0.L, -0.L)), "neighbor equality preserves target sign");
         Require(function(infinity, 0.L) == std::numeric_limits<long double>::max(), "neighbor of infinity");
         Require(std::isnan(function(nan, 1.L)), "neighbor NaN");
