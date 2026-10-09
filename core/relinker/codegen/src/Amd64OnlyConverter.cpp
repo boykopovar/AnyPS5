@@ -39,13 +39,21 @@ private:
         Amd64OnlyMatch Substitution;
     };
 
+    struct Segment {
+        Domain::ProgramHeader Header;
+        std::vector<std::uint8_t> Bytes;
+        std::vector<InstructionMatch> Instructions;
+        std::vector<Pending> Substitutions;
+    };
+
     X64InstructionRewriter _rewriter;
     std::unique_ptr<IAmd64OnlyInstructionMatcher> _matcher = MakeAmd64OnlyInstructionMatcher();
     std::unique_ptr<IInstructionScanner> _scanner = MakeInstructionScanner();
 
     void _convertSegment(
         std::vector<std::uint8_t>& fileBytes,
-        const Domain::ProgramHeader& ph,
+        Segment& segment,
+        const std::set<std::uint64_t>& branchTargets,
         ConvertResult& result
     ) const;
 
@@ -76,38 +84,20 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
 
 void Amd64OnlyConverter::_convertSegment(
     std::vector<std::uint8_t>& fileBytes,
-    const Domain::ProgramHeader& ph,
+    Segment& segment,
+    const std::set<std::uint64_t>& branchTargets,
     ConvertResult& result
 ) const {
+    if (segment.Substitutions.empty())
+        return;
+    const auto& ph = segment.Header;
     const auto segOffset = static_cast<std::size_t>(ph.Offset);
     const auto segSize = static_cast<std::size_t>(ph.FileSize);
-    if (segOffset > fileBytes.size() || segSize > fileBytes.size() - segOffset)
-        throw CodegenException("Code segment exceeds the file", ph.Offset);
-
-    std::vector<std::uint8_t> seg(
-        fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset),
-        fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize)
-    );
-
-    const auto matches = _atFileOffset(ph.Offset, [&] { return _scanner->ScanCodeSection(seg, 0, seg.size()); });
-
-    std::vector<Pending> pending;
-    for (std::size_t index = 0; index < matches.size(); ++index) {
-        const auto& match = matches[index];
-        auto substitution = _atFileOffset(ph.Offset + match.Offset, [&] { return _matcher->Match(seg.data() + match.Offset, match.Length); });
-        if (substitution.has_value())
-            pending.push_back({index, match, std::move(*substitution)});
-    }
-    if (pending.empty())
-        return;
-
-    const bool needsBranchTargets = std::any_of(pending.begin(), pending.end(), [](const Pending& item) {
-        return item.Substitution.Lowering == Amd64OnlyLowering::Trampoline;
-    });
-    const auto branchTargets = needsBranchTargets ? _collectBranchTargets(seg, matches, ph) : std::set<std::uint64_t>{};
+    auto& seg = segment.Bytes;
+    const auto& matches = segment.Instructions;
 
     std::set<std::size_t> consumed;
-    for (const auto& item : pending) {
+    for (const auto& item : segment.Substitutions) {
         if (consumed.contains(item.Index))
             continue;
         const auto& match = item.Instruction;
@@ -198,9 +188,51 @@ ConvertResult Amd64OnlyConverter::Convert(
     std::vector<std::uint8_t> fileBytes,
     const std::vector<Domain::ProgramHeader>& codeSegments
 ) const {
+    std::vector<const Domain::ProgramHeader*> fileRanges;
+    for (const auto& ph : codeSegments) {
+        if (ph.Offset > fileBytes.size() || ph.FileSize > fileBytes.size() - ph.Offset)
+            throw CodegenException("Code segment exceeds the file", ph.Offset);
+        if (ph.FileSize != 0)
+            fileRanges.push_back(&ph);
+    }
+    std::sort(fileRanges.begin(), fileRanges.end(), [](const auto* left, const auto* right) { return left->Offset < right->Offset; });
+    for (std::size_t index = 1; index < fileRanges.size(); ++index) {
+        const auto& previous = *fileRanges[index - 1];
+        const auto& current = *fileRanges[index];
+        if (current.Offset - previous.Offset < previous.FileSize)
+            throw CodegenException("Overlapping code segment file ranges are not supported", current.Offset);
+    }
+    std::vector<Segment> segments;
+    bool needsBranchTargets = false;
+    for (const auto& ph : codeSegments) {
+        const auto segOffset = static_cast<std::size_t>(ph.Offset);
+        const auto segSize = static_cast<std::size_t>(ph.FileSize);
+        std::vector<std::uint8_t> seg(
+            fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset),
+            fileBytes.begin() + static_cast<std::ptrdiff_t>(segOffset + segSize)
+        );
+        auto matches = _atFileOffset(ph.Offset, [&] { return _scanner->ScanCodeSection(seg, 0, seg.size()); });
+        std::vector<Pending> pending;
+        for (std::size_t index = 0; index < matches.size(); ++index) {
+            const auto& match = matches[index];
+            auto substitution = _atFileOffset(ph.Offset + match.Offset, [&] { return _matcher->Match(seg.data() + match.Offset, match.Length); });
+            if (substitution.has_value()) {
+                needsBranchTargets |= substitution->Lowering == Amd64OnlyLowering::Trampoline;
+                pending.push_back({index, match, std::move(*substitution)});
+            }
+        }
+        segments.push_back({ph, std::move(seg), std::move(matches), std::move(pending)});
+    }
+    std::set<std::uint64_t> branchTargets;
+    if (needsBranchTargets) {
+        for (const auto& segment : segments) {
+            const auto targets = _collectBranchTargets(segment.Bytes, segment.Instructions, segment.Header);
+            branchTargets.insert(targets.begin(), targets.end());
+        }
+    }
     ConvertResult result{};
-    for (const auto& ph : codeSegments)
-        _convertSegment(fileBytes, ph, result);
+    for (auto& segment : segments)
+        _convertSegment(fileBytes, segment, branchTargets, result);
     result.Bytes = std::move(fileBytes);
     return result;
 }

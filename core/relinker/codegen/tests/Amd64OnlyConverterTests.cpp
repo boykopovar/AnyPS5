@@ -19,6 +19,7 @@
 #include <elfpatcher/general/SegmentFilter.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <io/ByteWriter.hpp>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -27,6 +28,7 @@
 #include <sys/mman.h>
 #endif
 #include <functional>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -692,6 +694,117 @@ void converterReciprocal() {
     require(movedSite.Relocations.size() == 1 && movedSite.Relocations[0].DisplacementOffset == movedSite.ReturnBranchOffset - 4 && movedSite.Relocations[0].InstructionEnd == movedSite.ReturnBranchOffset && movedSite.Relocations[0].SiteTarget == 10 + 0x10, "Absorbed RIP-relative load has the wrong relocation");
 }
 
+void converterCrossSegmentBranches() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    for (const std::uint8_t opcode : {std::uint8_t{0xE8}, std::uint8_t{0xE9}}) {
+        for (const bool reverse : {false, true}) {
+            for (const bool optional : {false, true}) {
+                for (const std::uint64_t targetOffset : {std::uint64_t{0}, std::uint64_t{4}, std::uint64_t{5}, std::uint64_t{0x80}}) {
+                    Bytes file(0x400, 0xCC);
+                    const Bytes instruction = optional ? Bytes{0xC5, 0xF8, 0x52, 0xD5} : Bytes{0x66, 0x0F, 0x79, 0xCA};
+                    std::copy(instruction.begin(), instruction.end(), file.begin() + 0x200);
+                    file[0x204] = 0x90;
+                    file[0x205] = 0xC3;
+                    file[0x300] = opcode;
+                    write(file, 0x301, static_cast<std::int32_t>(0x1000 + targetOffset) - 0x2005);
+                    file[0x305] = 0xC3;
+                    std::vector<Domain::ProgramHeader> headers = {segmentHeader(6), {1, 5, 0x300, 0x2000, 0, 6, 6, 16}};
+                    if (reverse)
+                        std::reverse(headers.begin(), headers.end());
+                    if (targetOffset == 4 && !optional) {
+                        require(failureOffset([&] { (void)converter->Convert(file, headers); }, "Cross-segment branch into an absorbed instruction was accepted") == 0x204, "Cross-segment branch failure does not carry the target's file offset");
+                        continue;
+                    }
+                    const auto result = converter->Convert(file, headers);
+                    require(result.Bytes == file && result.Reports.size() == 1, "Cross-segment branch conversion changed unrelated bytes or reports");
+                    if (targetOffset == 4) {
+                        require(result.Trampolines.empty() && result.KeptCount == 1 && result.Reports[0].Lowering == Codegen::Amd64OnlyLowering::Kept, "Cross-segment branch into an optional reciprocal's follower did not keep it native");
+                    } else {
+                        require(result.Trampolines.size() == 1 && result.KeptCount == 0 && result.Trampolines[0].Offset == 0x200 && result.Trampolines[0].Length == 5, "Cross-segment branch outside a trampoline's interior blocked conversion");
+                    }
+                }
+            }
+        }
+    }
+}
+
+void converterOverlappingFileRanges() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    const Bytes movntss{0xF3, 0x0F, 0x2B, 0x07};
+    Bytes file(0x300, 0xCC);
+    file[0x1FF] = 0xB8;
+    std::copy(movntss.begin(), movntss.end(), file.begin() + 0x200);
+    std::copy(movntss.begin(), movntss.end(), file.begin() + 0x204);
+    file[0x208] = 0xC3;
+    const auto requireOverlap = [&](const Bytes& input, std::vector<Domain::ProgramHeader> headers, const Domain::FileByteOffset offset) {
+        const auto original = input;
+        for (const bool reverse : {false, true}) {
+            if (reverse)
+                std::reverse(headers.begin(), headers.end());
+            std::optional<Codegen::ConvertResult> result;
+            bool rejected = false;
+            try {
+                result = converter->Convert(input, headers);
+            } catch (const Codegen::CodegenException& error) {
+                require(std::string(error.what()) == "Overlapping code segment file ranges are not supported", "Overlapping code segments were scanned before rejection");
+                require(error.FailureOffset == offset, "Overlap failure does not carry the first overlapping file offset");
+                rejected = true;
+            }
+            require(rejected && !result.has_value() && input == original, "Overlapping code segments returned converted bytes or replacement reports");
+        }
+    };
+    const std::vector<Domain::ProgramHeader> contained = {
+        {1, 5, 0x200, 0x1200, 0, 4, 4, 16},
+        {1, 5, 0x1FF, 0x21FF, 0, 10, 10, 16}};
+    requireOverlap(file, contained, 0x200);
+    requireOverlap(file, {segmentHeader(4), {1, 5, 0x200, 0x2000, 0, 4, 4, 16}}, 0x200);
+    requireOverlap(file, {segmentHeader(8), {1, 5, 0x204, 0x2000, 0, 5, 5, 16}}, 0x204);
+    requireOverlap(Bytes(file.size(), 0x90), contained, 0x200);
+    requireOverlap(Bytes(file.size(), 0x0F), contained, 0x200);
+    for (const std::uint64_t secondOffset : {std::uint64_t{0x204}, std::uint64_t{0x240}}) {
+        Bytes input(0x300, 0xCC);
+        std::copy(movntss.begin(), movntss.end(), input.begin() + 0x200);
+        std::copy(movntss.begin(), movntss.end(), input.begin() + static_cast<std::ptrdiff_t>(secondOffset));
+        auto expected = input;
+        expected[0x202] = 0x11;
+        expected[secondOffset + 2] = 0x11;
+        for (const bool reverse : {false, true}) {
+            std::vector<Domain::ProgramHeader> headers = {
+                {1, 5, 0x200, 0x2000, 0, 4, 0x1000, 16},
+                {1, 5, secondOffset, 0x2004, 0, 4, 4, 16},
+                {1, 5, 0x202, 0x3000, 0, 0, 0x1000, 16},
+                {1, 5, input.size(), 0x4000, 0, 0, 0, 16}};
+            if (reverse)
+                std::reverse(headers.begin(), headers.end());
+            const auto result = converter->Convert(input, headers);
+            require(result.Bytes == expected && result.ReplacedCount == 2 && result.KeptCount == 0 && result.Trampolines.empty() && result.Reports.size() == 2, "Disjoint code ranges returned inconsistent converted bytes or counts");
+            const std::array<Domain::FileByteOffset, 2> offsets = reverse ? std::array{secondOffset, std::uint64_t{0x200}} : std::array{std::uint64_t{0x200}, secondOffset};
+            for (std::size_t index = 0; index < offsets.size(); ++index) {
+                const auto& report = result.Reports[index];
+                require(report.InstructionName == "MOVNTSS" && report.Offset == offsets[index] && report.OriginalLength == 4 && report.ReplacementLength == 4 && report.Lowering == Codegen::Amd64OnlyLowering::InPlace, "Disjoint code range replacement report is inconsistent with its output");
+            }
+        }
+    }
+    const auto maximum = std::numeric_limits<std::uint64_t>::max();
+    for (const auto& header : std::vector<Domain::ProgramHeader>{
+            {1, 5, maximum, 0, 0, 1, 1, 16},
+            {1, 5, 1, 0, 0, maximum, maximum, 16},
+            {1, 5, file.size() + 1, 0, 0, 0, 0, 16}}) {
+        for (const bool reverse : {false, true}) {
+            std::vector<Domain::ProgramHeader> headers = {{1, 5, 0, 0x1000, 0, 1, 1, 16}, header};
+            if (reverse)
+                std::reverse(headers.begin(), headers.end());
+            const Bytes malformed(file.size(), 0x0F);
+            try {
+                (void)converter->Convert(malformed, headers);
+                throw std::runtime_error("Out-of-bounds code range was accepted");
+            } catch (const Codegen::CodegenException& error) {
+                require(std::string(error.what()) == "Code segment exceeds the file" && error.FailureOffset == header.Offset, "Code range bounds were truncated, wrapped, or checked after scanning");
+            }
+        }
+    }
+}
+
 void converterStrayRex() {
     const auto converter = Codegen::MakeAmd64OnlyConverter();
     const auto convert = [&](const Bytes& text) {
@@ -1337,6 +1450,8 @@ int main() {
         converterMonitorWait();
         converterClzero();
         converterReciprocal();
+        converterCrossSegmentBranches();
+        converterOverlappingFileRanges();
         converterStrayRex();
         rewriterStrayRex();
     rewriterReferenceSites();
