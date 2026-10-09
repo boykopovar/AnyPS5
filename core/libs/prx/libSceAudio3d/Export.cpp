@@ -108,11 +108,14 @@ int APS5_VABI sceAudio3dPortGetQueueLevel(uint32_t port_id, uint32_t* queue_leve
     if (queue_level == nullptr && queue_available == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
     const std::uint32_t level = QueueLevel(Clock::now());
     if (queue_level != nullptr) *queue_level = level;
-    if (queue_available != nullptr) *queue_available = g_port.queue_depth - level;
+    if (queue_available != nullptr) {
+        *queue_available = level >= g_port.queue_depth ? 0 : g_port.queue_depth - level;
+    }
     return 0;
 }
 
 int APS5_VABI sceAudio3dPortOpen(int user_id, const Audio3dOpenParameters* parameters, uint32_t* id) {
+    if (id != nullptr) *id = AUDIO3D_OBJECT_INVALID;
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return AUDIO3D_ERROR_NOT_READY;
     if (user_id != AUDIO3D_USER_ID_SYSTEM || parameters == nullptr || id == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
