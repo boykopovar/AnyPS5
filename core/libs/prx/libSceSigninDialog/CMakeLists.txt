@@ -1,0 +1,14 @@
+add_library(libSceSigninDialog SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSigninDialog PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSigninDialog)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_signin_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestSigninDialog.cpp)
+    target_include_directories(guest_signin_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_signin_dialog_tests PRIVATE libSceSigninDialog)
+    add_test(NAME guest_signin_dialog COMMAND guest_signin_dialog_tests)
+    if(WIN32)
+        set_tests_properties(guest_signin_dialog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSigninDialog>")
+    endif()
+endif()
