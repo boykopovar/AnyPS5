@@ -61,11 +61,7 @@ std::uint64_t APS5_VABI _Iswctype_nid_postfix() {
     return 0;
 }
 
-APS5_EXPORT("H+8UBOwfScI", libcCyberUnknown08);
-std::uint64_t APS5_VABI libcCyberUnknown08(void) {
-    NotImplemented_nid_no_patch("H+8UBOwfScI");
-    return 0;
-}
+APS5_EXPORT("H+8UBOwfScI", __powidf2_nid_postfix);
 
 std::uint64_t APS5_VABI _WStoul_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);

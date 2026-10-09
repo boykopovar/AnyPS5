@@ -51,8 +51,10 @@ int APS5_VABI __isnormalf_nid_postfix(float);
 int APS5_VABI __isinff_nid_postfix(float);
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
 std::lldiv_t APS5_VABI ldiv_nid_postfix(std::int64_t, std::int64_t);
+double APS5_VABI __powidf2_nid_postfix(double, int);
 }
 static void Require(bool value) { if (!value) std::abort(); }
+static void CheckPowi();
 
 static void CheckIntegerConversions() {
     for (const long long numerator : {4294967301LL, -4294967301LL}) {
@@ -201,6 +203,7 @@ static void CheckFloatClassification() {
 int main() {
     CheckFloatClassification();
     CheckIntegerConversions();
+    CheckPowi();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
     const char input[] = "0x1.8p+2 remainder";
@@ -268,4 +271,25 @@ int main() {
     Require(negativeDenominator.quot == -3 && negativeDenominator.rem == 1);
     const auto minimum = div_nid_postfix(std::numeric_limits<int>::min(), 10);
     Require(minimum.quot == -214748364 && minimum.rem == -8);
+}
+
+static void CheckPowi() {
+    Require(__powidf2_nid_postfix(2.0, 10) == 1024.0);
+    Require(__powidf2_nid_postfix(2.0, -3) == 0.125);
+    Require(__powidf2_nid_postfix(-2.0, 3) == -8.0);
+    Require(__powidf2_nid_postfix(3.0, 5) == 243.0);
+    Require(__powidf2_nid_postfix(5.0, 0) == 1.0);
+    Require(__powidf2_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 0) == 1.0);
+    Require(__powidf2_nid_postfix(std::numeric_limits<double>::infinity(), 0) == 1.0);
+    Require(__powidf2_nid_postfix(0.0, 5) == 0.0);
+    Require(__powidf2_nid_postfix(0.0, -1) == std::numeric_limits<double>::infinity());
+    Require(__powidf2_nid_postfix(-0.0, -1) == -std::numeric_limits<double>::infinity());
+    Require(__powidf2_nid_postfix(0.5, std::numeric_limits<int>::min()) == std::numeric_limits<double>::infinity());
+    Require(__powidf2_nid_postfix(2.0, std::numeric_limits<int>::min()) == 0.0);
+    Require(__powidf2_nid_postfix(-1.0, std::numeric_limits<int>::min()) == 1.0);
+    Require(__powidf2_nid_postfix(-1.0, std::numeric_limits<int>::max()) == -1.0);
+    Require(__powidf2_nid_postfix(1.5, std::numeric_limits<int>::max()) == std::numeric_limits<double>::infinity());
+    Require(std::bit_cast<std::uint64_t>(__powidf2_nid_postfix(-2.0, 3)) == UINT64_C(0xc020000000000000));
+    Require(std::abs(__powidf2_nid_postfix(10.0, -5) - 0.00001) < 1e-20);
+    Require(std::abs(__powidf2_nid_postfix(1.1, 13) - std::pow(1.1, 13)) < 1e-12);
 }
