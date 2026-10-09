@@ -415,4 +415,253 @@ int APS5_VABI sceHttpSetRedirectCallback(int id, HttpRedirectCallback cbfunc, vo
     return 0;
 }
 
+int APS5_VABI sceHttpAbortRequestForce(int reqId) {
+    (void)reqId;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpAddCookie(int libhttpCtxId, const char* url, const char* cookie, uint64_t cookieLength) {
+    (void)libhttpCtxId;
+    (void)url;
+    (void)cookie;
+    (void)cookieLength;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpAuthCacheFlush(int libhttpCtxId) {
+    (void)libhttpCtxId;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpCacheRedirectedConnectionEnabled(int id, int isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpCookieExport(int libhttpCtxId, void* buffer, uint64_t bufferSize, uint64_t* exportSize) {
+    (void)libhttpCtxId;
+    (void)buffer;
+    (void)bufferSize;
+    (void)exportSize;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpCookieFlush(int libhttpCtxId) {
+    (void)libhttpCtxId;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpCookieImport(int libhttpCtxId, const void* buffer, uint64_t bufferSize) {
+    (void)libhttpCtxId;
+    (void)buffer;
+    (void)bufferSize;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int id, int* isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetAuthEnabled(int id, int* isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetAutoRedirect(int id, int* isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetCookie(int libhttpCtxId, const char* url, char* cookie, uint64_t* required, uint64_t prepared, int isSecure) {
+    (void)libhttpCtxId;
+    (void)url;
+    (void)cookie;
+    (void)required;
+    (void)prepared;
+    (void)isSecure;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetCookieEnabled(int id, int* isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetCookieStats(int libhttpCtxId, void* stats) {
+    (void)libhttpCtxId;
+    (void)stats;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetEpoll(int id, HttpEpollHandle* eh, void** userArg) {
+    (void)id;
+    (void)eh;
+    (void)userArg;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetMemoryPoolStats(int libhttpCtxId, void* currentStat) {
+    (void)libhttpCtxId;
+    (void)currentStat;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpGetNonblock(int id, int* isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpRemoveRequestHeader(int id, const char* name) {
+    (void)id;
+    (void)name;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpsDisableOptionPrivate(int id, uint32_t sslFlags) {
+    (void)id;
+    (void)sslFlags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpsEnableOptionPrivate(int id, uint32_t sslFlags) {
+    (void)id;
+    (void)sslFlags;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetAcceptEncodingGZIPEnabled(int id, int isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetCookieMaxNum(int libhttpCtxId, uint32_t num) {
+    (void)libhttpCtxId;
+    (void)num;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetCookieMaxNumPerDomain(int libhttpCtxId, uint32_t num) {
+    (void)libhttpCtxId;
+    (void)num;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetCookieMaxSize(int libhttpCtxId, uint32_t size) {
+    (void)libhttpCtxId;
+    (void)size;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetCookieSendCallback(int id, HttpCookieSendCallback cbfunc, void* userArg) {
+    (void)id;
+    (void)cbfunc;
+    (void)userArg;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetCookieTotalMaxSize(int libhttpCtxId, uint32_t size) {
+    (void)libhttpCtxId;
+    (void)size;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int libhttpCtxId, int isEnable) {
+    (void)libhttpCtxId;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetHttp09Enabled(int id, int isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetProxy(int id, int httpProxyConf, int wlanProxyConf, const char* host, uint16_t port) {
+    (void)id;
+    (void)httpProxyConf;
+    (void)wlanProxyConf;
+    (void)host;
+    (void)port;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpSetRecvBlockSize(int id, uint32_t blockSize) {
+    (void)id;
+    (void)blockSize;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpsFreeCaList(int libhttpCtxId, void* caList) {
+    (void)libhttpCtxId;
+    (void)caList;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpsGetCaList(int httpCtxId, void* list) {
+    (void)httpCtxId;
+    (void)list;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpTryGetNonblock(int id, int* isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHttpTrySetNonblock(int id, int isEnable) {
+    (void)id;
+    (void)isEnable;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
