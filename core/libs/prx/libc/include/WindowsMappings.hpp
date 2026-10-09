@@ -4,9 +4,11 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <map>
 #include <memory>
@@ -31,6 +33,7 @@ public:
     std::vector<std::pair<std::uintptr_t, std::size_t>> Commit(void* address, std::size_t bytes, DWORD protection, std::size_t granule, bool watched) {
         std::vector<std::pair<std::uintptr_t, std::size_t>> created;
         std::lock_guard lock(mutex);
+        watchPrivate = watched;
         const auto end = reinterpret_cast<std::uintptr_t>(address) + bytes;
         for (auto cursor = reinterpret_cast<std::uintptr_t>(address); cursor < end;) {
             const auto memory = query(cursor);
@@ -49,6 +52,7 @@ public:
                 if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
                 if (!created.empty() && created.back().first + created.back().second == cursor) created.back().second += size;
                 else created.emplace_back(cursor, size);
+                if (watched) privateAllocations[cursor] = cursor + size;
                 cursor += size;
             } else {
                 if (memory.State != MEM_COMMIT) throw std::runtime_error("guest memory is not committed");
@@ -144,12 +148,56 @@ public:
         return true;
     }
 
+    void BeginRetarget(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(retargetMutex);
+        retargets.emplace_back(address, address + bytes);
+        retargeting.fetch_add(1, std::memory_order_acq_rel);
+        retargeted.store(true, std::memory_order_release);
+    }
+
+    void EndRetarget(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(retargetMutex);
+        const auto found = std::find(retargets.begin(), retargets.end(), std::make_pair(address, address + bytes));
+        if (found == retargets.end()) throw std::logic_error("ending a guest range switch that did not begin");
+        retargets.erase(found);
+        retargeting.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    bool AwaitRetarget(std::uintptr_t address, ULONG_PTR access) {
+        if (!retargeted.load(std::memory_order_acquire)) return false;
+        bool waited = false;
+        while (retargeting.load(std::memory_order_acquire) != 0) {
+            {
+                std::lock_guard lock(retargetMutex);
+                const bool inside = std::any_of(retargets.begin(), retargets.end(), [&](const auto& range) { return address >= range.first && address < range.second; });
+                if (!inside) break;
+            }
+            waited = true;
+            SwitchToThread();
+        }
+        if (waited) return true;
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT) return false;
+        const auto protection = memory.Protect & 0xffu;
+        if ((memory.Protect & PAGE_GUARD) != 0 || protection == PAGE_NOACCESS) return false;
+        if (access == 1) return protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE;
+        if (access == 8) return protection == PAGE_EXECUTE || protection == PAGE_EXECUTE_READ || protection == PAGE_EXECUTE_READWRITE;
+        return true;
+    }
+
     bool BeginHostWrite(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         const auto first = views.lower_bound(address & ~(pageBytes - 1));
         const auto end = address + bytes;
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             if (!writable(it->second.protection)) return false;
+        }
+        for (auto cursor = address; cursor < end;) {
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory)) return false;
+            const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            if (memory.Type == MEM_PRIVATE && (memory.State != MEM_COMMIT || (memory.Protect & PAGE_GUARD) != 0 || !writable(memory.Protect & 0xffu))) return false;
+            cursor = stop;
         }
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             auto& view = it->second;
@@ -259,9 +307,14 @@ public:
                 }
                 cursor = stop;
             } else {
-                const auto memory = query(cursor);
-                if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
-                const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                std::uintptr_t stop = 0;
+                if (const auto allocation = findPrivate(cursor); allocation != privateAllocations.end()) {
+                    stop = std::min(end, allocation->second);
+                } else {
+                    const auto memory = query(cursor);
+                    if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+                    stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                }
                 ULONG_PTR available = capacity - *count;
                 if (available == 0) return true;
                 DWORD granularity = 0;
@@ -379,14 +432,22 @@ private:
                 cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
                 continue;
             }
-            if (reinterpret_cast<std::uintptr_t>(memory.AllocationBase) != cursor) throw std::runtime_error("cannot release part of a host allocation");
+            const auto allocationBase = reinterpret_cast<std::uintptr_t>(memory.AllocationBase);
             auto allocationEnd = cursor;
             do {
                 const auto part = query(allocationEnd);
                 if (part.AllocationBase != memory.AllocationBase) break;
                 allocationEnd = reinterpret_cast<std::uintptr_t>(part.BaseAddress) + part.RegionSize;
             } while (allocationEnd < end);
-            if (allocationEnd > end || query(allocationEnd).AllocationBase == memory.AllocationBase) throw std::runtime_error("guest release truncates a host allocation");
+            const bool beyond = allocationEnd > end || query(allocationEnd).AllocationBase == memory.AllocationBase;
+            if (memory.Type == MEM_PRIVATE && (allocationBase != cursor || beyond)) {
+                while (query(allocationEnd).AllocationBase == memory.AllocationBase) allocationEnd = reinterpret_cast<std::uintptr_t>(query(allocationEnd).BaseAddress) + query(allocationEnd).RegionSize;
+                releasePartOfPrivate(allocationBase, allocationEnd, cursor, std::min(end, allocationEnd));
+                cursor = std::min(end, allocationEnd);
+                continue;
+            }
+            if (allocationBase != cursor) throw std::runtime_error("cannot release part of a host allocation");
+            if (beyond) throw std::runtime_error("guest release truncates a host allocation");
             if (memory.Type == MEM_MAPPED) {
                 if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(cursor), MEM_PRESERVE_PLACEHOLDER)) fail("unmap shared guest page");
                 const auto found = views.find(cursor);
@@ -396,6 +457,7 @@ private:
                 }
             } else if (memory.Type == MEM_PRIVATE) {
                 if (!VirtualFree(reinterpret_cast<void*>(cursor), allocationEnd - cursor, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("release private guest memory");
+                privateAllocations.erase(cursor);
             } else {
                 throw std::runtime_error("unsupported guest mapping type");
             }
@@ -409,8 +471,71 @@ private:
         if (query(address).RegionSize != bytes && !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS)) fail("coalesce guest placeholders");
     }
 
+    void releasePartOfPrivate(std::uintptr_t base, std::uintptr_t end, std::uintptr_t start, std::uintptr_t stop) {
+        struct Region {
+            std::uintptr_t begin;
+            std::size_t bytes;
+            DWORD protection;
+        };
+        struct Kept {
+            std::uintptr_t begin;
+            std::uintptr_t end;
+            std::vector<Region> regions;
+            std::vector<std::byte> content;
+        };
+        std::vector<Kept> kept;
+        if (base < start) kept.push_back({base, start, {}, {}});
+        if (stop < end) kept.push_back({stop, end, {}, {}});
+        BeginRetarget(base, end - base);
+        try {
+            for (auto& part : kept) {
+                for (auto cursor = part.begin; cursor < part.end;) {
+                    const auto memory = query(cursor);
+                    const auto regionEnd = std::min(part.end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                    part.regions.push_back({cursor, static_cast<std::size_t>(regionEnd - cursor), memory.Protect});
+                    DWORD previous;
+                    if (!VirtualProtect(reinterpret_cast<void*>(cursor), regionEnd - cursor, PAGE_READONLY, &previous)) fail("hold private guest memory for a split");
+                    cursor = regionEnd;
+                }
+                part.content.resize(part.end - part.begin);
+                std::memcpy(part.content.data(), reinterpret_cast<const void*>(part.begin), part.content.size());
+            }
+            if (!VirtualFree(reinterpret_cast<void*>(base), end - base, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("release private guest memory for a split");
+            privateAllocations.erase(base);
+            for (auto& part : kept) {
+                const auto bytes = part.end - part.begin;
+                split(part.begin, bytes);
+                const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watchPrivate ? MEM_WRITE_WATCH : 0);
+                if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(part.begin), bytes, flags, PAGE_READWRITE, nullptr, 0)) fail("commit a kept part of private guest memory");
+                if (watchPrivate) privateAllocations[part.begin] = part.end;
+                std::memcpy(reinterpret_cast<void*>(part.begin), part.content.data(), bytes);
+                for (const auto& region : part.regions) {
+                    DWORD previous;
+                    if (!VirtualProtect(reinterpret_cast<void*>(region.begin), region.bytes, region.protection, &previous)) fail("restore a kept part's protection");
+                }
+            }
+        } catch (...) {
+            EndRetarget(base, end - base);
+            throw;
+        }
+        EndRetarget(base, end - base);
+    }
+
+    std::map<std::uintptr_t, std::uintptr_t>::iterator findPrivate(std::uintptr_t address) {
+        auto it = privateAllocations.upper_bound(address);
+        if (it == privateAllocations.begin()) return privateAllocations.end();
+        --it;
+        return address < it->second ? it : privateAllocations.end();
+    }
+
+    bool watchPrivate = true;
+    std::map<std::uintptr_t, std::uintptr_t> privateAllocations;
     std::map<std::uintptr_t, std::uintptr_t> cleanRanges;
     std::map<std::uintptr_t, View> views;
+    std::mutex retargetMutex;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> retargets;
+    std::atomic<std::uint32_t> retargeting{0};
+    std::atomic<bool> retargeted{false};
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::weak_ptr<SharedPage>> physical;
     std::mutex mutex;
     AllocateFunction allocate = nullptr;

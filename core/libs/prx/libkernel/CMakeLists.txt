@@ -568,6 +568,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_memory_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_memory_tests)
     add_test(NAME guest_memory COMMAND guest_memory_tests)
+    set_tests_properties(guest_memory PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_memory PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")

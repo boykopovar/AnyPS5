@@ -6,6 +6,7 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <array>
+#include <atomic>
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstring>
@@ -75,6 +76,16 @@ static void Require(bool condition, std::source_location location = std::source_
         std::abort();
     }
 }
+
+#ifdef _WIN32
+static void AwaitStores(const std::atomic<std::uint32_t>& stores, std::uint32_t count, std::source_location location = std::source_location::current()) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (stores.load() < count) {
+        Require(std::chrono::steady_clock::now() < deadline, location);
+        std::this_thread::yield();
+    }
+}
+#endif
 
 static const char* NameAt(const void* address) {
     static VirtualQueryInfo info;
@@ -737,6 +748,8 @@ static void CheckPinnedSharedPages() {
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 3, 0, 0, &phys) == 0);
     void* mapped = nullptr;
     Require(sceKernelMapDirectMemory(&mapped, page * 3, 3, 0, phys, 0) == 0);
+    void* alias = nullptr;
+    Require(sceKernelMapDirectMemory(&alias, page * 3, 3, 0, phys, 0) == 0);
     auto* bytes = static_cast<volatile unsigned char*>(mapped);
     const auto collect = [&] {
         std::array<void*, 32> pages{};
@@ -768,7 +781,112 @@ static void CheckPinnedSharedPages() {
     Require(protection(page) == PAGE_READONLY);
     bytes[page + 8] = 11;
     Require(collect() == 4);
+    Require(sceKernelMunmap(alias, page * 3) == 0);
     Require(sceKernelMunmap(mapped, page * 3) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
+#endif
+}
+
+static void CheckPartialUnmapOfPrivateDirectMemory() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 4, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 4, 3, 0, phys, 0) == 0);
+    auto* bytes = static_cast<volatile unsigned char*>(mapped);
+    for (std::size_t i = 0; i < 4; ++i) bytes[page * i + 3] = static_cast<unsigned char>(10 + i);
+    Require(sceKernelMprotect(const_cast<unsigned char*>(bytes + page * 3), page, 1) == 0);
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint32_t> stores{0};
+    std::thread writer([&] {
+        for (std::uint32_t value = 1; !stop.load(); ++value) {
+            bytes[100] = static_cast<unsigned char>(value);
+            stores.store(value);
+        }
+    });
+    AwaitStores(stores, 1000);
+    Require(sceKernelMunmap(const_cast<unsigned char*>(bytes + page), page * 2) == 0);
+    const auto after = stores.load();
+    AwaitStores(stores, after + 1000);
+    stop.store(true);
+    writer.join();
+    Require(bytes[100] == static_cast<unsigned char>(stores.load()));
+    Require(bytes[3] == 10 && bytes[page * 3 + 3] == 13);
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(const_cast<unsigned char*>(bytes), &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE && info.Protect == PAGE_READWRITE);
+    Require(VirtualQuery(const_cast<unsigned char*>(bytes + page * 3), &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE && info.Protect == PAGE_READONLY);
+    Require(VirtualQuery(const_cast<unsigned char*>(bytes + page), &info, sizeof(info)) == sizeof(info) && info.State == MEM_RESERVE);
+    std::array<void*, 32> pages{};
+    std::size_t count = pages.size();
+    Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), page, pages.data(), &count, true));
+    bytes[7] = 1;
+    count = pages.size();
+    Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), page, pages.data(), &count, true) && count == 1);
+    void* middle = const_cast<unsigned char*>(bytes + page);
+    Require(sceKernelMapDirectMemory(&middle, page * 2, 3, 0x10, phys + page, 0) == 0);
+    Require(bytes[page + 3] == 11 && bytes[page * 2 + 3] == 12);
+    Require(sceKernelMunmap(mapped, page * 4) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 4) == 0);
+#endif
+}
+
+static void CheckDirectMemoryMappedOnceIsPrivate() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 3, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 3, 3, 0, phys, 0) == 0);
+    auto* bytes = static_cast<volatile unsigned char*>(mapped);
+    const auto kind = [](const volatile void* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(const_cast<const void*>(address), &info, sizeof(info)) == sizeof(info));
+        return std::make_pair(info.Type, info.Protect);
+    };
+    const auto collect = [&](void* address) {
+        std::array<void*, 32> pages{};
+        std::size_t count = pages.size();
+        Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(address), page * 3, pages.data(), &count, true));
+        return count;
+    };
+    Require(kind(bytes) == std::make_pair(static_cast<DWORD>(MEM_PRIVATE), static_cast<DWORD>(PAGE_READWRITE)));
+    collect(mapped);
+    Require(collect(mapped) == 0);
+    Require(kind(bytes + page).second == PAGE_READWRITE);
+    bytes[page + 5] = 21;
+    Require(collect(mapped) == 1);
+    bytes[0] = 7;
+    bytes[page * 2 + 9] = 9;
+    Require(sceKernelMunmap(mapped, page * 3) == 0);
+    void* again = nullptr;
+    Require(sceKernelMapDirectMemory(&again, page * 3, 3, 0, phys, 0) == 0);
+    bytes = static_cast<volatile unsigned char*>(again);
+    Require(kind(bytes).first == MEM_PRIVATE);
+    Require(bytes[0] == 7 && bytes[page + 5] == 21 && bytes[page * 2 + 9] == 9);
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint32_t> stores{0};
+    std::thread writer([&] {
+        for (std::uint32_t value = 1; !stop.load(); ++value) {
+            bytes[page + 64] = static_cast<unsigned char>(value);
+            stores.store(value);
+        }
+    });
+    AwaitStores(stores, 1000);
+    void* alias = nullptr;
+    Require(sceKernelMapDirectMemory(&alias, page * 3, 3, 0, phys, 0) == 0);
+    const auto after = stores.load();
+    AwaitStores(stores, after + 1000);
+    stop.store(true);
+    writer.join();
+    auto* other = static_cast<volatile unsigned char*>(alias);
+    Require(kind(bytes).first == MEM_MAPPED && kind(other).first == MEM_MAPPED);
+    Require(other[0] == 7 && other[page + 5] == 21 && other[page * 2 + 9] == 9);
+    Require(other[page + 64] == static_cast<unsigned char>(stores.load()));
+    other[page * 2] = 33;
+    Require(bytes[page * 2] == 33);
+    Require(sceKernelMunmap(alias, page * 3) == 0);
+    Require(sceKernelMunmap(again, page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 #endif
 }
@@ -1088,6 +1206,8 @@ int main() {
     CheckSharedWriteTracking();
     CheckReadsIntoSharedWriteTracking();
     CheckPinnedSharedPages();
+    CheckDirectMemoryMappedOnceIsPrivate();
+    CheckPartialUnmapOfPrivateDirectMemory();
 #if defined(__linux__)
     CheckWriteWatch();
     CheckDirectMemoryWriteWatch();
