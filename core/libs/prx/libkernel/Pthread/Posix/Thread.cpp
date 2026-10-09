@@ -7,6 +7,7 @@
 #include "Common.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <chrono>
+#include <cstring>
 #include <thread>
 
 extern "C" {
@@ -20,9 +21,14 @@ int APS5_VABI scePthreadSetcancelstate(int state, int* old_state);
 void APS5_VABI scePthreadTestcancel();
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio);
 int APS5_VABI scePthreadGetprio(Pthread thread, int* prio);
+int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask);
 }
 
 static constexpr int GUEST_SCHED_FIFO = 1;
+static constexpr std::size_t GUEST_CPUSET_BYTES = 32;
+static constexpr int GUEST_ESRCH = 3;
+static constexpr int GUEST_EFAULT = 14;
+static constexpr int GUEST_ERANGE = 34;
 
 extern "C" {
 
@@ -58,6 +64,18 @@ int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, Ker
     if (!policy || !param) return PosixThread::GUEST_EINVAL;
     *policy = GUEST_SCHED_FIFO;
     return PosixThread::ToErrno(scePthreadGetprio(thread, &param->sched_priority));
+}
+
+int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset) {
+    if (cpusetSize != GUEST_CPUSET_BYTES) return GUEST_ERANGE;
+    if (!thread) return GUEST_ESRCH;
+    if (!cpuset) return GUEST_EFAULT;
+    KernelCpumask mask = 0;
+    const int result = scePthreadGetaffinity(thread, &mask);
+    if (result != 0) return PosixThread::ToErrno(result);
+    std::memset(cpuset, 0, GUEST_CPUSET_BYTES);
+    std::memcpy(cpuset, &mask, sizeof(mask));
+    return 0;
 }
 
 int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value) {
