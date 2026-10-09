@@ -122,6 +122,44 @@ int main() {
     Require(remove_nid_postfix(file.string().c_str()) == 0);
     Require(!std::filesystem::exists(file));
     Require(remove_nid_postfix(file.string().c_str()) == -1 && *__error_nid_postfix() == 2);
+    const auto area = root / "rename";
+    std::filesystem::create_directories(area / "full");
+    { std::ofstream stream(area / "full" / "entry"); stream << "inside"; }
+    { std::ofstream stream(area / "source"); stream << "moved"; }
+    { std::ofstream stream(area / "target"); stream << "replaced"; }
+    std::filesystem::create_directories(area / "folder" / "inner");
+    std::filesystem::create_directories(area / "empty");
+    const auto at = [&](const char* name) { return (area / name).string(); };
+    Require(rename_nid_postfix(at("missing").c_str(), at("anything").c_str()) == -1 && *__error_nid_postfix() == 2);
+    Require(rename_nid_postfix(at("missing").c_str(), at("target").c_str()) == -1 && *__error_nid_postfix() == 2);
+    Require(rename_nid_postfix(at("source").c_str(), at("absent/name").c_str()) == -1 && *__error_nid_postfix() == 2);
+    Require(rename_nid_postfix(at("source").c_str(), at("target/name").c_str()) == -1 && *__error_nid_postfix() == 20);
+    Require(rename_nid_postfix(at("folder").c_str(), at("target").c_str()) == -1 && *__error_nid_postfix() == 20);
+    Require(rename_nid_postfix(at("source").c_str(), at("empty").c_str()) == -1 && *__error_nid_postfix() == 21);
+    Require(rename_nid_postfix(at("folder").c_str(), at("full").c_str()) == -1 && *__error_nid_postfix() == 66);
+    Require(rename_nid_postfix(at("folder").c_str(), at("folder/inner/moved").c_str()) == -1 && *__error_nid_postfix() == 22);
+    Require(std::filesystem::is_directory(area / "folder" / "inner") && std::filesystem::is_regular_file(area / "full" / "entry"));
+    Require(rename_nid_postfix(at("source").c_str(), at("target").c_str()) == 0);
+    Require(!std::filesystem::exists(area / "source"));
+    { std::ifstream stream(area / "target"); std::string contents; std::getline(stream, contents);
+      Require(contents == "moved"); }
+    Require(rename_nid_postfix(at("folder").c_str(), at("empty").c_str()) == 0);
+    Require(!std::filesystem::exists(area / "folder") && std::filesystem::is_directory(area / "empty" / "inner"));
+    Require(rename_nid_postfix(at("empty").c_str(), at("renamed").c_str()) == 0 && std::filesystem::is_directory(area / "renamed" / "inner"));
+#ifndef _WIN32
+    if (::geteuid() != 0) {
+        std::filesystem::create_directories(area / "locked");
+        { std::ofstream stream(area / "locked" / "entry"); stream << "locked"; }
+        std::filesystem::permissions(area / "locked", std::filesystem::perms::none);
+        const int lockedSource = rename_nid_postfix(at("locked/entry").c_str(), at("moved").c_str());
+        const int lockedTarget = rename_nid_postfix(at("target").c_str(), at("locked/moved").c_str());
+        std::filesystem::permissions(area / "locked", std::filesystem::perms::owner_all);
+        Require(lockedSource == -1 && *__error_nid_postfix() == 13);
+        Require(lockedTarget == -1 && *__error_nid_postfix() == 13);
+        Require(std::filesystem::is_regular_file(area / "locked" / "entry") && std::filesystem::is_regular_file(area / "target"));
+    }
+#endif
+    std::filesystem::remove_all(area);
     const auto sized = root / "sized.txt";
     { std::ofstream stream(sized); stream << "0123456789abcdef"; }
     Require(sceKernelChmod_nid_postfix(sized.string().c_str(), 0600) == 0);
