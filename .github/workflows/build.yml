@@ -141,7 +141,16 @@ jobs:
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
       - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
       - run: cmake --build build-relinker --parallel 3
-      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120
+      - run: ctest --test-dir build-relinker --output-on-failure --timeout 120 --output-junit "${{ github.workspace }}/ctest-results.xml"
+      - name: Summarize CTest results
+        if: ${{ !cancelled() }}
+        run: python tools/test_summary.py ctest-results.xml
+      - name: Retain CTest results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-relinker-${{ matrix.os }}
+          path: ctest-results.xml
 
   linux:
     needs: eligibility
@@ -166,10 +175,21 @@ jobs:
         run: python3 tools/check_test_registration.py build
       - run: cmake --build build
       - run: cmake --build build --target libs
-      - run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log
+      - run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit "${{ github.workspace }}/ctest-results.xml"
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
+      - name: Summarize CTest results
+        if: ${{ !cancelled() }}
+        run: python3 tools/test_summary.py ctest-results.xml
+      - name: Retain CTest results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-linux
+          path: |
+            ctest-results.xml
+            ctest.log
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash
@@ -221,7 +241,18 @@ jobs:
       - shell: cmd
         run: cmake --build build --target libs
       - shell: cmd
-        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log
+        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit "${{ github.workspace }}/ctest-results.xml"
+      - name: Summarize CTest results
+        if: ${{ !cancelled() }}
+        run: python tools/test_summary.py ctest-results.xml
+      - name: Retain CTest results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-windows
+          path: |
+            ctest-results.xml
+            ctest.log
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash
