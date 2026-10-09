@@ -115,9 +115,11 @@ std::uint32_t AudioOut2MixPorts(const AudioOut2Context& context, const AudioOut2
         if (index >= g_ports.size()) continue;
         const auto& port = g_ports[index];
         if (!port.used || port.generation != generation || port.context != &context || port.channels == 0) continue;
-        const auto route = padOut != nullptr ? AudioOut2RouteForPort(port.type, port.channels) : AudioOut2Route::Main;
-        if (route == AudioOut2Route::Main) AccumulatePort(port, data, out, frames);
-        else AccumulatePadPort(port, data, route, padOut, frames);
+        const auto route = AudioOut2RouteForPort(port.type, port.channels);
+        // Haptic PCM is not audible content. Without a controller audio device,
+        // only the controller speaker may fall back to the main speakers.
+        if (route == AudioOut2Route::Main || (context.padDevice == 0 && route == AudioOut2Route::PadSpeaker)) AccumulatePort(port, data, out, frames);
+        else if (padOut != nullptr) AccumulatePadPort(port, data, route, padOut, frames);
         mixed++;
     }
     return mixed;

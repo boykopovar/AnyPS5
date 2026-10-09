@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <cmath>
 #include <stdexcept>
 
 AudioOut2Route AudioOut2RouteForPort(std::uint16_t type, std::uint32_t channels) {
@@ -35,6 +36,22 @@ void AudioOut2AccumulatePadFrame(AudioOut2Route route, const float* in, std::uin
 void AudioOut2FinishPadMix(float* out, std::uint32_t frames) {
     const auto samples = static_cast<std::size_t>(frames) * AUDIO_OUT2_PAD_CHANNELS;
     for (std::size_t index = 0; index < samples; index++) out[index] = std::clamp(out[index], -1.0f, 1.0f);
+}
+
+std::array<std::uint8_t, 2> AudioOut2RumbleFromPadFrames(const float* pad, std::uint32_t frames) {
+    std::array<std::uint8_t, 2> result{};
+    if (pad == nullptr || frames == 0) return result;
+    for (std::uint32_t channel = 0; channel < 2; ++channel) {
+        double energy = 0.0;
+        for (std::uint32_t frame = 0; frame < frames; ++frame) {
+            const auto sample = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + AUDIO_OUT2_PAD_VIBRATION_LEFT + channel];
+            if (std::isfinite(sample)) energy += static_cast<double>(sample) * sample;
+        }
+        // Approximate waveform energy with motor intensity; ignore near-silence.
+        const auto rms = std::sqrt(energy / frames);
+        if (rms >= 0.01) result[channel] = static_cast<std::uint8_t>(std::lround(std::min(1.0, rms * 2.0) * 255));
+    }
+    return result;
 }
 
 AudioOut2PadLayout AudioOut2PadLayoutForDriver(const char* driver) {

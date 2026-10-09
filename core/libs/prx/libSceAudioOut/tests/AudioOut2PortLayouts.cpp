@@ -73,9 +73,9 @@ AudioOut2ContextHandle CreateContext() {
     return context;
 }
 
-int CreatePort(AudioOut2ContextHandle context, std::uint32_t format, AudioOut2PortHandle* port) {
+int CreatePort(AudioOut2ContextHandle context, std::uint32_t format, AudioOut2PortHandle* port, std::uint16_t type = portTypeMain) {
     AudioOut2PortParam params{};
-    params.port_type = portTypeMain;
+    params.port_type = type;
     params.data_format = format;
     params.sampling_freq = frequency;
     return sceAudioOut2PortCreate(context, &params, port);
@@ -91,14 +91,14 @@ void SetVolume(AudioOut2PortHandle port, const std::vector<float>& volume) {
     Require(sceAudioOut2PortSetAttributes(port, &attribute, 1) == 0);
 }
 
-std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume) {
+std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume, std::uint16_t type = portTypeMain) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_layouts-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
     const auto context = CreateContext();
     AudioOut2PortHandle port = 0;
-    Require(CreatePort(context, format, &port) == 0);
+    Require(CreatePort(context, format, &port, type) == 0);
     SetVolume(port, volume);
     SetData(port, data);
     Require(sceAudioOut2ContextPush(context, 1) == 0);
@@ -269,6 +269,12 @@ int main() {
         RequireFold(Play(0xFFFFF200u, data.data(), volume), stereo, data, volume, 1.0f);
     }
     TestHeightChannels();
+    // A host without a DualSense audio device must never play haptic PCM as sound.
+    for (const auto channels : {1u, 2u}) {
+        const auto data = FloatGrain(channels);
+        const auto output = Play(Format(channels, formatFloat), data.data(), Volume(channels), 0x6);
+        Require(output.empty()); // Play trims the recorded leading/trailing silence.
+    }
     TestDroppedLfe();
     TestMeasuredMainPortFormats();
     return 0;
