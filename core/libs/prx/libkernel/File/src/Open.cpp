@@ -16,26 +16,39 @@
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
+extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
+static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     return ::_wopen(p.wstring().c_str(), nativeFlags, static_cast<int>(mode));
 }
 static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
-    return ::_lseeki64(fd, offset, whence);
+    const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
+    const auto result = ::_lseeki64(fd, offset, whence);
+    _set_thread_local_invalid_parameter_handler(previous);
+    return result;
 }
 static int NativeRead(int fd, void* buf, std::size_t n) {
-    if (n > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
+    if (n > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         throw std::runtime_error("sceKernelRead: nbytes exceeds platform limit");
     }
-    return ::_read(fd, buf, static_cast<unsigned int>(n));
+    char empty = 0;
+    if (buf == nullptr) buf = &empty;
+    const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
+    const int result = ::_read(fd, buf, static_cast<unsigned int>(n));
+    _set_thread_local_invalid_parameter_handler(previous);
+    return result;
 }
 static int NativeWrite(int fd, const void* buf, std::size_t n) {
-    if (n > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
+    if (n > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         throw std::runtime_error("sceKernelWrite: nbytes exceeds platform limit");
     }
-    return ::_write(fd, buf, static_cast<unsigned int>(n));
+    char empty = 0;
+    if (buf == nullptr) buf = &empty;
+    const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
+    const int result = ::_write(fd, buf, static_cast<unsigned int>(n));
+    _set_thread_local_invalid_parameter_handler(previous);
+    return result;
 }
-extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
-static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
 static int NativeClose(int fd) {
     const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
     const int result = ::_close(fd);
@@ -96,9 +109,48 @@ static int MapFlags(int sceFlags) {
 #endif
 
 static int SceErrorFromErrno(int error) {
-    constexpr int GuestEio = 5;
-    const int guest = error > 0 && error <= 34 ? error : GuestEio;
-    return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
+    switch (error) {
+        case EPERM: return SCE_KERNEL_ERROR_EPERM;
+        case ENOENT: return SCE_KERNEL_ERROR_ENOENT;
+        case ESRCH: return SCE_KERNEL_ERROR_ESRCH;
+        case EINTR: return SCE_KERNEL_ERROR_EINTR;
+        case EIO: return SCE_KERNEL_ERROR_EIO;
+        case ENXIO: return SCE_KERNEL_ERROR_ENXIO;
+        case E2BIG: return SCE_KERNEL_ERROR_E2BIG;
+        case ENOEXEC: return SCE_KERNEL_ERROR_ENOEXEC;
+        case EBADF: return SCE_KERNEL_ERROR_EBADF;
+        case ECHILD: return SCE_KERNEL_ERROR_ECHILD;
+        case EDEADLK: return SCE_KERNEL_ERROR_EDEADLK;
+        case EBUSY: return SCE_KERNEL_ERROR_EBUSY;
+        case EXDEV: return SCE_KERNEL_ERROR_EXDEV;
+        case ENODEV: return SCE_KERNEL_ERROR_ENODEV;
+        case EACCES: return SCE_KERNEL_ERROR_EACCES;
+        case EFAULT: return SCE_KERNEL_ERROR_EFAULT;
+        case EEXIST: return SCE_KERNEL_ERROR_EEXIST;
+        case ENOTDIR: return SCE_KERNEL_ERROR_ENOTDIR;
+        case EISDIR: return SCE_KERNEL_ERROR_EISDIR;
+        case EINVAL: return SCE_KERNEL_ERROR_EINVAL;
+        case ENFILE: return SCE_KERNEL_ERROR_ENFILE;
+        case EMFILE: return SCE_KERNEL_ERROR_EMFILE;
+        case ENOTTY: return SCE_KERNEL_ERROR_ENOTTY;
+        case ETXTBSY: return SCE_KERNEL_ERROR_ETXTBSY;
+        case ENOSPC: return SCE_KERNEL_ERROR_ENOSPC;
+        case ESPIPE: return SCE_KERNEL_ERROR_ESPIPE;
+        case EROFS: return SCE_KERNEL_ERROR_EROFS;
+        case EFBIG: return SCE_KERNEL_ERROR_EFBIG;
+        case EMLINK: return SCE_KERNEL_ERROR_EMLINK;
+        case EPIPE: return SCE_KERNEL_ERROR_EPIPE;
+        case EDOM: return SCE_KERNEL_ERROR_EDOM;
+        case ERANGE: return SCE_KERNEL_ERROR_ERANGE;
+        case EOVERFLOW: return SCE_KERNEL_ERROR_EOVERFLOW;
+        case EAGAIN: return SCE_KERNEL_ERROR_EAGAIN;
+        case ENOMEM: return SCE_KERNEL_ERROR_ENOMEM;
+        case ENOSYS: return SCE_KERNEL_ERROR_ENOSYS;
+        case ENAMETOOLONG: return SCE_KERNEL_ERROR_ENAMETOOLONG;
+        case ENOTEMPTY: return SCE_KERNEL_ERROR_ENOTEMPTY;
+        case ELOOP: return SCE_KERNEL_ERROR_ELOOP;
+        default: return SCE_KERNEL_ERROR_EIO;
+    }
 }
 
 extern "C" {
@@ -133,38 +185,28 @@ int APS5_VABI sceKernelClose(int d) {
 }
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
-    if (buf == nullptr) {
-        throw std::invalid_argument(std::string(__func__) + ": buf is null");
-    }
+    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(EFAULT);
+    char empty = 0;
+    if (buf == nullptr) buf = &empty;
     const GuestArena::HostWrite destination(buf, nbytes);
-    if (!destination.Open()) errno = EFAULT;
-    auto n = destination.Open() ? NativeRead(d, buf, nbytes) : -1;
-    if (n < 0) {
-        throw std::runtime_error(std::string(__func__) + ": read failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
-    }
-    return static_cast<std::int64_t>(n);
+    if (nbytes != 0 && !destination.Open()) return SceErrorFromErrno(EFAULT);
+    const auto result = NativeRead(d, buf, nbytes);
+    return result < 0 ? SceErrorFromErrno(errno) : static_cast<std::int64_t>(result);
 }
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
-    if (buf == nullptr) {
-        throw std::invalid_argument(std::string(__func__) + ": buf is null");
-    }
-    auto n = NativeWrite(d, buf, nbytes);
-    if (n < 0) {
-        throw std::runtime_error(std::string(__func__) + ": write failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
-    }
-    return static_cast<std::int64_t>(n);
+    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(EFAULT);
+    char empty = 0;
+    if (buf == nullptr) buf = &empty;
+    const auto result = NativeWrite(d, buf, nbytes);
+    return result < 0 ? SceErrorFromErrno(errno) : static_cast<std::int64_t>(result);
 }
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
-    if (whence < 0 || whence > 2) {
-        throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
-    }
+    if (whence < 0 || whence > 4) return SceErrorFromErrno(EINVAL);
+    if (whence == 3 || whence == 4) NotImplemented_nid_no_patch(__func__);
     std::int64_t result = NativeLseek(d, offset, whence);
-    if (result < 0) {
-        throw std::runtime_error(std::string(__func__) + ": lseek failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
-    }
-    return result;
+    return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {

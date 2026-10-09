@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #ifdef _WIN32
 #include <fcntl.h>
@@ -16,6 +18,7 @@
 static int MakePipe(int* ends) { return ::_pipe(ends, 64, _O_BINARY); }
 static int ClosePipe(int end) { return ::_close(end); }
 #else
+#include <fcntl.h>
 #include <unistd.h>
 static int MakePipe(int* ends) { return ::pipe(ends); }
 static int ClosePipe(int end) { return ::close(end); }
@@ -29,8 +32,10 @@ struct GuestIovec {
 extern "C" {
 int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
 int APS5_VABI sceKernelClose(int);
+int APS5_VABI sceKernelUnlink(const char*);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-int APS5_VABI sceKernelLseek(int, std::int64_t, int);
+std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
+std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
 std::int64_t APS5_VABI sceKernelReadv(int, const GuestIovec*, int);
 std::int64_t APS5_VABI sceKernelWritev(int, const GuestIovec*, int);
 std::int64_t APS5_VABI sceKernelPreadv(int, const GuestIovec*, int, std::int64_t);
@@ -45,7 +50,20 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
+template <typename TFunction>
+static void RequireThrows(TFunction function) {
+    bool threw = false;
+    try {
+        function();
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static constexpr std::int64_t ErrorEbadf = static_cast<int>(0x80020009u);
+static constexpr std::int64_t ErrorEnoent = static_cast<int>(0x80020002u);
+static constexpr std::int64_t ErrorEagain = static_cast<int>(0x80020023u);
 static constexpr std::int64_t ErrorEfault = static_cast<int>(0x8002000Eu);
 static constexpr std::int64_t ErrorEinval = static_cast<int>(0x80020016u);
 static constexpr std::int64_t ErrorEspipe = static_cast<int>(0x8002001Du);
@@ -61,6 +79,9 @@ int main() {
     Require(std::filesystem::create_directory(root));
     const auto path = root / "data.bin";
     { std::ofstream stream(path, std::ios::binary); stream << "0123456789"; }
+    const auto missing = path.string() + ".missing";
+    Require(sceKernelOpen(missing.c_str(), SCE_KERNEL_O_RDONLY, 0) == ErrorEnoent);
+    Require(sceKernelUnlink(missing.c_str()) == ErrorEnoent);
 
     const int file = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
     Require(file >= 0);
@@ -119,7 +140,40 @@ int main() {
     Require(sceKernelPwritev(file, writes, 2, -1) == ErrorEinval);
     Require(Contents(path) == "01ABCDE7ABCDE");
 
+    Require(sceKernelLseek(file, 0, 0) == 0);
+    Require(sceKernelLseek(file, 0x100000000LL, 0) == 0x100000000LL);
+    Require(sceKernelLseek(file, 0, 0) == 0);
+    Require(sceKernelRead(file, first, 2) == 2);
+    Require(std::memcmp(first, "01", 2) == 0);
+    Require(sceKernelLseek(file, 13, 0) == 13);
+    Require(sceKernelWrite(file, "!", 1) == 1);
+    Require(sceKernelLseek(file, 13, 0) == 13);
+    Require(sceKernelRead(file, first, 1) == 1 && first[0] == '!');
+    Require(sceKernelLseek(file, 0, 5) == ErrorEinval);
+    Require(sceKernelLseek(file, 0, -1) == ErrorEinval);
+    Require(sceKernelLseek(file, 0, 0) == 0);
+    RequireThrows([&] { sceKernelLseek(file, 0, 3); });
+    Require(sceKernelLseek(file, 0, 1) == 0);
+    RequireThrows([&] { sceKernelLseek(file, 0, 4); });
+    Require(sceKernelLseek(file, 0, 1) == 0);
+    Require(sceKernelLseek(-1, 0, 0) == ErrorEbadf);
+    Require(sceKernelRead(-1, first, sizeof(first)) == ErrorEbadf);
+    Require(sceKernelWrite(-1, "x", 1) == ErrorEbadf);
+    Require(sceKernelRead(file, nullptr, 1) == ErrorEfault);
+    Require(sceKernelWrite(file, nullptr, 1) == ErrorEfault);
+    Require(sceKernelRead(file, nullptr, 0) == 0);
+    Require(sceKernelWrite(file, nullptr, 0) == 0);
+#ifdef _WIN32
+    const auto beyondNativeLimit = static_cast<std::size_t>(std::numeric_limits<int>::max()) + 1;
+    RequireThrows([&] { sceKernelRead(file, first, beyondNativeLimit); });
+    RequireThrows([&] { sceKernelWrite(file, first, beyondNativeLimit); });
+#endif
+    Require(sceKernelLseek(file, -1, 0) == ErrorEinval);
+
     Require(sceKernelClose(file) == 0);
+    Require(sceKernelRead(file, first, sizeof(first)) == ErrorEbadf);
+    Require(sceKernelWrite(file, "x", 1) == ErrorEbadf);
+    Require(sceKernelLseek(file, 0, 0) == ErrorEbadf);
     Require(sceKernelReadv(file, reads, 2) == ErrorEbadf);
     Require(sceKernelWritev(file, writes, 2) == ErrorEbadf);
     Require(sceKernelPreadv(file, reads, 2, 0) == ErrorEbadf);
@@ -127,6 +181,11 @@ int main() {
 
     int ends[2] = {};
     Require(MakePipe(ends) == 0);
+#ifndef _WIN32
+    Require(::fcntl(ends[0], F_SETFL, ::fcntl(ends[0], F_GETFL) | O_NONBLOCK) == 0);
+    Require(sceKernelRead(ends[0], first, 1) == ErrorEagain);
+    Require(sceKernelLseek(ends[0], 0, 0) == ErrorEspipe);
+#endif
     char xyz[] = "xyz";
     GuestIovec message[1] = {{xyz, 3}};
     Require(sceKernelWritev(ends[1], message, 1) == 3);
