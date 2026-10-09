@@ -271,12 +271,21 @@ const char* createDmaBufImport(const Context& context, HostImport& entry, int fi
 }
 #endif
 
-const char* createImport(const Context& context, HostImport& entry, VkResult& failure) {
-    const char* step = createHostPointerImport(context, entry, failure);
+const char* createImport(const Context& context, HostImport& entry, VkResult& failure, bool preferDmaBuf) {
 #ifndef _WIN32
     int file = -1;
     std::uint64_t offset = 0;
-    if (step != nullptr && context.dmaBufImport && GuestArena::GuestArenaSharedBacking_nid_postfix(static_cast<std::uintptr_t>(entry.base), static_cast<std::size_t>(entry.bytes), &file, &offset)) step = createDmaBufImport(context, entry, file, offset, failure);
+    if (preferDmaBuf && context.dmaBufImport && GuestArena::GuestArenaSharedBacking_nid_postfix(static_cast<std::uintptr_t>(entry.base), static_cast<std::size_t>(entry.bytes), &file, &offset)) {
+        if (createDmaBufImport(context, entry, file, offset, failure) == nullptr) return nullptr;
+    }
+#endif
+    const char* step = createHostPointerImport(context, entry, failure);
+#ifndef _WIN32
+    if (step != nullptr && context.dmaBufImport) {
+        int file = -1;
+        std::uint64_t offset = 0;
+        if (GuestArena::GuestArenaSharedBacking_nid_postfix(static_cast<std::uintptr_t>(entry.base), static_cast<std::size_t>(entry.bytes), &file, &offset)) step = createDmaBufImport(context, entry, file, offset, failure);
+    }
 #endif
     return step;
 }
@@ -421,7 +430,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     VkResult result = VK_SUCCESS;
     const char* step = nullptr;
     GuestMemory::ImportWatched(base, bytes, [&] {
-        step = createImport(context, entry, result);
+        step = createImport(context, entry, result, state.unwatchImports && !state.unwatchDmaBufImports);
         return step == nullptr;
     });
     entry.unwatched = step == nullptr && (entry.dmaBuf ? state.unwatchDmaBufImports : state.unwatchImports);
@@ -1347,7 +1356,7 @@ ImportProbe ProbeImportWriteProtection(const Context& context) {
     const auto base = (reinterpret_cast<std::uint64_t>(raw) + alignment - 1) / alignment * alignment;
     auto* scratch = reinterpret_cast<volatile std::uint8_t*>(base);
     for (std::uint64_t offset = 0; offset < bytes; offset += page) scratch[offset] = 1;
-    runImportProbe(context, base, bytes, [&](HostImport& import, VkResult& result) { return createImport(context, import, result); }, probe);
+    runImportProbe(context, base, bytes, [&](HostImport& import, VkResult& result) { return createImport(context, import, result, false); }, probe);
     munmap(raw, bytes + alignment);
     return probe;
 #endif

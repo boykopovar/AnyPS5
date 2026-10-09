@@ -41,6 +41,7 @@ public:
     std::uint64_t Serial() const { return serial; }
     // The Vulkan device handle (a Recipe names the device it was built on).
     VkDevice Device() const;
+    bool DmaBufImportSupported() const;
     // Drains everything under the caller's GpuMutex: recorder Sync plus vkDeviceWaitIdle. For suspend,
     // resize, device replacement, CPU fill fallback and APS5_DRAIN_ALL; the packet-loop drains use the
     // three-step form below so the GPU wait happens without the mutex.
