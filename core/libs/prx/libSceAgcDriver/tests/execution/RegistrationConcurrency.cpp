@@ -38,7 +38,7 @@ public:
         ShaderSpecialRegs specials{};
     } header;
 
-    ComputeFixture() {
+    explicit ComputeFixture(std::uint32_t instruction = 0xbf800000u) : code{instruction, 0xbf810000u} {
         const auto address = reinterpret_cast<std::uintptr_t>(code.data());
         header.shader.file_header = 0x34333231u;
         header.shader.version = 0x18;
@@ -56,7 +56,7 @@ public:
     ComputeFixture& operator=(const ComputeFixture&) = delete;
 
 private:
-    alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
+    alignas(256) std::array<std::uint32_t, 2> code;
 };
 
 void DeferredOperations() {
@@ -108,14 +108,13 @@ void PreparationWhilePublicationBlocked() {
     ComputeFixture warm;
     warm.header.registers[2].value = 8;
     AgcDriverRegisterShader_nid_postfix(&warm.header.shader);
-    ComputeFixture invalid;
-    invalid.header.registers[2].value = 0;
+    ComputeFixture invalid(0xbf910001u);
     std::future<void> worker;
     bool prepared = false;
     {
         ShaderPreparationTransaction held;
         worker = std::async(std::launch::async, [&] {
-            ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, "must be nonzero");
+            ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, "s_sendmsghalt 1 at pc 0 halts the wave");
         });
         prepared = worker.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
         held.Commit();
@@ -126,12 +125,11 @@ void PreparationWhilePublicationBlocked() {
 
 void NestedFailure() {
     AgcDriver::DriverDetail::ShaderSnapshot pending;
-    ComputeFixture invalid;
-    invalid.header.registers[2].value = 0;
+    ComputeFixture invalid(0xbf910001u);
     {
         ShaderPreparationTransaction transaction;
         transaction.Edit(pending).registeredAbis.push_back({17});
-        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, "must be nonzero");
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, "s_sendmsghalt 1 at pc 0 halts the wave");
         ExpectFailure([&] { transaction.Commit(); }, "transaction was aborted");
     }
     Require(pending.prepared->registeredAbis.empty(), "caught registration failure published the enclosing preparation transaction");
