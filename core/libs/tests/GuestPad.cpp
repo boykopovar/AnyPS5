@@ -79,6 +79,27 @@ static void CheckRemoteController(int handle) {
     Require(!remote);
 }
 
+static void CheckAngularVelocityDeadband(int handle) {
+    Require(scePadSetAngularVelocityDeadbandState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityDeadbandState(handle + 1, true) == PAD_ERROR_INVALID_HANDLE);
+    PadInputState motion;
+    motion.hasMotion = true;
+    motion.gyro = {0.005f, -0.008f, 0.05f};
+    PadPublishInput_nid_postfix(motion);
+    Require(scePadSetAngularVelocityDeadbandState(handle, false) == PAD_OK);
+    auto data = Pad::ReadState();
+    Require(data.angular_velocity_x == 0.005f);
+    Require(data.angular_velocity_y == -0.008f);
+    Require(data.angular_velocity_z == 0.05f);
+    Require(scePadSetAngularVelocityDeadbandState(handle, true) == PAD_OK);
+    data = Pad::ReadState();
+    Require(data.angular_velocity_x == 0.0f);
+    Require(data.angular_velocity_y == 0.0f);
+    Require(data.angular_velocity_z == 0.05f);
+    Require(scePadSetAngularVelocityDeadbandState(handle, false) == PAD_OK);
+    PadPublishInput_nid_postfix(PadInputState{});
+}
+
 int main() {
     constexpr int noHandle = static_cast<int>(0x80920008);
     constexpr int user = 0x10000000;
@@ -100,6 +121,7 @@ int main() {
     CheckTouchContact();
     CheckReadStateHandle(handle);
     CheckRemoteController(handle);
+    CheckAngularVelocityDeadband(handle);
     Require(scePadSetVibrationMode(handle, 1) == 0);
     Require(scePadSetVibrationMode(handle, 2) == 0);
     Require(scePadSetVibrationMode(handle, 3) == PAD_ERROR_INVALID_ARG);

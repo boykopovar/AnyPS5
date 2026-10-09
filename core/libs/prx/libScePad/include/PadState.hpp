@@ -58,6 +58,7 @@ void SetTriggerCommand(int trigger, const std::uint8_t* command);
 void ResetOrientation();
 void SetMotionEnabled(bool enabled);
 void SetTiltCorrection(bool enabled);
+void SetAngularVelocityDeadband(bool enabled);
 }
 
 extern "C" void PadPublishInput_nid_postfix(const PadInputState& input);

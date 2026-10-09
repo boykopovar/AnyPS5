@@ -20,6 +20,8 @@ namespace {
     std::uint64_t lastFuseTime = 0;
     float biasIntegral[3] = {0.0f, 0.0f, 0.0f};
     bool tiltCorrection = true;
+    bool angularVelocityDeadband = false;
+    constexpr float kDeadbandThreshold = 0.01f;
     std::uint8_t nextTouchId = 0;
     bool prevTouchActive[2] = {false, false};
     std::uint8_t touchIds[2] = {0, 0};
@@ -135,6 +137,11 @@ PadData Pad::ReadState() {
     data.angular_velocity_x = gyro[0];
     data.angular_velocity_y = gyro[1];
     data.angular_velocity_z = gyro[2];
+    if (angularVelocityDeadband) {
+        if (std::abs(data.angular_velocity_x) < kDeadbandThreshold) data.angular_velocity_x = 0.0f;
+        if (std::abs(data.angular_velocity_y) < kDeadbandThreshold) data.angular_velocity_y = 0.0f;
+        if (std::abs(data.angular_velocity_z) < kDeadbandThreshold) data.angular_velocity_z = 0.0f;
+    }
 
     data.connected = true;
     data.connected_count = 1;
@@ -261,6 +268,11 @@ void Pad::SetTiltCorrection(bool enabled) {
     std::lock_guard lock(stateMutex);
     tiltCorrection = enabled;
     biasIntegral[0] = biasIntegral[1] = biasIntegral[2] = 0.0f;
+}
+
+void Pad::SetAngularVelocityDeadband(bool enabled) {
+    std::lock_guard lock(stateMutex);
+    angularVelocityDeadband = enabled;
 }
 
 void Pad::SetMotionEnabled(bool enabled) {
