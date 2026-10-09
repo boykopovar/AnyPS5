@@ -1423,6 +1423,12 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state)) {
         if (const auto* entry = findImport(state, address, address + bytes)) return entry;
+        const auto lease = GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch(address, bytes);
+        if (!importsStale(context, state)) {
+            if (lease.empty()) return nullptr;
+            const auto& range = *lease.front();
+            return importAllocation(context, state, range.address, range.bytes, lease);
+        }
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
@@ -1431,9 +1437,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
 }
 
 bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
-    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    return containingRange(lease, address, address + bytes) != nullptr;
+    return !GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch(address, bytes).empty();
 }
 
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -2283,7 +2287,14 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             region.direct = nullptr;
             if (entry == nullptr) entry = findImport(state, region.begin, region.end);
             if (entry == nullptr) {
-                if (const auto* range = containingRange(importRanges(), region.begin, region.end)) entry = importAllocation(context, state, range->address, range->bytes, importRanges());
+                GuestAllocations::Lease targeted;
+                const bool haveLease = !lease.empty() || space != nullptr || !acquired.empty();
+                if (!haveLease) targeted = GuestAllocations::GuestAllocationsAcquireRange_nid_no_patch(region.begin, bytes);
+                const bool stale = importsStale(context, state);
+                const auto& available = haveLease || stale ? importRanges() : targeted;
+                if (stale) refreshImports(context, state, available);
+                if (const auto* range = containingRange(available, region.begin, region.end))
+                    entry = importAllocation(context, state, range->address, range->bytes, available);
             }
             // A staged region (see stagingEligible) is copied out of the import even when aligned;
             // without a recorder to record the copies it binds in place like any other.
