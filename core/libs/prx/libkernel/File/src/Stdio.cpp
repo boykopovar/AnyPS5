@@ -123,7 +123,7 @@ static std::int64_t NativePositioned(int descriptor, void* buf, std::size_t nbyt
     }
     if (!ok) {
         if (!write && error == ERROR_HANDLE_EOF) return 0;
-        errno = EIO;
+        errno = (write && error == ERROR_ACCESS_DENIED) ? EBADF : EIO;
         return -1;
     }
     return done;
@@ -287,25 +287,31 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
     return 0;
 }
 
-int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
-    if (length < 0) {
-        APS5_INVALID_ARG_EX;
-    }
+int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
+    if (length < 0) return SceErrorFromErrno(GUEST_EINVAL);
 #ifdef _WIN32
-    int error = NativeFtruncate(d, length);
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(d));
+    if (handle == INVALID_HANDLE_VALUE) return SceErrorFromErrno(GUEST_EBADF);
+    DWORD done = 0;
+    OVERLAPPED ov{};
+    if (!::WriteFile(handle, "", 0, &done, &ov) && ::GetLastError() == ERROR_ACCESS_DENIED) {
+        return SceErrorFromErrno(GUEST_EINVAL);
+    }
+    const int error = NativeFtruncate(d, length);
     if (error != 0) {
-        throw std::runtime_error(std::string(__func__) + ": ftruncate failed, fd=" + std::to_string(d) + ", error=" + std::to_string(error));
+        const int guestErr = (error == EACCES) ? GUEST_EINVAL : (error == EBADF) ? GUEST_EBADF : (error > 0 && error <= 34 ? error : GUEST_EIO);
+        return SceErrorFromErrno(guestErr);
     }
 #else
     if (NativeFtruncate(d, length) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": ftruncate failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+        return SceErrorFromErrno(errno);
     }
 #endif
     return 0;
 }
 
-int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
-    return ftruncate_nid_postfix(d, length);
+int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
+    return PosixResult(sceKernelFtruncate(d, length));
 }
 
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
@@ -521,15 +527,23 @@ static bool OpenIovecs(const KernelIovec* iov, int iovcnt, std::deque<GuestArena
     return true;
 }
 
-#ifdef _WIN32
-
 int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset) {
- return pread_nid_postfix(d, buf, nbytes, offset);
+    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(GUEST_EFAULT);
+    if (offset < 0) return SceErrorFromErrno(GUEST_EINVAL);
+    const GuestArena::HostWrite destination(buf, nbytes);
+    if (!destination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
+    const auto result = NativePread(d, buf, nbytes, offset);
+    return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
 int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
- return pwrite_nid_disambig1_nid_postfix(d, buf, nbytes, offset);
+    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(GUEST_EFAULT);
+    if (offset < 0) return SceErrorFromErrno(GUEST_EINVAL);
+    const auto result = NativePwrite(d, buf, nbytes, offset);
+    return result < 0 ? SceErrorFromErrno(errno) : result;
 }
+
+#ifdef _WIN32
 
 static std::int64_t TransferIovecs(int d, const KernelIovec* iov, int iovcnt, const std::int64_t* offset, bool write) {
     if (const int error = CheckIovecs(iov, iovcnt)) return error;
@@ -581,22 +595,6 @@ int64_t APS5_VABI sceKernelPwritev(int d, const KernelIovec* iov, int iovcnt, in
 }
 
 #else
-
-int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset) {
-    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(GUEST_EFAULT);
-    if (offset < 0) return SceErrorFromErrno(GUEST_EINVAL);
-    const GuestArena::HostWrite destination(buf, nbytes);
-    if (!destination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
-    const auto result = NativePread(d, buf, nbytes, offset);
-    return result < 0 ? SceErrorFromErrno(errno) : result;
-}
-
-int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
-    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(GUEST_EFAULT);
-    if (offset < 0) return SceErrorFromErrno(GUEST_EINVAL);
-    const auto result = NativePwrite(d, buf, nbytes, offset);
-    return result < 0 ? SceErrorFromErrno(errno) : result;
-}
 
 int64_t APS5_VABI sceKernelReadv(int d, const KernelIovec* iov, int iovcnt) {
     if (const int error = CheckIovecs(iov, iovcnt)) return error;
