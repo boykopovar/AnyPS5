@@ -164,9 +164,7 @@ void Driver::run(std::uint32_t id) noexcept {
     } catch (const ProcessShutdown&) {
         submission = Submission{};
     } catch (...) {
-        const auto error = std::current_exception();
-        ReportFailure(error);
-        for (const auto& [offset, flip] : submission.flips) flip->Fail(error);
+        ReportFailure(std::current_exception(), submission);
     }
 }
 
