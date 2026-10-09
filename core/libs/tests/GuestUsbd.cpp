@@ -162,8 +162,8 @@ void CheckInvalidArguments() {
     sceUsbdClose(nullptr);
     sceUsbdFreeConfigDescriptor(nullptr);
     sceUsbdFreeDeviceList(nullptr, 1);
-    RequireUnsupported([] { sceUsbdSubmitTransfer(nullptr); });
-    RequireUnsupported([] { sceUsbdCancelTransfer(nullptr); });
+    Require(sceUsbdSubmitTransfer(nullptr) == invalidArgument, "null submit transfer accepted");
+    Require(sceUsbdCancelTransfer(nullptr) == invalidArgument, "null cancel transfer accepted");
     RequireUnsupported([] { sceUsbdCheckConnected(nullptr); });
 }
 
