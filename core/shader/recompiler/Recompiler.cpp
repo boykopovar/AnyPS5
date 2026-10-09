@@ -122,6 +122,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
     translateOptions.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
     translateOptions.scratchDwords = request.context.compute.has_value() ? request.context.compute->scratchDwords : 0u;
     translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled;
+    translateOptions.floatMode = request.context.floatMode;
     translateOptions.inputInfo = inputInfo;
 
     constexpr InstructionTranslator translator;

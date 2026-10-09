@@ -37,6 +37,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::LaneId:
     case IrOpcode::GetAttribute:
     case IrOpcode::GetInterpolationParameter:
+    case IrOpcode::GetInterpolationParameterF16:
     case IrOpcode::GetTessellationAttribute:
     case IrOpcode::DppMoveU32:
     case IrOpcode::DppUpdateU32:

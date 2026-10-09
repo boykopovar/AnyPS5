@@ -339,6 +339,36 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsAtomic(inst, IrOpcode::SharedAtomicXor32, false);
     case RdnaOpcode::DsXorRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicXor32, true);
+    case RdnaOpcode::DsAddSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicIAdd32);
+    case RdnaOpcode::DsSubSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicISub32);
+    case RdnaOpcode::DsRsubSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicRsub32);
+    case RdnaOpcode::DsIncSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicInc32);
+    case RdnaOpcode::DsDecSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicDec32);
+    case RdnaOpcode::DsMinSrc2I32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMin32);
+    case RdnaOpcode::DsMaxSrc2I32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMax32);
+    case RdnaOpcode::DsMinSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMin32);
+    case RdnaOpcode::DsMaxSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMax32);
+    case RdnaOpcode::DsAndSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicAnd32);
+    case RdnaOpcode::DsOrSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicOr32);
+    case RdnaOpcode::DsXorSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicXor32);
+    case RdnaOpcode::DsWriteSrc2B32:
+        return dsSrc2(inst, IrOpcode::WriteSharedU32);
+    case RdnaOpcode::DsMinSrc2F32:
+    case RdnaOpcode::DsMaxSrc2F32:
+    case RdnaOpcode::DsAddSrc2F32:
+        throw std::runtime_error("f32 DS src2 operations depend on the f32 denormal mode, which is not modelled for LDS float atomics");
     case RdnaOpcode::DsWrxchgRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicSwap32, true);
 

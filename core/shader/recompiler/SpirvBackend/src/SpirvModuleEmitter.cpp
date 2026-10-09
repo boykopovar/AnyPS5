@@ -200,6 +200,38 @@ std::uint32_t EmitInterpolationParameterValue(SpirvEmitterState& state, std::uin
     return bits;
 }
 
+std::uint32_t EmitInterpolationParameterF16Value(SpirvEmitterState& state, std::uint32_t attr, std::uint32_t chan, std::uint32_t mode, bool high) {
+    const auto& pixel = *state.inputInfo.pixel;
+    if (pixel.InputHalfIsDefault(attr, high)) {
+        return ConstantF32(state, mode == 2u ? pixel.InputHalfDefaultBits(attr, chan & 3u, high) : 0u);
+    }
+    const auto* input = SpirvInputBindingForParameter(state, attr);
+    if (input == nullptr || !input->perVertex) {
+        throw std::runtime_error("16-bit interpolation parameter is not read per vertex");
+    }
+    const auto loadVertex = [&](std::uint32_t vertex) {
+        const auto pointer = state.module.AllocateId();
+        const auto value = state.module.AllocateId();
+        auto bits = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeF32(state)), pointer, input->variableId, ConstantU32(state, vertex), ConstantU32(state, chan & 3u));
+        state.module.AddFunction(spv::OpLoad, TypeF32(state), value, pointer);
+        state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
+        if (high) {
+            const auto shifted = state.module.AllocateId();
+            state.module.AddFunction(spv::OpShiftRightLogical, TypeU32(state), shifted, bits, ConstantU32(state, 16u));
+            bits = shifted;
+        }
+        return EmitF16BitsToF32(state, bits);
+    };
+    const auto value = loadVertex((mode + 1u) % 3u);
+    if (mode == 2u) {
+        return value;
+    }
+    const auto delta = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFSub, TypeF32(state), delta, value, loadVertex(0u));
+    return EmitF16BitsToF32(state, EmitConvertF16F32(state, delta));
+}
+
 std::uint32_t MrtOutputMode(const SpirvEmitterState& state, const ExportInfo& exp) {
     if (state.program.Resources().stage != IrShaderStage::Pixel || exp.kind != ExportTargetKind::Mrt) {
         return 0u;
@@ -1083,6 +1115,10 @@ std::uint32_t EmitGetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) 
 
 std::uint32_t EmitGetInterpolationParameter(SpirvValueEmitContext& ctx, const IrValue& inst) {
     return EmitInterpolationParameterValue(ctx.state, inst.Argument(0)->ImmediateU32(), inst.Argument(1)->ImmediateU32(), inst.Argument(2)->ImmediateU32());
+}
+
+std::uint32_t EmitGetInterpolationParameterF16(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    return EmitInterpolationParameterF16Value(ctx.state, inst.Argument(0)->ImmediateU32(), inst.Argument(1)->ImmediateU32(), inst.Argument(2)->ImmediateU32(), inst.Argument(3)->ImmediateU32() != 0u);
 }
 
 void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {

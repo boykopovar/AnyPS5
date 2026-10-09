@@ -623,6 +623,9 @@ bool IsVectorAluOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VInterpP1F32:
         case RdnaOpcode::VInterpP2F32:
         case RdnaOpcode::VInterpMovF32:
+        case RdnaOpcode::VInterpP1llF16:
+        case RdnaOpcode::VInterpP1lvF16:
+        case RdnaOpcode::VInterpP2F16:
             return true;
         default:
             return false;

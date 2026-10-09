@@ -589,6 +589,7 @@ public:
             {0, 0, 0, 128}
         };
         request.useCache = false;
+        request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
         result = ShaderRecompiler::Recompile(request);
     }
 

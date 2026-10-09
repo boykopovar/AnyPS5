@@ -155,6 +155,19 @@ struct ShaderVertexStageInfo {
     bool fetchEmbedded;
 };
 
+struct ShaderFloatMode {
+    std::uint32_t floatMode = 0;
+    bool dx10Clamp = false;
+    bool ieeeMode = false;
+    bool fp16Overflow = false;
+
+    bool operator==(const ShaderFloatMode&) const = default;
+};
+
+inline constexpr std::uint32_t InterpolationQuiet = 1u;
+inline constexpr std::uint32_t InterpolationFlush32 = 2u;
+inline constexpr std::uint32_t InterpolationFlush16 = 4u;
+
 struct GuestContext {
     std::uint32_t waveSize;
     std::uint32_t userDataBaseRegister;
@@ -163,6 +176,7 @@ struct GuestContext {
     std::optional<ShaderPixelStageInfo> pixel;
     std::optional<ShaderVertexStageInfo> vertex;
     std::span<const MemoryRegion> memory;
+    std::optional<ShaderFloatMode> floatMode;
 };
 
 struct MeshTargetLimits {

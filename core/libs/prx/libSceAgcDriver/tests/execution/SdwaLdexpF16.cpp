@@ -155,6 +155,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
     return ShaderRecompiler::Recompile(request);
 }
 

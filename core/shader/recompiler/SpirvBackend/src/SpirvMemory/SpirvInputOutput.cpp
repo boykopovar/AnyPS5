@@ -28,7 +28,7 @@ namespace ShaderRecompiler
             if (input >= PixelParameterLimit || input >= info.inputNum) {
                 FailEmit("pixel interpolator index is out of range");
             }
-            if (info.InputIsDefault(input)) {
+            if (info.InputIsDefault(input) && (!info.InputIsFp16(input) || info.InputHalfIsDefault(input, true))) {
                 FailEmit("pixel input " + std::to_string(input) + " reads a default value, not a parameter");
             }
             return info.InputSlot(input);
