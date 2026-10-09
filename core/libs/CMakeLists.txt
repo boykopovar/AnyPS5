@@ -17,6 +17,11 @@ add_executable(nid_patcher
 target_include_directories(nid_patcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
 target_compile_features(nid_patcher PRIVATE cxx_std_20)
 
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME nid_patcher_pe_duplicate_aliases COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_pe_duplicate_aliases.py $<TARGET_FILE:nid_patcher>)
+endif()
+
 if(MINGW)
     target_link_options(nid_patcher PRIVATE -static -static-libgcc -static-libstdc++)
     add_compile_options(-fno-asynchronous-unwind-tables)

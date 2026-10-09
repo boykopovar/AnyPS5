@@ -155,6 +155,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         std::string Name;
         std::uint32_t Rva;
         std::uint16_t Ordinal;
+        std::uint32_t FunctionRva;
     };
 
     std::vector<ExportName> exportNames;
@@ -165,11 +166,12 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         if (ordinal >= exportTable.NumberOfFunctions)
             throw std::runtime_error("export name ordinal out of bounds");
         const auto nameOffset = RvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
-        exportNames.push_back({ReadCStr(pe, nameOffset), nameRva, ordinal});
+        const auto functionRva = Read<std::uint32_t>(pe, RvaToOffset(pe, exportTable.AddressOfFunctions, peHeaderOffset, numberOfSections, sizeOfOptionalHeader) + ordinal * sizeof(std::uint32_t));
+        exportNames.push_back({ReadCStr(pe, nameOffset), nameRva, ordinal, functionRva});
     }
     std::sort(exportNames.begin(), exportNames.end(), [](const ExportName& left, const ExportName& right) { return left.Name < right.Name; });
     for (std::size_t i = 0; i < exportNames.size(); ++i) {
-        if (i != 0 && exportNames[i - 1].Name == exportNames[i].Name)
+        if (i != 0 && exportNames[i - 1].Name == exportNames[i].Name && exportNames[i - 1].FunctionRva != exportNames[i].FunctionRva)
             throw std::runtime_error("duplicate patched export name: " + exportNames[i].Name);
         Write(pe, namesArrayOffset + i * sizeof(std::uint32_t), exportNames[i].Rva);
         Write(pe, ordinalsArrayOffset + i * sizeof(std::uint16_t), exportNames[i].Ordinal);
