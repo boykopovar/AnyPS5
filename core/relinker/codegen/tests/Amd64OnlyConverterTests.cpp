@@ -772,7 +772,7 @@ Bytes elfFixture(const Bytes& text) {
     write<std::uint64_t>(bytes, 24, 0x1000);
     write<std::uint64_t>(bytes, 32, 64);
     write<std::uint16_t>(bytes, 54, 56);
-    write<std::uint16_t>(bytes, 56, 6);
+    write<std::uint16_t>(bytes, 56, 7);
     write<std::uint32_t>(bytes, 64, 1);
     write<std::uint32_t>(bytes, 68, 5);
     write<std::uint64_t>(bytes, 72, 0x200);

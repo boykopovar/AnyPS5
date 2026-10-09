@@ -141,7 +141,7 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
             frameCount++;
     }
 
-    const bool keepFrames = keptCount + kSyntheticProgramHeaderCount < request.PhNum;
+    const bool keepFrames = keptCount + kSyntheticProgramHeaderCount <= request.PhNum;
     if (!keepFrames && frameCount > 0) {
         keptCount -= frameCount;
         std::cerr << "WARNING: No free program header slot for PT_GNU_EH_FRAME; C++ exceptions thrown in the executable cannot be caught.\n";

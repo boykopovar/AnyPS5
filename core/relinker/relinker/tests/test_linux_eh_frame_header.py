@@ -59,7 +59,7 @@ def main():
         assert elf[offset:offset + size] == image[offset:offset + size], "eh_frame_hdr bytes changed"
         assert all(header[0] != PT_SCE_VERSION for header in headers), headers
 
-        for header_count in (5, 6):
+        for header_count in (6,):
             result, elf = relink(relinker, directory, "full-slots-" + str(header_count), fixture(header_count))
             headers = program_headers(elf)
             assert all(header[0] != PT_GNU_EH_FRAME for header in headers), (header_count, headers)

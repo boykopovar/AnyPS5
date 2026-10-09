@@ -55,7 +55,7 @@ inline constexpr std::uint64_t kDefaultLoadAlignment = 0x1000;
 inline constexpr std::uint64_t kPhdrHeaderAlignment = 8;
 inline constexpr std::uint64_t kDynamicHeaderAlignment = 8;
 inline constexpr std::uint64_t kInterpHeaderAlignment = 1;
-inline constexpr std::uint16_t kSyntheticProgramHeaderCount = 4;
+inline constexpr std::uint16_t kSyntheticProgramHeaderCount = 5;
 
 inline constexpr std::uint32_t PT_LOAD = 1;
 inline constexpr std::uint32_t PT_DYNAMIC = 2;

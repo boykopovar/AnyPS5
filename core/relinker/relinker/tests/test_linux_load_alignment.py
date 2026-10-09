@@ -14,14 +14,14 @@ def fixture():
     image = bytearray(0x8000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
-                     3, 62, 1, 0x4000, 64, 0, 0, 64, 56, 5, 64, 0, 0)
+                     3, 62, 1, 0x4000, 64, 0, 0, 64, 56, 6, 64, 0, 0)
     image[0x4000:0x4006] = b"\xb8\x2a\x00\x00\x00\xc3"
     tags = [(5, 0x600), (10, 1), (6, 0x620), (11, 24), (7, 0x700), (8, 0), (9, 24), (0, 0)]
     struct.pack_into("<IIQQQQQQ", image, 64,
                      PT_LOAD, 5, 0x4000, 0, 0, 0x1000, 0x1000, 0x4000)
     struct.pack_into("<IIQQQQQQ", image, 120,
                      2, 6, 0x600 + 0x4000, 0x600, 0x600, len(tags) * 16, len(tags) * 16, 8)
-    for index in range(2, 5):
+    for index in range(2, 6):
         struct.pack_into("<IIQQQQQQ", image, 64 + index * 56, PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x4600 + index * 16, *tag)
