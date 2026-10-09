@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import PurePosixPath
+from urllib.parse import unquote
 
 RULES = {
     "comment": ("error", "docs/dev/CONVENTIONS.md", "Comments are only for technical debt, so they need a change to docs/dev/TechnicalDebt.md in the same pull request; #endif and namespace ends are always allowed"),
@@ -182,13 +183,25 @@ def utf8(data):
     return True
 
 
+
 def links(path, text):
     result = []
     for target in LINK.findall(text):
         if re.match(r"[a-z]+:|#", target):
             continue
+
+        original = target
         target = target.split("#", 1)[0].split("?", 1)[0]
-        result.append((target, posixpath.normpath(target.lstrip("/") if target.startswith("/") else str(PurePosixPath(path).parent / target))))
+        decoded = unquote(target)
+
+        resolved = (
+            decoded.lstrip("/")
+            if decoded.startswith("/")
+            else str(PurePosixPath(path).parent / decoded)
+        )
+
+        result.append((original, os.path.normpath(resolved)))
+
     return result
 
 
