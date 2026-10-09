@@ -5,6 +5,7 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <atomic>
+#include <bit>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -62,6 +63,13 @@ struct PthreadSemPrivate {
 
 static constexpr KernelCpumask DEFAULT_THREAD_AFFINITY = 0x1FFF;
 static constexpr int DEFAULT_THREAD_PRIORITY = 700;
+
+inline int GuestCpuFromHost(unsigned hostCpu, KernelCpumask threadAffinity) {
+    KernelCpumask mask = threadAffinity & DEFAULT_THREAD_AFFINITY;
+    if (mask == 0) mask = DEFAULT_THREAD_AFFINITY;
+    for (auto skip = hostCpu % static_cast<unsigned>(std::popcount(mask)); skip != 0; --skip) mask &= mask - 1;
+    return std::countr_zero(mask);
+}
 
 struct PthreadAttrPrivate {
     void* stackAddress = nullptr;

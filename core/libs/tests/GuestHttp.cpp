@@ -15,6 +15,7 @@ int APS5_VABI sceHttpUriUnescape(char*, std::size_t*, std::size_t, const char*);
 int APS5_VABI sceHttpUriSweepPath(char*, const char*, std::size_t);
 int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
 int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
+int APS5_VABI sceHttpWaitRequest(HttpEpollHandle, HttpNBEvent*, int, int);
 int APS5_VABI sceHttpReadData(int, void*, std::size_t);
 int APS5_VABI sceHttpCreateRequest2(int, const char*, const char*, std::uint64_t);
 int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
@@ -23,12 +24,19 @@ int APS5_VABI sceHttpGetLastErrno(int, int*);
 int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
 int APS5_VABI sceHttpRedirectCacheFlush(int);
 int APS5_VABI sceHttpsUnloadCert(int);
+int APS5_VABI sceHttpsSetSslVersion(int, int);
+int APS5_VABI sceHttpsGetSslError(int, int*, std::uint32_t*);
+int APS5_VABI sceHttpSetRedirectCallback(int, HttpRedirectCallback, void*);
+int APS5_VABI sceHttpSetCookieRecvCallback(int, HttpCookieRecvCallback, void*);
+int APS5_VABI sceHttpSetAuthInfoCallback(int, HttpAuthInfoCallback, void*);
 int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
+
+static int AuthInfo(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*) { std::abort(); }
 
 int main() {
     constexpr int outOfMemory = static_cast<int>(0x80431022);
@@ -181,6 +189,12 @@ int main() {
     HttpEpollHandle epoll = nullptr;
     Require(sceHttpCreateEpoll(1, nullptr) == invalidValue);
     Require(sceHttpCreateEpoll(1, &epoll) == 0 && epoll != nullptr);
+    HttpNBEvent events[2]{};
+    Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
+    Require(sceHttpWaitRequest(epoll, events, 2, 1000) == 0);
+    Require(sceHttpWaitRequest(epoll, nullptr, 2, 0) == invalidValue);
+    Require(sceHttpWaitRequest(epoll, events, 0, 0) == invalidValue);
+    Require(sceHttpWaitRequest(nullptr, events, 2, 0) == invalidValue);
     Require(sceHttpDestroyEpoll(1, epoll) == 0);
 
     char data[16];
@@ -196,10 +210,22 @@ int main() {
     Require(sceHttpsUnloadCert(1) == 0);
     Require(sceHttpSetResponseHeaderMaxSize(1, 8192) == 0);
     Require(sceHttpRedirectCacheFlush(1) == 0);
+    int authUserArg = 0;
+    Require(sceHttpSetAuthInfoCallback(1, AuthInfo, &authUserArg) == 0);
+    Require(sceHttpReadData(1, data, sizeof(data)) == network);
     int httpErrno = -1;
     Require(sceHttpGetLastErrno(1, &httpErrno) == 0);
     Require(httpErrno == 0);
     Require(sceHttpGetLastErrno(1, nullptr) == invalidValue);
+    Require(sceHttpsSetSslVersion(1, 0) == 0);
+    Require(sceHttpSetRedirectCallback(1, nullptr, nullptr) == 0);
+    Require(sceHttpSetCookieRecvCallback(1, nullptr, nullptr) == 0);
+    int sslError = -1;
+    std::uint32_t sslDetail = 0xFFFFFFFFu;
+    Require(sceHttpsGetSslError(1, &sslError, &sslDetail) == 0);
+    Require(sslError == 0 && sslDetail == 0);
+    Require(sceHttpsGetSslError(1, nullptr, &sslDetail) == invalidValue);
+    Require(sceHttpsGetSslError(1, &sslError, nullptr) == invalidValue);
 
     constexpr int parseInvalidResponse = static_cast<int>(0x80432060);
     constexpr int parseInvalidValue = static_cast<int>(0x804321FE);

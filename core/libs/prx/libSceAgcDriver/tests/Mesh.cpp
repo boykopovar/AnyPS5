@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
+#include "execution/VulkanTestDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <array>
 #include <cmath>
@@ -7,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -122,7 +124,7 @@ struct MeshDraw {
 void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
     const auto target = device.Target();
     std::vector<std::uint32_t> userData(12, 0u);
-    const auto index = AgcDriver::Graphics::MeshIndexBufferDescriptor(setup.draw, reinterpret_cast<std::uintptr_t>(GeometryCode.data()));
+    const auto index = AgcDriver::Graphics::MeshIndexBufferDescriptor(setup.draw);
     std::copy(index.begin(), index.end(), userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord);
     std::copy(setup.vertexBuffer.begin(), setup.vertexBuffer.end(), userData.begin() + 8);
     const std::array<ShaderRecompiler::MemoryRegion, 1> geometryMemory{{{reinterpret_cast<std::uintptr_t>(GeometryCode.data()), std::as_bytes(std::span(GeometryCode))}}};
@@ -206,7 +208,11 @@ void CheckTriangles(const char* what) {
 
 int main() {
     try {
-        setenv("APS5_NO_SHADER_DISK_CACHE", "1", 1);
+#ifdef _WIN32
+        _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+#else
+        setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+#endif
         for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
             const auto vertices = TriangleVertices(triangle);
             for (std::uint32_t k = 0; k < 3; ++k) {
@@ -235,11 +241,17 @@ int main() {
         }
         FanRestart[FanRim] = 0xffffu;
 
-        AgcDriver::VulkanDevice device;
+        const auto testDevice = OpenVulkanTestDevice();
+        if (!testDevice) return VulkanTestSkipped;
+        auto& device = *testDevice;
         const auto target = device.Target();
         if (!target.mesh.has_value()) {
-            std::puts("Mesh tests skipped: the device has no VK_EXT_mesh_shader");
-            return 0;
+            std::puts("skipped, the device has no VK_EXT_mesh_shader");
+            return VulkanTestSkipped;
+        }
+        if (device.DeviceName().starts_with("llvmpipe")) {
+            std::puts("skipped, the device has no mesh shader compiler that handles these programs (llvmpipe)");
+            return VulkanTestSkipped;
         }
 
         for (const auto& [name, subgroup] : {std::pair{"one-wave subgroups", SmallSubgroup}, std::pair{"two-wave subgroups", WideSubgroup}}) {
@@ -253,8 +265,7 @@ int main() {
         }
 
         constexpr std::size_t recordBlockBytes = 65536;
-        auto* record = static_cast<std::uint32_t*>(std::aligned_alloc(65536, recordBlockBytes));
-        Require(record != nullptr, "cannot allocate the indirect record block");
+        auto* record = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(record, recordBlockBytes, true, true);

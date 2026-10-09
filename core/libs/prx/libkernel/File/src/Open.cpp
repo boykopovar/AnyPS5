@@ -116,6 +116,8 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     if (fd < 0) {
         return SceErrorFromErrno(errno);
     }
+    if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY || (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)))
+        RecordWrittenPath_nid_no_patch(native);
     return fd;
 }
 
@@ -189,6 +191,7 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     if (NativeUnlink(native) != 0) {
         return SceErrorFromErrno(errno);
     }
+    RecordWrittenPath_nid_no_patch(native);
     return 0;
 }
 

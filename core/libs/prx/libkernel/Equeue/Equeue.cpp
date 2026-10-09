@@ -441,7 +441,7 @@ int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
     }
     KernelEqueueEvent event{};
     event.event.ident = static_cast<uintptr_t>(id);
-    event.event.filter = EVFILT_USER;
+    event.event.filter = EVFILT_AMPR;
     event.event.flags = EV_ADD | EV_CLEAR;
     event.event.udata = udata;
     event.filter.triggerFunc = [](KernelEqueueEvent* e, void* data) {
@@ -473,7 +473,7 @@ int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue eq, int id) {
     if (eq == 0) {
         return EQUEUE_OK;
     }
-    EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_USER);
+    EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_AMPR);
     return EQUEUE_OK;
 }
 

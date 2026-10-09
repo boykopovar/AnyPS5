@@ -482,7 +482,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     g_slots[slot].real_path = real_path;
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
     mount_result->required_blocks = 0;
-    mount_result->mount_status = (create || create2) ? 1u : 0u;
+    mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
     return SAVE_DATA_OK;
 }
 
@@ -577,8 +577,8 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
         }
     }
     if (n != 0) {
-        std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
-        if (!f) {
+        std::vector<char> memory;
+        if (!read_file_all(path, memory) || memory.size() != size) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
         for (std::uint32_t i = 0; i < n; i++) {
@@ -586,11 +586,9 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
             if (d.buf_size == 0) {
                 continue;
             }
-            f.seekp(static_cast<std::streamoff>(d.offset));
-            f.write(static_cast<const char*>(d.buf), static_cast<std::streamsize>(d.buf_size));
+            std::memcpy(memory.data() + d.offset, d.buf, d.buf_size);
         }
-        f.flush();
-        if (!f) {
+        if (!write_file_replace(path, memory)) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
     }
@@ -740,5 +738,15 @@ int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond,
     const int rc = dirNameSearchPs4(cond, result);
     SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond->user_id, static_cast<unsigned>(rc));
     return rc;
+}
+
+int APS5_VABI sceSaveDataConvert() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetConvertProgress() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 }

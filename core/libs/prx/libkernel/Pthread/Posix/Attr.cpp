@@ -9,6 +9,7 @@ extern "C" {
 int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
 int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
 int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize);
+int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, std::size_t size);
 }
 
 static bool Valid(const PthreadAttr* attr) {
@@ -108,6 +109,11 @@ int APS5_VABI pthread_attr_setschedpolicy_nid_postfix(PthreadAttr* attr, int pol
 int APS5_VABI pthread_attr_setstacksize_nid_postfix(PthreadAttr* attr, size_t stack_size) {
     if (!Valid(attr)) return PosixThread::GUEST_EINVAL;
     return PosixThread::ToErrno(scePthreadAttrSetstacksize(attr, stack_size));
+}
+
+int APS5_VABI pthread_attr_setstack_nid_postfix(PthreadAttr* attr, void* stack_addr, size_t stack_size) {
+    if (!Valid(attr) || !stack_addr || stack_size < 16384) return PosixThread::GUEST_EINVAL;
+    return PosixThread::ToErrno(scePthreadAttrSetstack(attr, stack_addr, stack_size));
 }
 
 int APS5_VABI pthread_attr_setsolosched_np_nid_postfix() {

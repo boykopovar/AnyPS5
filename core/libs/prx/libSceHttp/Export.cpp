@@ -4,9 +4,11 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include <atomic>
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
@@ -141,6 +143,20 @@ int APS5_VABI sceHttpSetAuthEnabled(int id, int enable) {
     return 0;
 }
 
+int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, void* userArg) {
+    (void)id;
+    (void)callback;
+    (void)userArg;
+    return 0;
+}
+
+int APS5_VABI sceHttpSetCookieEnabled(int id, int enable) {
+    (void)id;
+    if (static_cast<uint32_t>(enable) > 1) return ERROR_INVALID_VALUE;
+    if (enable != 0) NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceHttpSetAutoRedirect(int id, int enable) {
     (void)id;
     (void)enable;
@@ -226,11 +242,10 @@ int APS5_VABI sceHttpUnsetEpoll(int id) {
 }
 
 int APS5_VABI sceHttpWaitRequest(HttpEpollHandle eh, HttpNBEvent* nbev, int maxevents, int timeout) {
-    (void)eh;
-    (void)nbev;
-    (void)maxevents;
-    (void)timeout;
-    return ERROR_NETWORK;
+    if (!eh || !nbev || maxevents <= 0) return ERROR_INVALID_VALUE;
+    if (timeout < 0) NotImplemented_nid_no_patch(__func__);
+    std::this_thread::sleep_for(std::chrono::microseconds(timeout));
+    return 0;
 }
 
 int APS5_VABI sceHttpCreateRequestWithURL(int conn_id, int method, const char* url, uint64_t content_length) {
@@ -370,23 +385,33 @@ int APS5_VABI sceHttpGetLastErrno(int request_id, int* errno_out) {
     return 0;
 }
 
-int APS5_VABI sceHttpsGetSslError(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpsGetSslError(int id, int* err_num, uint32_t* detail) {
+    (void)id;
+    if (err_num == nullptr || detail == nullptr) {
+        return ERROR_INVALID_VALUE;
+    }
+    *err_num = 0;
+    *detail = 0;
     return 0;
 }
 
-int APS5_VABI sceHttpSetCookieRecvCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpSetCookieRecvCallback(int id, HttpCookieRecvCallback cbfunc, void* user_arg) {
+    (void)id;
+    (void)cbfunc;
+    (void)user_arg;
     return 0;
 }
 
-int APS5_VABI sceHttpsSetSslVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpsSetSslVersion(int id, int ssl_version) {
+    (void)id;
+    (void)ssl_version;
     return 0;
 }
 
-int APS5_VABI sceHttpSetRedirectCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceHttpSetRedirectCallback(int id, HttpRedirectCallback cbfunc, void* user_arg) {
+    (void)id;
+    (void)cbfunc;
+    (void)user_arg;
     return 0;
 }
 

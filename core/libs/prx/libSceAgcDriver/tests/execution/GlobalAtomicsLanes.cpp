@@ -90,7 +90,7 @@ void Put(std::vector<std::uint8_t>& image, std::uint32_t offset, std::uint64_t v
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::string Hex(std::uint64_t value) {
@@ -237,6 +237,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
+            std::puts("skipped, the device has no shaderBufferInt64Atomics");
+            return VulkanTestSkipped;
+        }
         GuestBlock writable(true);
         GuestBlock readOnly(false);
         RunAtomics(*device, writable, 32);

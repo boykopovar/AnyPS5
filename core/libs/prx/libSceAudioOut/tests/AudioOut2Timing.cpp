@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -52,7 +53,7 @@ struct Session {
     AudioOut2PortHandle port = 0;
     std::vector<float> buffer = std::vector<float>(static_cast<std::size_t>(grain) * 2, 0.0f);
 
-    explicit Session(const char* name) : path(std::filesystem::temp_directory_path() / name) {
+    explicit Session(const char* name) : path(std::filesystem::temp_directory_path() / (std::to_string(std::random_device{}()) + "-" + name)) {
         std::filesystem::remove(path);
         SetEnvironment("SDL_DISKAUDIOFILE", path.string());
         AudioOut2ContextParam params{};

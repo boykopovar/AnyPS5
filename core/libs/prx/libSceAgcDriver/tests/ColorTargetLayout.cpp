@@ -50,6 +50,26 @@ void RunColorTargetLayoutTests() {
             standardSeen[address / 4] = true;
         }
     }
+    for (const auto mode : {ColorTileMode::Standard4KB, ColorTileMode::Standard64KB}) {
+        for (const std::uint32_t bpe : {1u, 2u, 4u, 8u, 16u}) {
+            const auto block = mode == ColorTileMode::Standard64KB ? 65536u : 4096u;
+            const ColorTargetLayout sized(512, 512, mode, bpe);
+            Require(sized.Alignment() == block && sized.Bytes() == ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(mode), bpe, 512, 512, 1), 1), "standard color layout differs from the texture layout");
+            std::vector<bool> seen(block / bpe);
+            std::uint32_t count = 0;
+            for (std::uint32_t y = 0; y < 512 && count < seen.size(); ++y) {
+                for (std::uint32_t x = 0; x < 512; ++x) {
+                    const auto address = sized.Offset(x, y);
+                    if (address >= block) continue;
+                    Require(address % bpe == 0 && !seen[address / bpe], "standard block aliases its texels");
+                    seen[address / bpe] = true;
+                    ++count;
+                }
+            }
+            Require(count == seen.size(), "standard block leaves texels unaddressed");
+        }
+    }
+    Require(DecodeColorTileMode(0x4dc24000) == ColorTileMode::Standard64KB, "64 KiB standard color descriptor was rejected");
     reject([&] { layout.Offset(257, 0); });
     std::vector<std::byte> tiled(layout.Bytes(), std::byte{0x5a});
     std::vector<std::byte> linear(layout.LinearBytes());

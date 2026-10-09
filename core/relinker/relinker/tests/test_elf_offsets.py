@@ -25,6 +25,17 @@ def main():
                 result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(output)],
                                         capture_output=True, text=True, timeout=20)
                 assert result.returncode == 2 and error in result.stderr and not output.exists(), (name, mode, result)
+        for size in (0, 55, 64):
+            source = Path(directory) / f"program-header-entry-size-{size}.elf"
+            data = fixture()
+            struct.pack_into("<H", data, 0x36, size)
+            source.write_bytes(data)
+            for mode in ([], ["--windows"]):
+                output = source.with_suffix(".out")
+                result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                error = "Invalid ELF program header entry size: expected 56 bytes (offset 0x36)"
+                assert result.returncode == 2 and error in result.stderr and not output.exists(), (size, mode, result)
     print("ELF offset tests passed")
 
 

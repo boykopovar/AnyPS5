@@ -127,16 +127,19 @@ struct RiffChunks {
 static int ReadChunks(const std::uint8_t* bytes, std::size_t size, RiffChunks& chunks) {
     if (size < 12) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     if (std::memcmp(bytes, "RIFF", 4) != 0 || std::memcmp(bytes + 8, "WAVE", 4) != 0) return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
-    const std::size_t end = std::min<std::size_t>(size, 8 + static_cast<std::size_t>(ReadLe32(bytes + 4)));
+    const std::size_t riffEnd = 8 + static_cast<std::size_t>(ReadLe32(bytes + 4));
+    if (riffEnd < 12) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    const std::size_t end = std::min(size, riffEnd);
     for (std::size_t offset = 12; offset + 8 <= end;) {
         const auto* chunk = bytes + offset;
         const std::size_t payload = offset + 8;
         const std::size_t chunkSize = ReadLe32(chunk + 4);
+        if (chunkSize > riffEnd - payload) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
         const bool data = std::memcmp(chunk, "data", 4) == 0;
         if (data) {
             chunks.dataOffset = payload;
             chunks.dataSize = chunkSize;
-            break;
+            if (chunkSize > end - payload) break;
         }
         if (chunkSize > end - payload) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
         if (std::memcmp(chunk, "fmt ", 4) == 0) {
@@ -155,6 +158,47 @@ static int ReadChunks(const std::uint8_t* bytes, std::size_t size, RiffChunks& c
     return SCE_NGS2_OK;
 }
 
+static bool AddAtrac9Range(Ngs2WaveformInfo& info, std::uint64_t begin, std::uint32_t samples, std::uint32_t repeats) {
+    if (samples == 0) return true;
+    const auto preroll = std::min<std::uint64_t>(begin, info.num_audio_unit_samples);
+    const auto firstFrame = (begin - preroll) / info.num_audio_frame_samples;
+    const auto skip = begin - firstFrame * info.num_audio_frame_samples;
+    const auto frames = (skip + samples + info.num_audio_frame_samples - 1) / info.num_audio_frame_samples;
+    const auto offset = firstFrame * info.audio_frame_size;
+    const auto bytes = frames * info.audio_frame_size;
+    if (offset > info.data_size || bytes > info.data_size - offset) return false;
+    auto& block = info.block[info.num_blocks++];
+    block = {info.data_offset + offset, bytes, repeats, static_cast<std::uint32_t>(skip), samples, 0, 0};
+    return true;
+}
+
+static int ParseAtrac9Loop(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
+    if (chunks.sampler == nullptr) return SCE_NGS2_OK;
+    if (chunks.samplerSize < 36) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    const auto count = ReadLe32(chunks.sampler + 28);
+    if (count > (chunks.samplerSize - 36) / 24) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    if (count == 0) return SCE_NGS2_OK;
+    if (count != 1) throw std::runtime_error("NGS2: multiple waveform loops are not implemented");
+    const auto* loop = chunks.sampler + 36;
+    if (ReadLe32(loop + 4) != 0 || ReadLe32(loop + 16) != 0)
+        throw std::runtime_error("NGS2: non-forward or fractional waveform loops are not implemented");
+    const std::uint64_t begin = ReadLe32(loop + 8);
+    const std::uint64_t end = static_cast<std::uint64_t>(ReadLe32(loop + 12)) + 1;
+    const auto skip = info.block[0].num_skip_samples;
+    const std::uint64_t waveformEnd = static_cast<std::uint64_t>(skip) + info.num_samples;
+    if (begin < skip || begin >= end || end > waveformEnd) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    const auto plays = ReadLe32(loop + 20);
+    info.loop_begin_position = static_cast<std::uint32_t>(begin - skip);
+    info.loop_end_position = static_cast<std::uint32_t>(end - skip);
+    info.num_blocks = 0;
+    info.block[0] = {};
+    if (!AddAtrac9Range(info, skip, info.loop_begin_position, 0) ||
+        !AddAtrac9Range(info, begin, static_cast<std::uint32_t>(end - begin), plays == 0 ? UINT32_MAX : plays - 1) ||
+        !AddAtrac9Range(info, end, static_cast<std::uint32_t>(waveformEnd - end), 0))
+        return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    return SCE_NGS2_OK;
+}
+
 static int ParseAtrac9(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
     const auto* format = chunks.format;
     if (chunks.formatSize < FMT_ATRAC9_SIZE || chunks.fact == nullptr || chunks.factSize < FACT_ATRAC9_SIZE) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
@@ -165,7 +209,6 @@ static int ParseAtrac9(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
         ReadLe16(format + 12) != codec.superframeSize || ReadLe16(format + 18) != static_cast<std::uint32_t>(codec.frameSamples * codec.framesInSuperframe)) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (chunks.sampler != nullptr && chunks.samplerSize >= 32 && ReadLe32(chunks.sampler + 28) != 0) throw std::runtime_error("NGS2: parsing looped waveforms is not implemented");
     info.format = {SCE_NGS2_WAVEFORM_TYPE_ATRAC9, static_cast<std::uint32_t>(codec.channels), static_cast<std::uint32_t>(codec.samplingRate),
                    static_cast<std::uint32_t>(config[0]) << 24 | static_cast<std::uint32_t>(config[1]) << 16 | static_cast<std::uint32_t>(config[2]) << 8 | config[3], 0, 0};
     info.data_offset = static_cast<std::uint32_t>(chunks.dataOffset);
@@ -182,7 +225,7 @@ static int ParseAtrac9(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
     info.block[0].data_size = chunks.dataSize;
     info.block[0].num_skip_samples = ReadLe32(chunks.fact + 8);
     info.block[0].num_samples = info.num_samples;
-    return SCE_NGS2_OK;
+    return ParseAtrac9Loop(chunks, info);
 }
 
 static int ParsePcm16(const RiffChunks& chunks, std::size_t size, Ngs2WaveformInfo& info) {
@@ -224,6 +267,7 @@ int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2W
     RiffChunks chunks;
     const int result = ReadChunks(static_cast<const std::uint8_t*>(data), data_size, chunks);
     if (result != SCE_NGS2_OK) return result;
+    if (chunks.formatSize < 2) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     const std::uint16_t tag = ReadLe16(chunks.format);
     if (tag == WAVE_FORMAT_EXTENSIBLE && chunks.formatSize >= FMT_GUID_OFFSET + sizeof(ATRAC9_GUID) &&
         std::memcmp(chunks.format + FMT_GUID_OFFSET, ATRAC9_GUID, sizeof(ATRAC9_GUID)) == 0) {

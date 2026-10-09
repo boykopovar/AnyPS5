@@ -8,6 +8,7 @@
 #include <codegen/x86/ClzeroOperands.hpp>
 #include <codegen/x86/ClzeroLowering.hpp>
 #include <codegen/x86/ReciprocalOperands.hpp>
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64InstructionRewriter.hpp>
@@ -124,9 +125,16 @@ void decoderLengths() {
         {0x66, 0x0F, 0xC4, 0xC0, 0x01}, {0xC2, 0x08, 0x00}, {0xC8, 0x10, 0x00, 0x00}, {0xF3, 0x0F, 0x2B, 0x07},
         {0xF2, 0x44, 0x0F, 0x2B, 0x4C, 0x24, 0x10}, {0x0F, 0x01, 0xFA}, {0x0F, 0xB9, 0x00},
         {0x41, 0x0F, 0xBB, 0xF7}, {0x0F, 0xBB, 0x47, 0x08},
+        {0xA0, 1, 2, 3, 4, 5, 6, 7, 8}, {0x48, 0xA1, 1, 2, 3, 4, 5, 6, 7, 8}, {0xA2, 1, 2, 3, 4, 5, 6, 7, 8},
+        {0x64, 0x48, 0xA3, 1, 2, 3, 4, 5, 6, 7, 8}, {0x67, 0xA1, 1, 2, 3, 4}, {0x48, 0x67, 0xA3, 1, 2, 3, 4},
         {0x0F, 0x38, 0xCB, 0xCA}, {0x45, 0x0F, 0x38, 0xCC, 0xE1}, {0x0F, 0x38, 0xCD, 0x08}, {0x0F, 0x38, 0xCB, 0x0D, 0x10, 0x00, 0x00, 0x00},
+        {0x62, 0xF1, 0x75, 0x48, 0xF6, 0xC2}, {0x62, 0xF1, 0x7D, 0x48, 0xF6, 0x05, 0x10, 0x00, 0x00, 0x00}, {0x62, 0xF1, 0x6D, 0x48, 0xF6, 0x4C, 0x24, 0x01},
         {0x0F, 0x3A, 0xCC, 0xD5, 0x03}, {0x45, 0x0F, 0x3A, 0xCC, 0xE1, 0x00}, {0x0F, 0x3A, 0xCC, 0x08, 0x01}, {0x0F, 0x38, 0xC8, 0xCA}, {0x0F, 0x38, 0xC9, 0xCA}, {0x0F, 0x38, 0xCA, 0x08},
         {0x48, 0x66, 0xB8, 0x34, 0x12}, {0x66, 0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8}, {0x41, 0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8},
+        {0x66, 0x48, 0x81, 0xC0, 1, 2, 3, 4}, {0x66, 0x48, 0x05, 1, 2, 3, 4}, {0x66, 0x48, 0xC7, 0xC0, 1, 2, 3, 4},
+        {0x66, 0x48, 0x69, 0xC0, 1, 2, 3, 4}, {0x66, 0x48, 0x68, 1, 2, 3, 4}, {0x66, 0x48, 0xA9, 1, 2, 3, 4},
+        {0x66, 0x48, 0xF7, 0xC0, 1, 2, 3, 4}, {0x66, 0x81, 0xC0, 0x34, 0x12}, {0x48, 0x66, 0x81, 0xC0, 0x34, 0x12},
+        {0x66, 0x41, 0x81, 0xC0, 0x34, 0x12}, {0x66, 0xF7, 0xC0, 0x34, 0x12},
         {0x48, 0x64, 0x8B, 0x00}, {0x48, 0xF3, 0x0F, 0x2B, 0x00}, {0x48, 0x67, 0x0F, 0x01, 0xFC}, {0x48, 0x48, 0x0F, 0x01, 0xFC}};
     Bytes padded;
     for (const auto& instruction : instructions) {
@@ -160,6 +168,36 @@ void decoderRipRelative() {
     }
     for (const auto& instruction : kRegisterVectorOperations)
         require(!decoder.DecodeInstruction(instruction.data(), instruction.size()).HasRipRelativeDisp, "Vector instruction without a RIP-relative operand was reported as RIP-relative");
+    const Bytes ud1 = {0x0F, 0xB9, 0x05, 0x10, 0x00, 0x00, 0x00};
+    const auto trap = decoder.DecodeInstruction(ud1.data(), ud1.size());
+    require(trap.Length == ud1.size() && trap.FlowKind == Codegen::ControlFlowKind::Trap && trap.HasRipRelativeDisp && read<std::int32_t>(ud1, trap.RipRelativeDispOffset) == 0x10, "UD1 was not decoded as a trap with its RIP-relative operand");
+}
+
+void decoderTwoByteOpcodeLengths() {
+    const Codegen::X64InstructionDecoder decoder;
+    const std::vector<Bytes> instructions = {
+        {0x0F, 0xA8}, {0x0F, 0xA9}, {0x0F, 0xAA}, {0x66, 0x0F, 0xA8}, {0x41, 0x0F, 0xA9},
+        {0x0F, 0xAB, 0xC8}, {0x0F, 0xAB, 0x05, 0x10, 0x00, 0x00, 0x00}, {0x48, 0x0F, 0xAB, 0x44, 0x24, 0x08},
+        {0x0F, 0x20, 0xC0}, {0x0F, 0x20, 0x05}, {0x0F, 0x22, 0x04}, {0x0F, 0x21, 0x45}, {0x0F, 0x23, 0x85},
+        {0x66, 0x0F, 0x38, 0x20, 0x05, 0x10, 0x00, 0x00, 0x00}, {0x66, 0x0F, 0x38, 0x23, 0x44, 0x24, 0x08}};
+    Bytes padded;
+    for (const auto& instruction : instructions) {
+        padded = instruction;
+        padded.insert(padded.end(), 8, 0x90);
+        require(decoder.Decode(padded.data(), padded.size()) == instruction.size(), "Two-byte opcode was decoded with operand bytes it does not have");
+        require(decoder.DecodeInstruction(padded.data(), padded.size()).Length == instruction.size(), "Two-byte opcode was described with operand bytes it does not have");
+    }
+    const Bytes controlRegister = {0x0F, 0x20, 0x05, 0x90, 0x90, 0x90, 0x90};
+    const auto control = decoder.DecodeInstruction(controlRegister.data(), controlRegister.size());
+    require(control.Length == 3 && control.HasModRm && control.ModRmByte == 0x05 && !control.HasRipRelativeDisp, "MOV from a control register was reported as RIP-relative");
+    const Bytes debugRegister = {0x0F, 0x23, 0x05, 0x90, 0x90, 0x90, 0x90};
+    require(!decoder.DecodeInstruction(debugRegister.data(), debugRegister.size()).HasRipRelativeDisp, "MOV to a debug register was reported as RIP-relative");
+    const Bytes extend = {0x66, 0x0F, 0x38, 0x20, 0x05, 0x10, 0x00, 0x00, 0x00};
+    const auto extended = decoder.DecodeInstruction(extend.data(), extend.size());
+    require(extended.HasRipRelativeDisp && read<std::int32_t>(extend, extended.RipRelativeDispOffset) == 0x10, "PMOVSXBW lost its RIP-relative operand");
+    const Bytes bitTest = {0x0F, 0xAB, 0x05, 0x10, 0x00, 0x00, 0x00};
+    const auto bts = decoder.DecodeInstruction(bitTest.data(), bitTest.size());
+    require(bts.HasRipRelativeDisp && read<std::int32_t>(bitTest, bts.RipRelativeDispOffset) == 0x10, "BTS lost its RIP-relative operand");
 }
 
 void sse4aOperands() {
@@ -201,7 +239,11 @@ void sha256Operands() {
     const Bytes absolute = {0x0F, 0x38, 0xCC, 0x14, 0x25, 0x78, 0x56, 0x34, 0x12};
     const auto noBase = Codegen::DecodeSha256(absolute.data(), absolute.size());
     require(!noBase.Memory->StackBase && noBase.Memory->Displacement == 0x12345678, "SIB without a base was decoded incorrectly");
-    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xCC, 0x15, 0, 0, 0, 0}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "SHA-256 RIP-relative operand was accepted");
+    const Bytes ripRelative = {0x0F, 0x38, 0xCC, 0x15, 0x78, 0x56, 0x34, 0x12};
+    const auto rip = Codegen::DecodeSha256(ripRelative.data(), ripRelative.size());
+    require(rip.Destination == 2 && rip.Memory && rip.Memory->RipRelative && rip.Memory->Displacement == 0x12345678 && rip.Memory->EncodedSize == 5 && rip.Memory->InstructionLength == 8 && !noBase.Memory->RipRelative, "SHA-256 RIP-relative operand was decoded incorrectly");
+    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xCC, 0x15, 0, 0, 0, 0, 0x90}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "SHA-256 RIP-relative operand that does not end the instruction was accepted");
+    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xCC, 0x15, 0, 0, 0}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "Truncated SHA-256 RIP-relative operand was accepted");
     requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xCC, 0x54, 0x24}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "Truncated SHA-256 memory operand was accepted");
     requireFailure([] { const Bytes bytes = {0x66, 0x0F, 0x38, 0xCB, 0xCA}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "Prefixed 0F 38 CB was decoded as SHA-256");
     requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xC9, 0xCA}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "SHA-1 was decoded as SHA-256");
@@ -236,8 +278,14 @@ void sha1Operands() {
     const Bytes message = {0x0F, 0x38, 0xC9, 0x08};
     const auto decodedMessage = Codegen::DecodeSha1(message.data(), message.size());
     require(decodedMessage.Operation == Codegen::Sha1Operation::Msg1 && decodedMessage.Destination == 1 && decodedMessage.Memory && decodedMessage.Memory->Mod == 0 && decodedMessage.Memory->Rm == 0, "SHA1MSG1 memory operand was decoded incorrectly");
-    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xC9, 0x15, 0, 0, 0, 0}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "SHA-1 RIP-relative operand was accepted");
-    requireFailure([] { const Bytes bytes = {0x0F, 0x3A, 0xCC, 0x15, 0, 0, 0, 0, 0x00}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "SHA1RNDS4 RIP-relative operand was accepted");
+    const Bytes ripMessage = {0x0F, 0x38, 0xC9, 0x15, 0x10, 0x00, 0x00, 0x00};
+    const auto ripDecoded = Codegen::DecodeSha1(ripMessage.data(), ripMessage.size());
+    require(ripDecoded.Operation == Codegen::Sha1Operation::Msg1 && ripDecoded.Destination == 2 && ripDecoded.Memory && ripDecoded.Memory->RipRelative && ripDecoded.Memory->Displacement == 0x10 && ripDecoded.Memory->InstructionLength == 8, "SHA-1 RIP-relative operand was decoded incorrectly");
+    const Bytes ripRounds = {0x0F, 0x3A, 0xCC, 0x15, 0xF0, 0xFF, 0xFF, 0xFF, 0x03};
+    const auto ripRoundsDecoded = Codegen::DecodeSha1(ripRounds.data(), ripRounds.size());
+    require(ripRoundsDecoded.Operation == Codegen::Sha1Operation::Rnds4 && ripRoundsDecoded.Function == 3 && ripRoundsDecoded.Memory && ripRoundsDecoded.Memory->RipRelative && ripRoundsDecoded.Memory->Displacement == -16 && ripRoundsDecoded.Memory->InstructionLength == 9, "SHA1RNDS4 RIP-relative operand was decoded incorrectly");
+    requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xC9, 0x15, 0, 0, 0, 0, 0x90}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "SHA-1 RIP-relative operand that does not end the instruction was accepted");
+    requireFailure([] { const Bytes bytes = {0x0F, 0x3A, 0xCC, 0x15, 0, 0, 0, 0, 0x00, 0x90}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "SHA1RNDS4 RIP-relative operand that does not end the instruction was accepted");
     requireFailure([] { const Bytes bytes = {0x0F, 0x38, 0xC9, 0x54, 0x24}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "Truncated SHA-1 memory operand was accepted");
     requireFailure([] { const Bytes bytes = {0x0F, 0x3A, 0xCC, 0xCA}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "SHA1RNDS4 without its immediate was accepted");
     requireFailure([] { const Bytes bytes = {0x0F, 0x3A, 0xCC, 0x50, 0x02}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "SHA1RNDS4 memory form without its immediate was accepted");
@@ -359,6 +407,49 @@ void goldenBodies() {
     require(insertqRegisterForm.Bytes[0] == 0x48 && insertqRegisterForm.Bytes.size() % 16 == 0 && insertqRegisterForm.ReturnBranchOffset < insertqRegisterForm.Bytes.size(), "INSERTQ register form body does not start with the red-zone skip");
 }
 
+void ripRelativeBodies() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const auto relocated = [](const Codegen::Amd64OnlyMatch& match, const std::size_t displacementOffset, const std::size_t instructionEnd, const std::int64_t siteTarget) {
+        return match.Relocations.size() == 1 && match.Relocations[0].DisplacementOffset == displacementOffset && match.Relocations[0].InstructionEnd == instructionEnd && match.Relocations[0].SiteTarget == siteTarget;
+    };
+    const Bytes message = {0x0F, 0x38, 0xCC, 0x15, 0x78, 0x56, 0x34, 0x12};
+    const auto sha256 = matcher->Match(message.data(), message.size());
+    require(sha256 && sha256->StubBody.size() > 21 && Bytes(sha256->StubBody.begin() + 13, sha256->StubBody.begin() + 21) == Bytes{0xF3, 0x0F, 0x6F, 0x0D, 0x00, 0x00, 0x00, 0x00}, "SHA-256 RIP-relative operand was not reloaded through a RIP-relative MOVDQU");
+    require(relocated(*sha256, 17, 21, 8 + 0x12345678), "SHA-256 RIP-relative operand has the wrong relocation");
+    const Bytes prefixed = {0x65, 0x67, 0x0F, 0x38, 0xCC, 0x15, 0x78, 0x56, 0x34, 0x12};
+    const auto segmentOverride = matcher->Match(prefixed.data(), prefixed.size());
+    require(segmentOverride && segmentOverride->StubBody.size() > 23 && Bytes(segmentOverride->StubBody.begin() + 13, segmentOverride->StubBody.begin() + 23) == Bytes{0x65, 0x67, 0xF3, 0x0F, 0x6F, 0x0D, 0x00, 0x00, 0x00, 0x00}, "RIP-relative reload lost the segment or address-size prefix");
+    require(relocated(*segmentOverride, 19, 23, 10 + 0x12345678), "Prefixed RIP-relative operand has the wrong relocation");
+    const Bytes rounds = {0x0F, 0x3A, 0xCC, 0x15, 0xF0, 0xFF, 0xFF, 0xFF, 0x03};
+    const auto sha1 = matcher->Match(rounds.data(), rounds.size());
+    require(sha1 && sha1->StubBody.size() > 21 && Bytes(sha1->StubBody.begin() + 13, sha1->StubBody.begin() + 21) == Bytes{0xF3, 0x0F, 0x6F, 0x05, 0x00, 0x00, 0x00, 0x00}, "SHA1RNDS4 RIP-relative operand was not reloaded through a RIP-relative MOVDQU");
+    require(relocated(*sha1, 17, 21, 9 - 16), "SHA1RNDS4 RIP-relative operand does not count its immediate");
+    const Bytes extrq = {0x66, 0x0F, 0x79, 0xCA};
+    const Bytes followers = {0x90, 0x48, 0x8D, 0x05, 0x10, 0x00, 0x00, 0x00};
+    const auto moved = matcher->Match(extrq.data(), extrq.size(), followers);
+    require(moved && moved->ReturnBranchOffset >= followers.size(), "EXTRQ with followers was not lowered through a stub");
+    const auto start = moved->ReturnBranchOffset - followers.size();
+    require(Bytes(moved->StubBody.begin() + static_cast<std::ptrdiff_t>(start), moved->StubBody.begin() + static_cast<std::ptrdiff_t>(moved->ReturnBranchOffset)) == Bytes{0x90, 0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00}, "Moved RIP-relative LEA was not copied with a cleared displacement");
+    require(relocated(*moved, start + 4, start + 8, 4 + 8 + 0x10), "Moved RIP-relative LEA has the wrong relocation");
+    const std::vector<std::span<const std::uint8_t>> sequence = {extrq, message};
+    const auto pair = matcher->MatchSequence(sequence, {});
+    require(pair && pair->Relocations.size() == 1 && pair->Relocations[0].SiteTarget == 4 + 8 + 0x12345678, "RIP-relative operand in a sequence is not relative to the site start");
+}
+
+void stubRelocations() {
+    Bytes body(8, 0xCC);
+    const std::vector<Codegen::StubRelocation> relocations = {{2, 6, 0x1040}};
+    Codegen::ApplyStubRelocations(body, relocations, 0x401000, 0x400F00, 0);
+    require(read<std::int32_t>(body, 2) == 0x401000 + 0x1040 - (0x400F00 + 6) && body[0] == 0xCC && body[6] == 0xCC, "Stub relocation was not resolved against the site address");
+    Codegen::ApplyStubRelocations(body, relocations, 0x1000, 0x7FFF0000, 0);
+    require(read<std::int32_t>(body, 2) == 0x1000 + 0x1040 - (0x7FFF0000 + 6), "Stub placed above its site was not relocated backwards");
+    requireFailure([&] { Codegen::ApplyStubRelocations(body, relocations, 0x1000, 0x1000 + 0x90000000ull, 0); }, "RIP-relative operand beyond rel32 range was accepted");
+    const std::vector<Codegen::StubRelocation> outside = {{6, 10, 0}};
+    requireFailure([&] { Codegen::ApplyStubRelocations(body, outside, 0x1000, 0x2000, 0); }, "Stub relocation outside the body was accepted");
+    const std::vector<Codegen::StubRelocation> narrow = {{4, 6, 0}};
+    requireFailure([&] { Codegen::ApplyStubRelocations(body, narrow, 0x1000, 0x2000, 0); }, "Stub relocation narrower than a displacement was accepted");
+}
+
 Bytes segmentFixture() {
     Bytes file(0x300, 0xCC);
     const Bytes text = {
@@ -425,7 +516,16 @@ void converterRipRelativeFollower() {
     };
     for (const auto& following : kRipRelativeVectorLoads) {
         const auto [file, header] = withFollower(following);
-        require(failureOffset([&] { (void)converter->Convert(file, {header}); }, "RIP-relative vector load was moved into an EXTRQ stub") == 0x204, "RIP-relative follower failure does not carry its file offset");
+        const auto result = converter->Convert(file, {header});
+        require(result.Trampolines.size() == 1 && result.Trampolines[0].Length == 4 + following.size(), "RIP-relative vector load was not moved into the EXTRQ stub");
+        const auto& site = result.Trampolines[0];
+        const auto info = Codegen::X64InstructionDecoder{}.DecodeInstruction(following.data(), following.size());
+        const auto start = site.ReturnBranchOffset - following.size();
+        require(site.Relocations.size() == 1 && site.Relocations[0].DisplacementOffset == start + info.RipRelativeDispOffset && site.Relocations[0].InstructionEnd == site.ReturnBranchOffset && site.Relocations[0].SiteTarget == static_cast<std::int64_t>(4 + following.size()) + 0x10, "Moved RIP-relative vector load has the wrong relocation");
+    }
+    for (const Bytes& following : {Bytes{0xFF, 0x15, 0x10, 0x00, 0x00, 0x00}, Bytes{0xFF, 0x25, 0x10, 0x00, 0x00, 0x00}}) {
+        const auto [file, header] = withFollower(following);
+        require(failureOffset([&] { (void)converter->Convert(file, {header}); }, "RIP-relative indirect branch was moved into an EXTRQ stub") == 0x204, "RIP-relative branch failure does not carry its file offset");
     }
     for (const auto& following : kRegisterVectorOperations) {
         const auto [file, header] = withFollower(following);
@@ -460,9 +560,12 @@ void converterSha256() {
     const auto memoryResult = converter->Convert(memoryForm, {segmentHeader(text.size())});
     require(memoryResult.Trampolines.size() == 2 && memoryResult.Reports[1].InstructionName == "SHA256MSG2", "SHA-256 memory form was not lowered through a stub");
     auto ripRelative = file;
-    const Bytes ripMessage = {0x0F, 0x38, 0xCD, 0x2D, 0x00, 0x00, 0x00, 0x00, 0xC3};
+    const Bytes ripMessage = {0x0F, 0x38, 0xCD, 0x2D, 0x40, 0x00, 0x00, 0x00, 0xC3};
     std::copy(ripMessage.begin(), ripMessage.end(), ripRelative.begin() + 0x20C);
-    require(failureOffset([&] { (void)converter->Convert(ripRelative, {segmentHeader(text.size() + 3)}); }, "SHA-256 RIP-relative form was accepted") == 0x20C, "SHA-256 operand failure does not carry the file offset");
+    const auto ripResult = converter->Convert(ripRelative, {segmentHeader(text.size() + 3)});
+    require(ripResult.Trampolines.size() == 2 && ripResult.Bytes == ripRelative && ripResult.Reports[1].InstructionName == "SHA256MSG2", "SHA-256 RIP-relative form was not lowered through a stub");
+    const auto& ripSite = ripResult.Trampolines[1];
+    require(ripSite.Offset == 0x20C && ripSite.Length == 8 && ripSite.Relocations.size() == 1 && ripSite.Relocations[0].SiteTarget == 8 + 0x40 && ripSite.Relocations[0].InstructionEnd <= ripSite.ReturnBranchOffset, "SHA-256 RIP-relative site was recorded without its relocation");
 }
 
 void converterSha1() {
@@ -492,9 +595,12 @@ void converterSha1() {
     const auto memoryResult = converter->Convert(memoryForm, {segmentHeader(text.size())});
     require(memoryResult.Trampolines.size() == 3 && memoryResult.Reports[2].InstructionName == "SHA1MSG2", "SHA-1 memory form was not lowered through a stub");
     auto ripRelative = file;
-    const Bytes ripMessage = {0x0F, 0x38, 0xCA, 0x2D, 0x00, 0x00, 0x00, 0x00, 0xC3};
+    const Bytes ripMessage = {0x0F, 0x38, 0xCA, 0x2D, 0xF0, 0xFF, 0xFF, 0xFF, 0xC3};
     std::copy(ripMessage.begin(), ripMessage.end(), ripRelative.begin() + 0x211);
-    require(failureOffset([&] { (void)converter->Convert(ripRelative, {segmentHeader(text.size() + 3)}); }, "SHA-1 RIP-relative form was accepted") == 0x211, "SHA-1 operand failure does not carry the file offset");
+    const auto ripResult = converter->Convert(ripRelative, {segmentHeader(text.size() + 3)});
+    require(ripResult.Trampolines.size() == 3 && ripResult.Bytes == ripRelative && ripResult.Reports[2].InstructionName == "SHA1MSG2", "SHA-1 RIP-relative form was not lowered through a stub");
+    const auto& ripSite = ripResult.Trampolines[2];
+    require(ripSite.Offset == 0x211 && ripSite.Length == 8 && ripSite.Relocations.size() == 1 && ripSite.Relocations[0].SiteTarget == 8 - 16 && ripSite.Relocations[0].InstructionEnd <= ripSite.ReturnBranchOffset, "SHA-1 RIP-relative site was recorded without its relocation");
 }
 
 void converterMonitorWait() {
@@ -580,8 +686,10 @@ void converterReciprocal() {
     auto ripRelative = file;
     const Bytes load = {0xC5, 0xF8, 0x52, 0xD5, 0x8B, 0x05, 0x10, 0x00, 0x00, 0x00, 0xC3};
     std::copy(load.begin(), load.end(), ripRelative.begin() + 0x200);
-    const auto kept = converter->Convert(ripRelative, {segmentHeader(load.size())});
-    require(kept.Trampolines.empty() && kept.KeptCount == 1 && kept.Bytes == ripRelative, "A following RIP-relative instruction was moved into a stub");
+    const auto moved = converter->Convert(ripRelative, {segmentHeader(load.size())});
+    require(moved.Trampolines.size() == 1 && moved.KeptCount == 0 && moved.Bytes == ripRelative && moved.Trampolines[0].Length == 10, "VRSQRTPS did not absorb the following RIP-relative load");
+    const auto& movedSite = moved.Trampolines[0];
+    require(movedSite.Relocations.size() == 1 && movedSite.Relocations[0].DisplacementOffset == movedSite.ReturnBranchOffset - 4 && movedSite.Relocations[0].InstructionEnd == movedSite.ReturnBranchOffset && movedSite.Relocations[0].SiteTarget == 10 + 0x10, "Absorbed RIP-relative load has the wrong relocation");
 }
 
 void converterStrayRex() {
@@ -616,6 +724,19 @@ void rewriterStrayRex() {
     const auto rewritten = Codegen::X64InstructionRewriter{}.Rewrite(code, {7, {0x66, 0x90}});
     const Bytes expected = {0x48, 0x2E, 0xE9, 0x02, 0x00, 0x00, 0x00, 0x66, 0x90, 0xC3};
     require(rewritten.Bytes == expected, "Branch with a stray REX was not adjusted by a length-changing rewrite");
+}
+
+void rewriterReferenceSites() {
+    const std::vector<std::tuple<Bytes, std::uint64_t, Bytes>> cases = {
+        {{0x90, 0x48, 0xB8, 0x05, 0xF0, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xC3}, 0,
+         {0x66, 0x90, 0x48, 0xB8, 0x05, 0xF0, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xC3}},
+        {{0xC5, 0xF9, 0x6F, 0x05, 0x01, 0x00, 0x00, 0x00, 0x90, 0xC3}, 8,
+         {0xC5, 0xF9, 0x6F, 0x05, 0x02, 0x00, 0x00, 0x00, 0x66, 0x90, 0xC3}},
+        {{0x66, 0x0F, 0x38, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x90, 0xC3}, 9,
+         {0x66, 0x0F, 0x38, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00, 0x66, 0x90, 0xC3}},
+        {{0xE2, 0x01, 0x90, 0xC3}, 2, {0xE2, 0x02, 0x66, 0x90, 0xC3}}};
+    for (const auto& [code, offset, expected] : cases)
+        require(Codegen::X64InstructionRewriter{}.Rewrite(code, {offset, {0x66, 0x90}}).Bytes == expected, "Length-changing rewrite adjusted an immediate or missed a VEX, three-byte or LOOP reference");
 }
 
 void converterFailureOffsets() {
@@ -675,35 +796,40 @@ std::vector<Domain::ProgramHeader> elfHeaders() {
     return {{1, 5, 0x200, 0x1000, 0, 0x100, 0x100, 0x1000}, {1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000}};
 }
 
-void linuxPlacement() {
-    const auto source = elfFixture({0xEB, 0x06, 0xF2, 0x0F, 0x78, 0xDB, 0x08, 0x08, 0xC3});
-    const auto headers = elfHeaders();
-    const auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(source, {headers[0]});
-    require(converted.Trampolines.size() == 1 && converted.Bytes == source, "Linux fixture conversion produced unexpected results");
+Elfpatcher::Linux::LinuxElfPatcher linuxPatcher() {
     const auto byteWriter = std::make_shared<Io::ByteWriter>();
-    Elfpatcher::Linux::LinuxElfPatcher patcher(
+    return Elfpatcher::Linux::LinuxElfPatcher(
         std::make_shared<Elfpatcher::EntryStubBuilder>(),
         std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(std::make_shared<Elfpatcher::SegmentFilter>(), byteWriter),
         std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
         byteWriter);
-    const auto output = patcher.Patch(converted.Bytes, headers, {}, 0, "$ORIGIN/libs", true, false, converted.Trampolines);
-    require(output[0x202] == 0xE9 && output[0x207] == 0x90, "Linux site was not replaced by a jump");
-    const auto target = 0x1002 + 5 + static_cast<std::int64_t>(read<std::int32_t>(output, 0x203));
-    require(target % 16 == 0 && target > 0x2100, "Linux stub is misaligned or inside the original image");
+}
+
+std::uint64_t executableFileOffset(const Bytes& output, const std::uint64_t address) {
     const auto phNum = read<std::uint16_t>(output, 56);
-    std::uint64_t bodyOffset = 0;
-    bool found = false;
     for (std::uint16_t index = 0; index < phNum; ++index) {
         const auto header = 64 + index * 56;
         if (read<std::uint32_t>(output, header) != 1) continue;
         const auto vaddr = read<std::uint64_t>(output, header + 16);
         const auto memSize = read<std::uint64_t>(output, header + 40);
-        if (static_cast<std::uint64_t>(target) < vaddr || static_cast<std::uint64_t>(target) >= vaddr + memSize) continue;
+        if (address < vaddr || address >= vaddr + memSize) continue;
         require((read<std::uint32_t>(output, header + 4) & 1) != 0, "Linux stub segment is not executable");
-        bodyOffset = read<std::uint64_t>(output, header + 8) + (static_cast<std::uint64_t>(target) - vaddr);
-        found = true;
+        return read<std::uint64_t>(output, header + 8) + (address - vaddr);
     }
-    require(found, "Linux stub is not inside a PT_LOAD segment");
+    throw std::runtime_error("Linux stub is not inside a PT_LOAD segment");
+}
+
+void linuxPlacement() {
+    const auto source = elfFixture({0xEB, 0x06, 0xF2, 0x0F, 0x78, 0xDB, 0x08, 0x08, 0xC3});
+    const auto headers = elfHeaders();
+    const auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(source, {headers[0]});
+    require(converted.Trampolines.size() == 1 && converted.Bytes == source, "Linux fixture conversion produced unexpected results");
+    auto patcher = linuxPatcher();
+    const auto output = patcher.Patch(converted.Bytes, headers, {}, 0, "$ORIGIN/libs", true, false, converted.Trampolines);
+    require(output[0x202] == 0xE9 && output[0x207] == 0x90, "Linux site was not replaced by a jump");
+    const auto target = 0x1002 + 5 + static_cast<std::int64_t>(read<std::int32_t>(output, 0x203));
+    require(target % 16 == 0 && target > 0x2100, "Linux stub is misaligned or inside the original image");
+    const auto bodyOffset = executableFileOffset(output, static_cast<std::uint64_t>(target));
     auto expectedBody = kInsertqSelfBody;
     write<std::int32_t>(expectedBody, 10, static_cast<std::int32_t>(0x1008 - (target + 9 + 5)));
     const Bytes actualBody(output.begin() + static_cast<std::ptrdiff_t>(bodyOffset), output.begin() + static_cast<std::ptrdiff_t>(bodyOffset + expectedBody.size()));
@@ -711,6 +837,23 @@ void linuxPlacement() {
     auto altered = converted.Bytes;
     altered[0x205] = 0xDC;
     requireFailure([&] { (void)patcher.Patch(altered, headers, {}, 0, "$ORIGIN/libs", true, false, converted.Trampolines); }, "Changed Linux site bytes were accepted");
+}
+
+void linuxRipRelativePlacement() {
+    Bytes text = {0x0F, 0x38, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x00, 0xC3};
+    write<std::int32_t>(text, 4, 0x2040 - 0x1008);
+    const auto source = elfFixture(text);
+    const auto headers = elfHeaders();
+    const auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(source, {headers[0]});
+    require(converted.Trampolines.size() == 1 && converted.Trampolines[0].Relocations.size() == 1, "RIP-relative Linux fixture was not lowered with a relocation");
+    auto patcher = linuxPatcher();
+    const auto output = patcher.Patch(converted.Bytes, headers, {}, 0, "$ORIGIN/libs", true, false, converted.Trampolines);
+    require(output[0x200] == 0xE9, "RIP-relative Linux site was not replaced by a jump");
+    const auto stub = 0x1000 + 5 + static_cast<std::int64_t>(read<std::int32_t>(output, 0x201));
+    const auto& relocation = converted.Trampolines[0].Relocations[0];
+    const auto bodyOffset = executableFileOffset(output, static_cast<std::uint64_t>(stub));
+    const auto operand = stub + static_cast<std::int64_t>(relocation.InstructionEnd) + read<std::int32_t>(output, bodyOffset + relocation.DisplacementOffset);
+    require(operand == 0x2040, "Relocated RIP-relative operand does not reach the original address");
 }
 
 }
@@ -912,19 +1055,24 @@ struct StubRun {
     std::uint64_t Rcx;
     std::uint64_t Flags;
     std::uint64_t Xmm[16][2];
+    std::uint64_t SiteAddress;
 };
 
-StubRun runStubBody(const Codegen::Amd64OnlyMatch& match, const std::uint64_t rax, const std::uint64_t (&xmmIn)[16][2]) {
+StubRun runStubBody(const Codegen::Amd64OnlyMatch& match, const std::uint64_t rax, const std::uint64_t (&xmmIn)[16][2], const Bytes& data = {}) {
     require(match.Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Stub was not produced");
     auto body = match.StubBody;
     const auto ret = body.size();
     body.push_back(0xC3);
     const auto displacement = static_cast<std::int32_t>(ret - (match.ReturnBranchOffset + 5));
     std::memcpy(body.data() + match.ReturnBranchOffset + 1, &displacement, sizeof(displacement));
-    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(body.size() <= 4096 && data.size() <= 4096, "Stub or its data does not fit in a page");
+    auto* code = static_cast<std::uint8_t*>(mmap(nullptr, 3 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     require(code != MAP_FAILED, "cannot map executable memory for the stub");
-    std::memcpy(code, body.data(), body.size());
     StubRun run{};
+    run.SiteAddress = reinterpret_cast<std::uint64_t>(code) + 4096;
+    Codegen::ApplyStubRelocations(std::span<std::uint8_t>(body).first(match.ReturnBranchOffset), match.Relocations, run.SiteAddress, reinterpret_cast<std::uint64_t>(code), 0);
+    std::memcpy(code, body.data(), body.size());
+    std::copy(data.begin(), data.end(), code + 2 * 4096);
     asm volatile(
         "movdqu 0x00(%[xmmIn]), %%xmm0\n\t"
         "movdqu 0x10(%[xmmIn]), %%xmm1\n\t"
@@ -972,7 +1120,7 @@ StubRun runStubBody(const Codegen::Amd64OnlyMatch& match, const std::uint64_t ra
         : [flags] "=&r"(run.Flags), [raxOut] "=&r"(run.Rax), [rcxOut] "=&r"(run.Rcx)
         : [xmmIn] "r"(xmmIn), [xmmOut] "r"(run.Xmm), [raxIn] "r"(rax), [code] "r"(code)
         : "rax", "rcx", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
-    munmap(code, 4096);
+    munmap(code, 3 * 4096);
     return run;
 }
 
@@ -1092,6 +1240,57 @@ void sha1Execution() {
         }
     }
 }
+
+void ripRelativeExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    std::uint64_t xmmIn[16][2];
+    for (unsigned reg = 0; reg < 16; ++reg) {
+        xmmIn[reg][0] = 0x9e3779b97f4a7c15ull * (reg + 1);
+        xmmIn[reg][1] = 0xc2b2ae3d27d4eb4full * (reg + 3);
+    }
+    const std::uint64_t words[2] = {0x510e527f9b05688cull, 0x1f83d9ab5be0cd19ull};
+    Bytes data(0x40, 0xA5);
+    std::memcpy(data.data() + 0x20, words, sizeof(words));
+    const std::uint64_t rax = 0x5A5A5A5A5A5A5A5Aull;
+    const auto unchanged = [&](const StubRun& run, const std::uint32_t changed, const char* message) {
+        for (unsigned reg = 0; reg < 16; ++reg)
+            if ((changed & (1u << reg)) == 0)
+                require(run.Xmm[reg][0] == xmmIn[reg][0] && run.Xmm[reg][1] == xmmIn[reg][1], message);
+        require(run.Rcx == 0x1122334455667788ull && (run.Flags & 0x8D5) == (0x8D7 & 0x8D5), message);
+    };
+    for (const std::uint8_t opcode : {std::uint8_t{0xCB}, std::uint8_t{0xCC}, std::uint8_t{0xCD}}) {
+        Bytes site = {0x0F, 0x38, opcode, 0x15, 0x00, 0x00, 0x00, 0x00};
+        write<std::int32_t>(site, 4, 4096 + 0x20 - 8);
+        const auto match = matcher->Match(site.data(), site.size());
+        require(match && match->Relocations.size() == 1, "SHA-256 RIP-relative stub was not produced");
+        const auto run = runStubBody(*match, rax, xmmIn, data);
+        require(std::array<std::uint64_t, 2>{run.Xmm[2][0], run.Xmm[2][1]} == sha256Reference(opcode, xmmIn[2], words, xmmIn[0]), "SHA-256 RIP-relative stub did not read the original operand");
+        require(run.Rax == rax, "SHA-256 RIP-relative stub changed rax");
+        unchanged(run, 1u << 2, "SHA-256 RIP-relative stub clobbered a register or RFLAGS");
+    }
+    Bytes rounds = {0x0F, 0x3A, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x00, 0x02};
+    write<std::int32_t>(rounds, 4, 4096 + 0x20 - 9);
+    const auto roundsMatch = matcher->Match(rounds.data(), rounds.size());
+    require(roundsMatch && roundsMatch->Relocations.size() == 1, "SHA1RNDS4 RIP-relative stub was not produced");
+    std::uint32_t x[4];
+    std::uint32_t y[4];
+    std::memcpy(x, xmmIn[2], sizeof(x));
+    std::memcpy(y, words, sizeof(y));
+    const auto expected = sha1Reference(Codegen::DecodeSha1(rounds.data(), rounds.size()), x, y);
+    const auto roundsRun = runStubBody(*roundsMatch, rax, xmmIn, data);
+    require(std::memcmp(roundsRun.Xmm[2], expected.data(), 16) == 0, "SHA1RNDS4 RIP-relative stub did not read the original operand");
+    unchanged(roundsRun, 1u << 2, "SHA1RNDS4 RIP-relative stub clobbered a register or RFLAGS");
+    const Bytes extrq = {0x66, 0x0F, 0x79, 0xCA};
+    Bytes followers = {0xF3, 0x0F, 0x6F, 0x1D, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00};
+    write<std::int32_t>(followers, 4, 4096 + 0x20 - 12);
+    write<std::int32_t>(followers, 11, 4096 + 0x30 - 19);
+    const auto moved = matcher->Match(extrq.data(), extrq.size(), followers);
+    require(moved && moved->Relocations.size() == 2, "EXTRQ with RIP-relative followers was not lowered with two relocations");
+    const auto movedRun = runStubBody(*moved, rax, xmmIn, data);
+    require(movedRun.Xmm[3][0] == words[0] && movedRun.Xmm[3][1] == words[1], "Moved RIP-relative MOVDQU did not load from the original address");
+    require(movedRun.Rax == movedRun.SiteAddress + 4096 + 0x30, "Moved RIP-relative LEA did not compute the original address");
+    unchanged(movedRun, (1u << 1) | (1u << 3), "Stub with moved RIP-relative instructions clobbered a register or RFLAGS");
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -1099,6 +1298,7 @@ void sha1Execution() {}
 void sha256Execution() {}
 void clzeroExecution() {}
 void immediateFormExecution() {}
+void ripRelativeExecution() {}
 #endif
 
 void scannerZeroTail() {
@@ -1113,6 +1313,7 @@ int main() {
     try {
         decoderLengths();
         decoderRipRelative();
+        decoderTwoByteOpcodeLengths();
         sse4aOperands();
         sha256Operands();
         sha1Operands();
@@ -1120,12 +1321,15 @@ int main() {
         reciprocalOperands();
         matcherSubstitutions();
         goldenBodies();
+        ripRelativeBodies();
+        stubRelocations();
         registerFormExecution();
         immediateFormExecution();
         sha256Execution();
         sha1Execution();
         clzeroExecution();
         reciprocalExecution();
+        ripRelativeExecution();
         converterSegment();
         converterRipRelativeFollower();
         converterSha256();
@@ -1135,8 +1339,10 @@ int main() {
         converterReciprocal();
         converterStrayRex();
         rewriterStrayRex();
+    rewriterReferenceSites();
         converterFailureOffsets();
         linuxPlacement();
+        linuxRipRelativePlacement();
         scannerZeroTail();
         std::cout << "AMD64-only converter tests passed\n";
     } catch (const std::exception& error) {

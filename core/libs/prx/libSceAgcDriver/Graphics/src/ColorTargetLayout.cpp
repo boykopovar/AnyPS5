@@ -27,6 +27,16 @@ std::uint32_t standardOffset(std::uint32_t x, std::uint32_t y, std::uint32_t ele
     }
 }
 
+std::uint32_t standard64Extra(std::uint32_t x, std::uint32_t y, std::uint32_t elementBytes) {
+    switch (elementBytes) {
+        case 1u: return ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^ ((y << 6) & 0x1000u) ^ ((y << 7) & 0x4000u);
+        case 2u: return ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^ ((y << 7) & 0x1000u) ^ ((y << 8) & 0x4000u);
+        case 4u: return ((x << 8) & 0x2000u) ^ ((x << 9) & 0x8000u) ^ ((y << 7) & 0x1000u) ^ ((y << 8) & 0x4000u);
+        case 8u: return ((x << 8) & 0x2000u) ^ ((x << 9) & 0x8000u) ^ ((y << 8) & 0x1000u) ^ ((y << 9) & 0x4000u);
+        default: return ((x << 9) & 0x2000u) ^ ((x << 10) & 0x8000u) ^ ((y << 8) & 0x1000u) ^ ((y << 9) & 0x4000u);
+    }
+}
+
 }
 
 ColorTileMode DecodeColorTileMode(std::uint32_t attrib3) {
@@ -35,7 +45,7 @@ ColorTileMode DecodeColorTileMode(std::uint32_t attrib3) {
     const auto mode = (attrib3 >> 14u) & 0x1fu;
     const auto fmaskMode = (attrib3 >> 19u) & 0x1fu;
     require(fmaskMode == 0 || fmaskMode == 0x18, "AGC graphics: unsupported color FMASK swizzle mode");
-    require(mode == 0 || mode == 5 || mode == 0x1b, "AGC graphics: unsupported color tile mode");
+    require(mode == 0 || mode == 5 || mode == 9 || mode == 0x1b, "AGC graphics: unsupported color tile mode");
     return static_cast<ColorTileMode>(mode);
 }
 
@@ -70,18 +80,18 @@ const SwizzleTables& renderTargetTables(std::uint32_t bytesPerElement, std::uint
     return tables[index];
 }
 
-const SwizzleTables& standardTables(std::uint32_t bytesPerElement, std::uint32_t blockWidth, std::uint32_t blockHeight) {
-    static std::once_flag once[5];
-    static SwizzleTables tables[5];
+const SwizzleTables& standardTables(std::uint32_t bytesPerElement, std::uint32_t blockWidth, std::uint32_t blockHeight, bool block64KB) {
+    static std::once_flag once[2][5];
+    static SwizzleTables tables[2][5];
     const auto index = static_cast<std::size_t>(std::countr_zero(bytesPerElement));
-    std::call_once(once[index], [&] {
-        auto& table = tables[index];
+    std::call_once(once[block64KB][index], [&] {
+        auto& table = tables[block64KB][index];
         table.x.resize(blockWidth);
         table.y.resize(blockHeight);
-        for (std::uint32_t x = 0; x < blockWidth; ++x) table.x[x] = standardOffset(x, 0, bytesPerElement);
-        for (std::uint32_t y = 0; y < blockHeight; ++y) table.y[y] = standardOffset(0, y, bytesPerElement);
+        for (std::uint32_t x = 0; x < blockWidth; ++x) table.x[x] = standardOffset(x, 0, bytesPerElement) ^ (block64KB ? standard64Extra(x, 0, bytesPerElement) : 0u);
+        for (std::uint32_t y = 0; y < blockHeight; ++y) table.y[y] = standardOffset(0, y, bytesPerElement) ^ (block64KB ? standard64Extra(0, y, bytesPerElement) : 0u);
     });
-    return tables[index];
+    return tables[block64KB][index];
 }
 
 }
@@ -108,13 +118,16 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             yOffsets = tables.y.data();
             break;
         }
-        case ColorTileMode::Standard4KB: {
+        case ColorTileMode::Standard4KB:
+        case ColorTileMode::Standard64KB: {
             const auto log2Bytes = static_cast<std::uint32_t>(std::countr_zero(bytesPerElement));
-            blockWidth = 1u << (6u - (log2Bytes + 1u) / 2u);
-            blockHeight = 1u << (6u - log2Bytes / 2u);
+            const bool block64KB = mode == ColorTileMode::Standard64KB;
+            const auto log2Side = block64KB ? 8u : 6u;
+            blockWidth = 1u << (log2Side - log2Bytes / 2u);
+            blockHeight = 1u << (log2Side - (log2Bytes + 1u) / 2u);
             pitch = (width + blockWidth - 1u) / blockWidth * blockWidth;
             paddedHeight = (height + blockHeight - 1u) / blockHeight * blockHeight;
-            const auto& tables = standardTables(bytesPerElement, blockWidth, blockHeight);
+            const auto& tables = standardTables(bytesPerElement, blockWidth, blockHeight, block64KB);
             xOffsets = tables.x.data();
             yOffsets = tables.y.data();
             break;

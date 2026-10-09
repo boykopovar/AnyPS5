@@ -74,7 +74,8 @@ ElfHeader ElfReader::ReadHeader() const {
         throw RelinkerException("File too small for ELF header");
     }
 
-    if (_fileBuffer[0] == 0x4f && _fileBuffer[1] == 0x15 && _fileBuffer[2] == 0x3d && _fileBuffer[3] == 0x1d) {
+    const std::uint32_t magic = _readU32At(0);
+    if (magic == 0x1d3d154f || magic == 0xeef51454) {
         throw RelinkerException("The input is a SELF container, not an ELF");
     }
 
@@ -102,6 +103,9 @@ ElfHeader ElfReader::ReadHeader() const {
 
 std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     const ElfHeader header = ReadHeader();
+    if (header.ProgramHeaderCount != 0 && header.ProgramHeaderEntrySize != 56) {
+        throw RelinkerException("Invalid ELF program header entry size: expected 56 bytes", 0x36);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;

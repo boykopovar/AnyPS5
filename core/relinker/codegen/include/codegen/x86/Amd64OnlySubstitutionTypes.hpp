@@ -15,6 +15,12 @@ enum class Amd64OnlyLowering : std::uint8_t {
     Kept
 };
 
+struct StubRelocation {
+    std::size_t DisplacementOffset;
+    std::size_t InstructionEnd;
+    std::int64_t SiteTarget;
+};
+
 struct Amd64OnlyMatch {
     std::string InstructionName;
     std::size_t Length;
@@ -23,6 +29,7 @@ struct Amd64OnlyMatch {
     std::vector<std::uint8_t> StubBody;
     std::size_t ReturnBranchOffset;
     bool Optional = false;
+    std::vector<StubRelocation> Relocations = {};
 };
 
 struct Amd64OnlySubstitutionReport {

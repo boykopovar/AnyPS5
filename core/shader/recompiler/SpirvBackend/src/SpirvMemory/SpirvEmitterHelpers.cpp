@@ -1,4 +1,6 @@
+#include "Optimization/ResourceMaterializer.hpp"
 #include "BdaAbi.hpp"
+#include "PipelineSpecialization.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
@@ -124,66 +126,13 @@ std::uint32_t PushConstantBlockType(SpirvEmitterState& state) {
 
 }
 
-void CheckBindings(const IrProgram& program, const BindingAllocationResult& bindings) {
+void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindings) {
     const IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.bindingLayoutComplete) {
         FailEmit("shader binding layout has not been allocated for this program");
     }
     if (!(bindings.layout == metadata.bindings)) {
         FailEmit("binding allocation result does not match the program's committed binding layout");
-    }
-    if (bindings.bindings.size() != bindings.layout.descriptors.size()) {
-        FailEmit("binding allocation result has a different descriptor count than the binding layout");
-    }
-    const IrShaderStage stage = program.Resources().stage;
-    for (std::size_t index = 0; index < bindings.layout.descriptors.size(); index++) {
-        const IrDescriptorBinding& logical = bindings.layout.descriptors[index];
-        const DescriptorBinding& physical = bindings.bindings[index];
-        const std::uint32_t expectedCount = logical.resources.empty() ? 1u : static_cast<std::uint32_t>(logical.resources.size());
-        if (physical.count != expectedCount) {
-            FailEmit("descriptor binding " + std::to_string(index) + " has an incorrect descriptor count");
-        }
-        if (physical.descriptorSet != 0u) {
-            FailEmit("descriptor binding " + std::to_string(index) + " is bound to the wrong descriptor set");
-        }
-        if (physical.binding != NativeBinding(stage, logical.kind)) {
-            FailEmit("descriptor binding " + std::to_string(index) + " is bound to the wrong native binding slot");
-        }
-        DescriptorKind expectedKind = DescriptorKind::StorageBuffer;
-        DescriptorRole expectedRole = DescriptorRole::GuestBuffers;
-        if (logical.kind == DescriptorBindingKind::Samplers) {
-            expectedKind = DescriptorKind::Sampler;
-            expectedRole = DescriptorRole::GuestSamplers;
-        } else if (logical.kind == DescriptorBindingKind::Gds) {
-            expectedRole = DescriptorRole::Gds;
-        } else if (logical.kind == DescriptorBindingKind::BdaPagetable) {
-            expectedRole = DescriptorRole::BdaPagetable;
-        } else if (logical.kind == DescriptorBindingKind::FaultBuffer) {
-            expectedRole = DescriptorRole::FaultBuffer;
-        } else if (logical.kind == DescriptorBindingKind::FlattenedSrt) {
-            expectedRole = DescriptorRole::FlattenedSrt;
-        } else if (logical.kind == DescriptorBindingKind::ShaderData) {
-            expectedRole = DescriptorRole::ShaderData;
-        } else {
-            const auto imageClass = ImageBindingResourceClass(logical.kind);
-            if (imageClass == ImageResourceClass::Sampled) {
-                expectedKind = DescriptorKind::SampledImage;
-                expectedRole = DescriptorRole::GuestImages;
-            } else if (imageClass == ImageResourceClass::Storage) {
-                expectedKind = DescriptorKind::StorageImage;
-                expectedRole = DescriptorRole::GuestImages;
-            } else if (logical.kind == DescriptorBindingKind::Buffers) {
-                expectedRole = DescriptorRole::GuestBuffers;
-            } else {
-                FailEmit("descriptor binding " + std::to_string(index) + " has an unmapped binding kind");
-            }
-        }
-        if (physical.kind != expectedKind) {
-            FailEmit("descriptor binding " + std::to_string(index) + " has an incorrect descriptor kind");
-        }
-        if (physical.role != expectedRole) {
-            FailEmit("descriptor binding " + std::to_string(index) + " has an incorrect descriptor role");
-        }
     }
 }
 
@@ -393,7 +342,10 @@ void DefineDescriptors(SpirvEmitterState& state) {
             return variable;
         };
         const auto ArrayType = [&](std::uint32_t type) {
-            return state.module.Type(spv::OpTypeArray, type, ConstantU32(state, static_cast<std::uint32_t>(binding.resources.size())));
+            const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
+            const auto count = static_cast<std::uint32_t>(binding.resources.size());
+            const auto length = heap ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
+            return state.module.Type(spv::OpTypeArray, type, length);
         };
         switch (binding.kind) {
         case DescriptorBindingKind::Buffers:
@@ -430,7 +382,10 @@ void DefineDescriptors(SpirvEmitterState& state) {
             if (ImageBindingResourceClass(binding.kind) == ImageResourceClass::None) {
                 FailEmit("descriptor binding has an unmapped image resource class");
             }
-            const ImageResource& image = state.program.Info().images.at(binding.resources.front());
+            const auto modes = ResourceMaterializer::RuntimeImageModes(state.program.Info().images.at(binding.resources.front()));
+            const auto selected = std::ranges::find_if(modes, [&](const ImageResource& mode) { return DescriptorBindingForImage(mode) == binding.kind; });
+            if (selected == modes.end()) FailEmit("static image heap has no runtime mode");
+            const auto& image = *selected;
             const auto name = "image_" + std::to_string(static_cast<std::uint32_t>(binding.kind));
             state.imageVariables.at(ImageBindingIndex(binding.kind)) = Define(ArrayType(ImageType(state, image)), name.c_str(), spv::StorageClassUniformConstant);
             if (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray) {

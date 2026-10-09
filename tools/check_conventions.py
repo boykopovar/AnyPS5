@@ -1,8 +1,10 @@
 import argparse
 import json
 import os
+import posixpath
 import re
 import subprocess
+import sys
 from collections import defaultdict
 from pathlib import PurePosixPath
 
@@ -114,7 +116,7 @@ class Check:
         if not exports:
             return
         pattern = r"\bAPS5_VABI\s+(" + "|".join(exports) + r")\s*\("
-        result = subprocess.run(["git", "grep", "-nE", pattern, self.head, "--", "core/libs/prx"], capture_output=True, text=True)
+        result = subprocess.run(["git", "grep", "-nE", pattern, self.head, "--", "core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
         for line in result.stdout.splitlines():
             _, path, _, text = line.split(":", 3)
             name = EXPORT.search(text).group(1)
@@ -186,7 +188,7 @@ def links(path, text):
         if re.match(r"[a-z]+:|#", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
-        result.append((target, os.path.normpath(target.lstrip("/") if target.startswith("/") else str(PurePosixPath(path).parent / target))))
+        result.append((target, posixpath.normpath(target.lstrip("/") if target.startswith("/") else str(PurePosixPath(path).parent / target))))
     return result
 
 
@@ -244,7 +246,7 @@ def output(check, repo):
         rows.append(f"| {level} | [{rule}](https://github.com/{repo}/blob/main/{doc}) | {where} | {cell} |")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
-        with open(summary, "a") as out:
+        with open(summary, "a", encoding="utf-8") as out:
             if rows:
                 out.write("| Level | Rule | Where | What |\n|---|---|---|---|\n" + "\n".join(rows) + "\n")
             else:
@@ -255,6 +257,10 @@ def output(check, repo):
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="check a branch against the contributing rules; errors fail the check")
     parser.add_argument("--base", default="origin/main", help="branch the pull request targets (default: origin/main)")
     parser.add_argument("--head", default="HEAD")
@@ -268,9 +274,9 @@ if __name__ == "__main__":
     check.repository()
     check.docs()
     check.commits()
-    pr = json.load(open(args.event)).get("pull_request") if args.event else None
+    pr = json.load(open(args.event, encoding="utf-8")).get("pull_request") if args.event else None
     if pr:
         check.pull_request(pr["title"], pr["body"])
     elif args.title is not None or args.body:
-        check.pull_request(args.title or "", open(args.body).read() if args.body else "")
+        check.pull_request(args.title or "", open(args.body, encoding="utf-8").read() if args.body else "")
     raise SystemExit(output(check, os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")))

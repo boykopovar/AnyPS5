@@ -3,15 +3,25 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <mutex>
 
 // PSN is not emulated: the user is reported as signed out and online queries fail.
 static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
+static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
+static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
+static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
 
 static std::atomic<int> g_nextRequest{1};
+
+namespace {
+std::mutex reachabilityMutex;
+void* reachabilityCallback = nullptr;
+void* reachabilityUserdata = nullptr;
+}
 
 extern "C" {
 
@@ -24,12 +34,10 @@ int APS5_VABI sceNpCheckCallback(void) {
     return 0;
 }
 
-int APS5_VABI sceNpCheckNpAvailability(int req_id, const char* user, void* result) {
+int APS5_VABI sceNpCheckNpAvailability(int req_id, const NpOnlineId* online_id) {
  (void)req_id;
- (void)user;
- (void)result;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+ return SCE_NP_ERROR_USER_NOT_FOUND;
 }
 
 int APS5_VABI sceNpCheckNpReachability(int req_id, int user_id) {
@@ -124,8 +132,19 @@ void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata)
 }
 
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
-    (void)userdata;
     if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(reachabilityMutex);
+    if (reachabilityCallback) return SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED;
+    reachabilityCallback = callback;
+    reachabilityUserdata = userdata;
+    return 0;
+}
+
+int APS5_VABI sceNpUnregisterNpReachabilityStateCallback(void) {
+    std::lock_guard lock(reachabilityMutex);
+    if (!reachabilityCallback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
+    reachabilityCallback = nullptr;
+    reachabilityUserdata = nullptr;
     return 0;
 }
 

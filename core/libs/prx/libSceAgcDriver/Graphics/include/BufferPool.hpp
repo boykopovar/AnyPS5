@@ -55,7 +55,8 @@ public:
     BufferPool(const BufferPool&) = delete;
     BufferPool& operator=(const BufferPool&) = delete;
     // The size a buffer for `bytes` is created with: its size class, or `bytes` itself when large.
-    static std::size_t Capacity(std::size_t bytes);
+    static std::size_t Capacity(std::size_t bytes, VkMemoryPropertyFlags properties);
+    static VkBufferUsageFlags Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void Put(const BufferAllocation& allocation) noexcept;
 
@@ -92,6 +93,8 @@ private:
     Tier& tierFor(std::size_t capacity, VkMemoryPropertyFlags properties);
     // The device tier's budget (APS5_STAGING_POOL_MIB), read once.
     static VkDeviceSize DeviceBudget();
+    static bool DeviceTiered(VkMemoryPropertyFlags properties);
+    static std::size_t NextCapacity(std::size_t capacity);
     void destroy(const BufferAllocation& allocation) noexcept;
     // Moves the tier's least recently used slot (the oldest front of its lists) to `evicted`; the
     // caller destroys those after releasing the mutex, so builds taking buffers on other threads
@@ -116,6 +119,7 @@ private:
     static constexpr VkDeviceSize smallBudget = 64ull * 1024 * 1024;
     // Requests of this size and more keep their exact size and go to the large tier.
     static constexpr std::size_t classLimit = std::size_t{1} << 20u;
+    static constexpr unsigned deviceClassBits = 3;
     static constexpr std::size_t defaultSlots = 4096;
 };
 

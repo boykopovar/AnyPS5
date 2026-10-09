@@ -93,6 +93,11 @@ static void CheckSscanfS() {
     Require(sscanf_s_nid_postfix(" 12 abc x", "%d %s %c", &number, word, 4u, &letter, 1u) == 3 && number == 12 && std::strcmp(word, "abc") == 0 && letter == 'x');
     Require(sscanf_s_nid_postfix("12 abcd", "%d %s", &number, word, 4u) == 1 && word[0] == '\0');
     Require(sscanf_s_nid_postfix("key=val", "%3[a-z]=%3s", word, 4u, value, 8u) == 2 && std::strcmp(word, "key") == 0 && std::strcmp(value, "val") == 0);
+    Require(sscanf_s_nid_postfix("abcdef", "%3s", word, 4u) == 1 && std::strcmp(word, "abc") == 0);
+    Require(sscanf_s_nid_postfix("abcdef", "%3s", value, 8u) == 1 && std::strcmp(value, "abc") == 0);
+    Require(sscanf_s_nid_postfix("abcdef", "%3[a-z]", value, 8u) == 1 && std::strcmp(value, "abc") == 0);
+    Require(sscanf_s_nid_postfix("2024ABCD 7", "%4s%s", word, 4u, value, 8u) == 0 && word[0] == '\0');
+    Require(sscanf_s_nid_postfix("2024ABCD", "%3s%4s", word, 4u, value, 8u) == 2 && std::strcmp(word, "202") == 0 && std::strcmp(value, "4ABC") == 0);
     int position = 0;
     Require(sscanf_s_nid_postfix("7 %", "%d %%%n", &number, &position) == 1 && position == 3);
     Require(sscanf_s_nid_postfix("   ", "%d", &number) == EOF);

@@ -26,6 +26,7 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
         writeF64Result(inst.destination, *result);
         return true;
     }
+    rejectHalfOrDoubleOutputModifier(inst.destination);
     RdnaOperand destination = inst.destination;
     destination.omod = 0u;
     writeOperand(destination, result);
@@ -33,10 +34,12 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
 }
 
 void TranslationContext::writeF64Result(const RdnaOperand& operand, IrValue& value) {
+    rejectHalfOrDoubleOutputModifier(operand);
     RdnaOperand destination = operand;
     destination.omod = 0u;
     IrValue* result = &value;
     if (destination.clamp) {
+        if (!dx10Clamp()) throw std::runtime_error("clamp on an f64 result with DX10_CLAMP=0 is not implemented");
         result = &ir.Emit(IrOpcode::FPSaturate64, IrType::U64, {result});
     }
     writeOperand(destination, result);

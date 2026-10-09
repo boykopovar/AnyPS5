@@ -5,27 +5,38 @@
 
 namespace AgcDriver::DriverDetail {
 
-std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Submission& submission) {
+namespace {
+
+std::uint32_t ReadGraphicsRegister(const Registers& registers, std::uint32_t offset) {
+    const auto found = registers.find(offset);
+    return found == registers.end() ? 0u : found->second;
+}
+
+}
+
+void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const ShaderRegistry& registry, bool staticAbi, bool includeFragment) {
     using Stage = ShaderRecompiler::ShaderStage;
     using Role = ShaderRecompiler::ProgramRole;
     const auto programAddress = [&](std::uint32_t base) {
         Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, base);
         Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, base + 1);
-        const auto high = readRegister(queue.shader, base + 1);
+        const auto high = ReadGraphicsRegister(queue.shader, base + 1);
         require((high & ~0xffu) == 0, "reserved graphics program address bits are set");
-        return (static_cast<std::uint64_t>(readRegister(queue.shader, base)) << 8u) | (static_cast<std::uint64_t>(high) << 40u);
+        return (static_cast<std::uint64_t>(ReadGraphicsRegister(queue.shader, base)) << 8u) | (static_cast<std::uint64_t>(high) << 40u);
     };
+    const bool pixelSkipped = Graphics::PixelProgramSkipped(queue);
     const auto prepare = [&](std::uint64_t address, std::uint8_t type, Stage stage, std::uint32_t rsrc2, std::uint32_t userDataBase) {
-        const bool nullPixel = address == 0 && stage == Stage::Fragment;
+        const bool nullPixel = stage == Stage::Fragment && (address == 0 || pixelSkipped);
         if (nullPixel) address = NullPixelProgramAddress();
-        auto it = submission.shaders->upper_bound(address);
-        require(it != submission.shaders->begin(), "graphics program does not belong to a registered shader");
+        auto it = registry.upper_bound(address);
+        require(it != registry.begin(), "graphics program does not belong to a registered shader");
         --it;
         const auto& snapshot = *it->second;
         require(address - snapshot.codeAddress < snapshot.code.size() * sizeof(std::uint32_t), "graphics program is outside registered shader code");
+        require((address - snapshot.codeAddress) % sizeof(std::uint32_t) == 0, "graphics entry point is not dword aligned");
         require(snapshot.type == type, "graphics program refers to an incompatible shader binary type");
         Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, rsrc2);
-        const auto resources = nullPixel && !queue.shader.contains(rsrc2) ? 0u : readRegister(queue.shader, rsrc2);
+        const auto resources = nullPixel && !queue.shader.contains(rsrc2) ? 0u : ReadGraphicsRegister(queue.shader, rsrc2);
         const auto userCount = ((resources >> 1u) & 0x1fu) | (((resources >> 27u) & 1u) << 5u);
         require(userCount <= 32, "graphics user SGPR count exceeds the register bank");
         const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
@@ -40,13 +51,12 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         };
         for (std::uint32_t i = 0; i < userCount; ++i) {
             Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, userDataBase + i);
-            result.userData.push_back(readUserData(queue.shader, userDataBase + i));
+            result.userData.push_back((staticAbi ? ReadGraphicsRegister(queue.shader, userDataBase + i) : readUserData(queue.shader, userDataBase + i)));
         }
         return result;
     };
     {
-        auto product = std::make_shared<DrawDecode>();
-        product->state = Graphics::DecodeState(queue);
+        auto* product = &decoded;
         auto& programs = product->programs;
         auto& roles = product->roles;
         programs.reserve(5);
@@ -60,9 +70,10 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
             program.userData.insert(program.userData.begin(), 8, 0);
             Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, pointerBase);
             Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, pointerBase + 1);
+            if (staticAbi) return;
             if (!pointerRequired && !queue.shader.contains(pointerBase) && !queue.shader.contains(pointerBase + 1)) return;
-            const auto low = readRegister(queue.shader, pointerBase);
-            const auto high = readRegister(queue.shader, pointerBase + 1);
+            const auto low = ReadGraphicsRegister(queue.shader, pointerBase);
+            const auto high = ReadGraphicsRegister(queue.shader, pointerBase + 1);
             const auto address = static_cast<std::uint64_t>(low) | (static_cast<std::uint64_t>(high) << 32u);
             require(address != 0 || !pointerRequired, "merged shader user-data address is null");
             if (address == 0) return;
@@ -78,8 +89,8 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
             append(0x0c8, 2, Stage::TessellationEvaluation, 0x08b, 0x08c, Role::Domain);
         } else if (graphics.stages.path == Graphics::ShaderPath::Geometry) {
             const auto frontAddress = programAddress(0xc8);
-            auto snapshot = submission.shaders->upper_bound(frontAddress);
-            require(snapshot != submission.shaders->begin(), "geometry front program is not registered");
+            auto snapshot = registry.upper_bound(frontAddress);
+            require(snapshot != registry.begin(), "geometry front program is not registered");
             --snapshot;
             const auto type = snapshot->second->type;
             require(type == 2 || type == 4, "invalid geometry front binary type");
@@ -89,16 +100,23 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
         } else {
             append(0xc8, 2, Stage::Vertex, 0x8b, 0x8c, Role::Main);
         }
-        const bool nullPixel = Graphics::PixelProgramUnset(queue);
-        if (nullPixel) {
-            const auto rejection = Graphics::NullPixelProgramRejection(queue);
-            require(rejection.empty(), rejection.c_str());
+        if (includeFragment) {
+            if (pixelSkipped) {
+                const auto rejection = Graphics::NullPixelProgramRejection(queue);
+                require(rejection.empty(), rejection.c_str());
+            }
+            append(0x008, 1, Stage::Fragment, 0x00b, 0x00c, Role::Fragment);
+            programs.back().firstUserSgpr = 0;
         }
-        append(0x008, 1, Stage::Fragment, 0x00b, 0x00c, Role::Fragment);
-        programs.back().firstUserSgpr = 0;
-        product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(graphics), nullPixel);
-        return product;
     }
+}
+
+std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Submission& submission) {
+    auto product = std::make_shared<DrawDecode>();
+    product->state = Graphics::DecodeState(queue);
+    DecodeGraphicsPrograms(*product, queue, *submission.shaders, false, true);
+    product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue));
+    return product;
 }
 
 void Driver::resolveDrawDecode(const QueueState& queue, const Submission& submission, std::shared_ptr<const DrawDecode>& decode, bool registerKey, std::uint64_t drawKey, bool profile) {

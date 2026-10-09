@@ -2,6 +2,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 #include <stdexcept>
 #include <thread>
 extern "C" {
@@ -13,6 +16,9 @@ int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void*);
 int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void*);
 }
 static void Require(bool value) { if (!value) std::abort(); }
+#ifndef _WIN32
+extern "C" int APS5_VABI GuestDefaultScopeOnly(int a, int b) { return a * b; }
+#endif
 template<typename TFunction>
 static bool ThrowsRuntimeError(TFunction function) {
     try {
@@ -38,6 +44,7 @@ int main(int argc, char** argv) {
     auto add = reinterpret_cast<Add>(dlsym_nid_postfix(module, "GuestModuleAdd"));
     Require(add && add(17, 25) == 42);
     Require(dlsym_nid_postfix(reinterpret_cast<void*>(-2), "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    Require(dlsym_nid_postfix(nullptr, "GuestModuleAdd") == reinterpret_cast<void*>(add));
 #ifndef _WIN32
     auto mul = reinterpret_cast<Add>(dlsym_nid_postfix(module, "GuestModuleMul"));
     Require(mul && mul(6, 7) == 42);
@@ -88,4 +95,20 @@ int main(int argc, char** argv) {
     Require(ThrowsRuntimeError([] { _sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&Require)); }));
     int local = 0;
     Require(ThrowsRuntimeError([&] { _sceKernelRtldThreadAtexitIncrement_nid_postfix(&local); }));
+#ifndef _WIN32
+    Require(dlsym_nid_postfix(nullptr, "malloc") == nullptr);
+    Require(dlsym_nid_postfix(nullptr, "dlopen") == nullptr);
+    Require(dlsym_nid_postfix(nullptr, "pthread_create") == nullptr);
+    Require(dlsym_nid_postfix(nullptr, "GuestDefaultScopeOnly") == reinterpret_cast<void*>(&GuestDefaultScopeOnly));
+    Require(dlsym_nid_postfix(reinterpret_cast<void*>(-2), "GuestDefaultScopeOnly") == reinterpret_cast<void*>(&GuestDefaultScopeOnly));
+    const auto hostLoaded = std::filesystem::absolute("anyps5-host-loaded-module-for-test.prx");
+    std::filesystem::copy_file(argv[1], hostLoaded, std::filesystem::copy_options::overwrite_existing);
+    void* host = ::dlopen(hostLoaded.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    Require(host != nullptr);
+    void* hostAdd = ::dlsym(host, "3qcG+yBRS+s");
+    Require(hostAdd != nullptr);
+    Require(dlsym_nid_postfix(nullptr, "GuestModuleAdd") == hostAdd);
+    Require(dlsym_nid_postfix(nullptr, "malloc") == nullptr);
+    Require(::dlclose(host) == 0);
+#endif
 }

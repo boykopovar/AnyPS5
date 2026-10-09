@@ -47,6 +47,10 @@ probe:
   .amdhsa_float_denorm_mode_32 @DENORM@
   .amdhsa_float_denorm_mode_16_64 @DENORM16@
   .amdhsa_ieee_mode @IEEE@
+  .amdhsa_dx10_clamp @DX10_CLAMP@
+  .amdhsa_float_round_mode_32 @ROUND32@
+  .amdhsa_float_round_mode_16_64 @ROUND16@
+  .amdhsa_fp16_overflow @FP16_OVERFLOW@
 .end_amdhsa_kernel
 
 .amdgpu_metadata

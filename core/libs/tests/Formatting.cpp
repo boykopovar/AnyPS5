@@ -8,6 +8,7 @@ int APS5_VABI snprintf_nid_postfix(char*, size_t, const char*, ...);
 int APS5_VABI sprintf_nid_postfix(char*, const char*, ...);
 int APS5_VABI printf_nid_postfix(const char*, ...);
 int APS5_VABI libc_printf_nid_postfix(const char*, ...);
+int APS5_VABI sscanf_nid_postfix(const char*, const char*, ...);
 int APS5_VABI vsnprintf_nid_postfix(char*, size_t, const char*, VaList*);
 int APS5_VABI vprintf_nid_postfix(const char*, VaList*);
 }
@@ -38,6 +39,7 @@ static int APS5_VABI PrintList(const char* format, ...) {
     return result;
 }
 
+#ifdef _WIN32
 static bool CheckWidePrecision() {
     const char16_t input[] = u"A\u00e9\u20ac\U0001f600Z";
     const char* expected[] = {"", "A", "A", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9\xe2\x82\xac",
@@ -65,6 +67,7 @@ static bool CheckWidePrecision() {
     Require(snprintf_nid_postfix(output, sizeof(output), "%.1s", "\xc3\xa9") == 1 && static_cast<unsigned char>(output[0]) == 0xc3 && output[1] == 0);
     return correct;
 }
+#endif
 
 __attribute__((noinline)) static void APS5_VABI RunChecks() {
     char buffer[1024];
@@ -101,6 +104,15 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(snprintf_nid_postfix(buffer, 1, "%d", 123) == 3 && buffer[0] == 0);
     Require(sprintf_nid_postfix(buffer, "%hhd %hhu %hd %hu %%", 255, 257, 65535, 65537) == 11);
     Require(std::strcmp(buffer, "-1 1 -1 1 %") == 0);
+    Require(sprintf_nid_postfix(buffer, "%d %d %d %d %d %d", 1, 2, 3, 4, 5, 6) == 11);
+    Require(std::strcmp(buffer, "1 2 3 4 5 6") == 0);
+    int first = 0, second = 0, third = 0, fourth = 0, fifth = 0, sixth = 0;
+    char word[16] = {};
+    double real = 0.0;
+    Require(sscanf_nid_postfix("1 2 3 4 5 6 seven 8.5", "%d %d %d %d %d %d %15s %lf",
+        &first, &second, &third, &fourth, &fifth, &sixth, word, &real) == 8);
+    Require(first == 1 && second == 2 && third == 3 && fourth == 4 && fifth == 5 && sixth == 6);
+    Require(std::strcmp(word, "seven") == 0 && real == 8.5);
     long long count = -1;
     int smallCount = -1;
     Require(snprintf_nid_postfix(buffer, 3, "abcd%lnEF%n", &count, &smallCount) == 6);
@@ -109,8 +121,13 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(buffer[0] == 'a' && buffer[1] == 0 && buffer[2] == 'b' && buffer[3] == 0);
     Require(printf_nid_postfix("printf: %d %.1f\n", 7, 2.5) == 14);
     Require(libc_printf_nid_postfix("libc_printf: %s\n", "OK") == 16);
+    Require(libc_printf_nid_postfix("%d %d %d %d %d %d %d\n", 1, 22, 333, 4444, 55555, 666666, 7777777) == 35);
     Require(PrintList("vprintf: %d\n", 42) == 12);
     std::puts("Formatting checks passed: 10000 iterations");
 }
 
+#ifdef _WIN32
 int main() { RunChecks(); return CheckWidePrecision() ? 0 : 1; }
+#else
+int main() { RunChecks(); }
+#endif

@@ -40,18 +40,6 @@ struct ShaderBufferResource {
     [[nodiscard]] std::uint8_t Type() const { return (fields[3] >> 30u) & 0x3u; }
 };
 
-struct ShaderColorComponentMapping {
-    static constexpr std::uint8_t Identity = 0xe4u;
-    std::uint8_t packed = Identity;
-
-    [[nodiscard]] std::uint32_t Map(std::uint32_t component) const {
-        return (packed >> (component * 2u)) & 0x3u;
-    }
-    [[nodiscard]] bool IsIdentity() const {
-        return packed == Identity;
-    }
-};
-
 struct ShaderVertexInputBuffer {
     static constexpr int MaxAttributes = 32;
 
@@ -169,7 +157,6 @@ struct ShaderPixelInputInfo {
         return vgprs;
     }();
     std::uint8_t targetOutputMode[8] = {};
-    std::array<ShaderColorComponentMapping, 8> targetExportMapping = {};
     std::uint32_t scratchSizeDwords = 0;
     bool psPosX = false;
     bool psPosY = false;
@@ -185,6 +172,7 @@ struct ShaderPixelInputInfo {
     bool psEarlyZ = false;
     bool psExecuteOnNoop = false;
     ConservativeZExport psConservativeZExport = ConservativeZExport::AnyZ;
+    bool psOrderedPixelShader = false;
     ShaderStageRuntime stage;
 
     bool HasPositionInput() const {
@@ -209,6 +197,26 @@ struct ShaderPixelInputInfo {
 
     [[nodiscard]] std::uint32_t InputDefaultBits(std::uint32_t input, std::uint32_t component) const {
         const auto value = input < 32u ? (interpolatorSettings[input] >> 8u) & 0x3u : 0u;
+        const bool one = component == 3u ? (value & 0x1u) != 0u : (value & 0x2u) != 0u;
+        return one ? 0x3f800000u : 0u;
+    }
+
+    [[nodiscard]] bool InputIsFp16(std::uint32_t input) const {
+        return input < inputNum && input < 32u && (interpolatorSettings[input] & 0x80000u) != 0u;
+    }
+
+    [[nodiscard]] bool InputHalfIsDefault(std::uint32_t input, bool high) const {
+        if (!high) {
+            return InputIsDefault(input);
+        }
+        return input < inputNum && input < 32u && (interpolatorSettings[input] & 0x100000u) != 0u;
+    }
+
+    [[nodiscard]] std::uint32_t InputHalfDefaultBits(std::uint32_t input, std::uint32_t component, bool high) const {
+        if (!high) {
+            return InputDefaultBits(input, component);
+        }
+        const auto value = input < 32u ? (interpolatorSettings[input] >> 21u) & 0x3u : 0u;
         const bool one = component == 3u ? (value & 0x1u) != 0u : (value & 0x2u) != 0u;
         return one ? 0x3f800000u : 0u;
     }

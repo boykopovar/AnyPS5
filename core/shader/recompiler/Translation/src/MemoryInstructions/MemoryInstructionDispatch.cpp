@@ -5,6 +5,22 @@
 
 namespace ShaderRecompiler {
 
+namespace {
+
+const char* globalWaveSyncName(RdnaOpcode opcode) {
+    switch (opcode) {
+    case RdnaOpcode::DsGwsInit: return "ds_gws_init";
+    case RdnaOpcode::DsGwsSemaV: return "ds_gws_sema_v";
+    case RdnaOpcode::DsGwsSemaBr: return "ds_gws_sema_br";
+    case RdnaOpcode::DsGwsSemaP: return "ds_gws_sema_p";
+    case RdnaOpcode::DsGwsSemaReleaseAll: return "ds_gws_sema_release_all";
+    case RdnaOpcode::DsGwsBarrier: return "ds_gws_barrier";
+    default: throw std::logic_error("opcode is not a global wave sync instruction");
+    }
+}
+
+}
+
 void TranslateMemoryInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
     throw std::runtime_error("TranslateMemoryInstruction not implemented");
 }
@@ -323,6 +339,36 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsAtomic(inst, IrOpcode::SharedAtomicXor32, false);
     case RdnaOpcode::DsXorRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicXor32, true);
+    case RdnaOpcode::DsAddSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicIAdd32);
+    case RdnaOpcode::DsSubSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicISub32);
+    case RdnaOpcode::DsRsubSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicRsub32);
+    case RdnaOpcode::DsIncSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicInc32);
+    case RdnaOpcode::DsDecSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicDec32);
+    case RdnaOpcode::DsMinSrc2I32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMin32);
+    case RdnaOpcode::DsMaxSrc2I32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicSMax32);
+    case RdnaOpcode::DsMinSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMin32);
+    case RdnaOpcode::DsMaxSrc2U32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicUMax32);
+    case RdnaOpcode::DsAndSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicAnd32);
+    case RdnaOpcode::DsOrSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicOr32);
+    case RdnaOpcode::DsXorSrc2B32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicXor32);
+    case RdnaOpcode::DsWriteSrc2B32:
+        return dsSrc2(inst, IrOpcode::WriteSharedU32);
+    case RdnaOpcode::DsMinSrc2F32:
+    case RdnaOpcode::DsMaxSrc2F32:
+    case RdnaOpcode::DsAddSrc2F32:
+        throw std::runtime_error("f32 DS src2 operations depend on the f32 denormal mode, which is not modelled for LDS float atomics");
     case RdnaOpcode::DsWrxchgRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicSwap32, true);
 
@@ -430,6 +476,8 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsAtomic64(inst, IrOpcode::SharedAtomicFMax64, true);
     case RdnaOpcode::DsWrxchgRtnB64:
         return dsAtomic64(inst, IrOpcode::SharedAtomicSwap64, true);
+    case RdnaOpcode::DsCondxchg32RtnB64:
+        return dsCondxchg32(inst);
     case RdnaOpcode::DsNop:
         emitControlNop();
         return true;
@@ -443,6 +491,15 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return dsAppendConsume(inst, IrOpcode::DataConsume);
     case RdnaOpcode::DsAppend:
         return dsAppendConsume(inst, IrOpcode::DataAppend);
+    case RdnaOpcode::DsGwsInit:
+    case RdnaOpcode::DsGwsSemaV:
+    case RdnaOpcode::DsGwsSemaBr:
+    case RdnaOpcode::DsGwsSemaP:
+    case RdnaOpcode::DsGwsSemaReleaseAll:
+    case RdnaOpcode::DsGwsBarrier:
+        throw std::runtime_error(std::string(globalWaveSyncName(inst.op)) + " at pc " + std::to_string(inst.programCounter) + ": global wave sync barriers and semaphores shared by waves of different workgroups are not modeled");
+    case RdnaOpcode::DsOrderedCount:
+        throw std::runtime_error("ds_ordered_count at pc " + std::to_string(inst.programCounter) + ": GDS counters updated in wave launch order are not modeled");
     case RdnaOpcode::DsWriteAddtidB32:
         return dsAddtid(inst, true);
     case RdnaOpcode::DsReadAddtidB32:
@@ -547,6 +604,7 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::ImageGather4CO:
     case RdnaOpcode::ImageGather4CLzO:
     case RdnaOpcode::ImageGather4h:
+    case RdnaOpcode::ImageGather4hPck:
     case RdnaOpcode::ImageGather4:
     case RdnaOpcode::ImageGather4B:
     case RdnaOpcode::ImageGather4BCl:
@@ -598,6 +656,23 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return imageAtomic(inst, IrOpcode::ImageAtomicFMin32);
     case RdnaOpcode::ImageAtomicFmax:
         return imageAtomic(inst, IrOpcode::ImageAtomicFMax32);
+    case RdnaOpcode::ImageLoadBy2:
+    case RdnaOpcode::ImageLoadBy4:
+    case RdnaOpcode::ImageLoadMipBy2:
+    case RdnaOpcode::ImageLoadMipBy4:
+    case RdnaOpcode::ImageStoreBy2:
+    case RdnaOpcode::ImageStoreBy4:
+    case RdnaOpcode::ImageStoreMipBy2:
+    case RdnaOpcode::ImageStoreMipBy4:
+    case RdnaOpcode::ImageLoadPck2:
+    case RdnaOpcode::ImageLoadPck4:
+    case RdnaOpcode::ImageLoadMipPck2:
+    case RdnaOpcode::ImageLoadMipPck4:
+    case RdnaOpcode::ImageStorePck2:
+    case RdnaOpcode::ImageStorePck4:
+    case RdnaOpcode::ImageStoreMipPck2:
+    case RdnaOpcode::ImageStoreMipPck4:
+        return imageBy(inst);
     case RdnaOpcode::ImageLoad:
     case RdnaOpcode::ImageLoadMip:
     case RdnaOpcode::ImageLoadPck:

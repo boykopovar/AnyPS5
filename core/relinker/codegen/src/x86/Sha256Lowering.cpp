@@ -205,10 +205,9 @@ void Sha256Lowering::EmitOutOfLine(StubBodyBuilder& body, const Sha256Operands& 
     }
 }
 
-LoweredBody Sha256Lowering::LowerOutOfLine(const Sha256Operands& operands, std::span<const std::uint8_t> trailing) const {
+LoweredBody Sha256Lowering::LowerOutOfLine(const Sha256Operands& operands) const {
     StubBodyBuilder body;
     EmitOutOfLine(body, operands);
-    body.Raw(trailing);
     return body.Finish();
 }
 

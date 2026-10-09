@@ -160,7 +160,7 @@ void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program
         const RdnaInstruction& instruction = program.instructions.back();
         wordIndex += instruction.wordCount;
 
-        if (IsDirectBranchOpcode(instruction.op)) {
+        if (IsDirectBranchOpcode(instruction.op) || instruction.op == RdnaOpcode::SCallB64) {
             const std::uint32_t targetIndex = instruction.branchTarget / static_cast<std::uint32_t>(sizeof(std::uint32_t));
             if (targetIndex >= code.size()) {
                 throw std::out_of_range("branch target is out of the code span bounds");
@@ -168,7 +168,7 @@ void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program
             furthestBranchTarget = std::max(furthestBranchTarget, targetIndex);
         }
 
-        if (instruction.op == RdnaOpcode::SEndpgm && furthestBranchTarget < wordIndex) {
+        if ((instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) && furthestBranchTarget < wordIndex) {
             return;
         }
     }

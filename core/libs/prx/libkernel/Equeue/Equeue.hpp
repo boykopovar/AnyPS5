@@ -18,6 +18,7 @@ static constexpr int16_t EVFILT_TIMER = -7;
 static constexpr int16_t EVFILT_USER = -11;
 static constexpr int16_t EVFILT_VIDEO_OUT = -13;
 static constexpr int16_t EVFILT_HRTIMER = -15;
+static constexpr int16_t EVFILT_AMPR = -25;
 
 static constexpr uint16_t EV_ADD = 0x0001;
 static constexpr uint16_t EV_ONESHOT = 0x0010;

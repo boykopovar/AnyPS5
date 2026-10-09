@@ -71,15 +71,22 @@ std::uint64_t AddressOf(const void* data) {
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool watch) : watched(watch) {
+    explicit GuestBlock(bool watch, bool shared = false) : watched(watch) {
 #ifdef _WIN32
         if (watched) {
             block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-            if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+            if (shared) {
+                Require(block != nullptr, "cannot reserve shared test memory");
+                const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, BlockBytes, nullptr);
+                Require(section != nullptr, "cannot create shared test memory");
+                GuestArena::GuestArenaMap_nid_postfix(block, BlockBytes, section, 0, PAGE_READWRITE);
+                CloseHandle(section);
+            } else if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
         } else {
             block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         }
 #else
+        Require(!shared, "shared test memory requires Windows");
         if (watched) {
             constexpr std::uintptr_t alignment = 65536;
             void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -146,7 +153,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = AddressOf(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool wait = true) {
@@ -184,6 +191,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::memset(texels, 0x55, SurfaceBytes);
     std::memset(keys, 0x00, KeyBytes);
     std::memset(copied, 0xaa, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto texture = TextureDescriptor(texels, keys);
     std::vector<std::uint32_t> writeData(16, 0u);
     std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
@@ -201,6 +209,12 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Require(image != nullptr && image->Descriptor().dccAddress == AddressOf(keys), "the written surface has no pending image under its keys");
     Require(AgcDriver::Graphics::StorageImageServesKeys(*image, AddressOf(copied)), "the written image does not serve the copied keys");
     Require(image->UploadedKeys() == DccKeys::Uncompressed && image->FilledKeys() == DccKeys::Uncompressed, "the written image still holds the clear it was uploaded under");
+    const auto pendingVersion = image->Version();
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        Require(image->Refresh(), "an unchanged pending image was uploaded again");
+        Require(image->Version() == pendingVersion, "an unchanged pending image changed version");
+        Require(StorageTexture::FindPending(surface, SurfaceBytes) == image, "an unchanged refresh wrote the pending image back");
+    }
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
     RequireKeys(keys, 0xff, "the keys after the write-back");
@@ -268,6 +282,24 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
     requireTexels("a first write followed by a kernel's 0000 store over half the keys");
+    fillKeys(0x00, DccKeys::Clear0000);
+    image->Refresh();
+    Require(image->UploadedKeys() == DccKeys::Clear0000 && image->FilledKeys() == DccKeys::Uncompressed, "the refresh after a 0000 key fill did not clear the image");
+    fillKeys(0x40, DccKeys::Clear0001);
+    Require(image->FilledKeys() == DccKeys::Clear0001, "the 0001 key fill over the cleared image was not noted on it");
+    Dispatch(device, ClearKeysCode, clearData);
+    const auto overFill = image->ProvedKeys();
+    std::snprintf(message, sizeof(message), "a key read after a kernel's 0000 store over a 0001 key fill: the keys read %s and the image keeps a %s fill (expected 0000 and none)", AgcDriver::Graphics::DccKeysName(overFill), AgcDriver::Graphics::DccKeysName(image->FilledKeys()));
+    Require(overFill == DccKeys::Clear0000 && image->FilledKeys() == DccKeys::Uncompressed, message);
+    std::memset(copied, 0xaa, KeyBytes);
+    fillKeys(0x40, DccKeys::Clear0001);
+    Dispatch(device, ClearKeysCode, clearData);
+    Dispatch(device, WriteCode, writeData);
+    Dispatch(device, CopyKeysCode, copyData);
+    RequireKeys(copied, 0xff, "a kernel reading the keys after a 0001 key fill, a kernel's 0000 store over them and a write");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    requireTexels("a write after a 0001 key fill and a kernel's 0000 store over the keys");
     const auto fill = [&](std::size_t offset, std::size_t bytes, std::uint8_t key) {
         const std::uint32_t word = key * 0x01010101u;
         const std::array<std::uint32_t, 4> pattern{word, word, word, word};
@@ -311,16 +343,106 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     RequireKeys(keys, 0x40, "a write marked after a 0001 key fill over a cleared image, before a refresh saw the fill");
 }
 
+void RunUntrackedReuse(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    const auto address = AddressOf(block);
+    std::memset(block, 0x55, BlockBytes);
+    auto descriptor = TextureDescriptor(block, nullptr);
+    descriptor[2] = ((Side - 1u) >> 2u) | ((2 * Side - 1u) << 14u);
+    descriptor[6] = 0;
+    descriptor[7] = 0;
+    std::vector<std::uint32_t> userData(16, 0u);
+    std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 4);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, userData);
+    const auto image = StorageTexture::FindPending(address, BlockBytes);
+    Require(image != nullptr && image->GuestBytes() == BlockBytes, "the two-block image has no pending results");
+    Require(!AgcDriver::GuestMemory::Watched(address, BlockBytes), "the imported test image is still write-watched");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto version = image->Version();
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        Require(image->Refresh() && image->Version() == version, "an unchanged untracked image was uploaded again");
+        Require(Count(block, BlockBytes, 0x55) == BlockBytes, "refresh wrote GPU results into unchanged guest memory");
+    }
+    std::memset(block + SurfaceBytes, 0x33, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!image->Refresh(), "an untracked CPU edit was missed");
+    const auto editedVersion = image->Version();
+    Require(image->Refresh() && image->Version() == editedVersion, "the CPU-edited image was uploaded twice");
+    StorageTexture::FlushPending(address, BlockBytes, nullptr, "test untracked reuse");
+    device.WaitIdle();
+    Require(Count(block, SurfaceBytes, 0xff) == Threads * 4u, "refresh lost the unchanged block's GPU results");
+    Require(Count(block, SurfaceBytes, 0x55) == SurfaceBytes - Threads * 4u, "refresh changed unrelated texels");
+    Require(Count(block + SurfaceBytes, SurfaceBytes, 0x33) == SurfaceBytes, "write-back overwrote the CPU-edited block");
+
+    Dispatch(device, WriteCode, userData);
+    Require(image->Refresh(), "a freshly dispatched image did not retain its snapshot");
+    std::memset(block, 0x77, SurfaceBytes);
+    image->WriteBack();
+    device.WaitIdle();
+    Require(Count(block, SurfaceBytes, 0x77) == SurfaceBytes, "write-back without refresh overwrote a CPU edit");
+    image->Refresh();
+    Require(image->Refresh(), "the image did not stabilize after write-back");
+    AgcDriver::GuestMemory::StoreOwnBytes(address, SurfaceBytes, [&] { std::memset(block, 0x22, SurfaceBytes); });
+    Require(!image->Refresh(), "a driver store within the comparison epoch was missed");
+    Require(image->Refresh(), "the driver-edited image was uploaded twice");
+    const std::array<std::uint32_t, 4> pattern{0x44444444u, 0x44444444u, 0x44444444u, 0x44444444u};
+    Require(device.FillBuffer(address, SurfaceBytes, pattern), "the imported GPU fill was not recorded");
+    Require(!image->Refresh(), "a pending GPU store within the comparison epoch was missed");
+    device.WaitIdle();
+    Require(Count(block, SurfaceBytes, 0x44) == SurfaceBytes, "the GPU fill did not reach guest memory");
+    Require(image->Refresh(), "the GPU-edited image was uploaded twice");
+}
+
+#ifdef _WIN32
+void RunSharedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    using namespace AgcDriver::GuestMemory;
+    const auto address = AddressOf(block);
+    std::lock_guard gpu(GpuMutex());
+    std::memset(block, 0x11, BlockBytes);
+    const std::array<std::uint32_t, 4> pattern{0x22222222u, 0x22222222u, 0x22222222u, 0x22222222u};
+    Require(device.FillBuffer(address, SurfaceBytes, pattern), "shared memory was not imported");
+    device.WaitIdle();
+    Require(Watched(address, BlockBytes), "importing a separate alias disabled guest write tracking");
+    auto* alias = static_cast<std::uint8_t*>(GuestArena::GuestArenaMapAlias_nid_postfix(address, BlockBytes));
+    const auto beforeAliasWrite = CollectWritesUncached(address, BlockBytes);
+    alias[SurfaceBytes] = 0x11;
+    CollectWritesUncached(address, BlockBytes);
+    Require(UnchangedSince(address + SurfaceBytes, SurfaceBytes, beforeAliasWrite), "a driver alias write dirtied the protected guest view");
+    GuestArena::GuestArenaUnmapAlias_nid_postfix(alias);
+    for (int repeat = 0; repeat < 8; ++repeat) {
+        const auto before = CollectWritesUncached(address, BlockBytes);
+        Require(device.FillBuffer(address, SurfaceBytes, pattern), "shared memory import was lost");
+        device.WaitIdle();
+        CollectWritesUncached(address, BlockBytes);
+        Require(UnchangedSince(address + SurfaceBytes, SurfaceBytes, before), "GPU access dirtied untouched guest pages");
+        const auto current = CollectWritesUncached(address, BlockBytes);
+        block[SurfaceBytes] = static_cast<std::uint8_t>(repeat);
+        CollectWritesUncached(address, BlockBytes);
+        Require(!UnchangedSince(address + SurfaceBytes, SurfaceBytes, current), "CPU write after GPU completion was missed");
+        block[SurfaceBytes] = 0x11;
+    }
+}
+#endif
+
 }
 
 int main() {
     try {
         std::optional<GuestBlock> block;
         std::optional<GuestBlock> watched;
+        std::optional<GuestBlock> untracked;
+        std::optional<GuestBlock> shared;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         block.emplace(false);
         Run(*device, block->Data());
+        untracked.emplace(false);
+        RunUntrackedReuse(*device, untracked->Data());
+#ifdef _WIN32
+        shared.emplace(true, true);
+        RunSharedImport(*device, shared->Data());
+        Run(*device, shared->Data());
+#endif
         if (AgcDriver::GuestMemory::WriteWatched()) {
             watched.emplace(true);
             Run(*device, watched->Data());

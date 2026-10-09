@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <stdexcept>
 #include <vector>
 
@@ -68,7 +69,8 @@ bool ForceThrows(KernelModule handle) {
 
 int main() {
     self = ModuleOf(&dsoHandle);
-    void* otherDso = reinterpret_cast<void*>(&_sceLibcInternalThreadDtors_nid_postfix);
+    void* otherDso = dlsym(RTLD_NEXT, "_sceLibcInternalThreadDtors_nid_postfix");
+    Require(otherDso != nullptr);
     const KernelModule other = ModuleOf(otherDso);
     Require(other != self && other != 0);
     int local = 0;

@@ -19,7 +19,7 @@ struct InitEnvParams {
 extern "C" {
 int APS5_VABI cxa_atexit_nid_postfix(void (APS5_VABI *)(void*), void*, void*);
 void APS5_VABI cxa_finalize_nid_postfix(void*);
-int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (*)(void*), void*, void*);
+int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *)(void*), void*, void*);
 void APS5_VABI init_env_nid_postfix(const InitEnvParams*);
 }
 
@@ -38,7 +38,12 @@ void APS5_VABI Second(void*) { secondAt = order++; }
 void APS5_VABI Other(void*) { otherAt = order++; }
 
 std::atomic<int> threadCleanups{0};
-void ThreadDone(void*) { ++threadCleanups; }
+std::atomic<void*> threadObjectSeen{nullptr};
+int threadObjectSentinel = 0;
+void APS5_VABI ThreadDone(void* object) {
+    threadObjectSeen.store(object);
+    ++threadCleanups;
+}
 
 }
 
@@ -63,13 +68,14 @@ int main() {
             dlopen(nullptr, RTLD_NOW);
 #endif
         Require(image != nullptr);
-        Require(LibcInternalExtCxaThreadAtexit_nid_postfix(ThreadDone, nullptr, image) == 0);
+        Require(LibcInternalExtCxaThreadAtexit_nid_postfix(ThreadDone, &threadObjectSentinel, image) == 0);
 #ifndef _WIN32
         dlclose(image);
 #endif
     });
     worker.join();
     Require(threadCleanups == 1);
+    Require(threadObjectSeen.load() == &threadObjectSentinel);
 
     try {
         init_env_nid_postfix(nullptr);

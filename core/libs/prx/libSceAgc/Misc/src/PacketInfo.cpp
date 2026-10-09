@@ -17,8 +17,7 @@ uint32_t APS5_VABI sceAgcGetPacketSize(uint32_t* packet) {
     return ((packet[0] >> 16u) & 0x3fffu) + 2u;
 }
 
-APS5_EXPORT("V++UgBtQhn0", sceAgcGetDataPacketPayloadAddressUnk);
-int APS5_VABI sceAgcGetDataPacketPayloadAddressUnk(uint32_t** addr, uint32_t* cmd, int type) {
+int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(uint32_t** addr, uint32_t* cmd, int type) {
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(addr), alignof(uint32_t*), __func__);
     Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(cmd), alignof(uint32_t), __func__);
     if (type != 0) {

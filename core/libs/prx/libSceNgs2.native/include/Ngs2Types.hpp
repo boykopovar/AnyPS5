@@ -49,6 +49,7 @@ static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_EXIT_LOOP = 0x100000
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH = 0x10000005;
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER = 0x1000000a;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP = 0x20000000;
+static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX = 0x20000004;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_SETUP = 0x30000000;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_GAIN = 0x30000004;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT = 0x30000005;
@@ -60,6 +61,7 @@ static constexpr std::uint32_t SCE_NGS2_CUSTOM_MAX_PORTS = 16;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MODULE_ID_USER_FX2 = 0x1f;
 
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE = 1;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND = 2;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET = 4;
 
 static constexpr std::uint32_t SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END = 1;
@@ -171,6 +173,20 @@ struct Ngs2UserFx2SetupContext {
     std::uint64_t reserved[4];
 };
 static_assert(sizeof(Ngs2UserFx2SetupContext) == 72);
+
+struct Ngs2UserFxProcessContext {
+    float** channel_data;
+    std::uintptr_t user_data0;
+    std::uintptr_t user_data1;
+    std::uintptr_t user_data2;
+    std::uint32_t flags;
+    std::uint32_t num_channels;
+    std::uint32_t num_grain_samples;
+    std::uint32_t sample_rate;
+};
+static_assert(sizeof(Ngs2UserFxProcessContext) == 48);
+
+using Ngs2UserFxProcessHandler = std::int32_t (APS5_VABI *)(Ngs2UserFxProcessContext*);
 
 using Ngs2UserFx2CleanupContext = Ngs2UserFx2SetupContext;
 
@@ -404,6 +420,15 @@ struct Ngs2SubmixerVoiceSetupParam {
     std::uint32_t flags;
 };
 static_assert(sizeof(Ngs2SubmixerVoiceSetupParam) == 16);
+
+struct Ngs2SubmixerVoiceUserFxParam {
+    Ngs2VoiceParamHeader header;
+    Ngs2UserFxProcessHandler handler;
+    std::uintptr_t user_data0;
+    std::uintptr_t user_data1;
+    std::uintptr_t user_data2;
+};
+static_assert(sizeof(Ngs2SubmixerVoiceUserFxParam) == 40);
 
 struct Ngs2CustomSubmixerVoiceSetupParam {
     Ngs2VoiceParamHeader header;

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -85,7 +86,7 @@ void run(const std::filesystem::path& root) {
 }
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() / "anyps5-icon-resource-tests";
+    const auto root = std::filesystem::temp_directory_path() / ("anyps5-icon-resource-tests-" + std::to_string(std::random_device{}()));
     std::filesystem::remove_all(root);
     try {
         run(root);

@@ -281,6 +281,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
+            std::puts("skipped, the device has no shaderBufferInt64Atomics");
+            return VulkanTestSkipped;
+        }
         Run(*device, Wave32Code, 32, device->Target());
         Check(Expected32, Names, "wave32");
         Run(*device, Wave64Code, 64, device->Target());

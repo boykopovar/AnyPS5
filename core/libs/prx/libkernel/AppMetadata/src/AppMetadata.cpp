@@ -18,6 +18,7 @@ bool g_iconLoaded = false;
 char g_title[128] = {};
 char g_titleId[12] = {};
 std::uint64_t g_downloadDataSizeMiB = 0;
+std::int32_t g_userDefinedParams[4] = {};
 std::vector<std::uint8_t> g_iconBytes;
 
 constexpr const char* AppMetadataParamJsonGuestPath = "/app0/sce_sys/param.json";
@@ -37,6 +38,7 @@ void ensureTitleLoaded() {
     copyToFixedBuffer(g_title, sizeof(g_title), parsed.title);
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
     g_downloadDataSizeMiB = parsed.downloadDataSizeMiB;
+    std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
     g_titleLoaded = true;
 }
 
@@ -73,6 +75,12 @@ AppTitle GetAppTitle_nid_postfix() {
 std::uint64_t GetAppDownloadDataSizeMiB_nid_postfix() {
     ensureTitleLoaded();
     return g_downloadDataSizeMiB;
+}
+
+std::int32_t GetAppUserDefinedParam_nid_postfix(std::uint32_t index) {
+    if (index >= 4) throw std::out_of_range("user defined param index out of range");
+    ensureTitleLoaded();
+    return g_userDefinedParams[index];
 }
 
 AppTitleId GetAppTitleId_nid_postfix() {

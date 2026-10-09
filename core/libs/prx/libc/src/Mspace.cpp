@@ -216,6 +216,7 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, st
     if (!FindUsed(arena, pointer, chunk)) return nullptr;
     if (!size) { Release(*arena, chunk); return nullptr; }
     const auto needed = AlignUp(size, Granule);
+    if (needed < size) { Error(12); return nullptr; }
     const auto start = chunk->first;
     const auto capacity = chunk->second.end - start;
     if (needed <= capacity) {
@@ -276,8 +277,10 @@ void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointe
     std::map<std::uintptr_t, Chunk>::iterator chunk;
     if (!FindUsed(arena, pointer, chunk)) return nullptr;
     if (!size) { Release(*arena, chunk); return nullptr; }
+    const auto needed = AlignUp(size, Granule);
+    if (needed < size) { Error(12); return nullptr; }
     const auto start = chunk->first;
-    if (AlignUp(size, Granule) <= chunk->second.end - start && (start & (effective - 1)) == 0) {
+    if (needed <= chunk->second.end - start && (start & (effective - 1)) == 0) {
         chunk->second.requested = size;
         return pointer;
     }

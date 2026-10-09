@@ -183,10 +183,9 @@ void Sha1Lowering::EmitOutOfLine(StubBodyBuilder& body, const Sha1Operands& oper
     }
 }
 
-LoweredBody Sha1Lowering::LowerOutOfLine(const Sha1Operands& operands, std::span<const std::uint8_t> trailing) const {
+LoweredBody Sha1Lowering::LowerOutOfLine(const Sha1Operands& operands) const {
     StubBodyBuilder body;
     EmitOutOfLine(body, operands);
-    body.Raw(trailing);
     return body.Finish();
 }
 

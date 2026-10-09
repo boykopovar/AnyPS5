@@ -328,11 +328,15 @@ struct DeferredBatch {
 };
 struct DeferredBatchesTag {};
 auto& DeferredBatches() { return HostThreadLocal<std::vector<DeferredBatch>, DeferredBatchesTag>(); }
+struct DeferredBytesTag {};
+auto& DeferredBytes() { return HostThreadLocal<std::size_t, DeferredBytesTag>(); }
+std::vector<DeferredBatch> TakeDeferred() {
+    auto taken = std::move(DeferredBatches());
+    DeferredBatches().clear();
+    DeferredBytes() = 0;
+    return taken;
+}
 std::atomic<std::uint64_t> deferredPending{0};
-// APS5_PROFILE_DRAW, for the [recorder] line: batches and objects released after an unlock and the
-// time that took, on the release thread and inline (on the unlocking thread: the kill switch, a
-// full queue, a stopping thread or a failed hand-off), the batches that went inline because the
-// queue was full, and the longest queue seen (in batches).
 std::atomic<std::uint64_t> threadReleases{0}, threadObjects{0}, threadReleaseUs{0};
 std::atomic<std::uint64_t> inlineReleases{0}, inlineObjects{0}, inlineReleaseUs{0}, inlineOverBound{0};
 std::atomic<std::uint64_t> releaseQueueMax{0};
@@ -446,8 +450,7 @@ void ReleaseDeferredKeeps() {
     if (DeferredBatches().empty()) return;
     // Taken off the thread's list first: a destructor that took and released the mutex (none is
     // known to) would re-enter here and must find nothing.
-    auto releasing = std::move(DeferredBatches());
-    DeferredBatches().clear();
+    auto releasing = TakeDeferred();
     if (ReleaseOnUnlock()) {
         DestroyDeferred(std::move(releasing), false);
         return;
@@ -1134,11 +1137,7 @@ Recorder::~Recorder() {
     // other threads (an unlock hook that found the queue stopping or full) are waited for before
     // the caller destroys the device. The count is global: a newer recorder's batches (device
     // replacement) are waited for too, which only prolongs the spin.
-    if (!DeferredBatches().empty()) {
-        auto own = std::move(DeferredBatches());
-        DeferredBatches().clear();
-        DestroyDeferred(std::move(own), false);
-    }
+    if (!DeferredBatches().empty()) DestroyDeferred(TakeDeferred(), false);
     JoinReleaseThread();
     while (deferredPending.load(std::memory_order_acquire) != 0) std::this_thread::yield();
     {
@@ -1370,10 +1369,13 @@ VkCommandBuffer Recorder::CommandsInRenderPass() {
     return open->commands;
 }
 
-void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool continuable) {
+void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool continuable, std::function<void(VkCommandBuffer)> afterPass) {
     Require(open != nullptr, "no batch is open for the render pass");
     auto& pass = open->renderPass;
-    if (!pass.open) pass.timing = timing;
+    if (!pass.open) {
+        pass.timing = timing;
+        pass.afterPass = std::move(afterPass);
+    }
     pass.open = true;
     pass.key = key;
     pass.continuable = continuable;
@@ -1386,6 +1388,7 @@ void Recorder::endOpenRenderPass() {
     // host sees them at the batch's fence).
     recordBarrier(open->commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
     CountBarriers(CommandClass::Draw);
+    if (pass.afterPass) pass.afterPass(open->commands);
     EndGpuTiming(pass.timing);
     open->coveredAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     open->hostReadOwed = true;
@@ -2186,9 +2189,21 @@ std::size_t Recorder::UnsignaledBatches() const {
     return static_cast<std::size_t>(std::count_if(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return !signaled(*batch); }));
 }
 
-void Recorder::Keep(std::shared_ptr<void> object) {
+void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     ensureOpen();
     open->kept.push_back(std::move(object));
+    open->keptBytes += bytes;
+}
+
+void Recorder::BoundKeptBytes() {
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (open != nullptr && open->keptBytes >= KeptBytesBudget) Submit();
+    if (DeferredBytes() != 0 && inFlightKeptBytes + DeferredBytes() > 2 * KeptBytesBudget) DestroyDeferred(TakeDeferred(), false);
+    while (!inFlight.empty() && inFlightKeptBytes > 2 * KeptBytesBudget) {
+        auto batch = std::move(inFlight.front());
+        inFlight.pop_front();
+        finish(std::move(batch), true, 4, true);
+    }
 }
 
 namespace {
@@ -2747,6 +2762,7 @@ bool Recorder::writtenBackSince(std::uint64_t sequence, std::uint64_t begin, std
 }
 
 void Recorder::Submit() {
+    PerformanceTimer frameTiming("Recorder.Submit");
     // The work count is cleared even when nothing is open: the driver counts a dispatch after its
     // call returns (outside the mutex), so a submit by another thread in between leaves a stale
     // count behind, and the callers that act on it would otherwise take the mutex for nothing at
@@ -2807,6 +2823,7 @@ void Recorder::Submit() {
         newestSubmittedAt = batch->submittedAt;
     }
     inFlight.push_back(std::move(batch));
+    inFlightKeptBytes += inFlight.back()->keptBytes;
     if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
 }
 
@@ -2855,6 +2872,7 @@ VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphore
 }
 
 void Recorder::WaitSerial(std::uint64_t serial) {
+    PerformanceTimer frameTiming("Recorder.WaitSerial");
     if (timeline == VK_NULL_HANDLE || serial == 0) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2884,6 +2902,7 @@ void Recorder::FinishUpTo(std::uint64_t serial) {
 }
 
 void Recorder::Sync() {
+    PerformanceTimer frameTiming("Recorder.Sync");
     const auto source = std::exchange(announcedSource, 4);
     const void* site = std::exchange(announcedSite, nullptr);
     Submit();
@@ -3156,6 +3175,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
 }
 
 bool Recorder::Reap() {
+    PerformanceTimer frameTiming("Recorder.Reap");
     const bool profile = DrawProfiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::uint64_t retired = 0;
@@ -3175,7 +3195,8 @@ bool Recorder::Reap() {
     return inFlight.empty();
 }
 
-void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source) {
+void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow) {
+    inFlightKeptBytes -= batch->keptBytes;
     // The batch's writes stay published until its completions ran, on every exit path.
     struct Finishing {
         Recorder& recorder;
@@ -3287,7 +3308,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source) {
     const auto keptStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // Deferred only from inside a hold: the unlock that releases the list is this thread's own, and
     // a caller finishing batches without the mutex (a test) might never make one.
-    if (ReleaseUnderLock() || !GuestMemory::GpuMutex().HeldByThisThread()) {
+    if (releaseNow || ReleaseUnderLock() || !GuestMemory::GpuMutex().HeldByThisThread()) {
         batch->completions.clear();
         batch->kept.clear();
     } else {
@@ -3298,6 +3319,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source) {
         try {
             DeferredBatches().push_back({std::move(batch->kept), std::move(batch->completions)});
             deferredPending.fetch_add(1, std::memory_order_acq_rel);
+            DeferredBytes() += batch->keptBytes;
         } catch (...) {
         }
         batch->completions.clear();

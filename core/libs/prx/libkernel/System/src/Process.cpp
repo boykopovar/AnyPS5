@@ -13,6 +13,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -89,39 +90,6 @@ void validateSchedulingPolicy(int policy) {
         throw std::invalid_argument("Unsupported guest scheduling policy");
 }
 
-#ifdef _WIN32
-void syncVolumes() {
-    std::array<wchar_t, 32768> name{};
-    const auto first = FindFirstVolumeW(name.data(), static_cast<DWORD>(name.size()));
-    if (first == INVALID_HANDLE_VALUE)
-        throw std::system_error(GetLastError(), std::system_category(), "Enumerating volumes for sync");
-    const std::unique_ptr<void, decltype(&FindVolumeClose)> search(first, &FindVolumeClose);
-    for (;;) {
-        DWORD flags = 0;
-        if (!GetVolumeInformationW(name.data(), nullptr, 0, nullptr, nullptr, &flags, nullptr, 0))
-            throw std::system_error(GetLastError(), std::system_category(), "Reading volume properties for sync");
-        if ((flags & FILE_READ_ONLY_VOLUME) == 0) {
-            std::wstring path(name.data());
-            if (path.empty() || path.back() != L'\\')
-                throw std::runtime_error("Invalid volume path for sync");
-            path.pop_back();
-            const auto native = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-            if (native == INVALID_HANDLE_VALUE)
-                throw std::system_error(GetLastError(), std::system_category(), "Opening volume for sync");
-            const std::unique_ptr<void, decltype(&CloseHandle)> volume(native, &CloseHandle);
-            if (!FlushFileBuffers(volume.get()))
-                throw std::system_error(GetLastError(), std::system_category(), "Flushing volume");
-        }
-        if (FindNextVolumeW(search.get(), name.data(), static_cast<DWORD>(name.size())))
-            continue;
-        const auto error = GetLastError();
-        if (error != ERROR_NO_MORE_FILES)
-            throw std::system_error(error, std::system_category(), "Enumerating volumes for sync");
-        break;
-    }
-}
-#endif
-
 }
 
 struct GuestResourceUsage {
@@ -142,6 +110,8 @@ struct GuestResourceUsage {
     std::int64_t ru_nvcsw;
     std::int64_t ru_nivcsw;
 };
+
+extern "C" Pthread APS5_VABI scePthreadSelf();
 
 extern "C" {
 
@@ -171,6 +141,26 @@ int APS5_VABI getpid_nid_postfix(void) {
     return static_cast<int>(pid);
 }
 
+int APS5_VABI getuid_nid_postfix(void) {
+    return 0;
+}
+
+int APS5_VABI geteuid_nid_postfix(void) {
+    return 0;
+}
+
+int APS5_VABI getgid_nid_postfix(void) {
+    return 0;
+}
+
+int APS5_VABI getegid_nid_postfix(void) {
+    return 0;
+}
+
+int APS5_VABI issetugid_nid_postfix(void) {
+    return 0;
+}
+
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
 }
@@ -190,13 +180,13 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
             throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
         index += count;
     }
-    return static_cast<int>(index);
 #else
     const int cpu = ::sched_getcpu();
     if (cpu < 0)
         throw std::system_error(errno, std::generic_category(), "Reading current processor");
-    return cpu;
+    const auto index = static_cast<unsigned>(cpu);
 #endif
+    return GuestCpuFromHost(index, scePthreadSelf()->affinity.load(std::memory_order_relaxed));
 }
 
 std::uint64_t APS5_VABI sceKernelGetGPI(void) {
@@ -232,11 +222,7 @@ int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
 }
 
 void APS5_VABI sceKernelSync(void) {
-#ifdef _WIN32
-    syncVolumes();
-#else
-    ::sync();
-#endif
+    SyncWrittenPaths_nid_no_patch();
 }
 
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy) {
@@ -324,6 +310,18 @@ int APS5_VABI sceKernelGetOperationMode(int* mode, int* submode) {
         throw std::invalid_argument("sceKernelGetOperationMode: null output");
     *mode = 0;
     *submode = 0;
+    return 0;
+}
+
+int APS5_VABI seteuid_nid_postfix(std::uint32_t euid) {
+    if (euid != 0)
+        throw std::runtime_error("seteuid: unsupported user id " + std::to_string(euid));
+    return 0;
+}
+
+int APS5_VABI setegid_nid_postfix(std::uint32_t egid) {
+    if (egid != 0)
+        throw std::runtime_error("setegid: unsupported group id " + std::to_string(egid));
     return 0;
 }
 

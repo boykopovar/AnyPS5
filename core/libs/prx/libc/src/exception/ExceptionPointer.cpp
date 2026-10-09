@@ -1,5 +1,6 @@
 #include <exception>
 
+#ifndef _LIBCPP_VERSION
 extern "C" {
 void ExceptionPointerAddref(std::exception_ptr* self) noexcept asm("_ZNSt15__exception_ptr13exception_ptr9_M_addrefEv");
 void ExceptionPointerRelease(std::exception_ptr* self) noexcept asm("_ZNSt15__exception_ptr13exception_ptr10_M_releaseEv");
@@ -79,3 +80,53 @@ const type_info* exception_ptr::__cxa_exception_type() const noexcept {
 }
 
 }
+
+#else
+
+namespace {
+struct GuestExceptionPointer {
+    void* object {};
+    explicit GuestExceptionPointer(void* primary) noexcept : object(primary) {}
+    GuestExceptionPointer(const GuestExceptionPointer&) = delete;
+    ~GuestExceptionPointer() {}
+};
+}
+
+extern "C" {
+void APS5_VABI _ZNSt15__exception_ptr13exception_ptr9_M_addrefEv_nid_postfix(GuestExceptionPointer* self) noexcept {
+    __cxa_increment_exception_refcount_nid_postfix(self->object);
+}
+
+void APS5_VABI _ZNSt15__exception_ptr13exception_ptr10_M_releaseEv_nid_postfix(GuestExceptionPointer* self) noexcept {
+    __cxa_decrement_exception_refcount_nid_postfix(self->object);
+    self->object = nullptr;
+}
+
+void* APS5_VABI _ZNKSt15__exception_ptr13exception_ptr6_M_getEv_nid_postfix(const GuestExceptionPointer* self) noexcept {
+    return self->object;
+}
+
+void APS5_VABI _ZNSt15__exception_ptr13exception_ptrC1EPv_nid_postfix(GuestExceptionPointer* self, void* exception) noexcept {
+    self->object = exception;
+    __cxa_increment_exception_refcount_nid_postfix(exception);
+}
+
+void APS5_VABI _ZNSt15__exception_ptr13exception_ptrC2EPv_nid_postfix(GuestExceptionPointer* self, void* exception) noexcept {
+    _ZNSt15__exception_ptr13exception_ptrC1EPv_nid_postfix(self, exception);
+}
+
+const std::type_info* APS5_VABI _ZNKSt15__exception_ptr13exception_ptr20__cxa_exception_typeEv_nid_postfix(const GuestExceptionPointer* self) noexcept {
+    return LibcException::FromObject(self->object)->type;
+}
+
+GuestExceptionPointer APS5_VABI _ZSt17current_exceptionv_nid_postfix() noexcept {
+    return GuestExceptionPointer(__cxa_current_primary_exception_nid_postfix());
+}
+
+[[noreturn]] void APS5_VABI _ZSt17rethrow_exceptionNSt15__exception_ptr13exception_ptrE_nid_postfix(GuestExceptionPointer& exception) {
+    __cxa_rethrow_primary_exception_nid_postfix(exception.object);
+    LibcException::Terminate();
+}
+}
+
+#endif

@@ -10,6 +10,14 @@ std::array<IrU32, 2> TranslationContext::ballotMask(IrU1 value) {
     return {IrU32(ir.CompositeExtract(mask, 0u)), program.WaveSize() == 64u ? IrU32(ir.CompositeExtract(mask, 1u)) : IrU32(ir.Constant(0u))};
 }
 
+IrU32 TranslationContext::hostExecWord(std::uint32_t half) {
+    const IrU32 word(half == 0u ? ir.GetExecLo() : ir.GetExecHi());
+    if (half != 0u && program.WaveSize() != 64u) {
+        return word;
+    }
+    return IrU32(ir.BitwiseAnd(word.Value(), ballotMask(IrU1(ir.ConstantBool(true)))[half].Value()));
+}
+
 IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask) {
     const IrU32 lane(ir.Emit(IrOpcode::LaneId, IrType::U32, {}));
     const IrU32 word = program.WaveSize() == 64u ? IrU32(ir.Select(ir.ULessThan(lane.Value(), ir.Constant(32u)), mask[0].Value(), mask[1].Value())) : mask[0];

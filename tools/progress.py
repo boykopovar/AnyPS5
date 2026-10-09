@@ -53,10 +53,6 @@ OPCODE_VARIANTS = {
     "VMacLegacyF32": ("V_FMAC_LEGACY_F32",),
     "VMadLegacyF32": ("V_FMA_LEGACY_F32",),
     "ImageSample": ("IMAGE_SAMPLE_L", "IMAGE_SAMPLE_B", "IMAGE_SAMPLE_C_LZ", "IMAGE_SAMPLE_L_O", "IMAGE_SAMPLE_D_CL_O"),
-    "ImageLoadPck": ("IMAGE_LOAD_PCK2", "IMAGE_LOAD_PCK4"),
-    "ImageLoadMipPck": ("IMAGE_LOAD_MIP_PCK2", "IMAGE_LOAD_MIP_PCK4"),
-    "ImageStorePck": ("IMAGE_STORE_PCK2", "IMAGE_STORE_PCK4"),
-    "ImageStoreMipPck": ("IMAGE_STORE_MIP_PCK2", "IMAGE_STORE_MIP_PCK4"),
 }
 REPORT_ROWS = 100
 PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30
@@ -86,6 +82,8 @@ def stub_calls(text):
 def scan_library(path):
     done, todo = set(), set()
     for source in path.rglob("*.cpp"):
+        if "tests" in source.relative_to(path).parts:
+            continue
         text = source.read_text(errors="ignore")
         calls = stub_calls(text)
         for match in DEFINITION.finditer(text):
@@ -95,8 +93,14 @@ def scan_library(path):
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             (todo if any(call in body for call in calls) else done).add(name)
     todo -= done
-    return {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
-            "done_names": sorted(done), "todo_names": sorted(todo)}
+    group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
+             "done_names": sorted(done), "todo_names": sorted(todo)}
+    cmake = path / "CMakeLists.txt"
+    if not (done or todo) and cmake.is_file():
+        shared = re.search(r'^\s*include\(\s*"?\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./([\w.-]+)/[\w.-]+\.cmake"?\s*\)', cmake.read_text(), re.M)
+        if shared and (path.parent / shared[1]).is_dir() and shared[1] != path.name:
+            group["shared_sources"] = shared[1]
+    return group
 
 
 def summarize(groups):
@@ -205,7 +209,9 @@ def treemap(title, data, left):
     parts = [text(left + 4, 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)]
     for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
         total = group["done"] + group["todo"]
-        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%)</title>')
+        shared = [g["name"] for g in data["groups"] if g.get("shared_sources") == group["name"]]
+        suffix = "; shared by " + ", ".join(shared) if shared else ""
+        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%){escape(suffix)}</title>')
         for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
             parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
         parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
@@ -242,6 +248,11 @@ def table(heading, column, data):
     rows = [f"<h2>{heading}</h2>", "<table>",
             f"<tr><th>{column}</th><th>Implemented</th><th>Total</th><th>%</th></tr>"]
     for group in sorted(data["groups"], key=lambda g: g["name"].lower()):
+        if "shared_sources" in group:
+            owner = escape(group["shared_sources"])
+            rows.append(f'<tr><td>{escape(group["name"])}</td><td colspan="3">Shared sources: '
+                        f'<a href="{SOURCE}/core/libs/prx/{owner}">{owner}</a></td></tr>')
+            continue
         total = group["done"] + group["todo"]
         percent = f'{100 * group["done"] / total:.0f}%' if total else "-"
         rows.append(f'<tr><td>{escape(group["name"])}</td><td>{group["done"]}</td><td>{total}</td><td>{percent}</td></tr>')
@@ -266,7 +277,8 @@ def summary(libraries, shaders):
         table("System libraries", "Library", libraries),
         "<p>A function is implemented when it no longer calls <code>NotImplemented_nid_no_patch</code>. "
         f'The total only includes functions already declared in <a href="{SOURCE}/core/libs/prx">core/libs/prx</a>, '
-        "not every function exported by the PS5 firmware.</p>",
+        "not every function exported by the PS5 firmware. Shared-source libraries are counted only at their source library. "
+        f'<a href="{SOURCE}/docs/dev/PROGRESS.md">Counting rules</a>.</p>',
         table("GPU shader instructions", "Encoding", shaders),
         f'<p>The total is the AMD RDNA 1 + RDNA 2 instruction list (<a href="{SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
         f'An instruction is implemented when the <a href="{SOURCE}/core/shader/recompiler/RdnaDecoder">decoder</a> recognizes it. '
@@ -275,8 +287,9 @@ def summary(libraries, shaders):
     ]) + "\n"
 
 
-def names(data, state):
-    return {(g["name"], n) for g in data["groups"] for n in g.get(f"{state}_names", [])}
+def names(data, state, owners=None):
+    owners = owners or {}
+    return {(owners.get(g["name"], g["name"]), n) for g in data["groups"] for n in g.get(f"{state}_names", [])}
 
 
 def details(icon, title, column, items):
@@ -290,21 +303,26 @@ def details(icon, title, column, items):
 
 
 def compare(title, column, unit, base, head):
-    base_done, head_done = names(base, "done"), names(head, "done")
-    base_all, head_all = base_done | names(base, "todo"), head_done | names(head, "todo")
+    owners = {g["name"]: g["shared_sources"] for g in head["groups"] if "shared_sources" in g}
+    previous = {g["name"]: g.get("shared_sources") for g in base["groups"]}
+    shared = {(name, owner) for name, owner in owners.items() if previous.get(name) != owner}
+    base_done, head_done = names(base, "done", owners), names(head, "done", owners)
+    base_all, head_all = base_done | names(base, "todo", owners), head_done | names(head, "todo", owners)
     implemented, declared = head_done - base_done, head_all - base_all - head_done
     regressed, removed = base_done & (head_all - head_done), base_all - head_all
-    if not (implemented or declared or regressed or removed):
+    if not (implemented or declared or regressed or removed or shared):
         return []
     delta = round(head["percent"] - base["percent"], 2)
     icon = "📈" if delta > 0 else "📉" if delta < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
-    lines = [f'{icon} **{title}**: {head["percent"]}% ({delta:+}%, {", ".join(counts)} {unit})', ""]
+    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    lines = [f'{icon} **{title}**: {head["percent"]}% ({delta:+}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("🆕", "declared as stubs", column, declared)
     lines += details("⚠️", "went back to stubs", column, regressed)
     lines += details("🗑️", "removed", column, removed)
+    lines += details("🔗", "now sharing sources", column, shared)
     return lines + [""]
 
 

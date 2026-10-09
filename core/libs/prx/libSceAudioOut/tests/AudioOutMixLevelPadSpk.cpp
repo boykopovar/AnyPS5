@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -55,7 +56,7 @@ constexpr int invalidMixLevel = static_cast<int>(0x80260014);
 
 template<typename TSample, typename TSetup>
 std::vector<TSample> Play(int type, std::uint32_t format, const std::vector<TSample>& block, TSetup setup) {
-    const auto path = std::filesystem::temp_directory_path() / "anyps5_audio_out_mix_level_pad_spk.raw";
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out_mix_level_pad_spk-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 

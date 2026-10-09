@@ -500,6 +500,10 @@ int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5Va
     return 0;
 }
 
+int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void* self, NullAccessCallback callback, void* context) {
+    return _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(self, callback, context);
+}
+
 void APS5_VABI _ZN3sce4Json12MemAllocatorC2Ev(void* self) {
     *static_cast<void* const**>(self) = &JsonMemAllocatorVtable[2];
 }
@@ -569,6 +573,7 @@ void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { (void)se
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) { ++self->it; return self; }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) { return &*self->it; }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) { return self->it != other->it; }
+bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return self->items->empty(); }
 std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items->size(); }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
@@ -771,9 +776,8 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
 }
 
 
-APS5_EXPORT("6i18OJSvFWk", sceJson2Unknown00);
-int APS5_VABI sceJson2Unknown00(void) {
-    NotImplemented_nid_no_patch("6i18OJSvFWk");
+int APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -803,9 +807,9 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void
     return 0;
 }
 
-int APS5_VABI _ZN3sce4Json5Value5clearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZN3sce4Json5Value5clearEv(Value* self) {
+    if (self == nullptr) return;
+    Clear(NodeOf(*self));
 }
 
 int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {

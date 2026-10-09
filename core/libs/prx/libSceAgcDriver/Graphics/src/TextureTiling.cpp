@@ -298,7 +298,10 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
     Require(width != 0 && height != 0 && depth != 0, "cannot compute layout for a zero-sized 3D texture");
     Require(mipCount != 0 && mipCount <= 16u, "3D texture mip count is out of range");
     const auto bytesPerElement = BytesPerElement(format);
-    Require(BlockWidth(format) == 1u && BlockHeight(format) == 1u, "block-compressed 3D textures are not implemented");
+    const auto texelWidth = BlockWidth(format);
+    const auto texelHeight = BlockHeight(format);
+    const auto elementsWidth0 = (width + texelWidth - 1u) / texelWidth;
+    const auto elementsHeight0 = (height + texelHeight - 1u) / texelHeight;
     ThickLayout result{};
     result.depth = depth;
     result.mips.resize(mipCount);
@@ -315,7 +318,7 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
         const auto effectiveLog2 = log2BlockBytes - (log2BlockBytes - 8u) / 3u;
         maxTailLevels = effectiveLog2 <= 11u ? 1u + (1u << (effectiveLog2 - 9u)) : effectiveLog2 - 4u;
         for (std::uint32_t level = 0; mipCount > 1 && level < mipCount; ++level) {
-            if (ShiftCeil(width, level) <= tailWidth && ShiftCeil(height, level) <= tailHeight && mipCount - level <= maxTailLevels) {
+            if (ShiftCeil(elementsWidth0, level) <= tailWidth && ShiftCeil(elementsHeight0, level) <= tailHeight && mipCount - level <= maxTailLevels) {
                 firstTailLevel = level;
                 break;
             }
@@ -326,14 +329,14 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
     std::uint64_t linearOffset = 0;
     for (auto level = mipCount; level-- > 0;) {
         auto& mip = result.mips[level];
-        mip.width = std::max(width >> level, 1u);
-        mip.height = std::max(height >> level, 1u);
+        mip.width = TexelLevelDimension(width, level, texelWidth);
+        mip.height = TexelLevelDimension(height, level, texelHeight);
         mip.tail = level >= firstTailLevel;
         mip.tailX = 0;
         mip.tailY = 0;
         const bool tiled = tileMode != TextureTileMode::kLinear;
-        const auto levelWidth = tiled ? std::max((width + (1u << level) - 1u) >> level, 1u) : mip.width;
-        const auto levelHeight = tiled ? std::max((height + (1u << level) - 1u) >> level, 1u) : mip.height;
+        const auto levelWidth = tiled ? std::max(ShiftCeil(elementsWidth0, level), 1u) : mip.width;
+        const auto levelHeight = tiled ? std::max(ShiftCeil(elementsHeight0, level), 1u) : mip.height;
         const auto paddedWidth = AlignUp(levelWidth, block[0]);
         mip.pitchBytes = paddedWidth * bytesPerElement;
         if (mip.tail) {

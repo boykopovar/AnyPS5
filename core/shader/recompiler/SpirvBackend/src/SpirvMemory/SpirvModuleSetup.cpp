@@ -11,12 +11,12 @@
 namespace ShaderRecompiler
 {
 
-void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const BindingAllocationResult& bindings) {
+void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const CompiledBindingLayout& bindings) {
     CheckBindings(program, bindings);
     EmitBaseHeader(module, program);
 }
 
-void EmitModuleHeader(SpirvEmitterState& state, const BindingAllocationResult& bindings) {
+void EmitModuleHeader(SpirvEmitterState& state, const CompiledBindingLayout& bindings) {
     CheckBindings(state.program, bindings);
     DefineModule(state);
 }
@@ -77,6 +77,9 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitExtension(extension);
     }
     if (state.requirements.bufferInt64Atomics) {
+        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) == state.supportedCapabilities.end()) {
+            FailEmit("64-bit buffer atomics need shaderBufferInt64Atomics");
+        }
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
@@ -175,6 +178,14 @@ void DefineModule(SpirvEmitterState& state) {
         }
         if (pixel.psEarlyZ && !pixel.psPixelKillEnable && !pixel.psDepthExportEnable && !pixel.psSampleMaskExportEnable) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeEarlyFragmentTests);
+        }
+        if (pixel.psOrderedPixelShader) {
+            if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFragmentShaderPixelInterlockEXT)) == state.supportedCapabilities.end()) {
+                throw std::runtime_error("a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
+            }
+            state.module.EmitCapability(spv::CapabilityFragmentShaderPixelInterlockEXT);
+            state.module.EmitExtension("SPV_EXT_fragment_shader_interlock");
+            state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModePixelInterlockOrderedEXT);
         }
     }
     if (state.requirements.computeDerivatives && StageOf(state) == IrShaderStage::Compute) {

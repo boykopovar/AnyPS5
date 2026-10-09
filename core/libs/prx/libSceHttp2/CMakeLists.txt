@@ -1,11 +1,12 @@
 add_library(libSceHttp2 SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceHttp2 PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceHttp2 PRIVATE libc libkernel)
 configure_windows_unwind(libSceHttp2)
 
 if(BUILD_TESTING)
     add_test_executable(guest_http2_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttp2.cpp)
     target_include_directories(guest_http2_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_http2_tests PRIVATE libSceHttp2 libc)
+    target_link_libraries(guest_http2_tests PRIVATE libSceHttp2 libkernel libc)
     configure_windows_unwind(guest_http2_tests)
     add_test(NAME guest_http2 COMMAND guest_http2_tests)
     if(WIN32)

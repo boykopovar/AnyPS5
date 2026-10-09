@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCENGS2_SRC_NGS2INTERNAL_HPP
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -25,12 +26,21 @@ enum class Ngs2PlayState : std::uint32_t {
     Stopped = SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_PLAYING | SCE_NGS2_VOICE_STATE_FLAG_STOPPED,
 };
 
+struct Ngs2Piece {
+    const std::uint8_t* data;
+    std::uint64_t firstFrame;
+    std::uint64_t frames;
+};
+
 struct Ngs2Block {
     const std::uint8_t* data;
     Ngs2WaveformBlock info;
     std::uint32_t cursor = 0;
     std::uint32_t numRepeated = 0;
     std::size_t dataCursor = 0;
+    bool streaming = false;
+    std::uint64_t availableFrames = 0;
+    std::vector<Ngs2Piece> pieces;
 };
 
 struct Ngs2Atrac9DecoderDeleter {
@@ -105,6 +115,9 @@ struct Ngs2Voice {
     float fbwLevel = 1.0f;
     float lfeLevel = 1.0f;
     std::vector<Ngs2UserFx2> userFx;
+    Ngs2UserFxProcessHandler userFxHandler = nullptr;
+    std::array<std::uintptr_t, 3> userFxData{};
+    std::uint32_t userFxFlags = 0;
     std::vector<float> samples;
     bool rendering = false;
     bool rendered = false;
@@ -143,6 +156,7 @@ struct Ngs2System {
 };
 
 std::string Ngs2Hex(std::uint32_t value);
+const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block);
 std::recursive_mutex& Ngs2Mutex();
 Ngs2System* Ngs2FindSystem(Ngs2Handle handle);
 
@@ -166,6 +180,7 @@ void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
+void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 
 #endif

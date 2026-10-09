@@ -9,11 +9,15 @@
 
 namespace ShaderRecompiler {
 
-struct BindingAllocationResult {
-    std::vector<DescriptorBinding> bindings;
+struct CompiledBindingLayout {
     IrBindingLayout layout;
     std::uint32_t pushConstantOffsetBytes = 0;
     std::uint32_t pushConstantSizeBytes = 0;
+};
+
+struct BindingAllocationResult : CompiledBindingLayout {
+    std::vector<PipelineSpecializationConstant> specialization;
+    std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
 };
 

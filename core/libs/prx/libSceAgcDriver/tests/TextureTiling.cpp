@@ -77,6 +77,19 @@ void requireThickAddresses(const GuestTextureResource& resource, std::uint32_t b
     }
 }
 
+void requireBlockVolumeLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t blockFormat, std::uint32_t width, std::uint32_t height, std::uint32_t depth, std::uint32_t mipCount, const std::string& what) {
+    const auto compressed = DescribeSurface(thickVolume(tileMode, format, width, height, depth, mipCount));
+    const auto blocks = DescribeSurface(thickVolume(tileMode, blockFormat, (width + 3u) / 4u, (height + 3u) / 4u, depth, mipCount));
+    Require(compressed.thick == blocks.thick && compressed.guestBytes == blocks.guestBytes && compressed.layerBytes == blocks.layerBytes && compressed.blockDepth == blocks.blockDepth, what + ": the volume is not tiled as a volume of its blocks");
+    for (std::uint32_t level = 0; level < mipCount; ++level) {
+        const auto& mip = compressed.mips[level];
+        const auto& block = blocks.mips[level];
+        Require(mip.blocksPerRow == block.blocksPerRow && mip.pitchBytes == block.pitchBytes && mip.tiledOffset == block.tiledOffset && mip.tiledSize == block.tiledSize && mip.tail == block.tail && mip.tailX == block.tailX && mip.tailY == block.tailY, what + ": mip " + std::to_string(level) + " is not tiled as the same mip of a volume of its blocks");
+        Require(mip.width == std::max((std::max(width >> level, 1u) + 3u) / 4u, 1u) && mip.height == std::max((std::max(height >> level, 1u) + 3u) / 4u, 1u), what + ": mip " + std::to_string(level) + " is not sized in blocks");
+        Require(mip.linearSize == static_cast<std::uint64_t>(mip.pitchBytes) * mip.height, what + ": mip " + std::to_string(level) + " linear region does not cover its block rows");
+    }
+}
+
 void requireThinAddresses(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, std::uint32_t slices, std::uint64_t guestBytes, std::uint64_t layerBytes, std::span<const ElementAddress> expected, const std::string& what) {
     GuestTextureResource resource{};
     resource.width = width;
@@ -248,6 +261,9 @@ void RunTextureTilingTests() {
     {
         constexpr ElementAddress chainInTail[] = {{0, 0, 0, 0, 0x800}, {0, 7, 7, 7, 0xffc}, {0, 4, 2, 4, 0xe20}, {0, 2, 7, 0, 0x968}, {0, 7, 0, 7, 0xed4}, {1, 0, 0, 0, 0x300}, {1, 3, 3, 3, 0x3fc}, {1, 2, 1, 2, 0x3c8}, {1, 1, 3, 0, 0x32c}, {1, 3, 0, 3, 0x3d4}};
         requireThickAddresses(thickVolume(TextureTileMode::kStandard4KB, 56, 8, 8, 8, 2), 4, 0, 4096, chainInTail, "SW_4KB_S 32 bpp 8x8x8, 2 levels");
+        requireBlockVolumeLayout(TextureTileMode::kStandard4KB, 175, 71, 128, 128, 128, 8, "SW_4KB_S BC4 128x128x128, 8 levels");
+        requireBlockVolumeLayout(TextureTileMode::kStandard64KB, 181, 77, 130, 66, 12, 6, "SW_64KB_S BC7 130x66x12, 6 levels");
+        requireBlockVolumeLayout(TextureTileMode::kS64KBX, 169, 71, 60, 36, 20, 5, "SW_64KB_S_X BC1 60x36x20, 5 levels");
         constexpr ElementAddress unevenTail[] = {{0, 0, 0, 0, 0x6000}, {0, 32, 19, 11, 0x1f0b8}, {0, 16, 6, 6, 0x85a0}, {0, 11, 19, 0, 0xc06c}, {0, 32, 0, 11, 0x1a090}, {1, 0, 0, 0, 0x3000}, {1, 15, 9, 5, 0x4e5c}, {1, 8, 3, 3, 0x40b8}, {1, 5, 9, 0, 0x3a0c}, {1, 15, 0, 5, 0x4654}, {2, 0, 0, 0, 0x1000}, {2, 7, 4, 2, 0x13c4}, {2, 4, 1, 1, 0x1218}, {2, 2, 4, 0, 0x1140}, {2, 7, 0, 2, 0x12c4}, {3, 0, 0, 0, 0x800}, {3, 3, 1, 0, 0x84c}, {3, 2, 0, 0, 0x840}, {3, 1, 1, 0, 0x80c}, {3, 3, 0, 0, 0x844}, {4, 0, 0, 0, 0x300}, {4, 1, 0, 0, 0x304}, {4, 0, 0, 0, 0x300}, {5, 0, 0, 0, 0x200}};
         requireThickAddresses(thickVolume(TextureTileMode::kStandard4KB, 56, 33, 20, 12, 6), 4, 3, 131072, unevenTail, "SW_4KB_S 32 bpp 33x20x12, 6 levels");
         constexpr ElementAddress wideTail[] = {{0, 0, 0, 0, 0x20000}, {0, 39, 23, 19, 0xb0bf8}, {0, 20, 8, 10, 0x2e280}, {0, 13, 23, 0, 0x41b28}, {0, 39, 0, 19, 0x902d8}, {1, 0, 0, 0, 0x10000}, {1, 19, 11, 9, 0x1e178}, {1, 10, 4, 5, 0x11c50}, {1, 6, 11, 0, 0x14360}, {1, 19, 0, 9, 0x1a058}, {2, 0, 0, 0, 0x8000}, {2, 9, 5, 4, 0x9c28}, {2, 5, 2, 2, 0x8388}, {2, 3, 5, 0, 0x8868}, {2, 9, 0, 4, 0x9408}, {3, 0, 0, 0, 0x4000}, {3, 4, 2, 1, 0x4310}, {3, 2, 1, 1, 0x4070}, {3, 1, 2, 0, 0x4108}, {3, 4, 0, 1, 0x4210}, {4, 0, 0, 0, 0x1000}, {4, 1, 0, 0, 0x1008}, {5, 0, 0, 0, 0xa00}};

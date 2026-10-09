@@ -104,6 +104,20 @@ void WriterFailure() {
     }
 }
 
+void ExplicitStop() {
+    std::string written;
+    AgcDriver::ProfileOutput output([&](std::string_view text) { written += text; });
+    output.Write("pending output");
+    output.Stop();
+    output.Stop();
+    output.Flush();
+    Check(written == "pending output", "explicit stop did not drain pending output");
+    bool failed = false;
+    try { output.Write("after stop"); }
+    catch (const std::runtime_error& error) { failed = std::string(error.what()) == "profile output is stopping"; }
+    Check(failed, "write after stop was accepted");
+}
+
 }
 
 int main() {
@@ -112,6 +126,7 @@ int main() {
         SlowWriter();
         ConcurrentWriters();
         WriterFailure();
+        ExplicitStop();
         std::cout << "profile output tests passed\n";
         return 0;
     } catch (const std::exception& error) {

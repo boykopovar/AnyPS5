@@ -67,7 +67,7 @@ public:
     // continuing draw the command buffer without ending it.
     bool ContinuesRenderPass(std::uint64_t key) const;
     VkCommandBuffer CommandsInRenderPass();
-    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool continuable);
+    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool continuable, std::function<void(VkCommandBuffer)> afterPass = {});
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
     // label store (RecordStore), or before a command that writes or reads a queued range (the
@@ -86,14 +86,10 @@ public:
     bool Idle() const { return open == nullptr && inFlight.empty(); }
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
-    // The object lives at least until the batch open now completed; it is then destroyed AFTER the
-    // finishing thread released GuestMemory::GpuMutex, on a release thread of its own (never under
-    // a hold, see Recorder.cpp ReleaseDeferredKeeps; the finishing thread destroys it itself when
-    // the thread's queue is full, APS5_RELEASE_QUEUE_MAX batches, or with APS5_RELEASE_ON_UNLOCK=1;
-    // APS5_RELEASE_UNDER_LOCK=1 destroys it in the reap as before), so its destructor must need
-    // neither the mutex nor the recorder nor a particular thread. ~Recorder joins the release
-    // thread and waits for every release in progress before the device goes.
-    void Keep(std::shared_ptr<void> object);
+    void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
+    static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
+    void BoundKeptBytes();
+    std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
     enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32 };
     static constexpr std::size_t DrawSnapshotBudget = std::size_t{256} << 20u;
     static constexpr std::size_t DrawSnapshotEntries = 1024;
@@ -499,6 +495,7 @@ private:
         VkCommandBuffer commands = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
+        std::size_t keptBytes = 0;
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
@@ -590,6 +587,7 @@ private:
             bool continuable = false;
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
+            std::function<void(VkCommandBuffer)> afterPass;
         } renderPass;
         // A pass ended in this batch: Submit records the host-read barrier its draws left out.
         bool hostReadOwed = false;
@@ -685,7 +683,7 @@ private:
     // Returns false when the locked path must run instead (no timeline, nested acquisition, off).
     bool syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int source, const void* site);
     // `source` is the CountSync source the wait is attributed to.
-    void finish(std::unique_ptr<Batch> batch, bool wait, int source);
+    void finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow = false);
     void release(Batch& batch) noexcept;
     static bool overlaps(const Batch& batch, std::uint64_t address, std::uint64_t end);
     // The first noted read of `batch` overlapping [address, end), or null.
@@ -740,6 +738,7 @@ private:
     // snapshot (a rebuild from inside a completion must not drop them) until finish returns.
     std::vector<const Batch*> finishing;
     std::uint64_t submissions = 0;
+    std::size_t inFlightKeptBytes = 0;
     std::uint64_t writeNoteCount = 0;
     // Command buffers and fences of completed batches, reused by later ones (hundreds of batches per
     // frame would otherwise allocate and free their objects each time).

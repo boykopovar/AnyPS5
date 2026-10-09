@@ -46,6 +46,18 @@ int APS5_VABI sceRudpInit_nid_postfix(void* mem_pool, int mem_pool_size) {
     return 0;
 }
 
+int APS5_VABI sceRudpActivate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
+    (void)status;
+    (void)size;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceRudpEnd(int ctx_id) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {

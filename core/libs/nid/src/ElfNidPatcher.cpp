@@ -337,6 +337,8 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         }
         if (shdr.sh_type == kShtGnuVersym)
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);
+        if (shdr.sh_type == kShtGnuVerdef)
+            throw std::runtime_error("unsupported .gnu.version_d section: symbol version definitions cannot be preserved");
     }
 
     if (dynSymOffset == 0u) throw std::runtime_error("no .dynsym section");

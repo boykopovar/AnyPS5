@@ -28,15 +28,16 @@ WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, cons
         throw Domain::RelinkerException("No PT_LOAD segments found");
     std::sort(segments.begin(), segments.end(), [](const auto& left, const auto& right) { return left.MappedAddress < right.MappedAddress; });
     firstAddress = segments.front().MappedAddress & ~static_cast<std::uint64_t>(SectionAlignment - 1);
-    const auto end = segments.back().MappedAddress + segments.back().MemorySize;
+    std::uint64_t end = firstAddress;
+    for (const auto& segment : segments) {
+        if (segment.MappedAddress < end)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", segment.MappedAddress);
+        end = segment.MappedAddress + segment.MemorySize;
+    }
     data.resize(AlignRva(end - firstAddress));
     CheckedRva(LoadRva + static_cast<std::uint64_t>(data.size()));
     pageFlags.resize(data.size() / SectionAlignment);
-    std::uint64_t previousEnd = firstAddress;
     for (const auto& segment : segments) {
-        if (segment.MappedAddress < previousEnd)
-            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", segment.MappedAddress);
-        previousEnd = segment.MappedAddress + segment.MemorySize;
         const auto offset = static_cast<std::size_t>(segment.MappedAddress - firstAddress);
         std::copy_n(source.begin() + static_cast<std::ptrdiff_t>(segment.Offset), static_cast<std::size_t>(segment.FileSize), data.begin() + static_cast<std::ptrdiff_t>(offset));
         std::uint32_t flags = 0;

@@ -8,8 +8,8 @@
 
 namespace ShaderRecompiler {
 
-void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const BindingAllocationResult& bindings);
-void EmitModuleHeader(SpirvEmitterState& state, const BindingAllocationResult& bindings);
+void EmitModuleHeader(SpirvModule& module, const IrProgram& program, const CompiledBindingLayout& bindings);
+void EmitModuleHeader(SpirvEmitterState& state, const CompiledBindingLayout& bindings);
 void DefineModule(SpirvEmitterState& state);
 std::uint32_t DefineInterfaceVariable(SpirvEmitterState& state, std::uint32_t type, std::uint32_t storage, const char* name);
 std::uint32_t ExecutionModelForStage(IrShaderStage stage);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -24,12 +25,17 @@ public:
     }
 
     ~ProfileOutput() {
+        Stop();
+    }
+
+    void Stop() {
+        std::lock_guard stopLock(stopMutex);
         {
             std::lock_guard lock(mutex);
             stopping = true;
         }
         changed.notify_one();
-        worker.join();
+        if (worker.joinable()) worker.join();
     }
 
     bool Write(std::string text) {
@@ -117,6 +123,7 @@ private:
 
     std::function<void(std::string_view)> writer;
     const std::size_t capacity;
+    std::mutex stopMutex;
     std::mutex mutex;
     std::condition_variable changed;
     std::condition_variable idle;
@@ -129,12 +136,19 @@ private:
     std::thread worker;
 };
 
+inline std::atomic<ProfileOutput*> createdProfileOutput{nullptr};
+
 inline ProfileOutput& ProfileOutput_nid_no_patch() {
     static ProfileOutput output([](std::string_view text) {
         if (std::fwrite(text.data(), 1, text.size(), stderr) != text.size() || std::fflush(stderr) != 0)
             throw std::runtime_error("profile output write failed");
     });
+    createdProfileOutput.store(&output, std::memory_order_release);
     return output;
+}
+
+inline void StopProfileOutput_nid_no_patch() {
+    if (auto* output = createdProfileOutput.load(std::memory_order_acquire)) output->Stop();
 }
 
 template<typename... TArgs>

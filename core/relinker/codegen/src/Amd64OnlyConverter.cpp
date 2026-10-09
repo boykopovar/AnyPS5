@@ -144,7 +144,7 @@ void Amd64OnlyConverter::_convertSegment(
                         if (amdOnly && trailingBytes == 0) {
                             sequence.push_back(bytes);
                             taken.push_back(next);
-                        } else if (amdOnly || info.FlowKind != ControlFlowKind::Sequential || info.HasRipRelativeDisp || info.HasBranchTarget) {
+                        } else if (amdOnly || info.FlowKind != ControlFlowKind::Sequential || info.HasBranchTarget) {
                             throw CodegenException("AMD-only instruction too short for a jump is followed by an instruction that cannot move", ph.Offset + following.Offset);
                         } else {
                             trailingBytes += following.Length;
@@ -167,7 +167,8 @@ void Amd64OnlyConverter::_convertSegment(
                     siteLength,
                     std::vector<std::uint8_t>(begin, begin + static_cast<std::ptrdiff_t>(siteLength)),
                     stub.StubBody,
-                    stub.ReturnBranchOffset
+                    stub.ReturnBranchOffset,
+                    stub.Relocations
                 });
                 replacementLength = stub.StubBody.size();
                 consumed.insert(taken.begin(), taken.end());

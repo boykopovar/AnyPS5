@@ -196,15 +196,14 @@ void Sse4aLowering::EmitOutOfLine(StubBodyBuilder& body, const Sse4aOperands& op
     _emitOutOfLine(body, operands);
 }
 
-LoweredBody Sse4aLowering::LowerOutOfLine(const Sse4aOperands& operands, std::span<const std::uint8_t> trailing) const {
-    return LowerOutOfLine(std::span<const Sse4aOperands>(&operands, 1), trailing);
+LoweredBody Sse4aLowering::LowerOutOfLine(const Sse4aOperands& operands) const {
+    return LowerOutOfLine(std::span<const Sse4aOperands>(&operands, 1));
 }
 
-LoweredBody Sse4aLowering::LowerOutOfLine(std::span<const Sse4aOperands> sequence, std::span<const std::uint8_t> trailing) const {
+LoweredBody Sse4aLowering::LowerOutOfLine(std::span<const Sse4aOperands> sequence) const {
     StubBodyBuilder body;
     for (const auto& operands : sequence)
         _emitOutOfLine(body, operands);
-    body.Raw(trailing);
     return body.Finish();
 }
 

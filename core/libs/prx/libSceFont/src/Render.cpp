@@ -419,6 +419,13 @@ int APS5_VABI sceFontDeleteGlyph(const FontMemory* memory, FontGlyph* pGlyph) {
     return SCE_FONT_OK;
 }
 
+int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph glyph, std::uint32_t attribute, std::uint64_t value) {
+    (void)attribute;
+    (void)value;
+    if (!glyph || glyph->magic != GLYPH_MAGIC) return SCE_FONT_ERROR_INVALID_GLYPH;
+    return SCE_FONT_OK;
+}
+
 int APS5_VABI sceFontGlyphGetGlyphForm(FontGlyph glyph) {
     if (!glyph || glyph->magic != GLYPH_MAGIC) return SCE_FONT_ERROR_INVALID_GLYPH;
     return glyph->glyph_form;

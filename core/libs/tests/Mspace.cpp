@@ -8,6 +8,7 @@
 #include <thread>
 
 extern "C" {
+int* APS5_VABI __error_nid_postfix();
 void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char*, void*, std::size_t, unsigned);
 int APS5_VABI sceLibcMspaceDestroy_nid_postfix(void*);
 void* APS5_VABI sceLibcMspaceMalloc_nid_postfix(void*, std::size_t);
@@ -42,6 +43,23 @@ int main() {
     Require(first > storage.data() && first + 128 <= storage.data() + storage.size());
     for (int i = 0; i < 128; ++i) { Require(first[i] == 0); first[i] = static_cast<unsigned char>(i); }
     void* blocker = sceLibcMspaceMalloc_nid_postfix(arena, 128);
+    MallocManagedSize beforeOverflow{sizeof(MallocManagedSize), 1, 0, 0, 0, 0, 0};
+    Require(sceLibcMspaceMallocStats_nid_postfix(arena, &beforeOverflow) == 0);
+    for (std::size_t delta = 0; delta < 16; ++delta) {
+        const auto size = std::numeric_limits<std::size_t>::max() - delta;
+        *__error_nid_postfix() = 0;
+        Require(sceLibcMspaceRealloc_nid_postfix(arena, first, size) == nullptr);
+        Require(*__error_nid_postfix() == 12);
+        *__error_nid_postfix() = 0;
+        Require(sceLibcMspaceReallocalign_nid_postfix(arena, first, size, 16) == nullptr);
+        Require(*__error_nid_postfix() == 12);
+        Require(sceLibcMspaceMallocUsableSize_nid_postfix(first) == 128);
+        for (int i = 0; i < 128; ++i) Require(first[i] == i);
+        MallocManagedSize afterOverflow{sizeof(MallocManagedSize), 1, 0, 0, 0, 0, 0};
+        Require(sceLibcMspaceMallocStats_nid_postfix(arena, &afterOverflow) == 0);
+        Require(afterOverflow.currentInuseSize == beforeOverflow.currentInuseSize);
+        Require(afterOverflow.maxInuseSize == beforeOverflow.maxInuseSize);
+    }
     auto* grown = static_cast<unsigned char*>(sceLibcMspaceRealloc_nid_postfix(arena, first, 4096));
     Require(grown && grown != first);
     for (int i = 0; i < 128; ++i) Require(grown[i] == i);

@@ -93,7 +93,7 @@ void FillInput() {
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t width, std::uint32_t height, std::uint32_t format) {
@@ -175,6 +175,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64ImageEXT)) {
+            std::puts("skipped, the device has no shaderImageInt64Atomics");
+            return VulkanTestSkipped;
+        }
         FillInput();
         for (const auto format : {Format32_32UInt, Format32_32SInt, Format32_32Float}) {
             Run(*device, format);

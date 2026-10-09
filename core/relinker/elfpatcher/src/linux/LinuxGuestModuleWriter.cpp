@@ -1,8 +1,10 @@
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
+#include <span>
 
 namespace Elfpatcher {
 
@@ -153,6 +155,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         const auto returnDisplacement = displacement(returnAddress, stubReturn, site.Offset);
         const auto siteDisplacement = displacement(stubAddress, siteNext, site.Offset);
         bytes.insert(bytes.end(), site.Body.begin(), site.Body.end());
+        Codegen::ApplyStubRelocations(std::span<std::uint8_t>(bytes.data() + stubOffset, site.ReturnBranchOffset), site.Relocations, site.Address, stubAddress, site.Offset);
         Io::WriteU32(bytes, stubOffset + site.ReturnBranchOffset + 1,
                      static_cast<std::uint32_t>(returnDisplacement));
         std::fill_n(bytes.begin() + static_cast<std::ptrdiff_t>(site.Offset), site.Length, kNop1.Bytes[0]);

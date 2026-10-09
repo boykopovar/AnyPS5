@@ -41,6 +41,7 @@ struct ResourceSnapshot {
     std::vector<std::uint32_t> flattenedSrt;
     std::vector<std::uint32_t> userData;
     UniformFill uniformFill;
+    std::vector<SrtReadPoison> srtPoison;
 };
 
 struct UniformFillPlan {
@@ -63,6 +64,8 @@ struct IrResourcePlan {
     std::vector<ResourceBlock> controlFlow;
     std::vector<std::uint32_t> materializationSources;
     std::vector<SrtRead> srtReads;
+    std::vector<std::uint32_t> guardedSrtSlots;
+    std::uint32_t srtGuardOffset = 0;
     std::vector<std::uint8_t> cleanFlatSlots;
     // One byte per srtReads slot, 1 when the CPU walk never consumes the slot's value (see
     // Detail::ComputePureFlatSlots): a driver may reuse a capture whose words differ only there.

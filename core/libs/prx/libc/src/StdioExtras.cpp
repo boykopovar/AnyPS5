@@ -114,4 +114,9 @@ void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alig
     if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
 }
 
+void APS5_VABI _ZdlPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, std::size_t alignment) {
+    (void)alignment;
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
 }

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -131,7 +132,7 @@ int main() {
     constexpr std::uint32_t VietnameseBold = 0x18070057u;
     constexpr std::uint32_t JapaneseJg2Light = 0x1A0835D3u;
     constexpr std::uint32_t ChineseGb = 0x180CB0D4u;
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "anyps5_guest_system_font";
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / ("anyps5_guest_system_font-" + std::to_string(std::random_device{}()));
     std::filesystem::remove_all(root);
     const std::filesystem::path empty = root / "empty";
     const std::filesystem::path fonts = root / "fonts";
@@ -196,7 +197,10 @@ int main() {
     FontHandle missing = nullptr;
     Require(sceFontOpenFontSet(library, ChineseGb, 1, nullptr, &missing) == SCE_FONT_ERROR_FONT_OPEN_FAILED && missing == nullptr);
 
-    std::filesystem::remove(fonts / "SST-Bold.otf");
+    const auto substituteFonts = root / "substitute-fonts";
+    std::filesystem::create_directories(substituteFonts);
+    WriteFile(substituteFonts / "NotoSans-Bold.ttf", SquareGlyphFont('A', 300));
+    SetFontDirectory(substituteFonts);
     FontHandle substitute = nullptr;
     Require(sceFontOpenFontSet(library, EuropeanBold, 3, nullptr, &substitute) == SCE_FONT_OK);
     Require(sceFontSetScalePixel(substitute, 100.0f, 100.0f) == SCE_FONT_OK);

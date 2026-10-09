@@ -12,6 +12,25 @@
 
 namespace Relinker {
 
+namespace {
+
+std::vector<std::string> ReadNeededNames(const Domain::SysVDynamicSection& dynamic) {
+    if (dynamic.DynamicSegmentData.size() % 16 != 0) throw Domain::RelinkerException("Invalid executable dependency table");
+    std::vector<std::string> names;
+    for (std::size_t offset = 0; offset < dynamic.DynamicSegmentData.size(); offset += 16) {
+        if (Io::ReadU64(dynamic.DynamicSegmentData, offset) != 1) throw Domain::RelinkerException("Unexpected executable dependency tag");
+        const auto nameOffset = Io::ReadU64(dynamic.DynamicSegmentData, offset + 8);
+        if (nameOffset >= dynamic.DynStrData.size()) throw Domain::RelinkerException("Invalid dependency string offset");
+        const auto start = dynamic.DynStrData.begin() + static_cast<std::ptrdiff_t>(nameOffset);
+        const auto end = std::find(start, dynamic.DynStrData.end(), 0);
+        if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated dependency string");
+        names.emplace_back(start, end);
+    }
+    return names;
+}
+
+}
+
 std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const {
     const auto root = std::filesystem::absolute(inputPath).parent_path();
     const auto singular = root / "sce_module";
@@ -47,16 +66,9 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (isElf(entry.path())) paths.push_back(entry.path());
         }
     }
-    if (dynamic.DynamicSegmentData.size() % 16 != 0) throw Domain::RelinkerException("Invalid executable dependency table");
+    const auto neededNames = ReadNeededNames(dynamic);
     std::set<std::string> missingNeeded;
-    for (std::size_t offset = 0; offset < dynamic.DynamicSegmentData.size(); offset += 16) {
-        if (Io::ReadU64(dynamic.DynamicSegmentData, offset) != 1) continue;
-        const auto nameOffset = Io::ReadU64(dynamic.DynamicSegmentData, offset + 8);
-        if (nameOffset >= dynamic.DynStrData.size()) throw Domain::RelinkerException("Invalid dependency string offset");
-        const auto start = dynamic.DynStrData.begin() + static_cast<std::ptrdiff_t>(nameOffset);
-        const auto end = std::find(start, dynamic.DynStrData.end(), 0);
-        if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated dependency string");
-        const std::string name(start, end);
+    for (const auto& name : neededNames) {
         if (excludedModules.contains(name)) continue;
         if (std::none_of(paths.begin(), paths.end(), [&](const auto& path) { return path.filename().string() == name; })) missingNeeded.insert(name);
     }
@@ -115,13 +127,25 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         images.push_back(std::move(image));
     }
     std::map<std::string, std::size_t> guestNames;
+    std::map<std::string, std::size_t> windowsGuestFiles;
+    const auto foldFilename = [](std::string name) {
+        for (auto& character : name) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
+        return name;
+    };
     for (std::size_t index = 0; index < images.size(); ++index) {
         for (const auto& name : {images[index].SourcePath.filename().string(), images[index].Soname}) {
             if (name.empty()) continue;
             const auto [found, inserted] = guestNames.emplace(name, index);
             if (!inserted && found->second != index) throw Domain::RelinkerException("Ambiguous guest dependency name: " + name);
         }
+        if (windows) windowsGuestFiles.emplace(foldFilename(images[index].SourcePath.filename().string()), index);
     }
+    const auto findGuest = [&](const std::string& name) {
+        const auto exact = guestNames.find(name);
+        if (exact != guestNames.end() || !windows) return exact;
+        const auto file = windowsGuestFiles.find(foldFilename(name));
+        return file == windowsGuestFiles.end() ? guestNames.end() : guestNames.emplace(name, file->second).first;
+    };
     const auto rejectSharedImport = [&](const std::string& name, const std::string& importer) {
         const auto shared = sharedExports.find(name);
         if (shared == sharedExports.end()) return;
@@ -147,6 +171,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (!windows && exports.contains(name)) rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
     }
     std::vector<std::set<std::size_t>> dependencies(images.size());
+    std::vector<std::set<std::size_t>> systemImports(images.size());
     for (auto& image : images) {
         image.UsePlatformTlsResolver = !windows ? !exports.contains("vNe1w4diLCs") : std::none_of(image.Symbols.begin(), image.Symbols.end(), [](const auto& symbol) {
             return symbol.Name == "vNe1w4diLCs" && symbol.Section != 0 && symbol.Section != AbsoluteSection && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
@@ -154,18 +179,19 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     }
     for (std::size_t index = 0; index < images.size(); ++index) {
         for (const auto& name : images[index].Dependencies) {
-            const auto found = guestNames.find(name);
+            const auto found = findGuest(name);
             if (found != guestNames.end() && found->second != index) dependencies[index].insert(found->second);
         }
-        for (const auto& symbol : images[index].Symbols) {
+        for (std::size_t symbolIndex = 0; symbolIndex < images[index].Symbols.size(); ++symbolIndex) {
+            const auto& symbol = images[index].Symbols[symbolIndex];
             if (symbol.Section != 0 || symbol.Name.empty()) continue;
             rejectSharedImport(symbol.Name, images[index].SourcePath.string());
             const auto found = exports.find(symbol.Name);
             std::vector<std::size_t> providers;
             if (found != exports.end()) {
                 for (const auto provider : found->second) {
-                    const auto& candidate = images[provider];
-                    if (!windows || symbol.Library.empty() || symbol.Library == candidate.SourcePath.filename().string() || symbol.Library == candidate.Soname) providers.push_back(provider);
+                    const auto declared = findGuest(symbol.Library);
+                    if (!windows || symbol.Library.empty() || (declared != guestNames.end() && declared->second == provider)) providers.push_back(provider);
                 }
             }
             if (providers.size() > 1) throw Domain::RelinkerException("Ambiguous guest import after stripping #: " + symbol.Name);
@@ -175,6 +201,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (exported == provider.Symbols.end() || ((symbol.Info & 15) != 0 && (symbol.Info & 15) != (exported->Info & 15))) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (providers.front() != index) dependencies[index].insert(providers.front());
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
+            if (providers.empty()) systemImports[index].insert(symbolIndex);
         }
     }
     if (!windows) {
@@ -200,20 +227,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<std::string> hostLibraries;
     std::set<std::string> uniqueHosts;
     const auto addHost = [&](const std::string& name) {
-        if (guestNames.contains(name)) return;
+        if (findGuest(name) != guestNames.end()) return;
         if (name.empty() || name.find_first_of("/\\:$") != std::string::npos) throw Domain::RelinkerException("Invalid host dependency: " + name);
         if (uniqueHosts.insert(name).second) hostLibraries.push_back(name);
     };
-    if (dynamic.DynamicSegmentData.size() % 16 != 0) throw Domain::RelinkerException("Invalid executable dependency table");
-    for (std::size_t offset = 0; offset < dynamic.DynamicSegmentData.size(); offset += 16) {
-        if (Io::ReadU64(dynamic.DynamicSegmentData, offset) != 1) throw Domain::RelinkerException("Unexpected executable dependency tag");
-        const auto nameOffset = Io::ReadU64(dynamic.DynamicSegmentData, offset + 8);
-        if (nameOffset >= dynamic.DynStrData.size()) throw Domain::RelinkerException("Invalid dependency string offset");
-        const auto start = dynamic.DynStrData.begin() + nameOffset;
-        const auto end = std::find(start, dynamic.DynStrData.end(), 0);
-        if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated dependency string");
-        addHost(std::string(start, end));
-    }
+    for (const auto& name : neededNames) addHost(name);
     for (const auto& image : images) for (const auto& dependency : image.Dependencies) addHost(dependency);
     if (uniqueHosts.contains("libSceLibcInternal.prx") && uniqueHosts.insert("libc.prx").second) hostLibraries.push_back("libc.prx");
     dynamic.DynamicSegmentData.clear();
@@ -254,8 +272,22 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             needed.insert(needed.end(), hostLibraries.begin(), hostLibraries.end());
             output = Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath);
         }
+        if (windows) {
+            for (const auto& [name, provider] : guestNames) {
+                if (provider == index && std::find(runtime.Names.begin(), runtime.Names.end(), name) == runtime.Names.end()) runtime.Names.push_back(name);
+            }
+        }
+        std::vector<Domain::CallRegistryEntry> imports;
+        for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData}) {
+            for (std::size_t position = 0; position < table->size(); position += 24) {
+                const auto symbolIndex = static_cast<std::size_t>(Io::ReadU64(*table, position + 8) >> 32);
+                if (!systemImports[index].contains(symbolIndex)) continue;
+                const auto& symbol = image.Symbols[symbolIndex];
+                imports.push_back({symbol.Name, symbol.Library, {}, 0, {}, Io::ReadU64(*table, position), {}, false});
+            }
+        }
         dynamic.GuestModules.push_back(std::move(runtime));
-        artifacts.push_back({target, std::move(output)});
+        artifacts.push_back({target, std::move(output), std::move(imports)});
     }
     return artifacts;
 }

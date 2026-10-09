@@ -17,6 +17,7 @@ void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexce
 void APS5_VABI _ZdlPv_nid_postfix(void*);
 void APS5_VABI _ZdaPv_nid_postfix(void*);
 void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void*, std::size_t);
+void APS5_VABI _ZdlPvmSt11align_val_t_nid_postfix(void*, std::size_t, std::size_t);
 void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
 char* APS5_VABI strdup_nid_postfix(const char*);
 char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
@@ -201,6 +202,11 @@ int main(int argc, char** argv) {
     require(frees == 5);
     _ZdlPvSt11align_val_t_nid_postfix(nullptr, 64);
     require(frees == 5);
+    pointer = ApplicationHeapAlign_nid_no_patch(64, 37);
+    _ZdlPvmSt11align_val_t_nid_postfix(pointer, 37, 64);
+    require(frees == 6);
+    _ZdlPvmSt11align_val_t_nid_postfix(nullptr, 37, 64);
+    require(frees == 6);
     fail = true;
     require(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);
     require(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr);

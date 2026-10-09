@@ -23,6 +23,19 @@ void Driver::UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<I
     outputs.erase(it);
 }
 
+void Driver::AttachWindow(const PresentationWindow& window) {
+    CheckFailure();
+    std::unique_lock replacing(deviceReplacement);
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
+    std::lock_guard lock(GuestMemory::GpuMutex());
+    if (device) {
+        require(device->Window() == nullptr, "a window is already attached to the device");
+        device->PrepareForReplacement();
+        replacedDevices.push_back(device);
+    }
+    device = std::make_shared<VulkanDevice>(&window);
+}
+
 void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque, void (*gpuReady)(void*), void* context) {
 
     PerformanceContext timingContext(window.timing.get());
@@ -48,19 +61,10 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
         bool trailing = false;
         double waitedMs = 0;
         {
-            std::unique_lock replacing(deviceReplacement, std::defer_lock);
-            if (const auto current = device.Load(); current == nullptr || current->Window() == nullptr) replacing.lock();
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
             std::lock_guard lock(GuestMemory::GpuMutex());
             timing.Mark("gpu_mutex_wait");
-            if (device == nullptr || device->Window() == nullptr) {
-                if (device) {
-                    device->PrepareForReplacement();
-                    replacedDevices.push_back(device);
-                }
-                device = std::make_shared<VulkanDevice>(&window);
-            }
-            require(device->Window() == window.context, "presentation window does not match device surface");
+            require(device != nullptr && device->Window() == window.context, "presentation window is not attached to the device");
             presenting = device;
             timing.Mark("device_setup");
             std::uint32_t drawableWidth = 0;

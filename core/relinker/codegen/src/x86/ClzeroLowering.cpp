@@ -41,10 +41,9 @@ void ClzeroLowering::EmitOutOfLine(StubBodyBuilder& body, const ClzeroOperands& 
     body.Restore(kScratch);
 }
 
-LoweredBody ClzeroLowering::LowerOutOfLine(const ClzeroOperands& operands, std::span<const std::uint8_t> trailing) const {
+LoweredBody ClzeroLowering::LowerOutOfLine(const ClzeroOperands& operands) const {
     StubBodyBuilder body;
     EmitOutOfLine(body, operands);
-    body.Raw(trailing);
     return body.Finish();
 }
 

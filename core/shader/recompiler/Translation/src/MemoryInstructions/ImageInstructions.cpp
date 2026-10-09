@@ -35,7 +35,7 @@ MemoryInfo imageMemoryInfoFromInstruction(const RdnaInstruction& inst) {
     memory.imageDimension = inst.imageDimension;
     memory.imageAddressComponents = inst.imageAddressComponents;
     memory.imageHasMip = inst.op == RdnaOpcode::ImageLoadMip || inst.op == RdnaOpcode::ImageStoreMip || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStoreMipPck;
-    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck;
+    memory.imagePacked = inst.op == RdnaOpcode::ImageLoadPck || inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPck || inst.op == RdnaOpcode::ImageLoadMipPckSgn || inst.op == RdnaOpcode::ImageStorePck || inst.op == RdnaOpcode::ImageStoreMipPck || inst.op == RdnaOpcode::ImageGather4hPck;
     memory.dataSigned = inst.op == RdnaOpcode::ImageLoadPckSgn || inst.op == RdnaOpcode::ImageLoadMipPckSgn;
     memory.imageR128 = inst.imageR128;
     return memory;
@@ -138,6 +138,24 @@ bool TranslationContext::imageGetLod(const RdnaInstruction& inst) {
     return true;
 }
 
+bool TranslationContext::imageBy(const RdnaInstruction& inst) {
+    const auto id = inst.imageOpcodeId;
+    const bool packed = id >= 0x70u;
+    if (packed ? id >= 0x76u : (id & 0x10u) != 0u) {
+        throw std::runtime_error(packed ? "MIMG PCK2/PCK4 stores are not implemented" : "MIMG BY2/BY4 stores are not implemented");
+    }
+    MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
+    memory.imageHasMip = packed ? id == 0x73u || id == 0x74u : (id & 8u) != 0u;
+    memory.imagePacked = packed;
+    memory.imageByElements = packed ? (id == 0x71u || id == 0x74u ? 4u : 2u) : (id & 1u) != 0u ? 4u : 2u;
+    IrValue* resource = getImageResource(memory);
+    IrValue* address = makeImageAddress(inst, inst.source0);
+    IrValue& exec = ir.GetExec();
+    IrValue& result = ir.Emit(IrOpcode::ImageRead, IrOpcodeType(IrOpcode::ImageRead), {resource, address, &exec}, addMemoryInfo(memory, inst.programCounter));
+    writeImageComponents(inst.destination, &result, memory, 4u);
+    return true;
+}
+
 bool TranslationContext::imageLoad(const RdnaInstruction& inst) {
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
     IrValue* resource = getImageResource(memory);
@@ -199,6 +217,9 @@ bool TranslationContext::imageSample(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::imageGather(const RdnaInstruction& inst) {
+    if (inst.op == RdnaOpcode::ImageGather4hPck && inst.dataBits != 32u) {
+        throw std::runtime_error("packed horizontal gather with D16 data is not measured");
+    }
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);

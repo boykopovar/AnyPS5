@@ -44,6 +44,7 @@ struct MemoryInfo {
     bool imageHasMip = false;
     bool imageR128 = false;
     bool imagePacked = false;
+    std::uint32_t imageByElements = 0;
     bool idxen = false;
     bool offen = false;
     bool planningOnly = false;

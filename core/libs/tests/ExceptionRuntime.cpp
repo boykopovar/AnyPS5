@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include <cassert>
 #include <cstdio>
 #include <typeinfo>
@@ -5,6 +6,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <functional>
+#include <memory>
 #include <stdexcept>
 #include <pthread.h>
 #include <sys/wait.h>
@@ -18,7 +21,9 @@ extern "C" void __cxa_rethrow_primary_exception_nid_postfix(void*);
 
 extern "C" [[noreturn]] void _ZSt14_Xout_of_rangePKc_nid_postfix(const char*);
 extern "C" [[noreturn]] void _ZSt13_Xrange_errorPKc_nid_postfix(const char*);
+extern "C" [[noreturn]] void _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
 extern "C" [[noreturn]] void __cxa_bad_cast_nid_postfix();
+extern "C" [[noreturn]] void _ZSt19_Throw_bad_weak_ptrv_nid_postfix();
 extern "C" [[noreturn]] void _ZNKSt9exception6_RaiseEv_nid_postfix(const void*);
 extern "C" void* __cxa_vec_new3_nid_postfix(std::size_t, std::size_t, std::size_t, void(*)(void*), void(*)(void*), void*(*)(std::size_t), void(*)(void*, std::size_t));
 extern "C" void __cxa_vec_delete3_nid_postfix(void*, std::size_t, std::size_t, void(*)(void*), void(*)(void*, std::size_t));
@@ -198,8 +203,14 @@ int main() {
     try { _ZSt13_Xrange_errorPKc_nid_postfix("not a logic error"); }
     catch (const std::logic_error&) { std::abort(); }
     catch (const std::range_error&) {}
+    bool badFunctionCall = false;
+    try { _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix(); }
+    catch (const std::bad_function_call&) { badFunctionCall = true; }
+    if (!badFunctionCall) std::abort();
     try { __cxa_bad_cast_nid_postfix(); }
     catch (const std::exception& value) { assert(value.what() != nullptr); }
+    try { _ZSt19_Throw_bad_weak_ptrv_nid_postfix(); std::abort(); }
+    catch (const std::bad_weak_ptr& value) { if (std::strcmp(value.what(), "bad_weak_ptr") != 0) std::abort(); }
     try { _ZNKSt9exception6_RaiseEv_nid_postfix(nullptr); assert(false); }
     catch (const std::invalid_argument&) {}
     try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); assert(false); }

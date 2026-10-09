@@ -203,7 +203,7 @@ const std::filesystem::path& save_root() {
 }
 
 bool ensure_save_root(std::error_code& error) {
-    std::filesystem::create_directories(save_root(), error);
+    if (std::filesystem::create_directories(save_root(), error)) RecordWrittenPath_nid_no_patch(save_root());
     if (error) {
         error.clear();
     }
@@ -233,6 +233,7 @@ void store_aliases_locked(State& st) {
     for (const auto& [alias, dir_name] : st.aliases) {
         file << alias << '\t' << dir_name << '\n';
     }
+    RecordWrittenPath_nid_no_patch(save_root() / "_aliases");
 }
 
 std::string save_alias_locked(State& st, const std::string& dir_name) {
@@ -289,7 +290,9 @@ std::filesystem::path save_blocks_path(const std::filesystem::path& directory) {
 }
 
 bool write_blob(const std::filesystem::path& path, const void* data, std::size_t size) {
-    return replace_file(path, data, size);
+    if (!replace_file(path, data, size)) return false;
+    RecordWrittenPath_nid_no_patch(path);
+    return true;
 }
 
 bool read_blob(const std::filesystem::path& path, void* data, std::size_t size) {
@@ -499,6 +502,7 @@ int mount_internal(const SceSaveDataDirName* dir_name, std::uint32_t mount_mode,
         if (!std::filesystem::create_directories(directory, error) || error) {
             return SD_ERROR_INTERNAL;
         }
+        RecordWrittenPath_nid_no_patch(directory);
         created = true;
         if (write_u64(save_blocks_path(directory), blocks) != SD_OK) {
             std::error_code cleanup;
@@ -579,6 +583,7 @@ int delete_internal(std::int32_t user_id, const SceSaveDataDirName* dir_name,
         return SD_ERROR_NOT_FOUND;
     }
     std::filesystem::remove_all(directory, error);
+    RecordWrittenPath_nid_no_patch(directory);
     if (error) {
         return SD_ERROR_INTERNAL;
     }
@@ -1286,7 +1291,8 @@ int set_local_storage_app_status_internal(const SceSaveDataDirName* dir_name,
         return SD_ERROR_PARAMETER;
     }
     std::error_code error;
-    std::filesystem::create_directories(app_status_path(dir_name->data).parent_path(), error);
+    if (std::filesystem::create_directories(app_status_path(dir_name->data).parent_path(), error))
+        RecordWrittenPath_nid_no_patch(app_status_path(dir_name->data).parent_path());
     if (error) {
         return SD_ERROR_INTERNAL;
     }
@@ -1301,7 +1307,8 @@ int delete_local_storage_app_status_internal(const SceSaveDataDirName* dir_name,
         return SD_ERROR_PARAMETER;
     }
     std::error_code error;
-    std::filesystem::remove(app_status_path(dir_name->data), error);
+    if (std::filesystem::remove(app_status_path(dir_name->data), error))
+        RecordWrittenPath_nid_no_patch(app_status_path(dir_name->data));
     return error ? SD_ERROR_INTERNAL : SD_OK;
 }
 

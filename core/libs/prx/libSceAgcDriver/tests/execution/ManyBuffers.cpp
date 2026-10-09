@@ -106,7 +106,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
         Table[buffer * 4u + 0u] = static_cast<std::uint32_t>(address);
         Table[buffer * 4u + 1u] = static_cast<std::uint32_t>((address >> 32u) & 0xffffu);
         Table[buffer * 4u + 2u] = RangeBytes;
-        Table[buffer * 4u + 3u] = 0x01016facu;
+        Table[buffer * 4u + 3u] = 0x31016facu;
     }
     const auto table = reinterpret_cast<std::uintptr_t>(Table.data());
     const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(table), static_cast<std::uint32_t>(table >> 32u)};

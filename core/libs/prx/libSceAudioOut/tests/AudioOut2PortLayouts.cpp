@@ -8,7 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
-#include <stdexcept>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -30,16 +30,6 @@ static void SetEnvironment(const char* name, const std::string& value) {
 #else
     setenv(name, value.c_str(), 1);
 #endif
-}
-
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
 }
 
 namespace {
@@ -64,7 +54,6 @@ struct Layout {
 
 const Layout mono{1, {1.0f}, {1.0f}};
 const Layout stereo{2, {1.0f, 0.0f}, {0.0f, 1.0f}};
-const Layout surround51{6, {1.0f, 0.0f, fold, 0.0f, fold, 0.0f}, {0.0f, 1.0f, fold, 0.0f, 0.0f, fold}};
 const Layout surround71{8, {1.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f}, {0.0f, 1.0f, fold, 0.0f, 0.0f, fold, 0.0f, fold}};
 const Layout surround714{12, {1.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold * fold, 0.0f},
     {0.0f, 1.0f, fold, 0.0f, 0.0f, fold, 0.0f, fold, 0.0f, fold, 0.0f, fold * fold}};
@@ -103,7 +92,7 @@ void SetVolume(AudioOut2PortHandle port, const std::vector<float>& volume) {
 }
 
 std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume) {
-    const auto path = std::filesystem::temp_directory_path() / "anyps5_audio_out2_port_layouts.raw";
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_layouts-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
@@ -215,20 +204,49 @@ void TestDroppedLfe() {
     RequireFold(Play(Format(surround714.channels, formatFloat), data.data(), volume), surround714, expected, volume, 1.0f);
 }
 
-void TestRejectedLayouts() {
+void TestMeasuredMainPortFormats() {
+    struct Case {
+        std::uint32_t format;
+        std::uint32_t result;
+    };
+    constexpr Case cases[] = {
+        {0x000, 0x8026800E}, {0x001, 0x8026800E}, {0x080, 0x80268001},
+        {0x100, 0}, {0x101, 0}, {0x102, 0x8026800E}, {0x17F, 0x8026800E},
+        {0x180, 0x80268001}, {0x181, 0x80268001}, {0x1FF, 0x80268001},
+        {0x200, 0}, {0x201, 0}, {0x202, 0x8026800E}, {0x27F, 0x8026800E},
+        {0x280, 0x80268001}, {0x281, 0x80268001}, {0x2FF, 0x80268001},
+        {0x300, 0x8026800E}, {0x301, 0x8026800E}, {0x380, 0x80268001},
+        {0x400, 0x8026800E}, {0x401, 0x8026800E}, {0x500, 0x8026800E},
+        {0x600, 0x8026800E}, {0x601, 0x8026800E}, {0x680, 0x80268001},
+        {0x700, 0x8026800E}, {0x701, 0x8026800E}, {0x780, 0x80268001},
+        {0x800, 0}, {0x801, 0}, {0x802, 0x8026800E}, {0x87F, 0x8026800E},
+        {0x880, 0}, {0x881, 0}, {0x882, 0x8026800E}, {0x8FF, 0x8026800E},
+        {0x900, 0x8026800E}, {0x901, 0x8026800E}, {0x980, 0x80268001},
+        {0xA00, 0x8026800E}, {0xB00, 0x8026800E}, {0xC00, 0}, {0xC01, 0},
+        {0xC02, 0x8026800E}, {0xC7F, 0x8026800E}, {0xC80, 0x80268001},
+        {0xC81, 0x80268001}, {0xD00, 0x8026800E}, {0xE00, 0x8026800E},
+        {0xF00, 0x8026800E}, {0xFFF, 0x80268001},
+        {0xFFFFF100, 0}, {0xFFFFF201, 0}, {0xFFFFF800, 0}, {0xFFFFFC01, 0},
+        {0xFFFFF600, 0x8026800E}, {0xFFFFF202, 0x8026800E}, {0xFFFFF280, 0x80268001},
+    };
     const auto context = CreateContext();
-    for (const std::uint32_t channels : {0u, 3u, 4u, 5u, 7u, 9u, 10u, 11u, 13u, 15u}) {
-        AudioOut2PortHandle port = 0;
-        Require(ThrowsRuntimeError([&] { CreatePort(context, Format(channels, formatFloat), &port); }));
-        Require(ThrowsRuntimeError([&] { CreatePort(context, Format(channels, formatS16), &port); }));
+    for (const auto& test : cases) {
+        AudioOut2PortHandle port = 0xAAAAAAAAAAAAAAAAull;
+        Require(static_cast<std::uint32_t>(CreatePort(context, test.format, &port)) == test.result);
+        if (test.result == 0) {
+            Require(port != 0 && port != static_cast<AudioOut2PortHandle>(-1));
+            Require(sceAudioOut2PortDestroy(port) == 0);
+        } else {
+            Require(port == static_cast<AudioOut2PortHandle>(-1));
+        }
     }
-    AudioOut2PortHandle port = 0;
-    Require(ThrowsRuntimeError([&] { CreatePort(context, Format(12, 2), &port); }));
-    Require(ThrowsRuntimeError([&] { CreatePort(context, Format(12, formatFloat) | 0x1000, &port); }));
-    Require(ThrowsRuntimeError([&] { CreatePort(context, Format(12, formatFloat) | 0x10000, &port); }));
-    Require(CreatePort(context, Format(12, formatFloat), &port) == 0);
-    Require(port != 0);
-    Require(sceAudioOut2PortDestroy(port) == 0);
+    for (const std::uint32_t format : {0x100u, 0x201u, 0x800u, 0xC01u}) {
+        for (std::uint32_t bit = 12; bit < 32; bit++) {
+            AudioOut2PortHandle port = 0;
+            Require(CreatePort(context, format | (1u << bit), &port) == 0);
+            Require(sceAudioOut2PortDestroy(port) == 0);
+        }
+    }
     Require(sceAudioOut2ContextDestroy(context) == 0);
 }
 
@@ -236,7 +254,7 @@ void TestRejectedLayouts() {
 
 int main() {
     SetEnvironment("SDL_AUDIODRIVER", "disk");
-    for (const Layout* layout : {&mono, &stereo, &surround51, &surround71, &surround714}) {
+    for (const Layout* layout : {&mono, &stereo, &surround71, &surround714}) {
         TestFloatLayout(*layout);
         TestS16Layout(*layout);
     }
@@ -245,8 +263,13 @@ int main() {
         const auto volume = Volume(8);
         RequireFold(Play(Format(8, formatFloat) | 0x80, data.data(), volume), surround71, data, volume, 1.0f);
     }
+    {
+        const auto data = FloatGrain(2);
+        const auto volume = Volume(2);
+        RequireFold(Play(0xFFFFF200u, data.data(), volume), stereo, data, volume, 1.0f);
+    }
     TestHeightChannels();
     TestDroppedLfe();
-    TestRejectedLayouts();
+    TestMeasuredMainPortFormats();
     return 0;
 }

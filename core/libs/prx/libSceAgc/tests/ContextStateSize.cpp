@@ -8,7 +8,7 @@
 #include <stdexcept>
 
 extern "C" std::uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(std::uint32_t operation);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateAnotherOp(CommandBuffer* buf, std::uint32_t operation);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
 
 namespace {
 
@@ -34,7 +34,7 @@ void testSizes() {
         std::array<std::uint32_t, 64> words{};
         CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(),
                              nullptr, nullptr, 0};
-        check(sceAgcDcbContextStateAnotherOp(&buffer, operation) == words.data(), "context state op did not start at the cursor");
+        check(sceAgcDcbContextStateOp_0100(&buffer, operation) == words.data(), "context state op did not start at the cursor");
         const auto written = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * sizeof(std::uint32_t);
         check(written == sizes[operation], "context state size differs from the written packets");
     }

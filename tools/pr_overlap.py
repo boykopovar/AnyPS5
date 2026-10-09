@@ -14,11 +14,11 @@ MARKER = "<!-- pr-overlap -->"
 
 
 def git(*args):
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
 
 
 def gh(*args):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True).stdout
 
 
 def upstream():
@@ -46,15 +46,22 @@ def fetch(base, prs):
 
 def merge(*args):
     result = subprocess.run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", *args],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding="utf-8")
     lines = result.stdout.splitlines()
+    if result.returncode not in (0, 1) or not lines:
+        raise RuntimeError(f"git merge-tree {' '.join(args)} failed: {result.stderr.strip()}")
     return lines[0], set(lines[1:]) if result.returncode else set()
+
+
+def commit(tree):
+    return git("-c", "user.name=pr_overlap", "-c", "user.email=pr_overlap", "commit-tree", tree,
+               "-p", "refs/pr/base", "-m", "pr_overlap").strip()
 
 
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
-    pr["tree"] = None if conflicted else tree
-    old, new = (git("merge-base", "refs/pr/base", pr["ref"]).strip(), pr["ref"]) if conflicted else ("refs/pr/base", tree)
+    pr["tree"] = None if conflicted else commit(tree)
+    old, new = (git("merge-base", "refs/pr/base", pr["ref"]).strip(), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     for line in git("diff", "--name-status", "--no-renames", old, new).splitlines():
         status, path = line.split("\t", 1)

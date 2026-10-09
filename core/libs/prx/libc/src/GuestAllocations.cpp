@@ -15,7 +15,15 @@
 #endif
 #include <windows.h>
 #else
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <system_error>
+#include <vector>
 #include <link.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -60,6 +68,38 @@ struct MutationState {
 void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
     if (mutation != nullptr && bytes != 0) static_cast<MutationState*>(mutation)->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 }
+
+#ifndef _WIN32
+std::vector<std::pair<std::uintptr_t, std::size_t>> fileBackedWritableImage() {
+    const auto image = std::filesystem::read_symlink("/proc/self/exe").string();
+    std::ifstream maps("/proc/self/maps");
+    std::vector<std::pair<std::uintptr_t, std::size_t>> mappings;
+    for (std::string line; std::getline(maps, line);) {
+        std::istringstream fields(line);
+        std::string span, permissions, offset, device, inode, path;
+        fields >> span >> permissions >> offset >> device >> inode >> std::ws;
+        std::getline(fields, path);
+        if (permissions != "rw-p" || path != image) continue;
+        const auto dash = span.find('-');
+        const auto begin = std::stoull(span.substr(0, dash), nullptr, 16);
+        mappings.emplace_back(begin, std::stoull(span.substr(dash + 1), nullptr, 16) - begin);
+    }
+    return mappings;
+}
+
+bool backWritableImageAnonymously() {
+    for (const auto& [address, bytes] : fileBackedWritableImage()) {
+        auto* image = reinterpret_cast<void*>(address);
+        auto* copy = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (copy == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "mmap of an anonymous main image copy failed");
+        std::memcpy(copy, image, bytes);
+        if (mremap(copy, bytes, bytes, MREMAP_MAYMOVE | MREMAP_FIXED, image) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "mremap of an anonymous main image copy failed");
+    }
+    return true;
+}
+
+[[maybe_unused]] const bool writableImageAnonymous = backWritableImageAnonymously();
+#endif
 
 }
 
@@ -227,9 +267,10 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
         if (std::chrono::steady_clock::now() >= deadline) PinnedFailure(address, bytes, ("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS)").c_str());
         const auto waiter = pinWaiter.load(std::memory_order_acquire);
         bool progressed = false;
-        if (waiter != nullptr && state != nullptr && state->lock.owns_lock()) {
+        if (state != nullptr && state->lock.owns_lock()) {
             state->lock.unlock();
-            progressed = waiter();
+            if (waiter != nullptr) progressed = waiter();
+            else std::this_thread::yield();
             state->lock.lock();
         } else {
             std::this_thread::yield();

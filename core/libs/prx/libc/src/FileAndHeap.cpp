@@ -7,10 +7,12 @@
 #include <limits>
 #include <utility>
 #include <cerrno>
+#include <cstring>
 
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 static std::string NativeFileMode(const char* mode) {
     std::string result(mode);
@@ -18,6 +20,10 @@ static std::string NativeFileMode(const char* mode) {
     if (!result.empty() && result.find('b') == std::string::npos) result.insert(1, 1, 'b');
 #endif
     return result;
+}
+
+static bool WritesFile(const char* mode) {
+    return std::strpbrk(mode, "wa+") != nullptr;
 }
 
 extern "C" {
@@ -57,7 +63,10 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
     if (!valid) { errno = 22; return nullptr; }
     try {
         const auto path = *filename ? ResolvePath_nid_no_patch(filename).string() : std::string{};
-        if (stream->Reopen(path.c_str(), NativeFileMode(mode).c_str())) return stream;
+        if (stream->Reopen(path.c_str(), NativeFileMode(mode).c_str())) {
+            if (!path.empty() && WritesFile(mode)) RecordWrittenPath_nid_no_patch(path);
+            return stream;
+        }
         const int error = errno;
         if (stream->IsDynamic()) delete stream;
         errno = error;
@@ -94,6 +103,7 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
         throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_OPEN_FAILED + ": \"" + abs_path + "\": " + reason);
     }
     // APS5_LOG_OUT("success: \"%s\"", abs_path.c_str());
+    if (WritesFile(mode)) RecordWrittenPath_nid_no_patch(fpath);
     auto stream = std::make_unique<FileStream>(handle.get(), true);
     handle.release();
     return stream.release();
@@ -145,6 +155,11 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
     auto* handle = GetNativeStream(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fread: null buffer");
+    if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fread: buffer size overflow");
+    const auto bytes = size * count;
+    if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fread: buffer address overflow");
+    const GuestArena::HostWrite destination(buffer, bytes);
+    if (!destination.Open()) throw std::runtime_error("fread: buffer is not writable");
     const auto result = std::fread(buffer, size, count, handle);
     stream->SyncStatus();
     if (std::ferror(handle)) throw std::runtime_error("fread: read failed");

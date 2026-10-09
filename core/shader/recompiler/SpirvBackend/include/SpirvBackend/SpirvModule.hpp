@@ -39,6 +39,7 @@ private:
 public:
     explicit SpirvModule(std::uint32_t version = 0x00010300u);
     [[nodiscard]] std::uint32_t AllocateId();
+    [[nodiscard]] std::uint32_t SpecializationConstant(std::uint32_t type, std::uint32_t constantId, std::uint32_t defaultValue);
     void EmitCapability(std::uint32_t capability);
     void EmitExtension(const std::string& extensionName);
     void EmitEntryPoint(std::uint32_t executionModel, std::uint32_t entryPointId, const std::string& entryPointName, const std::vector<std::uint32_t>& interfaceIds);
@@ -176,6 +177,7 @@ private:
         return id;
     }
 
+    std::map<std::uint32_t, std::uint32_t> specializationIds;
     static void appendOperand(std::vector<std::uint32_t>& words, std::uint32_t value) {
         words.push_back(value);
     }

@@ -320,12 +320,13 @@ int APS5_VABI sceAmprAprCommandBufferResetGatherScatterState(Apr::CommandBufferO
     return result;
 }
 
-int APS5_VABI sceAmprCommandBufferClearBuffer(Apr::CommandBufferObject* buffer) {
+void* APS5_VABI sceAmprCommandBufferClearBuffer(Apr::CommandBufferObject* buffer) {
+    void* memory = buffer->base;
     buffer->base = nullptr;
     buffer->size = 0;
     buffer->offset = 0;
     buffer->numCommands = 0;
-    return 0;
+    return memory;
 }
 
 int APS5_VABI sceAmprCommandBufferConstructMarker(Apr::CommandBufferObject* buffer, std::uint32_t type, const char* text, const std::uint32_t* color) {

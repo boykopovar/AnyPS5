@@ -615,6 +615,30 @@ bool Reserved(const void* addr, size_t len) {
     return false;
 }
 
+void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len) {
+    mutation.Unmap(addr, len, [&](const void* piece, std::size_t pieceBytes, const void* allocation, bool last) {
+        auto* pieceAddress = const_cast<void*>(piece);
+        std::lock_guard lock(g_directLock);
+        EraseMappings(reinterpret_cast<std::uintptr_t>(piece), reinterpret_cast<std::uintptr_t>(piece) + pieceBytes);
+#if defined(__linux__)
+        Unmap(pieceAddress, pieceBytes);
+#else
+        if (KernelArena::Get().Contains(pieceAddress, pieceBytes)) munmap(pieceAddress, pieceBytes);
+        else if (last) munmap_release(const_cast<void*>(allocation));
+        else munmap(pieceAddress, pieceBytes);
+#endif
+    });
+    EraseReservations(addr, len);
+    RecordProtection(addr, len, -1);
+}
+
+void ReplaceFixedOverlap(GuestAllocations::Mutation& mutation, void* addr, size_t len, int flags) {
+    constexpr int GuestMapNoOverwrite = 0x80;
+    if (addr == nullptr || (flags & GuestMapFixedFlag) == 0) return;
+    if ((flags & GuestMapNoOverwrite) == 0 && mutation.Overlaps(addr, len)) UnmapRegistered(mutation, addr, len);
+    mutation.RequireAvailable(addr, len);
+}
+
 bool FixedNoOverwriteConflict(const GuestAllocations::Mutation& mutation, void* addr, size_t len, int flags) {
     constexpr int GuestMapNoOverwrite = 0x80;
     if (addr == nullptr || (flags & GuestMapFixedFlag) == 0 || (flags & GuestMapNoOverwrite) == 0) return false;
@@ -634,7 +658,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
         RecordProtection(*addr, len, prot);
         return 0;
     }
-    if (*addr != nullptr && (flags & GuestMapFixedFlag) != 0) mutation.RequireAvailable(*addr, len);
+    ReplaceFixedOverlap(mutation, *addr, len, flags);
     std::lock_guard lock(g_directLock);
     ValidatePhysicalRange(static_cast<std::uint64_t>(physStart), len);
     void* mapped = MapAligned(*addr, len, PROT_NONE, flags, alignment);
@@ -663,7 +687,7 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags) {
         RecordProtection(*addr, len, prot);
         return 0;
     }
-    if (*addr != nullptr && (flags & GuestMapFixedFlag) != 0) mutation.RequireAvailable(*addr, len);
+    ReplaceFixedOverlap(mutation, *addr, len, flags);
     void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, PS5_PAGE_SIZE);
     try {
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0);
@@ -738,20 +762,7 @@ int DoMunmap(void* addr, size_t len) {
     Trace("unmap %p+0x%zx", addr, len);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
-    mutation.Unmap(addr, len, [&](const void* piece, std::size_t pieceBytes, const void* allocation, bool last) {
-        auto* pieceAddress = const_cast<void*>(piece);
-        std::lock_guard lock(g_directLock);
-        EraseMappings(reinterpret_cast<std::uintptr_t>(piece), reinterpret_cast<std::uintptr_t>(piece) + pieceBytes);
-#if defined(__linux__)
-        Unmap(pieceAddress, pieceBytes);
-#else
-        if (KernelArena::Get().Contains(pieceAddress, pieceBytes)) munmap(pieceAddress, pieceBytes);
-        else if (last) munmap_release(const_cast<void*>(allocation));
-        else munmap(pieceAddress, pieceBytes);
-#endif
-    });
-    EraseReservations(addr, len);
-    RecordProtection(addr, len, -1);
+    UnmapRegistered(mutation, addr, len);
     return 0;
 }
 

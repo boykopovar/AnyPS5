@@ -69,7 +69,8 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
    }
   }
  }
- g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
+ g_status = g_mode == SAVE_DATA_DIALOG_MODE_PROGRESS_BAR
+  ? SAVE_DATA_DIALOG_STATUS_RUNNING : SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;
 }
 
