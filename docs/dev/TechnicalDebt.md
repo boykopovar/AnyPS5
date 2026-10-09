@@ -226,6 +226,26 @@ Throughout the project, every function at every stage either **does exactly what
 - [sceRtcFormatRFC2822, sceRtcFormatRFC2822LocalTime, sceRtcFormatRFC3339LocalTime](../../core/libs/prx/libSceRtc/Export.cpp) (libSceRtc) - only shadPS4 (PS4) has bodies. A null tick returns `INVALID_POINTER` like the existing `sceRtcFormatRFC3339`, where shadPS4 formats the current time instead; offsets outside ±1439 minutes return `INVALID_VALUE` like `sceRtcFormatRFC3339`; the local-time variants use the host's offset at the given instant (shadPS4 uses `sceKernelGettimezone`, the current offset)
 - [snwprintf_s](../../core/libs/prx/libc/src/FormattingWide.cpp) (libc) - follows C11 K.3.9.1.3 with `RSIZE_MAX` assumed to be `SIZE_MAX >> 1`. A runtime-constraint violation only returns a negative value: `set_constraint_handler_s` is not exported and the console's default handler is unknown. An invalid multibyte `%s` argument is copied byte by byte instead of being reported as an encoding error, as in `vswprintf`
 - [libSceUlt queues](../../core/libs/prx/libSceUlt/Export.cpp) - the added `sceUltQueuePop`, `sceUltQueueTryPush`, `sceUltQueueDestroy` and `sceUltQueueDataResourcePoolDestroy` signatures are inferred from the existing push/pop and object APIs. Queue destruction is assumed to reject blocked callers with `ULT_ERROR_BUSY` and otherwise discard queued data; pool exhaustion returns `ULT_ERROR_AGAIN`. These rules, alignment checks and shared slot limits have not been confirmed on PS5 hardware or a title. Non-null queue and data-pool option parameters throw because their layouts are unknown.
+- [localeconv](../../core/libs/prx/libc/src/LocaleSupport.cpp) (libc, re-exported by libSceAmpr) - only the Sony lconv layout up to decimal_point at offset 0x48 is verified (seven null pointers and fourteen CHAR_MAX bytes before it); the int_p/int_n tail fields are left zero and the rest follows the host layout
+- [set_constraint_handler_s](../../core/libs/prx/libc/src/WideConversion.cpp) (libc, re-exported by libSceAmpr) - the default handler is assumed to abort; each module keeps its own handler state, so a handler set through one library is not seen by the other
+- [__udivti3](../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc, re-exported by libSceAmpr) - the hardware traps on a zero divisor; this throws instead
+- [AC1FtjqMCL0](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [0iEKNAvT600](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [2cELEBPdYQ0](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [5xYxiOtOccA](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [6W+shIH315Q](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [7ilObq815O4](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [7iq7Hfs8HBk](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [AMJZhpC+siY](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [E9XkHowt+dY](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [GADjreszOgM](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [Giyg2xGrXDU](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [KC3y21wrqzc](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [Qb8wS4GZUsw](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [aAQZSjb2fho](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [pnz21I6VjDs](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [qk043QPsrZU](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
+- [uDGXwUKqi8s](../../core/libs/prx/libkernel/Unimplemented.cpp) (libkernel) - unknown name, signature
 - [LinuxProtFromSce](../../core/libs/prx/libkernel/DirectMemory/DirectMemory.cpp) (libkernel) - protection bits 0x100 and 0x200 are accepted and assumed not to affect host CPU access; host protection is derived only from the read, write and execute bits
 - [_sceUlobjmgrRegisterObject](../../core/libs/prx/ulobjmgr/Export.cpp) (ulobjmgr) - parameters taken from shadPS4 (PS4): a nonzero 64-bit object, a nonzero 32-bit kind and a 32-bit id output; the meaning of the first two and the PS5 signature are unverified. The id bound of `_sceUlobjmgrUnregisterObject` (below 0x4000) and the raw `EINVAL` (22) return also come from shadPS4
 - [sceShareGetCurrentStatus](../../core/libs/prx/libSceShare/Export.cpp) (libSceShare) - validation (feature flag non-zero, status non-null) and the all-zero 16-byte status taken from the [KytyPS5](https://github.com/KytyPS5/KytyPS5) reimplementation, not confirmed on a PS5 title; the meaning of the recording status values is unknown

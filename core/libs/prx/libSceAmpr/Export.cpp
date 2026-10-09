@@ -1,7 +1,9 @@
 #include <cstdint>
 #include <cstddef>
+#include <ctime>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <cstring>
 #include <stdexcept>
@@ -802,4 +804,173 @@ int APS5_VABI sceAmprAmmWaitCommandBufferCompletion(std::uint32_t id) {
     return AmmSubmitted_nid_no_patch(id) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 }
 
+int APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _Thrd_join_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _Thrd_id_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _Cnd_signal_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _Cnd_init_with_name_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZTVN10__cxxabiv120__function_type_infoE_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZTVN10__cxxabiv119__pointer_type_infoE_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _Thrd_sleep_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI wcstombs_s_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI __cxa_call_unexpected_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("0hlfW1O4Aa4", sceAmprLocaleconv);
+SonyLconv* APS5_VABI sceAmprLocaleconv(void) {
+    return SonyLocaleconv();
+}
+
+APS5_EXPORT("802pFCwC9w0", sceAmprUdivti3);
+unsigned __int128 APS5_VABI sceAmprUdivti3(unsigned __int128 dividend, unsigned __int128 divisor) {
+    return SonyUdivti3(dividend, divisor);
+}
+
+APS5_EXPORT("MU25eqxSDTw", sceAmprSinh);
+double APS5_VABI sceAmprSinh(double x, double y) {
+    return SonySinh(x, y);
+}
+
+APS5_EXPORT("-vXEQdRADLI", sceAmprStrtokS);
+char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context) {
+    return SonyStrtokS(str, delim, context);
+}
+
+APS5_EXPORT("2UFh+YKfuzk", sceAmprCtimeS);
+int APS5_VABI sceAmprCtimeS(char* buffer, std::size_t size, const std::time_t* time) {
+    return SonyCtimeS(buffer, size, time);
+}
+
+APS5_EXPORT("6f5f-qx4ucA", sceAmprWcscpyS);
+int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
+    return SonyWcscpyS(dest, size, src);
+}
+
+APS5_EXPORT("ENLfKJEZTjE", sceAmprSetConstraintHandlerS);
+void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler) {
+    return SonySetConstraintHandlerS(handler);
+}
+
+APS5_EXPORT("Jo9ON-AX9eU", sceAmprFltrounds);
+int APS5_VABI sceAmprFltrounds(void) {
+    return SonyFltrounds();
+}
+
+APS5_EXPORT("ODGONXcSmz4", sceAmprIgnoreHandlerS);
+void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int error) {
+    SonyIgnoreHandlerS(message, pointer, error);
+}
+
+APS5_EXPORT("VUzjXknPPBs", sceAmprMbstowcs);
+std::size_t APS5_VABI sceAmprMbstowcs(std::uint16_t* dest, const char* src, std::size_t size) {
+    return SonyMbstowcs(dest, src, size);
+}
+
+APS5_EXPORT("qPe7-h5Jnuc", sceAmprAsctimeS);
+int APS5_VABI sceAmprAsctimeS(char* buffer, std::size_t size, const std::tm* time) {
+    return SonyAsctimeS(buffer, size, time);
+}
+
+APS5_EXPORT("qlWiRfOJx1A", sceAmprFpclassifyd);
+int APS5_VABI sceAmprFpclassifyd(double value) {
+    return SonyFpclassifyd(value);
+}
 }

@@ -9,6 +9,7 @@
 #include <string>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 
 namespace {
 
@@ -440,6 +441,10 @@ size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size
 
 size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const wchar_t** source, size_t count, mbstate_t* state) {
     return std::wcsrtombs(destination, source, count, state);
+}
+
+char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context) {
+    return SonyStrtokS(str, delim, context);
 }
 
 }

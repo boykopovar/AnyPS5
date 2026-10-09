@@ -203,6 +203,16 @@ if(BUILD_TESTING)
     configure_windows_unwind(savedata_replace_file_failure_tests)
     add_test(NAME savedata_replace_file_failure COMMAND savedata_replace_file_failure_tests)
 
+    add_test_executable(guest_crt_tests tests/GuestCrt.cpp)
+    target_include_directories(guest_crt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_crt_tests PRIVATE libSceAmpr libc)
+    configure_windows_unwind(guest_crt_tests)
+    add_test(NAME guest_crt COMMAND guest_crt_tests)
+    if(WIN32)
+        set_tests_properties(guest_crt PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAmpr>")
+    endif()
+
     if(MINGW)
         target_compile_options(savedata_core_write_replacement_tests PRIVATE -fasynchronous-unwind-tables)
         target_compile_options(savedata_native_write_replacement_tests PRIVATE -fasynchronous-unwind-tables)

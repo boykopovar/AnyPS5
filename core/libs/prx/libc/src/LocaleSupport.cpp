@@ -1,4 +1,5 @@
 #include <climits>
+#include <clocale>
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include <string>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
@@ -378,6 +380,10 @@ void APS5_VABI _init_env_nid_postfix() {
 void APS5_VABI init_env_nid_postfix(const InitEnvParams* params) {
     (void)params;
     _init_env_nid_postfix();
+}
+
+SonyLconv* APS5_VABI localeconv_nid_postfix(void) {
+    return SonyLocaleconv();
 }
 
 }

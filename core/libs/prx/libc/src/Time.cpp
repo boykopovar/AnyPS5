@@ -1,5 +1,7 @@
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
+#include <cstdio>
 #include <ctime>
 #include <cstring>
 
@@ -8,6 +10,7 @@
 #endif
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" {
 
@@ -115,6 +118,14 @@ int64_t APS5_VABI clock_nid_postfix() {
 #else
     return static_cast<int64_t>(static_cast<double>(std::clock()) * 1000000.0 / CLOCKS_PER_SEC);
 #endif
+}
+
+int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::time_t* time) {
+    return SonyCtimeS(buffer, size, time);
+}
+
+int APS5_VABI asctime_s_nid_postfix(char* buffer, std::size_t size, const std::tm* time) {
+    return SonyAsctimeS(buffer, size, time);
 }
 
 }

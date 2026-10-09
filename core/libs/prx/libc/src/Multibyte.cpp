@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -136,6 +137,10 @@ std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const ch
     }
     *source += converted;
     return converted;
+}
+
+std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size) {
+    return SonyMbstowcs(dest, src, size);
 }
 
 }
