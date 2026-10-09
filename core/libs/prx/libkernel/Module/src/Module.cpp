@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -15,11 +16,9 @@
 #include <dlfcn.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
-#else
-#include <fstream>
 #endif
 
-#ifdef _WIN32
+#ifndef __APPLE__
 namespace {
 std::uint64_t ReadEncoded(const std::uint8_t*& p, std::uint8_t encoding) {
   const auto application = encoding & 0x70;
@@ -36,6 +35,26 @@ std::uint64_t ReadEncoded(const std::uint8_t*& p, std::uint8_t encoding) {
   return value;
 }
 
+void FillEhFrameInfo(const std::uint8_t* header, const std::uint8_t* begin, const std::uint8_t* end, ModuleInfoForUnwind* info) {
+  if (header[0] != 1) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame_hdr version other than 1");
+  const auto* p = header + 4;
+  const auto frames = ReadEncoded(p, header[1]);
+  const auto* record = reinterpret_cast<const std::uint8_t*>(frames);
+  if (record < begin || record >= end) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: eh_frame_ptr outside the image");
+  for (;;) {
+    if (record + 4 > end) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: eh_frame has no terminator inside the image");
+    std::uint32_t length = 0;
+    std::memcpy(&length, record, 4);
+    if (length == 0) break;
+    if (length == 0xffffffffu) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame record with a 64-bit length");
+    record += 4 + length;
+  }
+  info->eh_frame_hdr_addr = reinterpret_cast<std::uint64_t>(header);
+  info->eh_frame_addr = frames;
+  info->eh_frame_size = static_cast<std::uint64_t>(record + 4 - reinterpret_cast<const std::uint8_t*>(frames));
+}
+
+#ifdef _WIN32
 void FillGuestUnwindInfo(const std::uint8_t* base, ModuleInfoForUnwind* info) {
   const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
   if (dos->e_magic != IMAGE_DOS_SIGNATURE) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: image without a DOS header");
@@ -46,29 +65,13 @@ void FillGuestUnwindInfo(const std::uint8_t* base, ModuleInfoForUnwind* info) {
     if (std::memcmp(sections[i].Name, ".ehmeta", 8) != 0) continue;
     std::uint32_t rva = 0;
     std::memcpy(&rva, base + sections[i].VirtualAddress, 4);
-    const auto* header = base + rva;
-    if (header[0] != 1) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame_hdr version other than 1");
-    const auto* p = header + 4;
-    const auto frames = ReadEncoded(p, header[1]);
-    const auto* record = reinterpret_cast<const std::uint8_t*>(frames);
-    const auto* end = base + nt->OptionalHeader.SizeOfImage;
-    if (record < base || record >= end) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: eh_frame_ptr outside the image");
-    for (;;) {
-      if (record + 4 > end) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: eh_frame has no terminator inside the image");
-      std::uint32_t length = 0;
-      std::memcpy(&length, record, 4);
-      if (length == 0) break;
-      if (length == 0xffffffffu) NotImplemented_nid_no_patch("sceKernelGetModuleInfoForUnwind eh_frame record with a 64-bit length");
-      record += 4 + length;
-    }
-    info->eh_frame_hdr_addr = reinterpret_cast<std::uint64_t>(header);
-    info->eh_frame_addr = frames;
-    info->eh_frame_size = static_cast<std::uint64_t>(record - reinterpret_cast<const std::uint8_t*>(frames));
+    FillEhFrameInfo(base + rva, base, base + nt->OptionalHeader.SizeOfImage, info);
     info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
     info->seg0_size = nt->OptionalHeader.SizeOfImage;
     return;
   }
 }
+#endif
 }
 #endif
 
@@ -157,32 +160,48 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
   info->seg0_size = textSize;
   return 0;
 #else
-  std::ifstream maps("/proc/self/maps");
-  if (!maps) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: failed to open /proc/self/maps");
-  std::string line;
-  while (std::getline(maps, line)) {
-    std::uint64_t start = 0;
+  struct Search {
+    std::uint64_t address;
+    ModuleInfoForUnwind* info;
+    bool found;
+  } search {addr, info, false};
+  dl_iterate_phdr([](dl_phdr_info* image, std::size_t, void* data) {
+    auto& search = *static_cast<Search*>(data);
+    const Elf64_Phdr* first = nullptr;
+    const Elf64_Phdr* frames = nullptr;
+    std::uint64_t begin = UINT64_MAX;
     std::uint64_t end = 0;
-    char perms[8] = {};
-    std::uint64_t offset = 0;
-    unsigned int devMajor = 0;
-    unsigned int devMinor = 0;
-    std::uint64_t inode = 0;
-    char path[4096] = {};
-    int parsed = std::sscanf(line.c_str(), "%llx-%llx %7s %llx %x:%x %llu %4095s",
-      (unsigned long long*)&start, (unsigned long long*)&end, perms,
-      (unsigned long long*)&offset, &devMajor, &devMinor, (unsigned long long*)&inode, path);
-    if (parsed < 7 || addr < start || addr >= end) continue;
+    bool contains = false;
+    for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
+      const auto& header = image->dlpi_phdr[index];
+      const auto start = image->dlpi_addr + header.p_vaddr;
+      if (header.p_type == PT_LOAD) {
+        if (first == nullptr) first = &header;
+        begin = std::min<std::uint64_t>(begin, start);
+        end = std::max<std::uint64_t>(end, start + header.p_memsz);
+        if (search.address >= start && search.address - start < header.p_memsz) contains = true;
+      }
+      if (header.p_type == PT_GNU_EH_FRAME) frames = &header;
+    }
+    if (!contains) return 0;
+    auto* info = search.info;
+    const std::string name = image->dlpi_name != nullptr ? image->dlpi_name : "";
     info->st_size = sizeof(ModuleInfoForUnwind);
-    std::strncpy(info->name, parsed >= 8 ? path : "", sizeof(info->name) - 1);
+    std::strncpy(info->name, name.c_str(), sizeof(info->name) - 1);
     info->name[sizeof(info->name) - 1] = '\0';
     info->eh_frame_hdr_addr = 0;
     info->eh_frame_addr = 0;
     info->eh_frame_size = 0;
-    info->seg0_addr = start;
-    info->seg0_size = end - start;
-    return 0;
-  }
+    info->seg0_addr = image->dlpi_addr + first->p_vaddr;
+    info->seg0_size = first->p_memsz;
+    const bool guest = name.empty() || name.ends_with(".guest.prx");
+    if (guest && frames != nullptr) {
+      FillEhFrameInfo(reinterpret_cast<const std::uint8_t*>(image->dlpi_addr + frames->p_vaddr), reinterpret_cast<const std::uint8_t*>(begin), reinterpret_cast<const std::uint8_t*>(end), info);
+    }
+    search.found = true;
+    return 1;
+  }, &search);
+  if (search.found) return 0;
   return SCE_KERNEL_ERROR_ESRCH;
 #endif
 }

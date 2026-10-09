@@ -33,7 +33,7 @@ int main() {
     Require(info.st_size == sizeof(ModuleInfoForUnwind));
     Require(info.eh_frame_hdr_addr == reinterpret_cast<std::uint64_t>(&fixture->header));
     Require(info.eh_frame_addr == reinterpret_cast<std::uint64_t>(&fixture->frames));
-    Require(info.eh_frame_size == 4 + 12);
+    Require(info.eh_frame_size == 4 + 12 + 4);
     Require(info.seg0_addr == base);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
