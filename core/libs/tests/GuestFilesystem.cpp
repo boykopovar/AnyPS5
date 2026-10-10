@@ -187,6 +187,8 @@ int main() {
     Require(stat_nid_postfix("", &status) == -1 && *__error_nid_postfix() == 2);
     Require(stat_nid_postfix((presentName + "/").c_str(), &status) == -1 && *__error_nid_postfix() == 20);
     Require(sceKernelStat((presentName + "/").c_str(), &status) == static_cast<int>(0x80020014u));
+    Require(sceKernelStat("\xff\xfe", &status) == static_cast<int>(0x80020002u));
+    Require(stat_nid_postfix("\xff\xfe", &status) == -1 && *__error_nid_postfix() == 2);
     FileStat dirStatus{};
     Require(stat_nid_postfix((rootName + "/").c_str(), &dirStatus) == 0 && (dirStatus.st_mode & 0170000) == 0040000);
     Require(stat_nid_postfix(nullptr, &status) == -1 && *__error_nid_postfix() == 14);

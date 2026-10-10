@@ -199,7 +199,12 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     if (sb == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": sb is null");
     }
-    const auto native = ResolvePath_nid_no_patch(path);
+    std::filesystem::path native;
+    try {
+        native = ResolvePath_nid_no_patch(path);
+    } catch (const std::filesystem::filesystem_error&) {
+        return SceErrorFromErrno(2);
+    }
     std::error_code error;
     constexpr int GuestEnotdir = 20;
     const auto status = std::filesystem::status(native, error);
