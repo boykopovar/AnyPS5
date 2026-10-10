@@ -231,13 +231,17 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         request.layout.pushConstantSizeBytes -= 4;
         static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request));
         request.layout.pushConstantOffsetBytes = 2;
-        Reject([&] { static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request)); }, "artifact is missing");
+        Reject([&] { static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request)); }, "not dword-aligned");
         request.layout = {0, 0, 0, mesh ? MeshDrawPushOffsetBytes : 128u};
         if (pixel) request.context.pixel->interpolatorSettings[0] ^= 1u;
         else if (tessellation) ++request.graphics->tessellation->outputControlPoints;
         else if (mesh) ++request.graphics->mesh->maxVertices;
         else ++request.context.userDataBaseRegister;
-        Reject([&] { static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request)); }, "artifact is missing");
+        const auto predicted = program.snapshot->prepared->entries.size();
+        static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request));
+        Require(program.snapshot->prepared->entries.size() == predicted + 1, "a draw state that registration did not predict was not prepared");
+        static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request));
+        Require(program.snapshot->prepared->entries.size() == predicted + 1, "an artifact prepared at a draw was not reused");
     }
     ShaderRegistry invalidRegistry;
     DrawDecode invalid{};
