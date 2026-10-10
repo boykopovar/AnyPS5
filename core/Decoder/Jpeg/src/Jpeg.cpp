@@ -2,8 +2,12 @@
 
 #include <climits>
 #include <cstddef>
+#include <cstdlib>
 #include <stdexcept>
 
+#define STBI_MALLOC(size) std::calloc(1, size)
+#define STBI_REALLOC(pointer, size) std::realloc(pointer, size)
+#define STBI_FREE(pointer) std::free(pointer)
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
@@ -44,6 +48,32 @@ int toSubsampling(Sampling sampling) {
     case Sampling::Yuv420: return TJSAMP_420;
     }
     throw std::invalid_argument("Jpeg::Encode: invalid sampling");
+}
+
+bool hasScan(std::span<const std::uint8_t> jpeg) {
+    constexpr std::uint8_t MARKER = 0xFF;
+    constexpr std::uint8_t START_OF_SCAN = 0xDA;
+    constexpr std::uint8_t END_OF_IMAGE = 0xD9;
+    std::size_t offset = 2;
+    while (offset + 1 < jpeg.size()) {
+        if (jpeg[offset] != MARKER) return false;
+        const std::uint8_t marker = jpeg[offset + 1];
+        if (marker == MARKER) {
+            ++offset;
+            continue;
+        }
+        if (marker == START_OF_SCAN) return true;
+        if (marker == END_OF_IMAGE) return false;
+        if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+            offset += 2;
+            continue;
+        }
+        if (offset + 3 >= jpeg.size()) return false;
+        const std::size_t length = (static_cast<std::size_t>(jpeg[offset + 2]) << 8) | jpeg[offset + 3];
+        if (length < 2) return false;
+        offset += 2 + length;
+    }
+    return false;
 }
 
 }  // namespace
@@ -92,7 +122,7 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg) {
 }
 
 std::optional<Image> Decode(std::span<const std::uint8_t> jpeg) {
-    if (jpeg.empty() || jpeg.size() > INT_MAX) return std::nullopt;
+    if (jpeg.empty() || jpeg.size() > INT_MAX || !hasScan(jpeg)) return std::nullopt;
 
     int width = 0;
     int height = 0;

@@ -2,6 +2,7 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <relinker/domain/Types.hpp>
 #include <cstring>
+#include <limits>
 
 namespace Relinker {
 
@@ -132,6 +133,12 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
 
 std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
     const ElfHeader header = ReadHeader();
+    if (header.SectionHeaderCount != 0 && header.SectionHeaderEntrySize != 64) {
+        throw RelinkerException("Invalid ELF section header entry size: expected 64 bytes", 0x3a);
+    }
+    if (header.SectionHeaderStringIndex != 0 && header.SectionHeaderStringIndex >= header.SectionHeaderCount) {
+        throw RelinkerException("Section name table index out of range", 0x3e);
+    }
 
     std::vector<SectionHeader> headers;
     FileByteOffset offset = header.SectionHeaderOffset;
@@ -166,11 +173,16 @@ std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeade
                         (header.SectionHeaderStringIndex * header.SectionHeaderEntrySize);
 
     const FileByteOffset strTableOffset = _readU64At(shstrOffset + 0x18);
+    const ByteCount strTableSize = _readU64At(shstrOffset + 0x20);
+    if (!_rangeFits(strTableOffset, strTableSize, _fileBuffer.size()) || nameOffset >= strTableSize) {
+        throw RelinkerException("Section name out of bounds", shstrOffset);
+    }
 
     std::string name;
+    const FileByteOffset end = strTableOffset + strTableSize;
     FileByteOffset currentPos = strTableOffset + nameOffset;
 
-    while (currentPos < _fileBuffer.size() && _fileBuffer[currentPos] != '\0') {
+    while (currentPos < end && _fileBuffer[currentPos] != '\0') {
         name += static_cast<char>(_fileBuffer[currentPos]);
         currentPos++;
     }
@@ -217,8 +229,13 @@ FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const 
         const VirtualAddress segVAddr = _readU64At(offset + 0x10);
         const ByteCount segFileSize = _readU64At(offset + 0x20);
 
-        if (type == PT_LOAD && address >= segVAddr && address < segVAddr + segFileSize) {
-            return segOffset + (address - segVAddr);
+        const bool rangeWraps = segFileSize > std::numeric_limits<std::uint64_t>::max() - segVAddr;
+        if (type == PT_LOAD && !rangeWraps && address >= segVAddr && address - segVAddr < segFileSize) {
+            const std::uint64_t relative = address - segVAddr;
+            if (segOffset > _fileBuffer.size() || relative >= _fileBuffer.size() - segOffset) {
+                throw RelinkerException("Virtual address maps outside the file", address);
+            }
+            return segOffset + relative;
         }
 
         offset += header.ProgramHeaderEntrySize;
