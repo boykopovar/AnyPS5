@@ -21,7 +21,8 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
     VirtualAddress textVaddr,
     VirtualAddress entryVaddr,
     const std::vector<VirtualAddress>& extraEntries,
-    const IRelativeRelocationIndex& relativeRelocations
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses = false
 );
 
 }

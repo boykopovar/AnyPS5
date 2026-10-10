@@ -462,6 +462,10 @@ def main():
         external[0x1300:0x1310] = external[0x1240:0x1250]
         external[0x1240:0x1250] = b"\xe8" + struct.pack("<i", 0x1300 - 0x1245) + b"\xc3" + b"\x90" * 10
         convert("direct-call-from-indirect-block", external, tls_address=0x1300)
+        address_taken = make_image("register", "unwind")
+        address_taken[0x1300:0x1310] = address_taken[0x1240:0x1250]
+        address_taken[0x1240:0x1250] = bytes.fromhex("48 8d 05") + struct.pack("<i", 0x1300 - 0x1247) + bytes.fromhex("ff d0 c3") + b"\x90" * 6
+        convert("address-taken-tls-callback", address_taken, tls_address=0x1300)
 
         def convert_padded(name, image):
             source = work / (name + ".elf")
