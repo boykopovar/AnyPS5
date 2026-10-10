@@ -296,6 +296,15 @@ if(BUILD_TESTING)
     )
     add_test(NAME windows_icon_resource COMMAND windows_icon_resource_tests)
 
+    add_test_executable(entry_stub_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/EntryStubTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
+    )
+    target_include_directories(entry_stub_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+    )
+    add_test(NAME entry_stub COMMAND entry_stub_tests)
+
     add_test_executable(strict_nid_filter_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/StrictNidFilterTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/StrictNidFilter.cpp

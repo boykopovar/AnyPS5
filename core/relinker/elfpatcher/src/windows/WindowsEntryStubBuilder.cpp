@@ -426,6 +426,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     call("FreeLibrary");
     code.Rip({0x48, 0x8b, 0x3d}, argumentBlock);
     const auto exitCallback = code.Branch({0x48, 0x8d, 0x35});
+    code.Emit({0x48, 0xc7, 0x44, 0x24, 0x40, 0, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x48, 0, 0, 0, 0, 0x48, 0x8d, 0x6c, 0x24, 0x40});
     code.Rip({0xe8}, entryRva);
     code.Emit({0x89, 0x44, 0x24, 0x58});
     guestStartup.Finalize(code, guestModules, handles, guestFinished);
