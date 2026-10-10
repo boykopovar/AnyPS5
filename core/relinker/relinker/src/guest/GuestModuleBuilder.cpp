@@ -2,6 +2,7 @@
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <io/FileReader.hpp>
+#include <io/NativePath.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <fstream>
@@ -58,7 +59,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const bool hasPlural = std::filesystem::exists(plural);
     const bool hasPrx = std::filesystem::exists(prx);
     if (hasSingular && hasPlural) throw Domain::RelinkerException("Both sce_module and sce_modules exist beside the input executable");
-    if (!hasSingular && !hasPlural && !hasPrx) throw Domain::RelinkerException("sce_module/sce_modules/prx was not found beside the input executable: " + root.string() + ". Use --skip-sce-module only if this game can run without these modules.");
+    if (!hasSingular && !hasPlural && !hasPrx) throw Domain::RelinkerException("sce_module/sce_modules/prx was not found beside the input executable: " + Io::Utf8Path(root) + ". Use --skip-sce-module only if this game can run without these modules.");
     std::vector<std::filesystem::path> directories;
     if (hasSingular || hasPlural) directories.push_back(hasSingular ? singular : plural);
     if (hasPrx) directories.push_back(prx);
@@ -181,7 +182,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (std::filesystem::exists(outputPath)) {
         for (const auto& path : paths)
             if (std::filesystem::equivalent(path, outputPath))
-                throw Domain::RelinkerException("Executable output would overwrite an input module: " + outputPath.string());
+                throw Domain::RelinkerException("Executable output would overwrite an input module: " + Io::Utf8Path(outputPath));
     }
     std::map<std::string, std::vector<std::size_t>> exports;
     std::map<std::string, std::set<std::size_t>> sharedExports;
