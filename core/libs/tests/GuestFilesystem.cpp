@@ -37,6 +37,7 @@ int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
 int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
 int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelStat(const char*, FileStat*);
+int APS5_VABI sceKernelFstat(int, FileStat*);
 int APS5_VABI sceKernelUnlink(const char*);
 int APS5_VABI sceKernelRmdir(const char*);
 int* APS5_VABI __error_nid_postfix();
@@ -211,6 +212,27 @@ int main() {
     Require(lstat_nid_postfix((root / "present.txt" / "child").string().c_str(), &linkStatus) == -1 && *__error_nid_postfix() == 20);
     Require(unlink_nid_postfix(link.string().c_str()) == 0 && unlink_nid_postfix(dangling.string().c_str()) == 0);
 #endif
+    FileStat identity{};
+    FileStat byDescriptor{};
+    const int identityDescriptor = open_nid_postfix(presentName.c_str(), 0, 0);
+    Require(identityDescriptor >= 0 && stat_nid_postfix(presentName.c_str(), &identity) == 0);
+    Require(sceKernelFstat(identityDescriptor, &byDescriptor) == 0 && close_nid_postfix(identityDescriptor) == 0);
+    Require(identity.st_ino != 0 && byDescriptor.st_dev == identity.st_dev && byDescriptor.st_ino == identity.st_ino);
+    const auto sibling = root / "sibling.txt";
+    { std::ofstream stream(sibling); stream << "other"; }
+    FileStat siblingStatus{};
+    Require(stat_nid_postfix(sibling.string().c_str(), &siblingStatus) == 0);
+    Require(siblingStatus.st_dev == identity.st_dev && siblingStatus.st_ino != identity.st_ino);
+    Require(unlink_nid_postfix(sibling.string().c_str()) == 0);
+    const auto hardLink = root / "hardlink.txt";
+    std::error_code linkError;
+    std::filesystem::create_hard_link(present, hardLink, linkError);
+    if (!linkError) {
+        FileStat linked{};
+        Require(stat_nid_postfix(hardLink.string().c_str(), &linked) == 0);
+        Require(linked.st_dev == identity.st_dev && linked.st_ino == identity.st_ino && linked.st_nlink == 2);
+        Require(unlink_nid_postfix(hardLink.string().c_str()) == 0);
+    }
     const int opened = open_nid_postfix(presentName.c_str(), 0, 0);
     Require(opened >= 0 && close_nid_postfix(opened) == 0);
     const int reopened = _open_nid_postfix(presentName.c_str(), 0);

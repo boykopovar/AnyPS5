@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -12,28 +13,36 @@
 #include <sys/types.h>
 struct NativeStat : __stat64 {
     FILE_BASIC_INFO times{};
+    BY_HANDLE_FILE_INFORMATION identity{};
     bool hasTimes = false;
+    bool hasIdentity = false;
 };
-static int ReadTimes(HANDLE handle, NativeStat* st) {
+static int ReadHandleInfo(HANDLE handle, NativeStat* st) {
     if (GetFileType(handle) != FILE_TYPE_DISK) return 0;
     if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &st->times, sizeof(st->times)))
         return File::WindowsFileTime::Failure(GetLastError());
     st->hasTimes = true;
+    if (!GetFileInformationByHandle(handle, &st->identity)) return File::WindowsFileTime::Failure(GetLastError());
+    st->hasIdentity = true;
     return 0;
+}
+static std::uint32_t FoldFileIndex(const BY_HANDLE_FILE_INFORMATION& identity) {
+    const std::uint32_t folded = identity.nFileIndexLow ^ (identity.nFileIndexHigh * 0x9E3779B1u);
+    return folded == 0 ? 1 : folded;
 }
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     if (_wstat64(p.c_str(), st) != 0) return -1;
     const auto handle = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
-    const int result = ReadTimes(handle, st);
+    const int result = ReadHandleInfo(handle, st);
     CloseHandle(handle);
     return result;
 }
 static int DoFstat(int fd, NativeStat* st) {
     if (const auto directory = File::DirectoryDescriptorPath(fd)) return DoStat(*directory, st);
     if (_fstat64(fd, st) != 0) return -1;
-    return ReadTimes(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st);
+    return ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st);
 }
 static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     std::error_code error;
@@ -80,6 +89,11 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
         sb->st_mtim = File::WindowsFileTime::Decode(st.times.LastWriteTime.QuadPart);
         sb->st_ctim = File::WindowsFileTime::Decode(st.times.ChangeTime.QuadPart);
         sb->st_birthtim = File::WindowsFileTime::Decode(st.times.CreationTime.QuadPart);
+    }
+    if (st.hasIdentity) {
+        sb->st_dev = st.identity.dwVolumeSerialNumber;
+        sb->st_ino = FoldFileIndex(st.identity);
+        sb->st_nlink = static_cast<std::uint16_t>(std::min<DWORD>(st.identity.nNumberOfLinks, 0xffff));
     }
 #else
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
