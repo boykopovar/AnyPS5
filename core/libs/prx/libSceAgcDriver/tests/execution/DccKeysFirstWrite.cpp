@@ -80,6 +80,9 @@ public:
                 const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, BlockBytes, nullptr);
                 Require(section != nullptr, "cannot create shared test memory");
                 GuestArena::GuestArenaMap_nid_postfix(block, BlockBytes, section, 0, PAGE_READWRITE);
+                twin = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+                Require(twin != nullptr, "cannot reserve the second mapping of shared test memory");
+                GuestArena::GuestArenaMap_nid_postfix(twin, BlockBytes, section, 0, PAGE_READWRITE);
                 CloseHandle(section);
             } else if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
         } else {
@@ -110,6 +113,10 @@ public:
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
+        if (twin != nullptr) {
+            GuestArena::GuestArenaReset_nid_postfix(twin, BlockBytes);
+            GuestArena::GuestArenaRelease_nid_postfix(twin, BlockBytes);
+        }
         if (watched) {
             GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
             GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
@@ -134,6 +141,7 @@ public:
 private:
     bool watched;
     std::uint8_t* block = nullptr;
+    std::uint8_t* twin = nullptr;
 };
 
 std::array<std::uint32_t, 8> TextureDescriptor(const std::uint8_t* texels, const std::uint8_t* keys) {

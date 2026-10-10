@@ -583,6 +583,10 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
             throw std::runtime_error(text);
         }
         entry.alias = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
+        if (entry.alias == nullptr) {
+            state.failed.insert(base);
+            return nullptr;
+        }
     }
 #else
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), static_cast<std::size_t>(bytes), true)) {

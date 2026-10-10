@@ -296,6 +296,10 @@ bool GuestArenaHandleWrite_nid_postfix(std::uintptr_t address) {
     return WindowsMappings::Get().HandleWrite(address);
 }
 
+bool GuestArenaHandleRead_nid_postfix(std::uintptr_t address) {
+    return WindowsMappings::Get().HandleRead(address);
+}
+
 void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) return;
     WindowsMappings::Get().Pin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
@@ -342,7 +346,7 @@ void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
 
 void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("shared mapping", pointer, bytes);
-    WindowsMappings::Get().Map(pointer, bytes, section, offset, protection);
+    WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched());
 }
 
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes) {
@@ -351,6 +355,14 @@ void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes) 
 
 void GuestArenaUnmapAlias_nid_postfix(void* alias) {
     WindowsMappings::Get().UnmapAlias(alias);
+}
+
+bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uintptr_t* start, std::uintptr_t* end) {
+    return WindowsMappings::Get().ResidentSpan(address, bytes, start, end);
+}
+
+void GuestArenaForgetSection_nid_postfix(void* section) {
+    WindowsMappings::Get().ForgetSection(section);
 }
 #endif
 

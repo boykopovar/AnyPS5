@@ -36,6 +36,7 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <psapi.h>
 #endif
 
 extern "C" {
@@ -931,6 +932,189 @@ static void CheckHeapAfterMappingReuse() {
     GuestHeap::GuestHeapFree_nid_postfix(pointer);
 }
 
+#ifdef _WIN32
+static int g_accessViolations = 0;
+
+static LONG WINAPI CountAccessViolations(EXCEPTION_POINTERS* info) {
+    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) ++g_accessViolations;
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
+static void CheckSingleDirectMappingTracksWritesWithoutFaults() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 4, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 4, 3, 0, phys, 0) == 0);
+    const auto collect = [](void* address, std::size_t bytes) {
+        std::array<void*, 32> pages{};
+        std::size_t count = pages.size();
+        Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(address), bytes, pages.data(), &count, true));
+        return count;
+    };
+    auto* bytes = static_cast<volatile unsigned char*>(mapped);
+    Require(collect(mapped, page * 4) == 16);
+    Require(collect(mapped, page * 4) == 0);
+    void* const handler = AddVectoredExceptionHandler(1, CountAccessViolations);
+    Require(handler != nullptr);
+    bytes[page + 0x1000] = 7;
+    bytes[page * 3] = 9;
+    Require(RemoveVectoredExceptionHandler(handler) != 0);
+    Require(g_accessViolations == 0);
+    Require(collect(mapped, page * 4) == 2);
+    Require(collect(mapped, page * 4) == 0);
+    Require(sceKernelMunmap(static_cast<unsigned char*>(mapped) + page * 2, page) == 0);
+    Require(bytes[page + 0x1000] == 7 && bytes[page * 3] == 9);
+    bytes[0] = 5;
+    Require(collect(mapped, page * 2) != 0);
+    Require(collect(mapped, page * 2) == 0);
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&second, page, 3, 0, phys + page, 0) == 0);
+    Require(static_cast<unsigned char*>(second)[0x1000] == 7);
+    static_cast<volatile unsigned char*>(second)[0x1001] = 11;
+    Require(bytes[page + 0x1001] == 11);
+    Require(collect(mapped, page * 2) != 0);
+    Require(sceKernelMunmap(second, page) == 0);
+    Require(sceKernelMunmap(mapped, page * 2) == 0);
+    Require(sceKernelMunmap(static_cast<unsigned char*>(mapped) + page * 3, page) == 0);
+    void* again = nullptr;
+    Require(sceKernelMapDirectMemory(&again, page * 4, 3, 0, phys, 0) == 0);
+    const auto* data = static_cast<const unsigned char*>(again);
+    Require(data[0] == 5 && data[page + 0x1000] == 7 && data[page + 0x1001] == 11 && data[page * 2] == 0 && data[page * 3] == 9);
+    Require(sceKernelMunmap(again, page * 4) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 4) == 0);
+#endif
+}
+
+static void CheckSecondDirectMappingWaitsForLeases() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 4, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 4, 3, 0, phys, 0) == 0);
+    auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    std::erase_if(lease, [&](const auto& range) { return range->address != reinterpret_cast<std::uintptr_t>(mapped); });
+    Require(lease.size() == 1);
+    std::atomic<bool> released{false};
+    std::thread holder([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        released = true;
+        lease.clear();
+    });
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&second, page, 3, 0, phys + page, 0) == 0);
+    Require(released);
+    holder.join();
+    static_cast<volatile unsigned char*>(second)[8] = 3;
+    Require(static_cast<unsigned char*>(mapped)[page + 8] == 3);
+    static_cast<volatile unsigned char*>(mapped)[page * 2 + 8] = 4;
+    Require(sceKernelMunmap(second, page) == 0);
+    Require(sceKernelMunmap(mapped, page * 4) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 4) == 0);
+#endif
+}
+
+static void CheckBreakingAResidentRunKeepsConcurrentAccesses() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t chunk = 0x200000;
+    constexpr std::size_t chunks = 4;
+    for (int round = 0; round < 20; ++round) {
+        const bool unmap = round % 2 != 0;
+        std::int64_t phys = 0;
+        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, chunk * chunks, 0, 0, &phys) == 0);
+        void* mapped = nullptr;
+        Require(sceKernelMapDirectMemory(&mapped, chunk * chunks, 3, 0, phys, 0) == 0);
+        auto* memory = static_cast<volatile unsigned char*>(mapped);
+        const auto value = [&](std::size_t at) { return static_cast<unsigned char>((at * 31 + static_cast<std::size_t>(round)) | 1); };
+        const auto skipped = [&](std::size_t offset) { return unmap && offset >= page && offset < page * 2; };
+        std::atomic<bool> go{false};
+        std::atomic<bool> done{false};
+        std::atomic<bool> consistent{true};
+        std::thread writer([&] {
+            while (!go) {}
+            for (std::size_t offset = 0; offset < chunk; ++offset) {
+                if (skipped(offset)) continue;
+                for (std::size_t index = 0; index < chunks; ++index) memory[index * chunk + offset] = value(index * chunk + offset);
+            }
+        });
+        std::thread reader([&] {
+            while (!go) {}
+            while (!done) {
+                for (std::size_t offset = 0; offset < chunk && !done; offset += 61) {
+                    if (skipped(offset)) continue;
+                    for (std::size_t index = 0; index < chunks; ++index) {
+                        const unsigned char seen = memory[index * chunk + offset];
+                        if (seen != 0 && seen != value(index * chunk + offset)) consistent = false;
+                    }
+                }
+            }
+        });
+        std::array<void*, chunks> second{};
+        go = true;
+        for (std::size_t index = 0; index < chunks; ++index) {
+            if (unmap) Require(sceKernelMunmap(static_cast<unsigned char*>(mapped) + index * chunk + page, page) == 0);
+            else Require(sceKernelMapDirectMemory(&second[index], page, 3, 0, phys + static_cast<std::int64_t>(index * chunk + page), 0) == 0);
+        }
+        writer.join();
+        done = true;
+        reader.join();
+        Require(consistent);
+        for (std::size_t index = 0; index < chunks; ++index) {
+            for (std::size_t offset = 0; offset < chunk; ++offset) {
+                if (!skipped(offset)) Require(memory[index * chunk + offset] == value(index * chunk + offset));
+            }
+            if (unmap) continue;
+            for (std::size_t offset = 0; offset < page; ++offset) Require(static_cast<unsigned char*>(second[index])[offset] == value(index * chunk + page + offset));
+            Require(sceKernelMunmap(second[index], page) == 0);
+        }
+        for (std::size_t index = 0; index < chunks; ++index) {
+            auto* base = static_cast<unsigned char*>(mapped) + index * chunk;
+            if (!unmap) {
+                Require(sceKernelMunmap(base, chunk) == 0);
+                continue;
+            }
+            Require(sceKernelMunmap(base, page) == 0);
+            Require(sceKernelMunmap(base + page * 2, chunk - page * 2) == 0);
+        }
+        Require(sceKernelReleaseDirectMemory(phys, chunk * chunks) == 0);
+    }
+#endif
+}
+
+static void CheckRemappedDirectMemoryIsChargedOnce() {
+#ifdef _WIN32
+    constexpr std::size_t bytes = 0x10000000;
+    const auto committed = [] {
+        PERFORMANCE_INFORMATION info{};
+        info.cb = sizeof(info);
+        Require(K32GetPerformanceInfo(&info, sizeof(info)) != 0);
+        return static_cast<std::int64_t>(info.CommitTotal) * static_cast<std::int64_t>(info.PageSize);
+    };
+    bool once = false;
+    for (int attempt = 0; attempt < 3 && !once; ++attempt) {
+        const auto before = committed();
+        std::int64_t phys = 0;
+        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &phys) == 0);
+        void* mapped = nullptr;
+        Require(sceKernelMapDirectMemory(&mapped, bytes, 3, 0, phys, 0) == 0);
+        std::memset(mapped, 0xa5, bytes);
+        Require(sceKernelMunmap(mapped, bytes) == 0);
+        void* again = nullptr;
+        Require(sceKernelMapDirectMemory(&again, bytes, 3, 0, phys, 0) == 0);
+        const auto* data = static_cast<const unsigned char*>(again);
+        Require(data[0] == 0xa5 && data[bytes / 2] == 0xa5 && data[bytes - 1] == 0xa5);
+        once = committed() - before < static_cast<std::int64_t>(bytes + bytes / 2);
+        Require(sceKernelMunmap(again, bytes) == 0);
+        Require(sceKernelReleaseDirectMemory(phys, bytes) == 0);
+    }
+    Require(once);
+#endif
+}
+
 static void CheckSharedWriteTracking() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -1012,7 +1196,7 @@ static void CheckFailedCollectKeepsWrites() {
     shared[8] = 2;
     Require(sceKernelMprotect(const_cast<unsigned char*>(shared + page), page, 0) == 0);
     Require(!collect(mapped, page * 2, count));
-    Require(collect(mapped, page, count) && count == 4);
+    Require(collect(mapped, page, count) && count == 1);
     Require(sceKernelMunmap(mapped, page * 2) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 #endif
@@ -1024,7 +1208,9 @@ static void CheckPinnedSharedPages() {
     std::int64_t phys = 0;
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 3, 0, 0, &phys) == 0);
     void* mapped = nullptr;
+    void* alias = nullptr;
     Require(sceKernelMapDirectMemory(&mapped, page * 3, 3, 0, phys, 0) == 0);
+    Require(sceKernelMapDirectMemory(&alias, page * 3, 3, 0, phys, 0) == 0);
     auto* bytes = static_cast<volatile unsigned char*>(mapped);
     const auto collect = [&] {
         std::array<void*, 32> pages{};
@@ -1056,6 +1242,7 @@ static void CheckPinnedSharedPages() {
     Require(protection(page) == PAGE_READONLY);
     bytes[page + 8] = 11;
     Require(collect() == 4);
+    Require(sceKernelMunmap(alias, page * 3) == 0);
     Require(sceKernelMunmap(mapped, page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 #endif
@@ -1551,6 +1738,10 @@ int main() {
     CheckReadsIntoSharedWriteTracking();
     CheckPinnedSharedPages();
     CheckFailedCollectKeepsWrites();
+    CheckSingleDirectMappingTracksWritesWithoutFaults();
+    CheckSecondDirectMappingWaitsForLeases();
+    CheckBreakingAResidentRunKeepsConcurrentAccesses();
+    CheckRemappedDirectMemoryIsChargedOnce();
 #if defined(__linux__)
     CheckWriteWatch();
     CheckWriteWatchArmedCollect();

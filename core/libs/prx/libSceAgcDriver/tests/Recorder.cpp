@@ -937,6 +937,42 @@ void remappedImportTests(const Device& device) {
     HostImportFor(context, address, bytes);
 }
 
+#ifdef _WIN32
+void secondMappingImportTests(const Device& device) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: imports after a second mapping not tested\n";
+        return;
+    }
+    constexpr std::size_t bytes = 65536;
+    constexpr std::size_t page = 16384;
+    struct Release {
+        void* mapping = nullptr;
+        void* alias = nullptr;
+        std::int64_t physical = -1;
+        ~Release() {
+            if (alias != nullptr) sceKernelMunmap(alias, page);
+            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
+        }
+    } release;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, bytes, 0, &release.physical) == 0, "allocate the second mapping test backing");
+    Require(sceKernelMapDirectMemory(&release.mapping, bytes, 0x33, 0, release.physical, bytes) == 0, "map the second mapping test backing");
+    const auto address = reinterpret_cast<std::uint64_t>(release.mapping);
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import of singly mapped direct memory refused: imports after a second mapping not tested\n";
+        return;
+    }
+    const auto first = HostImportSerial(context, address, bytes, true);
+    Require(first != 0 && HostImportSerial(context, address, bytes, true) == first, "singly mapped direct memory lost its import");
+    Require(sceKernelMapDirectMemory(&release.alias, page, 0x33, 0, release.physical, page) == 0, "map the first page a second time");
+    Require(HostImportFor(context, address, bytes) != nullptr, "direct memory was not imported again after a second mapping of its first page");
+    const auto second = HostImportSerial(context, address, bytes, true);
+    Require(second != 0 && second != first, "the import of direct memory whose pages were replaced was kept");
+    HostImportFor(context, address, bytes);
+}
+#endif
+
 void movedMetadataTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -4499,6 +4535,12 @@ int main(int argc, char** argv) {
             hostImportUnmapTests(device, recorder);
             return 0;
         }
+#ifdef _WIN32
+        if (argc == 2 && std::string_view(argv[1]) == "--host-import-second-mapping-only") {
+            secondMappingImportTests(device);
+            return 0;
+        }
+#endif
         readTrackingTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
@@ -4524,6 +4566,9 @@ int main(int argc, char** argv) {
         storeRunTests(device, recorder);
         queuedWriteGroupTests();
         remappedImportTests(device);
+#ifdef _WIN32
+        secondMappingImportTests(device);
+#endif
         movedMetadataTests(device, recorder);
         viewPastLastMipTests(device, recorder);
         keysFillTests(device, recorder);
