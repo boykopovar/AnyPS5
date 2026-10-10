@@ -10,6 +10,7 @@ int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
 int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
 int APS5_VABI sceKernelAddUserEvent(KernelEqueue eq, int id);
+int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id);
 int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata);
 int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id);
 int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts, void* udata);
@@ -124,8 +125,39 @@ static void VerifyPeriodicTimer() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyUserEventReportedOncePerWait() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "user") == SCE_OK);
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    int payload = 0;
+
+    Require(sceKernelAddUserEvent(eq, 5) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelTriggerUserEvent(eq, 5, &payload) == SCE_OK);
+    for (int i = 0; i < 2; ++i) {
+        count = 0;
+        Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_OK);
+        Require(count == 1 && sceKernelGetEventId(&events[0]) == 5);
+    }
+    Require(sceKernelDeleteUserEvent(eq, 5) == SCE_OK);
+
+    Require(sceKernelAddUserEventEdge(eq, 6) == SCE_OK);
+    Require(sceKernelTriggerUserEvent(eq, 6, &payload) == SCE_OK);
+    Require(sceKernelAddUserEvent(eq, 8) == SCE_OK);
+    Require(sceKernelTriggerUserEvent(eq, 8, &payload) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_OK);
+    Require(count == 2);
+    Require(sceKernelGetEventId(&events[0]) == 6 && sceKernelGetEventId(&events[1]) == 8);
+    Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_OK);
+    Require(count == 1 && sceKernelGetEventId(&events[0]) == 8);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
     VerifyPeriodicTimer();
+    VerifyUserEventReportedOncePerWait();
 
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "events") == SCE_OK);
