@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
+#include <cerrno>
 #include <cfenv>
 #include <cmath>
 #include <cstdint>
@@ -198,6 +199,26 @@ static void CheckFloatClassification() {
     Require(_FDtest_nid_postfix(reinterpret_cast<const float*>(&_FNan_nid_postfix)) == 2);
 }
 
+static void CheckDoubleRounding(double value, std::int64_t expected, bool invalid) {
+    for (const bool useLlround : {false, true}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        errno = 12345;
+        const std::int64_t result = useLlround ? llround_nid_postfix(value) : lround_nid_postfix(value);
+        Require(result == expected);
+        Require((std::fetestexcept(FE_INVALID) != 0) == invalid);
+        Require(errno == 12345);
+    }
+}
+
+static void CheckFloatRounding(float value, std::int64_t expected, bool invalid) {
+    std::feclearexcept(FE_ALL_EXCEPT);
+    errno = 12345;
+    const std::int64_t result = lroundf_nid_postfix(value);
+    Require(result == expected);
+    Require((std::fetestexcept(FE_INVALID) != 0) == invalid);
+    Require(errno == 12345);
+}
+
 int main() {
     CheckFloatClassification();
     CheckIntegerConversions();
@@ -251,20 +272,22 @@ int main() {
     Require(lroundf_nid_postfix(2.5f) == 3);
     Require(llround_nid_postfix(-4294967296.5) == -INT64_C(4294967297));
     Require(lround_nid_postfix(0.49999999999999994) == 0 && lround_nid_postfix(-0.49999999999999994) == 0);
-    Require(lround_nid_postfix(-9223372036854775808.0) == INT64_MIN);
-    Require(lround_nid_postfix(9223372036854774784.0) == INT64_C(9223372036854774784));
-    Require(lroundf_nid_postfix(9223371487098961920.f) == INT64_C(9223371487098961920));
-    std::feclearexcept(FE_ALL_EXCEPT);
-    Require(lround_nid_postfix(4503599627370497.0) == INT64_C(4503599627370497) && std::fetestexcept(FE_INVALID) == 0);
-    const double outOfRange[] = {9223372036854775808.0, -9223374235878031360.0, 1e30, -1e30, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()};
-    for (const double value : outOfRange) {
-        std::feclearexcept(FE_ALL_EXCEPT);
-        Require(lround_nid_postfix(value) == INT64_MIN && std::fetestexcept(FE_INVALID) != 0);
-        std::feclearexcept(FE_ALL_EXCEPT);
-        Require(llround_nid_postfix(value) == INT64_MIN && std::fetestexcept(FE_INVALID) != 0);
-        std::feclearexcept(FE_ALL_EXCEPT);
-        Require(lroundf_nid_postfix(static_cast<float>(value)) == INT64_MIN && std::fetestexcept(FE_INVALID) != 0);
+    constexpr double kTwo63 = 9223372036854775808.0;
+    constexpr double kTwo63Below = 9223372036854774784.0;
+    constexpr float kTwo63f = 9223372036854775808.f;
+    constexpr float kTwo63fBelow = 9223371487098961920.f;
+    CheckDoubleRounding(-kTwo63, INT64_MIN, false);
+    CheckDoubleRounding(kTwo63Below, INT64_C(9223372036854774784), false);
+    CheckDoubleRounding(-kTwo63Below, -INT64_C(9223372036854774784), false);
+    CheckDoubleRounding(4503599627370497.0, INT64_C(4503599627370497), false);
+    CheckFloatRounding(-kTwo63f, INT64_MIN, false);
+    CheckFloatRounding(kTwo63fBelow, INT64_C(9223371487098961920), false);
+    CheckFloatRounding(-kTwo63fBelow, -INT64_C(9223371487098961920), false);
+    for (const double value : {kTwo63, -9223374235878031360.0, 1e30, -1e30, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
+        CheckDoubleRounding(value, INT64_MIN, true);
+        CheckFloatRounding(static_cast<float>(value), INT64_MIN, true);
     }
+    CheckFloatRounding(kTwo63f, INT64_MIN, true);
     std::feclearexcept(FE_ALL_EXCEPT);
     const auto infinity = std::numeric_limits<float>::infinity();
     const auto nan = std::numeric_limits<float>::quiet_NaN();

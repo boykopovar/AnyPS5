@@ -13,10 +13,12 @@ namespace {
 
 template<typename TFloat>
 std::int64_t RoundToInt64(TFloat value) {
-    const std::int64_t native = std::llround(value);
     const TFloat rounded = std::round(value);
-    const bool inRange = rounded >= static_cast<TFloat>(INT64_MIN) && rounded < static_cast<TFloat>(INT64_MAX);
-    return inRange ? native : INT64_MIN;
+    if (!(rounded >= static_cast<TFloat>(INT64_MIN) && rounded < static_cast<TFloat>(INT64_MAX))) {
+        std::feraiseexcept(FE_INVALID);
+        return INT64_MIN;
+    }
+    return static_cast<std::int64_t>(rounded);
 }
 
 }
