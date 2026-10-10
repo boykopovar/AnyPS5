@@ -297,6 +297,8 @@ bool AllLanesBit(const IrValue* bit) {
 
 class EntryLaneWalk {
 public:
+    explicit EntryLaneWalk(IrShaderStage stage) : everyInvocationEnters(stage == IrShaderStage::Vertex || stage == IrShaderStage::Local || stage == IrShaderStage::TessellationControl || stage == IrShaderStage::TessellationEvaluation) {}
+
     bool ZeroBit(const IrValue* bit) {
         bit = Resolved(bit);
         if (bit == nullptr || !Spend()) return false;
@@ -317,7 +319,8 @@ private:
 
     bool NotHelper(const IrValue* predicate) {
         predicate = Resolved(predicate);
-        if (predicate == nullptr || predicate->HasImmediate() || !Spend()) return false;
+        if (predicate == nullptr || !Spend()) return false;
+        if (predicate->HasImmediate()) return everyInvocationEnters && predicate->Type() == IrType::Bool && predicate->ImmediateBool();
         switch (predicate->Opcode()) {
             case IrOpcode::LogicalAnd: return NotHelper(predicate->Argument(0)) || NotHelper(predicate->Argument(1));
             case IrOpcode::IEqual32: return EitherOrder(predicate, [](const IrValue* builtin, const IrValue* zero) { return IsU32(zero, 0u) && Is(builtin, IrOpcode::GetBuiltin) && IsU32(builtin->Argument(0), static_cast<std::uint32_t>(StageInputKind::HelperInvocation)) && IsU32(builtin->Argument(1), 0u); });
@@ -362,6 +365,7 @@ private:
         return result;
     }
 
+    bool everyInvocationEnters;
     std::unordered_set<const IrValue*> phis;
     std::uint32_t budget = 512u;
 };
@@ -393,7 +397,7 @@ bool CrossesRowsOf(const IrValue* value, const IrValue* scan) {
     return flags.x16 && !flags.fetchInactive && Resolved(permlane->Argument(0)) == scan && IsU32(permlane->Argument(1), 0xffffffffu) && IsU32(permlane->Argument(2), 0xffffffffu) && AllLanesBit(permlane->Argument(3));
 }
 
-std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value) {
+std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value, IrShaderStage stage) {
     const auto* combined = Unmasked(Resolved(value));
     const auto reduction = std::find_if(WaveReductions.begin(), WaveReductions.end(), [&](const WaveReduction& candidate) { return Is(combined, candidate.opcode); });
     const IrValue* scan = nullptr;
@@ -403,14 +407,14 @@ std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value) {
         if (scan == nullptr) return std::nullopt;
     }
     const auto* source = Unmasked(scan);
-    if (!Is(source, IrOpcode::SelectU32) || !IsU32(source->Argument(2), reduction->identity) || !EntryLaneWalk{}.ZeroBit(source->Argument(0))) return std::nullopt;
+    if (!Is(source, IrOpcode::SelectU32) || !IsU32(source->Argument(2), reduction->identity) || !EntryLaneWalk{stage}.ZeroBit(source->Argument(0))) return std::nullopt;
     return HalfWaveScan{&*reduction, source};
 }
 
 std::optional<std::uint32_t> EmitHalfWaveReduction(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t lane) {
     auto& state = ctx.state;
     if (state.program.WaveSize() != 64u || (lane & 31u) != 31u) return std::nullopt;
-    const auto scan = MatchHalfWaveScan(inst.Argument(0));
+    const auto scan = MatchHalfWaveScan(inst.Argument(0), state.program.Resources().stage);
     if (!scan) return std::nullopt;
     const auto read = "v_readlane_b32 of lane " + std::to_string(lane) + " of a wave64 half-wave reduction scan";
     const auto& capabilities = state.supportedCapabilities;
