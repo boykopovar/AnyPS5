@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -901,6 +902,27 @@ struct WriteTracker {
 #endif
     }
 
+    std::map<std::uint64_t, std::uint32_t> unstampedStores;
+
+    void noteUnstampedStore(std::uint64_t address, std::uint64_t end) {
+        for (auto block = address / WriteBlockBytes; block <= (end - 1) / WriteBlockBytes; ++block) unstampedStores[block] = generation;
+    }
+
+    std::uint32_t newestStamp(std::uint64_t address, std::uint64_t end) const {
+        std::uint32_t newest = 0;
+        for (auto found = unstampedStores.lower_bound(address / WriteBlockBytes); found != unstampedStores.end() && found->first <= (end - 1) / WriteBlockBytes; ++found) newest = std::max(newest, found->second);
+        if (!watched) return newest;
+#ifdef _WIN32
+        address = std::max<std::uint64_t>(address, base);
+        end = std::min<std::uint64_t>(end, base + size);
+#else
+        end = std::min<std::uint64_t>(end, LeafCount * LeafBlocks * WriteBlockBytes);
+#endif
+        if (address >= end) return newest;
+        for (auto block = blockOf(address); block <= blockOf(end - 1); ++block) newest = std::max(newest, stampOf(block));
+        return newest;
+    }
+
     bool unchanged(std::uint64_t first, std::uint64_t last, std::uint64_t since) const {
         if (first == last) return stampOf(first) <= since;
         const auto newer = [since](std::uint32_t stamp) { return stamp > since; };
@@ -1262,7 +1284,10 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, const std::func
     const auto stampStored = [](WriteTracker& tracker, std::pair<std::uint64_t, std::uint64_t> stored) -> std::uint64_t {
         if (stored.second <= stored.first) return 0;
         ++tracker.generation;
-        if (!tracker.watched || !tracker.covers(stored.first, static_cast<std::size_t>(stored.second - stored.first))) return 0;
+        if (!tracker.watched || !tracker.covers(stored.first, static_cast<std::size_t>(stored.second - stored.first))) {
+            tracker.noteUnstampedStore(stored.first, stored.second);
+            return 0;
+        }
         for (auto block = tracker.blockOf(stored.first); block <= tracker.blockOf(stored.second - 1); ++block) {
             tracker.stamp(block, tracker.generation, StampKind::Driver);
             tracker.noteDriverStore(block, stored.first, stored.second, tracker.generation);
@@ -1307,7 +1332,10 @@ std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
     tracker.initialize();
     if (bytes == 0) return 0;
     ++tracker.generation;
-    if (!tracker.watched || !tracker.covers(address, bytes)) return 0;
+    if (!tracker.watched || !tracker.covers(address, bytes)) {
+        tracker.noteUnstampedStore(address, address + bytes);
+        return 0;
+    }
 #ifndef _WIN32
     {
         const auto blockFirst = address & ~(std::uint64_t{WriteBlockBytes} - 1);
@@ -1315,6 +1343,7 @@ std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
         StampRuns runs{tracker, StampKind::Fresh};
         if (!GuestWriteWatch::GuestWriteWatchCollectFresh_nid_postfix(static_cast<std::uintptr_t>(blockFirst), static_cast<std::size_t>(blockStop - blockFirst), &stampWrittenRun, &runs)) {
             unwatchLocked(tracker, blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
+            tracker.noteUnstampedStore(address, address + bytes);
             return 0;
         }
         if (runs.stamped != 0) ++tracker.generation;
@@ -1369,6 +1398,13 @@ std::uint64_t TrackerGeneration() {
     // when the value is read absorbs stores made after it with a stamp not newer than the value.
     const auto lock = lockTracker(tracker);
     return tracker.generation;
+}
+
+std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    return bytes == 0 ? 0 : tracker.newestStamp(address, address + bytes);
 }
 
 bool UnchangedSinceCollected(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {

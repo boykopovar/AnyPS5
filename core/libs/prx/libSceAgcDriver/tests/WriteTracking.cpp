@@ -152,6 +152,32 @@ void CheckUnwatch() {
     Require(!UnchangedSince(base, Block, adjacent), "unwatch hid a CPU edit in unrelated memory");
 }
 
+void CheckNewestStamp() {
+    void* memory = AllocateWatched(4 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto first = base + Block;
+    const auto second = base + 2 * Block;
+    std::memset(memory, 0x11, 4 * Block);
+    BumpCollectEpoch();
+    CollectWrites(base, 4 * Block);
+    Unwatch(first, 2 * Block);
+    const auto firstBefore = NewestStamp(first, Block);
+    const auto secondBefore = NewestStamp(second, Block);
+    MarkWritten(second + 16, 4);
+    Require(NewestStamp(second, Block) > secondBefore, "a driver store into unwatched memory did not advance its stamp");
+    Require(NewestStamp(first, Block) == firstBefore, "a driver store advanced the stamp of other unwatched memory");
+    const auto generation = TrackerGeneration();
+    static_cast<volatile std::uint8_t*>(memory)[0] = 0x22;
+    CollectWritesUncached(base, Block);
+    Require(TrackerGeneration() > generation && NewestStamp(first, Block) == firstBefore, "a CPU store into watched memory advanced the stamp of unwatched memory");
+    StoreOwnBytes(first, 1, [&] { *reinterpret_cast<std::uint8_t*>(first) = 0x42; });
+    Require(NewestStamp(first, Block) > firstBefore, "an own store into unwatched memory did not advance its stamp");
+    const auto partial = NewestStamp(base + 3 * Block - 8, Block + 8);
+    static_cast<volatile std::uint8_t*>(memory)[3 * Block] = 0x33;
+    CollectWritesUncached(base + 3 * Block, Block);
+    Require(NewestStamp(base + 3 * Block - 8, Block + 8) > partial, "a CPU store into the watched part of a partly watched range did not advance its stamp");
+}
+
 #ifdef _WIN32
 void CheckPrivateMappingReuse() {
     void* memory = AllocateWatched(3 * Block);
@@ -310,6 +336,7 @@ int main() {
         CheckSharedBlock();
         CheckOwnStore();
         CheckUnwatch();
+        CheckNewestStamp();
 #ifdef _WIN32
         CheckPrivateMappingReuse();
 #endif
