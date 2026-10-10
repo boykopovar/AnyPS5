@@ -466,6 +466,22 @@ static void CheckGpuAccessFollowsProtection() {
     Require(sceKernelMunmap(flexible, page) == 0);
 }
 
+static void CheckHintedVirtualReservation() {
+    constexpr std::size_t page = 0x4000;
+    void* probe = nullptr;
+    Require(sceKernelReserveVirtualRange(&probe, page * 8, 0, 0) == 0);
+    Require(sceKernelMunmap(probe, page * 8) == 0);
+    void* const hint = static_cast<unsigned char*>(probe) + page * 2;
+    void* placed = hint;
+    Require(sceKernelReserveVirtualRange(&placed, page * 2, 0, 0) == 0);
+    Require(placed == hint);
+    void* above = hint;
+    Require(sceKernelReserveVirtualRange(&above, page * 2, 0, 0) == 0);
+    Require(above > hint);
+    Require(sceKernelMunmap(above, page * 2) == 0);
+    Require(sceKernelMunmap(placed, page * 2) == 0);
+}
+
 static void CheckFixedVirtualReservation() {
     constexpr std::size_t page = 0x4000;
     void* probe = nullptr;
@@ -1526,6 +1542,7 @@ int main() {
     CheckFixedMappingReplacesPartialOverlap();
     CheckDirectMemoryGpuProtBits();
     CheckGpuAccessFollowsProtection();
+    CheckHintedVirtualReservation();
     CheckFixedVirtualReservation();
     CheckReservedRangeIsNotCommitted();
     CheckNoOverwriteRefusesLiveMapping();
