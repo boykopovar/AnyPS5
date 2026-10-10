@@ -15,8 +15,8 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Extent = 64u;
 alignas(256) std::array<std::byte, Extent * Extent * 4u> pixels{};
-alignas(256) std::array<std::byte, 256> vertices{};
-alignas(256) std::array<std::byte, 256> movedVertices{};
+alignas(256) std::array<std::byte, 16384> vertices{};
+alignas(256) std::array<std::byte, 16384> movedVertices{};
 constexpr std::array<std::array<float, 4>, 3> positions{{{-1.0f, -1.0f, 0.0f, 1.0f}, {3.0f, -1.0f, 0.0f, 1.0f}, {-1.0f, 3.0f, 0.0f, 1.0f}}};
 constexpr std::array<std::uint32_t, 11> vertexCode{0xf4080100u, 0xfa000000u, 0x4a0a0a02u, 0x4a0a0b08u, 0x4a0a0a03u, 0xe00c2000u, 0x80010005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> pixelCode{0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u};
@@ -71,8 +71,17 @@ void Run(AgcDriver::VulkanDevice& device) {
                 }
             }
         }
+        auto* highIndexDestination = storage.data() + (firstRecord + 255u) * value.stride;
+        if (value.format == 77u) std::memcpy(highIndexDestination, positions[2].data(), 16u);
+        else {
+            for (std::size_t component = 0; component < 4u; ++component) {
+                const auto scalar = positions[2][component];
+                const std::uint16_t half = scalar == -1.0f ? 0xbc00u : scalar == 3.0f ? 0x4200u : scalar == 1.0f ? 0x3c00u : 0u;
+                std::memcpy(highIndexDestination + component * 2u, &half, sizeof(half));
+            }
+        }
         const auto address = reinterpret_cast<std::uintptr_t>(storage.data());
-        descriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) | (value.stride << 16u), 8u, 0x01000facu | (value.format << 12u)};
+        descriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) | (value.stride << 16u), 260u, 0x01000facu | (value.format << 12u)};
         request.context.vertex->resources[0].fields = descriptor;
         const auto vertex = ShaderRecompiler::Recompile(request);
         Require(vertex.vertexInputs.empty() && vertex.vertexAttributes.empty(), "runtime vertex fetch created Vulkan vertex attributes");
@@ -109,6 +118,43 @@ void Run(AgcDriver::VulkanDevice& device) {
         device.WaitIdle();
         for (std::size_t index = 0; index < pixels.size(); index += 4u) {
             Require(pixels[index] == std::byte{255} && pixels[index + 1u] == std::byte{0} && pixels[index + 2u] == std::byte{0} && pixels[index + 3u] == std::byte{255}, "runtime vertex fetch produced the wrong triangle");
+        }
+
+        // AGC accepts byte-sized indices, while Vulkan only exposes 16- and 32-bit
+        // index buffers. Exercise the driver's widening path with a complete GPU draw.
+        constexpr std::array<std::uint8_t, 3> byteIndices{0u, 1u, 2u};
+        AgcDriver::Pm4::DrawParameters indexedDraw{
+            reinterpret_cast<std::uintptr_t>(byteIndices.data()),
+            static_cast<std::uint32_t>(byteIndices.size()),
+            sizeof(byteIndices.front()), 1u, 0u, true};
+        indexedDraw.firstVertex = 1u;
+        indexedDraw.firstInstance = 1u;
+        pixels.fill(std::byte{0});
+        device.Draw(state, indexedDraw, shaders);
+        device.WaitIdle();
+        for (std::size_t index = 0; index < pixels.size(); index += 4u) {
+            Require(pixels[index] == std::byte{255} && pixels[index + 1u] == std::byte{0} && pixels[index + 2u] == std::byte{0} && pixels[index + 3u] == std::byte{255}, "uint8 indexed draw produced the wrong triangle");
+        }
+
+        constexpr std::array<std::uint8_t, 3> byteIndex255{0u, 1u, 0xffu};
+        indexedDraw.indexAddress = reinterpret_cast<std::uintptr_t>(byteIndex255.data());
+        pixels.fill(std::byte{0});
+        device.Draw(state, indexedDraw, shaders);
+        device.WaitIdle();
+        for (std::size_t index = 0; index < pixels.size(); index += 4u) {
+            Require(pixels[index] == std::byte{255} && pixels[index + 1u] == std::byte{0} && pixels[index + 2u] == std::byte{0} && pixels[index + 3u] == std::byte{255}, "uint8 value 0xff without primitive restart was treated as a restart marker");
+        }
+
+        constexpr std::array<std::uint8_t, 7> byteRestartIndices{0u, 1u, 2u, 0xffu, 0u, 1u, 2u};
+        indexedDraw.indexAddress = reinterpret_cast<std::uintptr_t>(byteRestartIndices.data());
+        indexedDraw.indexCount = static_cast<std::uint32_t>(byteRestartIndices.size());
+        state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+        state.primitiveRestart = true;
+        pixels.fill(std::byte{0});
+        device.Draw(state, indexedDraw, shaders);
+        device.WaitIdle();
+        for (std::size_t index = 0; index < pixels.size(); index += 4u) {
+            Require(pixels[index] == std::byte{255} && pixels[index + 1u] == std::byte{0} && pixels[index + 2u] == std::byte{0} && pixels[index + 3u] == std::byte{255}, "uint8 primitive restart produced the wrong triangle");
         }
     }
 }

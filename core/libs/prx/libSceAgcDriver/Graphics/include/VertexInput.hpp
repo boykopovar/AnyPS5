@@ -228,12 +228,14 @@ inline VertexCopyPlan PlanVertexCopies(std::span<const VertexFetch> fetches) {
 }
 
 inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
-    Require(indexSize == 2 || indexSize == 4, "unsupported index size");
-    const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
+    Require(indexSize == 1 || indexSize == 2 || indexSize == 4, "unsupported index size");
+    const auto restartIndex = indexSize == 1 ? 0xffu : indexSize == 2 ? 0xffffu : 0xffffffffu;
     std::optional<std::uint32_t> highest;
     for (std::size_t offset = 0; offset + indexSize <= indices.size(); offset += indexSize) {
         std::uint32_t index = 0;
-        if (indexSize == 2) {
+        if (indexSize == 1) {
+            index = std::to_integer<std::uint8_t>(indices[offset]);
+        } else if (indexSize == 2) {
             std::uint16_t value = 0;
             std::memcpy(&value, indices.data() + offset, sizeof(value));
             index = value;

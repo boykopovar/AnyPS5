@@ -972,7 +972,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     const auto* args = draw.indirect ? &*draw.indirect : nullptr;
     Require(draw.indexed ? draw.flags == 0 : (draw.flags & ~0x20u) == 0, "draw modifiers are unsupported");
     if (draw.indexed) {
-        Require(draw.indexSize == 2 || draw.indexSize == 4, "only uint16 and uint32 index buffers are supported");
+        Require(draw.indexSize == 1 || draw.indexSize == 2 || draw.indexSize == 4, "only uint8, uint16 and uint32 index buffers are supported");
+        Require(!state.stages.mesh || draw.indexSize != 1, "uint8 index buffers are not supported for mesh shaders");
     } else {
         Require(draw.indexAddress == 0 && draw.indexSize == 0, "auto draw must not reference an index buffer");
         if (args == nullptr) {
@@ -1025,19 +1026,24 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     timer.phase(PhaseValidate);
     inputs.maxIndex = draw.indexed ? 0u : draw.firstVertex + draw.indexCount - 1u;
     if (draw.indexed) {
+        const bool byteIndices = draw.indexSize == 1;
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         const bool fanGeometry = state.stages.mesh && state.stages.mesh->inputPrimitive == 5;
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart) && !fanGeometry;
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
-        const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
+        const auto* import = byteIndices ? nullptr : InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
         DrawInputCopy copy;
-        if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
+        if (byteIndices) {
+            GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
+            copy.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            GuestMemory::Read(draw.indexAddress, copy.buffer->Bytes(), draw.indexSize);
+        } else if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
         std::optional<std::uint32_t> highest;
         if (!copy.reused) {
             const auto bytes = import != nullptr ? std::span<const std::byte>(reinterpret_cast<const std::byte*>(draw.indexAddress), static_cast<std::size_t>(indexBytes)) : copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes));
             highest = HighestDrawIndex(bytes, draw.indexSize, skipRestart);
-            if (import == nullptr) KeepDrawInput(context.recorder, draw.indexAddress, copy, use, skipRestart ? (highest ? *highest + 1u : 0u) : highest.value_or(0u));
+            if (import == nullptr && !byteIndices) KeepDrawInput(context.recorder, draw.indexAddress, copy, use, skipRestart ? (highest ? *highest + 1u : 0u) : highest.value_or(0u));
         } else if (!skipRestart) {
             highest = copy.derived;
         } else if (copy.derived != 0) {
@@ -1048,12 +1054,25 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             return inputs;
         }
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
-        Require(!fanGeometry || !state.primitiveRestart || *highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
+        Require(!fanGeometry || !state.primitiveRestart || *highest != (draw.indexSize == 1 ? 0xffu : draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
         inputs.maxIndex = *highest;
         if (import != nullptr) {
             inputs.indexHandle = import->buffer;
             inputs.indexOffset = draw.indexAddress - import->base;
             inputs.inPlaceReads.emplace_back(draw.indexAddress, draw.indexAddress + indexBytes);
+        } else if (byteIndices) {
+            const auto expandedBytes = static_cast<std::uint64_t>(draw.indexCount) * sizeof(std::uint16_t);
+            Require(expandedBytes <= std::numeric_limits<std::size_t>::max(), "expanded index buffer size overflow");
+            auto expanded = std::make_shared<Buffer>(context, static_cast<std::size_t>(expandedBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            const auto source = copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes));
+            auto destination = expanded->Bytes();
+            for (std::size_t offset = 0; offset < source.size(); ++offset) {
+                const auto value = std::to_integer<std::uint8_t>(source[offset]);
+                const auto index = skipRestart && value == 0xffu ? std::uint16_t{0xffffu} : static_cast<std::uint16_t>(value);
+                std::memcpy(destination.data() + offset * sizeof(index), &index, sizeof(index));
+            }
+            inputs.indices = std::move(expanded);
+            inputs.indexHandle = inputs.indices->Handle();
         } else {
             inputs.indices = std::move(copy.buffer);
             inputs.indexHandle = inputs.indices->Handle();
@@ -1244,7 +1263,7 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
         return;
     }
     if (!inputs.vertexHandles.empty()) context.Resolved(&DeviceFunctions::cmdBindVertexBuffers, "vkCmdBindVertexBuffers")(commands, 0, static_cast<std::uint32_t>(inputs.vertexHandles.size()), inputs.vertexHandles.data(), inputs.vertexOffsets.data());
-    if (draw.indexed) context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, draw.indexSize == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+    if (draw.indexed) context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, draw.indexSize <= 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
     if (args == nullptr) {
         if (draw.indexed) context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, draw.indexCount, draw.instanceCount, 0, static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
         else context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, draw.indexCount, draw.instanceCount, draw.firstVertex, draw.firstInstance);
