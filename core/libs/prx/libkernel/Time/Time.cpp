@@ -566,10 +566,10 @@ int APS5_VABI sceKernelClockGettime(KernelClockid clock_id, KernelTimespec* tp) 
     return clock_gettime_nid_postfix(static_cast<int>(clock_id), tp);
 }
 
-int APS5_VABI sceKernelConvertLocaltimeToUtc(int64_t local_time, int64_t reserved, int64_t* utc_time, KernelTimezone* timezone, int32_t* dst_seconds) {
+int APS5_VABI sceKernelConvertLocaltimeToUtc(int64_t local_time, int64_t reserved, int64_t* utc_time, KernelTimesec* timezone, int32_t* dst_seconds) {
     (void)reserved;
     if (utc_time != nullptr) *utc_time = local_time;
-    if (timezone != nullptr) *timezone = {0, 0};
+    if (timezone != nullptr) *timezone = {local_time, 0u, 0u};
     if (dst_seconds != nullptr) *dst_seconds = 0;
     return 0;
 }
