@@ -143,6 +143,7 @@ struct HostImports {
     PFN_vkDestroyBuffer destroyBuffer = nullptr;
     PFN_vkFreeMemory freeMemory = nullptr;
     std::map<std::uint64_t, HostImport> imports;
+    std::uint64_t liveBytes = 0;
     std::set<std::uint64_t> failed;
     // Registry generation the imports were last reconciled with.
     std::uint64_t refreshedGeneration = 0;
@@ -200,6 +201,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, it->second);
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle()) recorder->Keep(std::move(holder));
     ++state.epoch;
+    state.liveBytes -= it->second.bytes;
     state.imports.erase(it);
 }
 
@@ -537,8 +539,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         const char* value = std::getenv("APS5_HOST_IMPORT_MIB");
         return (value ? std::strtoull(value, nullptr, 10) : 6144ull) << 20u;
     }();
-    std::uint64_t live = 0;
-    for (const auto& [address, existing] : state.imports) live += existing.bytes;
+    const auto live = state.liveBytes;
     if (live + bytes > budget) {
         // A refused import turns every later use of the range into CPU copies, so say so.
         static std::uint64_t refused = 0, refusedBytes = 0;
@@ -635,9 +636,8 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
-    std::uint64_t liveBytes = bytes;
-    for (const auto& [address, existing] : state.imports) liveBytes += existing.bytes;
-    if (trace) std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx ok (%zu live, %.1f MiB live, %.1f MiB ever)\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), state.imports.size() + 1, liveBytes / 1048576.0, importedBytes / 1048576.0);
+    state.liveBytes += bytes;
+    if (trace) std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx ok (%zu live, %.1f MiB live, %.1f MiB ever)\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), state.imports.size() + 1, state.liveBytes / 1048576.0, importedBytes / 1048576.0);
     return &state.imports.emplace(base, entry).first->second;
 }
 
@@ -669,6 +669,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
 #endif
         }
         state.imports.clear();
+        state.liveBytes = 0;
         state.failed.clear();
         state.device = context.device;
         state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
@@ -1492,6 +1493,7 @@ void ClearHostImports(VkDevice device) {
 #endif
     }
     state.imports.clear();
+    state.liveBytes = 0;
     state.failed.clear();
     state.device = VK_NULL_HANDLE;
     state.refreshedGeneration = 0;
@@ -1680,6 +1682,32 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     refreshImports(context, state, lease);
     if (const auto* range = containingRange(lease, address, address + bytes)) return importAllocation(context, state, range->address, range->bytes, lease);
     return nullptr;
+}
+
+bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
+    if (context.hostImportAlignment == 0) return true;
+    ensurePinWaiter();
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (!adoptDevice && (state.device != context.device || state.watchDevice != context.device)) return false;
+    const bool adopting = state.device != context.device;
+    GuestAllocations::Lease current;
+    if (adopting) {
+        current = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        refreshImports(context, state, current);
+    } else if (state.refreshedGeneration > generation) {
+        return true;
+    }
+    for (const auto& mapped : ranges) {
+        const auto range = mapped.lock();
+        if (range == nullptr || (adopting && leasedRangeOwner(current, range->address) != range)) continue;
+        try {
+            if (importAllocation(context, state, range->address, range->bytes, GuestAllocations::Lease{range}) == nullptr && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != generation) state.failed.erase(range->address);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[gpu] import of GPU memory mapped at 0x%llx+0x%zx failed: %s\n", static_cast<unsigned long long>(range->address), range->bytes, error.what());
+        }
+    }
+    return true;
 }
 
 bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes) {

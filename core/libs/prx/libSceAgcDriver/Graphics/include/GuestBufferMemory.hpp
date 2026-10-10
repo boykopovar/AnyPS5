@@ -55,6 +55,7 @@ void SetImportWatch(const Context& context, ImportWatch watch);
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in
 // the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice);
 // Whether an existing import covers [address, address + bytes), without reconciling the imports
 // with the registry or making one (HostImportFor may take a registry lease): a hint for choices
 // made outside the device lock (a sampled texture's path, a dispatch's pre-sync); the path taken

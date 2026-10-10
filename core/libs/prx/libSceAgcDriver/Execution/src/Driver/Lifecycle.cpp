@@ -4,6 +4,8 @@
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include <cstdio>
 
 namespace AgcDriver::DriverDetail {
 
@@ -13,6 +15,7 @@ Driver& Driver::Get() {
 }
 
 Driver::~Driver() {
+    GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix(nullptr);
     stop();
 }
 
@@ -57,6 +60,16 @@ Driver::Driver() {
         stop();
         throw;
     }
+    GuestAllocations::GuestAllocationsSetGpuMapObserver_nid_postfix([](const GuestAllocations::Mapped& ranges, std::uint64_t generation) {
+        try {
+            const auto current = Driver::Get().device.Load();
+            if (current == nullptr || current->ImportGuestMemory(ranges, generation, false)) return;
+            std::lock_guard lock(GuestMemory::GpuMutex());
+            if (Driver::Get().device.Load() == current) current->ImportGuestMemory(ranges, generation, true);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[gpu] import of GPU memory at its mapping failed: %s\n", error.what());
+        }
+    });
 }
 
 void Driver::WaitIdle() {
