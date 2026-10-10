@@ -21,6 +21,7 @@ void APS5_VABI _ZdlPvmSt11align_val_t_nid_postfix(void*, std::size_t, std::size_
 void* ApplicationHeapRealign_nid_no_patch(void*, std::size_t, std::size_t);
 char* APS5_VABI strdup_nid_postfix(const char*);
 char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
+char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI atexit_nid_postfix(void (APS5_VABI*)());
 }
@@ -260,6 +261,12 @@ int main(int argc, char** argv) {
     copy = strndup_nid_postfix(text, 5);
     require(lastSize == 6 && std::strcmp(copy, "guest") == 0);
     ApplicationHeapFree_nid_no_patch(copy);
+    char* directory = getcwd_nid_postfix(nullptr, 0);
+    require(directory == reinterpret_cast<char*>(storage.data()) && directory[0] == '/' && lastSize == std::strlen(directory) + 1);
+    ApplicationHeapFree_nid_no_patch(directory);
+    directory = getcwd_nid_postfix(nullptr, 200);
+    require(directory == reinterpret_cast<char*>(storage.data()) && lastSize == 200);
+    ApplicationHeapFree_nid_no_patch(directory);
     fail = true;
     *__error_nid_postfix() = 0;
     require(strdup_nid_postfix(text) == nullptr && *__error_nid_postfix() == 12);
@@ -267,5 +274,7 @@ int main(int argc, char** argv) {
     require(strdup_nid_postfix("") == nullptr && *__error_nid_postfix() == 12);
     *__error_nid_postfix() = 0;
     require(strndup_nid_postfix(text, 5) == nullptr && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 0;
+    require(getcwd_nid_postfix(nullptr, 0) == nullptr && *__error_nid_postfix() == 12);
     fail = false;
 }

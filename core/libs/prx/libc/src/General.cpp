@@ -24,7 +24,7 @@
 #include <unistd.h>
 #endif
 #include "prx/libc/include/General.hpp"
-#include "prx/libc/include/GuestHeap.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 namespace {
 // Guest prefixes (without leading slashes) mapped to host directories, e.g. save-data mount points:
@@ -304,7 +304,8 @@ extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
         const auto path = relative == "." ? std::string("/") : "/" + relative.generic_string();
         const auto required = path.size() + 1;
         if ((buffer || size) && size < required) { errno = 34; return nullptr; }
-        if (!buffer) buffer = static_cast<char*>(GuestHeap::GuestHeapAllocate_nid_postfix(size ? size : required));
+        if (!buffer) buffer = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(size ? size : required));
+        if (!buffer) { errno = 12; return nullptr; }
         std::memcpy(buffer, path.c_str(), required);
         return buffer;
     } catch (const std::bad_alloc&) { errno = 12; return nullptr; }
