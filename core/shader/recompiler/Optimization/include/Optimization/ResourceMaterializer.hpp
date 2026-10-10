@@ -19,6 +19,7 @@ public:
     static std::vector<ImageResource> RuntimeImageModes(const ImageResource& image);
     static std::uint32_t RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes);
     static void PrepareImageModes(ShaderInfo& info);
+    static const char* UnnormalizedSampleMismatch(const ImageResource& image);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();

@@ -150,7 +150,6 @@ const char* UnnormalizedUseReason(std::uint32_t uses) {
     switch (uses & (~uses + 1u)) {
         case SamplerUseImplicitLod: return "is used by an implicit-LOD sample";
         case SamplerUseGradient: return "is used by a sample with derivatives";
-        case SamplerUseOffset: return "is used with a texel offset";
         case SamplerUseCompare: return "is used with depth comparison";
         case SamplerUseGather: return "is used by a gather";
         case SamplerUseQueryLod: return "is used by image_get_lod";
@@ -167,11 +166,14 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
     UnnormalizedProof proof{std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size())};
     for (std::uint32_t r = 0; r < info.samplers.size(); r++) {
         if (snapshot.samplers.at(r).dwordCount != 4u) fail("sampler descriptor must contain four dwords");
+        const auto& sampler = info.samplers[r];
         if ((snapshot.samplers[r].dwords[0] & ForceUnnormalizedBit) == 0u) {
+            if (sampler.foldTexelOffsetsOnly) {
+                fail("DescriptorBindingBuilder::Populate normalized guest sampler is used with a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
+            }
             continue;
         }
-        const auto& sampler = info.samplers[r];
-        const std::uint32_t unsupported = sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod);
+        const std::uint32_t unsupported = sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset);
         if (unsupported != 0u) {
             failUnnormalized(UnnormalizedUseReason(unsupported));
         }
@@ -184,21 +186,10 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             }
             const auto& base = info.images.at(pair.image);
             const auto& image = info.runtimeImageModes.at(pair.image).at(ResourceMaterializer::RuntimeImageMode(base, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image)));
-            if (image.indirectRoot != ImageResource::NoIndirectImage) {
-                failUnnormalized("samples an image selected at run time");
+            if (const auto* reason = ResourceMaterializer::UnnormalizedSampleMismatch(image)) {
+                failUnnormalized(reason);
             }
-            if (image.constantSwizzle) {
-                continue;
-            }
-            if ((image.dimension != RdnaImageDimension::Dim1D && image.dimension != RdnaImageDimension::Dim2D) || image.cube) {
-                failUnnormalized("samples a 1D-array, 2D-array, 3D, cube or multisampled image");
-            }
-            if (image.depthCompare) {
-                failUnnormalized("is used with depth comparison");
-            }
-            if (image.conversionFormat != IrBufferFormat::Invalid || image.packed) {
-                failUnnormalized("samples an image that needs a format conversion or packed access");
-            }
+            if (image.constantSwizzle) continue;
             proof.images[pair.image] = true;
         }
         proof.samplers[r] = true;
@@ -253,6 +244,9 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity");
     DescriptorBindingPlan plan;
     const auto unnormalized = ProveUnnormalized(info, snapshot);
+    for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
+        if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
+    }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
         if (!info.images[index].depthCompare) continue;

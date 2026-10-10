@@ -1824,6 +1824,7 @@ void verifyUnnormalizedSamplers() {
     constexpr std::uint32_t Format8888UNorm = 56;
     constexpr std::uint32_t Format11_11_10UInt = 34;
     constexpr std::uint32_t Format32Float = 22;
+    constexpr std::uint32_t Type1D = 8;
     constexpr std::uint32_t Type2D = 9;
     constexpr std::uint32_t Type3D = 10;
     constexpr std::uint32_t TypeCube = 11;
@@ -1849,7 +1850,7 @@ void verifyUnnormalizedSamplers() {
     };
     const std::array<std::uint32_t, 3> capabilities{1u, static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended), static_cast<std::uint32_t>(spv::CapabilityMinLod)};
     std::uint64_t nextAddress = 0x40000u;
-    const auto recompile = [&](const std::vector<std::uint32_t>& code, const std::array<std::uint32_t, 16>& data, std::uint64_t address = 0u) {
+    const auto recompile = [&](const std::vector<std::uint32_t>& code, const std::array<std::uint32_t, 16>& data, std::uint64_t address = 0u, bool offsets = false) {
         RecompileRequest request{};
         request.shader = {ShaderStage::Compute, address != 0u ? address : (nextAddress += 0x1000u), code, 0, {}};
         request.context.waveSize = 32;
@@ -1861,6 +1862,7 @@ void verifyUnnormalizedSamplers() {
         request.target.subgroupSize = 32;
         request.target.supportedCapabilities = capabilities;
         request.target.fragmentShaderBarycentricEnabled = false;
+        request.target.nonConstantImageOffsets = offsets;
         request.layout.pushConstantSizeBytes = 128;
         AgcDriver::ShaderMemory memory({});
         static_cast<void>(memory.Capture(request));
@@ -1909,7 +1911,6 @@ void verifyUnnormalizedSamplers() {
     const auto reject = [&](std::uint32_t mimg, const std::array<std::uint32_t, 16>& data, const char* reason, const char* what) {
         expectFailure([&] { static_cast<void>(recompile(program(mimg), data)); }, reason, what);
     };
-    reject(0xf0c00f08u, userData(unnormalized), "unnormalized guest sampler is used with a texel offset, which is not implemented", "unnormalized samplers: image_sample_o was accepted");
     reject(0xf0bc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized guest sampler is used with depth comparison, which is not implemented", "unnormalized samplers: image_sample_c_lz was accepted");
     reject(0xf11c0108u, userData(unnormalized), "unnormalized guest sampler is used by a gather, which is not implemented", "unnormalized samplers: image_gather4_lz was accepted");
     reject(0xf1800308u, userData(unnormalized), "unnormalized guest sampler is used by image_get_lod, which is not implemented", "unnormalized samplers: image_get_lod was accepted");
@@ -1919,11 +1920,74 @@ void verifyUnnormalizedSamplers() {
     reject(0xf09c0f10u, imageData(unnormalized, Type3D, Format8888UNorm, 3u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 3D T# was accepted");
     reject(0xf09c0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array sample was accepted");
     reject(0xf09c0f08u, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u), "unnormalized guest sampler samples an image that needs a format conversion or packed access", "unnormalized samplers: a T# with a format conversion was accepted");
+    reject(0xf15c0108u, userData(unnormalized), "unnormalized guest sampler is used by a gather, which is not implemented", "unnormalized samplers: image_gather4_lz_o was accepted");
+    reject(0xf0fc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized guest sampler is used with depth comparison, which is not implemented", "unnormalized samplers: image_sample_c_lz_o was accepted");
+    reject(0xf0dc0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array image_sample_lz_o was accepted");
     for (const std::uint32_t mimg : {0xf0c00f08u, 0xf11c0108u, 0xf09c0f18u}) {
         static_cast<void>(recompile(program(mimg), imageData(normalized, mimg == 0xf09c0f18u ? TypeCube : Type2D, Format8888UNorm, mimg == 0xf09c0f18u ? 5u : 0u)));
     }
     const std::vector<std::uint32_t> latchSample{0xbe900380u, 0x7e020280u, 0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xf09c0f28u, 0x00400801u, 0x80108110u, 0xbf0a8410u, 0xbf85fffbu, 0xe0700000u, 0x80030800u, 0xbf810000u};
     static_cast<void>(recompile(latchSample, imageData(normalized, Type2DArray, Format8888UNorm, 5u)));
+
+    const auto offsetProgram = [](std::uint32_t mimg, std::uint32_t offsetSource, std::uint32_t literal) {
+        std::vector<std::uint32_t> code{0x7e020200u | offsetSource};
+        if (offsetSource == 0xffu) code.push_back(literal);
+        code.insert(code.end(), {0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, mimg, 0x00400801u, 0xe0700000u, 0x80030800u, 0xbf810000u});
+        return code;
+    };
+    const auto foldedSamples = [](const std::vector<std::uint32_t>& words) {
+        std::vector<std::uint32_t> exact;
+        std::vector<std::uint32_t> sums;
+        std::vector<std::uint32_t> coordinates;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
+            const auto op = words[cursor] & 0xffffu;
+            if (op == spv::OpDecorate && count == 3u && words[cursor + 2] == spv::DecorationNoContraction) exact.push_back(words[cursor + 1]);
+            if (op == spv::OpFAdd) sums.push_back(words[cursor + 2]);
+            if (op == spv::OpImageSampleExplicitLod) coordinates.push_back(words[cursor + 4]);
+            cursor += count;
+        }
+        return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) { return std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0; });
+    };
+    const auto sampleMasks = [](const std::vector<std::uint32_t>& words) {
+        std::vector<std::uint32_t> masks;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == spv::OpImageSampleExplicitLod && count > 5u) masks.push_back(words[cursor + 5]);
+            cursor += count;
+        }
+        return masks;
+    };
+    for (const std::uint32_t source : {0xffu, 0x100u}) {
+        const auto oneD = recompile(offsetProgram(0xf0dc0f00u, source, 0x3du), imageData(unnormalized, Type1D, Format8888UNorm, 0u));
+        require(proven(oneD, true), "unnormalized texel offsets: a 1D image_sample_lz_o through an unnormalized S# was not flagged");
+        auditSpirv(oneD.spirv.Words());
+        require(foldedSamples(oneD.spirv.Words()), "unnormalized texel offsets: a 1D offset was not added to the coordinate");
+    }
+    const auto constantLz = offsetProgram(0xf0dc0f08u, 0xffu, 0x3du | (2u << 8u));
+    const auto foldedLz = recompile(constantLz, userData(unnormalized), 0x48000u);
+    require(proven(foldedLz, true), "unnormalized texel offsets: image_sample_lz_o through an unnormalized S# was not flagged");
+    auditSpirv(foldedLz.spirv.Words());
+    require(foldedSamples(foldedLz.spirv.Words()), "unnormalized texel offsets: a constant offset was not added to the coordinates");
+    const auto operandLz = recompile(constantLz, userData(normalized), 0x48000u);
+    require(proven(operandLz, false) && operandLz.variantId == foldedLz.variantId && operandLz.PipelineVariantId() != foldedLz.PipelineVariantId(), "unnormalized texel offsets: a normalized S# did not get its own specialization of the shared artifact");
+    require(sampleMasks(operandLz.spirv.Words()) == std::vector<std::uint32_t>{spv::ImageOperandsLodMask | spv::ImageOperandsConstOffsetMask} && !foldedSamples(operandLz.spirv.Words()), "unnormalized texel offsets: a normalized image_sample_lz_o lost its ConstOffset operand");
+    require(recompile(constantLz, userData(unnormalized), 0x48000u).PipelineVariantId() == foldedLz.PipelineVariantId(), "unnormalized texel offsets: the unnormalized S# did not reuse its specialization");
+    for (const std::uint32_t mimg : {0xf0dc0f08u, 0xf0d00f08u, 0xf0c00f08u, 0xf0d40f08u, 0xf0c40f08u}) {
+        const auto computed = offsetProgram(mimg, 0x100u, 0u);
+        for (const bool offsets : {false, true}) {
+            const auto result = recompile(computed, userData(unnormalized), 0u, offsets);
+            require(proven(result, true), "unnormalized texel offsets: a compute image_sample_lz_o, _l_o, _o, _b_o or _cl_o with a computed offset was not flagged");
+            auditSpirv(result.spirv.Words());
+            require(foldedSamples(result.spirv.Words()), "unnormalized texel offsets: a computed offset was not added to the coordinates");
+        }
+        expectFailure([&] { static_cast<void>(recompile(computed, userData(normalized))); }, "normalized guest sampler is used with a texel offset that is not a constant", "unnormalized texel offsets: a normalized computed offset was accepted without maintenance8");
+        expectFailure([&] { static_cast<void>(recompile(computed, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u))); }, "takes only images an unnormalized S# can sample", "unnormalized texel offsets: a computed offset sampled a converted image without maintenance8");
+        const auto masks = sampleMasks(recompile(computed, userData(normalized), 0u, true).spirv.Words());
+        require(!masks.empty() && std::ranges::all_of(masks, [](std::uint32_t mask) { return (mask & spv::ImageOperandsOffsetMask) != 0u; }), "unnormalized texel offsets: a normalized computed offset lost its Offset operand");
+    }
 
     const std::array<std::uint32_t, 5> pixelCode{0xf0800f08u, 0x00400801u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
     const auto pixelData = userData(unnormalized);
@@ -1975,9 +2039,30 @@ void verifyUnusedUnnormalizedSampler() {
     auto compared = info;
     compared.samplers[0].depthCompare = true;
     expectFailure([&] { static_cast<void>(populate(compared)); }, "unnormalized guest sampler is used with depth comparison, which is not implemented", "unnormalized samplers: a depth-compare S# without live uses was accepted");
+    auto offset = info;
+    offset.samplers[0].uses = SamplerUseExplicitLod | SamplerUseOffset;
+    const auto folded = populate(offset);
+    require(folded[0].imageUnnormalized == std::vector<bool>{true} && folded[1].samplerUnnormalized == std::vector<bool>{true}, "unnormalized samplers: an offset use was not flagged");
+    auto gathered = offset;
+    gathered.samplers[0].uses |= SamplerUseGather;
+    expectFailure([&] { static_cast<void>(populate(gathered)); }, "unnormalized guest sampler is used by a gather, which is not implemented", "unnormalized samplers: an offset gather was accepted");
+    auto foldOnly = offset;
+    foldOnly.samplers[0].foldTexelOffsetsOnly = true;
+    static_cast<void>(populate(foldOnly));
+    auto foldVolume = foldOnly;
+    foldVolume.images[0].dimension = RdnaImageDimension::Dim3D;
+    foldVolume.images[0].foldTexelOffsetsOnly = true;
+    snapshot.images[0].dwords[3] = 0xa0000041u;
+    const auto foldedConstant = populate(foldVolume);
+    require(foldedConstant.size() == 1u && foldedConstant[0].samplerUnnormalized == std::vector<bool>{true}, "unnormalized texel offsets: a 3D view whose channels select constants was bound or refused");
+    snapshot.images[0].dwords[3] = 0xa0000facu;
+    expectFailure([&] { static_cast<void>(populate(foldVolume)); }, "takes only images an unnormalized S# can sample", "unnormalized texel offsets: an ordinary 3D view matched a constant-only mode");
+    snapshot.images[0].dwords[3] = 0x90000facu;
     snapshot.samplers[0].dwords[0] = 0x00000092u;
     const auto normalized = populate(info);
     require(normalized[0].imageUnnormalized == std::vector<bool>{false} && normalized[1].samplerUnnormalized == std::vector<bool>{false}, "unnormalized samplers: a normalized S# was flagged");
+    static_cast<void>(populate(offset));
+    expectFailure([&] { static_cast<void>(populate(foldOnly)); }, "normalized guest sampler is used with a texel offset that is not a constant", "unnormalized samplers: a normalized S# was accepted for an offset that only folds");
 }
 
 void verifyWaveUniformValues() {

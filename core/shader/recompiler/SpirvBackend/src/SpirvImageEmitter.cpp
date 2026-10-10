@@ -467,6 +467,15 @@ std::uint32_t PackedOffset(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
     return result;
 }
 
+std::uint32_t FoldedOffsetCoord(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
+    auto& state = ctx.state;
+    const auto components = setup.dimensionInfo.spatialComponents;
+    const auto type = components == 1u ? TypeF32(state) : TypeF32Vector(state, components);
+    const auto sum = Binary(state, spv::OpFAdd, type, setup.coord, Unary(state, spv::OpConvertSToF, type, PackedOffset(ctx, access, setup.layout)));
+    state.module.AddAnnotation(spv::OpDecorate, sum, spv::DecorationNoContraction);
+    return sum;
+}
+
 std::uint32_t HorizontalOffsets(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto components = RdnaImageDimensionInfoFor(access.image.dimension).spatialComponents;
@@ -1421,15 +1430,20 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         const auto* value = access.address.Argument(argument)->Resolve();
         return value->HasImmediate() ? value : nullptr;
     };
-    if (setup.layout.offset != NoImageComponent && constantOffset() == nullptr) {
-        const bool gatherExtended = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended)) != state.supportedCapabilities.end();
-        if (!state.nonConstantImageOffsets || !gatherExtended) {
-            ctx.Fail(access.inst, "has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
-        }
+    const bool hasOffset = setup.layout.offset != NoImageComponent;
+    const bool foldOffset = hasOffset && FoldsTexelOffsets(state.program.Info().samplers.at(mem.sampler)) && ResourceMaterializer::UnnormalizedSampleMismatch(image) == nullptr;
+    const auto foldedMask = operandMask;
+    const auto foldedOperands = operands;
+    const bool gatherExtended = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended)) != state.supportedCapabilities.end();
+    const bool offsetOperand = hasOffset && (constantOffset() != nullptr || (state.nonConstantImageOffsets && gatherExtended));
+    if (hasOffset && !offsetOperand && !foldOffset) {
+        ctx.Fail(access.inst, "has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
+    }
+    if (offsetOperand && constantOffset() == nullptr) {
         state.module.EmitCapability(spv::CapabilityImageGatherExtended);
         operandMask |= spv::ImageOperandsOffsetMask;
         operands.insert(operands.end() - ((operandMask & spv::ImageOperandsMinLodMask) != 0u ? 1 : 0), PackedOffset(ctx, access, setup.layout));
-    } else if (setup.layout.offset != NoImageComponent) {
+    } else if (offsetOperand) {
         const auto bits = constantOffset()->ImmediateU32();
         std::array<std::uint32_t, 3> values{};
         for (std::uint32_t index = 0; index < setup.dimensionInfo.spatialComponents; index++) {
@@ -1444,17 +1458,45 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         operands.insert(operands.end() - ((operandMask & spv::ImageOperandsMinLodMask) != 0u ? 1 : 0), offset);
 
     }
-    const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler, access.slot);
-    const auto sample = state.module.AllocateId();
-    std::vector<std::uint32_t> words = {opcode, resultType, sample, sampled, setup.coord};
-    if (setup.dref) {
-        words.push_back(drefValue);
+    const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments) {
+        const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler, access.slot);
+        const auto sample = state.module.AllocateId();
+        std::vector<std::uint32_t> words = {opcode, resultType, sample, sampled, coord};
+        if (setup.dref) {
+            words.push_back(drefValue);
+        }
+        if (mask != 0u) {
+            words.push_back(mask);
+            words.insert(words.end(), arguments.begin(), arguments.end());
+        }
+        state.module.AddFunction(words);
+        return sample;
+    };
+    std::uint32_t sample = 0;
+    if (!foldOffset) {
+        sample = emitSample(setup.coord, operandMask, operands);
+    } else if (!offsetOperand) {
+        sample = emitSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands);
+    } else {
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::FoldOffsetBase + mem.sampler, 0u);
+        const auto folded = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
+        const auto foldLabel = state.module.AllocateId();
+        const auto operandLabel = state.module.AllocateId();
+        const auto merge = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, folded, foldLabel, operandLabel);
+        EmitLabel(state, foldLabel);
+        const auto foldSample = emitSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands);
+        const auto foldEnd = state.currentLabel;
+        state.module.AddFunction(spv::OpBranch, merge);
+        EmitLabel(state, operandLabel);
+        const auto operandSample = emitSample(setup.coord, operandMask, operands);
+        const auto operandEnd = state.currentLabel;
+        state.module.AddFunction(spv::OpBranch, merge);
+        EmitLabel(state, merge);
+        sample = state.module.AllocateId();
+        state.module.AddFunction(spv::OpPhi, resultType, sample, foldSample, foldEnd, operandSample, operandEnd);
     }
-    if (operandMask != 0u) {
-        words.push_back(operandMask);
-        words.insert(words.end(), operands.begin(), operands.end());
-    }
-    state.module.AddFunction(words);
     const auto result = setup.dref ? sample : UnpackImageTexel(ctx, access, sample);
     ctx.Define(access.inst, TableResult(ctx, access, ResultVector(ctx, access, result, setup.numericClass, setup.dref, false)));
 }
