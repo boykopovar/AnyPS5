@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,14 +39,14 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
     return it->second;
 }
 
-template <typename T> T _readHeaderPod(std::span<const std::byte> header, std::uint64_t headerAddress, const void* pointer) {
+template <typename T> T _readHeaderPod(std::span<const std::byte> header, std::uint64_t headerAddress, const void* pointer, std::size_t bytes = sizeof(T)) {
     if (pointer == nullptr) throw std::runtime_error("AGC graphics: null AGC header pointer");
     const auto address = reinterpret_cast<std::uint64_t>(pointer);
     if (address < headerAddress) throw std::runtime_error("AGC graphics: AGC header pointer precedes the shader header");
     const auto offset = address - headerAddress;
-    if (offset + sizeof(T) > header.size()) throw std::runtime_error("AGC graphics: AGC header pointer is outside the registered shader header");
-    T value;
-    std::memcpy(&value, header.data() + offset, sizeof(T));
+    if (offset > header.size() || bytes > header.size() - offset) throw std::runtime_error("AGC graphics: AGC header pointer is outside the registered shader header");
+    T value{};
+    std::memcpy(&value, header.data() + offset, bytes);
     return value;
 }
 
@@ -167,7 +168,8 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
     std::memcpy(&shader, header.data(), sizeof(Shader));
     ShaderRecompiler::ShaderVertexStageInfo info{};
     if (shader.user_data == nullptr) throw std::runtime_error("AGC graphics: missing AGC user-data header");
-    const auto userDataHeader = _readHeaderPod<ShaderUserData>(header, headerAddress, shader.user_data);
+    constexpr auto userDataBytes = offsetof(ShaderUserData, sharp_resource_count) + sizeof(ShaderUserData{}.sharp_resource_count);
+    const auto userDataHeader = _readHeaderPod<ShaderUserData>(header, headerAddress, shader.user_data, userDataBytes);
     if (userDataHeader.direct_resource_count > ShaderRegs::AGC_DIRECT_RESOURCE_TYPE_COUNT) throw std::runtime_error("AGC graphics: AGC direct-resource count exceeds the known resource domain");
     std::array<std::uint16_t, ShaderRegs::AGC_DIRECT_RESOURCE_TYPE_COUNT> directOffsets{};
     directOffsets.fill(ShaderRegs::AGC_ILLEGAL_DIRECT_OFFSET);
