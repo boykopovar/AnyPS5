@@ -1442,7 +1442,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     resources->MarkGpuWrites(recorder);
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
     // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
-    if (listed) {
+    if (listed && resources->HasCopiedWrites()) {
         // As VulkanDevice::dispatch lists its copied writers: delisted before the write-back
         // (one that fails must not keep indirect dispatches on the CPU), listed after the
         // registration (a throw there leaves nothing behind).
