@@ -168,6 +168,45 @@ void relativeTableAndWholeFunction() {
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Unknown switch target inside a live function was removed");
 }
 
+void exceptionLeb128Bounds() {
+    const auto check = [](const std::vector<std::uint8_t>& codeAlignment, const std::vector<std::uint8_t>& dataAlignment, bool overflowing) {
+        std::vector<std::uint8_t> bytes(0x400);
+        std::vector<std::uint8_t> cie{1, 0};
+        cie.insert(cie.end(), codeAlignment.begin(), codeAlignment.end());
+        cie.insert(cie.end(), dataAlignment.begin(), dataAlignment.end());
+        cie.push_back(16);
+        write<std::uint32_t>(bytes, 0x200, static_cast<std::uint32_t>(4 + cie.size()));
+        std::copy(cie.begin(), cie.end(), bytes.begin() + 0x208);
+        write<std::uint32_t>(bytes, 0x240, 20);
+        write<std::uint32_t>(bytes, 0x244, 0x44);
+        write<std::uint64_t>(bytes, 0x248, 0x1000);
+        write<std::uint64_t>(bytes, 0x250, 0x20);
+        write<std::uint8_t>(bytes, 0x300, 1);
+        write<std::uint8_t>(bytes, 0x302, 3);
+        write<std::uint64_t>(bytes, 0x304, 0x200);
+        write<std::uint32_t>(bytes, 0x30C, 1);
+        write<std::uint64_t>(bytes, 0x310, 0x1000);
+        write<std::uint64_t>(bytes, 0x318, 0x240);
+        const std::vector<Relinker::ProgramHeader> headers = {{1, 4, 0, 0, 0, bytes.size(), bytes.size(), 8}, {0x6474E550, 4, 0x300, 0x300, 0, 32, 32, 4}};
+        try {
+            const auto functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {});
+            require(!overflowing, "Overflowing CIE LEB128 value was accepted");
+            require(functions.size() == 1 && functions[0].Begin == 0x1000 && functions[0].End == 0x1020 && functions[0].ExtraTargets.empty(), "Valid CIE LEB128 changed the function range");
+        } catch (const Relinker::RelinkerException& error) {
+            require(overflowing && std::string(error.what()).find("overflowing LEB128 value") != std::string::npos, "CIE LEB128 was rejected for an unexpected reason");
+        }
+    };
+    check({1}, {0x78}, false);
+    for (const std::uint8_t prefix : {0x80, 0xFF}) {
+        for (unsigned terminal = 0; terminal < 0x80; ++terminal) {
+            std::vector<std::uint8_t> encoded(10, prefix);
+            encoded.back() = static_cast<std::uint8_t>(terminal);
+            check({1}, encoded, terminal != 0 && terminal != 0x7F);
+            check(encoded, {0x78}, terminal != 0 && terminal != 1);
+        }
+    }
+}
+
 void vectorInstructionLengths() {
     const Codegen::X64InstructionDecoder decoder;
     const std::vector<std::vector<std::uint8_t>> instructions = {
@@ -440,6 +479,7 @@ int main() {
         conservativeIndirectTargets();
         isolatedFunctionCycle();
         relativeTableAndWholeFunction();
+        exceptionLeb128Bounds();
         vectorInstructionLengths();
         exceptionLandingPads();
         exceptionDataWithoutPersonality();

@@ -67,7 +67,7 @@ private:
         unsigned shift = 0;
         for (;;) {
             const auto byte = read<std::uint8_t>(position);
-            if (shift == 63 && ((byte & 0x7F) != 0 && (byte & 0x7F) != 1 && (!signedValue || (byte & 0x7F) != 0x7F)))
+            if (shift == 63 && (byte & 0x7F) != 0 && (byte & 0x7F) != (signedValue ? 0x7F : 1))
                 throw RelinkerException("Strict filter: overflowing LEB128 value", position);
             value |= static_cast<std::uint64_t>(byte & 0x7F) << shift;
             shift += 7;
