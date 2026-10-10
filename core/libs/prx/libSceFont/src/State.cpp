@@ -273,10 +273,28 @@ bool Font::ForgetGeneratedGlyph(FontGlyph glyph) {
 }
 
 Font::GeneratedGlyph* Font::TryGetGeneratedGlyph(FontGlyph glyph) {
-    if (!glyph || glyph->magic != GLYPH_MAGIC) return nullptr;
+    if (!glyph) return nullptr;
     std::lock_guard lock(glyphMutex);
     if (!generatedGlyphs.contains(glyph)) return nullptr;
+    if (glyph->magic != GLYPH_MAGIC) return nullptr;
     return reinterpret_cast<GeneratedGlyph*>(glyph);
+}
+
+bool Font::GetGlyphRenderState(FontGlyph glyph, GlyphRenderState& state) {
+    if (!glyph) return false;
+    std::lock_guard lock(glyphMutex);
+    if (!generatedGlyphs.contains(glyph) || glyph->magic != GLYPH_MAGIC) return false;
+    const auto* generated = reinterpret_cast<const GeneratedGlyph*>(glyph);
+    state.faceData = generated->faceData;
+    state.glyphIndex = generated->glyphIndex;
+    state.faceIndex = generated->faceIndex;
+    state.scaleW = glyph->scale_x;
+    state.scaleH = glyph->base_scale;
+    state.flags = glyph->flags;
+    state.glyphForm = glyph->glyph_form;
+    state.metricsForm = glyph->metrics_form;
+    state.unsupportedCreationEffects = generated->unsupportedCreationEffects;
+    return true;
 }
 
 void Font::PopulateGlyphMetricVariants(GeneratedGlyph& glyph) {

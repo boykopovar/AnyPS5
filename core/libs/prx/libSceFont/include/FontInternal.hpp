@@ -42,13 +42,29 @@ struct GeneratedGlyph {
     FontGlyphMetricsHorizontalX metricsHorizontalX{};
     FontGlyphMetricsHorizontalAdvance metricsHorizontalAdvance{};
     std::uint32_t codepoint = 0;
+    std::uint32_t glyphIndex = 0;
+    std::uint32_t faceIndex = 0;
     FontHandle owner = nullptr;
+    std::shared_ptr<const std::vector<unsigned char>> faceData;
     FontGlyphOutline outline{};
     std::vector<FontGlyphOutlinePoint> outlinePoints;
     std::vector<std::uint8_t> outlineTags;
     std::vector<std::uint16_t> outlineContours;
+    bool unsupportedCreationEffects = false;
     bool metricsInitialized = false;
     bool outlineInitialized = false;
+};
+
+struct GlyphRenderState {
+    std::shared_ptr<const std::vector<unsigned char>> faceData;
+    std::uint32_t glyphIndex = 0;
+    std::uint32_t faceIndex = 0;
+    float scaleW = 0.0f;
+    float scaleH = 0.0f;
+    std::uint16_t flags = 0;
+    std::uint8_t glyphForm = 0;
+    std::uint8_t metricsForm = 0;
+    bool unsupportedCreationEffects = false;
 };
 
 struct SystemFontFile {
@@ -94,6 +110,7 @@ std::optional<SystemFontFile> FindSystemFontFile(std::uint32_t fontSetType);
 void TrackGeneratedGlyph(FontGlyph glyph);
 bool ForgetGeneratedGlyph(FontGlyph glyph);
 GeneratedGlyph* TryGetGeneratedGlyph(FontGlyph glyph);
+bool GetGlyphRenderState(FontGlyph glyph, GlyphRenderState& state);
 void PopulateGlyphMetricVariants(GeneratedGlyph& glyph);
 void BuildBoundingOutline(GeneratedGlyph& glyph);
 bool BuildTrueOutline(GeneratedGlyph& glyph);

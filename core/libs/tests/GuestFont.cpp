@@ -1,10 +1,12 @@
 #include "prx/libSceFont/include/FontDriver.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <random>
 #include <string>
@@ -29,6 +31,7 @@ int APS5_VABI sceFontCloseFont(FontHandle);
 int APS5_VABI sceFontSetResolutionDpi(FontHandle, std::uint32_t, std::uint32_t);
 int APS5_VABI sceFontGetResolutionDpi(FontHandle, std::uint32_t*, std::uint32_t*);
 int APS5_VABI sceFontSetScalePixel(FontHandle, float, float);
+int APS5_VABI sceFontSetScalePoint(FontHandle, float, float);
 int APS5_VABI sceFontBindRenderer(FontHandle, FontRenderer);
 int APS5_VABI sceFontUnbindRenderer(FontHandle);
 int APS5_VABI sceFontSetupRenderScalePixel(FontHandle, float, float);
@@ -39,6 +42,9 @@ int APS5_VABI sceFontGetCharGlyphCode(FontHandle, std::uint32_t, std::uint32_t*)
 int APS5_VABI sceFontGetFontResolution(FontHandle, std::uint32_t*, float*);
 int APS5_VABI sceFontGetRenderScaledKerning(FontHandle, std::uint32_t, std::uint32_t, FontKerning*);
 int APS5_VABI sceFontGenerateCharGlyph(FontHandle, std::uint32_t, const FontGenerateGlyphDetail*, FontGlyph*);
+int APS5_VABI sceFontGlyphRenderImage(FontGlyph, FontStyleFrame*, FontRenderer, FontRenderSurface*, float, float, FontGlyphMetrics*, FontRenderOutput*);
+int APS5_VABI sceFontGlyphRenderImageHorizontal(FontGlyph, FontStyleFrame*, FontRenderer, FontRenderSurface*, float, float, FontGlyphMetrics*, FontRenderOutput*);
+int APS5_VABI sceFontGlyphRenderImageVertical(FontGlyph, FontStyleFrame*, FontRenderer, FontRenderSurface*, float, float, FontGlyphMetrics*, FontRenderOutput*);
 int APS5_VABI sceFontGlyphDefineAttribute(FontGlyph, std::uint32_t, std::uint64_t);
 int APS5_VABI sceFontDeleteGlyph(const FontMemory*, FontGlyph*);
 const void* APS5_VABI sceFontSelectLibraryFt(int);
@@ -87,13 +93,14 @@ static std::vector<unsigned char> Words(std::initializer_list<int> values) {
 }
 
 static std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string, std::vector<unsigned char>> tables) {
-    tables["glyf"] = Words({0, 0});
-    tables["head"] = Words({1, 0, 1, 0, 0, 0, 0x5F0F, 0x3CF5, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 2, 0, 0});
-    tables["hhea"] = Words({1, 0, 800, -200, 0, 500, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1});
-    tables["hmtx"] = Words({500});
-    tables["hmtx"].resize(2 + 2 * static_cast<std::size_t>(glyphCount));
-    tables["loca"].assign(2 * (static_cast<std::size_t>(glyphCount) + 1), 0);
-    tables["maxp"] = Words({1, 0, glyphCount, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0});
+    tables.try_emplace("glyf", Words({0, 0}));
+    tables.try_emplace("head", Words({1, 0, 1, 0, 0, 0, 0x5F0F, 0x3CF5, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 2, 0, 0}));
+    tables.try_emplace("hhea", Words({1, 0, 800, -200, 0, 500, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1}));
+    auto [hmtx, insertedHmtx] = tables.try_emplace("hmtx", Words({500}));
+    (void)insertedHmtx;
+    hmtx->second.resize(2 + 2 * static_cast<std::size_t>(glyphCount));
+    tables.try_emplace("loca", std::vector<unsigned char>(2 * (static_cast<std::size_t>(glyphCount) + 1), 0));
+    tables.try_emplace("maxp", Words({1, 0, glyphCount, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0}));
     const int tableCount = static_cast<int>(tables.size());
     int entrySelector = 0;
     while ((2 << entrySelector) <= tableCount) ++entrySelector;
@@ -109,6 +116,35 @@ static std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string
         font.resize((font.size() + 3) & ~std::size_t{3});
     }
     return font;
+}
+
+static std::vector<unsigned char> RasterGlyphFont() {
+    std::vector<unsigned char> glyf;
+    const auto put = [&glyf](int value) { glyf.push_back(static_cast<unsigned char>((value >> 8) & 0xFF)); glyf.push_back(static_cast<unsigned char>(value & 0xFF)); };
+    put(1);
+    put(0);
+    put(0);
+    put(500);
+    put(700);
+    put(3);
+    put(0);
+    glyf.insert(glyf.end(), {0x31, 0x21, 0x01, 0x01});
+    put(500);
+    put(0);
+    put(-500);
+    put(700);
+    put(0);
+    auto maxp = Words({1, 0, 2, 4, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0});
+    auto hhea = Words({1, 0, 800, -200, 0, 500, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1});
+    auto hmtx = Words({500, 0, 0});
+    return BuildFont(2, {
+        {"cmap", Words({0, 1, 3, 1, 0, 12, 4, 40, 0, 6, 4, 1, 2, 'A', 'V', 0xFFFF, 0, 'A', 'V', 0xFFFF, 1 - 'A', 2 - 'V', 1, 0, 0, 0})},
+        {"glyf", std::move(glyf)},
+        {"hhea", std::move(hhea)},
+        {"hmtx", std::move(hmtx)},
+        {"loca", Words({0, 0, 14})},
+        {"maxp", std::move(maxp)},
+    });
 }
 
 static std::vector<unsigned char> EmptyGlyphFont() {
@@ -250,6 +286,132 @@ int main() {
 
     FontRenderer renderer = nullptr;
     Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK && renderer != nullptr);
+
+    const std::vector<unsigned char> rasterData = RasterGlyphFont();
+    FontHandle rasterFont = nullptr;
+    Require(sceFontOpenFontMemory(library, rasterData.data(), static_cast<std::uint32_t>(rasterData.size()), nullptr, &rasterFont) == SCE_FONT_OK && rasterFont != nullptr);
+    FontGlyph rasterGlyph = nullptr;
+    Require(sceFontGenerateCharGlyph(rasterFont, 'A', nullptr, &rasterGlyph) == SCE_FONT_OK && rasterGlyph != nullptr);
+    Require(sceFontSetScalePixel(rasterFont, 32.0f, 32.0f) == SCE_FONT_OK);
+    Require(sceFontCloseFont(rasterFont) == SCE_FONT_OK);
+    std::vector<std::uint8_t> pixels(64 * 64);
+    FontRenderSurface surface{};
+    surface.buffer = pixels.data();
+    surface.widthByte = 64;
+    surface.pixelSizeByte = 1;
+    surface.width = 64;
+    surface.height = 64;
+    surface.sc_x1 = 64;
+    surface.sc_y1 = 64;
+    FontGlyphMetrics imageMetrics{};
+    FontRenderOutput renderOutput{};
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, nullptr, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.x == 10 && renderOutput.UpdateRect.y == 29 && renderOutput.UpdateRect.w == 8 && renderOutput.UpdateRect.h == 11);
+    Require(renderOutput.SurfaceImage.address == pixels.data() + 29 * 64 + 10);
+    for (std::uint32_t y = 0; y < 64; ++y) {
+        for (std::uint32_t x = 0; x < 64; ++x) {
+            const bool inside = x >= 10 && x < 18 && y >= 29 && y < 40;
+            Require((pixels[y * 64 + x] != 0) == inside);
+        }
+    }
+    const std::vector<std::uint8_t> expectedHorizontal = pixels;
+    const std::uint32_t glyphWidthAtDefaultScale = renderOutput.UpdateRect.w;
+    FontStyleFrame scaleFrame{};
+    scaleFrame.magic = 0x0F09;
+    scaleFrame.flags1 = 0x01;
+    scaleFrame.hDpi = 144;
+    scaleFrame.vDpi = 144;
+    scaleFrame.scalePixelW = 32.0f;
+    scaleFrame.scalePixelH = 32.0f;
+    std::fill(pixels.begin(), pixels.end(), 0);
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, &scaleFrame, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.w == 16 && renderOutput.UpdateRect.h == 23 && renderOutput.UpdateRect.w == glyphWidthAtDefaultScale * 2);
+    scaleFrame.scaleUnit = 1;
+    scaleFrame.scalePixelW = 16.0f;
+    scaleFrame.scalePixelH = 16.0f;
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, &scaleFrame, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.w == 16 && renderOutput.UpdateRect.h == 23);
+    std::fill(pixels.begin(), pixels.end(), 0);
+    Require(sceFontGlyphRenderImage(rasterGlyph, nullptr, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.x == 10 && renderOutput.UpdateRect.y == 29 && renderOutput.UpdateRect.w == 8 && renderOutput.UpdateRect.h == 11);
+    Require(pixels == expectedHorizontal);
+    std::fill(pixels.begin(), pixels.end(), 0);
+    Require(sceFontGlyphRenderImageVertical(rasterGlyph, nullptr, renderer, &surface, 32.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.x == 28 && renderOutput.UpdateRect.y == 42 && renderOutput.UpdateRect.w == 8 && renderOutput.UpdateRect.h == 12);
+    Require(std::any_of(pixels.begin(), pixels.end(), [](std::uint8_t value) { return value != 0; }));
+    FontHandle pointScaleFont = nullptr;
+    Require(sceFontOpenFontMemory(library, rasterData.data(), static_cast<std::uint32_t>(rasterData.size()), nullptr, &pointScaleFont) == SCE_FONT_OK && pointScaleFont != nullptr);
+    Require(sceFontSetResolutionDpi(pointScaleFont, 144, 144) == SCE_FONT_OK);
+    Require(sceFontSetScalePoint(pointScaleFont, 16.0f, 16.0f) == SCE_FONT_OK);
+    FontGlyph pointScaleGlyph = nullptr;
+    Require(sceFontGenerateCharGlyph(pointScaleFont, 'A', nullptr, &pointScaleGlyph) == SCE_FONT_OK && pointScaleGlyph != nullptr);
+    std::fill(pixels.begin(), pixels.end(), 0);
+    Require(sceFontGlyphRenderImageHorizontal(pointScaleGlyph, nullptr, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.x == 10 && renderOutput.UpdateRect.y == 17 && renderOutput.UpdateRect.w == 16 && renderOutput.UpdateRect.h == 23);
+    Require(sceFontDeleteGlyph(&memory, &pointScaleGlyph) == SCE_FONT_OK && pointScaleGlyph == nullptr);
+    Require(sceFontCloseFont(pointScaleFont) == SCE_FONT_OK);
+    std::fill(pixels.begin(), pixels.end(), 0);
+    surface.sc_x0 = 12;
+    surface.sc_x1 = 16;
+    surface.sc_y0 = 30;
+    surface.sc_y1 = 34;
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, nullptr, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.x >= 12 && renderOutput.UpdateRect.x + renderOutput.UpdateRect.w <= 16);
+    Require(renderOutput.UpdateRect.y >= 30 && renderOutput.UpdateRect.y + renderOutput.UpdateRect.h <= 34);
+    Require(std::any_of(pixels.begin(), pixels.end(), [](std::uint8_t value) { return value != 0; }));
+    for (std::uint32_t y = 0; y < 64; ++y) {
+        for (std::uint32_t x = 0; x < 64; ++x) {
+            const bool inside = x >= 12 && x < 16 && y >= 30 && y < 34;
+            Require((pixels[y * 64 + x] != 0) == inside);
+        }
+    }
+    surface.sc_x0 = 0;
+    surface.sc_x1 = 64;
+    surface.sc_y0 = 0;
+    surface.sc_y1 = 64;
+    imageMetrics = {1.0f, 1.0f, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f}};
+    renderOutput = {};
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, nullptr, nullptr, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(imageMetrics.width == 0 && renderOutput.UpdateRect.w == 0);
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, nullptr, renderer, &surface, 1.0e30f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(imageMetrics.width == 0 && renderOutput.UpdateRect.w == 0);
+    scaleFrame.scaleUnit = 0;
+    scaleFrame.scalePixelW = std::numeric_limits<float>::max();
+    scaleFrame.scalePixelH = 16.0f;
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, &scaleFrame, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(imageMetrics.width == 0 && renderOutput.UpdateRect.w == 0);
+    std::vector<std::uint8_t> rgba(72 * 16, 0xA5);
+    FontRenderSurface surface32{};
+    surface32.buffer = rgba.data();
+    surface32.widthByte = 72;
+    surface32.pixelSizeByte = 4;
+    surface32.width = 16;
+    surface32.height = 16;
+    surface32.sc_x1 = 16;
+    surface32.sc_y1 = 16;
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, nullptr, renderer, &surface32, 2.0f, 14.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    bool rgbaPixelWritten = false;
+    for (std::uint32_t y = renderOutput.UpdateRect.y; y < renderOutput.UpdateRect.y + renderOutput.UpdateRect.h; ++y) {
+        for (std::uint32_t x = renderOutput.UpdateRect.x; x < renderOutput.UpdateRect.x + renderOutput.UpdateRect.w; ++x) {
+            const auto* pixel = rgba.data() + y * 72 + x * 4;
+            Require(pixel[0] == pixel[1] && pixel[1] == pixel[2] && pixel[2] == pixel[3]);
+            if (pixel[0] != 0xA5) rgbaPixelWritten = true;
+        }
+    }
+    Require(rgbaPixelWritten);
+    for (std::uint32_t y = 0; y < 16; ++y) {
+        for (std::uint32_t x = 64; x < 72; ++x) Require(rgba[y * 72 + x] == 0xA5);
+    }
+    Require(renderOutput.SurfaceImage.widthByte == 72 && renderOutput.SurfaceImage.pixelSizeByte == 4);
+    std::fill(pixels.begin(), pixels.end(), 0);
+    Require(sceFontGlyphRenderImageHorizontal(rasterGlyph, nullptr, renderer, &surface, 1000.0f, 1000.0f, &imageMetrics, &renderOutput) == SCE_FONT_OK);
+    Require(renderOutput.UpdateRect.w == 0 && renderOutput.UpdateRect.h == 0 && renderOutput.SurfaceImage.address == nullptr);
+    Require(std::all_of(pixels.begin(), pixels.end(), [](std::uint8_t value) { return value == 0; }));
+    FontGlyphOpaque notAGeneratedGlyph{};
+    Require(sceFontGlyphRenderImageHorizontal(&notAGeneratedGlyph, nullptr, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_ERROR_INVALID_GLYPH);
+    FontGlyph staleGlyph = rasterGlyph;
+    Require(sceFontDeleteGlyph(&memory, &rasterGlyph) == SCE_FONT_OK && rasterGlyph == nullptr);
+    Require(sceFontGlyphRenderImageHorizontal(staleGlyph, nullptr, renderer, &surface, 10.0f, 40.0f, &imageMetrics, &renderOutput) == SCE_FONT_ERROR_INVALID_GLYPH);
 
     const std::vector<unsigned char> kerningData = KerningFont();
     font = nullptr;

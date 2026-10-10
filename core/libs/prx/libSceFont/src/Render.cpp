@@ -7,15 +7,29 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <vector>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_OUTLINE_H
 
+#include "prx/libSceFont/include/FontFreeType.hpp"
 #include "prx/libSceFont/include/FontInternal.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace {
 
 using namespace Font;
+
+struct RenderFace {
+    FT_Library library = nullptr;
+    FT_Face face = nullptr;
+
+    ~RenderFace() {
+        if (face) FT_Done_Face(face);
+        if (library) FT_Done_FreeType(library);
+    }
+};
 
 constexpr std::uint16_t GENERATE_GLYPH_DETAIL_ID = 0x0FD3;
 
@@ -93,6 +107,153 @@ void LoadKerning(FT_Face face, float scaleW, float scaleH, std::uint32_t preCode
     kerning->offsetX = static_cast<float>(delta.x) / 64.0f;
 }
 
+bool FillGeneratedImageMetrics(FontRenderOutput* result, const FontGlyphMetrics* metrics, float x, float y);
+
+int RenderGeneratedGlyph(const char* functionName, FontGlyph glyph, FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result, bool vertical) {
+    ClearRenderOutputs(metrics, result);
+    GlyphRenderState generated;
+    if (!GetGlyphRenderState(glyph, generated)) return SCE_FONT_ERROR_INVALID_GLYPH;
+    if (!renderer || static_cast<RendererNative*>(renderer)->magic != RENDERER_MAGIC) return SCE_FONT_ERROR_INVALID_RENDERER;
+    auto* nativeRenderer = static_cast<RendererNative*>(renderer);
+    const auto* selection = static_cast<const RendererSelection*>(nativeRenderer->selection);
+    if (!selection || selection->magic != 0 || selection->size != sizeof(RendererFt)) NotImplemented_nid_no_patch(functionName);
+    auto* rendererFt = static_cast<RendererFt*>(renderer);
+    if (rendererFt->ft_backend.initialized_marker != rendererFt || rendererFt->ft_backend.renderer_header_0x10 != &nativeRenderer->mem_kind) NotImplemented_nid_no_patch(functionName);
+    if (styleFrame && !ValidStyleFrame(styleFrame)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if ((generated.flags & ~0x11u) != 0 || (generated.glyphForm != 0 && generated.glyphForm != 1) ||
+        (generated.glyphForm == 0 && generated.metricsForm != 0) || (generated.glyphForm == 1 && (generated.metricsForm == 0 || generated.metricsForm > 4))) NotImplemented_nid_no_patch(functionName);
+    if ((generated.flags & 0x11u) != 0) NotImplemented_nid_no_patch(functionName);
+    if (generated.unsupportedCreationEffects) NotImplemented_nid_no_patch(functionName);
+    if (styleFrame && ((styleFrame->flags1 & static_cast<std::uint8_t>(~STYLE_FRAME_FLAG_SCALE)) != 0 || styleFrame->flags2 != 0)) NotImplemented_nid_no_patch(functionName);
+    if (!surface || !metrics || !result || !std::isfinite(x) || !std::isfinite(y) ||
+        static_cast<double>(x) < std::numeric_limits<std::int32_t>::min() || static_cast<double>(x) > std::numeric_limits<std::int32_t>::max() ||
+        static_cast<double>(y) < std::numeric_limits<std::int32_t>::min() || static_cast<double>(y) > std::numeric_limits<std::int32_t>::max()) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!surface->buffer || surface->width <= 0 || surface->height <= 0 || surface->widthByte <= 0 || surface->pixelSizeByte <= 0) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
+    const int bytesPerPixel = surface->pixelSizeByte;
+    if ((bytesPerPixel != 1 && bytesPerPixel != 4) || static_cast<std::int64_t>(surface->widthByte) < static_cast<std::int64_t>(surface->width) * bytesPerPixel) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
+    if (!generated.faceData || generated.faceData->empty() || generated.glyphIndex == 0) return SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
+
+    float scaleW = generated.scaleW;
+    float scaleH = generated.scaleH;
+    if (styleFrame && (styleFrame->flags1 & STYLE_FRAME_FLAG_SCALE) != 0) {
+        if (styleFrame->scaleUnit > 1) NotImplemented_nid_no_patch(functionName);
+        StyleStateBlock state{};
+        state.dpi_x = styleFrame->hDpi ? styleFrame->hDpi : 72;
+        state.dpi_y = styleFrame->vDpi ? styleFrame->vDpi : 72;
+        state.scale_unit = styleFrame->scaleUnit;
+        state.scale_w = styleFrame->scalePixelW;
+        state.scale_h = styleFrame->scalePixelH;
+        if (StyleStateGetScalePixel(&state, &scaleW, &scaleH) != SCE_FONT_OK) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    if (!std::isfinite(scaleW) || !std::isfinite(scaleH) || scaleW <= 0.0f || scaleH <= 0.0f ||
+        static_cast<double>(scaleW) * 64.0 >= static_cast<double>(std::numeric_limits<FT_F26Dot6>::max()) ||
+        static_cast<double>(scaleH) * 64.0 >= static_cast<double>(std::numeric_limits<FT_F26Dot6>::max())) return SCE_FONT_ERROR_INVALID_PARAMETER;
+
+    RenderFace renderFace;
+    if (FT_Init_FreeType(&renderFace.library) != 0 || !renderFace.library || generated.faceData->size() > static_cast<std::size_t>(std::numeric_limits<FT_Long>::max()) ||
+        FT_New_Memory_Face(renderFace.library, generated.faceData->data(), static_cast<FT_Long>(generated.faceData->size()), static_cast<FT_Long>(generated.faceIndex), &renderFace.face) != 0 || !renderFace.face) return SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
+    FT_Face face = renderFace.face;
+    const auto charW = static_cast<FT_F26Dot6>(scaleW * 64.0f);
+    const auto charH = static_cast<FT_F26Dot6>(scaleH * 64.0f);
+    if (FT_Set_Char_Size(face, charW, charH, 72, 72) != 0 || FT_Load_Glyph(face, generated.glyphIndex, FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP | FT_LOAD_VERTICAL_LAYOUT) != 0) {
+        return SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
+    }
+    FT_GlyphSlot slot = face->glyph;
+    metrics->width = static_cast<float>(slot->metrics.width) / 64.0f;
+    metrics->height = static_cast<float>(slot->metrics.height) / 64.0f;
+    metrics->Horizontal.bearingX = static_cast<float>(slot->metrics.horiBearingX) / 64.0f;
+    metrics->Horizontal.bearingY = static_cast<float>(slot->metrics.horiBearingY) / 64.0f;
+    metrics->Horizontal.advance = static_cast<float>(slot->metrics.horiAdvance) / 64.0f;
+    metrics->Vertical.bearingX = static_cast<float>(slot->metrics.vertBearingX) / 64.0f;
+    metrics->Vertical.bearingY = static_cast<float>(slot->metrics.vertBearingY) / 64.0f;
+    metrics->Vertical.advance = static_cast<float>(slot->metrics.vertAdvance) / 64.0f;
+    const float verticalShiftX = metrics->Vertical.bearingX - metrics->Horizontal.bearingX;
+    const float verticalShiftY = metrics->Horizontal.bearingY + metrics->Vertical.bearingY;
+    const FT_Int32 loadFlags = FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP | FT_LOAD_VERTICAL_LAYOUT;
+    FT_Vector delta{};
+    delta.x = static_cast<FT_Pos>(static_cast<std::int32_t>((x - std::floor(x)) * 64.0f));
+    delta.y = static_cast<FT_Pos>(-static_cast<std::int32_t>((y - std::floor(y)) * 64.0f));
+    if (vertical) {
+        if (!std::isfinite(verticalShiftX) || !std::isfinite(verticalShiftY) || std::abs(static_cast<double>(verticalShiftX) * 64.0) > static_cast<double>(std::numeric_limits<FT_Pos>::max()) - 64.0 || std::abs(static_cast<double>(verticalShiftY) * 64.0) > static_cast<double>(std::numeric_limits<FT_Pos>::max()) - 64.0) {
+            ClearRenderOutputs(metrics, result);
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
+        }
+        delta.x += static_cast<FT_Pos>(verticalShiftX * 64.0f);
+        delta.y -= static_cast<FT_Pos>(verticalShiftY * 64.0f);
+    }
+    FT_Set_Transform(face, nullptr, &delta);
+    const FT_Error renderError = FT_Load_Glyph(face, generated.glyphIndex, loadFlags | FT_LOAD_RENDER);
+    FT_Set_Transform(face, nullptr, nullptr);
+    if (renderError != 0 || !face->glyph) {
+        ClearRenderOutputs(metrics, result);
+        return SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
+    }
+    slot = face->glyph;
+    const int glyphW = static_cast<int>(slot->bitmap.width);
+    const int glyphH = static_cast<int>(slot->bitmap.rows);
+    FontGlyphMetrics imageMetrics = *metrics;
+    if (vertical) {
+        imageMetrics.Horizontal.bearingX = metrics->Vertical.bearingX;
+        imageMetrics.Horizontal.bearingY = metrics->Vertical.bearingY;
+        imageMetrics.Horizontal.advance = metrics->Vertical.advance;
+    }
+    if (!FillGeneratedImageMetrics(result, &imageMetrics, x, y)) {
+        ClearRenderOutputs(metrics, result);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    result->ImageMetrics.width = static_cast<std::uint32_t>(glyphW);
+    result->ImageMetrics.height = static_cast<std::uint32_t>(glyphH);
+    std::vector<std::uint8_t> bitmap(static_cast<std::size_t>(glyphW) * static_cast<std::size_t>(glyphH));
+    for (int row = 0; row < glyphH; ++row) {
+        const int sourceRowIndex = slot->bitmap.pitch >= 0 ? row : glyphH - 1 - row;
+        const auto* sourceRow = slot->bitmap.buffer + static_cast<std::ptrdiff_t>(sourceRowIndex) * std::abs(slot->bitmap.pitch);
+        auto* targetRow = bitmap.data() + static_cast<std::size_t>(row) * static_cast<std::size_t>(glyphW);
+        if (slot->bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
+            for (int column = 0; column < glyphW; ++column) targetRow[column] = (sourceRow[column >> 3] & (0x80u >> (column & 7))) ? 0xFF : 0x00;
+        } else if (slot->bitmap.pixel_mode == FT_PIXEL_MODE_GRAY) {
+            std::memcpy(targetRow, sourceRow, static_cast<std::size_t>(glyphW));
+        } else if (glyphW > 0) {
+            ClearRenderOutputs(metrics, result);
+            return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
+        }
+    }
+    const double destXValue = std::floor(static_cast<double>(x)) + slot->bitmap_left;
+    const double destYValue = std::floor(static_cast<double>(y)) - slot->bitmap_top;
+    if (destXValue < static_cast<double>(std::numeric_limits<std::int32_t>::min()) || destXValue > static_cast<double>(std::numeric_limits<std::int32_t>::max()) ||
+        destYValue < static_cast<double>(std::numeric_limits<std::int32_t>::min()) || destYValue > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+        ClearRenderOutputs(metrics, result);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    const std::int64_t destX = static_cast<std::int64_t>(std::floor(destXValue));
+    const std::int64_t destY = static_cast<std::int64_t>(std::floor(destYValue));
+    const int clipX0 = static_cast<int>(std::min(surface->sc_x0, static_cast<std::uint32_t>(surface->width)));
+    const int clipY0 = static_cast<int>(std::min(surface->sc_y0, static_cast<std::uint32_t>(surface->height)));
+    const int clipX1 = std::max(clipX0, static_cast<int>(std::min(surface->sc_x1, static_cast<std::uint32_t>(surface->width))));
+    const int clipY1 = std::max(clipY0, static_cast<int>(std::min(surface->sc_y1, static_cast<std::uint32_t>(surface->height))));
+    const int startX = static_cast<int>(std::clamp<std::int64_t>(destX, clipX0, clipX1));
+    const int startY = static_cast<int>(std::clamp<std::int64_t>(destY, clipY0, clipY1));
+    const int endX = static_cast<int>(std::clamp<std::int64_t>(destX + glyphW, clipX0, clipX1));
+    const int endY = static_cast<int>(std::clamp<std::int64_t>(destY + glyphH, clipY0, clipY1));
+    for (int row = startY; row < endY; ++row) {
+        const auto* sourceRow = bitmap.data() + static_cast<std::size_t>(row - destY) * static_cast<std::size_t>(glyphW);
+        auto* targetRow = static_cast<std::uint8_t*>(surface->buffer) + static_cast<std::size_t>(row) * static_cast<std::size_t>(surface->widthByte);
+        for (int column = startX; column < endX; ++column) {
+            const std::uint8_t coverage = sourceRow[column - destX];
+            std::memset(targetRow + static_cast<std::size_t>(column) * static_cast<std::size_t>(bytesPerPixel), coverage, static_cast<std::size_t>(bytesPerPixel));
+        }
+    }
+    result->stage = nullptr;
+    result->SurfaceImage.address = endX > startX && endY > startY ? static_cast<std::uint8_t*>(surface->buffer) + static_cast<std::size_t>(startY) * static_cast<std::size_t>(surface->widthByte) + static_cast<std::size_t>(startX) * static_cast<std::size_t>(bytesPerPixel) : nullptr;
+    result->SurfaceImage.widthByte = static_cast<std::uint32_t>(surface->widthByte);
+    result->SurfaceImage.pixelSizeByte = static_cast<std::uint8_t>(bytesPerPixel);
+    result->SurfaceImage.pixelFormat = 0;
+    result->UpdateRect.x = static_cast<std::uint32_t>(startX);
+    result->UpdateRect.y = static_cast<std::uint32_t>(startY);
+    result->UpdateRect.w = static_cast<std::uint32_t>(std::max(0, endX - startX));
+    result->UpdateRect.h = static_cast<std::uint32_t>(std::max(0, endY - startY));
+    return SCE_FONT_OK;
+}
+
 int RenderDirectional(FontHandle fontHandle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result, std::uint16_t direction) {
     auto* font = GetNativeFont(fontHandle);
     if (!font || font->magic != HANDLE_MAGIC) {
@@ -117,6 +278,38 @@ int RenderDirectional(FontHandle fontHandle, std::uint32_t code, FontRenderSurfa
     ReleaseFontLock(font, fontLock);
     if (rc != SCE_FONT_OK) ClearRenderOutputs(metrics, result);
     return rc;
+}
+
+bool FillGeneratedImageMetrics(FontRenderOutput* result, const FontGlyphMetrics* metrics, float x, float y) {
+    const double leftF = static_cast<double>(x) + metrics->Horizontal.bearingX;
+    const double topF = static_cast<double>(y) + metrics->Horizontal.bearingY;
+    const double rightF = leftF + metrics->width;
+    const double bottomF = topF - metrics->height;
+    const double advanceF = static_cast<double>(x) + metrics->Horizontal.advance;
+    if (!std::isfinite(leftF) || !std::isfinite(topF) || !std::isfinite(rightF) || !std::isfinite(bottomF) || !std::isfinite(advanceF)) return false;
+    constexpr double minimum = static_cast<double>(std::numeric_limits<std::int32_t>::min() + 1);
+    constexpr double maximum = static_cast<double>(std::numeric_limits<std::int32_t>::max() - 1);
+    if (leftF < minimum || leftF > maximum || topF < minimum || topF > maximum || rightF < minimum || rightF > maximum ||
+        bottomF < minimum || bottomF > maximum || advanceF < minimum || advanceF > maximum) return false;
+    const auto left = static_cast<std::int64_t>(std::floor(leftF));
+    const auto top = static_cast<std::int64_t>(std::ceil(topF));
+    const auto right = static_cast<std::int64_t>(std::ceil(rightF));
+    const auto bottom = static_cast<std::int64_t>(std::floor(bottomF));
+    const auto advance = static_cast<std::int64_t>(std::ceil(advanceF));
+    result->ImageMetrics.bearingX = static_cast<float>(left) - x;
+    result->ImageMetrics.bearingY = static_cast<float>(top) - y;
+    result->ImageMetrics.advance = static_cast<float>(advance) - x;
+    std::int64_t stride = advance;
+    if (advanceF != static_cast<double>(advance)) {
+        const auto candidate = static_cast<std::int64_t>((static_cast<double>(right) - rightF) + advanceF);
+        stride = right + 1;
+        if (advanceF <= rightF) stride = candidate;
+        if (stride < candidate) stride = candidate;
+    }
+    result->ImageMetrics.stride = static_cast<float>(stride) - x;
+    result->ImageMetrics.width = static_cast<std::uint32_t>(std::max<std::int64_t>(0, right - left));
+    result->ImageMetrics.height = static_cast<std::uint32_t>(std::max<std::int64_t>(0, top - bottom));
+    return true;
 }
 
 }
@@ -282,6 +475,26 @@ int APS5_VABI sceFontRenderCharGlyphImageVertical(FontHandle fontHandle, std::ui
     return RenderDirectional(fontHandle, code, surface, x, y, metrics, result, 2);
 }
 
+int APS5_VABI sceFontGlyphRenderImage(FontGlyph glyph, FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+    if (styleFrame && !ValidStyleFrame(styleFrame)) {
+        ClearRenderOutputs(metrics, result);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    if (styleFrame) {
+        ClearRenderOutputs(metrics, result);
+        NotImplemented_nid_no_patch(__func__);
+    }
+    return RenderGeneratedGlyph(__func__, glyph, styleFrame, renderer, surface, x, y, metrics, result, false);
+}
+
+int APS5_VABI sceFontGlyphRenderImageHorizontal(FontGlyph glyph, FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+    return RenderGeneratedGlyph(__func__, glyph, styleFrame, renderer, surface, x, y, metrics, result, false);
+}
+
+int APS5_VABI sceFontGlyphRenderImageVertical(FontGlyph glyph, FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+    return RenderGeneratedGlyph(__func__, glyph, styleFrame, renderer, surface, x, y, metrics, result, true);
+}
+
 void APS5_VABI sceFontRenderSurfaceInit(FontRenderSurface* renderSurface, void* buffer, int bufWidthByte, int pixelSizeByte, int widthPixel, int heightPixel) {
     if (!renderSurface) return;
     const auto width = static_cast<std::uint32_t>(std::max(widthPixel, 0));
@@ -386,21 +599,39 @@ int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code
     FontGlyphMetrics metrics{};
     const int rc = GetCharGlyphMetrics(fontHandle, code, &metrics, false);
     if (rc != SCE_FONT_OK) return rc;
+    float scaleW = 0.0f;
+    float scaleH = 0.0f;
+    auto* nativeFont = GetNativeFont(fontHandle);
+    std::uint32_t fontLock = 0;
+    if (!nativeFont || !AcquireFontLock(nativeFont, fontLock)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
+    const int scaleRc = StyleStateGetScalePixel(&nativeFont->style, &scaleW, &scaleH);
+    const bool unsupportedCreationEffects = nativeFont->style.slant_ratio != 0.0f ||
+        nativeFont->style.effect_weight_x != 0.0f || nativeFont->style.effect_weight_y != 0.0f;
+    ReleaseFontLock(nativeFont, fontLock);
+    if (scaleRc != SCE_FONT_OK) return scaleRc;
     auto* generated = new (std::nothrow) GeneratedGlyph();
     if (!generated) return SCE_FONT_ERROR_ALLOCATION_FAILED;
     generated->codepoint = code;
+    generated->glyphIndex = ResolveGlyphIndexWithFallback(state->face, code);
+    if (generated->glyphIndex == 0) {
+        delete generated;
+        return SCE_FONT_ERROR_NO_SUPPORT_GLYPH;
+    }
+    generated->faceIndex = static_cast<std::uint32_t>(state->face->face_index);
+    generated->faceData = state->faceData;
+    generated->unsupportedCreationEffects = unsupportedCreationEffects;
     generated->metrics = metrics;
     generated->glyph.magic = GLYPH_MAGIC;
     generated->glyph.flags = formOptions;
     generated->glyph.glyph_form = glyphForm;
     generated->glyph.metrics_form = metricsForm;
-    generated->glyph.em_size = ClampToU16(state->scaleH);
+    generated->glyph.em_size = ClampToU16(scaleH);
     generated->glyph.baseline = ClampToU16(metrics.Horizontal.bearingY);
     generated->glyph.height_px = ClampToU16(metrics.height);
     generated->glyph.origin_x = 0;
     generated->glyph.origin_y = generated->glyph.baseline;
-    generated->glyph.scale_x = state->scaleW;
-    generated->glyph.base_scale = state->scaleH;
+    generated->glyph.scale_x = scaleW;
+    generated->glyph.base_scale = scaleH;
     generated->glyph.memory = glyphMemory;
     generated->owner = fontHandle;
     generated->outline.outline_flags = generated->glyph.flags;
