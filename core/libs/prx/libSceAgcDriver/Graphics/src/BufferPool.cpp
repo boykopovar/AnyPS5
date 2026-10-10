@@ -1,11 +1,14 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <algorithm>
 #include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <new>
+#include <system_error>
 
 namespace AgcDriver::Graphics {
 
@@ -63,6 +66,7 @@ void BufferPool::destroy(const BufferAllocation& allocation) noexcept {
     if (allocation.mapping != nullptr) unmap(device, allocation.memory);
     destroyBuffer(device, allocation.buffer, nullptr);
     freeMemory(device, allocation.memory, nullptr);
+    CountGpuMemory((allocation.properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 ? GpuMemoryKind::HostBuffer : GpuMemoryKind::DeviceBuffer, -static_cast<std::int64_t>(allocation.allocationBytes));
 }
 
 bool BufferPool::DeviceTiered(VkMemoryPropertyFlags properties) {
@@ -162,6 +166,38 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
         destroy(allocation);
     }
     for (const auto& gone : evicted) destroy(gone);
+}
+
+VkDeviceSize BufferPool::Trim() noexcept {
+    std::vector<BufferAllocation> evicted;
+    VkDeviceSize bytes = 0;
+    try {
+        std::lock_guard lock(mutex);
+        evicted.reserve(smallTier.slots + largeTier.slots + deviceTier.slots);
+        for (auto* tier : {&smallTier, &largeTier, &deviceTier}) {
+            for (const auto& [key, slots] : tier->free) {
+                for (const auto& slot : slots) {
+                    evicted.push_back(slot.allocation);
+                    bytes += slot.allocation.allocationBytes;
+                }
+            }
+            tier->evictions += tier->slots;
+            tier->free.clear();
+            tier->retainedBytes = 0;
+            tier->slots = 0;
+        }
+    } catch (const std::bad_alloc&) {
+        return 0;
+    } catch (const std::system_error&) {
+        return 0;
+    }
+    for (const auto& gone : evicted) destroy(gone);
+    return bytes;
+}
+
+std::pair<VkDeviceSize, VkDeviceSize> BufferPool::RetainedBytes() {
+    std::lock_guard lock(mutex);
+    return {smallTier.retainedBytes + largeTier.retainedBytes, deviceTier.retainedBytes};
 }
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context) {
