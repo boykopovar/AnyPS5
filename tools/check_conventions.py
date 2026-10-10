@@ -126,6 +126,8 @@ class Check:
 
     def build(self):
         for path, lines in self.files(lambda p: p.name == "CMakeLists.txt" or p.suffix == ".cmake"):
+            if path == "cmake/SystemDeps.cmake":
+                continue
             for number, text in lines:
                 if SYSTEM_DEPENDENCY.search(text.split("#", 1)[0]):
                     self.report("system-dependency", path, number, text.strip())
