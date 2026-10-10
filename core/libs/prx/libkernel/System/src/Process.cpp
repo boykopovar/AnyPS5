@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 #else
 #include <sched.h>
 #include <unistd.h>
@@ -46,17 +47,30 @@ constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
 std::atomic<std::uint32_t> gpoBits{0};
 constexpr std::array<std::uint8_t, 16> openPsId{'A', 'n', 'y', 'P', 'S', '5', 'O', 'p', 'e', 'n', 'P', 's', 'I', 'd', 0, 1};
 
+#ifdef _WIN32
+std::string toUtf8(const wchar_t* value) {
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 0)
+        throw std::system_error(GetLastError(), std::system_category(), "Converting a process argument to UTF-8");
+    std::string text(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, -1, text.data(), size, nullptr, nullptr) != size)
+        throw std::system_error(GetLastError(), std::system_category(), "Converting a process argument to UTF-8");
+    text.pop_back();
+    return text;
+}
+#endif
+
 class ProcessArguments {
 public:
     ProcessArguments() {
 #ifdef _WIN32
-        std::array<char, 32768> path{};
-        const auto size = GetModuleFileNameA(nullptr, path.data(), static_cast<DWORD>(path.size()));
-        if (size == 0)
-            throw std::system_error(GetLastError(), std::system_category(), "Reading executable path");
-        if (size >= path.size())
-            throw std::runtime_error("Executable path exceeds the guest argument buffer");
-        arguments.emplace_back(path.data(), size);
+        int count = 0;
+        const std::unique_ptr<LPWSTR, void (*)(LPWSTR*)> values(CommandLineToArgvW(GetCommandLineW(), &count),
+            [](LPWSTR* parsed) { LocalFree(parsed); });
+        if (!values)
+            throw std::system_error(GetLastError(), std::system_category(), "Reading process arguments");
+        for (int index = 0; index < count; ++index)
+            arguments.push_back(toUtf8(values.get()[index]));
 #else
         std::ifstream stream("/proc/self/cmdline", std::ios::binary);
         if (!stream)
