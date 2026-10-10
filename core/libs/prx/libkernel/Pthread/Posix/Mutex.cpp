@@ -15,6 +15,7 @@ namespace {
 
 constexpr int POSIX_EINVAL = 22;
 constexpr int POSIX_PRIO_PROTECT = 2;
+constexpr int POSIX_SCHED_RR = 3;
 constexpr std::uintptr_t POSIX_ADAPTIVE_MUTEX_INITIALIZER = 1;
 
 bool _isStaticInitializer(PthreadMutex mutex) {
@@ -36,6 +37,8 @@ void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
 }
 
 extern "C" {
+
+int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
 
 int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
     if (!mutex) throw std::runtime_error("pthread_mutex_destroy: null mutex");
@@ -91,6 +94,23 @@ int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr) {
 int APS5_VABI pthread_mutexattr_setprotocol_nid_postfix(PthreadMutexattr* attr, int protocol) {
     if (!attr || !*attr) throw std::runtime_error("pthread_mutexattr_setprotocol: null attr");
     if (protocol < 0 || protocol > POSIX_PRIO_PROTECT) return POSIX_EINVAL;
+    (*attr)->protocol = protocol;
+    (*attr)->ceiling = sched_get_priority_max_nid_postfix(POSIX_SCHED_RR);
+    return 0;
+}
+
+int APS5_VABI pthread_mutexattr_setprioceiling_nid_postfix(PthreadMutexattr* attr, int prioceiling) {
+    if (!attr || !*attr) throw std::runtime_error("pthread_mutexattr_setprioceiling: null attr");
+    if ((*attr)->protocol != POSIX_PRIO_PROTECT) return POSIX_EINVAL;
+    (*attr)->ceiling = prioceiling;
+    return 0;
+}
+
+int APS5_VABI pthread_mutexattr_getprioceiling_nid_postfix(const PthreadMutexattr* attr, int* prioceiling) {
+    if (!attr || !*attr) throw std::runtime_error("pthread_mutexattr_getprioceiling: null attr");
+    if (!prioceiling) throw std::runtime_error("pthread_mutexattr_getprioceiling: null prioceiling");
+    if ((*attr)->protocol != POSIX_PRIO_PROTECT) return POSIX_EINVAL;
+    *prioceiling = (*attr)->ceiling;
     return 0;
 }
 
