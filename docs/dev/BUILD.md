@@ -16,6 +16,28 @@ The output remains x86-64 Linux ELF or Windows PE. Converted games need system l
 
 Use a separate build directory for the full build.
 
+## Experimental native Apple ARM64 compiler
+
+`ANYPS5_NATIVE_AOT` enables an offline compiler on Apple Silicon. It reads x86-64 ELF code and explicit function/data contracts, emits LLVM IR, and optionally builds an ARM64 Mach-O object with Xcode's Clang. Generated code uses native calls and stack frames; there is no shipped x86 decoder, interpreter or JIT. This target is an initial compiler implementation, not a complete macOS game runtime.
+
+It requires native ARM64 Python 3.10 or newer, the Xcode command-line tools, and two pinned source submodules. The regular relinker and full build keep their existing behavior when the option is off.
+
+```sh
+git submodule update --init 3rdparty/capstone 3rdparty/pyelftools
+cmake -S . -B build-aot -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DANYPS5_NATIVE_AOT=ON -DBUILD_TESTING=ON
+cmake --build build-aot --parallel
+ctest --test-dir build-aot --output-on-failure --parallel 2
+python3 build-aot/core/aot/native_aot.py input.elf --contracts contracts.json --output module.ll --object module.o
+```
+
+The contract has `schema: 1`, the input file's `sha256`, `functions`, `imports`, complete non-executable `data` segments, and `pointer_relocations`. Each function declares its guest address and size, native symbol name, scalar result and parameter types. Import keys are the ELF symbol names; values declare the native provider's name and signature. Relocation entries are `[guest_slot, guest_target]` pairs. The compiler checks these against the image instead of guessing an ABI. The generated object must be linked with native implementations of its imports and a native entry-point caller. It does not include PS5 system libraries, a process loader or application packaging.
+
+Supported operations cover declared scalar integer, SSE and VEX integer/bitwise subsets. Native signatures support integer and pointer parameters, `float`/`double`, narrow integer extension and stack arguments. Direct calls and resolved tail calls use native functions. Register or memory calls require an instruction-address-bound signature and a declared compatible target set; target completeness remains the annotation author's responsibility. The recovery helper in `core/aot/recover.py` collects symbol, unwind and companion-object evidence but does not infer signatures or prove all indirect targets.
+
+The tests build synthetic ELF inputs, compile and execute ARM64 code, check native callback/tail-call ABIs and compare supported operations with independent integer oracles and x86 SSE probes. The SSE reference executables use Rosetta on Apple Silicon; generated ARM64 programs do not. Those differential tests therefore require Rosetta to be installed. They do not qualify console hardware, complete games or performance.
+
+Guest TLS and C++ exceptions, aggregate and variadic ABIs, general computed jumps, x87, atomics, guest fault delivery, concurrent memory semantics and full module lifecycle are incomplete. Unsupported instructions and declared ABIs reject. Pointer operands need a proven native origin: declared pointer arguments/results, reconstructed image/frame addresses or tracked pointer cells. Arbitrary pointer fields loaded from structs, and pointer-cell reuse after calls that could modify memory, currently reject; typed memory-effect contracts remain future work. Concurrent accesses are not qualified by the single-threaded memory model. See [TechnicalDebt](TechnicalDebt.md) for the remaining qualification limits.
+
 ## Full build
 
 ```sh

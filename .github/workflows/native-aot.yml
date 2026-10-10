@@ -1,0 +1,32 @@
+name: Native ARM64 AOT
+
+on:
+  pull_request:
+    paths:
+      - 'core/aot/**'
+      - 'CMakeLists.txt'
+      - '.gitmodules'
+      - '3rdparty/capstone'
+      - '3rdparty/pyelftools'
+      - '.github/workflows/native-aot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-aot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-aot:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: git submodule update --init 3rdparty/capstone 3rdparty/pyelftools
+      - run: test "$(uname -m)" = arm64
+      - run: /usr/bin/arch -x86_64 /usr/bin/true
+      - run: cmake -S . -B build-aot -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DANYPS5_NATIVE_AOT=ON -DBUILD_TESTING=ON
+      - run: cmake --build build-aot --parallel 3
+      - run: ctest --test-dir build-aot --output-on-failure --parallel 2
