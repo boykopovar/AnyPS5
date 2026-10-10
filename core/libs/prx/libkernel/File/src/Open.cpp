@@ -110,7 +110,11 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
 #ifdef _WIN32
     if (fd < 0 && errno != ENOENT) {
         std::error_code error;
-        if (std::filesystem::is_directory(native, error)) fd = File::OpenDirectoryDescriptor(native);
+        if (std::filesystem::is_directory(native, error)) {
+            if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) errno = EEXIST;
+            else if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY || (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC))) errno = EISDIR;
+            else fd = File::OpenDirectoryDescriptor(native);
+        }
     }
 #endif
     if (fd < 0) {
