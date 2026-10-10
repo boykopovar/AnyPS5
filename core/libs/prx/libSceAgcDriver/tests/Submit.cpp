@@ -19,6 +19,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 #ifdef _WIN32
@@ -170,7 +171,7 @@ void testSubmissions() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
-void testEndOfPipeInterrupts() {
+void testEndOfPipeInterrupts(bool implicitEop = false) {
     KernelEqueue eq = 0;
     check(sceKernelCreateEqueue(&eq, "AGC test") == 0, "event queue creation failed");
     auto owner = EqueuePin_nid_postfix(eq);
@@ -195,14 +196,18 @@ void testEndOfPipeInterrupts() {
     words[2] = 0;
     check(sceAgcDriverSubmitDcb(&packet) == 0, "plain release submit failed");
     AgcDriverWaitIdle_nid_postfix();
-    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "release without INT_SEL raised an interrupt");
+    const auto plainEvents = owner->GetTriggeredEvents(events.data(), 2);
+    check(plainEvents == (implicitEop ? 1 : 0), "plain release has the wrong submission completion count");
+    if (implicitEop) check(events[0].ident == 0 && events[0].data == 1, "plain release completion has the wrong queue or count");
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
     words = {0xc0064900, 0x528, (3u << 29u) | (3u << 24u) | (1u << 16u), static_cast<std::uint32_t>(labelAddress), static_cast<std::uint32_t>(static_cast<std::uint64_t>(labelAddress) >> 32u), 0x89abcdefu, 0x01234567u, 0};
     check(sceAgcDriverSubmitDcb(&packet) == 0, "send-data release submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(label != 0, "send-data release did not write its label");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "release with INT_SEL send data after write confirm raised an interrupt");
+    const auto sendDataEvents = owner->GetTriggeredEvents(events.data(), 2);
+    check(sendDataEvents == (implicitEop ? 1 : 0), "send-data release has the wrong submission completion count");
+    if (implicitEop) check(events[0].ident == 0 && events[0].data == 1, "send-data release completion has the wrong queue or count");
     words = {0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
     check(sceAgcDriverDeleteEqEvent(eq, 0) == 0, "graphics event deletion failed");
     expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, 0); });
@@ -249,6 +254,61 @@ std::vector<std::uint32_t> commands(const std::array<std::uint32_t, N>&... packe
     std::vector<std::uint32_t> words;
     (words.insert(words.end(), packets.begin(), packets.end()), ...);
     return words;
+}
+
+void testImplicitSubmissionCompletions() {
+    KernelEqueue eq = 0;
+    check(sceKernelCreateEqueue(&eq, "AGC submission completions") == 0, "event queue creation failed");
+    auto owner = EqueuePin_nid_postfix(eq);
+    int graphicsTag = 0, computeTag = 0;
+    check(sceAgcDriverAddEqEvent(eq, 0, &graphicsTag) == 0, "graphics event registration failed");
+    check(sceAgcDriverAddEqEvent(eq, 0x20, &computeTag) == 0, "compute event registration failed");
+    std::array<KernelEvent, 2> events{};
+    const auto expectCompletion = [&](std::uintptr_t queue, void* tag, std::intptr_t count) {
+        check(owner->GetTriggeredEvents(events.data(), 2) == 1, "submission completion was missing or reached another queue");
+        check(events[0].filter == -14 && events[0].ident == queue && events[0].udata == tag && events[0].data == count, "submission completion has the wrong encoding or count");
+        check(owner->GetTriggeredEvents(events.data(), 2) == 0, "submission completion did not clear");
+    };
+    alignas(64) static volatile std::uint32_t gate = 0, started = 0, finished = 0;
+    submit(0, commands(writeData(&started, 1), waitEqual(&gate, 1), writeData(&finished, 1)));
+    waitFor(&started, 1, "graphics submission never reached its wait");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0 && finished == 0, "a blocked submission signaled completion early");
+    submit(0x20, commands(writeData(&gate, 1)));
+    AgcDriverWaitIdle_nid_postfix();
+    check(finished == 1, "graphics submission did not finish after its dependency");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 2, "independent queue completions were lost");
+    for (const auto& event : events) {
+        check(event.filter == -14 && event.data == 1, "queue completion was duplicated");
+        check((event.ident == 0 && event.udata == &graphicsTag) || (event.ident == 0x20 && event.udata == &computeTag), "queue completion reached the wrong registration");
+    }
+    for (int i = 0; i < 3; ++i) submit(0, {0xc0001000, 0});
+    AgcDriverWaitIdle_nid_postfix();
+    expectCompletion(0, &graphicsTag, 3);
+    Packet empty{};
+    check(sceAgcDriverSubmitDcb(&empty) == 0, "empty submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    expectCompletion(0, &graphicsTag, 1);
+    const std::vector<std::uint32_t> rewindThenInterrupt{0xc0005900, 0x80000000u, 0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
+    submit(0, rewindThenInterrupt);
+    AgcDriverWaitIdle_nid_postfix();
+    expectCompletion(0, &graphicsTag, 1);
+    const std::vector<std::uint32_t> interruptThenRewind{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0, 0xc0005900, 0x80000000u, 0xc0001000, 0};
+    submit(0, interruptThenRewind);
+    AgcDriverWaitIdle_nid_postfix();
+    expectCompletion(0, &graphicsTag, 1);
+    submit(0, {0xc0001000, 0});
+    AgcDriverWaitIdle_nid_postfix();
+    expectCompletion(0, &graphicsTag, 1);
+    AgcDriverSuspendPoint_nid_postfix();
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "suspend boundary raised a submission interrupt");
+    check(sceAgcDriverDeleteEqEvent(eq, 0) == 0, "graphics event deletion failed");
+    submit(0, {0xc0001000, 0});
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a removed registration received completion");
+    check(sceAgcDriverDeleteEqEvent(eq, 0x20) == 0, "compute event deletion failed");
+    owner.reset();
+    check(sceKernelDeleteEqueue(eq) == 0, "event queue deletion failed");
 }
 
 std::array<std::uint32_t, 8> endOfPipeLabel(volatile std::uint32_t* address, std::uint32_t value) {
@@ -553,10 +613,18 @@ void testWorkerFailure() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--implicit-eop-only") {
+            testImplicitSubmissionCompletions();
+            testEndOfPipeInterrupts(true);
+            testEndOfPipeLabelsWithoutWork();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC implicit submission completion tests passed");
+            return 0;
+        }
         alignas(256) std::array<std::uint32_t, 64> rawCode{};
         rawCode.fill(0xbf800000);
         rawCode[0] = 0xbe8003ff;

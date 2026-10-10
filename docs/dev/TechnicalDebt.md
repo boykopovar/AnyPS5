@@ -1,5 +1,7 @@
 # Project technical debt
 
+- [Implicit submission EOP events](../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/QueueWorker.cpp) (libSceAgcDriver) are opt-in with `APS5_IMPLICIT_SUBMISSION_EOP=1`. A submission without an executed interrupt-requesting packet raises one event after recorded GPU work completes; suspend boundaries raise none. This unblocks a graphics-event wait observed in Minecraft Preview, but implicit interrupts per submission have not been verified on console hardware. The shared recorder can delay an event behind work from another queue. Existing explicit interrupts retain their packet semantics.
+
 ### Build
 
 - Building on Windows requires a specific version of mingw - MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`)

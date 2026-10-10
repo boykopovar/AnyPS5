@@ -78,7 +78,7 @@ private:
     static void readRegisterLists(Submission& submission);
     void waitForFlipRoom(const Submission& submission);
     void reserveOutputs(Submission& submission);
-    void executeRewindTail(const Submission& stalled);
+    void executeRewindTail(const Submission& stalled, bool& streamRequestedEop);
     void enqueue(Submission submission);
     void noteHeldAtSubmit(Submission& submission, std::size_t cursor);
     static void forgetUnfinishedWrites(QueueWorker& worker, const Submission& submission);
@@ -223,7 +223,7 @@ private:
     static void timed(double WorkerProfile::*bucket, TWork&& work);
     FrameTiming* frameTiming();
     FrameTiming* includeTimingSubmission(const Submission& submission, bool firstSegment);
-    void execute(const Submission& submission);
+    void execute(const Submission& submission, bool& streamRequestedEop);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();
     void reapCompletionLabels();

@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -51,6 +53,8 @@
 namespace {
 
 extern "C" {
+int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
+int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
 int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
 int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
@@ -411,6 +415,33 @@ void afterRecordedWorkTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
     Require(ran == std::vector<int>{1, 2, 3} && Recorder::PendingCompletionLabels() == 0 && recorder.Idle(), "actions behind recorded work did not run once each, in order");
     Require(seen == 1, "an action ran before the completion label recorded ahead of it");
+}
+
+void afterRecordedWorkEventTests(const Device& device, Recorder& recorder) {
+    recorder.Sync();
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "AGC recorded work") == 0, "cannot create recorded-work event queue");
+    auto owner = EqueuePin_nid_postfix(eq);
+    int tag = 0;
+    Require(sceAgcDriverAddEqEvent(eq, 0, &tag) == 0, "cannot register recorded-work event");
+    alignas(64) static std::uint32_t memory[16]{};
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    recorder.NotePendingWrite(0x52000, 0x100);
+    recorder.AfterCompletions(base, value, 6, 0, false);
+    std::uint32_t seen = 0;
+    Require(recorder.AfterRecordedWork([&] { seen = memory[0]; AgcDriverDeliverEopInterrupt(0); }), "recorded work did not retain its event");
+    recorder.Submit();
+    KernelEvent event{};
+    Require(owner->GetTriggeredEvents(&event, 1) == 0 && seen == 0, "recorded-work event arrived before retirement");
+    device.WaitQueue();
+    Require(owner->GetTriggeredEvents(&event, 1) == 0, "recorded-work event arrived before reaping");
+    recorder.Sync();
+    Require(owner->GetTriggeredEvents(&event, 1) == 1 && event.filter == -14 && event.ident == 0 && event.udata == &tag && event.data == 1 && seen == 1, "recorded-work event was lost, duplicated or preceded its completion label");
+    Require(owner->GetTriggeredEvents(&event, 1) == 0, "recorded-work event did not clear");
+    Require(sceAgcDriverDeleteEqEvent(eq, 0) == 0, "cannot unregister recorded-work event");
+    owner.reset();
+    Require(sceKernelDeleteEqueue(eq) == 0, "cannot delete recorded-work event queue");
 }
 
 void batchStampTests(Recorder& recorder) {
@@ -3601,6 +3632,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {
             completionCountTests(device, recorder);
             afterRecordedWorkTests(device, recorder);
+            afterRecordedWorkEventTests(device, recorder);
             directCompletionLabelTests(recorder);
             labelTests(recorder);
             lateLabelTests(recorder);

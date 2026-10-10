@@ -154,7 +154,7 @@ void Driver::reserveOutputs(Submission& submission) {
     }
 }
 
-void Driver::executeRewindTail(const Submission& stalled) {
+void Driver::executeRewindTail(const Submission& stalled, bool& streamRequestedEop) {
     PerformanceTimer timing("Driver.Rewind");
     std::atomic_ref<std::uint32_t> control(*const_cast<std::uint32_t*>(stalled.rewindTail - 1));
     if ((control.load(std::memory_order_acquire) & 0x80000000u) == 0) {
@@ -191,7 +191,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
     }
     if (APS5_ENABLE_TIMING_LOG) tail.enqueuedAt = tail.dequeuedAt = tail.orderedAt = std::chrono::steady_clock::now();
     timing.Finish();
-    execute(tail);
+    execute(tail, streamRequestedEop);
 }
 
 void Driver::Submit(const Packet* packet, std::uint32_t queue) {

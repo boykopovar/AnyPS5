@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -135,13 +136,27 @@ void Driver::run(std::uint32_t id) noexcept {
                 worker.queued.fetch_sub(1, std::memory_order_acq_rel);
                 if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
+            bool streamRequestedEop = false;
             {
                 struct Running {
                     std::atomic<std::uint32_t>& count;
                     explicit Running(std::atomic<std::uint32_t>& count) : count(count) { count.fetch_add(1, std::memory_order_acq_rel); }
                     ~Running() { count.fetch_sub(1, std::memory_order_acq_rel); }
                 } running{runningWorkers};
-                execute(submission);
+                execute(submission, streamRequestedEop);
+            }
+            static const bool implicitEop = std::getenv("APS5_IMPLICIT_SUBMISSION_EOP") != nullptr;
+            if (implicitEop && !submission.suspend && !streamRequestedEop) {
+                bool deferred = false;
+                {
+                    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Label);
+                    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                    if (const auto localDevice = device.Load()) {
+                        deferred = localDevice->AfterRecordedWork([id] { AgcDriverDeliverEopInterrupt(id); }, id == 0);
+                        if (deferred) localDevice->SubmitRecorded(id == 0);
+                    }
+                }
+                if (!deferred) AgcDriverDeliverEopInterrupt(id);
             }
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
             const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

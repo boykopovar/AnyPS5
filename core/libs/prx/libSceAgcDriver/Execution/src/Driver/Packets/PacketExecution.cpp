@@ -29,7 +29,7 @@ void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
     }
 }
 
-void Driver::execute(const Submission& submission) {
+void Driver::execute(const Submission& submission, bool& streamRequestedEop) {
     auto* submissionTiming = includeTimingSubmission(submission, true);
     if (submission.suspend) {
         PerformanceContext timingContext(submissionTiming);
@@ -169,6 +169,7 @@ void Driver::execute(const Submission& submission) {
 
         bool wroteOnGpu = false, endOfPipeInterrupt = false, interruptDeferred = false, drawPacket = false, sampleDump = false;
         const bool drains = preparePacketMemory(submission, queue, packet, header, opcode, wroteOnGpu, endOfPipeInterrupt, interruptDeferred, drawPacket, sampleDump);
+        streamRequestedEop |= endOfPipeInterrupt;
         traceLabel(packet, submission.queue);
         timing.Mark("prepare_memory");
 
@@ -310,7 +311,7 @@ void Driver::execute(const Submission& submission) {
         if (localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
     }
     endTiming.Finish();
-    if (submission.rewindTail != nullptr) executeRewindTail(submission);
+    if (submission.rewindTail != nullptr) executeRewindTail(submission, streamRequestedEop);
 }
 
 }

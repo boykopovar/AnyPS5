@@ -862,6 +862,18 @@ if(BUILD_TESTING)
         endif()
     endforeach()
     set_tests_properties(agc_driver_provoking_vertex PROPERTIES TIMEOUT 30)
+    add_test(NAME agc_driver_implicit_eop COMMAND agc_driver_tests --implicit-eop-only)
+    set_tests_properties(agc_driver_implicit_eop PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_IMPLICIT_SUBMISSION_EOP=1"
+            SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 20)
+    add_test(NAME agc_driver_completion_order COMMAND agc_driver_recorder_tests --completion-labels-only)
+    set_tests_properties(agc_driver_completion_order PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1"
+            SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_driver_implicit_eop agc_driver_completion_order PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_tests_properties(agc_driver_flat_store PROPERTIES RUN_SERIAL TRUE)
     set_tests_properties(agc_driver_storage_cache_budget PROPERTIES TIMEOUT 30)
     add_test(NAME agc_driver_sampled_cache_budget_memory COMMAND agc_driver_sampled_cache_budget_tests memory)
