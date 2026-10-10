@@ -496,6 +496,26 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
     return 0;
 }
 
+int APS5_VABI sceAudioOutSysClose() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioOutSysConfigureOutput() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioOutSysGetHdmiMonitorInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioOutSysOpen() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, int mixLevel) {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);

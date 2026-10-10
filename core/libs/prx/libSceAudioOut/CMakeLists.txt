@@ -37,6 +37,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
+    add_test_executable(audio_out_sys_tests tests/AudioOutSys.cpp)
+    target_include_directories(audio_out_sys_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_sys_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out_sys_tests)
+    add_test(NAME audio_out_sys COMMAND audio_out_sys_tests)
+    if(WIN32)
+        set_tests_properties(audio_out_sys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
     add_test_executable(audio_out_last_output_time_tests tests/AudioOutLastOutputTime.cpp)
     target_include_directories(audio_out_last_output_time_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out_last_output_time_tests PRIVATE libSceAudioOut libkernel libc)
