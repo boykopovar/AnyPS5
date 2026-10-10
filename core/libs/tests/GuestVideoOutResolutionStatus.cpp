@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "tests/VideoOutTestEnvironment.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +29,7 @@ static bool Rejects(int handle, VideoOutResolutionStatus* status) {
 }
 
 int main() {
+    VideoOutTestEnvironment environment;
     int handle = 0;
     try {
         handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);

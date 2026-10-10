@@ -1,10 +1,9 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "tests/VideoOutTestEnvironment.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <stdexcept>
 
 extern "C" {
@@ -34,12 +33,7 @@ static bool SameStatus(const VideoOutOutputStatus& a, const VideoOutOutputStatus
 }
 
 int main() {
-    std::filesystem::create_directories("app0/sce_sys");
-    {
-        std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
-        param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0})";
-        Require(static_cast<bool>(param));
-    }
+    VideoOutTestEnvironment environment;
     int handle = 0;
     try {
         handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);

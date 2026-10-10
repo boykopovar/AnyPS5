@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "tests/VideoOutTestEnvironment.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -14,8 +15,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <initializer_list>
 #include <string>
 #include <limits>
@@ -657,9 +656,8 @@ void testOneDevice() {
 }
 
 int main(int argc, char** argv) {
+    VideoOutTestEnvironment environment;
     try {
-        std::filesystem::create_directories("app0/sce_sys");
-        std::ofstream("app0/sce_sys/param.json", std::ios::binary) << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0})";
         if (argc == 2 && std::string(argv[1]) == "decode") testDecode();
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
         else if (argc == 2 && std::string(argv[1]) == "present") testPresentation();
