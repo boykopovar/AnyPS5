@@ -124,6 +124,7 @@ struct Instance {
     std::uint32_t superframeRemaining = 0;
     std::uint32_t frameInSuperframe = 0;
     std::uint64_t totalDecodedSamples = 0;
+    std::uint64_t segmentSamples = 0;
     SidebandGaplessDecode gapless{};
     bool flagsReported = false;
     AVCodecContext* mp3 = nullptr;
@@ -376,6 +377,7 @@ std::int32_t InitializeInstance(Instance& instance, const std::uint8_t* paramete
         instance.opusPending.clear();
         instance.initialized = true;
         instance.totalDecodedSamples = 0;
+        instance.segmentSamples = 0;
         instance.gapless = {};
         return 0;
     }
@@ -393,6 +395,7 @@ std::int32_t InitializeInstance(Instance& instance, const std::uint8_t* paramete
     }
     instance.initialized = true;
     instance.totalDecodedSamples = 0;
+    instance.segmentSamples = 0;
     instance.gapless = {};
     return 0;
 }
@@ -546,9 +549,10 @@ void EmitFrame(Instance& instance, PcmOutputs& outputs, const std::uint8_t* pcm,
         count -= skip;
     }
     if (instance.gapless.totalSamples != 0) {
-        const std::uint64_t remaining = instance.gapless.totalSamples > instance.totalDecodedSamples ? instance.gapless.totalSamples - instance.totalDecodedSamples : 0;
+        const std::uint64_t remaining = instance.gapless.totalSamples > instance.segmentSamples ? instance.gapless.totalSamples - instance.segmentSamples : 0;
         count = static_cast<std::size_t>(std::min<std::uint64_t>(count, remaining));
     }
+    instance.segmentSamples += count;
     instance.totalDecodedSamples += count;
     if (!Resampling(instance)) {
         outputs.Emit(pcm + first * channels * sampleBytes, count * channels * sampleBytes);
@@ -628,7 +632,9 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     const auto superframeSize = static_cast<std::size_t>(instance.info.superframeSize);
     const auto framesInSuperframe = static_cast<std::uint32_t>(std::max(1, instance.info.framesInSuperframe));
     if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
+    const auto segmentEnded = [&] { return instance.gapless.totalSamples != 0 && instance.segmentSamples >= instance.gapless.totalSamples; };
     for (;;) {
+        if (segmentEnded()) break;
         if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input.data() + consumed, input.size() - consumed);
         const std::size_t needed = instance.superframeRemaining == 0 ? superframeSize : instance.superframeRemaining;
         if (input.size() - consumed < needed) {
@@ -660,8 +666,8 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         ++frames;
 
         EmitFrame(instance, pcmOutputs, pcm.data(), frameSamples, channels, sampleBytes);
-        if ((job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
     }
+    if (segmentEnded()) instance.segmentSamples = 0;
 
     if (TraceEnabled()) {
         std::fprintf(stderr, "[ajm] instance %u run flags 0x%llx: %zu input bytes in %u buffers, %zu output bytes in %u buffers, sideband %llu bytes; superframe %d (%d frames), %d channels, %d samples/frame, %d Hz, config %02x %02x %02x %02x -> result 0x%x, decoder status 0x%x, %u frames, consumed %zu, produced %zu, total samples %llu, gapless total %u skip %u skipped %u, input",
@@ -1060,6 +1066,7 @@ void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, 
 
 void ClearContext(Instance& instance) {
     instance.totalDecodedSamples = 0;
+    instance.segmentSamples = 0;
     instance.gapless.skippedSamples = 0;
     if (HasAt9Decoder(instance) && instance.initialized) ResetDecoder(instance);
     if (instance.mp3) avcodec_flush_buffers(instance.mp3);
@@ -1134,7 +1141,10 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
         AJM_TRACE("[ajm] instance %u set gapless decode: total %u, skip %u, reset %llu (sideband %llu bytes)\n", job.instance, gapless.totalSamples, gapless.skipSamples, static_cast<unsigned long long>(job.flags), static_cast<unsigned long long>(job.sidebandSize));
         instance->gapless.totalSamples = gapless.totalSamples;
         instance->gapless.skipSamples = gapless.skipSamples;
-        if (job.flags) instance->gapless.skippedSamples = 0;
+        if (job.flags) {
+            instance->gapless.skippedSamples = 0;
+            instance->segmentSamples = 0;
+        }
         WriteResult(job.sideband, job.sidebandSize, 0);
         break;
     }
