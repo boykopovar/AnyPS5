@@ -37,7 +37,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnosti
     }
 }
 
-std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address) {
+std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
     GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
@@ -100,7 +100,16 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
             if (snapshot.code.size() == available) break;
         }
     }
-    throw std::runtime_error("AGC driver: raw compute program has no reachable end within mapped code or the size limit");
+    throw std::runtime_error("AGC driver: raw shader program has no reachable end within mapped code or the size limit");
+}
+
+std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shaders, std::uint64_t address) {
+    auto it = shaders.upper_bound(address);
+    if (it != shaders.begin()) {
+        --it;
+        if (address - it->second->codeAddress < it->second->code.size() * sizeof(std::uint32_t)) return it->second;
+    }
+    return ReadRawShader(address);
 }
 
 namespace {
@@ -233,8 +242,7 @@ bool PreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::Recom
         return true;
     }
     if (!snapshot.header.empty()) return snapshot.prepared->deferred;
-    if (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
-    APS5_LOG_ERR("Compute shader 0x%llx was not registered; preparing its artifact at dispatch", static_cast<unsigned long long>(snapshot.codeAddress));
+    APS5_LOG_ERR("%s shader 0x%llx was not registered; preparing its artifact at first use", request.shader.stage == ShaderRecompiler::ShaderStage::Compute ? "Compute" : "Graphics", static_cast<unsigned long long>(snapshot.codeAddress));
     return true;
 }
 
@@ -305,7 +313,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         invocationRequest = request;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
         auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
-        if (!invocation.has_value()) throw std::runtime_error("AGC driver: raw compute artifact does not match its invocation");
+        if (!invocation.has_value()) throw std::runtime_error("AGC driver: unregistered shader artifact does not match its invocation");
         snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
         return std::move(*invocation);
     }

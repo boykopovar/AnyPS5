@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -535,6 +536,41 @@ void testRegisteredFloatMode() {
     }
 }
 
+void testProgramSnapshots() {
+    alignas(256) static std::array<std::uint32_t, 64> registered{};
+    registered.fill(0xbf800000);
+    registered[0] = 0xbf810000;
+    alignas(256) static std::array<std::uint32_t, 64> raw{};
+    raw.fill(0xbf800000);
+    raw[1] = 0xbf810000;
+    const auto registeredAddress = reinterpret_cast<std::uintptr_t>(registered.data());
+    const auto rawAddress = reinterpret_cast<std::uintptr_t>(raw.data());
+    AgcDriver::DriverDetail::ShaderRegistry shaders;
+    AgcDriver::DriverDetail::ShaderSnapshot snapshot{registeredAddress, 0x1000, 2, {}, {}};
+    snapshot.code.assign(registered.begin(), registered.end());
+    snapshot.header.resize(sizeof(Shader));
+    const auto entry = std::make_shared<const AgcDriver::DriverDetail::ShaderSnapshot>(std::move(snapshot));
+    shaders.emplace(registeredAddress, entry);
+    check(AgcDriver::DriverDetail::ProgramSnapshot(shaders, registeredAddress) == entry, "a registered program was not resolved to its registration");
+    check(AgcDriver::DriverDetail::ProgramSnapshot(shaders, registeredAddress + 4 * 8) == entry, "an entry inside registered code was not resolved to its registration");
+    const auto unregistered = AgcDriver::DriverDetail::ProgramSnapshot(shaders, rawAddress);
+    check(unregistered != entry && unregistered->codeAddress == rawAddress && unregistered->header.empty() && unregistered->code.size() == 2, "an unregistered program was not read as raw code");
+    check(AgcDriver::DriverDetail::ProgramSnapshot({}, rawAddress) == unregistered, "an empty registry did not fall back to raw code");
+    check(!expectFailure([] { static_cast<void>(AgcDriver::DriverDetail::ProgramSnapshot({}, 0)); }).empty(), "an unmapped unregistered program was accepted");
+    AgcDriver::DriverDetail::DrawDecode decode{};
+    decode.programs.resize(2);
+    decode.programs[0].snapshot = unregistered;
+    decode.programs[1].snapshot = entry;
+    decode.programs[1].codeOffset = 8;
+    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "an unchanged decode was not current");
+    registered[8] = 0xbf810000;
+    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a rewritten registered program made a decode stale");
+    raw[0] = 0xbf810000;
+    check(!AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a rewritten unregistered program left its decode current");
+    decode.programs[0].snapshot = AgcDriver::DriverDetail::ProgramSnapshot(shaders, rawAddress);
+    check(AgcDriver::DriverDetail::DecodeProgramsCurrent(decode, shaders), "a decode with the rewritten program was not current");
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -563,20 +599,20 @@ int main() {
         rawCode[1] = 0xbf810000;
         rawCode[2] = 0xbf810000;
         const auto rawAddress = reinterpret_cast<std::uintptr_t>(rawCode.data());
-        const auto literal = AgcDriver::DriverDetail::ReadRawComputeShader(rawAddress);
+        const auto literal = AgcDriver::DriverDetail::ReadRawShader(rawAddress);
         check(literal->code.size() == 3 && literal->header.empty(), "raw compute stopped at an instruction literal");
-        check(AgcDriver::DriverDetail::ReadRawComputeShader(rawAddress) == literal, "unchanged raw compute code lost its snapshot identity");
+        check(AgcDriver::DriverDetail::ReadRawShader(rawAddress) == literal, "unchanged raw compute code lost its snapshot identity");
         rawCode[0] = 0xbf820002;
         rawCode[1] = 0xbf810000;
         rawCode[2] = 0xbf800000;
         rawCode[3] = 0xbf810000;
-        const auto branched = AgcDriver::DriverDetail::ReadRawComputeShader(rawAddress);
+        const auto branched = AgcDriver::DriverDetail::ReadRawShader(rawAddress);
         check(branched->code.size() == 4 && literal->code[0] == 0xbe8003ff, "raw compute lost branch targets or modified an earlier snapshot");
         check(branched != literal, "changed raw compute code reused a stale snapshot");
         std::array<std::shared_ptr<const AgcDriver::DriverDetail::ShaderSnapshot>, 8> concurrent;
         std::vector<std::thread> readers;
         for (auto& snapshot : concurrent) readers.emplace_back([&snapshot, rawAddress] {
-            snapshot = AgcDriver::DriverDetail::ReadRawComputeShader(rawAddress);
+            snapshot = AgcDriver::DriverDetail::ReadRawShader(rawAddress);
         });
         for (auto& reader : readers) reader.join();
         for (const auto& snapshot : concurrent) check(snapshot == branched, "concurrent raw compute readers lost snapshot reuse");
@@ -585,23 +621,23 @@ int main() {
         const auto firstAddress = reinterpret_cast<std::uintptr_t>(programs.front().data());
         readers.clear();
         for (auto& snapshot : concurrent) readers.emplace_back([&snapshot, firstAddress] {
-            snapshot = AgcDriver::DriverDetail::ReadRawComputeShader(firstAddress);
+            snapshot = AgcDriver::DriverDetail::ReadRawShader(firstAddress);
         });
         for (auto& reader : readers) reader.join();
         for (const auto& snapshot : concurrent) check(snapshot == concurrent.front(), "concurrent raw compute misses duplicated snapshots");
-        const auto evicted = AgcDriver::DriverDetail::ReadRawComputeShader(firstAddress);
+        const auto evicted = AgcDriver::DriverDetail::ReadRawShader(firstAddress);
         for (std::size_t i = 1; i < programs.size(); ++i)
-            AgcDriver::DriverDetail::ReadRawComputeShader(reinterpret_cast<std::uintptr_t>(programs[i].data()));
-        check(AgcDriver::DriverDetail::ReadRawComputeShader(firstAddress) != evicted && evicted->code[0] == 0xbf810000,
+            AgcDriver::DriverDetail::ReadRawShader(reinterpret_cast<std::uintptr_t>(programs[i].data()));
+        check(AgcDriver::DriverDetail::ReadRawShader(firstAddress) != evicted && evicted->code[0] == 0xbf810000,
             "raw compute cache eviction lost snapshot lifetime or exceeded its entry limit");
-        check(!expectFailure([&] { AgcDriver::DriverDetail::ReadRawComputeShader(rawAddress + 4); }).empty(), "raw compute accepted a misaligned entry");
-        check(!expectFailure([] { AgcDriver::DriverDetail::ReadRawComputeShader(0); }).empty(), "raw compute accepted an unmapped entry");
+        check(!expectFailure([&] { AgcDriver::DriverDetail::ReadRawShader(rawAddress + 4); }).empty(), "raw compute accepted a misaligned entry");
+        check(!expectFailure([] { AgcDriver::DriverDetail::ReadRawShader(0); }).empty(), "raw compute accepted an unmapped entry");
         alignas(256) std::array<std::uint32_t, 128> straddling{};
         straddling.fill(0xbf800000);
         straddling[63] = 0xf4000000;
         straddling[64] = 0xfa000000;
         straddling[65] = 0xbf810000;
-        const auto straddled = AgcDriver::DriverDetail::ReadRawComputeShader(reinterpret_cast<std::uintptr_t>(straddling.data()));
+        const auto straddled = AgcDriver::DriverDetail::ReadRawShader(reinterpret_cast<std::uintptr_t>(straddling.data()));
         check(straddled->code.size() == 66 && straddled->code[64] == 0xfa000000, "raw compute stopped at a memory instruction across its first read window");
 #ifdef _WIN32
         auto* mapping = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
@@ -611,21 +647,22 @@ int main() {
         auto* boundedCode = mapping + 1024 - 64;
         std::fill_n(boundedCode, 64, 0xbf800000u);
         const auto boundedAddress = reinterpret_cast<std::uintptr_t>(boundedCode);
-        const auto unterminated = expectFailure([&] { AgcDriver::DriverDetail::ReadRawComputeShader(boundedAddress); });
+        const auto unterminated = expectFailure([&] { AgcDriver::DriverDetail::ReadRawShader(boundedAddress); });
         boundedCode[63] = 0xbf810000;
-        const auto bounded = AgcDriver::DriverDetail::ReadRawComputeShader(boundedAddress);
+        const auto bounded = AgcDriver::DriverDetail::ReadRawShader(boundedAddress);
         check(VirtualProtect(mapping + 1024, 4096, PAGE_READWRITE, &protection) != 0, "cannot extend raw compute mapping");
         boundedCode[63] = 0xbf800000;
         boundedCode[64] = 0xbf810000;
-        const auto extended = AgcDriver::DriverDetail::ReadRawComputeShader(boundedAddress);
+        const auto extended = AgcDriver::DriverDetail::ReadRawShader(boundedAddress);
         check(extended != bounded && extended->code.size() == 65, "raw compute reused code before its end changed");
         check(VirtualProtect(mapping + 1024, 4096, PAGE_NOACCESS, &protection) != 0, "cannot revoke cached raw compute tail");
-        check(!expectFailure([&] { AgcDriver::DriverDetail::ReadRawComputeShader(boundedAddress); }).empty(), "raw compute reused an inaccessible cached tail");
+        check(!expectFailure([&] { AgcDriver::DriverDetail::ReadRawShader(boundedAddress); }).empty(), "raw compute reused an inaccessible cached tail");
         check(VirtualProtect(mapping, 4096, PAGE_NOACCESS, &protection) != 0, "cannot revoke cached raw compute code");
-        check(!expectFailure([&] { AgcDriver::DriverDetail::ReadRawComputeShader(boundedAddress); }).empty(), "raw compute reused inaccessible cached code");
+        check(!expectFailure([&] { AgcDriver::DriverDetail::ReadRawShader(boundedAddress); }).empty(), "raw compute reused inaccessible cached code");
         check(VirtualFree(mapping, 0, MEM_RELEASE) != 0, "cannot release raw compute boundary test");
         check(!unterminated.empty() && bounded->code.size() == 64, "raw compute crossed inaccessible memory or missed its last instruction");
 #endif
+        testProgramSnapshots();
         testEvents();
         testValidation();
         testClearState();

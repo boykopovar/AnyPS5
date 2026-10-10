@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -105,6 +106,22 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         drawCache.erase(last);
         ++drawCacheEvictions;
     }
+}
+
+void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>& expected) {
+    const auto found = drawCache.find(key);
+    if (found == drawCache.end() || found->second != expected) return;
+    for (const auto& variants : found->second->stages) {
+        for (const auto& variant : variants) accountDrawVariant(*variant, false);
+    }
+    drawOrder.erase(found->second->order);
+    drawCache.erase(found);
+}
+
+bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry) {
+    return std::all_of(decode.programs.begin(), decode.programs.end(), [&](const DrawProgram& program) {
+        return !program.snapshot->header.empty() || ProgramSnapshot(registry, program.snapshot->codeAddress + program.codeOffset * sizeof(std::uint32_t)) == program.snapshot;
+    });
 }
 
 std::shared_ptr<const DrawRecipe> Driver::findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages) {
