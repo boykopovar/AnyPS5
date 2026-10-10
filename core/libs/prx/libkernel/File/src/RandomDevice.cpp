@@ -56,6 +56,11 @@ bool ReadRandomDevice(int fd, void* buf, std::size_t nbytes) {
     return true;
 }
 
+void RememberRandomDevice(int fd) {
+    std::lock_guard lock(g_mutex);
+    g_descriptors.insert(fd);
+}
+
 void ForgetRandomDevice(int fd) {
     std::lock_guard lock(g_mutex);
     g_descriptors.erase(fd);

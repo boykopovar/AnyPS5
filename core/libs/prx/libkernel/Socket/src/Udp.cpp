@@ -219,6 +219,36 @@ std::shared_ptr<Socket> Find(int descriptor) {
 }
 }
 
+int GuestSockets::Duplicate(int descriptor) {
+    try {
+        std::lock_guard lock(socketsMutex);
+        const auto found = sockets.find(descriptor);
+        if (found == sockets.end()) return Fail(9);
+        if (nextDescriptor == INT_MAX) return Fail(24);
+        const int duplicate = nextDescriptor;
+        sockets.emplace(duplicate, found->second);
+        ++nextDescriptor;
+        return duplicate;
+    } catch (const std::bad_alloc&) {
+        return Fail(12);
+    }
+}
+
+int GuestSockets::DuplicateTo(int descriptor, int target) {
+    try {
+        std::lock_guard lock(socketsMutex);
+        const auto found = sockets.find(descriptor);
+        if (found == sockets.end()) return Fail(9);
+        if (target == descriptor) return target;
+        if (target == INT_MAX) return Fail(9);
+        sockets.insert_or_assign(target, found->second);
+        if (target >= nextDescriptor) nextDescriptor = target + 1;
+        return target;
+    } catch (const std::bad_alloc&) {
+        return Fail(12);
+    }
+}
+
 namespace {
 constexpr int GuestUnix = 1;
 constexpr int GuestCloseOnExec = 0x10000000;

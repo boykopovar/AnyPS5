@@ -10,6 +10,7 @@ bool IsRandomDevicePath(std::string_view path);
 int OpenRandomDevice();
 bool IsRandomDevice(int fd);
 bool ReadRandomDevice(int fd, void* buf, std::size_t nbytes);
+void RememberRandomDevice(int fd);
 void ForgetRandomDevice(int fd);
 
 }
