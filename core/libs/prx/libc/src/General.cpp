@@ -21,6 +21,9 @@
 #endif
 #include <windows.h>
 #else
+#include <ctime>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 #include "prx/libc/include/General.hpp"
@@ -125,26 +128,42 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
     if (auto aliased = ResolveAlias(guest.relative_path().generic_string())) return *aliased;
     return ResolveHostPath(state.root, guest.relative_path()).make_preferred();
 }
+#ifdef _WIN32
+using WriteMark = FILETIME;
+WriteMark Now() {
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    return now;
+}
+bool NotBefore(const WriteMark& time, const WriteMark& mark) {
+    return CompareFileTime(&time, &mark) >= 0;
+}
+#else
+using WriteMark = timespec;
+WriteMark Now() {
+    timespec now;
+    clock_gettime(CLOCK_REALTIME_COARSE, &now);
+    return now;
+}
+bool NotBefore(const WriteMark& time, const WriteMark& mark) {
+    if (time.tv_sec == mark.tv_sec) return time.tv_nsec >= mark.tv_nsec;
+    return time.tv_sec >= mark.tv_sec;
+}
+#endif
 struct WrittenPathRegistry {
     std::mutex syncMutex;
     std::mutex mutex;
     std::map<std::filesystem::path, bool> dirty;
-#ifdef _WIN32
-    FILETIME mark = [] { FILETIME now; GetSystemTimeAsFileTime(&now); return now; }();
-#endif
+    WriteMark mark = Now();
 };
 WrittenPathRegistry& Written() { static WrittenPathRegistry registry; return registry; }
 #ifdef _WIN32
-std::optional<FILETIME> WriteTime(const std::filesystem::path& path) {
+std::optional<WriteMark> WriteTime(const std::filesystem::path& path) {
     WIN32_FILE_ATTRIBUTE_DATA data;
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) return data.ftLastWriteTime;
     const auto error = GetLastError();
     if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return std::nullopt;
     throw std::system_error(static_cast<int>(error), std::system_category(), "Reading the write time of " + path.string());
-}
-bool ChangedSince(const std::filesystem::path& path, const FILETIME& mark) {
-    const auto time = WriteTime(path);
-    return time && CompareFileTime(&*time, &mark) >= 0;
 }
 void FlushPath(const std::filesystem::path& path) {
     const auto handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -159,7 +178,29 @@ void FlushPath(const std::filesystem::path& path) {
     if (!FlushFileBuffers(handle))
         throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Flushing " + path.string());
 }
+#else
+std::optional<WriteMark> WriteTime(const std::filesystem::path& path) {
+    struct stat data;
+    if (::stat(path.c_str(), &data) == 0) return data.st_mtim;
+    if (errno == ENOENT || errno == ENOTDIR) return std::nullopt;
+    throw std::system_error(errno, std::generic_category(), "Reading the write time of " + path.string());
+}
+void FlushPath(const std::filesystem::path& path) {
+    const int descriptor = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (descriptor < 0) {
+        if (errno == ENOENT || errno == ENOTDIR || errno == EACCES) return;
+        throw std::system_error(errno, std::generic_category(), "Opening " + path.string() + " for sync");
+    }
+    const int result = ::fsync(descriptor);
+    const int error = errno;
+    ::close(descriptor);
+    if (result != 0 && error != EINVAL) throw std::system_error(error, std::generic_category(), "Flushing " + path.string());
+}
 #endif
+bool ChangedSince(const std::filesystem::path& path, const WriteMark& mark) {
+    const auto time = WriteTime(path);
+    return time && NotBefore(*time, mark);
+}
 int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::permission_denied) return 13;
     if (error == std::errc::not_a_directory) return 20;
@@ -214,10 +255,8 @@ extern "C" std::vector<std::filesystem::path> WrittenPaths_nid_no_patch() {
 extern "C" void SyncWrittenPaths_nid_no_patch() {
     auto& registry = Written();
     std::lock_guard serial(registry.syncMutex);
-#ifdef _WIN32
-    FILETIME start;
-    GetSystemTimeAsFileTime(&start);
-    FILETIME mark;
+    const auto start = Now();
+    WriteMark mark;
     std::vector<std::pair<std::filesystem::path, bool>> entries;
     {
         std::lock_guard lock(registry.mutex);
@@ -233,7 +272,7 @@ extern "C" void SyncWrittenPaths_nid_no_patch() {
     for (const auto& [path, dirty] : entries) {
         const auto time = WriteTime(path);
         if (!time) missing.push_back(path);
-        if (!dirty && !(time && CompareFileTime(&*time, &mark) >= 0)) continue;
+        if (!dirty && !(time && NotBefore(*time, mark))) continue;
         if (time && flushed.insert(path).second) FlushPath(path);
         for (auto ancestor = path.parent_path(); ancestor.has_relative_path() && !flushed.contains(ancestor) && ChangedSince(ancestor, mark);
              ancestor = ancestor.parent_path()) {
@@ -246,11 +285,6 @@ extern "C" void SyncWrittenPaths_nid_no_patch() {
         const auto entry = registry.dirty.find(path);
         if (entry != registry.dirty.end() && !entry->second) registry.dirty.erase(entry);
     }
-#else
-    ::sync();
-    std::lock_guard lock(registry.mutex);
-    registry.dirty.clear();
-#endif
 }
 
 extern "C" void BlockPathAlias_nid_no_patch(const char* guestPrefix) {
