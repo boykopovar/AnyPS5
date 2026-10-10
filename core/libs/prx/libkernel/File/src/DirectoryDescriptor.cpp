@@ -3,8 +3,12 @@
 
 #ifdef _WIN32
 
+#include "prx/libc/include/General.hpp"
+
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <fcntl.h>
 #include <io.h>
 #include <map>
@@ -27,6 +31,18 @@ struct DirectoryState {
 
 std::mutex g_mutex;
 std::map<int, DirectoryState> g_directories;
+
+void Load(DirectoryState& state) {
+    if (state.loaded) return;
+    state.loaded = true;
+    state.entries.emplace_back(".", GuestDirectoryType);
+    state.entries.emplace_back("..", GuestDirectoryType);
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(state.path, error)) {
+        std::error_code typeError;
+        state.entries.emplace_back(entry.path().filename().string(), entry.is_directory(typeError) ? GuestDirectoryType : GuestRegularType);
+    }
+}
 
 }
 
@@ -52,21 +68,41 @@ void ForgetDirectoryDescriptor(int fd) {
     g_directories.erase(fd);
 }
 
+std::optional<std::int64_t> SeekDirectoryDescriptor(int fd, std::int64_t offset, int whence) {
+    constexpr int SeekSet = 0;
+    constexpr int SeekCurrent = 1;
+    std::lock_guard lock(g_mutex);
+    const auto found = g_directories.find(fd);
+    if (found == g_directories.end()) return std::nullopt;
+    auto& state = found->second;
+    if (whence != SeekSet && whence != SeekCurrent) NotImplemented_nid_no_patch("lseek from the end of a directory descriptor");
+    const auto cursor = static_cast<std::int64_t>(state.cursor);
+    if (whence == SeekCurrent && offset > std::numeric_limits<std::int64_t>::max() - cursor) {
+        errno = EINVAL;
+        return std::int64_t{-1};
+    }
+    const std::int64_t target = whence == SeekSet ? offset : cursor + offset;
+    if (target < 0) {
+        errno = EINVAL;
+        return std::int64_t{-1};
+    }
+    if (target == 0) {
+        state.entries.clear();
+        state.loaded = false;
+        state.cursor = 0;
+        return std::int64_t{0};
+    }
+    Load(state);
+    state.cursor = static_cast<std::size_t>(target);
+    return target;
+}
+
 int ReadDirectoryDescriptor(int fd, char* buf, int nbytes) {
     std::lock_guard lock(g_mutex);
     const auto found = g_directories.find(fd);
     if (found == g_directories.end()) return SCE_KERNEL_ERROR_ENOTDIR;
     auto& state = found->second;
-    if (!state.loaded) {
-        state.loaded = true;
-        state.entries.emplace_back(".", GuestDirectoryType);
-        state.entries.emplace_back("..", GuestDirectoryType);
-        std::error_code error;
-        for (const auto& entry : std::filesystem::directory_iterator(state.path, error)) {
-            std::error_code typeError;
-            state.entries.emplace_back(entry.path().filename().string(), entry.is_directory(typeError) ? GuestDirectoryType : GuestRegularType);
-        }
-    }
+    Load(state);
     std::size_t used = 0;
     while (state.cursor < state.entries.size()) {
         const auto& [name, type] = state.entries[state.cursor];
