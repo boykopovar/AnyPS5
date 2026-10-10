@@ -371,17 +371,12 @@ bool TranslationContext::vSatPkU8I16(const RdnaInstruction& inst) {
     return true;
 }
 
-bool TranslationContext::vMulLegacyF32(const RdnaInstruction& inst, bool accumulate) {
+bool TranslationContext::vMulLegacyF32(const RdnaInstruction& inst) {
     IrValue* lhs = readOperand(sourceAt(inst, 0u), IrType::F32);
     IrValue* rhs = readOperand(sourceAt(inst, 1u), IrType::F32);
     const auto isZero = [&](IrValue* value) { return IrU1(ir.IEqual(ir.BitwiseAnd(ir.BitCastU32(*value), ir.Constant(0x7fffffffu)), ir.Constant(0u))); };
     const IrU1 zero(ir.LogicalOr(isZero(lhs).Value(), isZero(rhs).Value()));
-    IrValue* result = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zero.Value(), &ir.ConstantF32(0.0f), nanResultF32({lhs, rhs}, &flushTinyProduct(lhs, rhs, &ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhs, rhs})).Value())});
-    if (accumulate) {
-        IrValue* addend = readOperand(accumulatorOperand(inst), IrType::F32);
-        result = &ir.Emit(IrOpcode::FPAdd32, IrType::F32, {result, addend});
-    }
-    writeOperand(inst.destination, result);
+    writeOperand(inst.destination, &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zero.Value(), &ir.ConstantF32(0.0f), nanResultF32({lhs, rhs}, &flushTinyProduct(lhs, rhs, &ir.Emit(IrOpcode::FPMul32, IrType::F32, {lhs, rhs})).Value())}));
     return true;
 }
 
@@ -647,10 +642,10 @@ bool TranslationContext::minMaxF16(const RdnaInstruction& inst, IrOpcode opcode)
     return true;
 }
 
-bool TranslationContext::vFmaLegacyF32(const RdnaInstruction& inst) {
+bool TranslationContext::vFmaLegacyF32(const RdnaInstruction& inst, bool accumulate) {
     IrValue* lhs = readOperand(sourceAt(inst, 0u), IrType::F32);
     IrValue* rhs = readOperand(sourceAt(inst, 1u), IrType::F32);
-    IrValue* addend = readOperand(sourceAt(inst, 2u), IrType::F32);
+    IrValue* addend = readOperand(accumulate ? accumulatorOperand(inst) : sourceAt(inst, 2u), IrType::F32);
     const auto isZero = [&](IrValue* value) { return IrU1(ir.IEqual(ir.BitwiseAnd(ir.BitCastU32(*value), ir.Constant(0x7fffffffu)), ir.Constant(0u))); };
     const IrU1 zero(ir.LogicalOr(isZero(lhs).Value(), isZero(rhs).Value()));
     const auto factor = [&](IrValue* value) { return &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zero.Value(), &ir.ConstantF32(0.0f), value}); };

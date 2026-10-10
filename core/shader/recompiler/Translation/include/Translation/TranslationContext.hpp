@@ -191,7 +191,7 @@ private:
     bool vDivFmasF32(const RdnaInstruction& inst);
     bool vDivFixupF32(const RdnaInstruction& inst);
     bool vFrexpMantF32(const RdnaInstruction& inst);
-    bool vFmaLegacyF32(const RdnaInstruction& inst);
+    bool vFmaLegacyF32(const RdnaInstruction& inst, bool accumulate);
     bool vLdexpF32(const RdnaInstruction& inst);
     IrU32 readF16Bits(const RdnaOperand& operand);
     IrU32 normF16(IrU32 bits, bool signedValue);
@@ -201,7 +201,7 @@ private:
     bool vCvtNormF16(const RdnaInstruction& inst, bool signedValue);
     bool vCvtPknormF16(const RdnaInstruction& inst, bool signedValue);
     bool vSatPkU8I16(const RdnaInstruction& inst);
-    bool vMulLegacyF32(const RdnaInstruction& inst, bool accumulate);
+    bool vMulLegacyF32(const RdnaInstruction& inst);
     bool vMullitF32(const RdnaInstruction& inst);
     void emitFloat16ClassCompare(const RdnaInstruction& inst, bool cmpx);
     bool float64Operation(const RdnaInstruction& inst, IrOpcode opcode);
