@@ -1446,7 +1446,25 @@ void StoreAddressWide(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint
     const auto& mem = ctx.Memory(inst);
     if (mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global) ctx.Fail(inst, "must write a physical address resource");
     EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
-        EmitBdaDwordWrites(ctx, inst, GuestAddressBase(ctx, inst, mem), mem.offset, components, ctx.Arg(inst, inst.ArgumentCount() - 2u));
+        auto& state = ctx.state;
+        const auto base = GuestAddressBase(ctx, inst, mem);
+        const auto data = ctx.Arg(inst, inst.ArgumentCount() - 2u);
+        if (!RoutesApertures(state, mem)) {
+            EmitBdaDwordWrites(ctx, inst, base, mem.offset, components, data);
+            return;
+        }
+        const auto split = SplitAperture(state, AddBdaImmediate(ctx, inst, base, static_cast<std::int32_t>(mem.offset)));
+        const auto storeAperture = [&](ResourceKind kind) {
+            for (std::uint32_t component = 0; component < components; component++) {
+                const auto value = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, data, component);
+                StoreApertureElement(ctx, kind, Binary(state, spv::OpIAdd, TypeU32(state), split.low, ConstantU32(state, component * 4u)), 32u, value);
+            }
+        };
+        EmitIfCondition(state, split.shared, [&] { storeAperture(ResourceKind::Lds); });
+        EmitIfCondition(state, split.priv, [&] { storeAperture(ResourceKind::Scratch); });
+        const auto global = Unary(state, spv::OpLogicalNot, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), split.shared, split.priv));
+        EmitIfCondition(state, global, [&] { EmitBdaDwordWrites(ctx, inst, base, mem.offset, components, data); });
     });
 }
 
