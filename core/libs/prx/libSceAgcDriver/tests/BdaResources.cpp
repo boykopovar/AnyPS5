@@ -576,7 +576,9 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     GuestBufferMemory memory(context);
     memory.AddWritable(address, sizeof(guest));
     memory.AddWritable(address + 16, 16);
+    Require(memory.CopiedBytes() == 0, "a region counted as copied before its upload");
     memory.Upload(true);
+    Require(memory.CopiedBytes() == sizeof(guest), "copied bytes " + std::to_string(memory.CopiedBytes()) + " do not match the one region copied");
     std::uint32_t adjustment = 0;
     const auto first = memory.Descriptor(address, sizeof(guest), adjustment);
     Require(adjustment == 0, "a view at its owner's start is bound off it");

@@ -2437,6 +2437,12 @@ void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     open->keptBytes += bytes;
 }
 
+void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
+    if (owner == nullptr || bytes == 0) return;
+    ensureOpen();
+    if (open->keptOwners.insert(owner).second) open->keptBytes += bytes;
+}
+
 void Recorder::BoundKeptBytes() {
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (open != nullptr && open->keptBytes >= KeptBytesBudget) Submit();

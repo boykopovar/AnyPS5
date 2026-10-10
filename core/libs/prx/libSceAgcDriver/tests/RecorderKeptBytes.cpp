@@ -194,6 +194,28 @@ void CountFollowsEveryPath() {
     Expect(recorder.Reap() && recorder.InFlightKeptBytes() == 0, "a reaped batch still counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
 }
 
+void SharedOwnerCountsOncePerBatch() {
+    mock = MockDevice{};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Recorder recorder(mockContext());
+    auto shared = std::make_shared<int>(0);
+    for (int keep = 0; keep < 3; ++keep) {
+        recorder.Keep(shared);
+        recorder.KeepBytes(shared.get(), Budget / 2);
+        recorder.BoundKeptBytes();
+    }
+    Expect(recorder.Recording() && recorder.OpenKeptBytes() == Budget / 2 && mock.submits == 0, "three keeps of one owner's half budget counted " + std::to_string(recorder.OpenKeptBytes()) + " kept bytes, not half the budget once");
+    auto other = std::make_shared<int>(1);
+    recorder.Keep(other);
+    recorder.KeepBytes(other.get(), Budget / 2);
+    recorder.BoundKeptBytes();
+    Expect(!recorder.Recording() && recorder.Submissions() == 1 && recorder.InFlightKeptBytes() == Budget, "a second owner's half budget did not complete the batch's budget");
+    recorder.Keep(shared);
+    recorder.KeepBytes(shared.get(), Budget / 2);
+    Expect(recorder.OpenKeptBytes() == Budget / 2, "the next batch did not count an owner the submitted batch counted");
+    recorder.Sync();
+}
+
 }
 
 int main() {
@@ -202,6 +224,7 @@ int main() {
         InFlightWithinTwiceTheBudget();
         SyncedWithinTwiceTheBudget();
         CountFollowsEveryPath();
+        SharedOwnerCountsOncePerBatch();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
