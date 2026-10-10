@@ -54,7 +54,7 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     auto* native = GetNativeStream(stream);
     if (size <= 0) {
         stream->SetEncodingError();
-        errno = EINVAL;
+        errno = 22;
         return nullptr;
     }
     auto* result = std::fgets(buffer, size, native);
