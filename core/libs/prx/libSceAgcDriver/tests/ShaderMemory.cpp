@@ -1418,6 +1418,102 @@ void verifyInt64AtomicCapabilities() {
     require(declares(compile(imageAtomic, spv::CapabilityInt64ImageEXT), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
 }
 
+void verifyCoherentBufferAccesses() {
+    using namespace ShaderRecompiler;
+    alignas(256) static std::array<std::uint32_t, 64> input{};
+    alignas(256) static std::array<std::uint32_t, 64> output{};
+    const auto inputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(input.data()));
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 8> userData{
+        static_cast<std::uint32_t>(inputAddress), static_cast<std::uint32_t>((inputAddress >> 32u) & 0xffffu), 256u, 0x31016facu,
+        static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 256u, 0x31016facu};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    struct Module {
+        std::map<std::uint32_t, std::string> names;
+        std::map<std::uint32_t, std::vector<std::uint32_t>> decorations;
+        std::vector<std::string> loads;
+        std::vector<std::string> stores;
+    };
+    const auto compile = [&](bool invalidate, bool glcLoad, bool glcStore) {
+        std::vector<std::uint32_t> code{0x34020082u};
+        if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
+        code.insert(code.end(), {0xe0301000u | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, 0xe0701000u | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x5a000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        const auto words = Recompile(request).spirv;
+        Module module;
+        std::map<std::uint32_t, std::uint32_t> bases;
+        const auto base = [&](std::uint32_t pointer) {
+            const auto found = bases.find(pointer);
+            const auto variable = found == bases.end() ? pointer : found->second;
+            const auto name = module.names.find(variable);
+            return name == module.names.end() ? std::string() : name->second;
+        };
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            const auto opcode = words[cursor] & 0xffffu;
+            require(count != 0 && count <= words.size() - cursor, "coherent buffers: truncated SPIR-V instruction");
+            if (opcode == spv::OpName) module.names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
+            if (opcode == spv::OpDecorate) module.decorations[words[cursor + 1]].push_back(words[cursor + 2]);
+            if (opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) {
+                const auto found = bases.find(words[cursor + 3]);
+                bases[words[cursor + 2]] = found == bases.end() ? words[cursor + 3] : found->second;
+            }
+            if (opcode == spv::OpLoad && base(words[cursor + 3]).starts_with("buffers")) module.loads.push_back(base(words[cursor + 3]));
+            if (opcode == spv::OpStore && base(words[cursor + 1]).starts_with("buffers")) module.stores.push_back(base(words[cursor + 1]));
+            cursor += count;
+        }
+        return module;
+    };
+    const auto decorated = [](const Module& module, std::string_view name, spv::Decoration decoration) {
+        for (const auto& [id, variable] : module.names) {
+            if (variable != name) continue;
+            const auto found = module.decorations.find(id);
+            return found != module.decorations.end() && std::ranges::find(found->second, static_cast<std::uint32_t>(decoration)) != found->second.end();
+        }
+        return false;
+    };
+    const auto declared = [](const Module& module, std::string_view name) {
+        return std::ranges::any_of(module.names, [&](const auto& entry) { return entry.second == name; });
+    };
+    const auto only = [](const std::vector<std::string>& accesses, std::string_view name) {
+        return !accesses.empty() && std::ranges::all_of(accesses, [&](const std::string& access) { return access == name; });
+    };
+
+    const auto plain = compile(false, false, false);
+    require(!declared(plain, "buffers_coherent") && !decorated(plain, "buffers", spv::DecorationCoherent), "coherent buffers: a program without GLC or DLC accesses declares coherent buffers");
+    require(only(plain.loads, "buffers") && only(plain.stores, "buffers"), "coherent buffers: a program without GLC or DLC accesses does not use the buffer array");
+
+    const auto store = compile(false, false, true);
+    require(declared(store, "buffers_coherent") && decorated(store, "buffers_coherent", spv::DecorationCoherent), "coherent buffers: a GLC store has no coherent buffer array");
+    require(!decorated(store, "buffers", spv::DecorationCoherent), "coherent buffers: a GLC store makes the loads without GLC coherent");
+    require(decorated(store, "buffers", spv::DecorationAliased) && decorated(store, "buffers_coherent", spv::DecorationAliased), "coherent buffers: the two buffer arrays are not decorated Aliased");
+    require(only(store.loads, "buffers"), "coherent buffers: a load without GLC goes through the coherent buffer array");
+    require(only(store.stores, "buffers_coherent"), "coherent buffers: a GLC store goes through the buffer array without Coherent");
+
+    const auto load = compile(false, true, false);
+    require(only(load.loads, "buffers_coherent"), "coherent buffers: a GLC load goes through the buffer array without Coherent");
+    require(only(load.stores, "buffers_coherent"), "coherent buffers: a store in a program with GLC accesses goes through the buffer array without Coherent");
+
+    const auto invalidated = compile(true, false, true);
+    require(!declared(invalidated, "buffers_coherent") && decorated(invalidated, "buffers", spv::DecorationCoherent), "coherent buffers: a program that invalidates the vector caches does not keep every buffer access coherent");
+    require(only(invalidated.loads, "buffers") && only(invalidated.stores, "buffers"), "coherent buffers: a program that invalidates the vector caches does not use the coherent buffer array");
+}
+
 void verifyUnnormalizedSamplers() {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
@@ -2162,6 +2258,7 @@ int main(int argc, char** argv) {
         verifyComputedTexelOffsets();
         verifyShaderClockScopes();
         verifyInt64AtomicCapabilities();
+        verifyCoherentBufferAccesses();
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyWaveUniformValues();

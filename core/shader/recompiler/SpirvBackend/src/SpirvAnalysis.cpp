@@ -437,6 +437,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             requirements.functionLdsDwords = static_cast<std::uint32_t>(std::max<std::uint64_t>((needed + 63u) & ~63ull, 64u));
         }
     }
+    requirements.coherentBufferAlias = requirements.coherentBuffers && !program.Metadata().invalidatesCaches;
     return requirements;
 }
 
