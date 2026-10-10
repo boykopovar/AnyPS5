@@ -46,7 +46,19 @@ static int NativeClose(int fd) {
     return result;
 }
 static int NativeUnlink(const std::filesystem::path& p) {
-    return ::_wunlink(p.wstring().c_str());
+    struct _stat64 status{};
+    bool restored = false;
+    if (::_wstat64(p.wstring().c_str(), &status) == 0 && (status.st_mode & _S_IFREG) != 0 && (status.st_mode & _S_IWRITE) == 0) {
+        if (::_wchmod(p.wstring().c_str(), status.st_mode | _S_IWRITE) != 0) return -1;
+        restored = true;
+    }
+    const int result = ::_wunlink(p.wstring().c_str());
+    if (result != 0 && restored) {
+        const int unlinkError = errno;
+        ::_wchmod(p.wstring().c_str(), status.st_mode);
+        errno = unlinkError;
+    }
+    return result;
 }
 static int MapFlags(int sceFlags) {
     int f = 0;

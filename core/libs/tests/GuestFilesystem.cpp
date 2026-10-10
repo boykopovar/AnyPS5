@@ -279,6 +279,14 @@ int main() {
     Require(rmdir_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
     Require(rmdir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(unlink_nid_postfix(missingName.c_str()) == -1 && *__error_nid_postfix() == 2);
+    const auto kernelReadOnly = root / "kernel-read-only.txt";
+    { std::ofstream stream(kernelReadOnly); stream << "removable"; }
+    Require(sceKernelChmod_nid_postfix(kernelReadOnly.string().c_str(), 0400) == 0);
+    Require(sceKernelUnlink(kernelReadOnly.string().c_str()) == 0 && !std::filesystem::exists(kernelReadOnly));
+    const auto unlinkReadOnly = root / "unlink-read-only.txt";
+    { std::ofstream stream(unlinkReadOnly); stream << "removable"; }
+    Require(sceKernelChmod_nid_postfix(unlinkReadOnly.string().c_str(), 0400) == 0);
+    Require(unlink_nid_postfix(unlinkReadOnly.string().c_str()) == 0 && !std::filesystem::exists(unlinkReadOnly));
     Require(sceKernelUnlink(missingName.c_str()) == static_cast<int>(0x80020002u));
     Require(unlink_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
     Require(unlink_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
