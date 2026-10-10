@@ -210,8 +210,7 @@ int APS5_VABI sceNpUnregisterPremiumEventCallback(void) {
 }
 
 int APS5_VABI sceNpGetUserIdByAccountId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 }

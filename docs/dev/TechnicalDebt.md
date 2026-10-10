@@ -235,6 +235,7 @@ Throughout the project, every function at every stage either **does exactly what
 - [sceSaveDataInitialize3](../../core/libs/prx/libSceSaveData.native/Export.cpp) (libSceSaveData.native) - a repeated initialize succeeds: PPSA12544's executable and its Unity SaveData plugin both initialize, and the plugin fails on any error. Initializations are counted and `sceSaveDataTerminate` ends the session at the last one; how the console pairs them is unknown
 - [sceVoiceSetMuteFlag](../../core/libs/prx/libSceVoice/Export.cpp) (libSceVoice) - unknown signature
 - [sceTextToSpeech2GetSystemStatus](../../core/libs/prx/libSceTextToSpeech2/Export.cpp) (libSceTextToSpeech2) - unknown signature
+- [sceNpGetUserIdByAccountId](../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - unknown signature; returns `SIGNED_OUT` like the other offline NP queries, without writing a user id
 - [sceCoredumpAttachUserMemoryFile](../../core/libs/prx/libkernel/System/src/Coredump.cpp) (libkernel) - unknown signature
 - [sceCoredumpAttachMemoryRegion](../../core/libs/prx/libkernel/System/src/Coredump.cpp) (libkernel) - unknown signature
 - [sceKernelAddTimerEvent](../../core/libs/prx/libkernel/Equeue/Equeue.cpp) (libkernel) - `usec` is taken as the period in microseconds; re-adding an existing timer keeps its pending expiration count and restarts the period from the time of the call, where FreeBSD 12+ `filt_timertouch` clears pending expirations on `EV_ADD`; `usec == 0` fires on every wait. None of this is confirmed on a PS5 title
