@@ -83,8 +83,17 @@ struct DccKeyProofCounts {
     std::uint64_t proved;
     std::uint64_t scanned;
     std::uint64_t unstable;
+    std::uint64_t rangeProved;
+    std::uint64_t rangeScanned;
 };
 DccKeyProofCounts KeyProofCounts();
+struct DccRangeProof {
+    std::uint64_t address = 0;
+    std::uint64_t count = 0;
+    DccKeys keys = DccKeys::Uncompressed;
+    std::uint64_t generation = 0;
+};
+DccKeys ProvedCurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, DccRangeProof& proof);
 // A surface's texels as a read sees them: the guest bytes, or the clear value of fast-cleared keys.
 void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std::span<std::byte> bytes);
 void NoteKeysFillOnGpu(std::uint64_t begin, std::size_t count, DccKeys keys);
