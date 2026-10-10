@@ -301,15 +301,22 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
     LibcAwaitExit_nid_postfix();
 }
 
-int APS5_VABI sceVideoOutVrrUnpegFromFixedRate() try {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle) try {
+    if (VideoOutDriver::Get().GetConfig(handle) == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+    }
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
-int APS5_VABI sceVideoOutVrrPegToFixedRate() try {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutVrrPegToFixedRate(int handle, int32_t arg1, int32_t arg2) try {
+    if (VideoOutDriver::Get().GetConfig(handle) == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+    }
+    if (arg1 != 0 || arg2 != 0) {
+        throw std::runtime_error(std::string(__func__) + ": unknown arguments " + std::to_string(arg1) + ", " + std::to_string(arg2));
+    }
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
