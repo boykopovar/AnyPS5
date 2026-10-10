@@ -28,6 +28,14 @@ int APS5_VABI sceAgcDriverRegisterResource(uint32_t* resource_handle, uint32_t o
     return SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE;
 }
 
+int APS5_VABI sceAgcDriverRegisterMultipleResources(uint32_t* resourceHandle, uint32_t ownerHandle, const void* resources, uint32_t resourceCount) {
+    (void)resourceHandle;
+    (void)ownerHandle;
+    (void)resources;
+    (void)resourceCount;
+    return SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE;
+}
+
 int APS5_VABI sceAgcDriverRegisterWorkloadStream(uint32_t stream_id, const void* stream) {
  (void)stream_id;
  (void)stream;
