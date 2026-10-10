@@ -32,14 +32,18 @@ double APS5_VABI ldexp_nid_postfix(double x, int exponent) { return std::ldexp(x
 double APS5_VABI scalbn_nid_postfix(double x, int exponent) { return std::scalbn(x, exponent); }
 float APS5_VABI scalbnf_nid_postfix(float x, int exponent) { return std::scalbn(x, exponent); }
 double APS5_VABI frexp_nid_postfix(double x, int* exponent) {
-    if (x == 0.0 || !std::isfinite(x)) {
+    std::uint64_t bits;
+    std::memcpy(&bits, &x, sizeof(bits));
+    if ((bits & 0x7ff0000000000000ull) == 0x7ff0000000000000ull || (bits << 1) == 0) {
         *exponent = 0;
         return x;
     }
     return std::frexp(x, exponent);
 }
 float APS5_VABI frexpf_nid_postfix(float x, int* exponent) {
-    if (x == 0.f || !std::isfinite(x)) {
+    std::uint32_t bits;
+    std::memcpy(&bits, &x, sizeof(bits));
+    if ((bits & 0x7f800000u) == 0x7f800000u || (bits << 1) == 0) {
         *exponent = 0;
         return x;
     }

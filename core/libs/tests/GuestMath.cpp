@@ -275,7 +275,9 @@ static void CheckFrexpSpecialValues() {
     exponent = 0x5a5a5a5a;
     Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(-std::numeric_limits<double>::infinity(), &exponent)) == UINT64_C(0xfff0000000000000) && exponent == 0);
     exponent = 0x5a5a5a5a;
+    std::feclearexcept(FE_ALL_EXCEPT);
     Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(std::bit_cast<double>(UINT64_C(0x7ff0000000000001)), &exponent)) == UINT64_C(0x7ff0000000000001) && exponent == 0);
+    Require(std::fetestexcept(FE_INVALID) == 0);
     exponent = 0x5a5a5a5a;
     Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(std::bit_cast<double>(UINT64_C(0xfff8000000012345)), &exponent)) == UINT64_C(0xfff8000000012345) && exponent == 0);
     exponent = 0x5a5a5a5a;
@@ -285,7 +287,9 @@ static void CheckFrexpSpecialValues() {
     exponent = 0x5a5a5a5a;
     Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(-std::numeric_limits<float>::infinity(), &exponent)) == 0xff800000u && exponent == 0);
     exponent = 0x5a5a5a5a;
+    std::feclearexcept(FE_ALL_EXCEPT);
     Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(std::bit_cast<float>(0x7f800001u), &exponent)) == 0x7f800001u && exponent == 0);
+    Require(std::fetestexcept(FE_INVALID) == 0);
     exponent = 0x5a5a5a5a;
     Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(std::bit_cast<float>(0xffc12345u), &exponent)) == 0xffc12345u && exponent == 0);
     exponent = 0x5a5a5a5a;
