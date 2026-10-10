@@ -80,7 +80,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     fragment.snapshot->code.resize(64);
     fragment.snapshot->code.insert(fragment.snapshot->code.end(), pixelCode.begin(), pixelCode.end());
     ShaderRegistry registry;
-    for (const auto* fixture : {&front, &back, &domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, fixture->snapshot);
+    for (const auto* fixture : {&front, &back, &domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{fixture->snapshot});
     AgcDriver::QueueState queue{};
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;
@@ -256,8 +256,8 @@ void NullPixelMatchesRegistration(AgcDriver::VulkanDevice& device) {
     const auto registered = null->prepared->entries;
     Require(!registered.empty(), "the null pixel program was not prepared at registration");
     ShaderRegistry registry;
-    registry.emplace(front.snapshot->codeAddress, front.snapshot);
-    registry.emplace(null->codeAddress, null);
+    registry.emplace(front.snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{front.snapshot});
+    registry.emplace(null->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{null});
     AgcDriver::QueueState queue{};
     queue.context[0x8e] = 0xfu;
     queue.context[0x8f] = 0xfu;

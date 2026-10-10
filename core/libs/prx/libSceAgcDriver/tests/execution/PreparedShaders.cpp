@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -334,6 +335,67 @@ void UnsupportedTypeRegistration() {
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
 
+void SharedCodeHeaders() {
+    alignas(256) static const std::array<std::uint32_t, 11> code{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+        ShaderUserData users{};
+        std::array<ShaderRegister, 1> context{{{0x2d5, 0x2000}}};
+    } vertex, mesh;
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    for (auto* header : {&vertex, &mesh}) {
+        header->shader.file_header = 0x34333231u;
+        header->shader.version = 0x18;
+        header->shader.header_size = sizeof(Header);
+        header->shader.shader_size = sizeof(code);
+        header->shader.code = code.data();
+        header->shader.sh_registers = header->registers.data();
+        header->shader.num_sh_registers = header->registers.size();
+        header->shader.specials = &header->specials;
+        header->shader.user_data = &header->users;
+        header->specials.dispatch_modifier = 0x8000;
+    }
+    vertex.shader.cx_registers = vertex.context.data();
+    vertex.shader.num_cx_registers = vertex.context.size();
+    vertex.shader.type = 2;
+    vertex.registers = {{{0xc8, static_cast<std::uint32_t>(address >> 8u)}, {0xc9, static_cast<std::uint32_t>(address >> 40u)}, {0x8b, 0}, {0x8a, 0}, {0xca, 0}, {0xcb, 0}, {0xcc, 0}}};
+    mesh.shader.type = 4;
+    mesh.registers = vertex.registers;
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    AgcDriverRegisterShader_nid_postfix(&vertex.shader);
+    AgcDriverRegisterShader_nid_postfix(&mesh.shader);
+    AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
+    AgcDriverRegisterShader_nid_postfix(&mesh.shader);
+    Shader copy = vertex.shader;
+    copy.user_data = nullptr;
+    AgcDriverResolveShaderAbi_nid_postfix(&copy, {}, primitive);
+    copy.target ^= 1u;
+    ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&copy, {}, primitive); }, "replaced shader header");
+    std::vector<std::uint32_t> commands;
+    for (const auto reg : vertex.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
+    for (const auto reg : vertex.context) commands.insert(commands.end(), {0xc0016900u, reg.offset, reg.value});
+    commands.insert(commands.end(), {0xc0017600u, 0x8, 0, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    for (unsigned iteration = 0; iteration < 2; ++iteration) {
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "shared-code draw submission failed");
+        AgcDriverWaitIdle_nid_postfix();
+    }
+    mesh.shader.type = 2;
+    mesh.shader.cx_registers = mesh.context.data();
+    mesh.shader.num_cx_registers = mesh.context.size();
+    AgcDriverRegisterShader_nid_postfix(&mesh.shader);
+    AgcDriverResolveShaderAbi_nid_postfix(&mesh.shader, {}, primitive);
+    AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "same-type registered header draw failed");
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriverRegisterShader_nid_postfix(&vertex.shader);
+    AgcDriverResolveShaderAbi_nid_postfix(&vertex.shader, {}, primitive);
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "re-registered earlier header draw failed");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void RegistrationWithoutSpecials() {
     alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
     struct Header {
@@ -521,6 +583,7 @@ int main(int argc, char** argv) {
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");
         PrepareMultisampledStorage(*device);
         device.reset();
+        SharedCodeHeaders();
         RegistrationWithoutSpecials();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";
