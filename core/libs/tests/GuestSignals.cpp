@@ -125,10 +125,41 @@ int main() {
         Require(sigaction_nid_postfix(unmapped, nullptr, &current) == 0 && current.handler == callback && current.flags == 0x2);
         Require(signal_nid_postfix(unmapped, nullptr) == Callback);
     }
-    for (int rejected : {0, 17, 129}) {
+    for (int outOfRange : {0, 129, -1}) {
         *__error_nid_postfix() = 0;
-        Require(signal_nid_postfix(rejected, Callback) == invalid && *__error_nid_postfix() == 22);
+        Require(signal_nid_postfix(outOfRange, nullptr) == invalid && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(signal_nid_postfix(outOfRange, Callback) == invalid && *__error_nid_postfix() == 22);
     }
-    Require(signal_nid_postfix(13, invalid) == invalid);
+    for (int fixed : {9, 17}) {
+        const GuestSigaction flagged{0, 0x1 | 0x4, {{0x5, 0x6, 0x7, 0x80000000u}}};
+        Require(sigaction_nid_postfix(fixed, &flagged, nullptr) == 0);
+        *__error_nid_postfix() = 0;
+        Require(signal_nid_postfix(fixed, Callback) == invalid && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(signal_nid_postfix(fixed, ignore) == invalid && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(signal_nid_postfix(fixed, invalid) == invalid && *__error_nid_postfix() == 22);
+        Require(sigaction_nid_postfix(fixed, nullptr, &current) == 0 && current.handler == 0);
+        *__error_nid_postfix() = 12345;
+        Require(signal_nid_postfix(fixed, nullptr) == nullptr && *__error_nid_postfix() == 12345);
+        Require(sigaction_nid_postfix(fixed, nullptr, &current) == 0 && current.handler == 0 && current.flags == 0x2 && current.mask.bits[0] == 0);
+        Require(sigaction_nid_postfix(fixed, &defaults, nullptr) == 0);
+    }
+    {
+        const GuestSigaction masked{callback, 0x1 | 0x4, {{0x5, 0x6, 0x7, 0x80000000u}}};
+        Require(sigaction_nid_postfix(13, &masked, nullptr) == 0);
+        *__error_nid_postfix() = 12345;
+        Require(signal_nid_postfix(13, ignore) == Callback && *__error_nid_postfix() == 12345);
+        Require(sigaction_nid_postfix(13, nullptr, &current) == 0);
+        Require(current.handler == 1 && current.flags == 0x2 && current.mask.bits[0] == 0 && current.mask.bits[1] == 0 && current.mask.bits[2] == 0 && current.mask.bits[3] == 0);
+        Require(sigaction_nid_postfix(13, &masked, nullptr) == 0);
+        Require(signal_nid_postfix(13, Callback) == Callback);
+        Require(sigaction_nid_postfix(13, nullptr, &current) == 0);
+        Require(current.handler == callback && current.flags == 0x2 && current.mask.bits[3] == 0);
+    }
+    Require(signal_nid_postfix(13, invalid) == Callback);
+    Require(sigaction_nid_postfix(13, nullptr, &current) == 0 && current.handler == static_cast<std::uintptr_t>(-1) && current.flags == 0x2);
+    Require(signal_nid_postfix(13, nullptr) == invalid);
     Require(sigaction_nid_postfix(13, nullptr, &current) == 0 && current.handler == 0);
 }
