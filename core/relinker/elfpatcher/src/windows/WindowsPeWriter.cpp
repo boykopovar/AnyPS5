@@ -44,8 +44,9 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
         const auto& section = sections[index];
         if (section.Name.empty() || section.Name.size() > 8 || section.Data.empty() || section.Rva != endRva)
             throw Domain::RelinkerException("Invalid PE section layout: " + section.Name, section.Rva);
-        const auto rawSize = Io::AlignUp(CheckedRva(section.Data.size()), FileAlignment);
-        const auto rawOffset = CheckedRva(result.size());
+        const auto initialized = static_cast<std::size_t>(std::find_if(section.Data.rbegin(), section.Data.rend(), [](const std::uint8_t value) { return value != 0; }).base() - section.Data.begin());
+        const auto rawSize = Io::AlignUp(CheckedRva(initialized), FileAlignment);
+        const auto rawOffset = rawSize == 0 ? 0u : CheckedRva(result.size());
         const auto header = sectionTable + index * 40;
         std::copy(section.Name.begin(), section.Name.end(), result.begin() + static_cast<std::ptrdiff_t>(header));
         Io::WriteU32(result, header + 8, CheckedRva(section.Data.size()));
@@ -61,8 +62,10 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
         } else {
             dataSize = CheckedRva(static_cast<std::uint64_t>(dataSize) + rawSize);
         }
-        result.insert(result.end(), section.Data.begin(), section.Data.end());
-        result.resize(static_cast<std::size_t>(rawOffset) + rawSize);
+        if (rawSize != 0) {
+            result.insert(result.end(), section.Data.begin(), section.Data.begin() + static_cast<std::ptrdiff_t>(initialized));
+            result.resize(static_cast<std::size_t>(rawOffset) + rawSize);
+        }
         endRva = AlignRva(section.Rva + static_cast<std::uint64_t>(section.Data.size()));
     }
     if (!foundEntry)
