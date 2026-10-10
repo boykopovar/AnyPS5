@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <initializer_list>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -50,6 +52,14 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+static void SetFontDirectory(const std::filesystem::path& directory) {
+#ifdef _WIN32
+    Require(_putenv_s("ANYPS5_SYSTEM_FONTS", directory.string().c_str()) == 0);
+#else
+    Require(::setenv("ANYPS5_SYSTEM_FONTS", directory.string().c_str(), 1) == 0);
+#endif
+}
 
 static int allocations = 0;
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {
@@ -118,6 +128,10 @@ static bool KerningIs(const FontKerning& kerning, float offsetX) {
 
 int main() {
     constexpr std::uint32_t SystemFontSet = 0x18070043u;
+    const std::filesystem::path fontRoot = std::filesystem::temp_directory_path() / ("anyps5_guest_font-" + std::to_string(std::random_device{}()));
+    std::filesystem::remove_all(fontRoot);
+    std::filesystem::create_directories(fontRoot);
+    SetFontDirectory(fontRoot);
     const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
     FontMemory memory{};
     Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);
@@ -288,4 +302,5 @@ int main() {
     Require(allocations == 0);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_ERROR_INVALID_MEMORY);
+    std::filesystem::remove_all(fontRoot);
 }
