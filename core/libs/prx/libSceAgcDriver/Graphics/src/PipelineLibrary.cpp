@@ -199,15 +199,15 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         *optimized = slot;
         const auto createPipelines = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
         const auto cache = context.pipelineCache;
-        const auto pipelineLayout = info.layout;
-        enqueue(store, context.device, [slot, createPipelines, cache, pipelineLayout, libraries, &store, devicePointer = &device] {
+        const auto libraryLayout = pipelineLayout->second;
+        enqueue(store, context.device, [slot, createPipelines, cache, libraryLayout, libraries, &store, devicePointer = &device] {
             if (slot->released.load()) return;
             VkPipelineLibraryCreateInfoKHR linked{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
             linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
             linked.pLibraries = libraries.data();
             VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
             create.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
-            create.layout = pipelineLayout;
+            create.layout = libraryLayout;
             VkPipeline result = VK_NULL_HANDLE;
             if (createPipelines(slot->device, cache, 1, &create, nullptr, &result) != VK_SUCCESS) return;
             slot->handle.store(result);
