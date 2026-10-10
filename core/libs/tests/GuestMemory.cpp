@@ -429,6 +429,67 @@ static bool GpuMapped(const void* pointer) {
     return mutation.Find(pointer).gpu;
 }
 
+static std::vector<GuestAllocations::Range> AllocationPieces(std::uintptr_t allocation) {
+    std::vector<GuestAllocations::Range> pieces;
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+        if (range->allocationAddress == allocation) pieces.push_back(*range);
+    }
+    std::sort(pieces.begin(), pieces.end(), [](const auto& left, const auto& right) { return left.address < right.address; });
+    return pieces;
+}
+
+static void CheckRegistryEditsBetweenManyRanges() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t pages = 32;
+    std::vector<unsigned char> storage(page * (pages * 2 + 1));
+    auto* base = reinterpret_cast<unsigned char*>((reinterpret_cast<std::uintptr_t>(storage.data()) + page - 1) & ~(page - 1));
+    auto* second = base + page * pages;
+    const auto first = reinterpret_cast<std::uintptr_t>(base);
+    const auto next = reinterpret_cast<std::uintptr_t>(second);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(base, page * pages, true, true, false);
+        mutation.Add(second, page * pages, true, true, false);
+    }
+    for (std::size_t index = 1; index < pages; index += 2) {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(base + page * index, page, true, false, false, [] {});
+    }
+    auto pieces = AllocationPieces(first);
+    Require(pieces.size() == pages);
+    for (std::size_t index = 0; index < pages; ++index) {
+        Require(pieces[index].address == first + page * index && pieces[index].bytes == page);
+        Require(pieces[index].writable == (index % 2 == 0));
+    }
+    bool thrown = false;
+    try {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(base + page * 2, page * 4, false, false, false, [] { throw std::runtime_error("refused"); });
+    } catch (const std::runtime_error&) {
+        thrown = true;
+    }
+    Require(thrown);
+    pieces = AllocationPieces(first);
+    Require(pieces.size() == pages && pieces[2].readable && pieces[2].writable && pieces[3].readable);
+    std::vector<std::pair<std::uintptr_t, bool>> unmapped;
+    const auto record = [&](const void*, std::size_t, const void* allocation, bool last) { unmapped.emplace_back(reinterpret_cast<std::uintptr_t>(allocation), last); };
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(base + page * (pages - 2), page * 4, record);
+    }
+    Require(unmapped.size() == 2 && unmapped[0] == std::pair{first, false} && unmapped[1] == std::pair{next, false});
+    Require(AllocationPieces(first).size() == pages - 2 && AllocationPieces(next).size() == 1);
+    unmapped.clear();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(base, page * (pages - 2), record);
+        mutation.Unmap(second + page * 2, page * (pages - 2), record);
+    }
+    Require(unmapped.size() == 2 && unmapped[0] == std::pair{first, true} && unmapped[1] == std::pair{next, true});
+    GuestAllocations::Mutation mutation;
+    Require(!mutation.Overlaps(base, page * pages * 2));
+}
+
 static void CheckGpuAccessFollowsProtection() {
     constexpr std::size_t page = 0x4000;
     std::int64_t phys = 0;
@@ -1450,6 +1511,7 @@ int main() {
     CheckFixedMappingReplacesPartialOverlap();
     CheckDirectMemoryGpuProtBits();
     CheckGpuAccessFollowsProtection();
+    CheckRegistryEditsBetweenManyRanges();
     CheckFixedVirtualReservation();
     CheckReservedRangeIsNotCommitted();
     CheckNoOverwriteRefusesLiveMapping();
