@@ -45,6 +45,8 @@ int main(const int argc, char* argv[]) {
         Io::FileWriter fileWriter;
 
         auto sourceBytes = fileReader.Read(args.inputPath);
+        if (std::filesystem::exists(args.outputPath) && std::filesystem::equivalent(args.inputPath, args.outputPath))
+            throw Domain::RelinkerException("Executable output would overwrite the input executable");
         const std::string absPath = std::filesystem::absolute(args.outputPath).string();
 
         std::vector<Codegen::TrampolineSite> trampolines;

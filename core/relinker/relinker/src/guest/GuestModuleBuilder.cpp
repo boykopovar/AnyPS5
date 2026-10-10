@@ -175,6 +175,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (paths.empty()) return {};
     if (lazyBinding) throw Domain::RelinkerException("Guest modules require eager binding; --lazy-binding is incompatible");
     std::vector<GuestImage> images;
+    if (std::filesystem::exists(outputPath)) {
+        for (const auto& path : paths)
+            if (std::filesystem::equivalent(path, outputPath))
+                throw Domain::RelinkerException("Executable output would overwrite an input module: " + outputPath.string());
+    }
     std::map<std::string, std::vector<std::size_t>> exports;
     std::map<std::string, std::set<std::size_t>> sharedExports;
     std::set<std::string> outputNames;

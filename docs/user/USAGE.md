@@ -35,6 +35,8 @@ relinker --macos source/input.elf eboot
 
 Add `--to-intel` for Intel hosts. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
 
+The executable output must not refer to the input executable or a bundled module being converted, including through a hard link or symbolic link. An existing output file can be replaced if it is separate from those inputs.
+
 ## Options
 
 All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.
