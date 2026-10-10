@@ -50,8 +50,8 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
             continue;
         }
         --it;
-        mix(reinterpret_cast<std::uintptr_t>(it->second.get()));
-        mix(address - it->second->codeAddress);
+        for (const auto& snapshot : it->second) mix(reinterpret_cast<std::uintptr_t>(snapshot.get()));
+        mix(address - it->first);
     }
     return key;
 }

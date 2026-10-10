@@ -207,20 +207,57 @@ bool SameHeader(const ShaderSnapshot& snapshot, const Shader* shader) {
     return std::memcmp(&used, &registered, offsetof(Shader, num_sh_registers) + sizeof(Shader::num_sh_registers)) == 0;
 }
 
+std::shared_ptr<const ShaderSnapshot> RegisteredHeader(const ShaderRegistry& registry, const Shader* shader) {
+    const auto found = registry.find(reinterpret_cast<std::uintptr_t>(const_cast<const void*>(shader->code)));
+    if (found == registry.end()) return {};
+    for (const auto& snapshot : found->second) {
+        if (snapshot->headerAddress == reinterpret_cast<std::uintptr_t>(shader)) return snapshot;
+    }
+    for (const auto& snapshot : found->second) {
+        if (SameHeader(*snapshot, shader)) return snapshot;
+    }
+    return {};
+}
+
+std::shared_ptr<const ShaderSnapshot> RegisteredProgram(const ShaderRegistry& registry, std::uint64_t address, std::initializer_list<std::uint8_t> types) {
+    auto found = registry.upper_bound(address);
+    if (found == registry.begin()) return {};
+    --found;
+    std::shared_ptr<const ShaderSnapshot> result;
+    bool registered = false;
+    for (const auto& snapshot : found->second) {
+        if (address - snapshot->codeAddress >= snapshot->code.size() * sizeof(std::uint32_t)) continue;
+        registered = true;
+        if (std::ranges::find(types, snapshot->type) == types.end()) continue;
+        require(result == nullptr || result->type == snapshot->type, "registered program has ambiguous shader binary types");
+        result = snapshot;
+    }
+    require(!registered || result != nullptr, "registered program refers to an incompatible shader binary type");
+    return result;
+}
+
 void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const std::shared_ptr<const ShaderSnapshot>& snapshot) {
     ShaderPreparationTransaction transaction;
+    auto published = snapshot;
     if (registry != nullptr) {
         const auto found = registry->find(snapshot->codeAddress);
         if (found != registry->end()) {
-            const auto& current = *found->second;
-            if (current.headerAddress == snapshot->headerAddress && current.type == snapshot->type && current.code == snapshot->code && current.header == snapshot->header) {
-                transaction.Commit();
-                return;
+            for (const auto& current : found->second) {
+                if (current->headerAddress == snapshot->headerAddress && current->type == snapshot->type && current->code == snapshot->code && current->header == snapshot->header) {
+                    if (current == found->second.back()) {
+                        transaction.Commit();
+                        return;
+                    }
+                    published = current;
+                    break;
+                }
             }
         }
     }
     auto next = registry != nullptr ? std::make_shared<ShaderRegistry>(*registry) : std::make_shared<ShaderRegistry>();
-    next->insert_or_assign(snapshot->codeAddress, snapshot);
+    auto& headers = (*next)[snapshot->codeAddress];
+    std::erase_if(headers, [&](const auto& current) { return current->headerAddress == snapshot->headerAddress || current->code != snapshot->code; });
+    headers.push_back(published);
     registry = std::move(next);
     transaction.Commit();
 }
@@ -681,9 +718,10 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
             GuestMemory::CheckRange(shader, sizeof(Shader), alignof(Shader));
             const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(shader->code));
             require(registry != nullptr && registry->contains(address), "graphics ABI refers to an unregistered shader");
-            if (owner == nullptr) owner = registry->at(address);
-            const auto& snapshot = *registry->at(address);
-            require(SameHeader(snapshot, shader), "graphics ABI refers to a replaced shader header");
+            const auto selected = RegisteredHeader(*registry, shader);
+            require(selected != nullptr, "graphics ABI refers to a replaced shader header");
+            if (owner == nullptr) owner = selected;
+            const auto& snapshot = *selected;
             require(snapshot.registeredState != nullptr, "registered shader state is missing");
             const auto& registered = *snapshot.registeredState;
             for (const auto& [offset, value] : registered.shader) state.shader.insert_or_assign(offset, value);
@@ -747,8 +785,8 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         std::lock_guard lock(mutex);
         const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(shader->code));
         require(shaders != nullptr && shaders->contains(address), "static ABI refers to an unregistered shader");
-        snapshot = shaders->at(address);
-        require(SameHeader(*snapshot, shader), "static ABI refers to a replaced shader header");
+        snapshot = RegisteredHeader(*shaders, shader);
+        require(snapshot != nullptr, "static ABI refers to a replaced shader header");
     }
     require(snapshot->registeredState != nullptr, "registered shader state is missing");
     QueueState state{};
@@ -809,8 +847,8 @@ void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::
         const auto lookup = [&](const Shader* shader) {
             const auto address = reinterpret_cast<std::uintptr_t>(const_cast<const void*>(shader->code));
             require(shaders != nullptr && shaders->contains(address), "rectangle ABI refers to an unregistered shader");
-            const auto snapshot = shaders->at(address);
-            require(SameHeader(*snapshot, shader), "rectangle ABI refers to a replaced shader header");
+            const auto snapshot = RegisteredHeader(*shaders, shader);
+            require(snapshot != nullptr, "rectangle ABI refers to a replaced shader header");
             return snapshot;
         };
         front = lookup(vertex);
@@ -926,10 +964,13 @@ void Driver::RegisterShader(const Shader* shader) {
         if (shaders != nullptr) {
             const auto found = shaders->find(snapshot.codeAddress);
             if (found != shaders->end()) {
-                const auto& current = *found->second;
-                if (current.headerAddress == snapshot.headerAddress && current.type == snapshot.type && current.code == snapshot.code && current.header == snapshot.header) {
-                    transaction.Commit();
-                    return;
+                for (const auto& current : found->second) {
+                    if (current->headerAddress == snapshot.headerAddress && current->type == snapshot.type && current->code == snapshot.code && current->header == snapshot.header) {
+                        const auto identical = current;
+                        PublishRegisteredShader(shaders, identical);
+                        transaction.Commit();
+                        return;
+                    }
                 }
             }
         }
