@@ -3,10 +3,12 @@
 #include "ControlFlow/RequestSerializer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -18,6 +20,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <thread>
 
 namespace {
 
@@ -243,6 +246,56 @@ void PrepareMultisampledStorage(AgcDriver::VulkanDevice& device) {
     ExpectFailure([&] { static_cast<void>(PrepareShader(request)); }, "storage image multisampling is unavailable on the target device");
 }
 
+void SettleLater(AgcDriver::DriverDetail::PreparedShaders& prepared, std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry> entries, std::exception_ptr failure) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        std::lock_guard lock(prepared.mutex);
+        prepared.entries.insert(prepared.entries.end(), entries.begin(), entries.end());
+        prepared.failure = failure;
+        prepared.pending = false;
+    }
+    prepared.settled.notify_all();
+}
+
+std::exception_ptr InjectedFailure() {
+    try {
+        throw std::runtime_error("injected registration preparation failure");
+    } catch (...) {
+        return std::current_exception();
+    }
+}
+
+void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
+    alignas(256) const std::array<std::uint32_t, 1> code{0xbf810000u};
+    std::array<std::uint32_t, 4> users{};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{1, 1, 1}, 0, {false, false, false}, false, 1, {}};
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    for (const bool source : {true, false}) {
+        AgcDriver::DriverDetail::ShaderSnapshot snapshot{address, 0, 0, {code.begin(), code.end()}, {}};
+        snapshot.header.resize(sizeof(Shader));
+        ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, address, snapshot.code, 0, {}}, {32, 0, users, compute, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
+        const auto handle = ShaderRecompiler::PrepareShader(request);
+        snapshot.prepared->pending = true;
+        auto settle = std::async(std::launch::async, SettleLater, std::ref(*snapshot.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{{0, handle}}, nullptr);
+        if (source) Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == handle, "first use did not wait for registration preparation");
+        else static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request));
+        settle.get();
+        Require(snapshot.prepared->entries.size() == 1, "first use prepared a pending registration again");
+    }
+    AgcDriver::DriverDetail::ShaderSnapshot snapshot{address, 0, 0, {code.begin(), code.end()}, {}};
+    snapshot.header.resize(sizeof(Shader));
+    snapshot.prepared->pending = true;
+    auto settle = std::async(std::launch::async, SettleLater, std::ref(*snapshot.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{}, InjectedFailure());
+    {
+        AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
+        ExpectFailure([&] { static_cast<void>(transaction.Read(snapshot)); }, "injected registration preparation failure");
+    }
+    settle.get();
+    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, address, snapshot.code, 0, {}}, {32, 0, users, compute, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
+    ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request)); }, "injected registration preparation failure");
+    ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request)); }, "injected registration preparation failure");
+}
+
 void UnsupportedTypeRegistration() {
     alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000u};
     struct Header {
@@ -377,6 +430,7 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         Run(*device);
         FailureCapture(*device);
+        PendingRegistrationPreparation(*device);
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");
         PrepareMultisampledStorage(*device);
         device.reset();
