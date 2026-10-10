@@ -10,7 +10,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get("HW_ORACLE_CACHE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "anyps5-hw-oracle")
-ROWS_PER_DISPATCH = 1024
+ROWS_PER_DISPATCH = 512
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
 
