@@ -62,7 +62,10 @@ int main() {
     Require(sceKernelCreateSema(&semaphore, "limit", 1, 1, 3, nullptr) == SCE_OK);
     Require(sceKernelSignalSema(semaphore, 3) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelSignalSema(semaphore, 2) == SCE_OK);
+    Require(sceKernelSignalSema(semaphore, 0) == SCE_OK);
     Require(sceKernelPollSema(semaphore, 3) == SCE_OK);
+    Require(sceKernelSignalSema(semaphore, 0) == SCE_OK);
+    Require(sceKernelPollSema(semaphore, 1) == SCE_KERNEL_ERROR_EBUSY);
     Require(sceKernelDeleteSema(semaphore) == SCE_OK);
 
     KernelEqueue eq = 0;

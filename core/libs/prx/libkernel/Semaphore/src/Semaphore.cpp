@@ -36,7 +36,7 @@ int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
 }
 
 int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
- if (sem == nullptr || count <= 0) {
+ if (sem == nullptr || count < 0) {
   APS5_INVALID_ARG_EX;
  }
 
