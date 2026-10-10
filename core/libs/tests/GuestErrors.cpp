@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
@@ -64,8 +65,21 @@ int main() {
         Require(std::strcmp(strerror_nid_postfix(error), freebsd[error]) == 0);
     }
     Require(strerror_r_nid_postfix(-1, buffer, sizeof(buffer)) == 22);
-    Require(std::strstr(buffer, "-1") != nullptr);
+    Require(std::strcmp(buffer, "Unknown error: -1") == 0);
     Require(*__error_nid_postfix() == 13);
+    struct UnknownError {
+        int error;
+        const char* text;
+    };
+    for (const UnknownError& unknown : {UnknownError{97, "Unknown error: 97"}, UnknownError{INT_MAX, "Unknown error: 2147483647"},
+                                        UnknownError{INT_MIN, "Unknown error: -2147483648"}}) {
+        Require(strerror_r_nid_postfix(unknown.error, buffer, sizeof(buffer)) == 22);
+        Require(std::strcmp(buffer, unknown.text) == 0);
+        Require(*__error_nid_postfix() == 13);
+        Require(std::strcmp(strerror_nid_postfix(unknown.error), unknown.text) == 0);
+        Require(*__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 13;
+    }
     char sentinel[] = "xyz";
     Require(strerror_r_nid_postfix(22, sentinel, 1) == 34);
     Require(sentinel[0] == 0 && sentinel[1] == 'y');
