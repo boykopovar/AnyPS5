@@ -5,13 +5,20 @@
 
 namespace Cli {
 
+const char* Usage() {
+    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+           "Example: relinker input.elf output.elf";
+}
+
 Args ParseArgs(int argc, char* argv[]) {
     Args args;
     bool unusedFilterSpecified = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
-        if (arg == "--skip-syscall-check") {
+        if (arg == "--help") {
+            args.showHelp = true;
+        } else if (arg == "--skip-syscall-check") {
             args.skipSyscallCheck = true;
         } else if (arg == "--skip-sce-module") {
             args.skipSceModule = true;
@@ -35,6 +42,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.runPath = argv[++i];
         } else if (arg == "--windows") {
             args.toWindows = true;
+        } else if (arg == "--macos") {
+            args.toMacos = true;
         } else if (arg == "--lazy-binding") {
             args.lazyBinding = true;
         } else if (arg == "--autorun") {
@@ -57,17 +66,17 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.skipSceModule && !args.excludedSceModules.empty())
         throw std::runtime_error("--exclude-sce-module conflicts with --skip-sce-module");
 
+    if (args.toWindows && args.toMacos)
+        throw std::runtime_error("--windows conflicts with --macos");
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
 
     if (args.windowsGui && !args.toWindows)
         throw std::runtime_error("--windows-gui requires --windows");
 
-    if (args.inputPath.empty() || args.outputPath.empty())
-        throw std::runtime_error(
-            "Usage: relinker [--windows] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
-            "Example: relinker input.elf output.elf"
-        );
+    if (!args.showHelp && (args.inputPath.empty() || args.outputPath.empty()))
+        throw std::runtime_error(Usage());
+
 
     return args;
 }

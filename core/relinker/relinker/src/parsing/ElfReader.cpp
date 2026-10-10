@@ -83,6 +83,8 @@ ElfHeader ElfReader::ReadHeader() const {
         _fileBuffer[2] != 'L' || _fileBuffer[3] != 'F') {
         throw RelinkerException("Invalid ELF magic number: " + formatMagic());
     }
+    if (_fileBuffer[4] != 2 || _fileBuffer[5] != 1 || _fileBuffer[6] != 1)
+        throw RelinkerException("Expected little-endian ELF64 version 1");
 
     ElfHeader header{};
     header.Machine = _readU16At(0x12);

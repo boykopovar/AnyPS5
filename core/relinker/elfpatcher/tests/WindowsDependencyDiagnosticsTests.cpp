@@ -5,15 +5,29 @@
 #include <elfpatcher/windows/WindowsPeWriter.hpp>
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
 #include <io/BufferUtils.hpp>
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 
 namespace {
 
 namespace Fs = std::filesystem;
 using namespace Elfpatcher::Windows;
+
+Fs::path createFixtureDirectory(const Fs::path& parent) {
+    std::random_device random;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const auto directory = parent / ("windows-diagnostic-fixtures-" +
+                                        std::to_string(GetCurrentProcessId()) + "-" + std::to_string(random()));
+        if (Fs::create_directory(directory))
+            return directory;
+    }
+    throw std::runtime_error("Cannot create a unique diagnostic fixture directory");
+}
 
 void checkRuntimeDependencies() {
     const auto check = [](const std::vector<std::string>& input, const std::vector<std::string>& expected) {
@@ -39,9 +53,24 @@ void checkRuntimeDependencies() {
 }
 
 void writeFile(const Fs::path& path, const std::vector<std::uint8_t>& bytes) {
+    const auto fail = [&](const char* phase) {
+        const auto error = errno;
+        const auto nativeError = _doserrno;
+        throw std::runtime_error("Cannot write diagnostic fixture: phase=" + std::string(phase) +
+                                 " path=" + path.string() + " errno=" + std::to_string(error) +
+                                 " native_error=" + std::to_string(nativeError) +
+                                 " bytes=" + std::to_string(bytes.size()));
+    };
+    errno = 0;
+    _set_doserrno(0);
     std::ofstream stream(path, std::ios::binary);
+    if (!stream.is_open())
+        fail("open");
     if (!stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
-        throw std::runtime_error("Cannot write diagnostic fixture");
+        fail("write");
+    stream.close();
+    if (!stream)
+        fail("close");
 }
 
 void createImage(const Fs::path& path, const std::vector<std::pair<std::string, std::string>>& imports, const std::string& exported, const std::string& forwarded = {}) {
@@ -183,8 +212,7 @@ int main() {
         const auto size = GetModuleFileNameA(nullptr, filename.data(), static_cast<DWORD>(filename.size()));
         if (size == 0 || size >= filename.size())
             throw std::runtime_error("Cannot locate diagnostic tests");
-        const auto directory = Fs::path(filename.data()).parent_path() / "windows-diagnostic-fixtures";
-        Fs::create_directories(directory);
+        const auto directory = createFixtureDirectory(Fs::path(filename.data()).parent_path());
         const auto root = directory / "diagnostic-root.prx";
         const auto middle = directory / "diagnostic-middle.dll";
         const auto leaf = directory / "diagnostic-leaf.dll";
@@ -225,6 +253,7 @@ int main() {
         expectDiagnostic(runner, {"invalid or unsupported PE dependency metadata"});
         writeFile(root, {0, 1, 2});
         expectDiagnostic(runner, {"Windows API failed"});
+        Fs::remove_all(directory);
         std::cout << "Windows dependency machine-code tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -41,6 +41,7 @@ struct Ngs2Block {
     bool streaming = false;
     std::uint64_t availableFrames = 0;
     std::vector<Ngs2Piece> pieces;
+    bool started = false;
 };
 
 struct Ngs2Atrac9DecoderDeleter {
@@ -54,7 +55,11 @@ struct Ngs2Atrac9 {
     std::uint32_t framesInSuperframe = 0;
     std::uint32_t superframeBytes = 0;
     std::vector<float> window;
-    std::uint32_t windowStart = 0;
+    std::uint32_t windowCursor = 0;
+    std::vector<std::uint8_t> input;
+    std::uint32_t remainingSamples = 0;
+    std::uint32_t skipSamples = 0;
+    bool finishOnDrain = false;
 };
 
 struct Ngs2ReverbState;
@@ -111,6 +116,7 @@ struct Ngs2Voice {
     bool acceptsBlocks = true;
     std::uint64_t decodedSamples = 0;
     std::uint64_t decodedBytes = 0;
+    std::uint64_t waveformRevision = 0;
     const std::uint8_t* waveformEnd = nullptr;
     Ngs2VoiceCallbackHandler callback = nullptr;
     std::uintptr_t callbackData = 0;
@@ -181,7 +187,8 @@ int Ngs2ReleaseBuffer(const Ngs2BufferAllocator& allocator, Ngs2ContextBufferInf
 void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block);
 void Ngs2RestartAtrac9(Ngs2Voice& voice);
-const float* Ngs2Atrac9Frame(Ngs2Voice& voice, Ngs2Block& block, std::uint32_t frame);
+void Ngs2ConsumeAtrac9(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t systemRate);
+bool Ngs2FinishBlock(Ngs2Voice& voice);
 void Ngs2CheckCustomRack(const Ngs2CustomRackOption& option);
 void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
@@ -193,5 +200,8 @@ void Ngs2ClearReverb(Ngs2Voice& voice);
 bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
+float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);
+int Ngs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers);
+int Ngs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix);
 
 #endif

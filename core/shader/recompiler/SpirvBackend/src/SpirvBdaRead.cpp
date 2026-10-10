@@ -422,6 +422,78 @@ void EmitBdaStore(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
     });
 }
 
+void EmitBdaDwordWrites(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t offset, std::uint32_t dwords, std::uint32_t value) {
+    auto& state = ctx.state;
+    if (dwords < 2u || dwords > 4u) ctx.Fail(inst, "unsupported BDA dword store count");
+    if (state.bdaWritePointerFunction == 0 || state.bdaNoteWriteFunction == 0) ctx.Fail(inst, "BDA write functions are missing");
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    std::array<std::uint32_t, 4> values{};
+    std::array<std::uint32_t, 4> addresses{};
+    for (std::uint32_t dword = 0; dword < dwords; ++dword) {
+        values[dword] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, values[dword], value, dword);
+        addresses[dword] = AddBdaImmediate(ctx, inst, address, static_cast<std::int32_t>(offset + dword * 4u));
+    }
+    const auto storeDwords = [&] {
+        for (std::uint32_t dword = 0; dword < dwords; ++dword) EmitBdaStore(ctx, inst, addresses[dword], values[dword], 32u);
+    };
+    if (state.bdaWriteProbeFunction == 0) {
+        storeDwords();
+        return;
+    }
+    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto accessMask = BdaAccessMask(state, inst);
+    const auto physical = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, u64, physical, state.bdaWriteProbeFunction, addresses[0], ConstantU32(state, dwords * 4u), instruction);
+    const auto mapped = Binary(state, spv::OpINotEqual, boolean, physical, BdaConstant(state, 0u));
+    const auto aligned = Binary(state, spv::OpLogicalAnd, boolean, Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, addresses[0])), Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, physical)));
+    const auto wide = Binary(state, spv::OpLogicalAnd, boolean, mapped, aligned);
+    const auto wideLabel = state.module.AllocateId();
+    const auto dwordLabel = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, wide, wideLabel, dwordLabel);
+    EmitLabel(state, wideLabel);
+    const auto vectorBytes = dwords == 3u ? 4u : dwords * 4u;
+    const auto separate = [&] {
+        for (std::uint32_t dword = 0; dword < dwords; ++dword) {
+            const auto element = dword == 0u ? physical : Binary(state, spv::OpIAdd, u64, physical, BdaConstant(state, dword * 4u));
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, element);
+            state.module.AddFunction(spv::OpStore, pointer, values[dword], accessMask, 4u);
+        }
+    };
+    if (dwords == 3u) {
+        separate();
+    } else {
+        const auto vectorAligned = Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u64, physical, BdaConstant(state, vectorBytes - 1u)), BdaConstant(state, 0u));
+        const auto vectorType = TypeU32Vector(state, dwords);
+        const auto vector = state.module.AllocateId();
+        if (dwords == 2u) state.module.AddFunction(spv::OpCompositeConstruct, vectorType, vector, values[0], values[1]);
+        else state.module.AddFunction(spv::OpCompositeConstruct, vectorType, vector, values[0], values[1], values[2], values[3]);
+        EmitIfCondition(state, vectorAligned, [&] {
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, vectorType), pointer, physical);
+            state.module.AddFunction(spv::OpStore, pointer, vector, accessMask, vectorBytes);
+        });
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, vectorAligned), separate);
+    }
+    const auto last = addresses[dwords - 1u];
+    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, addresses[0]);
+    const auto pageShift = BdaConstant(state, BdaAbi::WrittenPageShift);
+    const auto crosses = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpShiftRightLogical, u64, addresses[0], pageShift), Binary(state, spv::OpShiftRightLogical, u64, last, pageShift));
+    EmitIfCondition(state, crosses, [&] {
+        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, last);
+    });
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, dwordLabel);
+    storeDwords();
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+}
+
 std::uint32_t EmitBdaAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t bytes, const std::function<std::uint32_t(std::uint32_t)>& operation) {
     auto& state = ctx.state;
     if (bytes != 4u && bytes != 8u) ctx.Fail(inst, "unsupported BDA atomic width");

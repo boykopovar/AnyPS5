@@ -80,8 +80,16 @@ extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
         const DWORD attributes = GetFileAttributesW(resolved.c_str());
         bool removed = false;
         if (attributes != INVALID_FILE_ATTRIBUTES) {
+            const DWORD writable = attributes & ~FILE_ATTRIBUTE_READONLY;
+            const bool unlocked = writable != attributes &&
+                SetFileAttributesW(resolved.c_str(), writable ? writable : FILE_ATTRIBUTE_NORMAL);
             removed = (attributes & FILE_ATTRIBUTE_DIRECTORY) ?
                 RemoveDirectoryW(resolved.c_str()) != 0 : DeleteFileW(resolved.c_str()) != 0;
+            if (!removed && unlocked) {
+                const DWORD nativeError = GetLastError();
+                SetFileAttributesW(resolved.c_str(), attributes);
+                SetLastError(nativeError);
+            }
         }
         if (!removed) {
             const DWORD nativeError = GetLastError();

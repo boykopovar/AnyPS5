@@ -20,7 +20,7 @@ bool TranslationContext::integer16Shift(const RdnaInstruction& inst, IrOpcode op
 bool TranslationContext::integer16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool sign) {
     const IrU32 lhs = readU16AsU32(sourceAt(inst, 0u), sign);
     const IrU32 rhs = readU16AsU32(sourceAt(inst, 1u), sign);
-    const IrU32 result(ir.Emit(opcode, IrType::U32, {&lhs.Value(), &rhs.Value()}));
+    const IrU32 result = saturateInteger16(inst.destination, IrU32(ir.Emit(opcode, IrType::U32, {&lhs.Value(), &rhs.Value()})), sign);
     write16Bits(inst.destination, IrU32(ir.BitwiseAnd(result.Value(), ir.Constant(0xffffu))));
     return true;
 }
@@ -625,7 +625,8 @@ bool TranslationContext::sQuadmask(const RdnaInstruction& inst, bool wide) {
 bool TranslationContext::bfmB32(const RdnaInstruction& inst) {
     const IrU32 count(ir.BitwiseAnd(readU32(sourceAt(inst, 0u)).Value(), ir.Constant(31u)));
     const IrU32 offset(ir.BitwiseAnd(readU32(sourceAt(inst, 1u)).Value(), ir.Constant(31u)));
-    const IrU32 result(ir.Emit(IrOpcode::BitFieldInsert, IrType::U32, {&ir.Constant(0u), &ir.Constant(0xffffffffu), &offset.Value(), &count.Value()}));
+    const IrU32 mask = rightMask32(count);
+    const IrU32 result(ir.ShiftLeftLogical(mask.Value(), offset.Value()));
     writeOperand(inst.destination, &result.Value());
     return true;
 }

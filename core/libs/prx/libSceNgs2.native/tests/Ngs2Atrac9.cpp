@@ -2,7 +2,9 @@
 
 #include "libatrac9.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <random>
 #include <stdexcept>
@@ -334,6 +336,151 @@ static void TestCorruptSuperframeAtPageEnd() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static uintptr_t EmptySampler(uintptr_t system) {
+    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_ATRAC9, 1, 48000, Config, 0, 0}});
+    Patch(voice, Mastering(system, 1));
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+    return voice;
+}
+
+static void Queue(uintptr_t voice, const void* data, std::uint32_t bytes, std::uint32_t flags, std::uint32_t samples = 0, std::uint32_t skip = 0) {
+    const Ngs2WaveformBlock block{0, bytes, 0, skip, samples, 0, bytes};
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, data, flags, 1, &block});
+}
+
+static void TestStreamPartitions() {
+    const auto reference = Reference(2);
+    std::vector<std::uint8_t> data(Superframe, Superframe + SuperframeBytes);
+    data.insert(data.end(), Superframe, Superframe + SuperframeBytes);
+    for (const auto skip : {100u, 1100u}) {
+        for (const float pitch : {0.5f, 1.0f, 1.5f}) {
+            const auto system = CreateSystem();
+            const auto voice = EmptySampler(system);
+            Control(voice, SCE_NGS2_VOICE_PARAM_CALLBACK,
+                Ngs2VoiceCallbackParam{{}, OnBlock, 0, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+            Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, pitch});
+            callbackFlags.clear();
+            const std::uint32_t sizes[]{1, 17, 61, 93, 340};
+            std::uint32_t offset = 0;
+            for (const auto size : sizes) {
+                const auto flags = offset == 0 ? SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE
+                    : SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | (offset + size == data.size() ? 0 : SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE);
+                Queue(voice, data.data() + offset, size, flags, 800, skip);
+                offset += size;
+            }
+            const auto output = Render(system, 1664);
+            for (std::size_t i = 0; i < output.size(); ++i) {
+                const float position = i * pitch;
+                float expected = 0.0f;
+                if (position < 800) {
+                    const auto index = static_cast<std::uint32_t>(position);
+                    const auto next = std::min(index + 1, 799u);
+                    const auto fraction = position - index;
+                    expected = reference[skip + index] * (1 - fraction) + reference[skip + next] * fraction;
+                }
+                Require(std::abs(output[i] - expected) < 1e-6f);
+            }
+            Require(callbackFlags.size() == 5 && Flags(voice) == 0);
+            Ngs2SamplerVoiceState state{};
+            Require(sceNgs2VoiceGetState(voice, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            Require(state.num_decoded_samples == 800);
+            Require(sceNgs2SystemDestroy(system, nullptr) == 0);
+        }
+    }
+}
+
+struct RefillState { int calls = 0; bool pause = false; bool reset = false; };
+
+static void APS5_VABI Refill(const Ngs2VoiceCallbackInfo* info) {
+    auto& state = *reinterpret_cast<RefillState*>(info->callback_data);
+    ++state.calls;
+    Require(info->flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END);
+    Require(info->user_data == info->block_size);
+    if (state.calls != 1) return;
+    Require(info->block_size == 13 && info->block_data == Superframe);
+    if (state.reset) Queue(info->voice_handle, Superframe, SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET, 500, 100);
+    else Queue(info->voice_handle, Superframe + 13, SuperframeBytes - 13, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND, 0xffffffffu, 0xffffffffu);
+    if (state.pause) Event(info->voice_handle, SCE_NGS2_VOICE_EVENT_PAUSE);
+}
+
+static void TestRefill(const std::vector<float>& reference) {
+    for (int mode = 0; mode < 3; ++mode) {
+        const auto system = CreateSystem();
+        const auto voice = EmptySampler(system);
+        RefillState state{0, mode == 1, mode == 2};
+        Control(voice, SCE_NGS2_VOICE_PARAM_CALLBACK,
+            Ngs2VoiceCallbackParam{{}, Refill, reinterpret_cast<std::uintptr_t>(&state), SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+        Queue(voice, Superframe, 13, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 500, 100);
+        if (mode != 0) {
+            for (float value : Render(system, Grain)) Require(value == 0.0f);
+            Require(state.calls == 1);
+            if (state.pause) Event(voice, SCE_NGS2_VOICE_EVENT_RESUME);
+        }
+        const auto output = Render(system, 512);
+        for (std::size_t i = 0; i < output.size(); ++i) Require(output[i] == (i < 500 ? reference[100 + i] : 0.0f));
+        Require(state.calls == 2 && Flags(voice) == 0);
+        Require(sceNgs2SystemDestroy(system, nullptr) == 0);
+    }
+}
+
+static void TestStarvationAndTruncation(const std::vector<float>& reference) {
+    for (bool truncate : {false, true}) {
+        const auto system = CreateSystem();
+        const auto voice = EmptySampler(system);
+        Queue(voice, Superframe, 13, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 500, 100);
+        for (float value : Render(system, Grain * 3)) Require(value == 0.0f);
+        Require((Flags(voice) & SCE_NGS2_VOICE_STATE_FLAG_PLAYING) != 0);
+        if (truncate) {
+            Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, nullptr, 0, 0, nullptr});
+            bool rejected = false;
+            try { Render(system, Grain); } catch (const std::invalid_argument&) { rejected = true; }
+            Require(rejected);
+        } else {
+            Queue(voice, Superframe + 13, SuperframeBytes - 13, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND);
+            const auto output = Render(system, 512);
+            for (std::size_t i = 0; i < output.size(); ++i) Require(output[i] == (i < 500 ? reference[100 + i] : 0.0f));
+            Require(Flags(voice) == 0);
+        }
+        Require(sceNgs2SystemDestroy(system, nullptr) == 0);
+    }
+}
+
+static void TestAppendBoundaries(const std::vector<float>& reference) {
+    for (std::uint32_t split = 1; split < SuperframeBytes; ++split) {
+        const auto system = CreateSystem();
+        const auto voice = EmptySampler(system);
+        Queue(voice, Superframe, split, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 500, 100);
+        for (float value : Render(system, Grain)) Require(value == 0.0f);
+        const Ngs2WaveformBlock block{split, SuperframeBytes - split, UINT32_MAX, UINT32_MAX, UINT32_MAX, 0, 0};
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS,
+            Ngs2SamplerVoiceWaveformBlocksParam{{}, Superframe, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND, 1, &block});
+        const auto output = Render(system, 512);
+        for (std::size_t i = 0; i < output.size(); ++i) Require(output[i] == (i < 500 ? reference[100 + i] : 0.0f));
+        Ngs2SamplerVoiceState state{};
+        Require(sceNgs2VoiceGetState(voice, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+        Require(state.num_decoded_samples == 500 && state.decoded_data_size == SuperframeBytes);
+        Require(state.waveform_data == Superframe + SuperframeBytes && Flags(voice) == 0);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+}
+
+static void TestAppendWithoutWaveform() {
+    const auto system = CreateSystem();
+    const auto voice = EmptySampler(system);
+    bool rejected = false;
+    try {
+        Queue(voice, Superframe, SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND, 500);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+    Queue(voice, Superframe, SuperframeBytes, 0, 500);
+    Render(system, 512);
+    Require(Flags(voice) == 0);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 int main() {
     const auto reference = Reference();
     TestSkipAndBlockEnd(reference);
@@ -343,5 +490,10 @@ int main() {
     TestMalformedLoops();
     TestCalcBlock();
     TestCorruptSuperframeAtPageEnd();
+    TestStreamPartitions();
+    TestRefill(reference);
+    TestStarvationAndTruncation(reference);
+    TestAppendBoundaries(reference);
+    TestAppendWithoutWaveform();
     return 0;
 }

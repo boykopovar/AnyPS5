@@ -18,7 +18,7 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
     Io::WriteU16(result, peOffset + 4, 0x8664);
     Io::WriteU16(result, peOffset + 6, static_cast<std::uint16_t>(sections.size()));
     Io::WriteU16(result, peOffset + 20, 240);
-    Io::WriteU16(result, peOffset + 22, directories[5].Size == 0 ? 0x23 : 0x22);
+    Io::WriteU16(result, peOffset + 22, 0x22);
     Io::WriteU16(result, optionalOffset, 0x20b);
     Io::WriteU32(result, optionalOffset + 16, entryRva);
     Io::WriteU64(result, optionalOffset + 24, ImageBase);

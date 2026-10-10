@@ -115,7 +115,11 @@ std::uint32_t AudioOut2MixPorts(const AudioOut2Context& context, const AudioOut2
         if (index >= g_ports.size()) continue;
         const auto& port = g_ports[index];
         if (!port.used || port.generation != generation || port.context != &context || port.channels == 0) continue;
-        const auto route = padOut != nullptr ? AudioOut2RouteForPort(port.type, port.channels) : AudioOut2Route::Main;
+        auto route = AudioOut2RouteForPort(port.type, port.channels);
+        if (padOut == nullptr) {
+            if (route == AudioOut2Route::PadVibration) continue;
+            route = AudioOut2Route::Main;
+        }
         if (route == AudioOut2Route::Main) AccumulatePort(port, data, out, frames);
         else AccumulatePadPort(port, data, route, padOut, frames);
         mixed++;

@@ -9,24 +9,33 @@ namespace Relinker::UnusedNidFilter {
 class ControlFlowGraph : public IControlFlowGraph {
 public:
     explicit ControlFlowGraph(std::unordered_set<VirtualAddress> reachable)
-        : _reachable(std::move(reachable)) {}
+        : _owned(std::move(reachable)), _borrowed(nullptr) {}
 
-    const std::unordered_set<VirtualAddress>& ReachableVaddrs() const override { return _reachable; }
-    bool IsReachable(VirtualAddress vaddr) const override { return _reachable.count(vaddr) > 0; }
+    explicit ControlFlowGraph(const std::unordered_set<VirtualAddress>* reachable)
+        : _borrowed(reachable) {}
+
+    const std::unordered_set<VirtualAddress>& ReachableVaddrs() const override {
+        return _borrowed ? *_borrowed : _owned;
+    }
+    bool IsReachable(VirtualAddress vaddr) const override {
+        return (_borrowed ? *_borrowed : _owned).count(vaddr) > 0;
+    }
 
 private:
-    std::unordered_set<VirtualAddress> _reachable;
+    std::unordered_set<VirtualAddress> _owned;
+    const std::unordered_set<VirtualAddress>* _borrowed = nullptr;
 };
 
 std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
-    const std::vector<std::uint8_t>& text,
+    std::span<const std::uint8_t> text,
     VirtualAddress textVaddr,
     VirtualAddress entryVaddr,
     const std::vector<VirtualAddress>& extraEntries,
-    const IRelativeRelocationIndex& relativeRelocations
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses,
+    std::unordered_set<VirtualAddress>& reachable
 ) {
     const Codegen::X64InstructionDecoder decoder;
-    std::unordered_set<VirtualAddress> reachable;
     std::queue<VirtualAddress> worklist;
 
     auto enqueue = [&](VirtualAddress va) {
@@ -53,6 +62,12 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
         Codegen::DecodedInstructionInfo info = decoder.DecodeInstruction(text.data() + bufOff, available);
 
         VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
+
+        if (followCodeAddresses && info.HasRipRelativeDisp && text[bufOff + info.OpcodeOffset] == 0x8d && (info.RexPrefix & 8)) {
+            std::int32_t displacement = 0;
+            std::memcpy(&displacement, text.data() + bufOff + info.RipRelativeDispOffset, 4);
+            enqueue(static_cast<VirtualAddress>(static_cast<std::int64_t>(nextVaddr) + displacement));
+        }
 
         switch (info.FlowKind) {
             using enum Codegen::ControlFlowKind;
@@ -103,7 +118,31 @@ std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
         }
     }
 
+    return std::make_unique<ControlFlowGraph>(&reachable);
+}
+
+std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
+    std::span<const std::uint8_t> text,
+    VirtualAddress textVaddr,
+    VirtualAddress entryVaddr,
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses
+) {
+    std::unordered_set<VirtualAddress> reachable;
+    BuildControlFlowGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, followCodeAddresses, reachable);
     return std::make_unique<ControlFlowGraph>(std::move(reachable));
+}
+
+std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
+    const std::vector<std::uint8_t>& text,
+    VirtualAddress textVaddr,
+    VirtualAddress entryVaddr,
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses
+) {
+    return BuildControlFlowGraph(std::span<const std::uint8_t>(text.data(), text.size()), textVaddr, entryVaddr, extraEntries, relativeRelocations, followCodeAddresses);
 }
 
 }

@@ -27,11 +27,12 @@ struct HostImport {
     VkDeviceMemory memory;
     VkDeviceAddress address;
     void* alias = nullptr;
-    std::weak_ptr<const GuestAllocations::Range> range {};
+    std::shared_ptr<const GuestAllocations::Range> range {};
     // Identity for the life of this import (see HostImportSerial); 0 until first asked for.
     std::uint64_t serial = 0;
     bool unwatched = false;
     bool dmaBuf = false;
+    std::shared_ptr<void> chunk;
 };
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };

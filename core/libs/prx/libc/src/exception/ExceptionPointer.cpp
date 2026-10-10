@@ -1,12 +1,23 @@
 #include <exception>
 
 #ifndef _LIBCPP_VERSION
+#include <future>
+
 extern "C" {
 void ExceptionPointerAddref(std::exception_ptr* self) noexcept asm("_ZNSt15__exception_ptr13exception_ptr9_M_addrefEv");
 void ExceptionPointerRelease(std::exception_ptr* self) noexcept asm("_ZNSt15__exception_ptr13exception_ptr10_M_releaseEv");
 void* ExceptionPointerGet(const std::exception_ptr* self) noexcept asm("_ZNKSt15__exception_ptr13exception_ptr6_M_getEv");
 void ExceptionPointerConstruct(std::exception_ptr* self, void* exception) noexcept asm("_ZNSt15__exception_ptr13exception_ptrC1EPv");
 const std::type_info* ExceptionPointerType(const std::exception_ptr* self) noexcept asm("_ZNKSt15__exception_ptr13exception_ptr20__cxa_exception_typeEv");
+void FutureResultDestroy(std::__future_base::_Result_base* self) noexcept asm("_ZNSt13__future_base12_Result_baseD2Ev");
+
+void FutureResultDestroy(std::__future_base::_Result_base* self) noexcept {
+    self->_M_error.~exception_ptr();
+}
+
+void APS5_VABI _ZNSt13__future_base12_Result_baseD2Ev_nid_postfix(std::__future_base::_Result_base* self) noexcept {
+    FutureResultDestroy(self);
+}
 
 void APS5_VABI _ZNSt15__exception_ptr13exception_ptr9_M_addrefEv_nid_postfix(std::exception_ptr* self) noexcept {
     ExceptionPointerAddref(self);

@@ -1,6 +1,7 @@
 #include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -13,6 +14,22 @@ namespace {
 bool wideAddressLoadsEnabled() {
     static const bool byteReads = std::getenv("APS5_BDA_BYTE_READS") != nullptr;
     return !byteReads;
+}
+
+bool wideAddressStoresEnabled() {
+    static const bool byteWrites = std::getenv("APS5_BDA_DWORD_STORES") != nullptr;
+    return !byteWrites;
+}
+
+IrOpcode wideAddressStoreOpcode(std::uint32_t dwords) {
+    switch (dwords) {
+    case 2u:
+        return IrOpcode::StoreAddressU32x2;
+    case 3u:
+        return IrOpcode::StoreAddressU32x3;
+    default:
+        return IrOpcode::StoreAddressU32x4;
+    }
 }
 
 IrOpcode wideAddressLoadOpcode(std::uint32_t dwords) {
@@ -136,6 +153,19 @@ bool TranslationContext::flatStore(const RdnaInstruction& inst) {
     const AddressOperands address = readAddressOperands(inst, 0u);
     IrValue& active = ir.GetExec();
     const std::uint32_t count = memory.dataBits == 32u ? memory.dataDwords : 1u;
+    if (count > 1u && count <= 4u && memory.kind != ResourceKind::Scratch && wideAddressStoresEnabled()) {
+        MemoryInfo group = memory;
+        group.dataDwords = count;
+        group.componentCount = count;
+        group.componentIndex = 0u;
+        std::array<IrValue*, 4> parts{};
+        for (std::uint32_t index = 0u; index < count; ++index) parts[index] = &readU32(offsetOperand(inst.destination, index)).Value();
+        IrValue& data = count == 2u ? ir.Emit(IrOpcode::CompositeConstructU32x2, IrOpcodeType(IrOpcode::CompositeConstructU32x2), {parts[0], parts[1]})
+                      : count == 3u ? ir.Emit(IrOpcode::CompositeConstructU32x3, IrOpcodeType(IrOpcode::CompositeConstructU32x3), {parts[0], parts[1], parts[2]})
+                                    : ir.Emit(IrOpcode::CompositeConstructU32x4, IrOpcodeType(IrOpcode::CompositeConstructU32x4), {parts[0], parts[1], parts[2], parts[3]});
+        (void)ir.Emit(wideAddressStoreOpcode(count), IrType::Void, {address.resource, address.low, address.high, &data, &active}, addMemoryInfo(group, inst.programCounter));
+        return true;
+    }
     for (std::uint32_t index = 0u; index < count; ++index) {
         MemoryInfo component = memory;
         component.offset += index * 4u;

@@ -102,16 +102,17 @@ private:
         return {address, info};
     }
 
-    bool isZeroPadding(VirtualAddress begin, VirtualAddress end) const {
-        const auto first = input.Text.begin() + static_cast<std::ptrdiff_t>(begin - input.TextVaddr);
-        const auto last = input.Text.begin() + static_cast<std::ptrdiff_t>(end - input.TextVaddr);
-        return std::all_of(first, last, [](std::uint8_t byte) { return byte == 0; });
+    VirtualAddress trailingZeroStart(VirtualAddress begin, VirtualAddress end) const {
+        auto pos = input.Text.data() + static_cast<std::ptrdiff_t>(end - input.TextVaddr);
+        const auto first = input.Text.data() + static_cast<std::ptrdiff_t>(begin - input.TextVaddr);
+        while (pos != first && *(pos - 1) == 0) --pos;
+        return input.TextVaddr + static_cast<VirtualAddress>(pos - input.Text.data());
     }
 
     void addGap(VirtualAddress begin, VirtualAddress end) {
+        const auto effectiveEnd = trailingZeroStart(begin, end);
         VirtualAddress regionBegin = begin;
-        for (auto address = begin; address < end;) {
-            if (isZeroPadding(address, end)) break;
+        for (auto address = begin; address < effectiveEnd;) {
             const auto instruction = decode(address, end);
             address += instruction.Info.Length;
             if (endsFlow(instruction.Info.FlowKind)) {
@@ -145,12 +146,10 @@ private:
 
     void buildEdges() {
         for (auto& [begin, region] : regions) {
+            const auto effectiveEnd = trailingZeroStart(begin, region.End);
             Codegen::ControlFlowKind lastFlow = Codegen::ControlFlowKind::Sequential;
-            for (auto address = begin; address < region.End;) {
-                if (isZeroPadding(address, region.End)) {
-                    lastFlow = Codegen::ControlFlowKind::Sequential;
-                    break;
-                }
+            auto address = begin;
+            while (address < effectiveEnd) {
                 const auto instruction = decode(address, region.End);
                 const auto& info = instruction.Info;
                 const auto next = address + info.Length;
@@ -185,6 +184,7 @@ private:
                 lastFlow = info.FlowKind;
                 address = next;
             }
+            if (address < region.End) lastFlow = Codegen::ControlFlowKind::Sequential;
             if (!endsFlow(lastFlow) && isCode(region.End)) region.Edges.insert(region.End);
         }
     }

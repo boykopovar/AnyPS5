@@ -21,6 +21,22 @@ char* APS5_VABI basename_nid_postfix(const char* path) {
     return buffer;
 }
 
+char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int address) {
+    thread_local char buffer[sizeof("255.255.255.255")];
+    unsigned char bytes[sizeof(address)];
+    std::memcpy(bytes, &address, sizeof(bytes));
+    char* end = buffer;
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) {
+        if (index != 0) *end++ = '.';
+        const unsigned value = bytes[index];
+        if (value >= 100) *end++ = static_cast<char>('0' + value / 100);
+        if (value >= 10) *end++ = static_cast<char>('0' + value / 10 % 10);
+        *end++ = static_cast<char>('0' + value % 10);
+    }
+    *end = 0;
+    return buffer;
+}
+
 std::size_t APS5_VABI strnlen_nid_postfix(const char* text, std::size_t limit) {
     std::size_t length = 0;
     while (length < limit && text[length] != '\0') ++length;

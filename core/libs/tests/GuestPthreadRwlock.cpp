@@ -75,7 +75,43 @@ static void ExpectTimeout(TimedLock lock, PthreadRwlock* rwlock) {
     Require(lock(rwlock, &negative) == GUEST_EINVAL);
 }
 
+struct FirstLockRace {
+    PthreadRwlock rwlock = nullptr;
+    std::atomic<int> ready{0};
+    std::atomic<int> inside{0};
+    std::atomic<int> overlaps{0};
+};
+
+static void* APS5_VABI FirstWrlock(void* arg) {
+    auto& race = *static_cast<FirstLockRace*>(arg);
+    race.ready.fetch_add(1);
+    while (race.ready.load() < 2) {}
+    Require(pthread_rwlock_wrlock_nid_postfix(&race.rwlock) == 0);
+    if (race.inside.fetch_add(1) != 0) race.overlaps.fetch_add(1);
+    for (int spin = 0; spin < 2000; ++spin) std::atomic_signal_fence(std::memory_order_seq_cst);
+    race.inside.fetch_sub(1);
+    Require(pthread_rwlock_unlock_nid_postfix(&race.rwlock) == 0);
+    return nullptr;
+}
+
+static void CheckConcurrentFirstWrlockExcludes() {
+    int overlaps = 0;
+    for (int round = 0; round < 500; ++round) {
+        FirstLockRace race;
+        Pthread first = nullptr;
+        Pthread second = nullptr;
+        Require(scePthreadCreate(&first, nullptr, FirstWrlock, &race, nullptr) == SCE_OK);
+        Require(scePthreadCreate(&second, nullptr, FirstWrlock, &race, nullptr) == SCE_OK);
+        Require(scePthreadJoin(first, nullptr) == SCE_OK);
+        Require(scePthreadJoin(second, nullptr) == SCE_OK);
+        overlaps += race.overlaps.load();
+        Require(pthread_rwlock_destroy_nid_postfix(&race.rwlock) == 0);
+    }
+    Require(overlaps == 0);
+}
+
 int main() {
+    CheckConcurrentFirstWrlockExcludes();
     const KernelTimespec invalid{0, NANOS_PER_SECOND};
     PthreadRwlock fresh[4] = {};
     Require(pthread_rwlock_tryrdlock_nid_postfix(&fresh[0]) == 0);

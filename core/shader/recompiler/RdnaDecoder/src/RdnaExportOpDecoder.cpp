@@ -14,7 +14,7 @@ RdnaInstruction DecodeRdnaExportOp(std::span<const std::uint32_t> code, std::uin
 RdnaInstruction DecodeRdnaExportOp(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
     const std::size_t index = wordIndex;
     if (index >= code.size() || code.size() - index < 2u) {
-        throw std::runtime_error("truncated export instruction");
+        throw std::out_of_range("truncated export instruction");
     }
     if (programCounter % 4u != 0u || programCounter > std::numeric_limits<std::uint32_t>::max() - 7u) {
         throw std::runtime_error("invalid export program counter");

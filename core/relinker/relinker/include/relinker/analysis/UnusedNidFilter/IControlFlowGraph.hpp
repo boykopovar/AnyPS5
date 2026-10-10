@@ -5,6 +5,7 @@
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <unordered_set>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace Relinker::UnusedNidFilter {
@@ -17,11 +18,31 @@ public:
 };
 
 std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
+    std::span<const std::uint8_t> text,
+    VirtualAddress textVaddr,
+    VirtualAddress entryVaddr,
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses = false
+);
+
+std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
+    std::span<const std::uint8_t> text,
+    VirtualAddress textVaddr,
+    VirtualAddress entryVaddr,
+    const std::vector<VirtualAddress>& extraEntries,
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses,
+    std::unordered_set<VirtualAddress>& reachable
+);
+
+std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(
     const std::vector<std::uint8_t>& text,
     VirtualAddress textVaddr,
     VirtualAddress entryVaddr,
     const std::vector<VirtualAddress>& extraEntries,
-    const IRelativeRelocationIndex& relativeRelocations
+    const IRelativeRelocationIndex& relativeRelocations,
+    bool followCodeAddresses = false
 );
 
 }

@@ -48,6 +48,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 }
 
 void Ngs2Voice::ResetSetup() {
+    ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
     for (auto& matrix : matrices) matrix.clear();
@@ -170,6 +171,20 @@ static void SetupSampler(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
 }
 
 static void AppendStreamData(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlocksParam& param, std::size_t frameBytes) {
+    if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+        const bool pendingWaveform = voice.atrac9.remainingSamples != 0 ||
+            std::any_of(voice.blocks.begin(), voice.blocks.end(), [](const Ngs2Block& block) { return block.info.num_samples != 0; });
+        if (!pendingWaveform) throw std::invalid_argument("NGS2: appending compressed data requires a waveform");
+        for (std::uint32_t i = 0; i < param.num_blocks; ++i) {
+            auto block = param.blocks[i];
+            if (block.data_size == 0) continue;
+            block.num_samples = 0;
+            block.num_skip_samples = 0;
+            block.num_repeats = 0;
+            voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
+        }
+        return;
+    }
     if (voice.blocks.empty() || !voice.blocks.back().streaming) throw std::runtime_error("NGS2: appending waveform data to a voice without a streaming waveform is not implemented");
     auto& stream = voice.blocks.back();
     for (std::uint32_t i = 0; i < param.num_blocks; i++) {
@@ -190,6 +205,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
     const bool reset = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET) != 0;
     if (!voice.acceptsBlocks && !reset) throw std::invalid_argument("NGS2: the voice waveform was already closed");
     if (reset) {
+        ++voice.waveformRevision;
         voice.blocks.clear();
         voice.phase = 0;
         voice.waveformEnd = nullptr;
@@ -197,7 +213,6 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
     }
     const std::size_t frameBytes = voice.channels * sizeof(std::int16_t);
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
-        if (voice.waveformType != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) throw std::runtime_error("NGS2: appending waveform data to a voice that is not 16-bit PCM is not implemented");
         AppendStreamData(voice, param, frameBytes);
         voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
         return;
@@ -210,7 +225,8 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
                                   : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
-        if (!streaming && (block.num_samples == 0 || bytes > block.data_size)) {
+        const bool compressedStream = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && voice.acceptsBlocks && block.num_repeats == 0;
+        if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream)) {
             throw std::invalid_argument("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
         }
         voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
@@ -454,6 +470,14 @@ int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_
     std::lock_guard lock(Ngs2Mutex());
     *state_flags = CheckedVoice(voice_handle).stateFlags;
     return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers) {
+    return Ngs2PanInit(work, speaker_angles, unit_angle, num_speakers);
+}
+
+int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
+    return Ngs2PanGetVolumeMatrix(work, params, num_params, matrix_format, out_volume_matrix);
 }
 
 }

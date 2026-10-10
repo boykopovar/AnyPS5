@@ -268,9 +268,10 @@ int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
 }
 
 
-int APS5_VABI scePadSetAngularVelocityBiasCorrectionState() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int handle, bool enabled) {
+ if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+ if (enabled) NotImplemented_nid_no_patch(__func__);
+ return PAD_OK;
 }
 
 }

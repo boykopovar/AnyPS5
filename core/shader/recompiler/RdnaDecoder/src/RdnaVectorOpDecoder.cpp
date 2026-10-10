@@ -58,11 +58,8 @@ constexpr Vop2OpcodeInfo vop2Opcodes[] = {
     {0x12u, RdnaOpcode::VMaxI32, Vop2SdwaProfile::Integer},
     {0x13u, RdnaOpcode::VMinU32, Vop2SdwaProfile::Integer},
     {0x14u, RdnaOpcode::VMaxU32, Vop2SdwaProfile::Integer},
-    {0x15u, RdnaOpcode::VLshrB32},
     {0x16u, RdnaOpcode::VLshrrevB32, Vop2SdwaProfile::Integer},
-    {0x17u, RdnaOpcode::VAshrI32},
     {0x18u, RdnaOpcode::VAshrrevI32, Vop2SdwaProfile::Integer},
-    {0x19u, RdnaOpcode::VLshlB32},
     {0x1au, RdnaOpcode::VLshlrevB32, Vop2SdwaProfile::Integer},
     {0x1bu, RdnaOpcode::VAndB32, Vop2SdwaProfile::Integer},
     {0x1cu, RdnaOpcode::VOrB32, Vop2SdwaProfile::Integer},
@@ -71,9 +68,6 @@ constexpr Vop2OpcodeInfo vop2Opcodes[] = {
     {0x1fu, RdnaOpcode::VMacF32},
     {0x20u, RdnaOpcode::VMadmkF32},
     {0x21u, RdnaOpcode::VMadakF32},
-    {0x22u, RdnaOpcode::VBcntU32B32},
-    {0x23u, RdnaOpcode::VMbcntLoU32B32},
-    {0x24u, RdnaOpcode::VMbcntHiU32B32},
     {0x25u, RdnaOpcode::VAddNcU32, Vop2SdwaProfile::Integer},
     {0x28u, RdnaOpcode::VAddcU32, Vop2SdwaProfile::Integer},
     {0x29u, RdnaOpcode::VSubCoCiU32, Vop2SdwaProfile::Integer},
@@ -630,11 +624,11 @@ RdnaOpcode lookupVectorOpcode(const TEntry (&table)[Size], std::uint32_t encodin
 }
 
 bool isVop2LiteralMadOpcode(std::uint32_t opcode) {
-    return opcode == 0x20u || opcode == 0x21u || opcode == 0x2cu || opcode == 0x2du;
+    return opcode == 0x20u || opcode == 0x21u || opcode == 0x2cu || opcode == 0x2du || opcode == 0x37u || opcode == 0x38u;
 }
 
 bool isUnsupportedVop3EncodedVop2Alias(std::uint32_t opcode) {
-    return isVop2LiteralMadOpcode(opcode) || opcode == 0x02u || opcode == 0x0du;
+    return isVop2LiteralMadOpcode(opcode) || opcode == 0x02u || opcode == 0x0du || opcode == 0x3cu;
 }
 
 bool isVop3EncodedVopc(std::uint32_t opcode) {
@@ -757,6 +751,9 @@ bool isNativeVop3AlignOpcode(RdnaOpcode opcode) {
 
 bool usesIntegerSaturateClamp(RdnaOpcode opcode) {
     switch (opcode) {
+        case RdnaOpcode::VAddNcU32:
+        case RdnaOpcode::VSubNcU32:
+        case RdnaOpcode::VSubrevNcU32:
         case RdnaOpcode::VAddNcI32:
         case RdnaOpcode::VSubNcI32:
         case RdnaOpcode::VMadU32U24:
@@ -780,6 +777,10 @@ bool usesIntegerSaturateClamp(RdnaOpcode opcode) {
 bool isCubeOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::VCubeidF32 || opcode == RdnaOpcode::VCubescF32 || opcode == RdnaOpcode::VCubetcF32 ||
         opcode == RdnaOpcode::VCubemaF32;
+}
+
+bool isVop3Integer16AddSubOpcode(RdnaOpcode opcode) {
+    return opcode == RdnaOpcode::VAddNcU16 || opcode == RdnaOpcode::VSubNcU16 || opcode == RdnaOpcode::VAddNcI16 || opcode == RdnaOpcode::VSubNcI16;
 }
 
 bool isNativeVop3B16BinaryOpcode(RdnaOpcode opcode) {
@@ -1119,7 +1120,7 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF32U32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32I32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32Ubyte0, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VNotB32, sdwaSelAll(), 0, 0, false},
+    {RdnaOpcode::VNotB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VFfblB32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VFfbhU32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VBfrevB32, sdwaSelAll(), 0, 0, false},
@@ -1981,7 +1982,7 @@ bool supportsNativeVop3Clamp(RdnaOpcode opcode) {
         return true;
     }
     return supportsNativeVop3ResultModifiers(opcode) || usesInexactClampControl(opcode) || usesIntegerSaturateClamp(opcode) ||
-        isF32DivisionStepOpcode(opcode) || isCubeOpcode(opcode);
+        isVop3Integer16AddSubOpcode(opcode) || isF32DivisionStepOpcode(opcode) || isCubeOpcode(opcode);
 }
 
 void checkNativeVop3Modifiers(RdnaOpcode opcode, bool permlane, bool carryInOut, bool scalarDst, std::uint32_t abs, std::uint32_t opSel, std::uint32_t clamp, std::uint32_t omod, std::uint32_t neg) {
@@ -2007,7 +2008,7 @@ void checkNativeVop3Modifiers(RdnaOpcode opcode, bool permlane, bool carryInOut,
         return;
     }
     if (isNativeVop3B16BinaryOpcode(opcode)) {
-        if (abs != 0u || clamp != 0u || omod != 0u || neg != 0u) {
+        if (abs != 0u || (clamp != 0u && !isVop3Integer16AddSubOpcode(opcode)) || omod != 0u || neg != 0u) {
             throw std::invalid_argument("VOP3 source modifiers are not implemented");
         }
         return;

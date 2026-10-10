@@ -13,6 +13,7 @@
 
 #include "SDL.h"
 #include "SceTypes.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 
 static constexpr int PORT_TYPE_MAIN = 0;
@@ -192,11 +193,8 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
 }
 
 static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
-    struct timespec req{};
-    req.tv_sec = static_cast<time_t>(us / 1000000ULL);
-    req.tv_nsec = static_cast<long>((us % 1000000ULL) * 1000ULL);
     lock.unlock();
-    nanosleep(&req, nullptr);
+    PreciseSleepUs(us);
     lock.lock();
 }
 

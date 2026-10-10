@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 
 #include "prx/libkernel/KernelErrors.hpp"
 
@@ -15,6 +16,14 @@ bool DirectMemoryCheckedFree(int64_t start, size_t len);
 void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType);
 bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end, std::uint64_t* offset, int* memoryType);
 void ForgetDirectMemory(int64_t start, size_t len);
+
+struct DirectMemoryView {
+    std::uintptr_t address;
+    std::size_t bytes;
+};
+
+std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len);
+void UnmapDirectMemoryViews(const std::vector<DirectMemoryView>& views);
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType);
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType);
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit);

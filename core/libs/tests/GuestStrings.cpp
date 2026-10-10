@@ -8,6 +8,7 @@
 
 extern "C" {
 char* APS5_VABI basename_nid_postfix(const char*);
+char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int);
 int* APS5_VABI __error_nid_postfix();
 std::size_t APS5_VABI strnlen_nid_postfix(const char*, std::size_t);
 std::size_t APS5_VABI strnlen_s_nid_postfix(const char*, std::size_t);
@@ -122,6 +123,21 @@ int main() {
     Require(std::strcmp(basename_nid_postfix("one\\two"), "one\\two") == 0);
     const std::string longName(1024, 'x');
     Require(basename_nid_postfix(longName.c_str()) == nullptr && *__error_nid_postfix() == 63);
+    const unsigned char loopbackBytes[4] = {127, 0, 0, 1};
+    unsigned int loopback;
+    std::memcpy(&loopback, loopbackBytes, sizeof(loopback));
+    char* const dotted = __inet_ntoa_nid_postfix(loopback);
+    Require(std::strcmp(dotted, "127.0.0.1") == 0);
+    Require(__inet_ntoa_nid_postfix(0xffffffffu) == dotted && std::strcmp(dotted, "255.255.255.255") == 0);
+    Require(std::strcmp(__inet_ntoa_nid_postfix(0), "0.0.0.0") == 0);
+    const unsigned char mixedBytes[4] = {10, 200, 3, 45};
+    unsigned int mixed;
+    std::memcpy(&mixed, mixedBytes, sizeof(mixed));
+    Require(std::strcmp(__inet_ntoa_nid_postfix(mixed), "10.200.3.45") == 0);
+    const unsigned char paddingBytes[4] = {100, 9, 99, 0};
+    unsigned int padding;
+    std::memcpy(&padding, paddingBytes, sizeof(padding));
+    Require(std::strcmp(__inet_ntoa_nid_postfix(padding), "100.9.99.0") == 0);
     const char bounded[] = {'a', 'b', 'c'};
     Require(strnlen_nid_postfix(bounded, 0) == 0);
     Require(strnlen_nid_postfix(bounded, sizeof(bounded)) == 3);

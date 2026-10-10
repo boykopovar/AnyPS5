@@ -736,7 +736,7 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
     StorageTexture::BumpPendingSerial();
 }
 
-void RetireShadow(const Context& context, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered) {
+void RetireShadow(VkDevice device, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered) {
     if (!UnitShadowEnabled()) return;
     auto& registry = Registry();
     std::shared_ptr<UnitShadow> shadow;
@@ -766,7 +766,7 @@ void RetireShadow(const Context& context, const HostImport& import, const std::f
     if (dropped != 0) Stats().droppedOnRetire.fetch_add(dropped, std::memory_order_relaxed);
     std::size_t published = 0;
     if (any) {
-        if (GuestMemory::GpuMutex().HeldByThisThread() && shadow->context.device == context.device) {
+        if (GuestMemory::GpuMutex().HeldByThisThread() && shadow->context.device == device) {
             published = publishUnits(shadow, 0, shadow->Units() - 1, selected, PublishReason::Retire);
         } else {
             Stats().lostOnRetire.fetch_add(shadow->liveUnits, std::memory_order_relaxed);

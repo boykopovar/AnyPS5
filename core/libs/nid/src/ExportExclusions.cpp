@@ -1,6 +1,7 @@
 #include <nid/ExportExclusions.hpp>
 #include <nid/ElfPatcher.hpp>
 #include <nid/PeNidPatcher.hpp>
+#include <nid/MachONidPatcher.hpp>
 #include <nid/NidPatcherUtils.hpp>
 #include <bit>
 #include <cstring>
@@ -121,6 +122,12 @@ std::unordered_set<std::string> ReadExportExclusions(const std::string& path) {
         exports = ReadPeExports(binary);
     } else if (binary.size() >= 4 && binary[0] == 0x7f && binary[1] == 'E' && binary[2] == 'L' && binary[3] == 'F') {
         exports = ReadElfExports(binary);
+    } else if (binary.size() >= 4 && binary[0] == 0xcf && binary[1] == 0xfa && binary[2] == 0xed && binary[3] == 0xfe) {
+        for (const auto& entry : ReadMachOExports(binary)) {
+            if (entry.Name.size() < 2 || entry.Name[0] != '_') throw std::runtime_error("invalid reference Mach-O export: " + entry.Name);
+            if (!exports.insert(entry.Name.substr(1)).second) throw std::runtime_error("duplicate reference export: " + entry.Name);
+        }
+        if (exports.empty()) throw std::runtime_error("reference Mach-O has no exports");
     } else {
         throw std::runtime_error("unrecognized export reference format: " + path);
     }

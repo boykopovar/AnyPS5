@@ -41,7 +41,13 @@ def load_db(path):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         print("downloading NID database to %s ..." % path, file=sys.stderr)
-        urllib.request.urlretrieve(DB_URL, str(path))
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as download:
+            temporary = Path(download.name)
+        try:
+            urllib.request.urlretrieve(DB_URL, str(temporary))
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
     db = {}
     with open(path, errors="replace") as handle:
         for line in handle:

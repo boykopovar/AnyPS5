@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -72,6 +73,20 @@ class EncodingTests(unittest.TestCase):
         with command_output("", UNICODE, 128):
             with self.assertRaisesRegex(RuntimeError, UNICODE):
                 pr_overlap.merge("main", "topic")
+
+    def test_report_is_written_as_utf8(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "1.md"
+            write_text = Path.write_text
+
+            def write_with_utf8(path, text, *args, **kwargs):
+                self.assertEqual(kwargs.get("encoding"), "utf-8")
+                return write_text(path, text, *args, **kwargs)
+
+            with patch.object(Path, "write_text", new=write_with_utf8), \
+                    patch.object(pr_overlap, "report", return_value=UNICODE):
+                pr_overlap.write_reports(Path(directory), {1: {}}, "https://example.test")
+            self.assertEqual(path.read_bytes(), UNICODE.encode("utf-8"))
 
 
 if __name__ == "__main__":

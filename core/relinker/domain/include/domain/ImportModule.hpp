@@ -10,6 +10,8 @@ namespace Domain {
 
 inline std::string ImportModuleName(std::string name) {
     if (name.ends_with(".prx")) name.resize(name.size() - 4);
+    else if (name.ends_with(".sprx")) name.resize(name.size() - 5);
+    else if (name.ends_with(".suprx")) name.resize(name.size() - 6);
     if (name.ends_with("-module")) name.resize(name.size() - 7);
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
@@ -36,7 +38,7 @@ inline std::string ImportModule(const std::string& symbol, const std::map<std::u
     auto name = module->second;
     if (name.empty() || name.find_first_of("/\\:$\r\n") != std::string::npos)
         throw RelinkerException("Invalid import module name: " + name);
-    if (!name.ends_with(".prx")) name += ".prx";
+    if (!name.ends_with(".prx") && !name.ends_with(".sprx") && !name.ends_with(".suprx")) name += ".prx";
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
     std::string matched;
     for (const auto& dependency : dependencies) {

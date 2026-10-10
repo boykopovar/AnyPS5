@@ -9,8 +9,8 @@ from test_optional_plt import fixture as optional_plt_fixture
 
 def fixture():
     image = optional_plt_fixture()
-    struct.pack_into("<H", image, 0x38, 5)
-    for index in range(2, 5):
+    struct.pack_into("<H", image, 0x38, 6)
+    for index in range(2, 6):
         struct.pack_into("<IIQQQQQQ", image, 64 + index * 56,
                          0x6fffff01, 0, 0, 0, 0, 0, 0, 1)
     return image

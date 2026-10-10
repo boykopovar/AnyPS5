@@ -3,7 +3,9 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device has no|the device reports)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device has no|the device reports|no display)", re.IGNORECASE)
+
+NO_DISPLAY = re.compile(r"skipped,.*no display", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
 
@@ -32,11 +34,11 @@ if __name__ == "__main__":
             print(f"{name}: {reason}")
         raise SystemExit
     if args.job == "windows":
-        unexpected = [name for name, _ in found if not name.startswith(WINDOWS_PREFIX)]
-        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for"
+        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not NO_DISPLAY.search(output)]
+        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device"
     else:
         unexpected = [name for name, output in found if not DEVICE_LIMITATION.search(output)]
-        expected = "any test that reports the device limitation it needs, such as narrow subgroups or a missing extension"
+        expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension or no display for a Vulkan window"
     for name in unexpected:
         print(f"error: {name} skipped")
     if unexpected:

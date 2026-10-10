@@ -137,6 +137,7 @@ struct Context {
     // VK_EXT_descriptor_indexing with non-uniform sampled/storage image array indexing enabled
     // (bindless image tables in graphics stages).
     bool descriptorIndexing = false;
+    VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorIndexingLimits{};
     bool imageInt64Atomics = false;
     bool geometryShader = false;
     bool sampleRateShading = false;
@@ -146,6 +147,8 @@ struct Context {
     bool imageViewMinLod = false;
     bool pipelineExecutableInfo = false;
     std::uint32_t srgbDecodeFormats = 0;
+    bool provokingVertexLast = false;
+    bool provokingVertexModePerPipeline = false;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

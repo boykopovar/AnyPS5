@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -27,7 +28,14 @@ static bool Rejects(int handle, VideoOutResolutionStatus* status) {
 }
 
 int main() {
-    const int handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
+    int handle = 0;
+    try {
+        handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
+    } catch (const std::runtime_error& error) {
+        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw;
+        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+        return 77;
+    }
     Require(handle > 0);
 
     VideoOutResolutionStatus status;

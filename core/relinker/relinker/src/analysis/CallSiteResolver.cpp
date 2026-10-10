@@ -2,6 +2,7 @@
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <map>
 
@@ -74,6 +75,8 @@ private:
 };
 
 std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector<std::uint8_t>& textSection, const FileByteOffset textSectionVAddr, const VirtualAddress targetGotOrPltAddress, const ByteCount targetGotOrPltSize) {
+    if (targetGotOrPltSize > std::numeric_limits<VirtualAddress>::max() - targetGotOrPltAddress)
+        throw RelinkerException("Relocation target range exceeds the address space");
     if (textSection.empty()) return {};
     if (_cachedTextPtr != &textSection || _cachedTextVAddr != textSectionVAddr) {
         auto scanner = Codegen::MakeInstructionScanner();

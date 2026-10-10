@@ -21,6 +21,6 @@ static void Check(std::uint32_t encoding, RdnaOpcode opcode, IrOpcode expected) 
     Require(found);
 }
 int main() {
-    Check(0x140u, RdnaOpcode::VMadLegacyF32, IrOpcode::FPFma32);
+    Check(0x140u, RdnaOpcode::VMadLegacyF32, IrOpcode::FPMul32);
     Check(0x150u, RdnaOpcode::VMullitF32, IrOpcode::FPMul32);
 }

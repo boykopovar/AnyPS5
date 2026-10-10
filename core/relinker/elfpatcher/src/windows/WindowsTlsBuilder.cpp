@@ -135,7 +135,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                 const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
                 const bool aluRead = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && info.Length - position == 7 && isAluReadOpcode(bytes[position]) && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
                 const bool wide = (info.RexPrefix & 8) != 0;
-                const auto address = supportedPrefixes && !loadValue && !aluRead && bytes[position] == 0x8b && (wide || !hasOperandSizePrefix) ? registerAddress(bytes, position, info.Length, info.RexPrefix) : std::nullopt;
+                const bool isAlu = isAluReadOpcode(bytes[position]);
+                const auto address = supportedPrefixes && !loadValue && !aluRead && (bytes[position] == 0x8b || isAlu) && (wide || !hasOperandSizePrefix) ? registerAddress(bytes, position, info.Length, info.RexPrefix) : std::nullopt;
                 const auto addressRegister = static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1));
                 if (address && addressRegister != 4) {
                     std::vector<MovedInstruction> moved;
@@ -149,7 +150,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                         moved.push_back({CheckedRva(rva + length), std::vector<std::uint8_t>(bytes + length, bytes + length + next.Length), next.HasRipRelativeDisp ? std::optional<std::size_t>(next.RipRelativeDispOffset) : std::nullopt});
                         length += next.Length;
                     }
-                    accesses.push_back({rva, header.Offset + offset, length, false, 0, addressRegister, 0, 0, *address, wide, std::move(moved)});
+                    accesses.push_back({rva, header.Offset + offset, length, false, 0, addressRegister, 0, isAlu ? bytes[position] : std::uint8_t{0}, *address, wide, std::move(moved)});
                     continue;
                 }
                 if (!loadValue && !storeImmediate && !aluRead) {
@@ -175,11 +176,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         throw Domain::RelinkerException("Invalid or unsupported ELF TLS layout", tls->Offset);
     // Native homebrew linkers can emit an empty PT_TLS placeholder.
     // It needs no Windows TLS directory unless guest code accesses TLS.
-    if (tls->MemorySize == 0) {
-        if (!accesses.empty())
-            throw Domain::RelinkerException("Guest TLS access with empty PT_TLS", tls->Offset);
+    if (tls->MemorySize == 0 && accesses.empty())
         return {};
-    }
     const auto alignment = std::max<std::uint64_t>(tls->Alignment, 16);
     const auto blockSize = CheckedRva((tls->MemorySize + alignment - 1) & ~(alignment - 1));
     const auto templateOffset = CheckedRva((64 + alignment - 1) & ~(alignment - 1));
@@ -224,26 +222,84 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         patchAccess(sections, access, code.GetRva());
         code.Emit({0x48, 0x8d, 0x64, 0x24, 0x80});
         if (!access.Address.empty()) {
-            code.Emit({0x51});
-            code.Emit({0x50});
-            for (const auto byte : access.Address)
-                code.Emit({byte});
-            code.Emit({0x50});
-            loadPointer();
-            code.Emit({0x59});
-            const auto rex = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | ((access.Register >> 3) << 2));
-            if (rex != 0x40)
-                code.Emit({rex});
-            code.Emit({0x8b, static_cast<std::uint8_t>(0x04 | ((access.Register & 7) << 3)), 0x08});
-            if (access.Register == 0) {
-                code.Emit({0x48, 0x8d, 0x64, 0x24, 0x08});
+            if (access.AluOpcode != 0 && access.Register == 0) {
+                code.Emit({0x51});
+                code.Emit({0x52});
+                code.Emit({0x50});
+                for (const auto byte : access.Address)
+                    code.Emit({byte});
+                code.Emit({0x50});
+                loadPointer();
                 code.Emit({0x59});
-            } else if (access.Register == 1) {
+                const auto rex = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | 0x00);
+                if (rex != 0x40)
+                    code.Emit({rex});
+                code.Emit({0x8b, 0x14, 0x08});
+                code.Emit({0x58});
+                if (access.Wide)
+                    code.Emit({0x48, access.AluOpcode, 0xc2});
+                else
+                    code.Emit({access.AluOpcode, 0xc2});
+                code.Emit({0x5a});
+                code.Emit({0x59});
+            } else if (access.AluOpcode != 0 && access.Register == 1) {
+                code.Emit({0x51});
+                code.Emit({0x50});
+                for (const auto byte : access.Address)
+                    code.Emit({byte});
+                code.Emit({0x50});
+                loadPointer();
+                code.Emit({0x59});
+                const auto rex = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | 0x00);
+                if (rex != 0x40)
+                    code.Emit({rex});
+                code.Emit({0x8b, 0x04, 0x08});
+                if (access.Wide)
+                    code.Emit({0x48, 0x8b, 0x4c, 0x24, 0x08, 0x48, access.AluOpcode, 0xc8});
+                else
+                    code.Emit({0x48, 0x8b, 0x4c, 0x24, 0x08, access.AluOpcode, 0xc8});
                 code.Emit({0x58});
                 code.Emit({0x48, 0x8d, 0x64, 0x24, 0x08});
+            } else if (access.AluOpcode != 0) {
+                code.Emit({0x51});
+                code.Emit({0x50});
+                for (const auto byte : access.Address)
+                    code.Emit({byte});
+                code.Emit({0x50});
+                loadPointer();
+                code.Emit({0x59});
+                const auto rexLoad = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | 0x00);
+                if (rexLoad != 0x40)
+                    code.Emit({rexLoad});
+                code.Emit({0x8b, 0x04, 0x08});
+                const auto rexAlu = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | ((access.Register >> 3) << 2));
+                if (rexAlu != 0x40)
+                    code.Emit({rexAlu});
+                code.Emit({access.AluOpcode, static_cast<std::uint8_t>(0xc0 | ((access.Register & 7) << 3))});
+                code.Emit({0x58});
+                code.Emit({0x59});
             } else {
-                code.Emit({0x58});
+                code.Emit({0x51});
+                code.Emit({0x50});
+                for (const auto byte : access.Address)
+                    code.Emit({byte});
+                code.Emit({0x50});
+                loadPointer();
                 code.Emit({0x59});
+                const auto rex = static_cast<std::uint8_t>((access.Wide ? 0x48 : 0x40) | ((access.Register >> 3) << 2));
+                if (rex != 0x40)
+                    code.Emit({rex});
+                code.Emit({0x8b, static_cast<std::uint8_t>(0x04 | ((access.Register & 7) << 3)), 0x08});
+                if (access.Register == 0) {
+                    code.Emit({0x48, 0x8d, 0x64, 0x24, 0x08});
+                    code.Emit({0x59});
+                } else if (access.Register == 1) {
+                    code.Emit({0x58});
+                    code.Emit({0x48, 0x8d, 0x64, 0x24, 0x08});
+                } else {
+                    code.Emit({0x58});
+                    code.Emit({0x59});
+                }
             }
         } else if (access.AluOpcode != 0 && access.Register == 0) {
             code.Emit({0x51});

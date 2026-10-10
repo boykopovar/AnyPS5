@@ -121,10 +121,7 @@ int APS5_VABI sceVideoOutAddVblankEvent(KernelEqueue eq, int handle, void* udata
 }
 
 int APS5_VABI sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, void* udata) try {
-    static_cast<void>(eq);
-    static_cast<void>(udata);
-    VideoOutDriver::Get().GetConfig(handle);
-    throw std::runtime_error("VideoOut: physical pre-vblank timing is not implemented");
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, udata);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -135,7 +132,6 @@ int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* u
     LibcAwaitExit_nid_postfix();
 }
 
-APS5_EXPORT("LibwuIonIBw", sceVideoOutAddVrrActiveStatusEvent);
 int APS5_VABI sceVideoOutAddVrrActiveStatusEvent(KernelEqueue eq, int handle, void* udata) try {
     return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS, udata);
 } catch (const ProcessShutdown&) {

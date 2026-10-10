@@ -509,9 +509,9 @@ private:
             presentationClock.Rebase(static_cast<double>(front.info.timestamp));
             clockEpoch = front.epoch;
         }
-        if (synced) {
+        if (synced || audioDriving) {
             const auto now = presentationClock.Now();
-            if (static_cast<double>(front.info.timestamp) > now) return false;
+            if (synced && static_cast<double>(front.info.timestamp) > now) return false;
             while (frames.size() > 1 && frames[1].epoch == frames.front().epoch && static_cast<double>(frames[1].info.timestamp) <= now) recycleFront(video);
         }
         present(video, info);

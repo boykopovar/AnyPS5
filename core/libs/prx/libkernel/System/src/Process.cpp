@@ -34,9 +34,14 @@
 #include <sys/resource.h>
 #endif
 
+extern "C" int* APS5_VABI __error_nid_postfix();
+
 namespace {
 
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
+constexpr int errnoNoChild = 10;
+constexpr int errnoInvalidArgument = 22;
+constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
 
 std::atomic<std::uint32_t> gpoBits{0};
 constexpr std::array<std::uint8_t, 16> openPsId{'A', 'n', 'y', 'P', 'S', '5', 'O', 'p', 'e', 'n', 'P', 's', 'I', 'd', 0, 1};
@@ -86,7 +91,7 @@ ProcessArguments& getProcessArguments() {
 }
 
 void validateSchedulingPolicy(int policy) {
-    if (policy != 1 && policy != 3)
+    if (policy < 1 || policy > 3)
         throw std::invalid_argument("Unsupported guest scheduling policy");
 }
 
@@ -152,6 +157,8 @@ extern "C" {
 
 // unknown data
 const char* __progname_nid_postfix = "eboot.bin";
+static char* emptyEnvironment[1];
+char** environ_nid_postfix = emptyEnvironment;
 
 int APS5_VABI getargc_nid_postfix(void) {
     return getProcessArguments().GetCount();
@@ -207,6 +214,13 @@ void APS5_VABI exit_nid_postfix(int code) {
 int APS5_VABI system_nid_postfix(const char* command) {
     constexpr int shellNotExecuted = 127 << 8;
     return command == nullptr ? 1 : shellNotExecuted;
+}
+
+int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
+    (void)pid;
+    (void)status;
+    *__error_nid_postfix() = (static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0 ? errnoInvalidArgument : errnoNoChild;
+    return -1;
 }
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {

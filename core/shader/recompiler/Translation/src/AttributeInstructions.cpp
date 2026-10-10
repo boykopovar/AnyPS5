@@ -53,7 +53,10 @@ ExportFlags TranslationContext::addExportInfo(const RdnaInstruction& inst) {
 }
 
 void TranslationContext::vInterpP1F32(const RdnaInstruction& inst) {
-    if (!fragmentShaderBarycentricEnabled) return;
+    if (!fragmentShaderBarycentricEnabled) {
+        writeOperand(inst.destination, &ir.Emit(IrOpcode::InterpolateHostP1, IrType::F32, {&ir.Constant(inst.source1.value), &ir.Constant(inst.source2.value), readOperand(inst.source0, IrType::F32)}));
+        return;
+    }
     auto& delta = ir.Emit(IrOpcode::GetInterpolationParameter, IrType::U32, {&ir.Constant(inst.source1.value), &ir.Constant(inst.source2.value), &ir.Constant(0u)});
     auto& origin = ir.Emit(IrOpcode::GetInterpolationParameter, IrType::U32, {&ir.Constant(inst.source1.value), &ir.Constant(inst.source2.value), &ir.Constant(2u)});
     auto& product = ir.Emit(IrOpcode::FPMul32, IrType::F32, {&ir.BitCastF32(delta), readOperand(inst.source0, IrType::F32)});
@@ -81,6 +84,7 @@ void TranslationContext::vInterpP2F32(const RdnaInstruction& inst) {
             program.Metadata().pixelPerspectiveInputs |= bit;
         }
     }
+    ir.Emit(IrOpcode::InterpolateHostP2, IrType::Void, {&ir.Constant(inst.source1.value), &ir.Constant(inst.source2.value), readOperand(inst.source0, IrType::F32), readOperand(inst.destination, IrType::F32), &ir.GetExec()});
     IrValue& value = ir.Emit(IrOpcode::GetAttribute, IrType::U32, {&ir.Constant(inst.source1.value), &ir.Constant(inst.source2.value)});
     writeOperand(inst.destination, &value);
 }
@@ -124,7 +128,9 @@ void TranslationContext::vInterpP1F16(const RdnaInstruction& inst) {
 void TranslationContext::vInterpP2F16(const RdnaInstruction& inst) {
     const auto mode = interpolationModeF16(inst);
     const IrF32 delta = interpolationParameterF16(inst, 1u);
-    writeF16(inst.destination, IrF32(ir.Emit(IrOpcode::FPInterpolateF16, IrType::F32, {&delta.Value(), readOperand(inst.source0, IrType::F32), readOperand(inst.source3, IrType::F32), &ir.Constant(mode)})));
+    IrValue* coordinate = readOperand(inst.source0, IrType::F32);
+    IrValue* partial = readOperand(inst.source3, IrType::F32);
+    writeF16(inst.destination, IrF32(ir.Emit(IrOpcode::FPInterpolateF16, IrType::F32, {&delta.Value(), coordinate, partial, &ir.Constant(mode)})), {&delta.Value(), coordinate, partial});
 }
 
 void TranslationContext::eXP(const RdnaInstruction& inst) {

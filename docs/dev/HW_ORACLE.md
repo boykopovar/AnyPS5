@@ -42,7 +42,7 @@ use hyphens; Python keywords use underscores. Record these settings alongside th
 | `dx10_clamp` | 0 or 1: DX10 clamp disabled or enabled |
 | `denorm32`, `denorm16` | 0: flush input/output; 1: preserve input, flush output; 2: flush input, preserve output; 3: preserve both |
 | `round32`, `round16` | 0: nearest even; 1: toward +infinity; 2: toward -infinity; 3: toward zero |
-| `fp16_overflow` | 0: overflow to infinity; 1: clamp computed overflow to the largest finite value (infinite inputs and division by zero still produce infinity) |
+| `fp16_overflow` | 0: overflow to infinity; 1: clamp computed overflow to the largest finite value (an infinite source operand still produces infinity, as does `v_div_fixup_f16` for a zero denominator or an infinite numerator, but not for an infinite quotient; `v_rcp_f16`, `v_rsq_f16` and `v_log_f16` of zero are clamped) |
 
 `denorm16` and `round16` control both f16 and f64. These values follow the
 [LLVM AMDGPU kernel descriptor documentation](https://llvm.org/docs/AMDGPUUsage.html#amdhsa-kernel-descriptor).

@@ -221,6 +221,7 @@ public:
         const auto capacity = *count;
         *count = 0;
         const auto end = address + bytes;
+        if (clear && !collectable(address, end)) return false;
         for (auto cursor = address; cursor < end;) {
             const auto nextClean = cleanRanges.upper_bound(cursor);
             if (nextClean != cleanRanges.begin()) {
@@ -275,6 +276,21 @@ public:
     }
 
 private:
+    bool collectable(std::uintptr_t address, std::uintptr_t end) {
+        for (auto cursor = address; cursor < end;) {
+            const auto base = cursor & ~(pageBytes - 1);
+            if (const auto found = views.find(base); found != views.end()) {
+                if (found->second.protection == PAGE_NOACCESS) return false;
+                cursor = std::min(end, base + pageBytes);
+                continue;
+            }
+            const auto memory = query(cursor);
+            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+            cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+        }
+        return true;
+    }
+
     static constexpr std::size_t pageBytes = 0x4000;
     struct SharedPage {
         std::uint64_t generation = 1;

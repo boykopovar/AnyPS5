@@ -7,6 +7,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <windows.h>
 
 extern "C" {
 int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler);
@@ -34,6 +35,7 @@ static std::atomic<int> calls{0};
 static std::atomic<std::thread::id> handlerThread;
 static std::atomic<std::uint64_t> handlerRsp{0};
 static std::atomic<std::uintptr_t> handlerFrame{0};
+static std::atomic<Pthread> handlerSelf{nullptr};
 static std::atomic<bool> clobberVectors{false};
 
 static void APS5_VABI Handler(int signum, void* context) {
@@ -44,6 +46,7 @@ static void APS5_VABI Handler(int signum, void* context) {
     handlerFrame.store(reinterpret_cast<std::uintptr_t>(&local));
     handlerRsp.store(rsp);
     handlerThread.store(std::this_thread::get_id());
+    handlerSelf.store(scePthreadSelf());
     if (clobberVectors.load()) asm volatile("vzeroall" ::: "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
     calls.fetch_add(1);
 }
@@ -103,6 +106,57 @@ static void* APS5_VABI Leaving(void* arg) {
         volatile std::uint64_t spins = 0;
         while (leavingRound.load() == round) spins = spins + 1;
     }
+    return nullptr;
+}
+
+static constexpr DWORD ContinuedCode = 0xe0000001u;
+static constexpr int ContinuingRounds = 50;
+static std::atomic<int> continued{0};
+
+static LONG CALLBACK ContinueRaised(EXCEPTION_POINTERS* info) {
+    if (info->ExceptionRecord->ExceptionCode != ContinuedCode) return EXCEPTION_CONTINUE_SEARCH;
+    continued.fetch_add(1);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static constexpr int SelfingRounds = 100;
+static std::atomic<Pthread> selfSink{nullptr};
+
+static void* APS5_VABI Selfing(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    worker.started.store(true);
+    while (!worker.stop.load()) selfSink.store(scePthreadSelf());
+    return nullptr;
+}
+
+static void* APS5_VABI Continuing(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    worker.started.store(true);
+    while (!worker.stop.load()) RaiseException(ContinuedCode, 0, 0, nullptr);
+    return nullptr;
+}
+
+using NtContinueFunction = LONG(NTAPI*)(CONTEXT*, BOOLEAN);
+alignas(16) static CONTEXT loopContext;
+alignas(16) static CONTEXT leaveContext;
+static std::atomic<DWORD> loopingId{0};
+
+static void* APS5_VABI Looping(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    const auto ntContinue = reinterpret_cast<NtContinueFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtContinue")));
+    volatile bool left = false;
+    RtlCaptureContext(&leaveContext);
+    if (left) return nullptr;
+    left = true;
+    loopContext = leaveContext;
+    loopContext.Rip = reinterpret_cast<DWORD64>(ntContinue);
+    loopContext.Rcx = reinterpret_cast<DWORD64>(&loopContext);
+    loopContext.Rdx = 0;
+    loopingId.store(GetCurrentThreadId());
+    worker.started.store(true);
+    ntContinue(&loopContext, FALSE);
     return nullptr;
 }
 
@@ -337,6 +391,59 @@ int main() {
     Require(scePthreadJoin(leavingThread, nullptr) == 0);
     Require(sceKernelDeleteSema(leaving.sem) == 0);
 
+    void* const vectored = AddVectoredExceptionHandler(1, ContinueRaised);
+    Require(vectored != nullptr);
+    Worker continuing;
+    Pthread continuingThread = nullptr;
+    Require(scePthreadCreate(&continuingThread, nullptr, Continuing, &continuing, "continuing") == 0);
+    while (!continuing.started.load() || continued.load() == 0) std::this_thread::yield();
+    for (int raised = 0; raised < ContinuingRounds; ++raised) {
+        Require(sceKernelRaiseException(continuingThread, SIGUSR1) == 0);
+        ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + raised, continuing.id);
+    }
+    continuing.stop.store(true);
+    Require(scePthreadJoin(continuingThread, nullptr) == 0);
+    Require(RemoveVectoredExceptionHandler(vectored) != 0);
+
+    Worker selfing;
+    Pthread selfingThread = nullptr;
+    Require(scePthreadCreate(&selfingThread, nullptr, Selfing, &selfing, "selfing") == 0);
+    while (!selfing.started.load()) std::this_thread::yield();
+    for (int raised = 0; raised < SelfingRounds; ++raised) {
+        Require(sceKernelRaiseException(selfingThread, SIGUSR1) == 0);
+        ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + ContinuingRounds + raised, selfing.id);
+        Require(handlerSelf.load() == selfingThread);
+    }
+    selfing.stop.store(true);
+    Require(scePthreadJoin(selfingThread, nullptr) == 0);
+
+    Worker looping;
+    Pthread loopingThread = nullptr;
+    Require(scePthreadCreate(&loopingThread, nullptr, Looping, &looping, "looping") == 0);
+    while (!looping.started.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const int beforeLooping = calls.load();
+    const auto raisedAt = std::chrono::steady_clock::now();
+    bool refused = false;
+    try {
+        sceKernelRaiseException(loopingThread, SIGUSR1);
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    const auto retried = std::chrono::steady_clock::now() - raisedAt;
+    Require(refused && retried >= std::chrono::milliseconds(900) && retried < std::chrono::seconds(10));
+    Require(calls.load() == beforeLooping);
+    const HANDLE loopingHandle = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, loopingId.load());
+    Require(loopingHandle != nullptr);
+    Require(SuspendThread(loopingHandle) != static_cast<DWORD>(-1));
+    CONTEXT stopped{};
+    stopped.ContextFlags = CONTEXT_CONTROL;
+    Require(GetThreadContext(loopingHandle, &stopped) != 0);
+    loopContext = leaveContext;
+    Require(ResumeThread(loopingHandle) != static_cast<DWORD>(-1));
+    CloseHandle(loopingHandle);
+    Require(scePthreadJoin(loopingThread, nullptr) == 0);
+
     if (__builtin_cpu_supports("avx")) {
         for (std::size_t i = 0; i < VectorBytes; ++i) vectorPattern[i] = static_cast<std::uint8_t>(i * 7 + 1);
         clobberVectors.store(true);
@@ -347,7 +454,7 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         for (int raised = 0; raised < VectorRounds; ++raised) {
             Require(sceKernelRaiseException(vectorsThread, SIGUSR1) == 0);
-            ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + raised, vectors.id);
+            ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + ContinuingRounds + SelfingRounds + raised, vectors.id);
         }
         clobberVectors.store(false);
         vectorStop = 1;

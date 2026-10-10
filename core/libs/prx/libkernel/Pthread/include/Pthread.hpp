@@ -15,6 +15,10 @@
 #include <string>
 #include <thread>
 
+#ifndef _WIN32
+#include <pthread.h>
+#endif
+
 enum class MutexType : std::uint32_t {
     ErrorCheck = 1,
     Recursive = 2,
@@ -41,6 +45,12 @@ struct PthreadRwlockattrPrivate {
 };
 
 struct PthreadRwlockPrivate {
+    // TODO(technical debt): winpthreads initializes a static rwlock on first use and fails a
+    // concurrent first lock with EINVAL, which shared_timed_mutex ignores. Initialize it here.
+    PthreadRwlockPrivate() {
+        _lock.lock();
+        _lock.unlock();
+    }
     std::shared_timed_mutex _lock;
     std::atomic<std::thread::id> _writer;
 };
@@ -91,10 +101,13 @@ struct PthreadPrivate {
 #ifdef _WIN32
     void* nativeHandle = nullptr;
 #else
-    std::thread _thr;
+    pthread_t hostThread{};
 #endif
     std::thread::id threadId;
     std::atomic<unsigned> references{2};
+    std::atomic<bool> inWait{false};
+    std::atomic<int> pendingException{0};
+    void* wakeEvent = nullptr;
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;
     std::atomic<int> waitCount{0};

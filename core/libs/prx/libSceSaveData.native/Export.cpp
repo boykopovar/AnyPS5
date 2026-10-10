@@ -140,7 +140,7 @@ SaveDataParam load_param(const std::string& real_path) {
         std::error_code ec;
         const auto written = std::filesystem::last_write_time(real_path, ec);
         if (!ec) {
-            const auto system = std::chrono::clock_cast<std::chrono::system_clock>(written);
+            const auto system = std::filesystem::file_time_type::clock::to_sys(written);
             param.mtime = std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
         }
     }

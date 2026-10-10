@@ -9,7 +9,17 @@
 
 namespace ShaderRecompiler {
 
+struct PreparedControlFlow;
+class ShaderPreparationContext {
+public:
+    [[nodiscard]] std::shared_ptr<const PreparedControlFlow> AcquireFrontend(const RecompileRequest& request);
+
+private:
+    std::shared_ptr<const PreparedControlFlow> frontend;
+};
+
 [[nodiscard]] IrProgram PrepareResourceProgram(const RecompileRequest& request);
+[[nodiscard]] IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparationContext* preparation);
 [[nodiscard]] std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request);
 
 struct SourceEntry;
@@ -55,6 +65,7 @@ private:
 };
 [[nodiscard]] std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request);
+[[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle);
 void BuildPreparedShaderKey(const RecompileRequest& request, std::vector<std::uint64_t>& key);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle, std::span<const std::uint64_t> key);

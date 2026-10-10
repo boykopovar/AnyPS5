@@ -1,4 +1,5 @@
 #include "ControlFlow/Structurizer.hpp"
+#include "ControlFlow/ControlFlowHelpers.hpp"
 #include <algorithm>
 #include <functional>
 #include <iterator>
@@ -19,25 +20,11 @@ std::vector<std::uint32_t> allBlockIds(std::uint32_t count) {
     return ids;
 }
 
-std::vector<std::uint32_t> intersectSorted(const std::vector<std::uint32_t>& first, const std::vector<std::uint32_t>& second) {
-    std::vector<std::uint32_t> result;
-    std::set_intersection(first.begin(), first.end(), second.begin(), second.end(), std::back_inserter(result));
-    return result;
-}
-
-void sortUnique(std::vector<std::uint32_t>& values) {
-    std::sort(values.begin(), values.end());
-    values.erase(std::unique(values.begin(), values.end()), values.end());
-}
-
-void addUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
-    if (std::find(values.begin(), values.end(), value) == values.end()) {
-        values.push_back(value);
+void addSortedUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
+    const auto position = std::lower_bound(values.begin(), values.end(), value);
+    if (position == values.end() || *position != value) {
+        values.insert(position, value);
     }
-}
-
-bool contains(const std::vector<std::uint32_t>& values, std::uint32_t value) {
-    return std::find(values.begin(), values.end(), value) != values.end();
 }
 
 bool replaceValue(std::vector<std::uint32_t>& values, std::uint32_t oldValue, std::uint32_t newValue) {
@@ -71,32 +58,6 @@ bool replaceTerminatorTarget(Terminator& terminator, std::uint32_t oldValue, std
         changed = true;
     }
     return changed;
-}
-
-std::uint32_t remapId(std::uint32_t id, const std::vector<std::uint32_t>& idMap) {
-    return id != InvalidControlFlowId && id < idMap.size() ? idMap[id] : id;
-}
-
-void remapIds(std::vector<std::uint32_t>& values, const std::vector<std::uint32_t>& idMap) {
-    for (auto& value : values) {
-        value = remapId(value, idMap);
-    }
-    sortUnique(values);
-}
-
-void rebuildPredecessors(ControlFlowGraph& graph) {
-    for (auto& block : graph.blocks) {
-        block.predecessors.clear();
-        sortUnique(block.successors);
-    }
-    for (const auto& block : graph.blocks) {
-        for (const auto successor : block.successors) {
-            addUnique(graph.blocks[successor].predecessors, block.id);
-        }
-    }
-    for (auto& block : graph.blocks) {
-        sortUnique(block.predecessors);
-    }
 }
 
 std::vector<std::uint32_t> applyBlockOrder(ControlFlowGraph& graph, std::vector<BasicBlock> blocks) {
@@ -837,6 +798,24 @@ void cloneBlocks(ControlFlowGraph& graph, const std::vector<std::uint32_t>& bloc
     applyBlockOrder(graph, std::move(ordered));
 }
 
+bool privatizeOneSharedReturn(ControlFlowGraph& graph) {
+    for (const auto& block : graph.blocks) {
+        if (!block.successors.empty() || block.terminator.kind != TerminatorKind::Return || block.predecessors.size() < 2u || block.estimatedSpirvWords > CloneWordFloor) {
+            continue;
+        }
+        for (const auto predecessor : block.predecessors) {
+            const auto& from = graph.FindBlock(predecessor);
+            if (from.terminator.kind != TerminatorKind::ConditionalBranch || findInnermostContainingLoop(graph, predecessor) != nullptr) {
+                continue;
+            }
+            const auto shared = block.id;
+            cloneBlocks(graph, {shared}, {{predecessor, shared}});
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<ControlFlowGraph> privatizeMergeTail(const ControlFlowGraph& graph, std::uint32_t header, std::uint32_t merge, std::uint32_t& cost, const std::function<void(ControlFlowGraph&)>& recompute) {
     const auto& headerBlock = graph.FindBlock(header);
     if ((headerBlock.terminator.trueBlock != merge && headerBlock.terminator.falseBlock != merge) || graph.FindBlock(merge).predecessors.size() < 2u || !hasLinearPathToTerminal(graph, merge)) {
@@ -1251,8 +1230,32 @@ void tarjanVisit(TarjanState& state, std::uint32_t blockId) {
 }
 
 void Structurizer::Structurize(ControlFlowGraph& graph) const {
+    const auto original = graph;
+    try {
+        structurize(graph, false);
+    } catch (const std::runtime_error&) {
+        graph = original;
+        structurize(graph, true);
+    }
+}
+
+void Structurizer::privatizeSharedReturns(ControlFlowGraph& graph) const {
+    const auto budget = std::max<std::size_t>(16u, graph.blocks.size() * 4u);
+    for (std::size_t clones = 0; privatizeOneSharedReturn(graph); ++clones) {
+        if (clones == budget) {
+            throw std::runtime_error("CFG shared return privatization exceeded budget");
+        }
+        rebuildPredecessors(graph);
+        recomputeAnalyses(graph);
+    }
+}
+
+void Structurizer::structurize(ControlFlowGraph& graph, bool privatizeReturns) const {
     recomputeAnalyses(graph);
     verifyReducibility(graph);
+    if (privatizeReturns) {
+        privatizeSharedReturns(graph);
+    }
     canonicalizeNaturalLoops(graph);
     splitSharedMergeBlocks(graph);
     isolateSemanticLoopHeaders(graph);
@@ -1334,8 +1337,7 @@ void Structurizer::computeDominatorTree(ControlFlowGraph& graph) const {
                 for (std::size_t i = 1; i < block.predecessors.size(); ++i) {
                     next = intersectSorted(next, graph.blocks[block.predecessors[i]].dominators);
                 }
-                addUnique(next, block.id);
-                sortUnique(next);
+                addSortedUnique(next, block.id);
             }
 
             if (next != block.dominators) {
@@ -1389,10 +1391,25 @@ void Structurizer::computePostDominators(ControlFlowGraph& graph) const {
         block.postDominators = block.successors.empty() ? std::vector<std::uint32_t>{block.id} : all;
     }
 
+    std::vector<std::uint32_t> order;
+    order.reserve(count);
+    std::vector<bool> ordered(count, false);
+    if (graph.entryBlock < count) {
+        const auto forward = reversePostOrder(graph);
+        for (auto it = forward.rbegin(); it != forward.rend(); ++it) {
+            order.push_back(*it);
+            ordered[*it] = true;
+        }
+    }
+    for (std::uint32_t id = 0; id < count; ++id) {
+        if (!ordered[id]) order.push_back(id);
+    }
+
     bool changed = true;
     while (changed) {
         changed = false;
-        for (auto& block : graph.blocks) {
+        for (const auto id : order) {
+            auto& block = graph.blocks[id];
             std::vector<std::uint32_t> next;
             if (block.successors.empty()) {
                 next = {block.id};
@@ -1401,8 +1418,7 @@ void Structurizer::computePostDominators(ControlFlowGraph& graph) const {
                 for (std::size_t i = 1; i < block.successors.size(); ++i) {
                     next = intersectSorted(next, graph.blocks[block.successors[i]].postDominators);
                 }
-                addUnique(next, block.id);
-                sortUnique(next);
+                addSortedUnique(next, block.id);
             }
 
             if (next != block.postDominators) {

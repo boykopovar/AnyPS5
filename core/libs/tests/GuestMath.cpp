@@ -15,6 +15,11 @@ long double APS5_VABI strtold_nid_postfix(const char*, char**);
 std::int64_t APS5_VABI strtol_nid_postfix(const char*, char**, int);
 std::uint64_t APS5_VABI strtoul_nid_postfix(const char*, char**, int);
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char*, char**, int);
+long long APS5_VABI strtoll_nid_postfix(const char*, char**, int);
+unsigned long long APS5_VABI strtoull_nid_postfix(const char*, char**, int);
+std::uintmax_t APS5_VABI strtoumax_nid_postfix(const char*, char**, int);
+unsigned long long APS5_VABI _Stoull_nid_postfix(const char*, char**, int);
+std::uint64_t APS5_VABI _Stoul_nid_postfix(const char*, char**, int);
 int* APS5_VABI __error_nid_postfix();
 struct LibcFloatConstant { std::uint32_t bits[4]; };
 extern LibcFloatConstant _FInf_nid_postfix;
@@ -83,6 +88,11 @@ static void CheckIntegerConversions() {
         {"0x8000000000000000!", 16, INT64_MAX, 18, 34},
         {"0100000000000!", 0, INT64_C(8589934592), 13, 0},
         {"100000000000000000000000000000000!", 2, INT64_C(4294967296), 33, 0},
+        {"0b101", 0, 0, 1, 0},
+        {"0b101", 2, 0, 1, 0},
+        {" -0B1!", 0, 0, 3, 0},
+        {"0b2", 0, 0, 1, 0},
+        {"0b101", 16, 0xb101, 5, 0},
         {"z!", 36, 35, 1, 0},
         {"", 10, 0, 0, 0},
         {" \t+!", 10, 0, 0, 0},
@@ -124,6 +134,10 @@ static void CheckIntegerConversions() {
         {"0x10000000000000000!", 16, UINT64_MAX, 19, 34},
         {"0100000000000!", 0, UINT64_C(8589934592), 13, 0},
         {"100000000000000000000000000000000!", 2, UINT64_C(4294967296), 33, 0},
+        {"0b101", 0, 0, 1, 0},
+        {"0B11", 2, 0, 1, 0},
+        {" +0b1!", 2, 0, 3, 0},
+        {"0b101", 16, 0xb101, 5, 0},
         {"z!", 36, 35, 1, 0},
         {"", 10, 0, 0, 0},
         {" \t-!", 10, 0, 0, 0},
@@ -138,11 +152,24 @@ static void CheckIntegerConversions() {
             std::abort();
         }
     }
+    for (const int base : {0, 2}) {
+        const char text[] = " -0B11";
+        char* end = nullptr;
+        Require(strtoll_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(strtoull_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(strtoumax_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(_Stoull_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(_Stoul_nid_postfix(text, &end, base) == 0 && end == text + 3);
+    }
     *__error_nid_postfix() = 13;
     Require(strtol_nid_postfix("-4294967296", nullptr, 10) == -INT64_C(4294967296));
     Require(*__error_nid_postfix() == 13);
     Require(strtoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
     Require(*__error_nid_postfix() == 13);
+    Require(_Stoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
+    Require(*__error_nid_postfix() == 13);
+    Require(_Stoul_nid_postfix("18446744073709551615", nullptr, 10) == UINT64_MAX);
+    Require(_Stoul_nid_postfix("-1", nullptr, 10) == UINT64_MAX && *__error_nid_postfix() == 13);
     *__error_nid_postfix() = 0;
 }
 
