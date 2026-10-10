@@ -246,13 +246,14 @@ void PrepareMultisampledStorage(AgcDriver::VulkanDevice& device) {
     ExpectFailure([&] { static_cast<void>(PrepareShader(request)); }, "storage image multisampling is unavailable on the target device");
 }
 
-void SettleLater(AgcDriver::DriverDetail::PreparedShaders& prepared, std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry> entries, std::exception_ptr failure) {
+void SettleLater(AgcDriver::DriverDetail::PreparedShaders& prepared, std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry> entries, std::exception_ptr failure, bool abi) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     {
         std::lock_guard lock(prepared.mutex);
         prepared.entries.insert(prepared.entries.end(), entries.begin(), entries.end());
-        prepared.failure = failure;
-        prepared.pending = false;
+        if (abi && failure != nullptr) prepared.abiFailures.emplace_back(std::vector<std::uint64_t>{1}, failure);
+        else prepared.failure = failure;
+        --prepared.pending;
     }
     prepared.settled.notify_all();
 }
@@ -275,8 +276,8 @@ void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
         snapshot.header.resize(sizeof(Shader));
         ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, address, snapshot.code, 0, {}}, {32, 0, users, compute, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
         const auto handle = ShaderRecompiler::PrepareShader(request);
-        snapshot.prepared->pending = true;
-        auto settle = std::async(std::launch::async, SettleLater, std::ref(*snapshot.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{{0, handle}}, nullptr);
+        snapshot.prepared->pending = 1;
+        auto settle = std::async(std::launch::async, SettleLater, std::ref(*snapshot.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{{0, handle}}, nullptr, false);
         if (source) Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == handle, "first use did not wait for registration preparation");
         else static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request));
         settle.get();
@@ -284,8 +285,8 @@ void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
     }
     AgcDriver::DriverDetail::ShaderSnapshot snapshot{address, 0, 0, {code.begin(), code.end()}, {}};
     snapshot.header.resize(sizeof(Shader));
-    snapshot.prepared->pending = true;
-    auto settle = std::async(std::launch::async, SettleLater, std::ref(*snapshot.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{}, InjectedFailure());
+    snapshot.prepared->pending = 1;
+    auto settle = std::async(std::launch::async, SettleLater, std::ref(*snapshot.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{}, InjectedFailure(), false);
     {
         AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
         ExpectFailure([&] { static_cast<void>(transaction.Read(snapshot)); }, "injected registration preparation failure");
@@ -294,6 +295,93 @@ void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
     ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, address, snapshot.code, 0, {}}, {32, 0, users, compute, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request)); }, "injected registration preparation failure");
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request)); }, "injected registration preparation failure");
+    AgcDriver::DriverDetail::ShaderSnapshot resolved{address, 0, 0, {code.begin(), code.end()}, {}};
+    resolved.header.resize(sizeof(Shader));
+    request.shader.code = resolved.code;
+    const auto handle = ShaderRecompiler::PrepareShader(request);
+    resolved.prepared->entries.push_back({0, handle});
+    resolved.prepared->pending = 2;
+    auto first = std::async(std::launch::async, SettleLater, std::ref(*resolved.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{}, nullptr, true);
+    auto second = std::async(std::launch::async, SettleLater, std::ref(*resolved.prepared), std::vector<AgcDriver::DriverDetail::PreparedShaders::Entry>{}, InjectedFailure(), true);
+    static_cast<void>(AgcDriver::DriverDetail::InvocationFor(resolved, 0, request));
+    Require(resolved.prepared->pending == 0, "first use did not wait for every pending ABI preparation");
+    first.get();
+    second.get();
+    {
+        AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
+        Require(transaction.Read(resolved).entries.size() == 1, "a failed ABI preparation discarded the registered artifact");
+        transaction.Commit();
+    }
+    Require(AgcDriver::DriverDetail::SourceHandleFor(resolved, 0, request) == handle, "a failed ABI preparation blocked a prepared artifact");
+    request.context.compute->numThreads[0] = 2;
+    ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(resolved, 0, request)); }, "injected registration preparation failure");
+    ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::InvocationFor(resolved, 0, request)); }, "injected registration preparation failure");
+}
+
+void BackgroundAbiResolution() {
+    const bool sync = std::getenv("APS5_SYNC_SHADER_PREPARE") != nullptr;
+    alignas(256) static const std::array<std::uint32_t, 4> pixelCode{0xbf820001u, 0xbe8003ffu, 0x12345678u, 0xbf810000u};
+    struct PixelHeader {
+        Shader shader{};
+        std::array<ShaderRegister, 3> registers{};
+        std::array<ShaderRegister, 3> context{{{0x1b3, 2}, {0x1b4, 2}, {0x1b6, 1}}};
+    } pixel;
+    const auto pixelAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
+    pixel.shader.file_header = 0x34333231u;
+    pixel.shader.version = 0x18;
+    pixel.shader.header_size = sizeof(pixel);
+    pixel.shader.shader_size = sizeof(pixelCode);
+    pixel.shader.code = pixelCode.data();
+    pixel.shader.type = 1;
+    pixel.shader.sh_registers = pixel.registers.data();
+    pixel.shader.num_sh_registers = pixel.registers.size();
+    pixel.shader.cx_registers = pixel.context.data();
+    pixel.shader.num_cx_registers = pixel.context.size();
+    pixel.registers = {{{0x008, static_cast<std::uint32_t>(pixelAddress >> 8u)}, {0x009, static_cast<std::uint32_t>(pixelAddress >> 40u)}, {0x00b, 0}}};
+    AgcDriverRegisterShader_nid_postfix(&pixel.shader);
+    const auto resolve = [&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); };
+    if (sync) ExpectFailure(resolve, "targets invalid program counter");
+    else {
+        resolve();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        for (bool reported = false; !reported;) {
+            try {
+                resolve();
+                Require(std::chrono::steady_clock::now() < deadline, "background ABI preparation failure was not reported");
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            } catch (const std::exception& error) {
+                Require(std::string(error.what()).find("targets invalid program counter") != std::string::npos, error.what());
+                reported = true;
+            }
+        }
+    }
+    alignas(256) static const std::array<std::uint32_t, 1> computeCode{0xbf810000u};
+    struct ComputeHeader {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    } compute;
+    const auto computeAddress = reinterpret_cast<std::uintptr_t>(computeCode.data());
+    compute.shader.file_header = 0x34333231u;
+    compute.shader.version = 0x18;
+    compute.shader.header_size = sizeof(compute);
+    compute.shader.shader_size = sizeof(computeCode);
+    compute.shader.code = computeCode.data();
+    compute.shader.sh_registers = compute.registers.data();
+    compute.shader.num_sh_registers = compute.registers.size();
+    compute.shader.specials = &compute.specials;
+    compute.specials.dispatch_modifier = 0x8000;
+    compute.registers = {{{0x20c, static_cast<std::uint32_t>(computeAddress >> 8u)}, {0x20d, static_cast<std::uint32_t>(computeAddress >> 40u)}, {0x207, 1}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 0}}};
+    AgcDriverRegisterShader_nid_postfix(&compute.shader);
+    const std::array<ShaderRegister, 1> context{{{0x1b6, 3}}};
+    AgcDriverResolveShaderAbi_nid_postfix(&compute.shader, context, {});
+    std::vector<std::uint32_t> commands;
+    for (const auto reg : compute.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
+    commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    sceAgcDriverSubmitAcb(0x20, &packet);
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriverResolveShaderAbi_nid_postfix(&compute.shader, context, {});
 }
 
 void UnsupportedTypeRegistration() {
@@ -434,6 +522,7 @@ int main(int argc, char** argv) {
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");
         PrepareMultisampledStorage(*device);
         device.reset();
+        BackgroundAbiResolution();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";
         return 0;

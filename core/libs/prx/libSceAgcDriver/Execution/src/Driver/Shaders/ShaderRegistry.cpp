@@ -106,7 +106,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawComputeShader(std::uint64_t address
 namespace {
 
 void AwaitRegisteredPreparation(PreparedShaders& prepared, std::unique_lock<std::mutex>& lock) {
-    prepared.settled.wait(lock, [&] { return !prepared.pending; });
+    prepared.settled.wait(lock, [&] { return prepared.pending == 0; });
     if (prepared.failure != nullptr) std::rethrow_exception(prepared.failure);
 }
 
@@ -231,6 +231,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
         snapshot.prepared->entries.push_back({codeOffset, handle});
         return handle;
     }
+    if (!snapshot.prepared->abiFailures.empty()) std::rethrow_exception(snapshot.prepared->abiFailures.back().second);
     std::string layouts;
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset || entry.handle == nullptr || entry.handle->artifact == nullptr) continue;
@@ -290,6 +291,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
         return std::move(*invocation);
     }
+    if (!snapshot.prepared->abiFailures.empty()) std::rethrow_exception(snapshot.prepared->abiFailures.back().second);
     std::string layouts;
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset || entry.handle == nullptr || entry.handle->artifact == nullptr) continue;
@@ -552,15 +554,15 @@ bool AsyncRegistrationPrepare() {
     return !sync;
 }
 
-void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan) {
-    RegistrationPreparePool::Instance().Submit([snapshot = std::move(snapshot), plan = std::move(plan)] {
+void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan, bool registration) {
+    RegistrationPreparePool::Instance().Submit([snapshot = std::move(snapshot), plan = std::move(plan), registration] {
         PerformanceContext timingContext(FrameTiming::Preparation());
         std::vector<PreparedShaders::Entry> entries;
         std::exception_ptr failure;
         try {
             entries = PrepareRegistered(*plan);
         } catch (const std::exception& error) {
-            APS5_LOG_ERR("Shader 0x%llx could not be prepared after registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
+            APS5_LOG_ERR("Shader 0x%llx could not be prepared in the background: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
             failure = std::current_exception();
         } catch (...) {
             failure = std::current_exception();
@@ -568,10 +570,17 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
         auto& prepared = *snapshot->prepared;
         {
             std::lock_guard lock(prepared.mutex);
-            prepared.entries.insert(prepared.entries.end(), std::make_move_iterator(entries.begin()), std::make_move_iterator(entries.end()));
-            if (failure == nullptr && !plan->abiKey.empty()) prepared.registeredAbis.push_back(std::move(plan->abiKey));
-            prepared.failure = failure;
-            prepared.pending = false;
+            for (auto& entry : entries) {
+                const auto duplicate = std::ranges::any_of(prepared.entries, [&](const auto& existing) { return existing.handle->artifact == entry.handle->artifact; });
+                if (!duplicate) prepared.entries.push_back(std::move(entry));
+            }
+            if (!plan->abiKey.empty()) {
+                std::erase(prepared.pendingAbis, plan->abiKey);
+                if (failure == nullptr && std::ranges::find(prepared.registeredAbis, plan->abiKey) == prepared.registeredAbis.end()) prepared.registeredAbis.push_back(plan->abiKey);
+            }
+            if (failure != nullptr && registration) prepared.failure = failure;
+            else if (failure != nullptr) prepared.abiFailures.emplace_back(std::move(plan->abiKey), failure);
+            --prepared.pending;
         }
         prepared.settled.notify_all();
     });
@@ -731,6 +740,29 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     struct RegisteredAbiKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, RegisteredAbiKeyStorage>();
     BuildRegisteredAbiKey(state, *localDevice, key);
+    if (AsyncRegistrationPrepare()) {
+        auto& prepared = *snapshot->prepared;
+        {
+            std::lock_guard lock(prepared.mutex);
+            if (prepared.failure != nullptr) std::rethrow_exception(prepared.failure);
+            const auto failed = std::ranges::find_if(prepared.abiFailures, [&](const auto& entry) { return entry.first == key; });
+            if (failed != prepared.abiFailures.end()) std::rethrow_exception(failed->second);
+            if (std::ranges::find(prepared.registeredAbis, key) != prepared.registeredAbis.end() || std::ranges::find(prepared.pendingAbis, key) != prepared.pendingAbis.end()) {
+                transaction.Commit();
+                return;
+            }
+        }
+        std::shared_ptr<RegisteredPreparation> plan = PlanRegistered(*snapshot, *localDevice, state, false);
+        plan->abiKey = key;
+        {
+            std::lock_guard lock(prepared.mutex);
+            prepared.pendingAbis.push_back(key);
+            ++prepared.pending;
+        }
+        PrepareRegisteredInBackground(snapshot, std::move(plan), false);
+        transaction.Commit();
+        return;
+    }
     const auto& registeredAbis = transaction.Read(*snapshot).registeredAbis;
     if (std::ranges::find(registeredAbis, key) != registeredAbis.end()) {
         transaction.Commit();
@@ -899,7 +931,10 @@ void Driver::RegisterShader(const Shader* shader) {
     if (AsyncRegistrationPrepare()) {
         preparation = PlanRegistered(snapshot, *localDevice, registered, true, &snapshot.prepared->deferred);
         if (preparation != nullptr && (snapshot.type == 0 || snapshot.type == 1)) BuildRegisteredAbiKey(registered, *localDevice, preparation->abiKey);
-        snapshot.prepared->pending = preparation != nullptr;
+        if (preparation != nullptr) {
+            snapshot.prepared->pending = 1;
+            if (!preparation->abiKey.empty()) snapshot.prepared->pendingAbis.push_back(preparation->abiKey);
+        }
     } else {
         snapshot.prepared->entries = PrepareRegistered(snapshot, *localDevice, registered, true, &snapshot.prepared->deferred);
         if ((snapshot.type == 0 || snapshot.type == 1) && !snapshot.prepared->entries.empty()) {
@@ -947,7 +982,7 @@ void Driver::RegisterShader(const Shader* shader) {
         PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(std::move(null)));
     }
     transaction.Commit();
-    if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));
+    if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation), true);
 }
 
 }

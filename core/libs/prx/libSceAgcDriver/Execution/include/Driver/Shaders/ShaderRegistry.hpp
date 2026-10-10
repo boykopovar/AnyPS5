@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -58,7 +59,9 @@ struct PreparedShaders : PreparedShaderState {
     std::mutex mutex;
     std::condition_variable settled;
     std::exception_ptr failure;
-    bool pending = false;
+    std::size_t pending = 0;
+    std::vector<std::vector<std::uint64_t>> pendingAbis;
+    std::vector<std::pair<std::vector<std::uint64_t>, std::exception_ptr>> abiFailures;
 };
 
 struct RegisteredShaderState {
