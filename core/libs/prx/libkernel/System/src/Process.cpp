@@ -208,7 +208,7 @@ void APS5_VABI exit_nid_postfix(int code) {
 }
 
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
-    std::_Exit(status);
+    LibcTerminate_nid_no_patch(status);
 }
 
 int APS5_VABI system_nid_postfix(const char* command) {

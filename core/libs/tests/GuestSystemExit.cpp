@@ -5,6 +5,9 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 extern "C" int APS5_VABI sceSystemServiceLoadExec(const char*, const char* const*);
 extern "C" void APS5_VABI _Exit_nid_postfix(int);
 extern "C" void APS5_VABI catchReturnFromMain_nid_postfix(int);
@@ -27,11 +30,18 @@ void APS5_VABI QuickFirst() {
 }
 void Require(bool value) { if (!value) std::abort(); }
 void UnexpectedCleanup() { std::_Exit(3); }
+#ifdef _WIN32
+void WINAPI UnexpectedDetach(PVOID) { TerminateProcess(GetCurrentProcess(), 4); }
+#endif
 }
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--immediate") == 0) {
         LibcRegisterShutdown_nid_postfix(UnexpectedCleanup);
         Require(std::atexit(UnexpectedCleanup) == 0);
+#ifdef _WIN32
+        auto slot = FlsAlloc(UnexpectedDetach);
+        Require(slot != FLS_OUT_OF_INDEXES && FlsSetValue(slot, &slot));
+#endif
         _Exit_nid_postfix(0);
         return 2;
     }
