@@ -19,6 +19,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestArena.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestWriteWatch.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Interfaces.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HeapDiagnostics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mspace.cpp
@@ -45,7 +46,7 @@ target_include_directories(libc PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(libc PRIVATE advapi32)
+    target_link_libraries(libc PRIVATE advapi32 ws2_32 iphlpapi)
 endif()
 
 if(BUILD_TESTING)
@@ -217,6 +218,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_thread_callback_abi PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_thread_callback_abi PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_interface_tests ${LIBS_INCLUDE_DIR}/tests/GuestInterfaces.cpp)
+    target_include_directories(guest_interface_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_interface_tests PRIVATE libc)
+    configure_windows_unwind(guest_interface_tests)
+    add_test(NAME guest_interfaces COMMAND guest_interface_tests)
+    if(WIN32)
+        target_link_libraries(guest_interface_tests PRIVATE ws2_32 iphlpapi)
+        set_tests_properties(guest_interfaces PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_reallocalign_tests ${LIBS_INCLUDE_DIR}/tests/GuestReallocalign.cpp)
