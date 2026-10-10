@@ -740,3 +740,12 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
     return ready;
 }
 }
+
+std::int64_t GuestSockets::Read(int descriptor, void* buffer, std::size_t length) {
+    if (length == 0) return IsOpen(descriptor) ? 0 : Fail(9);
+    return recv_nid_postfix(descriptor, buffer, std::min<std::size_t>(length, INT_MAX), 0);
+}
+
+std::int64_t GuestSockets::Write(int descriptor, const void* buffer, std::size_t length) {
+    return send_nid_postfix(descriptor, buffer, length, 0);
+}

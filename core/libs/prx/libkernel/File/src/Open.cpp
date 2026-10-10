@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
 
@@ -95,6 +96,8 @@ static int MapFlags(int sceFlags) {
 }
 #endif
 
+extern "C" int* APS5_VABI __error_nid_postfix();
+
 static int SceErrorFromErrno(int error) {
     constexpr int GuestEio = 5;
     const int guest = error > 0 && error <= 34 ? error : GuestEio;
@@ -137,6 +140,10 @@ int APS5_VABI sceKernelClose(int d) {
 }
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
+    if (d >= GuestSockets::FirstDescriptor) {
+        const auto n = GuestSockets::Read(d, buf, nbytes);
+        return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
+    }
     if (buf == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": buf is null");
     }
@@ -150,6 +157,10 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
 }
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
+    if (d >= GuestSockets::FirstDescriptor) {
+        const auto n = GuestSockets::Write(d, buf, nbytes);
+        return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
+    }
     if (buf == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": buf is null");
     }
