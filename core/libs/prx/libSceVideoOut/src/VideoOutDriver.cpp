@@ -181,14 +181,6 @@ void FlipRequest::ReleaseLocked() noexcept {
     cfg->vblankCond.notify_all();
 }
 
-void FlipRequest::Cancel() noexcept {
-    {
-        std::lock_guard lock(cfg->mutex);
-        ReleaseLocked();
-    }
-    queue->changed.notify_all();
-}
-
 void FlipRequest::GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>& frameTiming) {
     require(frameTiming != nullptr, "missing frame timing");
     timing = frameTiming;
