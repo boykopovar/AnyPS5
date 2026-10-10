@@ -2,11 +2,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceSslInit_nid_postfix(std::size_t);
 int APS5_VABI sceSslGetCaCerts(int, void*);
 int APS5_VABI sceSslFreeCaCerts(int, void*);
+int APS5_VABI sceSslLoadCert();
+int APS5_VABI sceSslUnloadCert();
 }
 
 struct SslMemoryPoolStats {
@@ -46,4 +50,20 @@ int main() {
     certs = {&marker, 3, &marker};
     Require(sceSslFreeCaCerts(context, &certs) == 0);
     Require(certs.certs == nullptr && certs.num == 0 && certs.pool == nullptr);
+
+    bool loadNotImplemented = false;
+    try {
+        sceSslLoadCert();
+    } catch (const std::runtime_error& error) {
+        loadNotImplemented = std::string(error.what()) == "sceSslLoadCert not implemented";
+    }
+    Require(loadNotImplemented);
+
+    bool unloadNotImplemented = false;
+    try {
+        sceSslUnloadCert();
+    } catch (const std::runtime_error& error) {
+        unloadNotImplemented = std::string(error.what()) == "sceSslUnloadCert not implemented";
+    }
+    Require(unloadNotImplemented);
 }

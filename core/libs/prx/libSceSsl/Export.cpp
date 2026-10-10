@@ -83,6 +83,11 @@ int APS5_VABI sceSslLoadCert() {
     return 0;
 }
 
+int APS5_VABI sceSslUnloadCert() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceSslGetMemoryPoolStats(int ssl_ctx_id, SslMemoryPoolStats* stats) {
     if (stats == nullptr) APS5_INVALID_ARG_EX;
     std::lock_guard lock(g_poolsMutex);

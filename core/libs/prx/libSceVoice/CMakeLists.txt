@@ -1,0 +1,15 @@
+add_library(libSceVoice SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVoice PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVoice)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_voice_tests ${LIBS_INCLUDE_DIR}/tests/GuestVoice.cpp)
+    target_include_directories(guest_voice_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_voice_tests PRIVATE libSceVoice libc)
+    configure_windows_unwind(guest_voice_tests)
+    add_test(NAME guest_voice COMMAND guest_voice_tests)
+    if(WIN32)
+        set_tests_properties(guest_voice PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVoice>")
+    endif()
+endif()
