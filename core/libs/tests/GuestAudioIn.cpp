@@ -11,6 +11,8 @@
 
 extern "C" {
 int APS5_VABI sceAudioInOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
+int APS5_VABI sceAudioInHqOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
+int APS5_VABI sceAudioInAsyncOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAudioInInput(int, void*);
 int APS5_VABI sceAudioInGetSilentState(int);
 int APS5_VABI sceAudioInClose(int);
@@ -41,6 +43,18 @@ void TestValidation() {
     Require(sceAudioInOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
     Require(sceAudioInOpen(user, 0, 0, 256, 48000, 3) == invalidParam);
     Require(sceAudioInOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
+    Require(sceAudioInHqOpen(user, 2, 0, 256, 48000, 2) == invalidType);
+    Require(sceAudioInHqOpen(user, 0, 1, 256, 48000, 2) == invalidParam);
+    Require(sceAudioInHqOpen(user, 0, 0, 512, 48000, 2) == invalidSize);
+    Require(sceAudioInHqOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
+    Require(sceAudioInHqOpen(user, 0, 0, 256, 48000, 3) == invalidParam);
+    Require(sceAudioInHqOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
+    Require(sceAudioInAsyncOpen(user, 2, 0, 256, 48000, 2) == invalidType);
+    Require(sceAudioInAsyncOpen(user, 0, 1, 256, 48000, 2) == invalidParam);
+    Require(sceAudioInAsyncOpen(user, 0, 0, 512, 48000, 2) == invalidSize);
+    Require(sceAudioInAsyncOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
+    Require(sceAudioInAsyncOpen(user, 0, 0, 256, 48000, 3) == invalidParam);
+    Require(sceAudioInAsyncOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
 }
 
 void TestCapture() {
@@ -91,6 +105,12 @@ void TestNoDevice() {
     Require(sceAudioInClose(handle) == 0);
     Require(sceAudioInClose(handle) == invalidHandle);
     Require(sceAudioInInput(handle, buffer.data()) == invalidHandle);
+    Require(sceAudioInOpen(user, 1, 0, 128, 48000, 0x10) == handle);
+    Require(sceAudioInClose(handle) == 0);
+    Require(sceAudioInHqOpen(user, 1, 0, 128, 48000, 0x11) == handle);
+    Require(sceAudioInClose(handle) == 0);
+    Require(sceAudioInAsyncOpen(user, 1, 0, 128, 48000, 0x11) == handle);
+    Require(sceAudioInClose(handle) == 0);
     Require(sceAudioInOpen(user, 1, 0, 128, 48000, 0x11) == handle);
 }
 
