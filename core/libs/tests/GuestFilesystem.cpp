@@ -232,6 +232,8 @@ int main() {
     Require(sceKernelUnlink(missingName.c_str()) == static_cast<int>(0x80020002u));
     Require(unlink_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
     Require(unlink_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(unlink_nid_postfix(rootName.c_str()) == -1 && *__error_nid_postfix() == 1 && std::filesystem::is_directory(root));
+    Require(sceKernelUnlink(rootName.c_str()) == static_cast<int>(0x80020001u));
     const int closable = sceKernelOpen(presentName.c_str(), 0, 0);
     Require(closable >= 0 && sceKernelClose(closable) == 0);
     Require(sceKernelClose(closable) == static_cast<int>(0x80020009u));

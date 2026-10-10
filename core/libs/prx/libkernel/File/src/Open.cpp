@@ -203,6 +203,9 @@ int APS5_VABI sceKernelUnlink(const char* path) {
         throw std::invalid_argument(std::string(__func__) + ": path is null");
     }
     auto native = ResolvePath_nid_no_patch(path);
+    constexpr int GuestEperm = 1;
+    std::error_code error;
+    if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) return SceErrorFromErrno(GuestEperm);
     if (NativeUnlink(native) != 0) {
         return SceErrorFromErrno(errno);
     }
