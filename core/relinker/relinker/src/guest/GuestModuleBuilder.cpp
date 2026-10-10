@@ -294,17 +294,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     for (const auto index : order) if (!windows) addNeeded("$ORIGIN/app0/" + images[index].SourcePath.parent_path().lexically_relative(root).generic_string() + "/" + images[index].OutputName);
     for (const auto& name : hostLibraries) addNeeded(name);
-    std::string guestRunPath = runPath;
-    if (!windows) {
-        if (guestRunPath == "$ORIGIN") guestRunPath = "$ORIGIN/../..";
-        else if (guestRunPath.starts_with("$ORIGIN/")) guestRunPath.insert(8, "../../");
-        else if (!std::filesystem::path(guestRunPath).is_absolute()) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
-    }
+    if (!windows && runPath != "$ORIGIN" && !runPath.starts_with("$ORIGIN/") && !std::filesystem::path(runPath).is_absolute()) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+    const auto outputDirectory = std::filesystem::absolute(outputPath).parent_path().lexically_normal();
     std::vector<GuestArtifact> artifacts;
     for (const auto index : order) {
         const auto& image = images[index];
         const auto relativeDirectory = "app0/" + image.SourcePath.parent_path().lexically_relative(root).generic_string();
-        const auto destination = std::filesystem::absolute(outputPath).parent_path() / relativeDirectory;
+        const auto destination = outputDirectory / relativeDirectory;
         const auto target = destination / image.OutputName;
         if (target.lexically_normal() == std::filesystem::absolute(outputPath).lexically_normal()) throw Domain::RelinkerException("Guest output collides with the executable output");
         for (const auto& source : paths) if (std::filesystem::exists(target) && std::filesystem::equivalent(source, target)) throw Domain::RelinkerException("Guest output would overwrite an input module: " + target.string());
@@ -316,6 +312,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<std::uint8_t> output;
         if (windows) output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime);
         else {
+            std::string guestRunPath = runPath;
+            if (runPath == "$ORIGIN" || runPath.starts_with("$ORIGIN/")) {
+                const auto relativeRoot = outputDirectory.lexically_relative(destination.lexically_normal()).generic_string();
+                guestRunPath = "$ORIGIN/" + relativeRoot + runPath.substr(7);
+            }
             std::vector<std::string> needed;
             for (const auto dependency : dependencies[index]) {
                 const auto dependencyPath = images[dependency].SourcePath.parent_path() / images[dependency].OutputName;
