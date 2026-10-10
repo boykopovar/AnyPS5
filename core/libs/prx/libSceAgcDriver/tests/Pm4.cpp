@@ -565,7 +565,17 @@ void testEventWrite() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1004, 0x2}), 0); }, "misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0, 0}), 0); }, "null or misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1000}), 0); }, "packet size");
-    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x1000, 0x2}), 0); }, "event type 56");
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00, 0}), 0);
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00, 0}), 0x20); }, "compute queue");
+    for (const auto index : {0u, 2u, 7u}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {(index << 8u) | 0x38u, 0x07fffc00, 0}), 0); }, "statistics control event index");
+    }
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00}), 0); }, "packet size");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00, 0, 0}), 0); }, "packet size");
+    for (std::uint32_t bit = 0; bit < 32; ++bit) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00u ^ (1u << bit), 0}), 0); }, "other than the Z-pass counter");
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00, 1u << bit}), 0); }, "other than the Z-pass counter");
+    }
     for (const auto bit : {0x40u, 0x80u, 0x800u, 0x80000000u}) {
         expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x410u | bit}), 0); }, "reserved bits");
     }
@@ -852,6 +862,28 @@ void testNopPadSubmission() {
     check(results[1] == 0 && results[2] == 83, "COND_EXEC did not count a one-dword NOP as one dword");
 }
 
+void testResetQueueGroupsSubmission() {
+    static std::uint32_t reached = 0;
+    reached = 0;
+    auto words = joinPackets({
+        {0xffff1000u, 0xc0027904u, 0x342u, 0xce2003ffu, 0u},
+        {0xc0039f00u, 0u, 0u, 0x80000000u, 0u},
+        {0xc0036300u, 0u, 0u, 0x80000000u, 0u},
+        {0xc0036400u, 0u, 0u, 0x80000000u, 0u},
+        {0xc0002f00u, 1u},
+        {0xc0017a00u, 0x20000243u, 0x480u, 0xc0012600u, 0u, 0u, 0xc0001300u, 0xffffffffu},
+        {0xc0021102u, 1u, 0u, 0u, 0xc0021100u, 1u, 0u, 0u},
+        {0xc0065800u, 0x86007fc0u, 0xfffffffeu, 0xffu, 1u, 0u, 0x19u, 0xc3e1u, 0xc0004600u, 0x2eu, 0xc0004600u, 0x2cu},
+        {0xc0004600u, 0x407u},
+        {0xc0004600u, 0x410u},
+        {0xc0024600u, 0x138u, 0x07fffc00u, 0u},
+        {0xc0017904u, 0x342u, 0xcea00000u},
+        writeWord(reached, 84)});
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(reached == 84, "the measured reset-queue groups for op 0x3ff stopped the packets after them");
+}
+
 std::vector<std::uint32_t> branch(std::uint32_t mode, std::uint32_t function, const std::vector<std::uint32_t>* first, const std::vector<std::uint32_t>* second) {
     const auto address = [](const std::vector<std::uint32_t>* target) { return target ? reinterpret_cast<std::uintptr_t>(target->data()) : std::uintptr_t{0}; };
     const auto size = [](const std::vector<std::uint32_t>* target) { return target ? static_cast<std::uint32_t>(target->size()) : 0u; };
@@ -1059,6 +1091,7 @@ int main(int argc, char** argv) {
         testConditionalSubmission();
         testSuspendPointWritesQueuedLabels();
         testNopPadSubmission();
+        testResetQueueGroupsSubmission();
         testBranchSubmission();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");

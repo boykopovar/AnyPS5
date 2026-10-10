@@ -217,6 +217,8 @@ constexpr std::uint32_t ConditionalWordsMask = 0x3fffu;
 constexpr std::uint32_t DmaSourceCachePolicy = 3u << 13u;
 constexpr std::uint32_t DmaDestinationCachePolicy = 3u << 25u;
 constexpr std::uint32_t WriteDataCachePolicy = 3u << 25u;
+constexpr std::uint32_t PixelPipeStatStride128Bits = 2u << 9u;
+constexpr std::uint32_t PixelPipeStatSixteenBackends = 0xffffu << 11u;
 
 void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     require(!packet.empty(), "truncated PM4 header");
@@ -364,6 +366,12 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                     graphics();
                     size(2);
                     require(eventIndex == 0, "invalid VGT_FLUSH event index");
+                    break;
+                case 0x38:
+                    graphics();
+                    size(4);
+                    require(eventIndex == 1, "invalid pixel pipe statistics control event index");
+                    require(packet[2] == (PixelPipeStatStride128Bits | PixelPipeStatSixteenBackends) && packet[3] == 0, "pixel pipe statistics control other than the Z-pass counter of 16 render backends at a 128-bit stride is not implemented");
                     break;
                 case 0x39:
                     graphics();
