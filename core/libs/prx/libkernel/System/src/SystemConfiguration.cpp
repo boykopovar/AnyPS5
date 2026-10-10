@@ -102,8 +102,18 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         *__error_nid_postfix() = 14;
         return -1;
     }
-    if (std::strcmp(name, "hw.ncpu") != 0) throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
-    static constexpr int mib[] = {6, 3};
-    return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
+    if (std::strcmp(name, "hw.ncpu") == 0) {
+        static constexpr int mib[] = {6, 3};
+        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
+    }
+    if (std::strcmp(name, "kern.sdk_version") == 0) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        static constexpr std::uint32_t value = 0x01000000;
+        return CopyOut(&value, sizeof(value), oldValue, oldLength);
+    }
+    throw std::runtime_error(std::string(__func__) + ": unsupported name " + name);
 }
 }
