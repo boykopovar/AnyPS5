@@ -34,6 +34,9 @@ extern "C" std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, cons
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
 extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
 extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbAcquireMem(CommandBuffer* buf, std::uint8_t engine, std::uint32_t cbDbOp, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbAcquireMem(CommandBuffer* buf, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles);
+extern "C" int APS5_VABI sceAgcAcquireMemSetEngine(std::uint32_t* cmd, std::uint32_t engine);
 
 namespace {
 
@@ -369,6 +372,29 @@ void testMemory() {
     expectFailure([&] { sceAgcWaitRegMemPatchMask(truncated, 0x100000000ull); });
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
+
+    Storage acquireStorage;
+    auto* acquire = sceAgcDcbAcquireMem(&acquireStorage.buffer, 0, 0x1234u, 0x567u, nullptr, 0x1000, 0);
+    check(acquire[0] == Agc::Command::Header(0x58u, 8), "acquire mem header mismatch");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was set");
+    check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    const auto beforeAcquire = acquireStorage.words;
+    expectFailure([&] { sceAgcAcquireMemSetEngine(nullptr, 0); });
+    auto* misalignedAcquire = reinterpret_cast<std::uint32_t*>(reinterpret_cast<unsigned char*>(acquire) + 1);
+    expectFailure([&] { sceAgcAcquireMemSetEngine(misalignedAcquire, 0); });
+    expectFailure([&] { sceAgcAcquireMemSetEngine(acquire, 2); });
+    expectFailure([&] { sceAgcAcquireMemSetEngine(acquire, 0xffffffffu); });
+    std::uint32_t wrongAcquire[8] = {0xc0065000u};
+    expectFailure([&] { sceAgcAcquireMemSetEngine(wrongAcquire, 0); });
+    check(acquireStorage.words == beforeAcquire, "invalid acquire engine patch modified packet memory");
+
+    auto* acbAcquire = sceAgcAcbAcquireMem(&acquireStorage.buffer, 0x567u, nullptr, 0x1000, 0);
+    check(acbAcquire[1] == 0x80000000u, "ACB acquire mem engine bit was not default 1");
+    check(sceAgcAcquireMemSetEngine(acbAcquire, 0) == 0, "sceAgcAcquireMemSetEngine failed on ACB acquire");
+    check(acbAcquire[1] == 0u, "ACB acquire mem engine bit was not cleared to 0");
 }
 
 void testDefaults() {
