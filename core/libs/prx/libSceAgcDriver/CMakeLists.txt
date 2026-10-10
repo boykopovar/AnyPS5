@@ -183,6 +183,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureTiling.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/TextureDetiler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcTextureDetileShaderHeader}
@@ -455,6 +456,12 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+add_test_executable(agc_pass_hazards_tests EXCLUDE_FROM_ALL tests/PassHazards.cpp Graphics/src/PassHazards.cpp)
+target_include_directories(agc_pass_hazards_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
+target_link_libraries(agc_pass_hazards_tests PRIVATE libc)
+set_target_properties(agc_pass_hazards_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_pass_hazards_tests)
 
 add_test_executable(agc_dcc_key_sharing_tests EXCLUDE_FROM_ALL tests/DccKeySharing.cpp)
 target_include_directories(agc_dcc_key_sharing_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
@@ -749,6 +756,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         Graphics/src/TextureTiling.cpp
         Graphics/src/TextureDetiler.cpp
         Graphics/src/Texture.cpp
+        Graphics/src/PassHazards.cpp
         Graphics/src/UnitShadow.cpp
         Graphics/src/Sampler.cpp
         Graphics/src/Recorder.cpp
@@ -883,7 +891,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_shader_bindless agc_shader_frontend_pair agc_shader_frontend_pair_off PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    foreach(agcTest IN ITEMS agc_shared_write_tests agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_constant_bit_test_tests agc_scalar_select_mask_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests agc_driver_cmask_fast_clear_tests agc_formatted_buffer_once_tests ${agcExecutionTests})
+    foreach(agcTest IN ITEMS agc_shared_write_tests agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_constant_bit_test_tests agc_scalar_select_mask_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_pass_hazards_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests agc_driver_cmask_fast_clear_tests agc_formatted_buffer_once_tests ${agcExecutionTests})
         if(agcTest STREQUAL "agc_driver_constant_store_tests")
             continue()
         endif()

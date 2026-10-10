@@ -157,11 +157,7 @@ public:
     const std::vector<std::pair<std::uint64_t, std::uint64_t>>& GpuWrites() const { return guestMemory.Writes(); }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const { return guestMemory.InPlaceReads(); }
     std::vector<std::pair<VkImage, bool>> StorageImages() const;
-    // Whether a use writes guest memory beyond a draw's attachments (storage images, written or
-    // copied buffers, an address-based build's unknown writes), or reads `image` (a view of it
-    // sampled, or the image itself bound): a recorded draw's render pass may only be continued by
-    // a draw for which neither holds (Draw.cpp).
-    bool WritesMemory() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const { return guestMemory.DeviceReads(); }
     bool ReadsImage(const StorageTexture* image) const;
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.

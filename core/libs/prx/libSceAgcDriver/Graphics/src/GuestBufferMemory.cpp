@@ -3160,6 +3160,20 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::InPlaceR
     return result;
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::DeviceReads() const {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> result;
+    if (!uploaded || committed) return result;
+    if (space != nullptr) {
+        for (const auto& region : space->base) {
+            if (region.direct != nullptr || region.mirror != nullptr) result.emplace_back(region.begin, region.end);
+        }
+    }
+    for (const auto& region : regions) {
+        if (region.direct != nullptr || region.mirror != nullptr) result.emplace_back(region.begin, region.end);
+    }
+    return result;
+}
+
 void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
     if (!uploaded || committed) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;

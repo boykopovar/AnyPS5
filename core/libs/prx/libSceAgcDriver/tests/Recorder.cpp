@@ -2799,8 +2799,9 @@ public:
     CoverPass& operator=(const CoverPass&) = delete;
 
     bool Draw(Recorder& recorder) const {
-        const bool continued = recorder.ContinuesRenderPass(PassKey);
-        const auto commands = continued ? recorder.CommandsInRenderPass() : recorder.Commands();
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{});
+        const bool continued = start.continued;
+        const auto commands = start.commands;
         if (!continued) {
             recorder.PrepareSampleSlot();
             VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -2812,7 +2813,7 @@ public:
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         recorder.NoteSampledDraw(commands);
         context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
-        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, true, {});
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
         return continued;
     }
 
