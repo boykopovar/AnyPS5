@@ -18,6 +18,11 @@ int APS5_VABI sceG2PDialogOpen(void) {
     return 0;
 }
 
+int APS5_VABI sceG2PDialogClose(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceG2PDialogGetStatus(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
