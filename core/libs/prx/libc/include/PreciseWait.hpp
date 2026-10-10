@@ -37,4 +37,11 @@ inline void PreciseSleepUs(unsigned long long micros) {
     std::this_thread::sleep_for(std::chrono::microseconds(micros));
 }
 
+template <class TClock, class TDuration>
+inline void PreciseSleepUntil(const std::chrono::time_point<TClock, TDuration>& deadline) {
+    for (auto now = TClock::now(); now < deadline; now = TClock::now()) {
+        PreciseSleepUs(static_cast<unsigned long long>(std::chrono::ceil<std::chrono::microseconds>(deadline - now).count()));
+    }
+}
+
 #endif

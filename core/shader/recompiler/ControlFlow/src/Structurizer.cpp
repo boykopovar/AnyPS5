@@ -1,4 +1,5 @@
 #include "ControlFlow/Structurizer.hpp"
+#include "ControlFlow/ControlFlowHelpers.hpp"
 #include <algorithm>
 #include <functional>
 #include <iterator>
@@ -17,27 +18,6 @@ std::vector<std::uint32_t> allBlockIds(std::uint32_t count) {
         ids.push_back(i);
     }
     return ids;
-}
-
-std::vector<std::uint32_t> intersectSorted(const std::vector<std::uint32_t>& first, const std::vector<std::uint32_t>& second) {
-    std::vector<std::uint32_t> result;
-    std::set_intersection(first.begin(), first.end(), second.begin(), second.end(), std::back_inserter(result));
-    return result;
-}
-
-void sortUnique(std::vector<std::uint32_t>& values) {
-    std::sort(values.begin(), values.end());
-    values.erase(std::unique(values.begin(), values.end()), values.end());
-}
-
-void addUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
-    if (std::find(values.begin(), values.end(), value) == values.end()) {
-        values.push_back(value);
-    }
-}
-
-bool contains(const std::vector<std::uint32_t>& values, std::uint32_t value) {
-    return std::find(values.begin(), values.end(), value) != values.end();
 }
 
 bool replaceValue(std::vector<std::uint32_t>& values, std::uint32_t oldValue, std::uint32_t newValue) {
@@ -71,32 +51,6 @@ bool replaceTerminatorTarget(Terminator& terminator, std::uint32_t oldValue, std
         changed = true;
     }
     return changed;
-}
-
-std::uint32_t remapId(std::uint32_t id, const std::vector<std::uint32_t>& idMap) {
-    return id != InvalidControlFlowId && id < idMap.size() ? idMap[id] : id;
-}
-
-void remapIds(std::vector<std::uint32_t>& values, const std::vector<std::uint32_t>& idMap) {
-    for (auto& value : values) {
-        value = remapId(value, idMap);
-    }
-    sortUnique(values);
-}
-
-void rebuildPredecessors(ControlFlowGraph& graph) {
-    for (auto& block : graph.blocks) {
-        block.predecessors.clear();
-        sortUnique(block.successors);
-    }
-    for (const auto& block : graph.blocks) {
-        for (const auto successor : block.successors) {
-            addUnique(graph.blocks[successor].predecessors, block.id);
-        }
-    }
-    for (auto& block : graph.blocks) {
-        sortUnique(block.predecessors);
-    }
 }
 
 std::vector<std::uint32_t> applyBlockOrder(ControlFlowGraph& graph, std::vector<BasicBlock> blocks) {

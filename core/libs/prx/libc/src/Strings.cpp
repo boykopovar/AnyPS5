@@ -452,8 +452,4 @@ size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size
     return std::strxfrm(destination, source, count);
 }
 
-size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const wchar_t** source, size_t count, mbstate_t* state) {
-    return std::wcsrtombs(destination, source, count, state);
-}
-
 }

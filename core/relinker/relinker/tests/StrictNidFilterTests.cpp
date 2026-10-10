@@ -86,6 +86,15 @@ void conditionalTailCall() {
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Conditional tail call was removed");
 }
 
+void fallthroughAfterZeroPadding() {
+    auto input = fixture();
+    ripOperand(input, 0, {0xE9}, 0x1000);
+    std::fill(input.Text.begin() + 5, input.Text.begin() + 16, 0);
+    importThunk(input, 16, 0x2000);
+    input.Functions = {{0x1000, 0x1010, {}}, {0x1010, 0x1018, {}}};
+    require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Zero padding after a region's last jump dropped its fall-through edge");
+}
+
 void callbackAndRelocationRoots() {
     auto input = fixture();
     ripOperand(input, 0, {0x48, 0x8D, 0x3D}, 0x1020);
@@ -296,6 +305,7 @@ int main() {
         deadTailAndExplicitEntry();
         ud1DeadTail();
         conditionalTailCall();
+        fallthroughAfterZeroPadding();
         callbackAndRelocationRoots();
         registerImportCall();
         mergedJumpTable();

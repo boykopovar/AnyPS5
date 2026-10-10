@@ -34,7 +34,7 @@ static constexpr int KERNEL_IOV_MAX = 1024;
 #include <fcntl.h>
 #include <direct.h>
 #include <sys/stat.h>
-#include <sys/utime.h>
+#include "prx/libkernel/File/include/WindowsFileTime.hpp"
 static int NativeRmdir(const std::filesystem::path& path) {
     return ::_wrmdir(path.wstring().c_str());
 }
@@ -73,15 +73,39 @@ static int NativeFchmod(int descriptor, int mode) {
 static int NativeFtruncate(int descriptor, std::int64_t length) {
     return static_cast<int>(::_chsize_s(descriptor, length));
 }
+static int SetTimes(HANDLE handle, const KernelTimeval* times) {
+    FILETIME access{}, modified{};
+    if (times == nullptr) {
+        GetSystemTimePreciseAsFileTime(&access);
+        modified = access;
+    } else if (!File::WindowsFileTime::Encode(times[0], access) || !File::WindowsFileTime::Encode(times[1], modified)) {
+        errno = EINVAL;
+        return -1;
+    }
+    return SetFileTime(handle, nullptr, &access, &modified) ? 0 : File::WindowsFileTime::Failure(GetLastError());
+}
 static int NativeUtimes(const std::filesystem::path& path, const KernelTimeval* times) {
-    RecordWrittenPath_nid_no_patch(path);
-    if (times == nullptr) return ::_wutime(path.wstring().c_str(), nullptr);
-    struct _utimbuf values{static_cast<time_t>(times[0].tv_sec), static_cast<time_t>(times[1].tv_sec)};
-    return ::_wutime(path.wstring().c_str(), &values);
+    const auto handle = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
+    const int result = SetTimes(handle, times);
+    CloseHandle(handle);
+    if (result == 0) RecordWrittenPath_nid_no_patch(path);
+    return result;
 }
 static int NativeFutimes(int descriptor, const KernelTimeval* times) {
-    const auto path = NativeDescriptorPath(descriptor);
-    return path ? NativeUtimes(*path, times) : -1;
+    if (const auto directory = File::DirectoryDescriptorPath(descriptor)) return NativeUtimes(*directory, times);
+    const auto original = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    if (original == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
+    if (GetFileType(original) != FILE_TYPE_DISK) { errno = EINVAL; return -1; }
+    const auto handle = ReOpenFile(original, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+    if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
+    const int result = SetTimes(handle, times);
+    CloseHandle(handle);
+    if (result == 0) {
+        if (const auto path = NativeDescriptorPath(descriptor)) RecordWrittenPath_nid_no_patch(*path);
+    }
+    return result;
 }
 static int NativeFlock(int descriptor, int operation) {
     HANDLE handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
@@ -706,6 +730,11 @@ int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t lengt
 
 int APS5_VABI sceKernelUtimes_nid_postfix(const char* path, const KernelTimeval* times) {
     if (path == nullptr) throw std::invalid_argument("sceKernelUtimes: path is null");
+    if (times != nullptr) {
+        for (int i = 0; i < 2; ++i) {
+            if (times[i].tv_usec < 0 || times[i].tv_usec >= 1000000) return SCE_KERNEL_ERROR_EINVAL;
+        }
+    }
     const auto native = ResolvePath_nid_no_patch(path);
     if (NativeUtimes(native, times) != 0) return SceErrorFromErrno(errno);
     return 0;

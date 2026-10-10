@@ -278,6 +278,12 @@ void RunTextureTilingTests() {
         requireThickAddresses(thickVolume(TextureTileMode::kS64KBX, 1, 100, 60, 70, 7), 1, 2, 1179648, xorSx8, "SW_64KB_S_X 8 bpp 100x60x70, 7 levels");
         constexpr ElementAddress xorSx128[] = {{0, 0, 0, 0, 0x10000}, {0, 8, 4, 2, 0x18c80}, {0, 4, 1, 1, 0x11830}, {0, 3, 4, 0, 0x10a40}, {0, 8, 0, 2, 0x18480}, {1, 0, 0, 0, 0x8400}, {1, 3, 1, 0, 0x8660}, {1, 2, 0, 0, 0x8600}, {1, 1, 1, 0, 0x8460}, {1, 3, 0, 0, 0x8640}, {2, 0, 0, 0, 0x4400}, {2, 1, 0, 0, 0x4440}, {2, 1, 0, 0, 0x4440}, {2, 0, 0, 0, 0x4400}, {2, 1, 0, 0, 0x4440}, {3, 0, 0, 0, 0x1800}, {3, 0, 0, 0, 0x1800}, {3, 0, 0, 0, 0x1800}, {3, 0, 0, 0, 0x1800}, {3, 0, 0, 0, 0x1800}};
         requireThickAddresses(thickVolume(TextureTileMode::kS64KBX, 77, 9, 5, 3, 4), 16, 1, 131072, xorSx128, "SW_64KB_S_X 128 bpp 9x5x3, 4 levels");
+        {
+            const auto linear = DescribeSurface(thickVolume(TextureTileMode::kLinear, 1, 100, 60, 8, 4));
+            constexpr std::uint64_t offsets[] = {0x3500u, 0x1700u, 0x800u, 0u};
+            Require(!linear.thick && linear.layerBytes == 28928u && linear.guestBytes == 231424u, "linear 8 bpp 100x60x8, 4 levels: slice size differs from addrlib");
+            for (std::uint32_t level = 0; level < 4u; ++level) Require(linear.mips[level].tiledOffset == offsets[level], "linear 8 bpp 100x60x8, 4 levels: mip " + std::to_string(level) + " offset differs from addrlib");
+        }
         constexpr ElementAddress xorZx64[] = {{0, 0, 0, 0, 0x8400}, {0, 32, 19, 11, 0xbc350}, {0, 16, 6, 6, 0x69040}, {0, 11, 19, 0, 0xe778}, {0, 32, 0, 11, 0xb8100}, {1, 0, 0, 0, 0x400}, {1, 15, 9, 5, 0x52eb8}, {1, 8, 3, 3, 0x32950}, {1, 5, 9, 0, 0x598}, {1, 15, 0, 5, 0x52fa8}, {2, 0, 0, 0, 0x800}, {2, 7, 4, 2, 0x21ca8}, {2, 4, 1, 1, 0x10090}, {2, 2, 4, 0, 0x1820}, {2, 7, 0, 2, 0x20ca8}, {3, 0, 0, 0, 0x4200}, {3, 3, 1, 0, 0x4238}, {3, 2, 0, 0, 0x4220}, {3, 1, 1, 0, 0x4218}, {3, 3, 0, 0, 0x4228}, {4, 0, 0, 0, 0x200}, {4, 1, 0, 0, 0x208}, {4, 1, 0, 0, 0x208}, {4, 0, 0, 0, 0x200}, {4, 1, 0, 0, 0x208}, {5, 0, 0, 0, 0x2000}, {5, 0, 0, 0, 0x2000}, {5, 0, 0, 0, 0x2000}, {5, 0, 0, 0, 0x2000}, {5, 0, 0, 0, 0x2000}};
         requireSliceAddresses(thickVolume(TextureTileMode::kZ64KBX, 71, 33, 20, 12, 6), 8, 786432, xorZx64, "thin SW_64KB_Z_X 64 bpp 33x20x12, 6 levels");
     }

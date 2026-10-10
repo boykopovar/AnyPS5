@@ -703,6 +703,20 @@ void testRegisterListsReadAtSubmission() {
     check(std::atomic_ref<std::uint32_t>(done).load() == 1, "register list rewritten after submission was read by the worker");
 }
 
+void testSuspendPointWritesQueuedLabels() {
+    alignas(8) static std::uint32_t gate = 0, marker = 0;
+    gate = 0;
+    marker = 0;
+    auto words = joinPackets({makePacket(0x3c, {0x13, low(&gate), high(&gate), 1, 0xffffffffu, 0x190}),
+                              makePacket(0x49, {0x0030c514, 0x20000000, low(&marker), high(&marker), 1, 0, 0})});
+    submitWords(words);
+    AgcDriverSuspendPoint_nid_postfix();
+    std::atomic_ref<std::uint32_t>(gate).store(1);
+    for (int waited = 0; waited < 2000 && std::atomic_ref<std::uint32_t>(marker).load() == 0; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(std::atomic_ref<std::uint32_t>(marker).load() == 1, "a label queued before a suspend point was never written");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testConditionalSubmission() {
     alignas(8) static std::uint32_t zero = 0, one = 1, condition = 0;
     static std::array<std::uint32_t, 16> results{};
@@ -975,6 +989,7 @@ int main(int argc, char** argv) {
         testRegisterListsReadAtSubmission();
         testPredicatedSubmission();
         testConditionalSubmission();
+        testSuspendPointWritesQueuedLabels();
         testBranchSubmission();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");

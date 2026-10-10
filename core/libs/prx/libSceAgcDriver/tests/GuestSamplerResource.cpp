@@ -221,6 +221,21 @@ void RunSamplerReductionTests(const Fields& base) {
     reject([&] { pointFiltered(pack(maxLinearMip)); }, "needs point filtering");
 }
 
+void RunSamplerCacheDegammaTests(const Fields& base) {
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    Fields forcedSrgb = base;
+    forcedSrgb.forceSrgb = true;
+    const auto words = pack(forcedSrgb);
+    SamplerCache unpaired;
+    reject([&] { unpaired.Get(context, words, false); }, "forces sRGB decoding");
+    SamplerCache cache;
+    const auto paired = cache.Get(context, words, false, false, true);
+    Require(paired->ForcesDegamma() && cache.Get(context, words, false, false, true) == paired && cache.Misses() == 1u, "a paired FORCE_DEGAMMA sampler must be created once and then served from the cache");
+    reject([&] { cache.Get(context, words, false); }, "forces sRGB decoding");
+}
+
 }
 
 void RunGuestSamplerResourceTests() {
@@ -360,9 +375,14 @@ void RunGuestSamplerResourceTests() {
     reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized coordinates with MC_COORD_TRUNC");
     rejectUnnormalized(base, "bound as unnormalized without FORCE_UNNORMALIZED");
 
-    Fields badSrgb = base;
-    badSrgb.forceSrgb = true;
-    rejectFields(badSrgb, "forces sRGB decoding");
+    Fields forcedSrgb = base;
+    forcedSrgb.forceSrgb = true;
+    rejectFields(forcedSrgb, "forces sRGB decoding");
+    const auto forced = DecodeSamplerResource(pack(forcedSrgb), false, true);
+    const auto plain = DecodeSamplerResource(pack(base));
+    Require(forced.forceDegamma && !plain.forceDegamma, "FORCE_DEGAMMA must be decoded into forceDegamma");
+    Require(forced.magFilter == plain.magFilter && forced.minFilter == plain.minFilter && forced.mipmapMode == plain.mipmapMode && forced.maxLod == plain.maxLod, "FORCE_DEGAMMA must not change the host sampler state");
+    RunSamplerCacheDegammaTests(base);
 
     Fields truncated = base;
     truncated.truncCoord = true;

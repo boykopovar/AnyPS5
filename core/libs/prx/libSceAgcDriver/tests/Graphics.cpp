@@ -750,6 +750,56 @@ void DepthStencilTests() {
     queue.context[0x10b] = 0;
     queue.context[0x000] = 1;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
+    queue.context[0x000] = 0x22;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    const auto clears = [](const VkStencilOpState& face) {
+        return face.compareOp == VK_COMPARE_OP_ALWAYS && face.passOp == VK_STENCIL_OP_REPLACE && face.failOp == VK_STENCIL_OP_REPLACE && face.depthFailOp == VK_STENCIL_OP_REPLACE && face.writeMask == 0xff && face.reference == 7;
+    };
+    Require(state.stencilTest && clears(state.stencilFront) && clears(state.stencilBack), "a STENCIL_CLEAR_ENABLE draw does not store DB_STENCIL_CLEAR");
+    queue.context[0x200] = 0;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.stencilTest && clears(state.stencilFront), "a STENCIL_CLEAR_ENABLE draw without a stencil test does not store DB_STENCIL_CLEAR");
+    queue.context[0x002] = 0x02000000;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("writable stencil plane") != std::string::npos, "precheck accepted read-only stencil clear");
+    queue.context[0x002] = 0;
+    for (const auto offset : {0x31bu, 0x31cu, 0x31du}) queue.context[offset + 0xfu] = queue.context.at(offset);
+    for (const auto offset : {0x3b0u, 0x3b8u}) queue.context[offset + 1u] = queue.context.at(offset);
+    const auto secondColor = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
+    queue.context[0x327] = static_cast<std::uint32_t>(secondColor >> 8u);
+    queue.context[0x391] = static_cast<std::uint32_t>(secondColor >> 40u);
+    queue.context[0x1e1] = 0;
+    queue.context[0x8e] = 0xf3;
+    queue.context[0x8f] = 0xff;
+    queue.context[0x1c5] = 0x99;
+    queue.context[0x90] = 0x80000001;
+    queue.context[0x91] = 0x00020003;
+    queue.context[0x10b] = 0x00050050;
+    queue.context[0x10c] = 0x05ffff02;
+    queue.context[0x10d] = 0x090000ff;
+    for (const auto control : {0u, 1u, 0x81u}) {
+        queue.context[0x200] = control;
+        state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.stencilTest && clears(state.stencilFront) && clears(state.stencilBack), "stencil clear used the overridden stencil operations");
+        Require(state.depth && !state.depthTest && !state.depthWrite, "stencil clear changed depth state");
+        Require(state.colors.size() == 2 && state.blends.size() == 2 && state.colors[1].address == secondColor && state.blends[0].colorWriteMask == 3 && state.blends[1].colorWriteMask == 0xf, "stencil clear lost MRT color writes");
+        Require(state.scissor.offset.x == 1 && state.scissor.offset.y == 0 && state.scissor.extent.width == 2 && state.scissor.extent.height == 2, "stencil clear changed scissor coverage");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "precheck rejected combined color/stencil clear");
+    }
+    queue.context[0x002] = 0x01000000;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(!state.depthWrite && clears(state.stencilFront), "read-only depth prevented stencil clear");
+    queue.context[0x002] = 0;
+    for (const auto control : {1u, 4u, 8u}) {
+        queue.context[0x000] = 0x22u | control;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
+    }
+    queue.context[0x000] = 0x22;
+    queue.context[0x011] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("writable stencil plane") != std::string::npos, "precheck accepted clear without a stencil plane");
+    queue.context[0x010] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
     queue = makeState();
     queue.context[0x31b] = 1u << 26u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "mip exceeds");
@@ -1198,6 +1248,8 @@ struct MockVulkan {
     std::optional<VkDeviceSize> memoryLimit;
     std::uint64_t allocationAttempts = 0;
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
+    VkDescriptorSetLayoutCreateFlags layoutFlags = 0;
+    std::vector<VkDescriptorBindingFlags> layoutBindingFlags;
     std::vector<VkDescriptorPoolSize> poolSizes;
     std::uint32_t poolMaxSets = 0;
     VkDescriptorPoolCreateFlags poolFlags = 0;
@@ -1280,6 +1332,10 @@ VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const
 VKAPI_ATTR VkResult VKAPI_CALL mockCreateDescriptorSetLayout(VkDevice, const VkDescriptorSetLayoutCreateInfo* info, const VkAllocationCallbacks*, VkDescriptorSetLayout* layout) {
     *layout = makeHandle<VkDescriptorSetLayout>();
     mock.layoutBindings.assign(info->pBindings, info->pBindings + info->bindingCount);
+    mock.layoutFlags = info->flags;
+    const auto* bindingFlags = static_cast<const VkDescriptorSetLayoutBindingFlagsCreateInfo*>(info->pNext);
+    if (bindingFlags != nullptr) mock.layoutBindingFlags.assign(bindingFlags->pBindingFlags, bindingFlags->pBindingFlags + bindingFlags->bindingCount);
+    else mock.layoutBindingFlags.clear();
     ++mock.live;
     return VK_SUCCESS;
 }
@@ -1686,6 +1742,32 @@ void resourceTests() {
     expectSingleAccepted(changed([](auto& binding) { binding.count = 3; binding.guestDescriptor = join(join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)), vsharp(reinterpret_cast<const void*>(0x1000), 8)); }), "an unmapped V# element");
     expectSingleFailure(changed([&](auto& binding) { binding.count = 2; binding.guestDescriptor = join(vsharp(guestFirst.data(), 16), vsharp(reinterpret_cast<const void*>(state.color.address), 64)); }), "aliases the render target");
     expectSingleFailure(changed([](auto& binding) { binding.count = 17; binding.guestDescriptor.assign(68, 0); }), "per-stage limits");
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        std::vector<std::uint32_t> words;
+        for (int index = 0; index < 17; ++index) words = join(words, vsharp(reinterpret_cast<const void*>(0x1000), 8));
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 17, words));
+        auto updateAfterBind = mockContext();
+        updateAfterBind.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 17;
+        updateAfterBind.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
+        updateAfterBind.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 32;
+        mock = MockVulkan{};
+        {
+            AgcDriver::Graphics::ShaderResources resources(updateAfterBind, vertex, fragment, state.color, 0, 0);
+            Require(mock.layoutFlags == VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT, "buffers above the per-stage limit did not get an update-after-bind layout");
+            Require(mock.layoutBindingFlags.size() == 1 && mock.layoutBindingFlags[0] == VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, "the guest buffers binding is not update-after-bind");
+            Require(mock.poolFlags == VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT, "the update-after-bind set did not come from an update-after-bind pool");
+        }
+        Require(mock.live == 0, "update-after-bind shader resources leaked Vulkan objects");
+        updateAfterBind.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 16;
+        expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(updateAfterBind, vertex, fragment, state.color, 0, 0); }, "shader descriptors exceed per-stage limits");
+        Require(mock.live == 0, "failed update-after-bind shader resources leaked Vulkan objects");
+        mock = MockVulkan{};
+        vertex.bindings.front() = makeBinding(Role::GuestBuffers, 0, 1, vsharp(reinterpret_cast<const void*>(0x1000), 8));
+        { AgcDriver::Graphics::ShaderResources resources(updateAfterBind, vertex, fragment, state.color, 0, 0); }
+        Require(mock.layoutFlags == 0 && mock.layoutBindingFlags.empty() && mock.poolFlags == 0, "buffers within the per-stage limit took the update-after-bind path");
+    }
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
@@ -2940,6 +3022,7 @@ int main() {
         RunTextureFormatTests();
         RunTextureTilingTests();
         RunGuestTextureResourceTests();
+        RunDepthSurfaceReuseTests();
         RunGuestSamplerResourceTests();
         mock = MockVulkan{};
         auto textureDetilerContext = mockContext();

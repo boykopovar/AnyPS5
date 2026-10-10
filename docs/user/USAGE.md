@@ -27,6 +27,12 @@ Windows output:
 relinker --windows source/input.elf app.exe
 ```
 
+macOS output (x86-64 Mach-O, which runs under Rosetta on Apple silicon):
+
+```sh
+relinker --macos source/input.elf eboot
+```
+
 Add `--to-intel` for Intel hosts. The output format defaults to Linux ELF regardless of the filename; `.exe` alone does not select Windows.
 
 ## Options
@@ -36,6 +42,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | Option                        | Effect                                                                                                                                                                                                                                                                                                                  |
 |-------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `--windows`                   | Produce a Windows PE executable.                                                                                                                                                                                                                                                                                        |
+| `--macos`                     | Produce an x86-64 Mach-O executable, with bundled modules as Mach-O libraries in `app0/sce_module`. Conflicts with `--windows`.                                                                                                                                                                                         |
 | `--windows-diagnostics`       | Include startup dependency diagnostics. Requires `--windows`.                                                                                                                                                                                                                                                           |
 | `--windows-gui`               | Select the Windows GUI subsystem instead of the console subsystem. Requires `--windows`.                                                                                                                                                                                                                                |
 | `--to-intel`                  | Convert supported AMD-only instructions in the executable and bundled modules. Unsupported instructions or unreachable conversion stubs cause an error.                                                                                                                                                                 |

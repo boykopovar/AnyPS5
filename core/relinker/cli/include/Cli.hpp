@@ -13,6 +13,7 @@ struct Args {
     bool toIntel = false;
     bool writeRegistry = false;
     bool toWindows = false;
+    bool toMacos = false;
     bool lazyBinding = false;
     bool autorun = false;
     bool windowsDiagnostics = false;

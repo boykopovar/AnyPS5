@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <stdexcept>
 #include <thread>
 
@@ -31,6 +32,7 @@ int APS5_VABI sceNetEpollCreate(const char*, int);
 int APS5_VABI sceNetEpollControl(int, int, int, const NetEpollEvent*);
 int APS5_VABI sceNetEpollWait(int, NetEpollEvent*, int, int);
 int APS5_VABI sceNetEpollDestroy(int);
+int APS5_VABI sceNetEpollAbort(int, int);
 extern const std::uint32_t sce_net_in6addr_any[4];
 int APS5_VABI sceNetResolverCreate(const char*, int, int);
 int APS5_VABI sceNetResolverStartNtoa(int, const char*, void*, int, int, int);
@@ -91,6 +93,44 @@ static void CheckPoolStats() {
     Require(Failed(sceNetGetMemoryPoolStats(pool, nullptr), 22));
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, &stats), 9));
+}
+
+static void CheckEmptyEpoll() {
+    const int epoll = sceNetEpollCreate("empty-epoll", 0);
+    Require(epoll >= 0);
+    NetEpollEvent event{};
+    Require(sceNetEpollWait(epoll, &event, 1, 0) == 0);
+    std::array<std::chrono::steady_clock::duration, 9> elapsed{};
+    for (auto& sample : elapsed) {
+        const auto start = std::chrono::steady_clock::now();
+        Require(sceNetEpollWait(epoll, &event, 1, 1000) == 0);
+        sample = std::chrono::steady_clock::now() - start;
+        Require(sample >= std::chrono::microseconds(1000));
+    }
+#ifdef _WIN32
+    if (std::getenv("APS5_NO_TIMER_RESOLUTION") == nullptr) {
+        std::sort(elapsed.begin(), elapsed.end());
+        Require(elapsed[elapsed.size() / 2] < std::chrono::milliseconds(8));
+    }
+#endif
+    Require(sceNetEpollAbort(epoll, 0) == 0);
+    Require(Failed(sceNetEpollWait(epoll, &event, 1, 1000), 53));
+    Require(sceNetEpollWait(epoll, &event, 1, 0) == 0);
+    Require(sceNetEpollDestroy(epoll) == 0);
+
+    for (const bool abort : {true, false}) {
+        const int waiting_epoll = sceNetEpollCreate("waiting-epoll", 0);
+        Require(waiting_epoll >= 0);
+        auto waiter = std::async(std::launch::async, [waiting_epoll, abort] {
+            NetEpollEvent ready{};
+            Require(Failed(sceNetEpollWait(waiting_epoll, &ready, 1, -1), abort ? 53 : 9));
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require((abort ? sceNetEpollAbort(waiting_epoll, 0) : sceNetEpollDestroy(waiting_epoll)) == 0);
+        Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+        waiter.get();
+        if (abort) Require(sceNetEpollDestroy(waiting_epoll) == 0);
+    }
 }
 
 static void CheckMessages(int receiver, int sender, const std::array<std::uint8_t, 16>& address) {
@@ -217,6 +257,7 @@ int main() {
     }
     Require(sceNetInit_nid_postfix() == 0);
     CheckPoolStats();
+    CheckEmptyEpoll();
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
     CheckAddressText(28, "::1");
@@ -257,13 +298,17 @@ int main() {
     registration.events = 1;
     registration.ident = static_cast<std::uint64_t>(accepted);
     registration.data.u32 = 77;
+    NetEpollEvent ready{};
+    auto waiter = std::async(std::launch::async, [&] { return sceNetEpollWait(epoll, &ready, 1, -1); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     Require(sceNetEpollControl(epoll, 1, accepted, &registration) == 0);
     const char request[] = "guest tcp loopback";
     char response[sizeof(request)]{};
     Require(sceNetSend(client, request, sizeof(request), 0) == sizeof(request));
-    NetEpollEvent ready{};
-    const int ready_count = sceNetEpollWait(epoll, &ready, 1, 1000000);
-    Require(ready_count == 1 && (ready.events & 1) && ready.ident == static_cast<std::uint64_t>(accepted));
+    Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+    const int ready_count = waiter.get();
+    Require(ready_count == 1 && (ready.events & 1) && ready.ident == static_cast<std::uint64_t>(accepted) && ready.data.u32 == 77);
+    Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1);
     Require(sceNetRecv(accepted, response, sizeof(response), 0) == sizeof(response));
     Require(std::strcmp(request, response) == 0);
     char reply[] = "stream reply";

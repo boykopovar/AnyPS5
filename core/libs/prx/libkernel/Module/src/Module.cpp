@@ -18,6 +18,7 @@
 #include <mach-o/loader.h>
 #else
 #include <fstream>
+#include <string_view>
 #endif
 
 #ifdef _WIN32
@@ -34,6 +35,45 @@ void FillGuestUnwindInfo(const std::uint8_t* base, ModuleInfoForUnwind* info) {
   info->eh_frame_size = tables.framesSize;
   info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
   info->seg0_size = nt->OptionalHeader.SizeOfImage;
+}
+}
+#elif !defined(__APPLE__)
+extern "C" int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
+
+namespace {
+struct ImageSearch {
+  std::uint64_t address;
+  bool relinked;
+};
+
+int FindRelinkedImage(dl_phdr_info* image, std::size_t, void* data) {
+  auto& search = *static_cast<ImageSearch*>(data);
+  bool contains = false;
+  for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
+    const auto& header = image->dlpi_phdr[index];
+    const auto start = image->dlpi_addr + header.p_vaddr;
+    if (header.p_type == PT_LOAD && search.address >= start && search.address - start < header.p_memsz) contains = true;
+  }
+  if (!contains) return 0;
+  const std::string_view name = image->dlpi_name != nullptr ? image->dlpi_name : "";
+  search.relinked = name.empty() || name.ends_with(".guest.prx");
+  return 1;
+}
+
+bool IsRelinkedImage(std::uint64_t address) {
+  ImageSearch search{address, false};
+  dl_iterate_phdr(FindRelinkedImage, &search);
+  return search.relinked;
+}
+
+void FillGuestUnwindInfo(std::uint64_t address, ModuleInfoForUnwind* info) {
+  ModuleInfoEx module{};
+  module.st_size = sizeof(ModuleInfoEx);
+  if (sceKernelGetModuleInfoFromAddr(address, 2, &module) != 0)
+    throw std::runtime_error("sceKernelGetModuleInfoForUnwind: failed to query guest module information");
+  info->eh_frame_hdr_addr = module.eh_frame_hdr_addr;
+  info->eh_frame_addr = module.eh_frame_addr;
+  info->eh_frame_size = module.eh_frame_size;
 }
 }
 #endif
@@ -147,6 +187,7 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
     info->eh_frame_size = 0;
     info->seg0_addr = start;
     info->seg0_size = end - start;
+    if (IsRelinkedImage(addr)) FillGuestUnwindInfo(addr, info);
     return 0;
   }
   return SCE_KERNEL_ERROR_ESRCH;

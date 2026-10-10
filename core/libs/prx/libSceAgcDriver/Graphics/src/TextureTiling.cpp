@@ -335,8 +335,8 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
         mip.tailX = 0;
         mip.tailY = 0;
         const bool tiled = tileMode != TextureTileMode::kLinear;
-        const auto levelWidth = tiled ? std::max(ShiftCeil(elementsWidth0, level), 1u) : mip.width;
-        const auto levelHeight = tiled ? std::max(ShiftCeil(elementsHeight0, level), 1u) : mip.height;
+        const auto levelWidth = std::max(ShiftCeil(elementsWidth0, level), 1u);
+        const auto levelHeight = std::max(ShiftCeil(elementsHeight0, level), 1u);
         const auto paddedWidth = AlignUp(levelWidth, block[0]);
         mip.pitchBytes = paddedWidth * bytesPerElement;
         if (mip.tail) {
@@ -356,7 +356,7 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
             mip.tiledSize = blockBytes;
         } else if (!tiled) {
             mip.blocksPerRow = paddedWidth;
-            mip.tiledSize = static_cast<std::uint64_t>(mip.pitchBytes) * mip.height;
+            mip.tiledSize = static_cast<std::uint64_t>(mip.pitchBytes) * levelHeight;
         } else {
             mip.blocksPerRow = paddedWidth / block[0];
             mip.tiledSize = static_cast<std::uint64_t>(mip.blocksPerRow) * (AlignUp(levelHeight, block[1]) / block[1]) * blockBytes;

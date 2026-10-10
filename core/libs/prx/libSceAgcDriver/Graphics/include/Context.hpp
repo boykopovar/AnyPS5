@@ -137,6 +137,7 @@ struct Context {
     // VK_EXT_descriptor_indexing with non-uniform sampled/storage image array indexing enabled
     // (bindless image tables in graphics stages).
     bool descriptorIndexing = false;
+    VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorIndexingLimits{};
     bool imageInt64Atomics = false;
     bool geometryShader = false;
     bool sampleRateShading = false;

@@ -813,6 +813,9 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
         return cacheControlInstruction(RdnaInstructionFamily::MUBUF, cacheOp, opcode, programCounter, code, wordIndex);
     }
     const auto& info = lookupOpcode(mubufOpcodes, opcode, "MUBUF opcode is not supported");
+    if (((word0 >> 16u) & 1u) != 0u) {
+        throw std::runtime_error("unsupported MUBUF lds modifier");
+    }
 
     RdnaInstruction instruction{};
     instruction.programCounter = programCounter;

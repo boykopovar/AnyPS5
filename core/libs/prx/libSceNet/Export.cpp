@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #else
 #include <arpa/inet.h>
 #include <cerrno>
@@ -224,8 +225,58 @@ struct Sock {
     int snd_timeout_us = 0;
 };
 
-std::mutex g_mutex;
-std::condition_variable g_cv;
+#ifdef _WIN32
+struct HostMutex {
+    SRWLOCK native = SRWLOCK_INIT;
+
+    HostMutex() = default;
+    HostMutex(const HostMutex&) = delete;
+    HostMutex& operator=(const HostMutex&) = delete;
+
+    void lock() { AcquireSRWLockExclusive(&native); }
+    void unlock() { ReleaseSRWLockExclusive(&native); }
+};
+#else
+using HostMutex = std::mutex;
+#endif
+
+class HostCondition {
+public:
+    HostCondition() = default;
+    HostCondition(const HostCondition&) = delete;
+    HostCondition& operator=(const HostCondition&) = delete;
+
+    void NotifyAll() {
+#ifdef _WIN32
+        WakeAllConditionVariable(&native);
+#else
+        native.notify_all();
+#endif
+    }
+
+    void WaitUntil(std::unique_lock<HostMutex>& lock, std::chrono::steady_clock::time_point deadline) {
+#ifdef _WIN32
+        const auto now = std::chrono::steady_clock::now();
+        if (deadline <= now) return;
+        const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+        if (!SleepConditionVariableSRW(&native, &lock.mutex()->native, static_cast<DWORD>(milliseconds), 0) &&
+            GetLastError() != ERROR_TIMEOUT)
+            throw std::runtime_error("sceNetEpollWait: native condition wait failed");
+#else
+        native.wait_until(lock, deadline);
+#endif
+    }
+
+private:
+#ifdef _WIN32
+    CONDITION_VARIABLE native = CONDITION_VARIABLE_INIT;
+#else
+    std::condition_variable native;
+#endif
+};
+
+HostMutex g_mutex;
+HostCondition g_cv;
 std::map<int, Sock> g_socks;
 std::set<int> g_epolls;
 std::map<int, std::map<int, NetEpollEvent>> g_epoll_socks;
@@ -255,7 +306,7 @@ int fail(int err) {
 }
 
 void set_resolver_error(int rid, int error) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver != g_resolvers.end()) resolver->second = error;
 }
@@ -325,7 +376,7 @@ int* APS5_VABI sceNetErrnoLoc(void) {
 int PollSockets(KernelSocketPoll::Entry* entries, int count, int timeoutMilliseconds) {
     std::vector<std::shared_ptr<NativeSocketHandle>> natives(static_cast<std::size_t>(count));
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         for (int index = 0; index < count; ++index) {
             const auto socket = g_socks.find(entries[index].descriptor);
             if (socket != g_socks.end()) natives[static_cast<std::size_t>(index)] = socket->second.native;
@@ -382,13 +433,13 @@ int PollSockets(KernelSocketPoll::Entry* entries, int count, int timeoutMillisec
 const bool g_socketPollerRegistered = (KernelSetSocketPoller_nid_no_patch(&PollSockets), true);
 
 int APS5_VABI sceNetInit_nid_postfix(void) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     g_net_inited = true;
     return 0;
 }
 
 int APS5_VABI sceNetTerm(void) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     g_net_inited = false;
     return 0;
 }
@@ -399,14 +450,14 @@ int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags) {
     if (size <= 0) {
         return fail(NET_EINVAL);
     }
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     const int id = g_next_pool++;
     g_pools.emplace(id, static_cast<std::size_t>(size));
     return id;
 }
 
 int APS5_VABI sceNetPoolDestroy(int memid) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     return g_pools.erase(memid) != 0 ? 0 : fail(NET_EBADF);
 }
 
@@ -428,7 +479,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
         close_socket(native);
         return fail(12);
     }
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     const int fd = g_next_sock++;
     Sock s;
     s.family = family;
@@ -441,7 +492,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
 int APS5_VABI sceNetSocketClose(int s) {
     std::shared_ptr<NativeSocketHandle> native;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         native = it->second.native;
@@ -454,7 +505,7 @@ int APS5_VABI sceNetSocketClose(int s) {
         ::shutdown(native->value, SHUT_RDWR);
 #endif
     }
-    g_cv.notify_all();
+    g_cv.NotifyAll();
     return 0;
 }
 
@@ -462,7 +513,7 @@ int APS5_VABI sceNetSocketAbort(int s, int flags) {
     (void)flags;
     std::shared_ptr<NativeSocketHandle> native;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         it->second.aborted = true;
@@ -473,14 +524,14 @@ int APS5_VABI sceNetSocketAbort(int s, int flags) {
 #else
     if (native) ::shutdown(native->value, SHUT_RDWR);
 #endif
-    g_cv.notify_all();
+    g_cv.NotifyAll();
     return 0;
 }
 
 int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) {
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -492,7 +543,7 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
     if (::bind(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) != 0)
         return fail(native_error());
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     auto it = g_socks.find(s);
     if (it != g_socks.end()) it->second.bound = true;
     return 0;
@@ -501,14 +552,14 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
 int APS5_VABI sceNetListen(int s, int backlog) {
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
     }
     if (socket.type != NET_SOCK_STREAM) return fail(NET_EOPNOTSUPP);
     if (::listen(socket.native->value, backlog) != 0) return fail(native_error());
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     auto it = g_socks.find(s);
     if (it != g_socks.end()) {
         it->second.bound = true;
@@ -520,7 +571,7 @@ int APS5_VABI sceNetListen(int s, int backlog) {
 int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     Sock listener;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         listener = it->second;
@@ -545,7 +596,7 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     connection.native = std::move(handle);
     int descriptor;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         descriptor = g_next_sock++;
         g_socks.emplace(descriptor, connection);
     }
@@ -559,7 +610,7 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
 int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -581,7 +632,7 @@ int64_t APS5_VABI sceNetRecv(int s, void* buf, size_t len, int flags) {
     if (len > INT_MAX) return fail(NET_EMSGSIZE);
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -598,7 +649,7 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
     if (from && !fromlen) return fail(NET_EINVAL);
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -619,7 +670,7 @@ int64_t APS5_VABI sceNetSend(int s, const void* buf, size_t len, int flags) {
     if (len > INT_MAX) return fail(NET_EMSGSIZE);
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -634,7 +685,7 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
     if (len > INT_MAX) return fail(NET_EMSGSIZE);
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -678,7 +729,7 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
     if (flags != 0 && flags != NET_MSG_PEEK) return fail(NET_EOPNOTSUPP);
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -722,7 +773,7 @@ int APS5_VABI sceNetShutdown(int s, int how) {
     if (how < 0 || how > 2) return fail(NET_EINVAL);
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -733,7 +784,7 @@ int APS5_VABI sceNetShutdown(int s, int how) {
 int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval, uint32_t optlen) {
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -770,7 +821,7 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     } else {
         return fail(NET_EOPNOTSUPP);
     }
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     auto it = g_socks.find(s);
     if (it != g_socks.end()) {
         if (optname == NET_SO_NBIO) it->second.nonblock = value != 0;
@@ -783,7 +834,7 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
 int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint32_t* optlen) {
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -807,7 +858,7 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
 int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -823,7 +874,7 @@ int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
 int APS5_VABI sceNetGetpeername(int s, void* addr, uint32_t* addrlen) {
     Sock socket;
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
@@ -840,14 +891,14 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     (void)info;
     (void)n;
     (void)flags;
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     return g_socks.count(s) != 0 ? 0 : fail(NET_EBADF);
 }
 
 int APS5_VABI sceNetEpollCreate(const char* name, int flags) {
     (void)name;
     (void)flags;
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     const int id = g_next_epoll++;
     g_epolls.insert(id);
     g_epoll_socks.emplace(id, std::map<int, NetEpollEvent>{});
@@ -858,7 +909,7 @@ int APS5_VABI sceNetGetMemoryPoolStats(int memid, NetMemoryPoolStats* stats) {
     if (stats == nullptr) {
         return fail(NET_EINVAL);
     }
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     const auto pool = g_pools.find(memid);
     if (pool == g_pools.end()) {
         return fail(NET_EBADF);
@@ -868,29 +919,29 @@ int APS5_VABI sceNetGetMemoryPoolStats(int memid, NetMemoryPoolStats* stats) {
 }
 
 int APS5_VABI sceNetEpollDestroy(int eid) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     if (g_epolls.erase(eid) == 0) {
         return fail(NET_EBADF);
     }
     g_epoll_socks.erase(eid);
     g_epoll_aborted.erase(eid);
-    g_cv.notify_all();
+    g_cv.NotifyAll();
     return 0;
 }
 
 int APS5_VABI sceNetEpollAbort(int eid, int flags) {
     (void)flags;
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     if (g_epolls.count(eid) == 0) {
         return fail(NET_EBADF);
     }
     g_epoll_aborted.insert(eid);
-    g_cv.notify_all();
+    g_cv.NotifyAll();
     return 0;
 }
 
 int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     if (g_epolls.count(eid) == 0) {
         return fail(NET_EBADF);
     }
@@ -907,7 +958,7 @@ int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* e
         if (registration == registrations.end()) return fail(NET_ENOENT);
         registration->second = *event;
     }
-    g_cv.notify_all();
+    g_cv.NotifyAll();
     return 0;
 }
 
@@ -920,7 +971,7 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
         std::vector<NetEpollEvent> registered_events;
         std::vector<std::shared_ptr<NativeSocketHandle>> native_sockets;
         {
-            std::lock_guard<std::mutex> lk(g_mutex);
+            std::lock_guard lk(g_mutex);
             if (g_epolls.count(eid) == 0) return fail(NET_EBADF);
             if (g_epoll_aborted.erase(eid) != 0) return fail(NET_ECONNABORTED);
             const auto registration = g_epoll_socks.find(eid);
@@ -935,12 +986,12 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
         }
         if (registered_events.empty()) {
             if (timeout == 0) return 0;
-            std::unique_lock<std::mutex> lk(g_mutex);
+            std::unique_lock lk(g_mutex);
             const auto now = std::chrono::steady_clock::now();
             if (timeout > 0 && now >= deadline) return 0;
             const auto slice = std::chrono::milliseconds(100);
             const auto wake = timeout > 0 ? std::min(deadline, now + slice) : now + slice;
-            g_cv.wait_until(lk, wake);
+            g_cv.WaitUntil(lk, wake);
             continue;
         }
 
@@ -974,7 +1025,7 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
 #endif
         if (ready_count < 0) return fail(native_error());
         {
-            std::lock_guard<std::mutex> lk(g_mutex);
+            std::lock_guard lk(g_mutex);
             if (g_epolls.count(eid) == 0) return fail(NET_EBADF);
             if (g_epoll_aborted.erase(eid) != 0) return fail(NET_ECONNABORTED);
         }
@@ -1077,20 +1128,20 @@ int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
     (void)name;
     (void)memid;
     (void)flags;
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     const int id = g_next_resolver++;
     g_resolvers[id] = 0;
     return id;
 }
 
 int APS5_VABI sceNetResolverDestroy(int rid) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     return g_resolvers.erase(rid) != 0 ? 0 : fail(NET_EBADF);
 }
 
 int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std::uint32_t>& addresses) {
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
     }
     if (!initialize_sockets()) return fail(5);
@@ -1164,7 +1215,7 @@ int APS5_VABI sceNetResolverStartAton(int rid, const void* addr, char* hostname,
     (void)flags;
     if (!addr || !hostname || len <= 0) return fail(NET_EINVAL);
     {
-        std::lock_guard<std::mutex> lk(g_mutex);
+        std::lock_guard lk(g_mutex);
         if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
     }
     if (!initialize_sockets()) return fail(5);
@@ -1185,7 +1236,7 @@ int APS5_VABI sceNetResolverStartAton(int rid, const void* addr, char* hostname,
 
 int APS5_VABI sceNetResolverGetError(int rid, int* status) {
     if (!status) return fail(NET_EINVAL);
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver == g_resolvers.end()) return fail(NET_EBADF);
     *status = resolver->second;

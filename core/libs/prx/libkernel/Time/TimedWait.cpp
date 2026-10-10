@@ -60,6 +60,16 @@ HANDLE CreateHighResolutionTimer() {
 }
 
 bool TimerWait(HANDLE timer, std::uint64_t nanos) {
+    thread_local int depth = 0;
+    struct Nesting {
+        HANDLE own;
+        explicit Nesting(bool nested) : own(nested ? CreateHighResolutionTimer() : nullptr) { ++depth; }
+        ~Nesting() {
+            --depth;
+            if (own) CloseHandle(own);
+        }
+    } nesting(depth != 0);
+    if (depth > 1) timer = nesting.own;
     if (!timer) return false;
     LARGE_INTEGER due{};
     due.QuadPart = -static_cast<LONGLONG>(nanos / 100ULL);

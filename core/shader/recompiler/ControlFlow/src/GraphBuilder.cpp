@@ -1,4 +1,5 @@
 #include "ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/ControlFlowHelpers.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstdio>
@@ -12,36 +13,8 @@ namespace ShaderRecompiler {
 
 namespace {
 
-std::string toHexString(std::uint32_t value) {
-    char buffer[11];
-    std::snprintf(buffer, sizeof(buffer), "0x%08x", value);
-    return std::string(buffer);
-}
-
 std::uint32_t instructionEndProgramCounter(const RdnaInstruction& instruction) {
     return instruction.programCounter + instruction.wordCount * 4u;
-}
-
-void addUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
-    if (std::find(values.begin(), values.end(), value) == values.end()) {
-        values.push_back(value);
-    }
-}
-
-void sortUnique(std::vector<std::uint32_t>& values) {
-    std::sort(values.begin(), values.end());
-    values.erase(std::unique(values.begin(), values.end()), values.end());
-}
-
-std::uint32_t remapId(std::uint32_t id, const std::vector<std::uint32_t>& idMap) {
-    return id != InvalidControlFlowId && id < idMap.size() ? idMap[id] : id;
-}
-
-void remapIds(std::vector<std::uint32_t>& values, const std::vector<std::uint32_t>& idMap) {
-    for (auto& value : values) {
-        value = remapId(value, idMap);
-    }
-    sortUnique(values);
 }
 
 std::uint32_t estimatedSpirvWords(const RdnaInstruction& instruction) {
@@ -639,21 +612,6 @@ BranchCondition conditionForOpcode(RdnaOpcode opcode) {
         default: break;
     }
     throw std::logic_error("unreachable branch condition for opcode " + std::to_string(static_cast<int>(opcode)));
-}
-
-void rebuildPredecessors(ControlFlowGraph& graph) {
-    for (auto& block : graph.blocks) {
-        block.predecessors.clear();
-        sortUnique(block.successors);
-    }
-    for (const auto& block : graph.blocks) {
-        for (const auto successor : block.successors) {
-            addUnique(graph.blocks[successor].predecessors, block.id);
-        }
-    }
-    for (auto& block : graph.blocks) {
-        sortUnique(block.predecessors);
-    }
 }
 
 void pruneUnreachableBlocks(ControlFlowGraph& graph) {

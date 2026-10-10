@@ -136,6 +136,7 @@ std::pair<IrF32, IrU1> TranslationContext::unaryFloatSpecials(IrOpcode opcode, I
         const IrU1 overflow(ir.LogicalAnd(ir.IEqual(sign.Value(), ir.Constant(0u)), ir.UGreaterThan(magnitude.Value(), ir.Constant(0x42ffffffu))));
         const IrU1 underflow(ir.LogicalAnd(negative.Value(), ir.UGreaterThan(magnitude.Value(), ir.Constant(0x42fc0000u))));
         value = pick(overflow, ir.Constant(0x7f800000u), value);
+        value = IrU32(ir.Emit(IrOpcode::UMax32, IrType::U32, {&value.Value(), &ir.Constant(0x00800000u)}));
         value = pick(underflow, ir.Constant(0u), value);
         value = pick(zero, ir.Constant(0x3f800000u), value);
         break;

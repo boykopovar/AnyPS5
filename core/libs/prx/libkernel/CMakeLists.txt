@@ -7,6 +7,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/NativeStat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Terminal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Open.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/OpenFileLimit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/Rename.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
@@ -111,6 +112,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_posix_sem_init guest_posix_sem_post PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_process_time_tests ${LIBS_INCLUDE_DIR}/tests/GuestProcessTime.cpp)
+    target_include_directories(guest_process_time_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_process_time_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_process_time_tests)
+    add_test(NAME guest_process_time COMMAND guest_process_time_tests)
+    add_test(NAME guest_process_time_counter COMMAND guest_process_time_tests counter)
+    if(WIN32)
+        set_tests_properties(guest_process_time guest_process_time_counter PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_library(guest_module_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestModuleFixture.cpp)
     target_include_directories(guest_module_fixture PRIVATE ${LIBS_INCLUDE_DIR})
     add_custom_command(TARGET guest_module_fixture POST_BUILD
@@ -153,6 +164,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_module_info PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_file_timestamp_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileTimestamps.cpp)
+    target_include_directories(guest_file_timestamp_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_file_timestamp_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_file_timestamp_tests)
+    add_test(NAME guest_file_timestamps COMMAND guest_file_timestamp_tests)
+    if(WIN32)
+        set_tests_properties(guest_file_timestamps PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_filesystem_tests ${LIBS_INCLUDE_DIR}/tests/GuestFilesystem.cpp)
     target_include_directories(guest_filesystem_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -416,6 +436,13 @@ if(BUILD_TESTING)
         add_test(NAME guest_raise_exception COMMAND guest_raise_exception_tests)
         set_tests_properties(guest_raise_exception PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test_executable(guest_raise_nested_sleep_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseNestedSleep.cpp)
+        target_include_directories(guest_raise_nested_sleep_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_raise_nested_sleep_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_raise_nested_sleep_tests)
+        add_test(NAME guest_raise_nested_sleep COMMAND guest_raise_nested_sleep_tests)
+        set_tests_properties(guest_raise_nested_sleep PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(WIN32)
         add_library(guest_unwind_module_info_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestUnwindModuleInfoFixture.cpp)
@@ -428,6 +455,26 @@ if(BUILD_TESTING)
         add_test(NAME guest_unwind_module_info COMMAND guest_unwind_module_info_tests)
         set_tests_properties(guest_unwind_module_info PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_unwind_module_info_fixture>")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_library(guest_unwind_module_info_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestModuleFixture.cpp)
+        target_include_directories(guest_unwind_module_info_fixture PRIVATE ${LIBS_INCLUDE_DIR})
+        set_target_properties(guest_unwind_module_info_fixture PROPERTIES PREFIX "" OUTPUT_NAME guest_unwind_module_info_fixture.prx SUFFIX ".guest.prx")
+        add_library(guest_unwind_no_header_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestModuleFixture.cpp)
+        target_include_directories(guest_unwind_no_header_fixture PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_options(guest_unwind_no_header_fixture PRIVATE -Wl,--no-eh-frame-hdr)
+        set_target_properties(guest_unwind_no_header_fixture PROPERTIES PREFIX "" OUTPUT_NAME guest_unwind_no_header_fixture.prx SUFFIX ".guest.prx")
+        add_test_executable(guest_unwind_module_info_tests ${LIBS_INCLUDE_DIR}/tests/GuestUnwindModuleInfoLinux.cpp)
+        target_include_directories(guest_unwind_module_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_unwind_module_info_tests PRIVATE libkernel libc)
+        add_dependencies(guest_unwind_module_info_tests guest_unwind_module_info_fixture guest_unwind_no_header_fixture)
+        add_test(NAME guest_unwind_module_info COMMAND guest_unwind_module_info_tests guest_unwind_module_info_fixture.prx guest_unwind_no_header_fixture.prx)
+        set_tests_properties(guest_unwind_module_info PROPERTIES
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:guest_unwind_module_info_fixture>")
+        add_test_executable(guest_unwind_module_info_failure_tests ${LIBS_INCLUDE_DIR}/tests/GuestUnwindModuleInfoFailureLinux.cpp)
+        target_include_directories(guest_unwind_module_info_failure_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_unwind_module_info_failure_tests PRIVATE libkernel libc)
+        set_target_properties(guest_unwind_module_info_failure_tests PROPERTIES ENABLE_EXPORTS ON)
+        add_test(NAME guest_unwind_module_info_failure COMMAND guest_unwind_module_info_failure_tests)
     endif()
     add_test_executable(guest_sync_on_address_tests ${LIBS_INCLUDE_DIR}/tests/GuestSyncOnAddress.cpp)
     target_include_directories(guest_sync_on_address_tests PRIVATE ${LIBS_INCLUDE_DIR})

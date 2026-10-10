@@ -8,6 +8,7 @@
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
+#include <elfpatcher/macos/MacOsMachOPatcher.hpp>
 #include <io/ByteWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
@@ -39,7 +40,7 @@ int main(const int argc, char* argv[]) {
     try {
         auto extension = std::filesystem::path(args.outputPath).extension().string();
         for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
-        if (!args.toWindows && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";
+        if (!args.toWindows && !args.toMacos && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";
         Io::FileReader fileReader;
         Io::FileWriter fileWriter;
 
@@ -79,7 +80,7 @@ int main(const int argc, char* argv[]) {
             args.unusedFilterLevel
         );
 
-        std::cout << "System: " << (args.toWindows ? "Windows" : "Linux") << "; unused-filter=" << args.unusedFilterLevel << "\n";
+        std::cout << "System: " << (args.toWindows ? "Windows" : args.toMacos ? "macOS" : "Linux") << "; unused-filter=" << args.unusedFilterLevel << "\n";
         std::cout << "sce_module/sce_modules/prx processing: " << (args.skipSceModule ? "disabled (--skip-sce-module)" : "enabled") << '\n';
         for (const auto& name : args.excludedSceModules) std::cout << "Guest module excluded: " << name << '\n';
         auto result = pipeline->Relink(sourceBytes);
@@ -91,7 +92,7 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toMacos, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
         }
 
         if (args.writeRegistry) {
@@ -108,7 +109,9 @@ int main(const int argc, char* argv[]) {
         auto byteWriter = std::make_shared<Io::ByteWriter>();
 
         std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
-        if (args.toWindows) {
+        if (args.toMacos) {
+            patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>();
+        } else if (args.toWindows) {
             patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui, std::filesystem::path(args.inputPath).parent_path() / "sce_sys" / "icon0.png");
         } else {
             patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(

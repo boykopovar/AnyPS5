@@ -169,6 +169,8 @@ int main() {
         Check("compute lane", Threads);
         if (device->Target().subgroupSize < 32u) {
             std::printf("vertex draw skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
+        } else if ((device->SubgroupStages() & VK_SHADER_STAGE_VERTEX_BIT) == 0u) {
+            std::puts("vertex draw skipped, the device has no subgroup operations in vertex shaders");
         } else {
             Draw(*device);
             Check("vertex", Vertices);

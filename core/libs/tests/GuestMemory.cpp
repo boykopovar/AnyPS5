@@ -664,6 +664,24 @@ static void CheckSharedDirectMemoryLifecycle() {
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }
 
+static void CheckHeapAlignment() {
+    std::vector<std::pair<unsigned char*, std::size_t>> blocks;
+    for (std::size_t bytes = 1; bytes <= 600; ++bytes) blocks.emplace_back(static_cast<unsigned char*>(GuestHeap::GuestHeapAllocate_nid_postfix(bytes)), bytes);
+    for (const std::size_t bytes : {std::size_t{4000}, std::size_t{70000}, std::size_t{0x30000}}) blocks.emplace_back(static_cast<unsigned char*>(GuestHeap::GuestHeapAllocate_nid_postfix(bytes)), bytes);
+    auto* grown = static_cast<unsigned char*>(GuestHeap::GuestHeapReallocate_nid_postfix(GuestHeap::GuestHeapAllocate_nid_postfix(8), 333));
+    blocks.emplace_back(grown, 333);
+    for (std::size_t index = 0; index < blocks.size(); ++index) {
+        const auto [pointer, bytes] = blocks[index];
+        Require((reinterpret_cast<std::uintptr_t>(pointer) & 31u) == 0);
+        std::memset(pointer, static_cast<int>(index & 0xffu), bytes);
+    }
+    for (std::size_t index = 0; index < blocks.size(); ++index) {
+        const auto [pointer, bytes] = blocks[index];
+        for (std::size_t at = 0; at < bytes; ++at) Require(pointer[at] == static_cast<unsigned char>(index & 0xffu));
+        GuestHeap::GuestHeapFree_nid_postfix(pointer);
+    }
+}
+
 static void CheckHeapAfterMappingReuse() {
     constexpr std::size_t bytes = 0x30000;
     auto* pointer = static_cast<unsigned char*>(GuestHeap::GuestHeapAllocate_nid_postfix(bytes));
@@ -1080,6 +1098,7 @@ int main() {
     CheckSharedDirectMemoryLifecycle();
     CheckGetDirectMemoryType();
     CheckMtypeprotect();
+    CheckHeapAlignment();
     CheckHeapAfterMappingReuse();
 #ifdef _WIN32
     CheckNoOverwriteRejectsHostOccupiedMapping();
