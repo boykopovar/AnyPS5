@@ -30,6 +30,41 @@ struct KernelIovec {
 
 static constexpr int KERNEL_IOV_MAX = 1024;
 
+struct KernelStatfs {
+    std::uint32_t f_version;
+    std::uint32_t f_type;
+    std::uint64_t f_flags;
+    std::uint64_t f_bsize;
+    std::uint64_t f_iosize;
+    std::uint64_t f_blocks;
+    std::uint64_t f_bfree;
+    std::int64_t f_bavail;
+    std::uint64_t f_files;
+    std::int64_t f_ffree;
+    std::uint64_t f_syncwrites;
+    std::uint64_t f_asyncwrites;
+    std::uint64_t f_syncreads;
+    std::uint64_t f_asyncreads;
+    std::uint64_t f_spare[10];
+    std::uint32_t f_namemax;
+    std::uint32_t f_owner;
+    std::int32_t f_fsid[2];
+    char f_charspare[80];
+    char f_fstypename[16];
+    char f_mntfromname[88];
+    char f_mntonname[88];
+};
+static_assert(sizeof(KernelStatfs) == 472);
+static_assert(offsetof(KernelStatfs, f_bavail) == 48);
+static_assert(offsetof(KernelStatfs, f_namemax) == 184);
+static_assert(offsetof(KernelStatfs, f_fstypename) == 280);
+static_assert(offsetof(KernelStatfs, f_mntonname) == 384);
+
+static constexpr std::uint32_t KERNEL_STATFS_VERSION = 0x20030518;
+static constexpr std::uint64_t KERNEL_MNT_RDONLY = 0x1;
+static constexpr std::uint64_t KERNEL_MNT_NOEXEC = 0x4;
+static constexpr std::uint64_t KERNEL_MNT_NOSUID = 0x8;
+
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -237,6 +272,68 @@ static int PosixResult(int result) {
     return result < 0 ? PosixFailure(result & 0xffff) : result;
 }
 
+#ifdef _WIN32
+static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
+    if (!File::DirectoryDescriptorPath(descriptor)) {
+        const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+        if (handle == INVALID_HANDLE_VALUE) return GUEST_EBADF;
+        const DWORD type = ::GetFileType(handle);
+        if (type == FILE_TYPE_PIPE) return GUEST_EINVAL;
+        if (type != FILE_TYPE_DISK)
+            throw std::runtime_error("_fstatfs: descriptor " + std::to_string(descriptor) + " is not a file on a Windows volume");
+    }
+    const auto path = NativeDescriptorPath(descriptor);
+    if (!path) throw std::runtime_error("_fstatfs: no path for descriptor " + std::to_string(descriptor) + ", errno=" + std::to_string(errno));
+    std::wstring root(path->native().size() + 2, L'\0');
+    if (!::GetVolumePathNameW(path->c_str(), root.data(), static_cast<DWORD>(root.size())))
+        throw std::runtime_error("_fstatfs: GetVolumePathNameW failed for " + path->string() + ", error=" + std::to_string(::GetLastError()));
+    DWORD sectorsPerCluster = 0, bytesPerSector = 0, freeClusters = 0, totalClusters = 0;
+    ULARGE_INTEGER available{}, total{}, totalFree{};
+    DWORD nameMax = 0, volumeFlags = 0;
+    if (!::GetDiskFreeSpaceW(root.c_str(), &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters) ||
+        !::GetDiskFreeSpaceExW(root.c_str(), &available, &total, &totalFree) ||
+        !::GetVolumeInformationW(root.c_str(), nullptr, 0, nullptr, &nameMax, &volumeFlags, nullptr, 0))
+        throw std::runtime_error("_fstatfs: volume query failed for " + path->string() + ", error=" + std::to_string(::GetLastError()));
+    const std::uint64_t cluster = static_cast<std::uint64_t>(sectorsPerCluster) * bytesPerSector;
+    if (cluster == 0) throw std::runtime_error("_fstatfs: volume of " + path->string() + " reports no cluster size");
+    fs->f_flags = (volumeFlags & FILE_READ_ONLY_VOLUME) ? KERNEL_MNT_RDONLY : 0;
+    fs->f_bsize = cluster;
+    fs->f_iosize = cluster;
+    fs->f_blocks = total.QuadPart / cluster;
+    fs->f_bfree = totalFree.QuadPart / cluster;
+    fs->f_bavail = static_cast<std::int64_t>(available.QuadPart / cluster);
+    fs->f_namemax = nameMax;
+    return 0;
+}
+#else
+#include <sys/statvfs.h>
+#include <sys/vfs.h>
+static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
+    constexpr long PipeFilesystem = 0x50495045;
+    struct stat file{};
+    if (::fstat(descriptor, &file) != 0) return SceErrorFromErrno(errno) & 0xffff;
+    if (S_ISSOCK(file.st_mode)) return GUEST_EINVAL;
+    if (S_ISFIFO(file.st_mode)) {
+        struct statfs kind{};
+        if (::fstatfs(descriptor, &kind) == 0 && static_cast<long>(kind.f_type) == PipeFilesystem) return GUEST_EINVAL;
+    }
+    struct statvfs host{};
+    if (::fstatvfs(descriptor, &host) != 0) return SceErrorFromErrno(errno) & 0xffff;
+    if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
+    if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
+    if (host.f_flag & ST_NOEXEC) fs->f_flags |= KERNEL_MNT_NOEXEC;
+    fs->f_bsize = host.f_frsize != 0 ? host.f_frsize : host.f_bsize;
+    fs->f_iosize = host.f_bsize;
+    fs->f_blocks = host.f_blocks;
+    fs->f_bfree = host.f_bfree;
+    fs->f_bavail = static_cast<std::int64_t>(host.f_bavail);
+    fs->f_files = host.f_files;
+    fs->f_ffree = static_cast<std::int64_t>(host.f_favail);
+    fs->f_namemax = static_cast<std::uint32_t>(host.f_namemax);
+    return 0;
+}
+#endif
+
 extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     if (!descriptors) return PosixFailure(GUEST_EFAULT);
     const GuestArena::HostWrite destination(descriptors, 2 * sizeof(int));
@@ -300,6 +397,19 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(error));
 #endif
     }
+    return 0;
+}
+
+int APS5_VABI _fstatfs_nid_postfix(int d, KernelStatfs* buf) {
+    if (d >= GuestSockets::FirstDescriptor) return PosixFailure(GuestSockets::IsOpen(d) ? GUEST_EINVAL : GUEST_EBADF);
+    if (d < 0) return PosixFailure(GUEST_EBADF);
+    KernelStatfs result{};
+    result.f_version = KERNEL_STATFS_VERSION;
+    if (const int error = NativeFstatfs(d, &result)) return PosixFailure(error);
+    if (buf == nullptr) return PosixFailure(GUEST_EFAULT);
+    const GuestArena::HostWrite destination(buf, sizeof(result));
+    if (!destination.Open()) return PosixFailure(GUEST_EFAULT);
+    std::memcpy(buf, &result, sizeof(result));
     return 0;
 }
 
