@@ -2996,6 +2996,86 @@ void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
     std::cout << "unchanged CPU stamps: ok\n";
 }
 
+void settledBaselineTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+#ifdef _WIN32
+    std::cout << "generation baseline over a pending store: Linux write watch only\n";
+    return;
+#endif
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: generation baseline over a pending store not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::uint64_t offset = 0x2000;
+    constexpr std::size_t bytes = 6 * 65536;
+    const auto decided = PrepareImportWatch(base);
+    SetImportWatch(base, ImportWatch::Watch);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() { SetImportWatch(context, decided); }
+    } restore{base, decided};
+    for (const bool pending : {false, true}) {
+        void* block = AllocateWatched(bytes, 65536);
+        if (block == nullptr) {
+            std::cout << "no write watching: generation baseline over a pending store not tested\n";
+            return;
+        }
+        std::memset(block, 0x5a, bytes);
+        const auto blockAddress = reinterpret_cast<std::uint64_t>(block);
+        const auto address = blockAddress + offset;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, bytes, true, true, true);
+        }
+        struct Unregister {
+            const Context& context;
+            void* block;
+            std::uint64_t address;
+            std::size_t bytes;
+            ~Unregister() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, address, bytes);
+                ReleaseWatched(block, bytes);
+            }
+        } unregister{base, block, blockAddress, bytes};
+        AgcDriver::GuestMemory::CollectWritesUncached(blockAddress, bytes);
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kLinear;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto surfaceBytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
+        Require(HostImportFor(context, address, surfaceBytes) != nullptr && AgcDriver::GuestMemory::Watched(address, surfaceBytes), "(b) the surface is not a watched host import");
+        static_cast<void>(recorder.Commands());
+        if (pending) recorder.NotePendingWrite(address + 4096, 4096);
+        const auto before = recorder.Submissions();
+        {
+            auto image = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+            recorder.Keep(image);
+            if (pending) Require(recorder.Submissions() == before, "(b) an upload over a pending recorded store submitted the open batch to read its generation baseline");
+        }
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    std::cout << "generation baseline over a pending store: ok\n";
+}
+
 void importWindowTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     const auto& base = device.GetContext();
@@ -4484,6 +4564,10 @@ int main(int argc, char** argv) {
             unchangedCpuStampTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--settled-baseline-only") {
+            settledBaselineTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {
             completionCountTests(device, recorder);
             afterRecordedWorkTests(device, recorder);
@@ -4536,6 +4620,7 @@ int main(int argc, char** argv) {
         singlePassTests(device, recorder, false);
         singlePassTests(device, recorder, true);
         unchangedCpuStampTests(device, recorder);
+        settledBaselineTests(device, recorder);
         importWatchTests(device);
         staleGenerationTests(device, recorder);
         importWindowTests(device, recorder);
