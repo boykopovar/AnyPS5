@@ -2298,12 +2298,7 @@ namespace {
 
 std::shared_ptr<StorageTexture> metadataPassResident(const Context& context, const ColorTarget& color) {
     if (color.tileMode == ColorTileMode::Linear || context.detiler == nullptr) return nullptr;
-    std::shared_ptr<StorageTexture> resident;
-    try {
-        resident = CachedStorageSurface(context, SurfaceForTarget(color));
-    } catch (const std::exception&) {
-        return nullptr;
-    }
+    const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
     return resident != nullptr && resident->GuestBytes() == color.bytes ? resident : nullptr;
 }
 

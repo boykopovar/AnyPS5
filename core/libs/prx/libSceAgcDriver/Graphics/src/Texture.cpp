@@ -3022,10 +3022,6 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
             return false;
         }
     }
-    if (HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) == nullptr) {
-        refusal = "not imported";
-        return false;
-    }
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) {
         refusal = "no recorder";
