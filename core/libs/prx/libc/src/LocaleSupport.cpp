@@ -79,10 +79,15 @@ GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
 
 constexpr std::size_t GuestStringInlineCapacity = 15;
+constexpr std::size_t WideStringInlineCapacity = GuestStringInlineCapacity - 1;
 constexpr std::size_t GuestStringLargeAllocation = 0x1000;
 
 void ValidateCharacterRange(const char* first, const char* last, const char* function) {
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
+}
+
+void ValidateWideCharacterRange(const char16_t* first, const char16_t* last, const char* function) {
+    if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid wide character range");
 }
 
 void APS5_VABI DestroyCollate(GuestLocale::Facet*) {}
@@ -142,6 +147,56 @@ std::int64_t APS5_VABI CollateHash(const GuestLocale::CollateFacet*, const char*
 }
 
 const GuestLocale::CollateVtable g_collateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CollateCompare, CollateTransform, CollateHash};
+
+// std::collate<wchar_t> is the C locale as wcscoll and wcsxfrm model it: the order of the guest's 16-bit
+// code units, the shorter range first when one is a prefix of the other. The hash folds the same bytes the
+// order compares, low byte first, so it agrees with compare().
+int APS5_VABI CollateWideCompare(const GuestLocale::CollateFacet*, const char16_t* first1, const char16_t* last1, const char16_t* first2, const char16_t* last2) {
+    ValidateWideCharacterRange(first1, last1, "collate::do_compare");
+    ValidateWideCharacterRange(first2, last2, "collate::do_compare");
+    const auto length1 = static_cast<std::size_t>(last1 - first1);
+    const auto length2 = static_cast<std::size_t>(last2 - first2);
+    const auto common = std::min(length1, length2);
+    for (std::size_t index = 0; index < common; ++index) {
+        if (first1[index] != first2[index]) return first1[index] < first2[index] ? -1 : 1;
+    }
+    if (length1 == length2) return 0;
+    return length1 < length2 ? -1 : 1;
+}
+
+GuestLocale::String* APS5_VABI CollateWideTransform(GuestLocale::String* result, const GuestLocale::CollateFacet*, const char16_t* first, const char16_t* last) {
+    if (result == nullptr) throw std::invalid_argument("collate::do_transform: null result");
+    ValidateWideCharacterRange(first, last, "collate::do_transform");
+    const auto length = static_cast<std::size_t>(last - first);
+    if (length != 0 && std::find(first, last, u'\0') != last) throw std::runtime_error("collate::do_transform: embedded null characters are not supported");
+    const auto bytes = length * sizeof(char16_t);
+    if (bytes + sizeof(char16_t) >= GuestStringLargeAllocation) throw std::runtime_error("collate::do_transform: results of 2047 characters or more are not supported");
+    char* data = result->buffer;
+    std::size_t capacity = WideStringInlineCapacity;
+    if (bytes > capacity) {
+        capacity = bytes;
+        data = static_cast<char*>(_Znwm_nid_postfix(capacity + sizeof(char16_t)));
+    }
+    if (length != 0) std::memcpy(data, first, bytes);
+    std::memset(data + bytes, 0, sizeof(char16_t));
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+std::int64_t APS5_VABI CollateWideHash(const GuestLocale::CollateFacet*, const char16_t* first, const char16_t* last) {
+    ValidateWideCharacterRange(first, last, "collate::do_hash");
+    std::uint64_t hash = 0xcbf29ce484222325;
+    for (; first != last; ++first) {
+        const auto unit = static_cast<unsigned char>(*first);
+        hash = (hash ^ unit) * 0x100000001b3;
+        hash = (hash ^ static_cast<unsigned char>(*first >> 8)) * 0x100000001b3;
+    }
+    return static_cast<std::int64_t>(hash);
+}
+
+const GuestLocale::WideCollateVtable g_wideCollateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CollateWideCompare, CollateWideTransform, CollateWideHash};
 
 constexpr std::array<short, 257> MakeClassificationTable() {
     std::array<short, 257> table{};
@@ -257,8 +312,14 @@ GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_post
     return &g_classicLocale;
 }
 
-void APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet**, const GuestLocale::Implementation*) {
-    NotImplemented_nid_no_patch(__func__);
+std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    if (facet != nullptr && *facet == nullptr) {
+        if (locale == nullptr || *locale == nullptr || (*locale)->name == nullptr || std::strcmp((*locale)->name, "C") != 0) throw std::invalid_argument("collate::_Getcat: only the C locale is supported");
+        auto* collate = static_cast<GuestLocale::CollateFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::CollateFacet)));
+        *collate = {{&g_wideCollateVtable.facet, 0, 0}, nullptr, nullptr};
+        *facet = &collate->base;
+    }
+    return 1;
 }
 
 std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {

@@ -438,6 +438,12 @@ unsigned long long APS5_VABI wcstoull_nid_postfix(const char16_t* str, char16_t*
     return ParseAsciiPrefix(str, endptr, [base](const char* text, char** end) { return StopAtBinaryPrefix_nid_no_patch(text, end, base) ? 0ULL : std::strtoull(text, end, base); });
 }
 
+// The UCRT names wcstoul's deprecated non-underscored alias _WStoul, as this library already gives
+// strtoul the alias _Stoul and strtoull the alias _Stoull.
+unsigned long long APS5_VABI _WStoul_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
+    return wcstoul_nid_postfix(str, endptr, base);
+}
+
 int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second) {
     return wcscmp_nid_postfix(first, second);
 }

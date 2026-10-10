@@ -27,6 +27,7 @@ long long APS5_VABI wcstol_nid_postfix(const char16_t* str, char16_t** endptr, i
 long long APS5_VABI wcstoll_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 unsigned long long APS5_VABI wcstoull_nid_postfix(const char16_t* str, char16_t** endptr, int base);
+unsigned long long APS5_VABI _WStoul_nid_postfix(const char16_t* str, char16_t** endptr, int base);
 int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second);
 std::size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, std::size_t count);
 }
@@ -135,6 +136,17 @@ int main() {
     }
     require(wcstoll_nid_postfix(binary + 2, &end, 16) == 0xb101 && end == binary + 7);
 
+    require(_WStoul_nid_postfix(negative, &end, 10) == ULLONG_MAX - 41 && end == negative + 5);
+    require(_WStoul_nid_postfix(hex, &end, 16) == 31 && end == hex + 4);
+    require(_WStoul_nid_postfix(hex, &end, 0) == 31 && end == hex + 4);
+    require(_WStoul_nid_postfix(wideSpace, &end, 10) == 0 && end == wideSpace);
+    require(_WStoul_nid_postfix(letters, &end, 10) == 0 && end == letters);
+    require(_WStoul_nid_postfix(u"18446744073709551615", nullptr, 10) == ULLONG_MAX);
+    for (const int base : {0, 2}) {
+        require(_WStoul_nid_postfix(binary, &end, base) == 0 && end == binary + 3);
+    }
+    require(_WStoul_nid_postfix(binary + 2, &end, 16) == 0xb101 && end == binary + 7);
+
     const char16_t* scientific = u"3.5e2!";
     require(wcstod_nid_postfix(scientific, &end) == 350.0 && end == scientific + 5);
     require(wcstod_nid_postfix(letters, &end) == 0.0 && end == letters);
@@ -151,5 +163,16 @@ int main() {
     require(wcsxfrm_nid_postfix(transformed, u"wide", 8) == 4 && same(transformed, u"wide", 5) && transformed[5] == 0xaaaa);
     require(wcsxfrm_nid_postfix(transformed, u"much too long", 4) == 13);
     require(wcsxfrm_nid_postfix(nullptr, u"abc", 0) == 3);
+
+    const char16_t* aliasInputs[] = {negative, hex, wideSpace, wideDigit, letters, binary, scientific, half};
+    const int aliasBases[] = {0, 2, 8, 10, 16, 36};
+    for (const char16_t* input : aliasInputs) {
+        for (const int base : aliasBases) {
+            char16_t* aliasEnd = nullptr;
+            char16_t* directEnd = nullptr;
+            require(_WStoul_nid_postfix(input, &aliasEnd, base) == wcstoul_nid_postfix(input, &directEnd, base));
+            require(aliasEnd == directEnd);
+        }
+    }
     return 0;
 }

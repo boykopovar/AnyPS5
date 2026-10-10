@@ -58,6 +58,13 @@ struct CollateVtable {
     std::int64_t (APS5_VABI *hash)(const CollateFacet* self, const char* first, const char* last);
 };
 
+struct WideCollateVtable {
+    FacetVtable facet;
+    int (APS5_VABI *compare)(const CollateFacet* self, const char16_t* first1, const char16_t* last1, const char16_t* first2, const char16_t* last2);
+    String* (APS5_VABI *transform)(String* result, const CollateFacet* self, const char16_t* first, const char16_t* last);
+    std::int64_t (APS5_VABI *hash)(const CollateFacet* self, const char16_t* first, const char16_t* last);
+};
+
 struct IosBase {
     const void* vtable;
     std::int64_t standardStream;
@@ -89,6 +96,10 @@ static_assert(offsetof(CollateFacet, collation) == 0x10);
 static_assert(sizeof(CollateFacet) == 0x20);
 static_assert(offsetof(CollateVtable, compare) == 0x20);
 static_assert(offsetof(CollateVtable, hash) == 0x30);
+static_assert(offsetof(WideCollateVtable, compare) == 0x20);
+static_assert(offsetof(WideCollateVtable, transform) == 0x28);
+static_assert(offsetof(WideCollateVtable, hash) == 0x30);
+static_assert(sizeof(WideCollateVtable) == 0x38);
 static_assert(alignof(LocinfoStorage) == 8);
 
 }
