@@ -6,10 +6,11 @@
 namespace Io {
 
 std::vector<std::uint8_t> FileReader::Read(const std::string& path) {
+    const std::filesystem::path fsPath(path);
     std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error))
+    if (!std::filesystem::is_regular_file(fsPath, error))
         throw Domain::RelinkerException("Cannot open file: " + path);
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    std::ifstream f(fsPath, std::ios::binary | std::ios::ate);
     if (!f)
         throw Domain::RelinkerException("Cannot open file: " + path);
     const std::streamsize size = f.tellg();

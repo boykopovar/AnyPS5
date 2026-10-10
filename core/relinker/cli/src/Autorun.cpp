@@ -17,7 +17,8 @@ int Autorun(const std::string& absPath, bool toWindows) {
     }
 
 #ifdef _WIN32
-    const std::string cmd = "\"" + absPath + "\"";
+    const std::wstring cmd = L"\"" + std::filesystem::path(absPath).wstring() + L"\"";
+    const int rawCode = _wsystem(cmd.c_str());
 #else
     std::string cmd = "'";
     for (const char character : absPath) {
@@ -26,7 +27,9 @@ int Autorun(const std::string& absPath, bool toWindows) {
     }
     cmd += '\'';
 #endif
+#ifndef _WIN32
     const int rawCode = std::system(cmd.c_str());
+#endif
 
     int exitCode = rawCode;
 #ifdef _WIN32

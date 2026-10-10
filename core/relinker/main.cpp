@@ -28,7 +28,8 @@
 #include <string>
 #include <vector>
 
-int main(const int argc, char* argv[]) {
+namespace {
+int Run(const int argc, char* argv[]) {
     Cli::Args args;
     try {
         args = Cli::ParseArgs(argc, argv);
@@ -174,3 +175,20 @@ int main(const int argc, char* argv[]) {
 
     return 0;
 }
+}
+#ifdef _WIN32
+int wmain(const int argc, wchar_t* argv[]) {
+    std::vector<std::string> utf8Arguments;
+    utf8Arguments.reserve(static_cast<std::size_t>(argc));
+    utf8Arguments.emplace_back("relinker");
+    for (int index = 1; index < argc; ++index) utf8Arguments.emplace_back(std::filesystem::path(argv[index]).string());
+    std::vector<char*> arguments;
+    arguments.reserve(utf8Arguments.size());
+    for (auto& argument : utf8Arguments) arguments.push_back(argument.data());
+    return Run(argc, arguments.data());
+}
+#else
+int main(const int argc, char* argv[]) {
+    return Run(argc, argv);
+}
+#endif
