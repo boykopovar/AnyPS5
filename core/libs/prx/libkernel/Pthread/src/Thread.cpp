@@ -33,6 +33,134 @@ static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
 #include <windows.h>
 #include <process.h>
 #include <limits>
+#include <cstdio>
+#include <initializer_list>
+
+static void InstallGuestFsBase() {
+    const auto base = reinterpret_cast<const std::uint8_t*>(GetModuleHandleW(nullptr));
+    const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+    const auto& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+    if (directory.VirtualAddress == 0) return;
+    const auto tls = reinterpret_cast<const IMAGE_TLS_DIRECTORY64*>(base + directory.VirtualAddress);
+    const auto raw = tls->EndAddressOfRawData - tls->StartAddressOfRawData;
+    constexpr std::uint64_t threadControlBlock = 0x30;
+    if (raw <= threadControlBlock || tls->AddressOfIndex == 0) return;
+    const auto index = *reinterpret_cast<const DWORD*>(tls->AddressOfIndex);
+    std::uint64_t slots = 0;
+    __asm__ __volatile__("movq %%gs:0x58, %0" : "=r"(slots));
+    if (slots == 0) return;
+    auto* data = reinterpret_cast<std::uint8_t**>(slots)[index];
+    if (data == nullptr) return;
+    const auto fsBase = reinterpret_cast<std::uint64_t>(data + (raw - threadControlBlock));
+    __asm__ __volatile__("wrfsbase %0" :: "r"(fsBase));
+}
+
+static void* AllocateNear(void* target, std::size_t bytes) {
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const auto origin = reinterpret_cast<std::uintptr_t>(target);
+    const auto step = static_cast<std::uintptr_t>(info.dwAllocationGranularity);
+    const std::uintptr_t span = 0x70000000ull;
+    for (int direction = -1; direction <= 1; direction += 2) {
+        for (std::uintptr_t delta = step; delta < span; delta += step) {
+            const auto address = static_cast<std::uintptr_t>(static_cast<std::intptr_t>(origin) + static_cast<std::intptr_t>(direction) * static_cast<std::intptr_t>(delta));
+            void* allocated = VirtualAlloc(reinterpret_cast<void*>(address), bytes, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+            if (allocated != nullptr) return allocated;
+        }
+    }
+    return nullptr;
+}
+
+static void PatchGuestFsLoads() {
+    auto* image = reinterpret_cast<std::uint8_t*>(GetModuleHandleW(nullptr));
+    const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+    const auto& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+    if (directory.VirtualAddress == 0) return;
+    const auto tls = reinterpret_cast<const IMAGE_TLS_DIRECTORY64*>(image + directory.VirtualAddress);
+    const auto raw = tls->EndAddressOfRawData - tls->StartAddressOfRawData;
+    constexpr std::uint64_t threadControlBlock = 0x30;
+    if (raw <= threadControlBlock || tls->AddressOfIndex == 0) return;
+    const auto index = *reinterpret_cast<const DWORD*>(tls->AddressOfIndex);
+    auto* stub = static_cast<std::uint8_t*>(AllocateNear(image, 64));
+    if (stub == nullptr) {
+        std::fprintf(stderr, "[tls] no executable page within 2 GiB of the guest image\n");
+        std::fflush(stderr);
+        return;
+    }
+    std::size_t cursor = 0;
+    const auto emit = [&](std::initializer_list<std::uint8_t> bytes) {
+        for (const auto byte : bytes) stub[cursor++] = byte;
+    };
+    emit({0x51, 0x52, 0xB9});
+    std::memcpy(stub + cursor, &index, sizeof(index));
+    cursor += sizeof(index);
+    emit({0x65, 0x48, 0x8B, 0x04, 0x25, 0x58, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x04, 0xC8, 0x48, 0xB9});
+    const auto bias = raw - threadControlBlock;
+    std::memcpy(stub + cursor, &bias, sizeof(bias));
+    cursor += sizeof(bias);
+    emit({0x48, 0x01, 0xC8, 0x5A, 0x59, 0xC3});
+    const auto signature = std::uint8_t{0x64};
+    int patched = 0;
+    const auto sections = IMAGE_FIRST_SECTION(nt);
+    for (unsigned section = 0; section < nt->FileHeader.NumberOfSections; ++section) {
+        if ((sections[section].Characteristics & IMAGE_SCN_MEM_EXECUTE) == 0) continue;
+        auto* bytes = image + sections[section].VirtualAddress;
+        const auto size = sections[section].Misc.VirtualSize;
+        for (std::size_t offset = 0; offset + 9 <= size; ++offset) {
+            if (bytes[offset] != signature || bytes[offset + 1] != 0x48 || bytes[offset + 2] != 0x8b || bytes[offset + 3] != 0x04 || bytes[offset + 4] != 0x25) continue;
+            if (*reinterpret_cast<const std::uint32_t*>(bytes + offset + 5) != 0) continue;
+            std::size_t start = offset;
+            std::size_t length = 9;
+            if (offset >= 3 && bytes[offset - 1] == 0x66 && bytes[offset - 2] == 0x66 && bytes[offset - 3] == 0x66) {
+                start = offset - 3;
+                length = 12;
+            }
+            auto* site = bytes + start;
+            const auto relative = stub - (site + 5);
+            if (relative > std::numeric_limits<std::int32_t>::max() || relative < std::numeric_limits<std::int32_t>::min()) continue;
+            DWORD protect = 0;
+            if (!VirtualProtect(site, length, PAGE_EXECUTE_READWRITE, &protect)) continue;
+            site[0] = 0xe8;
+            const auto displacement = static_cast<std::int32_t>(relative);
+            std::memcpy(site + 1, &displacement, sizeof(displacement));
+            std::memset(site + 5, 0x90, length - 5);
+            VirtualProtect(site, length, protect, &protect);
+            FlushInstructionCache(GetCurrentProcess(), site, length);
+            ++patched;
+            offset = start + length - 1;
+        }
+    }
+    std::fprintf(stderr, "[tls] patched %d guest fs loads\n", patched);
+    std::fflush(stderr);
+}
+
+static LONG CALLBACK GuestInt45(EXCEPTION_POINTERS* info) {
+    const DWORD code = info->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_PRIV_INSTRUCTION && code != EXCEPTION_ILLEGAL_INSTRUCTION)
+        return EXCEPTION_CONTINUE_SEARCH;
+    auto* rip = reinterpret_cast<const std::uint8_t*>(info->ContextRecord->Rip);
+    if (rip[0] != 0xcd || rip[1] != 0x45) return EXCEPTION_CONTINUE_SEARCH;
+    const bool doesNotReturn = (rip[2] == 0x0f && rip[3] == 0x0b) || (rip[2] == 0x90 && rip[3] == 0x0f && rip[4] == 0x0b);
+    std::fprintf(stderr, "[syscall] int 0x45 at %p%s\n", static_cast<const void*>(rip), doesNotReturn ? " (no return)" : "");
+    std::fflush(stderr);
+    if (doesNotReturn) ExitProcess(1);
+    info->ContextRecord->Rip += 2;
+    info->ContextRecord->Rax = 0;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static const bool _installedGuestFsBase = [] {
+    AddVectoredExceptionHandler(1, GuestInt45);
+    PatchGuestFsLoads();
+    InstallGuestFsBase();
+    return true;
+}();
 #endif
 
 struct ThreadArgs {
@@ -266,6 +394,9 @@ static void finishThread(PthreadPrivate* self, void* retval) {
 }
 
 static void RunThread(std::unique_ptr<ThreadArgs> args) {
+#ifdef _WIN32
+    InstallGuestFsBase();
+#endif
     APS5_LOG_OUT("RunThread entry=0x%llx arg=%p self=%p", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(args->entry)), args->arg, static_cast<void*>(args->self));
     const auto entry = args->entry;
     void* arg = args->arg;

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
-#include <cstdio>
 #include <iterator>
 #include <map>
 #include <mutex>
@@ -66,7 +65,12 @@ public:
             if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
             candidate = std::max(candidate, alignUp(end, alignment));
         }
-        if (candidate > _end || bytes > _end - candidate) throw std::runtime_error("guest address space arena exhausted");
+        if (candidate > _end || bytes > _end - candidate) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "guest address space arena exhausted: requested 0x%zx bytes (align 0x%zx, hint 0x%llx), candidate 0x%llx, end 0x%llx, used_count %zu",
+                          bytes, alignment, static_cast<unsigned long long>(hint), static_cast<unsigned long long>(candidate), static_cast<unsigned long long>(_end), _used.size());
+            throw std::runtime_error(buf);
+        }
         _used.emplace(candidate, candidate + bytes);
         return reinterpret_cast<void*>(candidate);
     }
@@ -241,21 +245,21 @@ void GuestArenaSetPrivateMappingObserver_nid_postfix(void (*callback)(std::uintp
 }
 
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
-    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
-    const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
-    const auto created = WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
-    if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) {
-        for (const auto& [address, size] : created) callback(address, size, generation);
+    const auto inArena = Arena::Get().Contains(pointer, bytes);
+    const auto generation = inArena ? commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1 : 0;
+    const auto created = WindowsMappings::Get().Commit(pointer, bytes, protection, granule, inArena && Arena::Get().WriteWatched());
+    if (inArena) {
+        if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) {
+            for (const auto& [address, size] : created) callback(address, size, generation);
+        }
     }
 }
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
-    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
     WindowsMappings::Get().Reset(pointer, bytes);
 }
 
 void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
-    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("shared mapping", pointer, bytes);
     WindowsMappings::Get().Map(pointer, bytes, section, offset, protection);
 }
 

@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include <atomic>
 #include <deque>
 #include <map>
@@ -285,7 +286,6 @@ int APS5_VABI sceHttp2SetRequestNoContentLength(int id) {
     return 0;
 }
 
-
 int APS5_VABI sceHttp2SetResolveRetry(int id, int32_t retry) {
     (void)id;
     (void)retry;
@@ -308,6 +308,12 @@ int APS5_VABI sceHttp2WebSocketSendTextMessageAsync() {
 }
 
 int APS5_VABI sceHttp2WebSocketSendDataMessageAsync() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("Gcjh+CisAZM", sceHttp2Unknown_GcjhCisAZM);
+int APS5_VABI sceHttp2Unknown_GcjhCisAZM(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

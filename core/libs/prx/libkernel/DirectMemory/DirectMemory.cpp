@@ -1,6 +1,7 @@
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/WindowsMappings.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -64,7 +65,21 @@ static void CommitArenaRange(void* addr, size_t len, DWORD winProt) {
 
 static void* mmap_aligned(size_t len, int prot, size_t alignment, std::uintptr_t hint = 0) {
     auto& arena = KernelArena::Get();
-    void* result = GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(hint, len, alignment);
+    void* result = nullptr;
+    try {
+        result = GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(hint, len, alignment);
+    } catch (const std::exception&) {
+        if (prot == PROT_NONE) {
+            void* raw = GuestArena::WindowsMappings::Get().Reserve(hint == 0 ? nullptr : reinterpret_cast<void*>(hint), len);
+            if (raw == nullptr && hint != 0) raw = GuestArena::WindowsMappings::Get().Reserve(nullptr, len);
+            if (raw != nullptr) {
+                std::fprintf(stderr, "[memory] reserved 0x%zx bytes outside the guest arena at %p\n", len, raw);
+                std::fflush(stderr);
+                return raw;
+            }
+        }
+        throw;
+    }
     if (prot != PROT_NONE) {
         try {
             CommitArenaRange(result, len, WinProtFromPosix(prot));
@@ -101,9 +116,17 @@ static void* mmap(void* addr, size_t len, int prot, int flags, int, int) {
 
 static int munmap(void* addr, size_t len) {
     auto& arena = KernelArena::Get();
-    if (arena.Contains(addr, len)) GuestArena::GuestArenaReset_nid_postfix(addr, len);
-    else if (!VirtualFree(addr, len, MEM_DECOMMIT)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualFree decommit failed");
-    if (arena.Contains(addr, len)) arena.Release(addr, len);
+    if (arena.Contains(addr, len)) {
+        GuestArena::GuestArenaReset_nid_postfix(addr, len);
+        arena.Release(addr, len);
+        return 0;
+    }
+    MEMORY_BASIC_INFORMATION info{};
+    if (VirtualQuery(addr, &info, sizeof(info)) == sizeof(info) && (info.State == MEM_RESERVE || info.Type == MEM_MAPPED)) {
+        GuestArena::GuestArenaReset_nid_postfix(addr, len);
+        return 0;
+    }
+    if (!VirtualFree(addr, len, MEM_DECOMMIT)) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualFree decommit failed");
     return 0;
 }
 

@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstddef>
@@ -127,6 +128,18 @@ int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle
         if (!ForceThreadDestructorPass(handle))
             break;
     }
+    return 0;
+}
+
+APS5_EXPORT("g0mZgRTFPoQ", sceLibcInternalUnknown_g0mZgRTFPoQ);
+int APS5_VABI sceLibcInternalUnknown_g0mZgRTFPoQ(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("nwujzxOPXzQ", sceLibcInternalUnknown_nwujzxOPXzQ);
+int APS5_VABI sceLibcInternalUnknown_nwujzxOPXzQ(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

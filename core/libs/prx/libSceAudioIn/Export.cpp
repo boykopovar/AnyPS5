@@ -191,4 +191,10 @@ int32_t APS5_VABI sceAudioInUnknown_X4jdIS75P0(void) {
  return 0;
 }
 
+APS5_EXPORT("3YQ1qY5ePUk", sceAudioInUnknown_3YQ1qY5ePUk);
+int32_t APS5_VABI sceAudioInUnknown_3YQ1qY5ePUk(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 }

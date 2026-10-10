@@ -2,12 +2,19 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 
 extern "C" {
 
 int APS5_VABI sceCoredumpWriteUserData() {
  NotImplemented_nid_no_patch(__func__);
  return 0;
+}
+
+APS5_EXPORT("32KQRUK13kI", stub_32KQRUK13kI);
+int APS5_VABI stub_32KQRUK13kI(void) {
+    NotImplemented_nid_no_patch("32KQRUK13kI");
+    return 0;
 }
 
 int APS5_VABI __tls_get_addr_nid_postfix(void) {

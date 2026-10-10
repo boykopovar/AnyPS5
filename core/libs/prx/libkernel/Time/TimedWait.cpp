@@ -175,7 +175,6 @@ bool WaitEventUntil(Waiter* waiter, std::uint64_t deadlineNanos) {
 
 Waiter* Condition::enqueue() {
     Waiter* waiter = AcquireWaiter();
-    std::lock_guard lock(queueLock);
     waiter->queued = true;
     waiter->next = nullptr;
     waiter->previous = tail;
@@ -183,6 +182,15 @@ Waiter* Condition::enqueue() {
     else head = waiter;
     tail = waiter;
     return waiter;
+}
+
+Waiter* Condition::BeginWait() {
+    std::lock_guard lock(queueLock);
+    if (pending != 0) {
+        --pending;
+        return nullptr;
+    }
+    return enqueue();
 }
 
 void Condition::unlink(Waiter* waiter) {
@@ -222,7 +230,10 @@ void Condition::NotifyOne() {
     }
     std::lock_guard lock(queueLock);
     Waiter* waiter = head;
-    if (!waiter) return;
+    if (!waiter) {
+        if (pending != 0xffffffffu) ++pending;
+        return;
+    }
     unlink(waiter);
     SetEvent(waiter->event);
 }

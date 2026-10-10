@@ -18,6 +18,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "SaveData.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
 
@@ -746,6 +747,18 @@ int APS5_VABI sceSaveDataConvert() {
 }
 
 int APS5_VABI sceSaveDataGetConvertProgress() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("8EA5OMIL1lQ", sceSaveDataUnknown_8EA5OMIL1lQ);
+int APS5_VABI sceSaveDataUnknown_8EA5OMIL1lQ(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("2mfSRGdshtk", sceSaveDataUnknown_2mfSRGdshtk);
+int APS5_VABI sceSaveDataUnknown_2mfSRGdshtk(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

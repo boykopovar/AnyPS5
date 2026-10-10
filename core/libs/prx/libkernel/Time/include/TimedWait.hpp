@@ -55,10 +55,11 @@ public:
     void Wait(TLock& lock) {
 #ifdef _WIN32
         if (!Coarse()) {
-            Waiter* waiter = enqueue();
-            lock.unlock();
-            waitSignal(waiter);
-            lock.lock();
+            if (Waiter* waiter = BeginWait()) {
+                lock.unlock();
+                waitSignal(waiter);
+                lock.lock();
+            }
             return;
         }
 #endif
@@ -69,7 +70,8 @@ public:
     bool WaitUntil(TLock& lock, std::uint64_t deadlineNanos) {
 #ifdef _WIN32
         if (!Coarse()) {
-            Waiter* waiter = enqueue();
+            Waiter* waiter = BeginWait();
+            if (waiter == nullptr) return true;
             lock.unlock();
             const bool signaled = waitSignalUntil(waiter, deadlineNanos);
             lock.lock();
@@ -95,6 +97,7 @@ public:
 private:
 #ifdef _WIN32
     Waiter* enqueue();
+    Waiter* BeginWait();
     void unlink(Waiter* waiter);
     void waitSignal(Waiter* waiter);
     bool waitSignalUntil(Waiter* waiter, std::uint64_t deadlineNanos);
@@ -102,6 +105,7 @@ private:
     std::mutex queueLock;
     Waiter* head = nullptr;
     Waiter* tail = nullptr;
+    std::uint32_t pending = 0;
 #endif
     std::condition_variable_any coarse;
 };

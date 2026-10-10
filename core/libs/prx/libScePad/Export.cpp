@@ -273,4 +273,10 @@ int APS5_VABI scePadSetAngularVelocityBiasCorrectionState() {
  return 0;
 }
 
+APS5_EXPORT("KLmYx9ij2h0", scePadUnknown_KLmYx9ij2h0);
+int APS5_VABI scePadUnknown_KLmYx9ij2h0(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 }
