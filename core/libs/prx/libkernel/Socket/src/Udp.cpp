@@ -67,6 +67,7 @@ int NativeError() {
         case WSAECONNREFUSED: return 61;
         case WSAEINTR: return 4;
         case WSAEINVAL: return 22;
+        case WSAESHUTDOWN: return 32;
         default: return 5;
     }
 #else

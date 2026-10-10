@@ -113,6 +113,7 @@ int native_error() {
         case WSAEINTR: return 4;
         case WSAEINVAL: return NET_EINVAL;
         case WSAENOTSOCK: return NET_ENOTSOCK;
+        case WSAESHUTDOWN: return 32;
         default: return 5;
     }
 }

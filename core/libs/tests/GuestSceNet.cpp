@@ -26,6 +26,7 @@ std::int64_t APS5_VABI sceNetRecv(int, void*, std::size_t, int);
 std::int64_t APS5_VABI sceNetSendto(int, const void*, std::size_t, int, const void*, std::uint32_t);
 std::int64_t APS5_VABI sceNetRecvfrom(int, void*, std::size_t, int, void*, std::uint32_t*);
 int APS5_VABI sceNetSocketClose(int);
+int APS5_VABI sceNetShutdown(int, int);
 int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
 int* APS5_VABI sceNetErrnoLoc(void);
 int APS5_VABI sceNetEpollCreate(const char*, int);
@@ -324,6 +325,8 @@ int main() {
     Require(sceNetSend(client, request, sizeof(request), 0) == sizeof(request));
     ready = {};
     Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1 && (ready.events & 1) && ready.ident == static_cast<std::uint64_t>(accepted));
+    Require(sceNetShutdown(accepted, 1) == 0);
+    Require(Failed(sceNetSend(accepted, request, sizeof(request), 0), 32));
     Require(sceNetEpollDestroy(epoll) == 0);
     Require(sceNetSocketClose(accepted) == 0);
     bool send_failed = false;
