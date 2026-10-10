@@ -30,7 +30,7 @@ enum TrySite { TryLabel = 0, TryFlush, TryReap, TryPoll, TryIdle, TryCapture, Tr
 
 extern std::atomic<std::uint64_t> triesFailed[TrySites];
 
-extern std::atomic<std::uint64_t> storesOnGpu, storesBehindCompletions, storesOnCpu, storesDrained;
+extern std::atomic<std::uint64_t> storesOnGpu, storesBehindCompletions, storesOnCpu, storesDrained, copiesToHostMemory;
 
 extern std::map<std::uint32_t, std::uint64_t> drainCounts;
 

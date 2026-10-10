@@ -2,6 +2,8 @@
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -440,6 +442,34 @@ void testMultiSubmissions() {
     }
 }
 
+std::array<std::uint32_t, 7> memoryCopy(const void* destination, const void* source, std::uint32_t bytes) {
+    const auto from = reinterpret_cast<std::uintptr_t>(source), to = reinterpret_cast<std::uintptr_t>(destination);
+    return {0xc0055000, 0x60000000, static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(static_cast<std::uint64_t>(from) >> 32u), static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(static_cast<std::uint64_t>(to) >> 32u), bytes};
+}
+
+void testCopyIntoHostMemory() {
+    constexpr std::size_t words = 32768;
+    constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
+    auto* produced = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlign_nid_postfix(65536, bytes));
+    auto* source = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlign_nid_postfix(65536, bytes));
+    std::vector<std::uint32_t> destination(words);
+    for (const bool label : {false, true}) {
+        for (std::size_t i = 0; i < words; ++i) {
+            produced[i] = 0xa5000000u | static_cast<std::uint32_t>(i);
+            source[i] = 0x5b000000u | static_cast<std::uint32_t>(i);
+        }
+        std::fill(destination.begin(), destination.end(), 0u);
+        const auto copiesBefore = AgcDriver::DriverDetail::copiesToHostMemory.load();
+        if (label) submit(0, commands(memoryCopy(source, produced, bytes), writeData(destination.data(), 0x1abe1u), memoryCopy(destination.data(), source, bytes)));
+        else submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(destination.data(), source, bytes)));
+        AgcDriverWaitIdle_nid_postfix();
+        check(std::equal(destination.begin(), destination.end(), produced), label ? "a copy into host memory behind a label into its destination lost bytes" : "a copy into host memory did not see the GPU copy into its source");
+        check(AgcDriver::DriverDetail::copiesToHostMemory.load() == copiesBefore + 1, "a copy into host memory drained instead of syncing its source");
+    }
+    GuestHeap::GuestHeapFree_nid_postfix(source);
+    GuestHeap::GuestHeapFree_nid_postfix(produced);
+}
+
 void testShaderHeaderAlignment() {
     alignas(256) static const std::array<std::uint32_t, 64> code{0xbf810000};
     struct Header {
@@ -643,6 +673,7 @@ int main() {
         testMultiSubmissions();
         testShaderHeaderAlignment();
         testHeaderWithoutProgramAddress();
+        testCopyIntoHostMemory();
         testRegisteredFloatMode();
         testWorkerFailure();
         check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("required shader register") != std::string::npos, "shutdown lost worker failure");
