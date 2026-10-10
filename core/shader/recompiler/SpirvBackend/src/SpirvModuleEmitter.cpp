@@ -1053,12 +1053,9 @@ std::uint32_t EmitMeshDrawParameter(SpirvValueEmitContext& ctx, const IrValue& i
     return result;
 }
 
-std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst) {
-    auto& state = ctx.state;
-    const auto index = inst.Argument(0)->ImmediateU32();
-    if (state.program.Resources().stage != IrShaderStage::Mesh || index >= MeshArgumentBytes / 4u) {
-        ctx.Fail(inst, "invalid mesh argument");
-    }
+namespace {
+
+std::uint32_t MeshArgumentAddress(SpirvEmitterState& state) {
     const auto push = [&](std::uint32_t dword) {
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, MeshDrawPushOffsetBytes / 4u + dword));
@@ -1068,7 +1065,42 @@ std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst) 
     };
     const auto low = push(MeshArgumentAddressDword);
     const auto high = push(MeshArgumentAddressDword + 1u);
-    const auto address = Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), low, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), high, ConstantU32(state, 32u)));
+    return Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), low, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), high, ConstantU32(state, 32u)));
+}
+
+std::uint32_t LoadMeshArgumentWord(SpirvEmitterState& state, std::uint32_t address, std::uint32_t dword) {
+    const auto element = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), Unary(state, spv::OpUConvert, TypeScalarU64(state), dword), ConstantU32(state, 2u)));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeU32(state)), pointer, element);
+    const auto loaded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), loaded, pointer, spv::MemoryAccessAlignedMask, 4u);
+    return loaded;
+}
+
+}
+
+std::uint32_t EmitMeshRestartStart(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.Resources().stage != IrShaderStage::Mesh) {
+        ctx.Fail(inst, "mesh restart table read outside a mesh shader");
+    }
+    return EmitValueOrZeroIfCondition(state, ctx.Arg(inst, 1), [&]() {
+        const auto address = MeshArgumentAddress(state);
+        const auto length = LoadMeshArgumentWord(state, address, ConstantU32(state, MeshRestartLengthDword));
+        const auto last = Binary(state, spv::OpISub, TypeU32(state), length, ConstantU32(state, 1u));
+        const auto position = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeU32(state), position, GlslStd450(state), GLSLstd450UMin, ctx.Arg(inst, 0), last);
+        return LoadMeshArgumentWord(state, address, Binary(state, spv::OpIAdd, TypeU32(state), position, ConstantU32(state, MeshRestartTableDword)));
+    });
+}
+
+std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto index = inst.Argument(0)->ImmediateU32();
+    if (state.program.Resources().stage != IrShaderStage::Mesh || index >= MeshArgumentBytes / 4u) {
+        ctx.Fail(inst, "invalid mesh argument");
+    }
+    const auto address = MeshArgumentAddress(state);
     const auto present = Binary(state, spv::OpINotEqual, TypeBool(state), address, BdaConstant(state, 0u));
     const auto before = state.currentLabel;
     const auto loadLabel = state.module.AllocateId();

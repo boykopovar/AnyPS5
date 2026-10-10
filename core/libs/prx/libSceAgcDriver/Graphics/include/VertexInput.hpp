@@ -246,6 +246,31 @@ inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> 
     return highest;
 }
 
+inline std::vector<std::uint32_t> MeshRestartTable(std::span<const std::byte> indices, std::uint32_t indexSize) {
+    Require(indexSize == 2 || indexSize == 4, "unsupported index size");
+    const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
+    std::vector<std::uint32_t> starts(indices.size() / indexSize);
+    std::uint32_t stripStart = 0;
+    bool restarted = false;
+    for (std::size_t position = 0; position < starts.size(); ++position) {
+        std::uint32_t index = 0;
+        if (indexSize == 2) {
+            std::uint16_t value = 0;
+            std::memcpy(&value, indices.data() + position * 2u, sizeof(value));
+            index = value;
+        } else {
+            std::memcpy(&index, indices.data() + position * 4u, sizeof(index));
+        }
+        if (index == restartIndex) {
+            restarted = true;
+            stripStart = static_cast<std::uint32_t>(position) + 1u;
+        }
+        starts[position] = stripStart;
+    }
+    if (!restarted) starts.clear();
+    return starts;
+}
+
 inline std::vector<std::size_t> SoloZeroPaddedFetchIndices(const std::vector<VertexFetch>& fetches, const std::vector<std::size_t>& fetchValid) {
     Require(fetchValid.size() == fetches.size(), "fetch validity does not match the fetch count");
     std::vector<std::size_t> solo;

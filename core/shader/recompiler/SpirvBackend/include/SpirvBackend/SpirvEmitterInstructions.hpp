@@ -62,6 +62,7 @@ void EmitVoid(SpirvValueEmitContext& context);
 void EmitBarrier(SpirvEmitterState& state);
 std::uint32_t EmitMeshDrawParameter(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst);
+std::uint32_t EmitMeshRestartStart(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitGetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitSetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitGetUserData(SpirvEmitterState& state, ScalarReg reg);

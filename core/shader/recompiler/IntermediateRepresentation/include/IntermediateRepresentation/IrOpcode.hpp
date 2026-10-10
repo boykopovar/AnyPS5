@@ -79,6 +79,7 @@ enum class IrOpcode : std::uint16_t {
     RealtimeClock,
     MeshDrawParameter,
     MeshArgument,
+    MeshRestartStart,
     MeshAllocate,
     TessellationBase,
     GetTessellationAttribute,

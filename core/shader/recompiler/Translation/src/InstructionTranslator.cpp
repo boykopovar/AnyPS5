@@ -262,12 +262,20 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& primitiveCount = minimum(subtractSaturate(primitives, waveBase), u32(options.waveSize));
         IrValue& waveInfo = entryIr.BitwiseOr(entryIr.ShiftLeftLogical(wave, u32(24u)), u32((totalThreads / options.waveSize) << 28u));
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.BitwiseOr(waveInfo, entryIr.BitwiseOr(entryIr.ShiftLeftLogical(primitiveCount, u32(8u)), vertexCount)));
-        IrValue& parity = mesh.inputPrimitive == kTriStripPrimitiveType ? entryIr.BitwiseAnd(entryIr.IAdd(firstPrimitive, local), u32(1u)) : u32(0u);
+        const bool strip = mesh.inputPrimitive == kTriStripPrimitiveType;
+        IrValue& indexWord = draw(3u);
+        IrValue& stripPosition = entryIr.IAdd(entryIr.IAdd(firstPrimitive, local), firstIndex);
+        IrValue& restartTable = entryIr.INotEqual(entryIr.BitwiseAnd(indexWord, u32(MeshIndexRestartTable)), u32(0u));
+        IrValue& stripStart = strip ? entryIr.Emit(IrOpcode::MeshRestartStart, IrOpcodeType(IrOpcode::MeshRestartStart), {&entryIr.IAdd(stripPosition, u32(2u)), &restartTable}) : u32(0u);
+        IrValue& parity = strip ? entryIr.BitwiseAnd(entryIr.ISub(stripPosition, entryIr.Emit(IrOpcode::UMax32, IrOpcodeType(IrOpcode::UMax32), {&stripStart, &firstIndex})), u32(1u)) : u32(0u);
         IrValue& vertex = entryIr.IMul(local, step);
         IrValue& item = u32(mesh.esgsItemSize);
-        IrValue& first = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item) : entryIr.IMul(entryIr.IAdd(vertex, parity), item);
-        IrValue& second = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : size >= 2u ? entryIr.IMul(entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity), item) : u32(0u);
-        IrValue& third = fan ? u32(0u) : size == 3u ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : u32(0u);
+        const auto unlessRestarted = [&](IrValue& offset) -> IrValue& {
+            return strip ? entryIr.Select(entryIr.ULessThan(stripPosition, stripStart), entryIr.IMul(vertex, item), offset) : offset;
+        };
+        IrValue& first = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item) : unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, parity), item));
+        IrValue& second = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : size >= 2u ? unlessRestarted(entryIr.IMul(entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity), item)) : u32(0u);
+        IrValue& third = fan ? u32(0u) : size == 3u ? unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item)) : u32(0u);
         entryIr.SetVectorReg(static_cast<VectorReg>(0), entryIr.BitwiseOr(entryIr.BitwiseAnd(first, u32(0xffffu)), entryIr.ShiftLeftLogical(second, u32(16u))));
         entryIr.SetVectorReg(static_cast<VectorReg>(1), entryIr.BitwiseAnd(third, u32(0xffffu)));
         entryIr.SetVectorReg(static_cast<VectorReg>(2), entryIr.IAdd(firstPrimitive, local));
@@ -277,7 +285,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             throw std::runtime_error("mesh shader translation requires the merged program's eight hidden user words");
         }
         IrValue& inputVertex = fan ? entryIr.Select(entryIr.IEqual(local, u32(0u)), u32(0u), entryIr.IAdd(firstVertex, local)) : entryIr.IAdd(firstVertex, local);
-        IrValue& indexBytes = draw(3u);
+        IrValue& indexBytes = entryIr.BitwiseAnd(indexWord, u32(0xffu));
         IrValue& indexed = entryIr.INotEqual(indexBytes, u32(0u));
         IrValue& byteOffset = entryIr.IMul(entryIr.IAdd(inputVertex, firstIndex), indexBytes);
         IrValue& indexResource = entryIr.Emit(IrOpcode::GetBufferResource, IrOpcodeType(IrOpcode::GetBufferResource), {&entryIr.GetUserData(static_cast<ScalarReg>(4)), &entryIr.GetUserData(static_cast<ScalarReg>(5)), &entryIr.GetUserData(static_cast<ScalarReg>(6)), &entryIr.GetUserData(static_cast<ScalarReg>(7))});
@@ -288,7 +296,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         for (std::uint32_t reg = 4u; reg < 8u; reg++) {
             entryIr.SetScalarReg(static_cast<ScalarReg>(reg), u32(0u));
         }
-        entryIr.SetVectorReg(static_cast<VectorReg>(5), entryIr.IAdd(draw(1u), entryIr.Select(indexed, index, inputVertex)));
+        IrValue& restartIndex = entryIr.Select(entryIr.IEqual(indexBytes, u32(2u)), u32(0xffffu), u32(0xffffffffu));
+        IrValue& fetchedIndex = entryIr.Select(entryIr.LogicalAnd(restartTable, entryIr.IEqual(index, restartIndex)), u32(0u), index);
+        entryIr.SetVectorReg(static_cast<VectorReg>(5), entryIr.IAdd(draw(1u), entryIr.Select(indexed, fetchedIndex, inputVertex)));
         entryIr.SetVectorReg(static_cast<VectorReg>(6), u32(0u));
         entryIr.SetVectorReg(static_cast<VectorReg>(7), u32(0u));
         entryIr.SetVectorReg(static_cast<VectorReg>(8), entryIr.IAdd(draw(2u), builtin(StageInputKind::WorkgroupId, 1u)));
