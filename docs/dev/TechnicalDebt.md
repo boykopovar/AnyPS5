@@ -7,6 +7,7 @@
   - libgcc_s_seh-1.dll
   - libstdc++-6.dll
   - libwinpthread-1.dll
+- winpthreads initializes a statically initialized rwlock on its first lock and fails a concurrent first lock with `EINVAL`, which `std::shared_mutex` and `std::shared_timed_mutex` ignore, so that lock does not exclude. Guest rwlocks ([Pthread.hpp](../../core/libs/prx/libkernel/Pthread/include/Pthread.hpp)) are locked once when created. The host `std::shared_mutex` objects in [Recompiler.cpp](../../core/shader/recompiler/Recompiler.cpp) and [GuestWriteWatch.cpp](../../core/libs/prx/libc/src/GuestWriteWatch.cpp) are not, and can still race on their first contended use.
 
 ### Silent stubs
 

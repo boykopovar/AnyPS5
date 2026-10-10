@@ -41,6 +41,12 @@ struct PthreadRwlockattrPrivate {
 };
 
 struct PthreadRwlockPrivate {
+    // TODO(technical debt): winpthreads initializes a static rwlock on first use and fails a
+    // concurrent first lock with EINVAL, which shared_timed_mutex ignores. Initialize it here.
+    PthreadRwlockPrivate() {
+        _lock.lock();
+        _lock.unlock();
+    }
     std::shared_timed_mutex _lock;
     std::atomic<std::thread::id> _writer;
 };
