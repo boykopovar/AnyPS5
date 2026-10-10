@@ -4,6 +4,12 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <algorithm>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 #endif
 #ifdef __APPLE__
 #include <dlfcn.h>
@@ -142,6 +148,37 @@ bool DecodeCandidate(_Unwind_Context& context, Frame& frame, const Lookup& query
     return true;
 }
 
+#ifdef _WIN32
+using FrameIndex = std::vector<std::pair<Word, const Byte*>>;
+
+const FrameIndex& IndexFrames(const Byte* begin, const Byte* end) {
+    static std::mutex mutex;
+    static std::unordered_map<const Byte*, std::unique_ptr<FrameIndex>> indexes;
+    std::lock_guard lock(mutex);
+    auto& index = indexes[begin];
+    if (index) return *index;
+    index = std::make_unique<FrameIndex>();
+    const Byte* p = begin;
+    while (end - p >= 8) {
+        const Byte* record = p;
+        const auto length = Read<std::uint32_t>(p);
+        if (!length) continue;
+        if (length == 0xffffffff || length < 4 || Word(end - p) < length) break;
+        const Byte* next = p + length;
+        if (Read<std::uint32_t>(p)) {
+            _Unwind_Context scratch {};
+            Frame candidate {};
+            const Lookup query {0, record};
+            DecodeCandidate(scratch, candidate, query);
+            if (candidate.length) index->emplace_back(candidate.start, record);
+        }
+        p = next;
+    }
+    std::sort(index->begin(), index->end());
+    return *index;
+}
+#endif
+
 bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
     Lookup query {context.registers[16] - !context.signalFrame};
 #if defined(__linux__) || defined(__APPLE__)
@@ -172,10 +209,14 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
 #endif
     return DecodeCandidate(context, frame, query);
 #else
-    MEMORY_BASIC_INFORMATION memory{};
-    if (!VirtualQuery(reinterpret_cast<void*>(query.pc), &memory, sizeof(memory)) || memory.Type != MEM_IMAGE)
-        return false;
-    const auto* base = static_cast<const Byte*>(memory.AllocationBase);
+    void* image = nullptr;
+    if (!RtlPcToFileHeader(reinterpret_cast<void*>(query.pc), &image) || !image) {
+        MEMORY_BASIC_INFORMATION memory{};
+        if (!VirtualQuery(reinterpret_cast<void*>(query.pc), &memory, sizeof(memory)) || memory.Type != MEM_IMAGE)
+            return false;
+        image = memory.AllocationBase;
+    }
+    const auto* base = static_cast<const Byte*>(image);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
@@ -205,21 +246,13 @@ bool DecodeFrame(_Unwind_Context& context, Frame& frame) {
             return DecodeCandidate(context, frame, query);
         }
         if (std::memcmp(section.Name, ".ehfram", 8) != 0) continue;
-        const Byte* p = base + section.VirtualAddress;
-        const Byte* end = p + section.Misc.VirtualSize;
-        while (end - p >= 8) {
-            const Byte* record = p;
-            const auto length = Read<std::uint32_t>(p);
-            if (!length) continue;
-            if (length == 0xffffffff || length < 4 || Word(end - p) < length) return false;
-            const Byte* next = p + length;
-            if (Read<std::uint32_t>(p)) {
-                query.fde = record;
-                frame = {};
-                if (DecodeCandidate(context, frame, query)) return true;
-            }
-            p = next;
-        }
+        const Byte* frames = base + section.VirtualAddress;
+        const auto& index = IndexFrames(frames, frames + section.Misc.VirtualSize);
+        auto found = std::upper_bound(index.begin(), index.end(), query.pc, [](Word pc, const std::pair<Word, const Byte*>& entry) { return pc < entry.first; });
+        if (found == index.begin()) continue;
+        query.fde = std::prev(found)->second;
+        frame = {};
+        if (DecodeCandidate(context, frame, query)) return true;
     }
     return false;
 #endif
