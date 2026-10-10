@@ -336,9 +336,152 @@ const MemoryInfo& SharedMemory(SpirvValueEmitContext& ctx, const IrValue& inst) 
     return mem;
 }
 
+constexpr std::uint32_t SharedApertureHigh = 0x80000000u;
+constexpr std::uint32_t PrivateApertureHigh = 0x70000000u;
+
+bool RoutesApertures(const SpirvEmitterState& state, const MemoryInfo& mem) {
+    return mem.kind == ResourceKind::Flat && state.program.Resources().stage == IrShaderStage::Compute;
+}
+
+struct ApertureAddress {
+    std::uint32_t low = 0;
+    std::uint32_t shared = 0;
+    std::uint32_t priv = 0;
+};
+
+ApertureAddress SplitAperture(SpirvEmitterState& state, std::uint32_t address) {
+    const auto u32 = TypeU32(state);
+    const auto high = Unary(state, spv::OpUConvert, u32, Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u)));
+    return {Unary(state, spv::OpUConvert, u32, address), Binary(state, spv::OpIEqual, TypeBool(state), high, ConstantU32(state, SharedApertureHigh)), Binary(state, spv::OpIEqual, TypeBool(state), high, ConstantU32(state, PrivateApertureHigh))};
+}
+
+std::uint32_t ApertureByteInBounds(SpirvEmitterState& state, const MemoryResourceAccess& resource, std::uint32_t byteOffset, std::uint32_t offset, std::uint32_t index) {
+    const auto noWrap = Binary(state, spv::OpULessThanEqual, TypeBool(state), byteOffset, ConstantU32(state, 0xffffffffu - offset));
+    return AndCondition(state, noWrap, EmitMemoryElementInBounds(state, resource, index));
+}
+
+std::uint32_t ApertureContained(SpirvEmitterState& state, std::uint32_t byteOffset, std::uint32_t bits) {
+    const auto inDword = Binary(state, spv::OpBitwiseAnd, TypeU32(state), byteOffset, ConstantU32(state, 3u));
+    return Binary(state, spv::OpULessThanEqual, TypeBool(state), EmitAddU32(state, inDword, ConstantU32(state, bits / 8u)), ConstantU32(state, 4u));
+}
+
+std::uint32_t LoadApertureDword(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t bits) {
+    auto& state = ctx.state;
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return ConstantU32(state, 0u);
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byteOffset, ConstantU32(state, 2u));
+    return EmitValueOrZeroIfCondition(state, EmitMemoryElementInBounds(state, resource, index), [&] {
+        return bits == 32u ? LoadWordInBounds(ctx, resource, index) : LoadSubwordInBounds(ctx, resource, byteOffset, index, bits, false);
+    });
+}
+
+std::uint32_t LoadApertureByte(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t offset) {
+    auto& state = ctx.state;
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return ConstantU32(state, 0u);
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto address = EmitAddU32(state, byteOffset, ConstantU32(state, offset));
+    const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u));
+    return EmitValueOrZeroIfCondition(state, ApertureByteInBounds(state, resource, byteOffset, offset, index), [&] {
+        return LoadSubwordInBounds(ctx, resource, address, index, 8u, false);
+    });
+}
+
+std::uint32_t ApertureElementInBounds(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t bits) {
+    auto& state = ctx.state;
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto last = bits / 8u - 1u;
+    const auto address = EmitAddU32(state, byteOffset, ConstantU32(state, last));
+    const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u));
+    return ApertureByteInBounds(state, resource, byteOffset, last, index);
+}
+
+std::uint32_t LoadApertureElement(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t bits) {
+    auto& state = ctx.state;
+    if (bits == 8u) return LoadApertureByte(ctx, kind, byteOffset, 0u);
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return ConstantU32(state, 0u);
+    return EmitValueOrZeroIfCondition(state, ApertureElementInBounds(ctx, kind, byteOffset, bits), [&] {
+        return EmitValueIfElse(state, ApertureContained(state, byteOffset, bits), TypeU32(state), [&] {
+            return LoadApertureDword(ctx, kind, byteOffset, bits);
+        }, [&] {
+            std::uint32_t value = ConstantU32(state, 0u);
+            for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
+                const auto part = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), LoadApertureByte(ctx, kind, byteOffset, byte), ConstantU32(state, byte * 8u));
+                value = Binary(state, spv::OpBitwiseOr, TypeU32(state), value, part);
+            }
+            return value;
+        });
+    });
+}
+
+void StoreApertureByte(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t offset, std::uint32_t data) {
+    auto& state = ctx.state;
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return;
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto address = EmitAddU32(state, byteOffset, ConstantU32(state, offset));
+    const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u));
+    EmitIfCondition(state, ApertureByteInBounds(state, resource, byteOffset, offset, index), [&] { StoreSubwordInBounds(ctx, storage, resource, address, index, 8u, data); });
+}
+
+void StoreApertureDword(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t bits, std::uint32_t data) {
+    auto& state = ctx.state;
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return;
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byteOffset, ConstantU32(state, 2u));
+    EmitIfCondition(state, EmitMemoryElementInBounds(state, resource, index), [&] {
+        if (bits == 32u) {
+            StoreWordInBounds(ctx, resource, index, data);
+        } else {
+            StoreSubwordInBounds(ctx, storage, resource, byteOffset, index, bits, data);
+        }
+    });
+}
+
+void StoreApertureElement(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t bits, std::uint32_t data) {
+    auto& state = ctx.state;
+    if (bits == 8u) {
+        StoreApertureByte(ctx, kind, byteOffset, 0u, data);
+        return;
+    }
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return;
+    EmitIfCondition(state, ApertureElementInBounds(ctx, kind, byteOffset, bits), [&] {
+        const auto contained = ApertureContained(state, byteOffset, bits);
+        EmitIfCondition(state, contained, [&] { StoreApertureDword(ctx, kind, byteOffset, bits, data); });
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), contained), [&] {
+            for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
+                StoreApertureByte(ctx, kind, byteOffset, byte, Binary(state, spv::OpShiftRightLogical, TypeU32(state), data, ConstantU32(state, byte * 8u)));
+            }
+        });
+    });
+}
+
+template<typename TAperture, typename TGlobal>
+std::uint32_t RouteFlatAccess(SpirvEmitterState& state, std::uint32_t address, std::uint32_t type, TAperture&& aperture, TGlobal&& global) {
+    const auto split = SplitAperture(state, address);
+    return EmitValueIfElse(state, split.shared, type, [&] { return aperture(ResourceKind::Lds, split.low); }, [&] {
+        return EmitValueIfElse(state, split.priv, type, [&] { return aperture(ResourceKind::Scratch, split.low); }, global);
+    });
+}
+
 void LoadAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t bits) {
     const auto& mem = ctx.Memory(inst);
     if (bits == 32u && mem.planningOnly) {
+        return;
+    }
+    if (RoutesApertures(ctx.state, mem)) {
+        ctx.Define(inst, EmitValueOrZeroIfCondition(ctx.state, ActiveArgument(ctx, inst), [&] {
+            const auto address = GuestAddress(ctx, inst, mem);
+            return RouteFlatAccess(ctx.state, address, TypeU32(ctx.state), [&](ResourceKind kind, std::uint32_t low) { return LoadApertureElement(ctx, kind, low, bits); }, [&] { return EmitBdaRead(ctx, inst, address, bits); });
+        }));
         return;
     }
     switch (mem.kind) {
@@ -367,6 +510,22 @@ void LoadAddressWide(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint3
     if (mem.planningOnly) {
         return;
     }
+    if (RoutesApertures(ctx.state, mem)) {
+        auto& state = ctx.state;
+        const auto type = TypeU32Composite(state, components);
+        ctx.Define(inst, EmitValueOrDefaultIfCondition(state, ActiveArgument(ctx, inst), type, ConstantU32CompositeZero(state, components), [&] {
+            const auto base = GuestAddressBase(ctx, inst, mem);
+            const auto address = AddBdaImmediate(ctx, inst, base, static_cast<std::int32_t>(mem.offset));
+            return RouteFlatAccess(state, address, type, [&](ResourceKind kind, std::uint32_t low) {
+                std::array<std::uint32_t, 4> values{};
+                for (std::uint32_t component = 0; component < components; component++) {
+                    values[component] = LoadApertureElement(ctx, kind, Binary(state, spv::OpIAdd, TypeU32(state), low, ConstantU32(state, component * 4u)), 32u);
+                }
+                return ConstructU32Composite(state, components, values);
+            }, [&] { return ConstructU32Composite(state, components, EmitBdaDwordReads(ctx, inst, base, mem.offset, components)); });
+        }));
+        return;
+    }
     switch (mem.kind) {
     case ResourceKind::Flat:
     case ResourceKind::Global:
@@ -390,7 +549,18 @@ void StoreAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t
     case ResourceKind::Flat:
     case ResourceKind::Global:
         EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
-            EmitBdaStore(ctx, inst, GuestAddress(ctx, inst, mem), ctx.Arg(inst, inst.ArgumentCount() - 2u), bits);
+            auto& state = ctx.state;
+            const auto address = GuestAddress(ctx, inst, mem);
+            const auto data = ctx.Arg(inst, inst.ArgumentCount() - 2u);
+            if (!RoutesApertures(state, mem)) {
+                EmitBdaStore(ctx, inst, address, data, bits);
+                return;
+            }
+            const auto split = SplitAperture(state, address);
+            EmitIfCondition(state, split.shared, [&] { StoreApertureElement(ctx, ResourceKind::Lds, split.low, bits, data); });
+            EmitIfCondition(state, split.priv, [&] { StoreApertureElement(ctx, ResourceKind::Scratch, split.low, bits, data); });
+            const auto global = Unary(state, spv::OpLogicalNot, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), split.shared, split.priv));
+            EmitIfCondition(state, global, [&] { EmitBdaStore(ctx, inst, address, data, bits); });
         });
         return;
     default:
@@ -734,6 +904,163 @@ std::uint32_t AddressAtomicOpcode(IrOpcode opcode) {
     }
 }
 
+std::uint32_t FlatAtomicNext32(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator) {
+    const auto u32 = TypeU32(state);
+    const auto winner = [&](spv::Op compare) {
+        return Select(state, u32, Binary(state, compare, TypeBool(state), old, value), old, value);
+    };
+    switch (opcode) {
+    case IrOpcode::AddressAtomicSwap32:
+        return value;
+    case IrOpcode::AddressAtomicCmpSwap32:
+        return Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), old, comparator), value, old);
+    case IrOpcode::AddressAtomicIAdd32:
+        return Binary(state, spv::OpIAdd, u32, old, value);
+    case IrOpcode::AddressAtomicISub32:
+        return Binary(state, spv::OpISub, u32, old, value);
+    case IrOpcode::AddressAtomicSMin32:
+        return winner(spv::OpSLessThan);
+    case IrOpcode::AddressAtomicUMin32:
+        return winner(spv::OpULessThan);
+    case IrOpcode::AddressAtomicSMax32:
+        return winner(spv::OpSGreaterThan);
+    case IrOpcode::AddressAtomicUMax32:
+        return winner(spv::OpUGreaterThan);
+    case IrOpcode::AddressAtomicAnd32:
+        return Binary(state, spv::OpBitwiseAnd, u32, old, value);
+    case IrOpcode::AddressAtomicOr32:
+        return Binary(state, spv::OpBitwiseOr, u32, old, value);
+    case IrOpcode::AddressAtomicXor32:
+        return Binary(state, spv::OpBitwiseXor, u32, old, value);
+    case IrOpcode::AddressAtomicInc32:
+        return AtomicIncrement(state, old, value);
+    case IrOpcode::AddressAtomicDec32:
+        return AtomicDecrement(state, old, value);
+    case IrOpcode::AddressAtomicUSubSat32:
+        return AtomicUSubSat(state, old, value);
+    case IrOpcode::AddressAtomicFMin32:
+        return AtomicFloatBits{state, false}.minMax(old, value, false);
+    case IrOpcode::AddressAtomicFMax32:
+        return AtomicFloatBits{state, false}.minMax(old, value, true);
+    case IrOpcode::AddressAtomicFCmpSwap32:
+        return AtomicFloatBits{state, false}.compareSwap(old, comparator, value);
+    default:
+        throw std::runtime_error("FlatAtomicNext32: opcode has no aperture lowering");
+    }
+}
+
+std::uint32_t ApertureAtomic32(SpirvValueEmitContext& ctx, const IrValue& inst, ResourceKind kind, std::uint32_t address, std::uint32_t byteOffset, std::uint32_t value, std::uint32_t comparator) {
+    auto& state = ctx.state;
+    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), byteOffset, ConstantU32(state, 3u)), ConstantU32(state, 0u));
+    EmitIfCondition(state, unaligned, [&] { RecordBdaFault(state, address, ConstantU32(state, 4u), instruction, BdaAbi::FaultReason::Unaligned); });
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return ConstantU32(state, 0u);
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byteOffset, ConstantU32(state, 2u));
+    const auto aligned = Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned);
+    const auto opcode = inst.Opcode();
+    return EmitValueOrZeroIfCondition(state, aligned, [&] {
+        return EmitValueOrZeroIfCondition(state, EmitMemoryElementInBounds(state, resource, index), [&] {
+            const auto pointer = EmitMemoryElementPointer(state, resource, index);
+            if (kind == ResourceKind::Lds) {
+                return AtomicUpdate(state, pointer, kind, [&](std::uint32_t current) { return FlatAtomicNext32(state, opcode, current, value, comparator); });
+            }
+            const auto old = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), old, pointer);
+            state.module.AddFunction(spv::OpStore, pointer, FlatAtomicNext32(state, opcode, old, value, comparator));
+            return old;
+        });
+    });
+}
+
+std::uint32_t FlatAtomicNext64(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator) {
+    const auto u64 = TypeScalarU64(state);
+    const AtomicFloatBits bits{state, true};
+    const auto winner = [&](spv::Op compare) {
+        return Select(state, u64, Binary(state, compare, TypeBool(state), old, value), old, value);
+    };
+    switch (opcode) {
+    case IrOpcode::AddressAtomicSwap64:
+        return value;
+    case IrOpcode::AddressAtomicCmpSwap64:
+        return Select(state, u64, Binary(state, spv::OpIEqual, TypeBool(state), old, comparator), value, old);
+    case IrOpcode::AddressAtomicIAdd64:
+        return Binary(state, spv::OpIAdd, u64, old, value);
+    case IrOpcode::AddressAtomicISub64:
+        return Binary(state, spv::OpISub, u64, old, value);
+    case IrOpcode::AddressAtomicSMin64:
+        return winner(spv::OpSLessThan);
+    case IrOpcode::AddressAtomicUMin64:
+        return winner(spv::OpULessThan);
+    case IrOpcode::AddressAtomicSMax64:
+        return winner(spv::OpSGreaterThan);
+    case IrOpcode::AddressAtomicUMax64:
+        return winner(spv::OpUGreaterThan);
+    case IrOpcode::AddressAtomicAnd64:
+        return Binary(state, spv::OpBitwiseAnd, u64, old, value);
+    case IrOpcode::AddressAtomicOr64:
+        return Binary(state, spv::OpBitwiseOr, u64, old, value);
+    case IrOpcode::AddressAtomicXor64:
+        return Binary(state, spv::OpBitwiseXor, u64, old, value);
+    case IrOpcode::AddressAtomicInc64:
+        return bits.increment(old, value);
+    case IrOpcode::AddressAtomicDec64:
+        return bits.decrement(old, value);
+    case IrOpcode::AddressAtomicFMin64:
+        return bits.minMax(old, value, false);
+    case IrOpcode::AddressAtomicFMax64:
+        return bits.minMax(old, value, true);
+    case IrOpcode::AddressAtomicFCmpSwap64:
+        return bits.compareSwap(old, comparator, value);
+    default:
+        throw std::runtime_error("FlatAtomicNext64: opcode has no aperture lowering");
+    }
+}
+
+template<typename TUpdate>
+std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, TUpdate&& update);
+
+std::uint32_t ApertureAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, ResourceKind kind, std::uint32_t address, std::uint32_t byteOffset, std::uint32_t value, std::uint32_t comparator) {
+    auto& state = ctx.state;
+    const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
+    const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), byteOffset, ConstantU32(state, 7u)), ConstantU32(state, 0u));
+    EmitIfCondition(state, unaligned, [&] { RecordBdaFault(state, address, ConstantU32(state, 8u), instruction, BdaAbi::FaultReason::Unaligned); });
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return ConstantU64(state, 0u);
+    if (kind == ResourceKind::Lds && !state.requirements.ldsLock) ctx.Fail(inst, "64-bit LDS atomic reached through a flat address without the workgroup lock");
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byteOffset, ConstantU32(state, 2u));
+    const auto high = EmitAddU32(state, low, ConstantU32(state, 1u));
+    const auto aligned = Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned);
+    const auto opcode = inst.Opcode();
+    return EmitValueOrDefaultIfCondition(state, aligned, TypeU64(state), ConstantU64(state, 0u), [&] {
+        return EmitValueOrDefaultIfCondition(state, EmitMemoryElementInBounds(state, resource, high), TypeU64(state), ConstantU64(state, 0u), [&] {
+            const auto update = [&]() {
+                const auto lowPointer = EmitMemoryElementPointer(state, resource, low);
+                const auto highPointer = EmitMemoryElementPointer(state, resource, high);
+                const auto lowValue = state.module.AllocateId();
+                const auto highValue = state.module.AllocateId();
+                state.module.AddFunction(spv::OpLoad, TypeU32(state), lowValue, lowPointer);
+                state.module.AddFunction(spv::OpLoad, TypeU32(state), highValue, highPointer);
+                const auto old = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeU64(state), old, lowValue, highValue);
+                const auto next = Unary(state, spv::OpBitcast, TypeU64(state), FlatAtomicNext64(state, opcode, Unary(state, spv::OpBitcast, TypeScalarU64(state), old), value, comparator));
+                const auto nextLow = state.module.AllocateId();
+                const auto nextHigh = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), nextLow, next, 0u);
+                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), nextHigh, next, 1u);
+                state.module.AddFunction(spv::OpStore, lowPointer, nextLow);
+                state.module.AddFunction(spv::OpStore, highPointer, nextHigh);
+                return old;
+            };
+            return kind == ResourceKind::Lds ? LockedLdsUpdate(state, update) : update();
+        });
+    });
+}
+
 std::uint32_t AddressAtomic(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto& mem = ctx.Memory(inst);
@@ -747,7 +1074,7 @@ std::uint32_t AddressAtomic(SpirvValueEmitContext& ctx, const IrValue& inst) {
         const auto scalarType = wide ? TypeScalarU64(state) : TypeU32(state);
         const auto scalar = [&](std::uint32_t value) { return wide ? Unary(state, spv::OpBitcast, scalarType, value) : value; };
         const auto value = scalar(ctx.Arg(inst, 3));
-        const auto old = EmitBdaAtomic(ctx, inst, GuestAddress(ctx, inst, mem), wide ? 8u : 4u, [&](std::uint32_t pointer) {
+        const auto operation = [&](std::uint32_t pointer) {
             if (inst.Opcode() == IrOpcode::AddressAtomicInc32 || inst.Opcode() == IrOpcode::AddressAtomicDec32) {
                 const bool increment = inst.Opcode() == IrOpcode::AddressAtomicInc32;
                 return AtomicUpdate(state, pointer, mem.kind, [&](std::uint32_t current) {
@@ -789,7 +1116,17 @@ std::uint32_t AddressAtomic(SpirvValueEmitContext& ctx, const IrValue& inst) {
             }
             EmitDeviceAtomicMemoryBarrier(state);
             return result;
-        });
+        };
+        if (RoutesApertures(state, mem)) {
+            const auto address = GuestAddress(ctx, inst, mem);
+            const bool hasComparator = inst.Opcode() == IrOpcode::AddressAtomicCmpSwap32 || inst.Opcode() == IrOpcode::AddressAtomicFCmpSwap32 || inst.Opcode() == IrOpcode::AddressAtomicCmpSwap64 || inst.Opcode() == IrOpcode::AddressAtomicFCmpSwap64;
+            const auto comparator = hasComparator ? scalar(ctx.Arg(inst, 4)) : 0u;
+            if (wide) {
+                return RouteFlatAccess(state, address, type, [&](ResourceKind kind, std::uint32_t low) { return ApertureAtomic64(ctx, inst, kind, address, low, value, comparator); }, [&] { return Unary(state, spv::OpBitcast, type, EmitBdaAtomic(ctx, inst, address, 8u, operation)); });
+            }
+            return RouteFlatAccess(state, address, TypeU32(state), [&](ResourceKind kind, std::uint32_t low) { return ApertureAtomic32(ctx, inst, kind, address, low, value, comparator); }, [&] { return EmitBdaAtomic(ctx, inst, address, 4u, operation); });
+        }
+        const auto old = EmitBdaAtomic(ctx, inst, GuestAddress(ctx, inst, mem), wide ? 8u : 4u, operation);
         return wide ? Unary(state, spv::OpBitcast, type, old) : old;
     });
 }
@@ -1119,7 +1456,25 @@ void StoreAddressWide(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint
     const auto& mem = ctx.Memory(inst);
     if (mem.kind != ResourceKind::Flat && mem.kind != ResourceKind::Global) ctx.Fail(inst, "must write a physical address resource");
     EmitIfCondition(ctx.state, ActiveArgument(ctx, inst), [&]() {
-        EmitBdaDwordWrites(ctx, inst, GuestAddressBase(ctx, inst, mem), mem.offset, components, ctx.Arg(inst, inst.ArgumentCount() - 2u));
+        auto& state = ctx.state;
+        const auto base = GuestAddressBase(ctx, inst, mem);
+        const auto data = ctx.Arg(inst, inst.ArgumentCount() - 2u);
+        if (!RoutesApertures(state, mem)) {
+            EmitBdaDwordWrites(ctx, inst, base, mem.offset, components, data);
+            return;
+        }
+        const auto split = SplitAperture(state, AddBdaImmediate(ctx, inst, base, static_cast<std::int32_t>(mem.offset)));
+        const auto storeAperture = [&](ResourceKind kind) {
+            for (std::uint32_t component = 0; component < components; component++) {
+                const auto value = state.module.AllocateId();
+                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, data, component);
+                StoreApertureElement(ctx, kind, Binary(state, spv::OpIAdd, TypeU32(state), split.low, ConstantU32(state, component * 4u)), 32u, value);
+            }
+        };
+        EmitIfCondition(state, split.shared, [&] { storeAperture(ResourceKind::Lds); });
+        EmitIfCondition(state, split.priv, [&] { storeAperture(ResourceKind::Scratch); });
+        const auto global = Unary(state, spv::OpLogicalNot, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), split.shared, split.priv));
+        EmitIfCondition(state, global, [&] { EmitBdaDwordWrites(ctx, inst, base, mem.offset, components, data); });
     });
 }
 
