@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 static constexpr int SCE_OK = 0;
+static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
 static constexpr int SCE_KERNEL_ERROR_ENOMEM = 0x8002000C;
 static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000B;
 static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
@@ -47,20 +48,25 @@ int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock) {
 #else
     lock->_lock.lock_shared();
 #endif
+    lock->_readers.fetch_add(1, std::memory_order_acq_rel);
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EBUSY;
-    return lock->_lock.try_lock_shared() ? SCE_OK : SCE_KERNEL_ERROR_EBUSY;
+    if (!lock->_lock.try_lock_shared()) return SCE_KERNEL_ERROR_EBUSY;
+    lock->_readers.fetch_add(1, std::memory_order_acq_rel);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadRwlockTimedrdlock(PthreadRwlock* rwlock, KernelUseconds usec) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EDEADLK;
     const bool locked = TimedWait::AcquireUntil(TimedWait::DeadlineNanos(usec), [&] { return lock->_lock.try_lock_shared(); }, [&](std::uint64_t micros) { return lock->_lock.try_lock_shared_for(std::chrono::microseconds(micros)); });
-    return locked ? SCE_OK : SCE_KERNEL_ERROR_ETIMEDOUT;
+    if (!locked) return SCE_KERNEL_ERROR_ETIMEDOUT;
+    lock->_readers.fetch_add(1, std::memory_order_acq_rel);
+    return SCE_OK;
 }
 
 int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock) {
@@ -96,9 +102,14 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) {
     if (OwnsWrite(lock)) {
         lock->_writer.store(std::thread::id{}, std::memory_order_release);
         lock->_lock.unlock();
-    } else {
-        lock->_lock.unlock_shared();
+        return SCE_OK;
     }
+    if (lock->_writer.load(std::memory_order_acquire) != std::thread::id{}) return SCE_KERNEL_ERROR_EPERM;
+    int readers = lock->_readers.load(std::memory_order_acquire);
+    do {
+        if (readers == 0) return SCE_KERNEL_ERROR_EPERM;
+    } while (!lock->_readers.compare_exchange_weak(readers, readers - 1, std::memory_order_acq_rel, std::memory_order_acquire));
+    lock->_lock.unlock_shared();
     return SCE_OK;
 }
 
