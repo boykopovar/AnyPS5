@@ -116,8 +116,9 @@ int APS5_VABI pthread_attr_setstack_nid_postfix(PthreadAttr* attr, void* stack_a
     return PosixThread::ToErrno(scePthreadAttrSetstack(attr, stack_addr, stack_size));
 }
 
-int APS5_VABI pthread_attr_setsolosched_np_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_attr_setsolosched_np_nid_postfix(PthreadAttr* attr, int solosched) {
+    if (!Valid(attr)) return PosixThread::GUEST_EINVAL;
+    (*attr)->_solosched = solosched;
     return 0;
 }
 
