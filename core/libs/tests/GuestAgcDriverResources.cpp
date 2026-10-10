@@ -27,9 +27,14 @@ int APS5_VABI sceAgcDriverFindResourcesPublic(const void*, void*);
 bool APS5_VABI sceAgcDriverIsCaptureInProgress(void);
 bool APS5_VABI sceAgcDriverIsTraceInProgress(void);
 bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void);
+int APS5_VABI sceAgcDriverRequestCaptureStart(const char*);
+int APS5_VABI sceAgcDriverRequestCaptureStop(void);
+int APS5_VABI sceAgcDriverTriggerCapture(void);
+int APS5_VABI sceAgcDriverGetShaderDebuggingStatus(void);
 }
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
+static constexpr int DebugUnavailable = static_cast<int>(0x8A6C1000);
 static void Require(bool value) { if (!value) std::abort(); }
 
 struct ResourceDescriptor {
@@ -91,4 +96,9 @@ int main() {
     Require(!sceAgcDriverIsCaptureInProgress());
     Require(!sceAgcDriverIsTraceInProgress());
     Require(!sceAgcDriverIsSubmitValidationEnabled());
+    Require(sceAgcDriverRequestCaptureStart("/data/capture") == DebugUnavailable);
+    Require(sceAgcDriverTriggerCapture() == DebugUnavailable);
+    Require(sceAgcDriverRequestCaptureStop() == DebugUnavailable);
+    Require(!sceAgcDriverIsCaptureInProgress());
+    Require(sceAgcDriverGetShaderDebuggingStatus() == 1);
 }
