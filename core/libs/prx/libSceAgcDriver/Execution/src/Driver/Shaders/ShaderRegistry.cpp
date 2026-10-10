@@ -452,6 +452,10 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     if (userCount > 32) throw std::runtime_error("AGC driver: static user SGPR count exceeds the register bank");
     if (stage == Stage::Compute) {
         compute = Graphics::DecodeComputeStageInfo(state.shader, snapshot.header);
+        if (header.specials == nullptr) {
+            if (deferred != nullptr) return defer("its header has no specials to give its wave size");
+            return {};
+        }
         const auto special = ReadHeaderArray(snapshot, header.specials, 1).front();
         wave = (special.dispatch_modifier & 0x8000u) != 0 ? 32u : 64u;
     } else if (stage == Stage::Fragment) {
