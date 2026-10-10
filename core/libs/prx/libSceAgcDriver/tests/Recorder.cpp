@@ -22,6 +22,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ResidentPresent.hpp"
+#include "HostImportLifetime.hpp"
 #include "SampleLod_spv.h"
 #include "SampleArray_spv.h"
 #include "Cover_vert_spv.h"
@@ -1751,17 +1752,17 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder) {
 // makes the unit stale), the scopes, the slab boundary, and the retire publish. With
 // APS5_UNIT_SHADOW_MIB=8 (one slab) the second slab's allocation evicts the first with a publish;
 // with APS5_NO_UNIT_SHADOW=1 every primitive is inert.
-void unitShadowTests(const Device& device, Recorder& recorder) {
+bool unitShadowTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
     if (!UnitShadowEnabled()) {
         Require(!AnyShadowedOverlaps(0x10000, 16) && PublishShadow(0x10000, 16, PublishScope::Whole, PublishReason::Hook) == 0, "unit shadows are off but not inert");
-        std::cout << "unit shadows off (APS5_NO_UNIT_SHADOW, or no write watching): primitives inert\n";
-        return;
+        std::cout << "skipped, host write watching is unavailable or unit shadows are disabled\n";
+        return false;
     }
     if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: unit shadows not tested\n";
-        return;
+        std::cout << "skipped, the device has no VK_EXT_external_memory_host\n";
+        return false;
     }
     constexpr std::uint64_t unit = 65536;
     // Three slabs at the default 8 MiB: units 0..127, 128..255, 256..271.
@@ -1793,13 +1794,10 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
         }
     } unregister{context, block, address};
     const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr) {
-        std::cout << "host import of the shadow test block refused: unit shadows not tested\n";
-        return;
-    }
+    Require(import != nullptr, "host import of the unit shadow test block was refused");
     if (!Watched(address, bytes)) {
-        std::cout << "host imports are compared, not watched: unit shadows not tested\n";
-        return;
+        std::cout << "skipped, the device reports host imports cannot be write watched\n";
+        return false;
     }
     Require(import->base == address && import->bytes == bytes, "the import does not cover the block");
     CollectWritesUncached(address, bytes);
@@ -1920,10 +1918,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     retile(*high, unit128, unit, 0x77, false);
     Require(AnyShadowedOverlaps(unit128, unit), "the second slab's unit is not shadowed");
     high.reset();
-    // Retire through the registry: the block is re-registered as its first five units, so the next
-    // lookup reconciles and retires the import; the fresh units still inside a registered range
-    // are published into its (kept) buffer, the rest (memory the title took back) are dropped.
-    // Under the one-slab budget unit 5's slab evicts the second one first (unit 128 published).
     retile(*ShadowDestinationFor(context, *import, unit5, unit5 + unit), unit5, unit, 0x88, false);
     retile(*ShadowDestinationFor(context, *import, address + 2 * unit, unit3), address + 2 * unit, unit, 0x99, false);
     Require(AnyShadowedOverlaps(unit5, unit) && AnyShadowedOverlaps(address + 2 * unit, unit), "units 2 and 5 are not shadowed before the retire");
@@ -1936,9 +1930,9 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(!AnyShadowedOverlaps(address, bytes), "the retired import's shadow survived");
     recorder.Sync();
     Require(words[2 * unit] == 0x99 && words[3 * unit - 1] == 0x99, "the retire did not publish the unit still registered");
-    Require(words[5 * unit] == 0x11 && words[5 * unit + unit - 1] == 0x11, "the retire published a unit whose memory is no longer registered");
-    if (budgetMiB >= 16) Require(words[127 * unit] == 0x11 && words[128 * unit] == 0x11, "the retire published the second slab's units outside the registration");
-    else Require(words[128 * unit] == 0x77, "the eviction before the retire did not publish unit 128");
+    Require(words[5 * unit] == 0x88 && words[5 * unit + unit - 1] == 0x88, "the retire lost a unit before its registration was removed");
+    Require(words[127 * unit] == 0x66 && words[128 * unit] == 0x77, "the retire lost the second slab's units before removing their registration");
+    return true;
 }
 
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
@@ -4347,6 +4341,8 @@ int main(int argc, char** argv) {
             return 77;
         }
         Device& device = *created;
+        if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-only") return RunHostImportLifetimeTests(device.GetContext());
+        if (argc == 2 && std::string_view(argv[1]) == "--host-import-mutation-race-only") return RunHostImportMutationRaceTests(device.GetContext());
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-only") {
             pipelineLibraryTests(device);
             return 0;
@@ -4360,6 +4356,11 @@ int main(int argc, char** argv) {
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {
+            if (!unitShadowTests(device, recorder)) return 77;
+            std::cout << "Unit shadow publication and retirement tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
             singleCubeTests(device, recorder);
             std::cout << "Single cube snapshot and storage sampling tests passed\n";

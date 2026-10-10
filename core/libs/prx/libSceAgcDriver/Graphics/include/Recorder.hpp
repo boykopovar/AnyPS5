@@ -87,6 +87,7 @@ public:
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
+    static void ReleaseCompletedKeeps();
     std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
     enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart };
     static constexpr std::size_t DrawSnapshotBudget = std::size_t{1024} << 20u;

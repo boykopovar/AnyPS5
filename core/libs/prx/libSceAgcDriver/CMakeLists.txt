@@ -652,6 +652,7 @@ configure_windows_unwind(agc_driver_cmask_fast_clear_tests)
 
 add_test_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
+        tests/HostImportLifetime.cpp
         tests/ResidentPresent.cpp
         ${agcTriangleHeaders}
         ${agcSampleLodShaderHeader}
@@ -705,6 +706,22 @@ if(BUILD_TESTING)
         set_tests_properties(agc_host_import_unmap PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_host_import_lifetime COMMAND agc_driver_recorder_tests --host-import-lifetime-only)
+    add_test(NAME agc_driver_host_import_mutation_race COMMAND agc_driver_recorder_tests --host-import-mutation-race-only)
+    set_tests_properties(agc_driver_host_import_lifetime agc_driver_host_import_mutation_race PROPERTIES
+        ENVIRONMENT "APS5_PIN_WAIT_MS=2000" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_driver_unit_shadow COMMAND agc_driver_recorder_tests --unit-shadow-only)
+    add_test(NAME agc_driver_unit_shadow_budget COMMAND agc_driver_recorder_tests --unit-shadow-only)
+    set_tests_properties(agc_driver_unit_shadow PROPERTIES
+        ENVIRONMENT "APS5_PIN_WAIT_MS=2000" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set_tests_properties(agc_driver_unit_shadow_budget PROPERTIES
+        ENVIRONMENT "APS5_PIN_WAIT_MS=2000;APS5_UNIT_SHADOW_MIB=8" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_host_import_lifetime agc_driver_host_import_mutation_race agc_driver_unit_shadow agc_driver_unit_shadow_budget PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    set_property(TEST agc_driver_host_import_lifetime APPEND PROPERTY ENVIRONMENT_MODIFICATION
+        "APS5_RELEASE_UNDER_LOCK=unset:" "APS5_RELEASE_ON_UNLOCK=unset:")
 endif()
 
 add_test_executable(agc_recorder_kept_bytes_tests EXCLUDE_FROM_ALL tests/RecorderKeptBytes.cpp)
@@ -888,6 +905,8 @@ target_include_directories(agc_driver_prepared_publication_tests PRIVATE $<TARGE
 target_include_directories(agc_driver_prepared_graphics_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(agc_driver_interpolation_modes_tests PRIVATE shader_recompiler_agc_driver)
 
+target_link_libraries(agc_driver_guest_memory_lifetime_tests PRIVATE libkernel)
+
 target_include_directories(agc_driver_prepared_shaders_tests PRIVATE
         $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
 )
@@ -922,6 +941,48 @@ if(BUILD_TESTING)
         endif()
     endforeach()
     set_tests_properties(agc_driver_provoking_vertex PROPERTIES TIMEOUT 30)
+    set(agcGuestMemoryLifetimeTests agc_driver_guest_memory_lifetime)
+    foreach(mode IN ITEMS copy direct locked heap heap_uncached)
+        set(testName agc_driver_guest_memory_lifetime_${mode})
+        if(mode STREQUAL "heap_uncached")
+            add_test(NAME ${testName} COMMAND agc_driver_guest_memory_lifetime_tests heap)
+        else()
+            add_test(NAME ${testName} COMMAND agc_driver_guest_memory_lifetime_tests ${mode})
+        endif()
+        list(APPEND agcGuestMemoryLifetimeTests ${testName})
+    endforeach()
+    set_tests_properties(${agcGuestMemoryLifetimeTests} PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIN_WAIT_MS=1000;APS5_HEAP_CACHE_MIB=4"
+            SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(agc_driver_guest_memory_lifetime_heap_uncached PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIN_WAIT_MS=1000;APS5_HEAP_CACHE_MIB=0")
+    if(WIN32)
+        set_tests_properties(${agcGuestMemoryLifetimeTests} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND Python3_Interpreter_FOUND)
+        add_library(agc_guest_memory_lifetime_fixture SHARED tests/GuestMemoryLifetimeFixture.cpp)
+        target_include_directories(agc_guest_memory_lifetime_fixture PRIVATE
+                ${LIBS_INCLUDE_DIR}
+                ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+                ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+                ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include)
+        target_link_libraries(agc_guest_memory_lifetime_fixture PRIVATE libSceAgcDriver SDL2-static libc)
+        add_dependencies(agc_guest_memory_lifetime_fixture relinker libkernel)
+        set_target_properties(agc_guest_memory_lifetime_fixture PROPERTIES
+                OUTPUT_NAME GuestMemoryFixture SUFFIX ".prx" CXX_EXTENSIONS OFF
+                BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
+        add_test(NAME agc_driver_guest_memory_lifetime_converted COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_guest_memory_lifetime.py
+                ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests
+                $<TARGET_FILE:relinker>
+                $<TARGET_FILE:agc_guest_memory_lifetime_fixture>
+                $<TARGET_FILE:libkernel>
+                $<TARGET_FILE:libc>
+                $<TARGET_FILE:libSceAgcDriver>)
+        set_tests_properties(agc_driver_guest_memory_lifetime_converted PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIN_WAIT_MS=1000" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    endif()
     set_tests_properties(agc_driver_flat_store PROPERTIES RUN_SERIAL TRUE)
     set_tests_properties(agc_driver_storage_cache_budget PROPERTIES TIMEOUT 30)
     add_test(NAME agc_driver_sampled_cache_budget_memory COMMAND agc_driver_sampled_cache_budget_tests memory)

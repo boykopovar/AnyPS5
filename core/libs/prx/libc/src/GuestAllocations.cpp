@@ -295,8 +295,13 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
         bool progressed = false;
         if (state != nullptr && state->lock.owns_lock()) {
             state->lock.unlock();
-            if (waiter != nullptr) progressed = waiter(address, bytes);
-            else std::this_thread::yield();
+            try {
+                if (waiter != nullptr) progressed = waiter(address, bytes);
+                else std::this_thread::yield();
+            } catch (...) {
+                state->lock.lock();
+                throw;
+            }
             state->lock.lock();
         } else {
             std::this_thread::yield();

@@ -2452,6 +2452,10 @@ void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     open->keptBytes += bytes;
 }
 
+void Recorder::ReleaseCompletedKeeps() {
+    if (!DeferredBatches().empty()) DestroyDeferred(TakeDeferred(), false);
+}
+
 void Recorder::BoundKeptBytes() {
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (open != nullptr && open->keptBytes >= KeptBytesBudget) Submit();
