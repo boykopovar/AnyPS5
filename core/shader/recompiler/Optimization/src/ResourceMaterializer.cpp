@@ -985,7 +985,7 @@ std::uint64_t ResourceMaterializer::SpecializationNanoseconds() {
 }
 
 std::uint32_t ResourceMaterializer::BindlessSlots() {
-    return RuntimeAbi::SampledHeapCapacity;
+    return RuntimeAbi::BindlessTableSlots;
 }
 
 void ResourceMaterializer::CountBindlessRejection(BindlessRejection reason) {
