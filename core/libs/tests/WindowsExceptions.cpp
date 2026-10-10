@@ -126,10 +126,41 @@ static void testFutureException() {
     if (count != 1) throw std::runtime_error("future result destroyed its exception an incorrect number of times");
 }
 
+static void testMadeExceptionPointer() {
+    std::atomic<int> count{0};
+    {
+        auto made = std::make_exception_ptr(TrackedError(&count));
+        try {
+            std::rethrow_exception(made);
+        } catch (const TrackedError& error) {
+            if (std::strcmp(error.what(), "retained error")) throw std::runtime_error("made exception lost its message");
+        }
+    }
+    if (count != 2) throw std::runtime_error("made exception destroyed an incorrect number of times");
+}
+
+struct UnwindProbe {
+    int& seen;
+    ~UnwindProbe() { seen = std::uncaught_exceptions(); }
+};
+
+static void testUncaughtExceptions() {
+    if (std::uncaught_exceptions() != 0) throw std::runtime_error("uncaught exception outside unwinding");
+    int seen = -1;
+    try {
+        UnwindProbe probe{seen};
+        throw std::runtime_error("probe");
+    } catch (const std::runtime_error&) {
+    }
+    if (seen != 1) throw std::runtime_error("unwinding did not count its exception");
+}
+
 int main() {
     TestTypeInfoVtables();
     testExceptionPointer();
     testFutureException();
+    testMadeExceptionPointer();
+    testUncaughtExceptions();
     try {
         Rethrow();
         return 1;

@@ -36,6 +36,10 @@ thread_local int destroyed = 0;
 struct Guard {
     ~Guard() { assert(__cxa_uncaught_exceptions_nid_postfix() > 0); ++destroyed; }
 };
+thread_local int counted = 0;
+struct Counted {
+    ~Counted() { ++counted; }
+};
 struct Base { virtual ~Base() = default; int value = 7; };
 struct Other { virtual ~Other() = default; int padding = 9; };
 struct Derived : Other, Base {};
@@ -188,6 +192,11 @@ int main() {
     try { __cxa_rethrow_primary_exception_nid_postfix(retained); assert(false); }
     catch (int value) { assert(value == 27); }
     __cxa_decrement_exception_refcount_nid_postfix(retained);
+    {
+        auto made = std::make_exception_ptr(Counted());
+        try { std::rethrow_exception(made); assert(false); } catch (const Counted&) {}
+    }
+    assert(counted == 2);
     Derived object;
     Base* pointer = &object;
     try { throw &object; } catch (Base* value) { assert(value == pointer); }
