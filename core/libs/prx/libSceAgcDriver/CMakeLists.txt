@@ -293,6 +293,15 @@ target_link_libraries(agc_structurizer_tests PRIVATE shader_recompiler_agc_drive
 set_target_properties(agc_structurizer_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_structurizer_tests)
 
+add_test_executable(agc_fragment_barycentric_tests EXCLUDE_FROM_ALL tests/FragmentBarycentric.cpp)
+target_include_directories(agc_fragment_barycentric_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
+set_target_properties(agc_fragment_barycentric_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_fragment_barycentric_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_fragment_barycentric_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_fragment_barycentric COMMAND agc_fragment_barycentric_tests)
+endif()
+
 add_test_executable(agc_subgroup_clock_tests EXCLUDE_FROM_ALL
         tests/SubgroupClock.cpp
         Execution/src/SubgroupClock.cpp
