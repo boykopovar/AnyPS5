@@ -2,13 +2,13 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "SDL.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstring>
 #include <mutex>
-#include <thread>
 
 namespace {
 
@@ -76,7 +76,7 @@ Port* find(int handle) {
 }
 
 std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t bytes, Clock::time_point deadline) {
-    while (SDL_GetQueuedAudioSize(device) < bytes && Clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    while (SDL_GetQueuedAudioSize(device) < bytes && Clock::now() < deadline) PreciseSleepUs(1000);
     const std::size_t queued = SDL_GetQueuedAudioSize(device);
     std::array<std::uint8_t, 4096> discard;
     for (std::size_t excess = queued > bytes * MAX_QUEUED_BLOCKS ? queued - bytes * MAX_QUEUED_BLOCKS : 0; excess > 0;) {
@@ -122,7 +122,7 @@ int APS5_VABI sceAudioInInput(int handle, void* dest) {
     if (device != 0) {
         captured = capture(device, out, bytes, deadline);
     } else {
-        while (Clock::now() < wake) std::this_thread::sleep_until(wake);
+        PreciseSleepUntil(wake);
     }
     std::memset(out + captured, 0, bytes - captured);
     lock.lock();

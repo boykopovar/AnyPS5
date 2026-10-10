@@ -12,9 +12,9 @@ from test_guest_module_directories import module_with_symbol, needed_libraries
 NEEDED = b"needed.prx"
 
 
-def executable_with_needed():
+def executable_with_needed(needed=NEEDED):
     image = main_fixture()
-    strings = b"\0" + NEEDED + b"\0"
+    strings = b"\0" + needed + b"\0"
     image[0x4800:0x4800 + len(strings)] = strings
     tags = []
     for position in range(0x4600, 0x4600 + 0x200, 16):
@@ -35,10 +35,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-modules-") as directory:
         work = Path(directory)
 
-        def convert(case, windows):
-            (case / "sce_module").mkdir(parents=True, exist_ok=True)
+        def convert(case, windows, needed=NEEDED):
+            if not (case / "sce_modules").exists():
+                (case / "sce_module").mkdir(parents=True, exist_ok=True)
             source = case / "input.elf"
-            source.write_bytes(executable_with_needed())
+            source.write_bytes(executable_with_needed(needed))
             output = case / ("output.exe" if windows else "output.elf")
             result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(source), str(output)],
                                     capture_output=True, text=True, timeout=30)
@@ -62,6 +63,41 @@ def main():
             if not windows:
                 needed = needed_libraries(output.read_bytes())
                 assert needed == ["$ORIGIN/app0/Media/Modules/needed.prx.guest.prx"], needed
+
+            for directory in ("Media/Modules", "sce_module", "sce_module/nested", "sce_modules/nested", "prx/shipping"):
+                case = work / f"{windows}-debug-name-{directory.replace('/', '-')}"
+                (case / directory).mkdir(parents=True)
+                (case / directory / "needed.prx").write_bytes(module_with_symbol(True))
+                result, output = convert(case, windows, b"needed.debug_prx")
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                artifact = case / "app0" / directory / "needed.prx.guest.prx"
+                assert list((case / "app0").rglob("*.guest.prx")) == [artifact], list((case / "app0").rglob("*"))
+                if windows and os.name == "nt":
+                    run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                    assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
+                if not windows:
+                    needed = needed_libraries(output.read_bytes())
+                    assert needed == [f"$ORIGIN/app0/{directory}/needed.prx.guest.prx"], needed
+
+            if windows:
+                case = work / "debug-name-case"
+                (case / "prx").mkdir(parents=True)
+                (case / "prx" / "foo-bar.prx").write_bytes(module_with_symbol(True))
+                result, output = convert(case, windows, b"Foo-Bar.debug_prx")
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                artifact = case / "app0" / "prx" / "foo-bar.prx.guest.prx"
+                assert list((case / "app0").rglob("*.guest.prx")) == [artifact], list((case / "app0").rglob("*"))
+                if os.name == "nt":
+                    run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+                    assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
+
+            case = work / f"{windows}-debug-name-ambiguous"
+            (case / "first").mkdir(parents=True)
+            (case / "first" / "needed.prx").write_bytes(module_with_symbol(True))
+            (case / "first" / "needed.sprx").write_bytes(module_with_symbol(True))
+            result, output = convert(case, windows, b"needed.debug_prx")
+            assert result.returncode == 2 and "Ambiguous needed module" in result.stderr, result.stderr
+            assert not output.exists(), output
 
             case = work / f"{windows}-ambiguous"
             for name in ("first", "second"):

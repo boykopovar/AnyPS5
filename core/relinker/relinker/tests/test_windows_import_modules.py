@@ -107,34 +107,51 @@ def executable(owner, symbol='shared#A#B', module_name=None, extra_dependencies=
     return image
 
 
-def shell_execute_exit_code(executable_path):
-    see_mask_nocloseprocess = 0x00000040
+def exit_code_without_standard_handles(executable_path):
+    sem_failcriticalerrors = 0x0001
+    sem_nogpfaulterrorbox = 0x0002
+    startf_usestdhandles = 0x00000100
     wait_object_0 = 0
     wait_timeout = 0x00000102
 
-    class ShellExecuteInfo(ctypes.Structure):
+    class StartupInfo(ctypes.Structure):
         _fields_ = [
-            ('cbSize', wintypes.DWORD),
-            ('fMask', wintypes.DWORD),
-            ('hwnd', wintypes.HWND),
-            ('lpVerb', wintypes.LPCWSTR),
-            ('lpFile', wintypes.LPCWSTR),
-            ('lpParameters', wintypes.LPCWSTR),
-            ('lpDirectory', wintypes.LPCWSTR),
-            ('nShow', ctypes.c_int),
-            ('hInstApp', wintypes.HANDLE),
-            ('lpIDList', wintypes.LPVOID),
-            ('lpClass', wintypes.LPCWSTR),
-            ('hkeyClass', wintypes.HANDLE),
-            ('dwHotKey', wintypes.DWORD),
-            ('hIconOrMonitor', wintypes.HANDLE),
-            ('hProcess', wintypes.HANDLE),
+            ('cb', wintypes.DWORD),
+            ('lpReserved', wintypes.LPWSTR),
+            ('lpDesktop', wintypes.LPWSTR),
+            ('lpTitle', wintypes.LPWSTR),
+            ('dwX', wintypes.DWORD),
+            ('dwY', wintypes.DWORD),
+            ('dwXSize', wintypes.DWORD),
+            ('dwYSize', wintypes.DWORD),
+            ('dwXCountChars', wintypes.DWORD),
+            ('dwYCountChars', wintypes.DWORD),
+            ('dwFillAttribute', wintypes.DWORD),
+            ('dwFlags', wintypes.DWORD),
+            ('wShowWindow', wintypes.WORD),
+            ('cbReserved2', wintypes.WORD),
+            ('lpReserved2', wintypes.LPVOID),
+            ('hStdInput', wintypes.HANDLE),
+            ('hStdOutput', wintypes.HANDLE),
+            ('hStdError', wintypes.HANDLE),
         ]
 
-    shell32 = ctypes.WinDLL('shell32', use_last_error=True)
+    class ProcessInformation(ctypes.Structure):
+        _fields_ = [
+            ('hProcess', wintypes.HANDLE),
+            ('hThread', wintypes.HANDLE),
+            ('dwProcessId', wintypes.DWORD),
+            ('dwThreadId', wintypes.DWORD),
+        ]
+
     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(ShellExecuteInfo)]
-    shell32.ShellExecuteExW.restype = wintypes.BOOL
+    kernel32.GetErrorMode.restype = wintypes.UINT
+    kernel32.SetErrorMode.argtypes = [wintypes.UINT]
+    kernel32.SetErrorMode.restype = wintypes.UINT
+    kernel32.CreateProcessW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.LPVOID, wintypes.LPVOID, wintypes.BOOL,
+                                        wintypes.DWORD, wintypes.LPVOID, wintypes.LPCWSTR, ctypes.POINTER(StartupInfo),
+                                        ctypes.POINTER(ProcessInformation)]
+    kernel32.CreateProcessW.restype = wintypes.BOOL
     kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
@@ -143,28 +160,30 @@ def shell_execute_exit_code(executable_path):
     kernel32.TerminateProcess.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
-    info = ShellExecuteInfo()
-    info.cbSize = ctypes.sizeof(info)
-    info.fMask = see_mask_nocloseprocess
-    info.lpVerb = 'open'
-    info.lpFile = str(executable_path)
-    info.nShow = 1
-    if not shell32.ShellExecuteExW(ctypes.byref(info)):
-        raise OSError(ctypes.get_last_error(), 'ShellExecuteExW failed')
+    kernel32.SetErrorMode(kernel32.GetErrorMode() | sem_failcriticalerrors | sem_nogpfaulterrorbox)
+    info = StartupInfo()
+    info.cb = ctypes.sizeof(info)
+    info.dwFlags = startf_usestdhandles
+    process = ProcessInformation()
+    command = ctypes.create_unicode_buffer(f'"{executable_path}"')
+    if not kernel32.CreateProcessW(str(executable_path), command, None, None, False, 0, None, None,
+                                   ctypes.byref(info), ctypes.byref(process)):
+        raise OSError(ctypes.get_last_error(), 'CreateProcessW failed')
     try:
-        result = kernel32.WaitForSingleObject(info.hProcess, 30_000)
+        result = kernel32.WaitForSingleObject(process.hProcess, 30_000)
         if result == wait_timeout:
-            kernel32.TerminateProcess(info.hProcess, 0xffffffff)
-            kernel32.WaitForSingleObject(info.hProcess, 0xffffffff)
-            raise TimeoutError('ShellExecuteExW child did not exit')
+            kernel32.TerminateProcess(process.hProcess, 0xffffffff)
+            kernel32.WaitForSingleObject(process.hProcess, 0xffffffff)
+            raise TimeoutError('GUI child did not exit')
         if result != wait_object_0:
             raise OSError(f'WaitForSingleObject returned {result}')
         exit_code = wintypes.DWORD()
-        if not kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(exit_code)):
+        if not kernel32.GetExitCodeProcess(process.hProcess, ctypes.byref(exit_code)):
             raise OSError(ctypes.get_last_error(), 'GetExitCodeProcess failed')
         return exit_code.value
     finally:
-        kernel32.CloseHandle(info.hProcess)
+        kernel32.CloseHandle(process.hThread)
+        kernel32.CloseHandle(process.hProcess)
 
 
 def main():
@@ -288,7 +307,7 @@ def main():
                     ('missing-dependency-gui', 'missing.prx', 'shared#A#B', 0xc0000135)]:
                 result, output = convert(name, owner, symbol, windows_gui=True)
                 assert result.returncode == 0, result.stderr
-                run_status = shell_execute_exit_code(output)
+                run_status = exit_code_without_standard_handles(output)
                 assert run_status == expected, (name, hex(run_status), hex(expected))
 
         result, output = convert('missing-symbol', 'a.prx', 'absent#A#B')

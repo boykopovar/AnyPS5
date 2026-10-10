@@ -22,6 +22,7 @@ constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 16;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+bool Ieee = false;
 
 alignas(256) constexpr std::array<std::uint32_t, 30> Code{
     0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0xd564000a, 0x02020d04, 0xd565000c,
@@ -98,6 +99,40 @@ constexpr std::uint32_t Expected[32][16] = {
     {0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x7ffc0000u},
     {0x00000000u, 0x41e00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x41e00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x41e00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x41e00000u}
 };
+constexpr std::uint32_t MinMaxNoIeee[32][4] = {
+    {0x00000000u, 0x3ff00000u, 0x80000000u, 0x40000000u},
+    {0x00000000u, 0x3ff80000u, 0x7fffffffu, 0x40000000u},
+    {0xfffff7ccu, 0x3ff00000u, 0xffffffffu, 0x7fefffffu},
+    {0x00000000u, 0xbff00000u, 0xfffffbcdu, 0x3ff00000u},
+    {0x00000000u, 0x3fe00000u, 0x00000401u, 0x3ff00000u},
+    {0x00000000u, 0xfff00000u, 0xffc00000u, 0x41dfffffu},
+    {0x12eaf8e8u, 0xc020f641u, 0x8a59a474u, 0xbefa45c5u},
+    {0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x80000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0xbff00000u, 0x00000000u, 0x7ff00000u},
+    {0x00000000u, 0x80000000u, 0x00000000u, 0x80000000u},
+    {0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u},
+    {0x00000000u, 0x41f00000u, 0x00000000u, 0x41f00000u},
+    {0xffffffffu, 0xffefffffu, 0x00000000u, 0x3ff80000u},
+    {0x00000000u, 0xfff00000u, 0x00000000u, 0xfff00000u},
+    {0xc66ab30du, 0x8e9a2140u, 0x047b57e5u, 0x02f22376u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x3ff00000u},
+    {0x00000000u, 0xbff00000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x3fe00000u},
+    {0x00000000u, 0xbfe00000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x3ff80000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x40040000u},
+    {0x00000000u, 0xc0040000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0xffffffffu, 0x7fefffffu},
+    {0xffffffffu, 0xffefffffu, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x41e00000u}
+};
 constexpr const char* Names[16] = {"add lo", "add hi", "mul lo", "mul hi", "fma lo", "fma hi", "fma error lo", "fma error hi", "min lo", "min hi", "max lo", "max hi", "ldexp lo", "ldexp hi", "add abs neg lo", "add abs neg hi"};
 
 void Fill(std::uint32_t tid, std::uint32_t* words) {
@@ -116,7 +151,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("f64 arithmetic: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Require(actual == expected, std::string(Ieee ? "f64 arithmetic, IEEE mode: lane " : "f64 arithmetic: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -137,6 +172,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    if (Ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -146,7 +182,11 @@ void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t i = 0; i < 16; ++i) Expect(tid, out[i], Expected[tid][i], Names[i]);
+        for (std::uint32_t i = 0; i < 16; ++i) {
+            std::uint32_t expected = !Ieee && i >= 8u && i < 12u ? MinMaxNoIeee[tid][i - 8u] : Expected[tid][i];
+            if (!Ieee && i == 13u && tid == 13u) expected = in[1];
+            Expect(tid, out[i], expected, Names[i]);
+        }
     }
 }
 
@@ -160,8 +200,11 @@ int main() {
             std::puts("skipped, the device has no shaderFloat64");
             return VulkanTestSkipped;
         }
-        Run(*device);
-        Check();
+        for (const bool ieee : {false, true}) {
+            Ieee = ieee;
+            Run(*device);
+            Check();
+        }
         std::puts("f64 arithmetic tests passed");
         return 0;
     } catch (const std::exception& error) {

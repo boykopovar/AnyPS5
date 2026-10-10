@@ -81,6 +81,28 @@ class ProgressTests(unittest.TestCase):
                 self.assertIn("-1 removed", report)
                 self.assertIn("Pending", report)
 
+    def test_empty_libraries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owner = root / "libSceExample"
+            alias = root / "libSceExampleBackend"
+            dummy = root / "libSceDummy"
+            for path in (owner, alias, dummy):
+                path.mkdir()
+            (owner / "Export.cpp").write_text("int APS5_VABI Ready() { return 0; }\n")
+            (alias / "Export.cpp").write_text('#include "prx/libSceExample/Export.cpp"\n')
+            (dummy / "Export.cpp").write_text('#include "prx/libc/include/General.hpp"\nextern "C" {\nAPS5_DUMMY_FUN\n}\n')
+            with patch.object(progress, "PRX", root):
+                data = progress.collect_libraries()
+            groups = {group["name"]: group for group in data["groups"]}
+            self.assertEqual(groups[alias.name]["shared_sources"], owner.name)
+            self.assertNotIn("shared_sources", groups[dummy.name])
+            self.assertEqual((data["done"], data["total"]), (1, 1))
+            html = progress.table("Libraries", "Library", data)
+            self.assertIn(f'<td>{alias.name}</td><td colspan="3">Shared sources:', html)
+            self.assertIn(f'<td>{dummy.name}</td><td colspan="3">No exports</td>', html)
+            self.assertNotIn("<td>0</td>", html)
+
 
 if __name__ == "__main__":
     unittest.main()

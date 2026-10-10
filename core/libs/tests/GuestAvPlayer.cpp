@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -993,6 +994,74 @@ void TestHandedOutFramesStayIntact() {
     Check(sceAvPlayerClose(player) == 0, "close failed");
 }
 
+void TestPs5ExtendedInitLayout() {
+    constexpr std::size_t Ps5Size = 0x230;
+    constexpr std::size_t Ps5AutoStart = 0x74;
+    constexpr std::size_t Ps5ThreadParameters = 0x78;
+    constexpr std::size_t Ps5VideoFrameBuffers = 0x228;
+    constexpr std::int32_t Buffers = 3;
+    constexpr int DecodeAheadBuffers = 4;
+    static_assert(offsetof(AvPlayerInitDataEx, audio_decoder_priority) == Ps5AutoStart);
+    const auto run = [&](bool autoStart) {
+        Events events;
+        const AvPlayerInitData common = InitData(&events);
+        AvPlayerInitDataEx head{};
+        head.this_size = Ps5Size;
+        head.memory_replacement = common.memory_replacement;
+        head.event_replacement = common.event_replacement;
+        head.default_language = common.default_language;
+        alignas(AvPlayerInitDataEx) std::array<std::uint8_t, Ps5Size> raw{};
+        std::memcpy(raw.data(), &head, Ps5AutoStart);
+        raw[Ps5AutoStart] = autoStart ? 1 : 0;
+        if (!autoStart) std::fill(raw.begin() + static_cast<std::ptrdiff_t>(Ps5ThreadParameters), raw.end(), std::uint8_t{1});
+        std::memcpy(raw.data() + Ps5VideoFrameBuffers, &Buffers, sizeof(Buffers));
+        AvPlayerInternal* player = nullptr;
+        Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(raw.data()), &player) == 0 && player != nullptr, "PS5 extended init failed");
+        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source after the PS5 extended init failed");
+        if (autoStart) {
+            Check(WaitFor([&] { return events.Seen(EventPlay); }), "auto start at 0x74 of the PS5 extended init did not start playback");
+        } else {
+            Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing after the PS5 extended init");
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            Check(!events.Seen(EventPlay), "playback started although auto start at 0x74 of the PS5 extended init is 0");
+            Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video after the PS5 extended init failed");
+            Check(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
+        }
+        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
+        Check(sceAvPlayerClose(player) == 0, "close after the PS5 extended init failed");
+    };
+    run(false);
+    run(true);
+}
+
+void TestUnsyncedVideoKeepsUpWithAudio() {
+    AvPlayerInitData init = InitData(nullptr);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init failed");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Check(sceAvPlayerStart(player) == 0, "start failed");
+    AvPlayerFrameInfo sound{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "no audio");
+    const auto start = std::chrono::steady_clock::now();
+    const auto first = sound.timestamp;
+    std::uint64_t worst = 0;
+    while (sceAvPlayerIsActive(player) && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(900)) {
+        const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+        while (sound.timestamp <= first + elapsed && sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound);
+        AvPlayerFrameInfoEx frame{};
+        if (sceAvPlayerGetVideoDataEx(player, &frame)) {
+            CheckVideoFrame(frame);
+            if (sound.timestamp > frame.timestamp) worst = std::max(worst, sound.timestamp - frame.timestamp);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(66));
+    }
+    Check(worst <= 150, "video fell " + std::to_string(worst) + " ms behind the audio");
+    Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
 }
 
 int main() {
@@ -1005,6 +1074,8 @@ int main() {
         TestOptionalVideoBuffersRespectMemoryLimit();
         TestFileReplacementAutoStart();
         TestHandedOutFramesStayIntact();
+        TestPs5ExtendedInitLayout();
+        TestUnsyncedVideoKeepsUpWithAudio();
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -82,6 +82,12 @@ protected:
         return result;
     }
 
+    void reopen(std::vector<std::uint8_t> replacement) {
+        avcodec_free_context(&context);
+        extradata = std::move(replacement);
+        open();
+    }
+
 private:
     void open() {
         const AVCodec* codec = avcodec_find_decoder(id);
@@ -118,7 +124,8 @@ public:
 
 class AacDecoder final : public FfmpegDecoder {
 public:
-    AacDecoder(std::int32_t wordSize, bool adts, std::vector<std::uint8_t> extradata) : FfmpegDecoder(AV_CODEC_ID_AAC, wordSize, std::move(extradata)), adts(adts) {}
+    AacDecoder(std::int32_t wordSize, bool adts, std::vector<std::vector<std::uint8_t>> configs)
+        : FfmpegDecoder(AV_CODEC_ID_AAC, wordSize, configs.empty() ? std::vector<std::uint8_t>{} : configs.front()), adts(adts), configs(std::move(configs)) {}
 
     DecodeResult Decode(const std::uint8_t* data, std::size_t size, std::uint8_t* pcm, std::size_t pcmSize) override {
         std::size_t frameBytes = size;
@@ -128,11 +135,22 @@ public:
             if (frameBytes < 7) return {DecodeStatus::InvalidData};
             if (frameBytes > size) return {DecodeStatus::PartialInput};
         }
-        return decodePacket(data, frameBytes, pcm, pcmSize);
+        if (configs.size() <= 1) return decodePacket(data, frameBytes, pcm, pcmSize);
+        for (std::size_t index = 0; index < configs.size(); ++index) {
+            if (index != 0) reopen(configs[index]);
+            const DecodeResult result = decodePacket(data, frameBytes, pcm, pcmSize);
+            if (result.status != DecodeStatus::InvalidData) {
+                configs = {configs[index]};
+                return result;
+            }
+        }
+        reopen(configs.front());
+        return {DecodeStatus::InvalidData};
     }
 
 private:
     bool adts;
+    std::vector<std::vector<std::uint8_t>> configs;
 };
 
 class At9Decoder final : public Decoder {
@@ -222,13 +240,19 @@ std::unique_ptr<Decoder> CreateMp3(std::int32_t wordSize) {
 }
 
 std::unique_ptr<Decoder> CreateAac(std::int32_t wordSize, bool adts, std::uint32_t samplingFreqIndex, std::uint32_t channels) {
-    std::vector<std::uint8_t> config;
+    std::vector<std::vector<std::uint8_t>> configs;
     if (!adts) {
         const std::uint32_t lowComplexity = 2;
-        config = {static_cast<std::uint8_t>(lowComplexity << 3 | samplingFreqIndex >> 1),
-                  static_cast<std::uint8_t>((samplingFreqIndex & 1) << 7 | channels << 3)};
+        const auto config = [&](std::uint32_t channelConfiguration) {
+            return std::vector<std::uint8_t>{static_cast<std::uint8_t>(lowComplexity << 3 | samplingFreqIndex >> 1),
+                                             static_cast<std::uint8_t>((samplingFreqIndex & 1) << 7 | channelConfiguration << 3)};
+        };
+        configs.push_back(config(channels < 2 ? 1 : 2));
+        for (std::uint32_t channelConfiguration = 3; channelConfiguration <= 7; ++channelConfiguration) {
+            if ((channelConfiguration == 7 ? 8 : channelConfiguration) <= channels) configs.push_back(config(channelConfiguration));
+        }
     }
-    return std::make_unique<AacDecoder>(wordSize, adts, std::move(config));
+    return std::make_unique<AacDecoder>(wordSize, adts, std::move(configs));
 }
 
 std::unique_ptr<Decoder> CreateAt9(std::int32_t wordSize, const std::uint8_t (&config)[4], At9Format& format) {

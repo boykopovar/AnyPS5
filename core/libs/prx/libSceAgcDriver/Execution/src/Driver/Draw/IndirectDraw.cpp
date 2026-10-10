@@ -12,7 +12,16 @@ std::uint32_t Driver::drawUserWord(const DrawProgram& program, std::int32_t sgpr
     return program.userData[index];
 }
 
-std::optional<Graphics::IndirectDrawPath> Driver::classifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect) {
+void Driver::FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters) {
+    if (result.vertexOffsetSgpr >= 0) {
+        const auto offset = drawUserWord(program, result.vertexOffsetSgpr);
+        require(offset <= std::numeric_limits<std::uint32_t>::max() - parameters.firstVertex, "draw vertex offset overflow");
+        parameters.firstVertex += offset;
+    }
+    if (result.instanceOffsetSgpr >= 0) parameters.firstInstance = drawUserWord(program, result.instanceOffsetSgpr);
+}
+
+std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect) {
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     auto& indirect = *drawParameters.indirect;
     using Rule = Pm4::DrawParameters::IndirectDraw::Rule;

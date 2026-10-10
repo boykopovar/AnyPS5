@@ -12,6 +12,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "AudioOut2Internal.hpp"
 
 // An AudioOut2 context is the hardware output queue: every push appends a grain (num_grains samples)
@@ -324,7 +325,7 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
         }
         if (now - waitStart > FULL_WAIT_TIMEOUT) break;
         lock.unlock();
-        std::this_thread::sleep_for(FULL_WAIT_STEP);
+        PreciseSleepUs(std::chrono::microseconds(FULL_WAIT_STEP).count());
         lock.lock();
         now = Clock::now();
     }

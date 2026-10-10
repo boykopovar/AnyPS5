@@ -24,6 +24,8 @@ struct EmbeddedFetchPlan {
     bool instanceOffsetShared = false;
     bool vertexOffsetConflict = false;
     bool instanceOffsetConflict = false;
+    bool vertexIndexObserved = false;
+    bool instanceIndexObserved = false;
 };
 
 class EmbeddedVertexFetchAnalyzer {

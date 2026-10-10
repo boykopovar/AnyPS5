@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <spirv/unified1/spirv.hpp>
+#include <algorithm>
 #include <array>
 #include <vector>
 #include <cstring>
@@ -125,6 +126,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         target.supportedCapabilities = capabilities;
         target.supportedExtensions = extensions;
         target.mesh = MeshTargetLimits{{128, 1, 1}, 128, 32768, 256, 256, 128, 32768, 1, 1};
+        target.spirvVersion = 0x00010400u;
     }
     const auto stages = PrepareGraphicsStages(prepared, target);
     Require(stages.size() == (tessellation ? 4u : 2u), "graphics preparation compiled the wrong stages");
@@ -182,6 +184,18 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         ResolvePreparedGraphics(*front.snapshot, {}, 7, target);
         Require(front.snapshot->prepared->fragments.size() == 1, "expired helper link was not removed");
         Require(front.snapshot->prepared->rectangleProgress.size() == 1 && !front.snapshot->prepared->rectangleProgress.front().fragment.expired(), "expired rectangle progress was not removed");
+        auto drawOnly = prepared;
+        drawOnly.pixel.interpolatorSettings[0] = 0x405u;
+        const auto drawStages = PrepareGraphicsStages(drawOnly, target);
+        auto unlinked = std::make_shared<ShaderSnapshot>();
+        unlinked->type = 1;
+        unlinked->prepared->entries.push_back(drawStages.back().entry);
+        const auto drawPixelId = GetPreparedArtifact(*drawStages.back().entry.handle).variantId;
+        const auto drawVertexId = GetPreparedArtifact(*drawStages.front().entry.handle).variantId;
+        Require(drawVertexId == GetPreparedArtifact(*stages.front().entry.handle).variantId && drawPixelId != pixelArtifact.variantId && drawPixelId != newPixelId, "draw-only fragment test did not isolate a new fragment variant");
+        const auto drawRectangle = DrawRectangle(*front.snapshot, unlinked, drawVertexId, drawPixelId, target);
+        Require(!drawRectangle.control.spirv.empty() && !drawRectangle.evaluation.spirv.empty(), "a rect-list draw did not prepare the rectangle of a fragment variant prepared at draw");
+        static_cast<void>(PreparedRectangle(*front.snapshot, drawVertexId, drawPixelId));
     }
     if (!dump.empty()) {
         for (std::size_t index = 0; index < stages.size(); ++index) {
@@ -234,6 +248,44 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     Reject([&] { DecodeGraphicsPrograms(invalid, queue, registry, true, true); }, "reserved graphics program address");
 }
 
+void NullPixelMatchesRegistration(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::DriverDetail;
+    Fixture front;
+    front.Initialize(2u);
+    const auto null = std::make_shared<ShaderSnapshot>(PrepareNullPixelProgram(device));
+    const auto registered = null->prepared->entries;
+    Require(!registered.empty(), "the null pixel program was not prepared at registration");
+    ShaderRegistry registry;
+    registry.emplace(front.snapshot->codeAddress, front.snapshot);
+    registry.emplace(null->codeAddress, null);
+    AgcDriver::QueueState queue{};
+    queue.context[0x8e] = 0xfu;
+    queue.context[0x8f] = 0xfu;
+    front.Bind(queue, 0xc8u, 0x8bu);
+    alignas(8) const std::array<std::uint32_t, 2> merged{};
+    const auto mergedAddress = reinterpret_cast<std::uintptr_t>(merged.data());
+    queue.shader[0x82u] = static_cast<std::uint32_t>(mergedAddress);
+    queue.shader[0x83u] = static_cast<std::uint32_t>(mergedAddress >> 32u);
+    queue.shader[0x008u] = 0u;
+    queue.shader[0x009u] = 0u;
+    queue.shader[0x00bu] = 4u << 1u;
+    queue.context[0x1b3u] = 0x30u;
+    queue.context[0x1b4u] = 0x30u;
+    DrawDecode draw{};
+    draw.state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
+    draw.state.stages.vertexWaveSize = 32u;
+    draw.state.stages.fragmentWaveSize = 64u;
+    std::array<std::uint8_t, 8> mappings{};
+    mappings.fill(0xe4u);
+    draw.pixel = AgcDriver::Graphics::DecodePixelStageInfo(queue.context, mappings, true);
+    DecodeGraphicsPrograms(draw, queue, registry, false, true);
+    const auto& fragment = draw.programs.back();
+    Require(fragment.snapshot == null && fragment.userData.empty(), "a null pixel draw took the last pixel shader's user SGPRs");
+    const auto stages = PrepareGraphicsStages(draw, device.Target());
+    const auto& handle = stages.back().entry.handle;
+    Require(std::ranges::any_of(registered, [&](const auto& entry) { return entry.handle == handle; }), "a null pixel draw did not match the variant prepared at registration");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -242,6 +294,7 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         Require(argc <= 2, "invalid test arguments");
         const auto dump = argc == 2 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
+        NullPixelMatchesRegistration(*device);
         Check(*device, AgcDriver::Graphics::ShaderPath::Vertex, dump);
         Check(*device, AgcDriver::Graphics::ShaderPath::Geometry, dump);
         Check(*device, AgcDriver::Graphics::ShaderPath::Tessellation, dump);

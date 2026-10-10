@@ -24,12 +24,13 @@ struct GuestSamplerResource {
     float lodBias;
     VkBorderColor borderColor;
     VkSamplerReductionMode reductionMode = VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT;
+    bool forceDegamma = false;
     bool compareEnable = false;
     VkCompareOp compareOp = VK_COMPARE_OP_NEVER;
     bool unnormalizedCoordinates = false;
 };
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false);
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven = false, bool forceDegammaPaired = false);
 
 }
 

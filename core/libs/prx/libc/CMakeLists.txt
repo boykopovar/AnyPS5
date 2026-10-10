@@ -9,6 +9,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/WideConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Multibyte.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/RuneLocale.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
@@ -32,7 +33,9 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Environment.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Rename.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
 )
@@ -224,6 +227,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_standard_streams PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(file_streams_tests ${LIBS_INCLUDE_DIR}/tests/FileStreams.cpp)
+    target_include_directories(file_streams_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(file_streams_tests PRIVATE libc)
+    configure_windows_unwind(file_streams_tests)
+    add_test(NAME file_streams COMMAND file_streams_tests file_streams.tmp)
+    set_tests_properties(file_streams PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(file_streams PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestErrors.cpp)
     target_include_directories(guest_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_error_tests PRIVATE libc)
@@ -231,6 +244,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_errors COMMAND guest_error_tests)
     if(WIN32)
         set_tests_properties(guest_errors PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_syslog_tests ${LIBS_INCLUDE_DIR}/tests/GuestSyslog.cpp)
+    target_include_directories(guest_syslog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_syslog_tests PRIVATE libc)
+    configure_windows_unwind(guest_syslog_tests)
+    add_test(NAME guest_syslog COMMAND guest_syslog_tests)
+    if(WIN32)
+        set_tests_properties(guest_syslog PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(mspace_tests ${LIBS_INCLUDE_DIR}/tests/Mspace.cpp)
@@ -249,6 +271,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_formatting COMMAND guest_formatting_tests)
     if(WIN32)
         set_tests_properties(guest_formatting PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_new_handler_tests ${LIBS_INCLUDE_DIR}/tests/GuestNewHandler.cpp)
+    target_include_directories(guest_new_handler_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_new_handler_tests PRIVATE libc)
+    configure_windows_unwind(guest_new_handler_tests)
+    add_test(NAME guest_new_handler COMMAND guest_new_handler_tests)
+    if(WIN32)
+        set_tests_properties(guest_new_handler PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_search_tests ${LIBS_INCLUDE_DIR}/tests/GuestSearch.cpp)
@@ -278,6 +309,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_strings PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_wcsrtombs_tests ${LIBS_INCLUDE_DIR}/tests/GuestWcsrtombs.cpp)
+    target_include_directories(guest_wcsrtombs_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_wcsrtombs_tests PRIVATE libc)
+    configure_windows_unwind(guest_wcsrtombs_tests)
+    add_test(NAME guest_wcsrtombs COMMAND guest_wcsrtombs_tests)
+    if(WIN32)
+        set_tests_properties(guest_wcsrtombs PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_wcsrtombs_s_tests ${LIBS_INCLUDE_DIR}/tests/GuestWcsrtombsS.cpp)
     target_include_directories(guest_wcsrtombs_s_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_wcsrtombs_s_tests PRIVATE libc)
@@ -296,6 +336,10 @@ if(BUILD_TESTING)
         target_include_directories(exception_personality_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(exception_personality_tests PRIVATE libc)
         add_test(NAME exception_personality COMMAND exception_personality_tests)
+        add_test_executable(guest_exit_order_tests ${LIBS_INCLUDE_DIR}/tests/GuestExitOrder.cpp)
+        target_include_directories(guest_exit_order_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_exit_order_tests PRIVATE libc)
+        add_test(NAME guest_exit_order COMMAND guest_exit_order_tests)
         if(NOT APPLE)
             enable_language(C)
             add_test_executable(exception_c_cleanup_tests ${LIBS_INCLUDE_DIR}/tests/ExceptionCCleanup.cpp ${LIBS_INCLUDE_DIR}/tests/ExceptionCCleanup.c)
@@ -338,6 +382,17 @@ if(BUILD_TESTING)
         set_tests_properties(application_heap_replacement application_heap_invalid_metadata application_heap_default application_heap_exit_order
             PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(application_heap_stats_tests ${LIBS_INCLUDE_DIR}/tests/ApplicationHeapStats.cpp)
+    target_include_directories(application_heap_stats_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(application_heap_stats_tests PRIVATE libc)
+    configure_windows_unwind(application_heap_stats_tests)
+    add_test(NAME application_heap_stats COMMAND application_heap_stats_tests)
+    add_test(NAME application_heap_stats_default COMMAND application_heap_stats_tests default)
+    add_test(NAME application_heap_stats_missing COMMAND application_heap_stats_tests missing)
+    if(WIN32)
+        set_tests_properties(application_heap_stats application_heap_stats_default application_heap_stats_missing
+            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(cpu_topology_tests ${LIBS_INCLUDE_DIR}/tests/CpuTopology.cpp)
         target_include_directories(cpu_topology_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -372,7 +427,44 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(guest_rune_locale_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestRuneLocale.cpp)
+target_include_directories(guest_rune_locale_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_rune_locale_tests PRIVATE libc)
+configure_windows_unwind(guest_rune_locale_tests)
+if(BUILD_TESTING)
+    set_target_properties(guest_rune_locale_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME guest_rune_locale COMMAND guest_rune_locale_tests)
+    if(WIN32)
+        set_tests_properties(guest_rune_locale PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 if(MINGW)
+    if(BUILD_TESTING)
+        enable_language(ASM)
+        add_test_executable(guest_message_destructor_abi_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestMessageDestructorAbi.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestMessageDestructorAbi.S)
+        target_include_directories(guest_message_destructor_abi_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_message_destructor_abi_tests PRIVATE libc)
+        configure_windows_unwind(guest_message_destructor_abi_tests)
+        foreach(mode IN ITEMS control decoy zero release regex-decoy regex-zero
+                unshared-decoy unshared-zero regex-unshared-decoy regex-unshared-zero)
+            add_test(NAME guest_message_destructor_${mode} COMMAND guest_message_destructor_abi_tests ${mode})
+            set_tests_properties(guest_message_destructor_${mode} PROPERTIES TIMEOUT 10
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endforeach()
+        foreach(kind IN ITEMS message plain)
+            foreach(operation IN ITEMS what destroy delete)
+                foreach(register IN ITEMS decoy zero)
+                    set(mode "vtable-${kind}-${operation}-${register}")
+                    add_test(NAME guest_exception_${mode} COMMAND guest_message_destructor_abi_tests ${mode})
+                    set_tests_properties(guest_exception_${mode} PROPERTIES TIMEOUT 10
+                        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+                endforeach()
+            endforeach()
+        endforeach()
+    endif()
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
         string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
     endforeach()

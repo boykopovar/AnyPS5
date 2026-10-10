@@ -16,6 +16,9 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
 int APS5_VABI sceKernelUnlink(const char* path);
+#ifdef _WIN32
+std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write);
+#endif
 
 }
 

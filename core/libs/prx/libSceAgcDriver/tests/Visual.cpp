@@ -61,7 +61,8 @@ void Run(SDL_Window* window, const std::filesystem::path& directory, bool verify
     }
     AgcDriver::Graphics::State state{};
     state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size()};
+    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+    state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -69,9 +70,11 @@ void Run(SDL_Window* window, const std::filesystem::path& directory, bool verify
     state.scissor = {{0, 0}, {Width, Height}};
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;
-    const std::array<std::uint16_t, 3> indices{0, 1, 2};
+    state.blends = {state.blend};
+    static constexpr std::array<std::uint16_t, 3> indices{0, 1, 2};
     const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(indices.data()), 3, 2, 1, 0};
     device.Draw(state, draw, shaders);
+    device.WaitIdle();
     const std::vector<std::byte> indexedPixels(Pixels.begin(), Pixels.end());
     for (std::size_t i = 0; i < Pixels.size(); i += 4) {
         Pixels[i] = std::byte{16};
@@ -81,6 +84,7 @@ void Run(SDL_Window* window, const std::filesystem::path& directory, bool verify
     }
     const AgcDriver::Pm4::DrawParameters autoDraw{0, 3, 0, 1, 0, false};
     device.Draw(state, autoDraw, shaders);
+    device.WaitIdle();
     Require(std::equal(Pixels.begin(), Pixels.end(), indexedPixels.begin()), "GPU readback: auto draw differs from indexed triangle");
     const auto center = (Height / 2 * Width + Width / 2) * 4;
     Require(std::to_integer<unsigned>(Pixels[center]) > 30 && std::to_integer<unsigned>(Pixels[center + 1]) > 30 && std::to_integer<unsigned>(Pixels[center + 2]) > 30, "GPU readback: triangle center was not rendered");

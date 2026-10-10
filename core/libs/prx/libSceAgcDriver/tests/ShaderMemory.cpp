@@ -5,6 +5,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
@@ -16,6 +17,7 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <iostream>
@@ -29,6 +31,17 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -65,6 +78,258 @@ void verifyResult(const ShaderRecompiler::RecompileResult& first, const ShaderRe
         const auto& left = first.bindings[index];
         const auto& right = second.bindings[index];
         require(left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly, "replayed binding differs");
+    }
+}
+
+ShaderRecompiler::RecompileRequest FrontendRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData) {
+    using namespace ShaderRecompiler;
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x100000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target = BufferTarget();
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32u;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    return request;
+}
+
+void verifyFrontendIdentity() {
+    using namespace ShaderRecompiler;
+    const bool reuse = std::getenv("APS5_NO_PERF_FRONTEND_PAIR") == nullptr;
+    const std::vector<std::uint32_t> code{0xbf800000u, 0xbf810000u};
+    const std::array<std::uint32_t, 2> userData{};
+    const auto request = FrontendRequest(code, userData);
+    ShaderPreparationContext preparation;
+    const auto first = preparation.AcquireFrontend(request);
+    require(first != nullptr, "frontend pair: no frontend was prepared");
+    require((preparation.AcquireFrontend(request) == first) == reuse, "frontend pair: repeated acquisition ignored the reuse switch");
+
+    const auto relocatedCode = code;
+    auto relocated = request;
+    relocated.shader.code = relocatedCode;
+    relocated.shader.codeAddress += 0x1000u;
+    require((preparation.AcquireFrontend(relocated) == first) == reuse, "frontend pair: identical words at another allocation or address changed reuse");
+    auto partial = request;
+    partial.context.compute->partialThreads = {33u, 1u, 1u};
+    require((preparation.AcquireFrontend(partial) == first) == reuse, "frontend pair: partial-thread state changed the frontend identity");
+    auto target = request;
+    target.target.subgroupSize = 64u;
+    target.context.waveSize = 32u;
+    target.context.compute->numThreads = {32u, 2u, 1u};
+    require((preparation.AcquireFrontend(target) == first) == reuse, "frontend pair: translation-only state changed the frontend identity");
+    const std::array<std::uint32_t, 2> changedUserData{1u, 2u};
+    auto userValues = request;
+    userValues.context.userData = changedUserData;
+    require((preparation.AcquireFrontend(userValues) == first) == reuse, "frontend pair: user-data values changed the frontend identity");
+
+    const auto verifyMiss = [&](const RecompileRequest& changed, const char* message) {
+        ShaderPreparationContext isolated;
+        const auto original = isolated.AcquireFrontend(request);
+        const auto replacement = isolated.AcquireFrontend(changed);
+        require(replacement != original, message);
+        require((isolated.AcquireFrontend(changed) == replacement) == reuse, "frontend pair: a successful miss was not retained");
+        require(isolated.AcquireFrontend(request) != original, "frontend pair: replacement retained more than the last frontend");
+    };
+    auto changed = request;
+    auto changedCode = code;
+    changedCode[0] = 0xbf800001u;
+    changed.shader.code = changedCode;
+    verifyMiss(changed, "frontend pair: changed code words reused the frontend");
+    changedCode = code;
+    changedCode.push_back(0xbf800000u);
+    changed.shader.code = changedCode;
+    verifyMiss(changed, "frontend pair: changed code length reused the frontend");
+    changed = request;
+    changed.context.userDataBaseRegister = 4u;
+    verifyMiss(changed, "frontend pair: changed user-data base reused the frontend");
+    changed = request;
+    changed.context.userData = std::span<const std::uint32_t>(userData).first(1u);
+    verifyMiss(changed, "frontend pair: changed user-data count reused the frontend");
+    changed = request;
+    changed.shader.stage = ShaderStage::Fragment;
+    changed.context.compute.reset();
+    changed.context.pixel = ShaderPixelStageInfo{};
+    verifyMiss(changed, "frontend pair: a different stage reused the frontend");
+    changed = request;
+    changed.shader.stage = ShaderStage::Vertex;
+    changed.context.compute.reset();
+    changed.context.vertex = ShaderVertexStageInfo{};
+    verifyMiss(changed, "frontend pair: a fetch-capable stage reused the compute frontend");
+
+    auto invalid = request;
+    invalid.shader.code = {};
+    bool failed = false;
+    try {
+        static_cast<void>(preparation.AcquireFrontend(invalid));
+    } catch (const std::out_of_range& error) {
+        failed = std::string_view(error.what()).find("before s_endpgm") != std::string_view::npos;
+    }
+    require(failed, "frontend pair: invalid code did not fail during frontend construction");
+    require((preparation.AcquireFrontend(request) == first) == reuse, "frontend pair: a failed miss replaced the prior frontend");
+}
+
+void verifyFrontendProgram(const ShaderRecompiler::IrProgram& reused, const ShaderRecompiler::IrProgram& fresh) {
+    using namespace ShaderRecompiler;
+    require(ProgramToString(reused) == ProgramToString(fresh), "frontend pair: reused frontend changed the IR");
+    require(reused.WaveSize() == fresh.WaveSize() && reused.Info() == fresh.Info(), "frontend pair: reused frontend changed shader information");
+    const auto& left = reused.Resources();
+    const auto& right = fresh.Resources();
+    require(left.stage == right.stage && left.shaderHash == right.shaderHash && left.userDataBase == right.userDataBase && left.userDataCount == right.userDataCount && left.srgbDecodeFormats == right.srgbDecodeFormats, "frontend pair: resource identity changed");
+    require(left.memoryInfo == right.memoryInfo && left.materializationSources == right.materializationSources && left.guardedSrtSlots == right.guardedSrtSlots && left.srtGuardOffset == right.srtGuardOffset && left.cleanFlatSlots == right.cleanFlatSlots && left.pureFlatSlots == right.pureFlatSlots, "frontend pair: resource planning changed");
+    require(left.descriptorSources.size() == right.descriptorSources.size() && left.srtReads.size() == right.srtReads.size(), "frontend pair: resource counts changed");
+    for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
+        const auto& a = left.descriptorSources[index];
+        const auto& b = right.descriptorSources[index];
+        require(a.dwordCount == b.dwordCount && a.indirectImage == b.indirectImage, "frontend pair: descriptor planning changed");
+        for (std::size_t word = 0; word < a.dwords.size(); ++word) {
+            require((a.dwords[word] == nullptr) == (b.dwords[word] == nullptr), "frontend pair: descriptor word presence changed");
+            if (a.dwords[word] != nullptr) require(a.dwords[word] != b.dwords[word] && a.dwords[word]->Id() == b.dwords[word]->Id(), "frontend pair: descriptor values were shared or changed");
+        }
+    }
+    require(reused.BlockOrder().size() == fresh.BlockOrder().size(), "frontend pair: block count changed");
+    for (std::size_t block = 0; block < reused.BlockOrder().size(); ++block) {
+        const auto* a = reused.BlockOrder()[block];
+        const auto* b = fresh.BlockOrder()[block];
+        require(a != b && a->Instructions().size() == b->Instructions().size(), "frontend pair: mutable IR blocks were shared or changed");
+        auto other = b->Instructions().begin();
+        for (const auto* x : a->Instructions()) {
+            const auto* y = *other++;
+            require(x != y && x->Flags<std::uint64_t>() == y->Flags<std::uint64_t>(), "frontend pair: mutable IR values were shared or their flags changed");
+        }
+    }
+}
+
+void verifyFrontendPair() {
+    using namespace ShaderRecompiler;
+    verifyFrontendIdentity();
+    const bool reuse = std::getenv("APS5_NO_PERF_FRONTEND_PAIR") == nullptr;
+    const std::vector<std::uint32_t> code{0xe0700000u, 0x80000000u, 0xbf810000u};
+    const std::array<std::uint32_t, 4> buffer{0x10000000u, 0u, 0x40u, 0x00027facu};
+    const auto request = FrontendRequest(code, buffer);
+    auto partial = request;
+    partial.context.compute->partialThreads = {33u, 1u, 1u};
+    const auto freshFull = PrepareResourceProgram(request);
+    const auto freshPartial = PrepareResourceProgram(partial);
+    require(ProgramToString(freshFull) != ProgramToString(freshPartial), "frontend pair: fixture does not distinguish full and partial threads");
+    const auto storeThreadLimits = [](const IrProgram& program) {
+        std::vector<const IrValue*> pending;
+        for (const auto* block : program.BlockOrder()) {
+            for (const auto* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::StoreBufferU32) pending.push_back(inst->Argument(inst->ArgumentCount() - 1u));
+            }
+        }
+        require(pending.size() == 1u, "frontend pair: fixture does not retain exactly one buffer store");
+        std::vector<const IrValue*> visited;
+        std::uint32_t axes = 0u;
+        while (!pending.empty()) {
+            const auto* value = pending.back()->Resolve();
+            pending.pop_back();
+            if (std::find(visited.begin(), visited.end(), value) != visited.end()) continue;
+            visited.push_back(value);
+            if (value->Opcode() == IrOpcode::GetBuiltin && value->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::DispatchThreadLimit)) {
+                const auto axis = value->Argument(1)->Resolve()->ImmediateU32();
+                require(axis < 3u, "frontend pair: invalid dispatch-limit axis");
+                axes |= 1u << axis;
+            }
+            for (const auto* argument : value->Arguments()) pending.push_back(argument);
+        }
+        return axes;
+    };
+    require(storeThreadLimits(freshFull) == 0u && storeThreadLimits(freshPartial) == 7u, "frontend pair: buffer-store predicate does not retain all partial-thread bounds");
+    require(!freshFull.Resources().memoryInfo.empty() && !freshFull.Resources().descriptorSources.empty() && !freshFull.Info().buffers.empty(), "frontend pair: fixture has no buffer resources");
+
+    for (const bool partialFirst : {false, true}) {
+        ShaderPreparationContext preparation;
+        std::shared_ptr<const PreparedControlFlow> retained;
+        {
+            auto temporary = code;
+            auto borrowed = request;
+            borrowed.shader.code = temporary;
+            retained = preparation.AcquireFrontend(borrowed);
+            std::fill(temporary.begin(), temporary.end(), 0xffffffffu);
+            require((preparation.AcquireFrontend(request) == retained) == reuse, "frontend pair: mutating the caller's code changed the retained frontend");
+        }
+        require((preparation.AcquireFrontend(request) == retained) == reuse, "frontend pair: destroying the caller's code changed the retained frontend");
+        const auto first = PrepareResourceProgram(partialFirst ? partial : request, &preparation);
+        const auto second = PrepareResourceProgram(partialFirst ? request : partial, &preparation);
+        verifyFrontendProgram(first, partialFirst ? freshPartial : freshFull);
+        verifyFrontendProgram(second, partialFirst ? freshFull : freshPartial);
+        require(first.BlockOrder().front() != second.BlockOrder().front(), "frontend pair: full and partial variants share mutable IR");
+        const auto repeated = PrepareResourceProgram(partialFirst ? partial : request, &preparation);
+        verifyFrontendProgram(repeated, first);
+        auto translated = request;
+        translated.context.waveSize = 32u;
+        translated.context.compute->numThreads = {32u, 2u, 1u};
+        const auto changed = PrepareResourceProgram(translated, &preparation);
+        const auto freshChanged = PrepareResourceProgram(translated);
+        verifyFrontendProgram(changed, freshChanged);
+        require(changed.WaveSize() != freshFull.WaveSize(), "frontend pair: changed translation inputs were ignored");
+        require((preparation.AcquireFrontend(request) == retained) == reuse, "frontend pair: translating a variant replaced the frontend");
+    }
+
+    for (const bool partialFirst : {false, true}) {
+        auto pairCode = code;
+        pairCode.insert(pairCode.begin(), 0xbf800000u | static_cast<std::uint32_t>(partialFirst));
+        auto full = request;
+        full.shader.code = pairCode;
+        auto limited = partial;
+        limited.shader.code = pairCode;
+        const auto fullReference = Recompile(full);
+        const auto partialReference = Recompile(limited);
+        ShaderPreparationContext preparation;
+        const auto first = PrepareShader(partialFirst ? limited : full, &preparation);
+        const auto second = PrepareShader(partialFirst ? full : limited, &preparation);
+        const auto& fullHandle = partialFirst ? second : first;
+        const auto& partialHandle = partialFirst ? first : second;
+        const auto& fullArtifact = GetPreparedArtifact(*fullHandle);
+        const auto& partialArtifact = GetPreparedArtifact(*partialHandle);
+        require(first->source != second->source, "frontend pair: full and partial fixtures did not exercise separate sources");
+        require(fullArtifact.spirv != partialArtifact.spirv, "frontend pair: full and partial threads share the same artifact");
+        SrtRuntime runtime{};
+        runtime.userData = buffer;
+        runtime.shaderBase = full.shader.codeAddress;
+        const auto fullCapture = CaptureResources(full, runtime, *fullHandle);
+        const auto partialCapture = CaptureResources(limited, runtime, *partialHandle);
+        const auto fullResult = MaterializeShader(full, *fullCapture, *fullHandle);
+        const auto partialResult = MaterializeShader(limited, *partialCapture, *partialHandle);
+        verifyResult(fullReference, *fullResult);
+        verifyResult(partialReference, *partialResult);
+    }
+
+    const std::array<std::uint32_t, 1> color{0x3f800000u};
+    for (const bool zeroFirst : {false, true}) {
+        const std::vector<std::uint32_t> pixelCode{0xbf800000u | static_cast<std::uint32_t>(zeroFirst), 0x7e000200u, 0xf800180fu, 0u, 0xbf810000u};
+        auto pixel = FrontendRequest(pixelCode, color);
+        pixel.shader.stage = ShaderStage::Fragment;
+        pixel.context.compute.reset();
+        pixel.context.pixel = ShaderPixelStageInfo{};
+        pixel.context.pixel->wave32 = true;
+        pixel.context.pixel->targetOutputMode[0] = 9u;
+        pixel.context.waveSize = 32u;
+        auto zero = pixel;
+        zero.layout.pushConstantSizeBytes = 0u;
+        const auto pixelReference = Recompile(pixel);
+        const auto zeroReference = Recompile(zero);
+        ShaderPreparationContext preparation;
+        const auto first = PrepareShader(zeroFirst ? zero : pixel, &preparation);
+        const auto second = PrepareShader(zeroFirst ? pixel : zero, &preparation);
+        const auto& pixelHandle = zeroFirst ? second : first;
+        const auto& zeroHandle = zeroFirst ? first : second;
+        require(first->source == second->source, "frontend pair: pixel capacities did not exercise the same source");
+        require(GetPreparedArtifact(*pixelHandle).spirv != GetPreparedArtifact(*zeroHandle).spirv, "frontend pair: pixel fixture does not distinguish push-constant capacities");
+        SrtRuntime runtime{};
+        runtime.userData = color;
+        runtime.shaderBase = pixel.shader.codeAddress;
+        const auto pixelCapture = CaptureResources(pixel, runtime, *pixelHandle);
+        const auto zeroCapture = CaptureResources(zero, runtime, *zeroHandle);
+        verifyResult(pixelReference, *MaterializeShader(pixel, *pixelCapture, *pixelHandle));
+        verifyResult(zeroReference, *MaterializeShader(zero, *zeroCapture, *zeroHandle));
     }
 }
 
@@ -114,6 +379,66 @@ void verifyEvaluatedValues() {
     require(table.Find(values[7].get(), found) && found == 21u, "evaluated values: a second insert replaced the first value");
     IrValue absent(IrOpcode::Void, IrType::U32, 1000u);
     require(!table.Find(&absent, found), "evaluated values: a value that was never inserted was found");
+}
+
+void verifySignedSrtComparison() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.userDataBase = 8;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t id = 0;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        auto value = std::make_unique<IrValue>(opcode, type, id++);
+        for (auto* argument : arguments) value->AddArgument(argument);
+        values.push_back(std::move(value));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    auto& registerValue = make(IrOpcode::Void, IrType::ScalarReg);
+    registerValue.SetRegister({RegisterBank::Scalar, 8u});
+    auto& userData = make(IrOpcode::GetUserData, IrType::U32, {&registerValue});
+    auto& zero = constant(0u);
+    auto& intMin = constant(0x80000000u);
+    auto& intMax = constant(0x7fffffffu);
+    auto& negative = constant(0xau);
+    auto& nonnegative = constant(0xbu);
+    auto& greaterThanMin = constant(0xcu);
+    auto& equalMin = constant(0xdu);
+    auto& belowMax = constant(0xeu);
+    auto& equalMax = constant(0xfu);
+    auto& isNegative = make(IrOpcode::SLessThan32, IrType::Bool, {&userData, &zero});
+    auto& aboveMin = make(IrOpcode::SLessThan32, IrType::Bool, {&intMin, &userData});
+    auto& belowMaxValue = make(IrOpcode::SLessThan32, IrType::Bool, {&userData, &intMax});
+    DescriptorSource source;
+    source.dwordCount = 3u;
+    source.dwords[0] = &make(IrOpcode::SelectU32, IrType::U32, {&isNegative, &negative, &nonnegative});
+    source.dwords[1] = &make(IrOpcode::SelectU32, IrType::U32, {&aboveMin, &greaterThanMin, &equalMin});
+    source.dwords[2] = &make(IrOpcode::SelectU32, IrType::U32, {&belowMaxValue, &belowMax, &equalMax});
+    plan.descriptorSources.push_back(source);
+    const std::array<std::uint32_t, 1> sourceIndex{0u};
+    const std::array<std::pair<std::uint32_t, std::array<std::uint32_t, 3>>, 4> cases{{
+        {0x80000000u, {0xau, 0xdu, 0xeu}},
+        {0xffffffffu, {0xau, 0xcu, 0xeu}},
+        {0u, {0xbu, 0xcu, 0xeu}},
+        {0x7fffffffu, {0xbu, 0xcu, 0xfu}},
+    }};
+    std::vector<DescriptorValue> descriptors;
+    std::vector<std::uint32_t> flat;
+    std::vector<std::uint8_t> active;
+    for (const auto& [input, expected] : cases) {
+        const std::array<std::uint32_t, 1> userDataWords{input};
+        const SrtRuntime runtime{userDataWords};
+        require(Detail::EvaluateRuntimeSourcesImpl(plan, sourceIndex, runtime, descriptors, flat, false, {}, active), "signed SRT comparison: descriptor expression could not be evaluated");
+        require(descriptors.size() == 1u && descriptors[0].dwordCount == expected.size(), "signed SRT comparison: descriptor shape changed");
+        for (std::size_t index = 0; index < expected.size(); ++index) {
+            require(descriptors[0].dwords[index] == expected[index], "signed SRT comparison: signed boundary selected the wrong descriptor dword");
+        }
+    }
 }
 
 // The pure flat slots of a hand-built plan (Detail::ComputePureFlatSlots): a slot is pure unless
@@ -419,6 +744,14 @@ void verifyBindlessTable() {
     require(wholeCapture->snapshot.images[wholeRoot].dwords == heap[0] && wholeCapture->snapshot.images[wholeDirect].dwords == heap[1] && wholeCapture->snapshot.images[wholeDirect + 1u].dwords == heap[2] && wholeCapture->snapshot.images[wholeDirect + 2u].dwords == heap[3], "bindless: mode T slots are wrong");
     whole.context.memory = wholeMemory.Regions();
     require(!Recompile(whole, *wholeCapture)->spirv.empty(), "bindless: mode T did not compile");
+    std::vector<std::uint32_t> latchCode(wholeCode.begin(), wholeCode.begin() + 12);
+    latchCode.insert(latchCode.end(), {0xbea80380u, 0xf09c0f08u, 0x00450000u, 0x80288128u, 0xbf0a8428u, 0xbf85fffbu, 0xe0700000u, 0x80070000u, 0xbf810000u});
+    auto latch = makeRequest(latchCode);
+    AgcDriver::ShaderMemory latchMemory({});
+    const auto latchCapture = latchMemory.Capture(latch);
+    const auto latchRegions = latchMemory.Regions();
+    latch.context.memory = latchRegions;
+    require(!Recompile(latch, *latchCapture)->spirv.empty(), "bindless: a sample in a loop latch did not compile");
 
     // A table wider than the slots without a material pattern is rejected.
     fillSrt(100u);
@@ -548,6 +881,64 @@ void verifyDescriptorPhis() {
 
     auto dynamic = makeRequest(dynamicCode);
     expectFailure([&] { static_cast<void>(GetResourcePlan(dynamic)); }, "GetSamplerResource dword 0 is not a valid runtime value", "descriptor Phi: an edge without an SRT slot was accepted");
+
+    const std::vector<std::uint32_t> loopCode{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbe910380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf068011u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x80118111u, 0xbf0a8211u, 0xbf85fff0u, 0xbf810000u};
+    const auto loopCapture = compile(loopCode, 2u, 1u);
+    const auto& loopImages = loopCapture->snapshot.images;
+    const auto holdsLoopImage = [&](const std::array<std::uint32_t, 8>& words) {
+        return std::ranges::any_of(loopImages, [&](const DescriptorValue& value) {
+            return std::equal(words.begin(), words.end(), value.dwords.begin());
+        });
+    };
+    require(loopImages.size() == 2u && holdsLoopImage(first) && holdsLoopImage(second), "descriptor Phi: the loop's chained T# Phis were not split into the two SRT T#s");
+
+    const auto entryWrites = [&](std::initializer_list<std::uint32_t> words) {
+        auto code = loopCode;
+        code.insert(code.begin() + 8, words);
+        return code;
+    };
+    const std::array<std::pair<std::vector<std::uint32_t>, const char*>, 3> invalidEntries{{
+        {entryWrites({0xbe8e1f00u}), "descriptor Phi: a T# holding the program counter was accepted"},
+        {entryWrites({0xbe8e037eu}), "descriptor Phi: a T# holding EXEC was accepted"},
+        {entryWrites({0x7d840080u, 0xbe8e036au}), "descriptor Phi: a T# holding a compare mask was accepted"},
+    }};
+    for (const auto& [code, message] : invalidEntries) {
+        auto request = makeRequest(code);
+        expectFailure([&] { static_cast<void>(GetResourcePlan(request)); }, "GetImageResource dword 0 is not a valid runtime value", message);
+    }
+    auto unwritten = loopCode;
+    unwritten[4] = 0xf4080200u;
+    auto unwrittenRequest = makeRequest(unwritten);
+    require(GetResourcePlan(unwrittenRequest)->info.images.size() == 3u, "descriptor Phi: a T# whose unwritten registers read as 0 was not planned as its own image");
+
+    const std::array<std::uint32_t, 7> prologue{0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu};
+    const std::array<std::uint32_t, 7> epilogue{0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    const auto planImages = [&](const std::vector<std::uint32_t>& body) {
+        std::vector<std::uint32_t> code(prologue.begin(), prologue.end());
+        code.insert(code.end(), body.begin(), body.end());
+        code.insert(code.end(), epilogue.begin(), epilogue.end());
+        auto request = makeRequest(code);
+        return GetResourcePlan(request)->info.images.size();
+    };
+    const auto distinctLoads = [](std::uint32_t loads) {
+        std::vector<std::uint32_t> body;
+        for (std::uint32_t load = 0; load < loads; load++) {
+            body.insert(body.end(), {0xbf068014u, 0xbf850002u, 0xf40c0200u, 0xfa000060u + load * 0x20u});
+        }
+        return body;
+    };
+    require(planImages(distinctLoads(63u)) == 64u, "descriptor Phi: 64 distinct T#s were not given one image each");
+    expectFailure([&] { static_cast<void>(planImages(distinctLoads(64u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: more than 64 distinct T#s were accepted");
+
+    const auto splitReloads = [](std::uint32_t joins) {
+        std::vector<std::uint32_t> body;
+        for (std::uint32_t join = 0; join < joins; join++) {
+            body.insert(body.end(), {0xbf068014u, 0xbf850003u, 0xf40003c0u, join % 2u == 0u ? 0xfa000088u : 0xfa00008cu, 0xbf820006u, 0xf4080200u, 0xfa000060u, 0xf4040300u, 0xfa000070u, 0xf4000380u, 0xfa000078u});
+        }
+        return body;
+    };
+    require(planImages(splitReloads(8u)) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s");
+    expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted");
 }
 
 void verifyProgramCounterRelativeData() {
@@ -738,6 +1129,45 @@ void verifyHalfWaveReduction() {
         const auto wide = "half-wave reduction: a wave64 scan reduced by SPIR-V opcode " + std::to_string(reduction.reduce) + " did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes";
         require(halves(pixel(scan(reduction.identity, reduction.vector, reduction.scalar), 64u, true), reduction.reduce, reduction.identity), wide.c_str());
     }
+    const auto vertex = [](std::vector<std::uint32_t> code, std::uint32_t subgroupSize) {
+        *std::find(code.begin(), code.end(), 0xf800180fu) = 0xf80008cfu;
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Vertex, 0x10000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.vertex = ShaderVertexStageInfo{};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.target.supportedCapabilities = capabilities;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv;
+    };
+    require(reductions(vertex(scan(0xffffffffu, 0x26000000u, 0x83800000u), 32u), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: the wave64 vertex UMin scan, whose entry EXEC is every invocation, did not read lane 31 as a subgroup UMin on 32 lanes");
+    require(halves(vertex(scan(0x80000000u, 0x24000000u, 0x84000000u), 64u), spv::OpGroupNonUniformSMax, 0x80000000u), "half-wave reduction: the wave64 vertex SMax scan did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes");
+    const auto floatScan = [&scan](std::uint32_t identity, std::uint32_t vector, std::uint32_t join) {
+        auto code = scan(identity, vector, 0u);
+        code[23] = join;
+        code[24] = 0x00000e06u;
+        return code;
+    };
+    const auto fmax = floatScan(0xff800000u, 0x20000000u, 0xd5100001u);
+    const auto fmin = floatScan(0x7f800000u, 0x1e000000u, 0xd50f0001u);
+    for (const auto& code : {fmax, fmin}) {
+        const auto narrow = pixel(code, 32u, false);
+        require(!narrow.empty() && reductions(narrow, spv::OpGroupNonUniformFMax) == 0u && reductions(narrow, spv::OpGroupNonUniformFMin) == 0u, "half-wave reduction: a wave64 v_max_f32/v_min_f32 scan did not read lane 63 as its -inf/+inf keys on 32 lanes");
+        require(!pixel(code, 64u, false).empty(), "half-wave reduction: a wave64 v_max_f32/v_min_f32 scan did not build on 64 lanes");
+    }
+    auto fmaxUnderExec = fmax;
+    fmaxUnderExec[3] = 0xbeea047eu;
+    expectFailure([&] { static_cast<void>(pixel(fmaxUnderExec, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a v_max_f32 scan under the entry EXEC read lane 63");
+    auto fmaxJoinedByMin = fmax;
+    fmaxJoinedByMin[17] = 0x1e000000u | 0x001a190du;
+    expectFailure([&] { static_cast<void>(pixel(fmaxJoinedByMin, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a v_max_f32 row scan joined by v_min_f32 read lane 63");
+    auto fmaxOfZero = fmax;
+    fmaxOfZero[6] = 0u;
+    expectFailure([&] { static_cast<void>(pixel(fmaxOfZero, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a v_max_f32 scan of 0 outside the live lanes read lane 63");
     const auto umin = scan(0xffffffffu, 0x26000000u, 0x83800000u);
     const auto patched = [&umin](std::initializer_list<std::pair<std::size_t, std::uint32_t>> words) {
         auto code = umin;
@@ -746,6 +1176,10 @@ void verifyHalfWaveReduction() {
     };
     require(reductions(pixel(patched({{3, 0xbeea25c1u}}), 32u, true), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: the scan under s_or_saveexec_b64 -1 did not read lane 31 as a subgroup UMin");
     const char* lane63 = "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup";
+    auto divergent = umin;
+    divergent.insert(divergent.begin() + 3, 0x88fe1a7eu);
+    divergent.insert(divergent.begin() + 2, {0xbe860480u, 0x7d821688u, 0xbe9a246au, 0xbf880001u});
+    require(reductions(pixel(divergent, 32u, true), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: keys masked inside a divergent branch did not read lane 31 as a subgroup UMin");
     const char* arithmetic = "v_readlane_b32 of lane 31 of a wave64 half-wave reduction scan needs subgroup arithmetic";
     expectFailure([&] { static_cast<void>(pixel(umin, 32u, false)); }, arithmetic, "half-wave reduction: a device without subgroup arithmetic read lane 31 on 32 lanes");
     expectFailure([&] { static_cast<void>(pixel(umin, 64u, false)); }, arithmetic, "half-wave reduction: a device without subgroup arithmetic read lane 31 on 64 lanes");
@@ -801,6 +1235,20 @@ void verifyMeshConfiguration() {
     other.graphics = GraphicsCompileContext{0u, {}, otherMesh, std::nullopt, {}};
     RecompileCacheKey::Build(other, key);
     require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "the cache keys ignore the mesh configuration");
+    const std::array<std::uint32_t, 8> users{};
+    request.context.waveSize = 32u;
+    request.context.userData = users;
+    request.context.vertex = ShaderVertexStageInfo{};
+    request.target.subgroupSize = 32u;
+    request.graphics->mesh = MeshConfiguration{1u, 1u, 1u, 1u, 1u, 32u, 256u, 0u, 4u};
+    for (const std::uint32_t threads : {32u, 64u, 128u, 480u}) {
+        request.graphics->mesh->threadsPerGroup = threads;
+        require(PrepareResourceProgram(request).WaveSize() == 32u, "a wave32 mesh program did not preserve its guest wave size");
+    }
+    for (const std::uint32_t threads : {31u, 512u}) {
+        request.graphics->mesh->threadsPerGroup = threads;
+        expectFailure([&] { static_cast<void>(PrepareResourceProgram(request)); }, "mesh shader translation configuration is not supported", "mesh translation accepted a partial wave or overflowing wave count");
+    }
 }
 
 ShaderRecompiler::ShaderPixelStageInfo twoParameterPixel() {
@@ -916,19 +1364,19 @@ void verifyPixelRequestSerialization() {
     minimal.context.waveSize = 64;
     minimal.context.pixel = ShaderPixelStageInfo{};
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQQ0AAAA=", "new requests did not use serialization version 13");
+    require(requestPrefix(encoded, 8u) == "NVNQQQ4AAAA=", "new requests did not use serialization version 14");
     constexpr std::size_t mappingOffset = 8u + 37u + 18u + 163u;
-    for (std::size_t bytes = 0; bytes < 8u; ++bytes) {
-        expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated version-12 pixel mapping was accepted");
+    for (std::size_t bytes = 0; bytes < 16u; ++bytes) {
+        expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping or packing was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQQ4AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQQ8AAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
 }
 
 void verifyLegacyPixelRequests() {
     using namespace ShaderRecompiler;
-    static constexpr std::array<std::string_view, 10> legacyPixelRequests{
+    static constexpr std::array<std::string_view, 13> legacyPixelRequests{
         "NVNQQQEAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAkAAAAAAAAAAAAA"
@@ -979,6 +1427,21 @@ void verifyLegacyPixelRequests() {
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgkAAAAAAAAA"
         "AAAAAAAAAAAAAAAAAAAAAAAAEEAAAAMBAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         "AAsAAAAAAAAAgAAAAAAAAQAAAAA=",
+        "NVNQQQsAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgAJAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAABBAAAADAQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAALAAAAAAAAAIAAAAAAAAEAAAAA",
+        "NVNQQQwAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgAJAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAABBAAAADAQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAALAAAAAAAAAIAAAAAAAAEAAAAAAA==",
+        "NVNQQQ0AAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAgAJAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAQQAAAAwEAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAACwAAAAAAAACAAAAAAAABAAAAAAA=",
     };
     const RequestSerializer serializer;
     for (std::size_t index = 0; index < legacyPixelRequests.size(); ++index) {
@@ -988,6 +1451,7 @@ void verifyLegacyPixelRequests() {
         require(request.context.pixel.has_value(), "legacy pixel state was lost");
         const auto& pixel = *request.context.pixel;
         require(pixel.targetExportMapping == std::array<std::uint8_t, 8>{}, "legacy pixel mapping no longer defaults to zero");
+        require(pixel.targetExportPacking == std::array<ColorExportPacking, 8>{}, "a legacy request packed a color export");
         require(pixel.inputAddr == 2u && pixel.hasPerspectiveCenterVgpr && pixel.targetOutputMode[0] == 9u, "legacy pixel layout was misread");
         require(pixel.conservativeZExport == (version >= 7u ? ConservativeZExport::GreaterThanZ : ConservativeZExport::AnyZ), "legacy conservative Z layout was misread");
         require(!pixel.orderedPixelShader, "a legacy request became a primitive-ordered pixel shader");
@@ -1452,6 +1916,8 @@ void verifyUnnormalizedSamplers() {
     for (const std::uint32_t mimg : {0xf0c00f08u, 0xf11c0108u, 0xf09c0f18u}) {
         static_cast<void>(recompile(program(mimg), imageData(normalized, mimg == 0xf09c0f18u ? TypeCube : Type2D, Format8888UNorm, mimg == 0xf09c0f18u ? 5u : 0u)));
     }
+    const std::vector<std::uint32_t> latchSample{0xbe900380u, 0x7e020280u, 0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0xf09c0f28u, 0x00400801u, 0x80108110u, 0xbf0a8410u, 0xbf85fffbu, 0xe0700000u, 0x80030800u, 0xbf810000u};
+    static_cast<void>(recompile(latchSample, imageData(normalized, Type2DArray, Format8888UNorm, 5u)));
 
     const std::array<std::uint32_t, 5> pixelCode{0xf0800f08u, 0x00400801u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
     const auto pixelData = userData(unnormalized);
@@ -1495,6 +1961,11 @@ void verifyUnusedUnnormalizedSampler() {
     auto selected = info;
     selected.images[0].indirectRoot = 0u;
     expectFailure([&] { static_cast<void>(populate(selected)); }, "unnormalized guest sampler samples an image selected at run time, which is not implemented", "unnormalized samplers: an image table root was accepted");
+    snapshot.images[0].dwords[3] = 0xa0000041u;
+    const auto constant = populate(info);
+    require(constant.size() == 1u && constant[0].samplerUnnormalized == std::vector<bool>{true}, "unnormalized samplers: a 3D view whose channels select constants was bound or refused");
+    expectFailure([&] { static_cast<void>(populate(selected)); }, "unnormalized guest sampler samples an image selected at run time, which is not implemented", "unnormalized samplers: an image table root whose channels select constants was accepted");
+    snapshot.images[0].dwords[3] = 0x90000facu;
     auto compared = info;
     compared.samplers[0].depthCompare = true;
     expectFailure([&] { static_cast<void>(populate(compared)); }, "unnormalized guest sampler is used with depth comparison, which is not implemented", "unnormalized samplers: a depth-compare S# without live uses was accepted");
@@ -1640,9 +2111,12 @@ void verifyBdaReadFallbackFunctions() {
             std::map<std::uint32_t, std::string> names;
             std::map<std::string, std::uint32_t> definitions;
             const auto reader = std::string("read_bda_dword_bytes") + (barrier ? "" : "_stop") + (coherent ? "_coherent" : "");
+            const auto span = std::string("read_bda_span") + (barrier ? "" : "_stop") + (coherent ? "_coherent" : "");
             std::string function;
             std::size_t compareExchanges = 0;
             std::size_t mainLookups = 0;
+            std::size_t mainProbes = 0;
+            std::size_t spanCalls = 0;
             std::array<std::size_t, 2> readerLoads{};
             for (std::size_t cursor = 5; cursor < five.size();) {
                 const auto length = five[cursor] >> 16u;
@@ -1651,22 +2125,29 @@ void verifyBdaReadFallbackFunctions() {
                 if (op == spv::OpName) names[five[cursor + 1]] = reinterpret_cast<const char*>(&five[cursor + 2]);
                 if (op == spv::OpFunction) {
                     function = names[five[cursor + 2]];
-                    if (function == "record_bda_fault" || function.starts_with("read_bda_dword_bytes")) {
-                        require((five[cursor + 3] & spv::FunctionControlDontInlineMask) != 0u, "BDA read functions: a fault or byte read function may be inlined");
+                    if (function == "record_bda_fault" || function.starts_with("read_bda_dword_bytes") || function.starts_with("read_bda_span")) {
+                        require((five[cursor + 3] & spv::FunctionControlDontInlineMask) != 0u, "BDA read functions: a fault, byte read or span read function may be inlined");
                         ++definitions[function];
                     }
                 }
                 if (op == spv::OpAtomicCompareExchange) ++compareExchanges;
                 if (op == spv::OpFunctionCall && function == "main" && names[five[cursor + 3]] == "get_bda_pointer") ++mainLookups;
+                if (op == spv::OpFunctionCall && function == "main") {
+                    const auto& callee = names[five[cursor + 3]];
+                    if (callee == "probe_bda_pointer" || callee.starts_with("read_bda_dword_bytes")) ++mainProbes;
+                    if (callee == span) ++spanCalls;
+                }
                 if (op == spv::OpLoad && function == reader) ++readerLoads[length > 4u && (five[cursor + 4] & spv::MemoryAccessVolatileMask) != 0u];
                 cursor += length;
             }
-            require(definitions["record_bda_fault"] == 1u && definitions[reader] == 1u, "BDA read functions: the fault and byte read functions are not defined");
+            require(definitions["record_bda_fault"] == 1u && definitions[reader] == 1u && definitions[span] == 1u, "BDA read functions: the fault, byte read and span read functions are not defined");
             for (const auto& [name, count] : definitions) require(count == 1u, "BDA read functions: a function is defined twice");
             require(compareExchanges == 1u, "BDA read functions: a fault is recorded outside record_bda_fault");
             require(mainLookups == 0u, "BDA read functions: a read site looks up its bytes inline");
             require(readerLoads[coherent] == 4u && readerLoads[!coherent] == 0u, "BDA read functions: the byte loads do not keep the access's coherence");
-            require(five.size() - one.size() < 4u * 300u, "BDA read functions: a read site takes 300 SPIR-V words or more");
+            require(mainProbes == 0u, "BDA read functions: a read site probes or reads bytes outside its span read function");
+            require(spanCalls == 5u, "BDA read functions: a read site does not call its span read function once");
+            require(five.size() - one.size() < 4u * 150u, "BDA read functions: a read site takes 150 SPIR-V words or more");
         }
     }
 }
@@ -1811,9 +2292,266 @@ void verifyFunctionLdsBound() {
     require(unsized == FunctionLdsDwordLimit, "function LDS: an access without a known width must keep the full array");
 }
 
+struct NestedRequest {
+    std::vector<std::uint32_t> code;
+    std::array<std::uint32_t, 2> userData{};
+    ShaderRecompiler::RecompileRequest request{};
+
+    NestedRequest(std::vector<std::uint32_t> words, const void* srt) : code(std::move(words)) {
+        using namespace ShaderRecompiler;
+        const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt));
+        userData = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+        request.shader = {ShaderStage::Compute, 0x60000u + static_cast<std::uint64_t>(code.size()) * 4u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target = BufferTarget();
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+    }
+};
+
+bool RegionsCover(const std::vector<ShaderRecompiler::MemoryRegion>& regions, const void* pointer, std::size_t bytes) {
+    auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
+    const auto end = address + bytes;
+    while (address < end) {
+        const auto region = std::find_if(regions.begin(), regions.end(), [&](const ShaderRecompiler::MemoryRegion& candidate) { return address >= candidate.guestAddress && address < candidate.guestAddress + candidate.bytes.size(); });
+        if (region == regions.end()) return false;
+        address = region->guestAddress + region->bytes.size();
+    }
+    return true;
+}
+
+bool RegionsTouch(const std::vector<ShaderRecompiler::MemoryRegion>& regions, std::uint64_t address, std::size_t bytes) {
+    return std::any_of(regions.begin(), regions.end(), [&](const ShaderRecompiler::MemoryRegion& region) { return region.guestAddress < address + bytes && address < region.guestAddress + region.bytes.size(); });
+}
+
+bool GuardRecords(const ShaderRecompiler::ResourceCapture& capture) {
+    const auto& plan = *capture.plan;
+    const auto& flat = capture.snapshot.flattenedSrt;
+    const auto& poison = capture.snapshot.srtPoison;
+    const auto flags = plan.srtReads.size();
+    const auto guards = plan.guardedSrtSlots.size();
+    if (flat.size() != flags + guards + 3u * poison.size()) return false;
+    for (std::size_t guard = 0; guard < guards; ++guard) {
+        const auto record = std::find_if(poison.begin(), poison.end(), [&](const ShaderRecompiler::SrtReadPoison& entry) { return entry.slot == plan.guardedSrtSlots[guard]; });
+        const auto expected = record == poison.end() ? 0u : static_cast<std::uint32_t>(record - poison.begin()) + 1u;
+        if (flat[flags + guard] != expected) return false;
+    }
+    for (std::size_t record = 0; record < poison.size(); ++record) {
+        const auto* words = flat.data() + flags + guards + 3u * record;
+        if (words[0] != poison[record].pc || words[1] != static_cast<std::uint32_t>(poison[record].address) || words[2] != static_cast<std::uint32_t>(poison[record].address >> 32u) || flat.at(poison[record].slot) != 0u) return false;
+    }
+    return true;
+}
+
+void verifyGuardedNullPointers() {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t Reserved = 0x10000;
+    void* reserved = nullptr;
+#ifdef _WIN32
+    reserved = VirtualAlloc(nullptr, Reserved, MEM_RESERVE, PAGE_NOACCESS);
+#else
+    reserved = mmap(nullptr, Reserved, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reserved == MAP_FAILED) reserved = nullptr;
+#endif
+    require(reserved != nullptr, "guarded pointer: cannot reserve an inaccessible range");
+    const auto unmapped = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(reserved));
+    alignas(256) static std::array<std::uint32_t, 64> output{};
+    alignas(256) static std::array<std::uint32_t, 16> root{};
+    static std::uint32_t payload = 0x3f800000u;
+    static std::uint64_t indirect = 0;
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    root = {static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(output)), 0x30027facu, 1u};
+    const auto point = [&](std::uint64_t address) {
+        root[6] = static_cast<std::uint32_t>(address);
+        root[7] = static_cast<std::uint32_t>(address >> 32u);
+    };
+    const auto payloadAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&payload));
+    const std::vector<std::uint32_t> branchCode{0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u,
+        0xbf8cc07fu, 0xbf068008u, 0xbf850003u, 0xf4000305u, 0xfa000000u, 0xbf8cc07fu, 0x7e02020cu, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u};
+    const std::vector<std::uint32_t> chainCode{0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4040280u, 0xfa000018u, 0xbe8c03ffu, 0x11111111u,
+        0xbf8cc07fu, 0xbf068008u, 0xbf850006u, 0xf4040385u, 0xfa000000u, 0xbf8cc07fu, 0xf4000307u, 0xfa000000u, 0xbf8cc07fu, 0x7e02020cu, 0x34040082u,
+        0xe0701000u, 0x80010102u, 0xbf810000u};
+    const std::vector<std::uint32_t> descriptorCode{0xf4040280u, 0xfa000018u, 0xbf8cc07fu, 0xf4080105u, 0xfa000000u, 0xbf8cc07fu, 0x34040082u, 0xe0701000u,
+        0x80010002u, 0xbf810000u};
+    const auto slotPc = [](const IrResourcePlan& plan, std::uint32_t slot) { return plan.srtReads.at(slot).value->Flags<MemoryFlags>().pc; };
+    const auto faultBinding = [](const RecompileResult& result) {
+        return std::any_of(result.bindings.begin(), result.bindings.end(), [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::FaultBuffer; });
+    };
+    const auto samePipeline = [](const RecompileResult& left, const RecompileResult& right) {
+        return left.variantId == right.variantId && left.specializationId == right.specializationId && left.PipelineVariantId() == right.PipelineVariantId() && left.spirv == right.spirv;
+    };
+
+    NestedRequest branch(branchCode, root.data());
+    point(payloadAddress);
+    AgcDriver::ShaderMemory validMemory({});
+    const auto valid = validMemory.Capture(branch.request);
+    require(valid->snapshot.srtPoison.empty() && valid->plan->guardedSrtSlots.size() == 1u && slotPc(*valid->plan, valid->plan->guardedSrtSlots[0]) == 0x2cu && GuardRecords(*valid), "guarded pointer: a mapped nested pointer was poisoned, or its read has no guard");
+    require(valid->snapshot.flattenedSrt.at(valid->plan->guardedSrtSlots[0]) == payload, "guarded pointer: a mapped nested read does not hold its word");
+    branch.request.context.memory = validMemory.Regions();
+    const auto validResult = Recompile(branch.request, *valid);
+    require(validResult->poisonedSrtReads == 0u && faultBinding(*validResult) && validResult->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a guarded program has no fault buffer");
+
+    for (const auto pointer : {std::uint64_t{0}, unmapped}) {
+        for (const auto condition : {1u, 0u}) {
+            point(pointer);
+            root[4] = condition;
+            branch.request.context.memory = {};
+            AgcDriver::ShaderMemory memory({});
+            const auto capture = memory.Capture(branch.request);
+            const auto& poison = capture->snapshot.srtPoison;
+            require(poison.size() == 1u && poison[0].pc == 0x2cu && poison[0].address == pointer && slotPc(*capture->plan, poison[0].slot) == 0x2cu, "guarded pointer: the nested read was not poisoned at its pc and address");
+            require(GuardRecords(*capture), "guarded pointer: the poison record is not where the guard reads it");
+            const auto regions = memory.Regions();
+            require(!RegionsTouch(regions, pointer, 4u) && RegionsCover(regions, root.data() + 6, 8u), "guarded pointer: the captured regions are wrong");
+            branch.request.context.memory = regions;
+            const auto result = Recompile(branch.request, *capture);
+            require(result->poisonedSrtReads == 1u && faultBinding(*result) && result->bdaAbiVersion == BdaAbi::Version, "guarded pointer: the poisoned capture does not report through the fault buffer");
+            require(samePipeline(*result, *validResult), "guarded pointer: poison changed the variant, the specialization or the module");
+            const auto replay = Recompile(branch.request);
+            require(replay.poisonedSrtReads == 1u && samePipeline(replay, *result), "guarded pointer: a replay of the captured regions did not reproduce the poison");
+            verifyResult(*result, replay);
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+            static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, branch.request.target.vulkanVersion, branch.request.target.spirvVersion));
+#endif
+        }
+    }
+    root[4] = 1u;
+
+    NestedRequest chain(chainCode, root.data());
+    point(unmapped);
+    AgcDriver::ShaderMemory chainMemory({});
+    const auto chained = chainMemory.Capture(chain.request);
+    const auto& chainPoison = chained->snapshot.srtPoison;
+    require(chainPoison.size() == 3u && GuardRecords(*chained), "guarded pointer: a pointer read through an unmapped pointer did not poison its two words and the read through it");
+    for (const auto& poison : chainPoison) {
+        const auto own = slotPc(*chained->plan, poison.slot);
+        const bool pointerWord = own == 0x2cu && (poison.address == unmapped || poison.address == unmapped + 4u);
+        const bool throughPointer = own == 0x38u && poison.address == unmapped;
+        require(poison.pc == 0x2cu && (pointerWord || throughPointer), "guarded pointer: a derived poison does not name the inaccessible read");
+    }
+    chain.request.context.memory = chainMemory.Regions();
+    const auto chainResult = Recompile(chain.request, *chained);
+    indirect = 0;
+    point(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&indirect)));
+    AgcDriver::ShaderMemory nullChainMemory({});
+    const auto nullChain = nullChainMemory.Capture(chain.request);
+    require(nullChain->snapshot.srtPoison.size() == 1u && nullChain->snapshot.srtPoison[0].pc == 0x38u && nullChain->snapshot.srtPoison[0].address == 0u && GuardRecords(*nullChain), "guarded pointer: a null pointer read from memory did not poison the read through it");
+    chain.request.context.memory = nullChainMemory.Regions();
+    const auto nullChainResult = Recompile(chain.request, *nullChain);
+    indirect = payloadAddress;
+    AgcDriver::ShaderMemory mappedChainMemory({});
+    const auto mappedChain = mappedChainMemory.Capture(chain.request);
+    require(mappedChain->snapshot.srtPoison.empty() && mappedChain->plan->guardedSrtSlots.size() == 3u && GuardRecords(*mappedChain), "guarded pointer: a mapped pointer chain was poisoned, or its reads have no guards");
+    chain.request.context.memory = mappedChainMemory.Regions();
+    const auto mappedChainResult = Recompile(chain.request, *mappedChain);
+    require(chainResult->poisonedSrtReads == 3u && nullChainResult->poisonedSrtReads == 1u && mappedChainResult->poisonedSrtReads == 0u, "guarded pointer: a chain result does not count its poisoned reads");
+    require(samePipeline(*chainResult, *mappedChainResult) && samePipeline(*nullChainResult, *mappedChainResult), "guarded pointer: a chain's poison changed the variant, the specialization or the module");
+
+    const auto poisonedWords = [](const ResourceCapture& capture, std::uint32_t pc, std::uint64_t base) {
+        std::vector<std::uint64_t> addresses;
+        for (const auto& entry : capture.snapshot.srtPoison) {
+            if (entry.pc != pc || capture.snapshot.flattenedSrt.at(entry.slot) != 0u) return false;
+            addresses.push_back(entry.address);
+        }
+        std::sort(addresses.begin(), addresses.end());
+        return addresses == std::vector<std::uint64_t>{base, base + 4u, base + 8u, base + 12u} && GuardRecords(capture);
+    };
+    const auto zeroBuffer = [](const ResourceCapture& capture) {
+        return capture.snapshot.buffers.size() == 1u && std::all_of(capture.snapshot.buffers[0].dwords.begin(), capture.snapshot.buffers[0].dwords.end(), [](std::uint32_t word) { return word == 0u; });
+    };
+    alignas(256) static std::array<std::uint32_t, 4> zeroTable{};
+    NestedRequest descriptor(descriptorCode, root.data());
+    point(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(zeroTable.data())));
+    AgcDriver::ShaderMemory zeroMemory({});
+    const auto zeroCapture = zeroMemory.Capture(descriptor.request);
+    require(zeroCapture->snapshot.srtPoison.empty() && zeroBuffer(*zeroCapture) && GuardRecords(*zeroCapture), "guarded pointer: a zero V# read from mapped memory was poisoned or not read");
+    descriptor.request.context.memory = zeroMemory.Regions();
+    const auto zeroResult = Recompile(descriptor.request, *zeroCapture);
+    for (const auto pointer : {std::uint64_t{0}, unmapped}) {
+        point(pointer);
+        descriptor.request.context.memory = {};
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(descriptor.request);
+        require(poisonedWords(*capture, 0xcu, pointer), "guarded pointer: a V# loaded through a null or unmapped nested pointer did not poison its four words at its pc");
+        require(zeroBuffer(*capture), "guarded pointer: a V# loaded through an inaccessible pointer is not bound as zero words");
+        const auto regions = memory.Regions();
+        descriptor.request.context.memory = regions;
+        const auto result = Recompile(descriptor.request, *capture);
+        require(result->poisonedSrtReads == 4u && faultBinding(*result) && result->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a capture with a poisoned V# does not report through the fault buffer");
+        require(samePipeline(*result, *zeroResult), "guarded pointer: a V# zeroed by poison and a V# read as zeros take different variants, specializations or modules");
+        const auto replay = Recompile(descriptor.request);
+        require(replay.poisonedSrtReads == 4u && samePipeline(replay, *result), "guarded pointer: a replay did not reproduce the poisoned V#");
+    }
+
+    alignas(256) static std::array<std::uint32_t, 8> table{};
+    alignas(256) static std::array<std::uint32_t, 4> vertexRoot{};
+    table = {0u, 0u, 0u, 0u, static_cast<std::uint32_t>(payloadAddress), static_cast<std::uint32_t>((payloadAddress >> 32u) & 0xffffu), 4u, 0x30027facu};
+    const std::vector<std::uint32_t> vertexDescriptorCode{0xf4000084u, 0xfa000000u, 0xf4040104u, 0xfa000008u, 0x7e020280u, 0xbf8cc07fu, 0xbf068002u, 0xbf850006u,
+        0xf4080302u, 0xfa000010u, 0xbf8cc07fu, 0xe0300000u, 0x80030100u, 0xbf8c3f70u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    NestedRequest vertex(vertexDescriptorCode, vertexRoot.data());
+    vertex.request.shader.stage = ShaderStage::Vertex;
+    vertex.request.context.compute.reset();
+    vertex.request.context.vertex = ShaderVertexStageInfo{};
+    vertex.request.context.userDataBaseRegister = 8;
+    const auto tableAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(table.data()));
+    vertexRoot[2] = static_cast<std::uint32_t>(tableAddress);
+    vertexRoot[3] = static_cast<std::uint32_t>(tableAddress >> 32u);
+    AgcDriver::ShaderMemory mappedVertexMemory({});
+    const auto mappedVertex = mappedVertexMemory.Capture(vertex.request);
+    require(mappedVertex->snapshot.srtPoison.empty() && mappedVertex->snapshot.buffers.size() == 1u && mappedVertex->snapshot.buffers[0].dwords[0] == table[4], "guarded pointer: a vertex V# behind a mapped pointer was poisoned or not read");
+    vertexRoot[2] = 0u;
+    vertexRoot[3] = 0u;
+    for (const auto guard : {0u, 1u}) {
+        vertexRoot[0] = guard;
+        vertex.request.context.memory = {};
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(vertex.request);
+        require(poisonedWords(*capture, 0x20u, 0x10u), "guarded pointer: a vertex V# behind a branch and a null pointer did not poison its four words at its pc");
+        const auto regions = memory.Regions();
+        vertex.request.context.memory = regions;
+        const auto result = Recompile(vertex.request, *capture);
+        require(result->poisonedSrtReads == 4u && faultBinding(*result) && !result->spirv.empty(), "guarded pointer: a vertex capture with a poisoned V# has no fault buffer");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(result->spirv, vertex.request.target.vulkanVersion, vertex.request.target.spirvVersion));
+#endif
+    }
+    NestedRequest rootless(branchCode, nullptr);
+    AgcDriver::ShaderMemory rootlessMemory({});
+    expectFailure([&] { static_cast<void>(rootlessMemory.Capture(rootless.request)); }, "null or misaligned address", "guarded pointer: a null user-data pointer was accepted");
+    point(0u);
+#ifdef _WIN32
+    VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+    munmap(reserved, Reserved);
+#endif
+}
+
+void verifyCubeDepthCompareMode() {
+    using namespace ShaderRecompiler;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2DArray;
+    image.depthCompare = true;
+    const DescriptorValue descriptor{{0x02143930u, 0x08200000u, 0u, 0xb0500facu, 5u, 0x00700000u, 0u, 0u}, 8u};
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+    require(modes[selected].cube && (modes[selected].emulatedCompare & EmulatedCompare::Enabled) != 0u, "cube color comparison did not select its emulated runtime mode");
+}
+
 int main(int argc, char** argv) {
     try {
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
+            verifyFrontendPair();
+            std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--bindless") {
             verifyBindlessTable();
             std::cout << "Bindless mapping, indexing capabilities and strict validation passed\n";
@@ -1822,6 +2560,8 @@ int main(int argc, char** argv) {
         require(argc == 1, "unknown shader memory test arguments");
         verifyRegisterSources();
         verifyEvaluatedValues();
+        verifyFrontendPair();
+        verifySignedSrtComparison();
         verifyPureFlatSlots();
         verifyBindlessTable();
         verifyDescriptorPhis();
@@ -1844,6 +2584,8 @@ int main(int argc, char** argv) {
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();
         verifyFunctionLdsBound();
+        verifyGuardedNullPointers();
+        verifyCubeDepthCompareMode();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{
             0x07230203u, 0x00010000u, 0u, 5u, 0u,
@@ -2030,8 +2772,18 @@ int main(int argc, char** argv) {
         expectFailure([&] { static_cast<void>(PrepareResourceProgram(request)); }, "shader user data exceeds the scalar register bank", "user data overran scalar register bank");
         request.context.userDataBaseRegister = 8;
         request.context.memory = {};
+        AgcDriver::ShaderMemory guarded({});
+        const auto poisoned = guarded.Capture(request);
+        require(poisoned->snapshot.srtPoison.size() == 1u && poisoned->snapshot.srtPoison[0].pc == 8u && poisoned->snapshot.srtPoison[0].address == 0u && GuardRecords(*poisoned), "null nested pointer was not poisoned at its read");
+        const auto guardedRegions = guarded.Regions();
+        request.context.memory = guardedRegions;
+        const auto poisonedVertex = Recompile(request, *poisoned);
+        require(poisonedVertex->poisonedSrtReads == 1u && poisonedVertex->bdaAbiVersion == BdaAbi::Version && poisonedVertex->PipelineVariantId() == first.PipelineVariantId() && std::any_of(poisonedVertex->bindings.begin(), poisonedVertex->bindings.end(), [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::FaultBuffer; }), "a vertex shader reading through a null nested pointer has no fault buffer or another variant");
+        request.context.memory = {};
+        const std::array<std::uint32_t, 2> nullUserData{};
+        request.context.userData = nullUserData;
         AgcDriver::ShaderMemory invalid({});
-        expectFailure([&] { invalid.Capture(request); }, "null or misaligned address", "null nested pointer was accepted");
+        expectFailure([&] { invalid.Capture(request); }, "null or misaligned address", "null user-data pointer was accepted");
         std::cout << "Shader memory capture, strict validation and deterministic replay passed\n";
         return 0;
     } catch (const std::exception& error) {

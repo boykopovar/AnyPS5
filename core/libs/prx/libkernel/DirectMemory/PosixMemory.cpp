@@ -1,10 +1,15 @@
 #include "DirectMemory.hpp"
+#include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include <limits>
 #include <new>
 #include <stdexcept>
 
 extern "C" int* APS5_VABI __error_nid_postfix();
+extern "C" int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length);
+extern "C" int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length);
+extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size);
 
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
@@ -13,6 +18,11 @@ constexpr int GuestNoMemory = 12;
 constexpr int GuestNotSupported = 45;
 constexpr int GuestPrivate = 0x2;
 constexpr int GuestAnonymous = 0x1000;
+constexpr int GuestSyncAsync = 0x1;
+constexpr int GuestSyncInvalidate = 0x2;
+constexpr int GuestAdviceCore = 9;
+constexpr int GuestAdviceProtect = 10;
+constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 
 bool RoundLength(std::size_t length, std::size_t& rounded) {
     constexpr auto mask = PS5_PAGE_SIZE - 1;
@@ -24,6 +34,21 @@ bool RoundLength(std::size_t length, std::size_t& rounded) {
 
 void SetError(int error) {
     *__error_nid_postfix() = error;
+}
+
+bool Mapped(std::uintptr_t address) {
+    VirtualQueryInfo info{};
+    return sceKernelVirtualQuery(reinterpret_cast<const void*>(address), 0, &info, sizeof(info)) == 0;
+}
+
+bool RangeMapped(std::uintptr_t start, std::uintptr_t end) {
+    for (auto cursor = start; cursor < end;) {
+        VirtualQueryInfo info{};
+        if (sceKernelVirtualQuery(reinterpret_cast<const void*>(cursor), 0, &info, sizeof(info)) != 0) return false;
+        if (info.end <= cursor) return false;
+        cursor = info.end;
+    }
+    return true;
 }
 }
 
@@ -95,6 +120,47 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
     } catch (const std::exception&) {
         return failed(GuestInvalid);
     }
+}
+
+int APS5_VABI mlock_nid_postfix(const void* address, std::size_t length) {
+    const int result = sceKernelMlock_nid_postfix(const_cast<void*>(address), length);
+    if (result == 0) return 0;
+    SetError(result & 0xffff);
+    return -1;
+}
+
+int APS5_VABI munlock_nid_postfix(const void* address, std::size_t length) {
+    const int result = sceKernelMunlock_nid_postfix(const_cast<void*>(address), length);
+    if (result == 0) return 0;
+    SetError(result & 0xffff);
+    return -1;
+}
+
+int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
+    const auto failed = [](int error) {
+        SetError(error);
+        return -1;
+    };
+    constexpr std::uintptr_t mask = PS5_PAGE_SIZE - 1;
+    const auto first = reinterpret_cast<std::uintptr_t>(address);
+    const auto start = first & ~mask;
+    const std::uintptr_t size = (length + (first - start) + mask) & ~mask;
+    const auto end = start + size;
+    if (end < start) return failed(GuestInvalid);
+    if ((flags & (GuestSyncAsync | GuestSyncInvalidate)) == (GuestSyncAsync | GuestSyncInvalidate)) return failed(GuestInvalid);
+    if (start == end ? !Mapped(start) : !RangeMapped(start, end)) return failed(GuestNoMemory);
+    if ((flags & GuestSyncInvalidate) != 0) throw std::runtime_error("msync: MS_INVALIDATE is not implemented");
+    return 0;
+}
+
+int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice) {
+    if (advice == GuestAdviceProtect) NotImplemented_nid_no_patch("madvise MADV_PROTECT");
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    if (advice < 0 || advice > GuestAdviceCore || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
+        SetError(GuestInvalid);
+        return -1;
+    }
+    return 0;
 }
 
 }

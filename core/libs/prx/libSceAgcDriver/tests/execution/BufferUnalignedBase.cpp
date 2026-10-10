@@ -143,6 +143,12 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset, std::uint32_
 }
 
 void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
+    auto code = PairCode;
+    const bool int64Atomics = TargetHasCapability(device.Target(), spv::CapabilityInt64Atomics);
+    if (!int64Atomics) {
+        code[5] = 0xbf800000u;
+        code[6] = 0xbf800000u;
+    }
     for (std::uint32_t index = 0; index < InputBytes; ++index) Input[index] = static_cast<std::uint8_t>(index * 53u + 7u + (index >> 2u));
     Output.fill(Fill);
     const auto* view = Input.data() + viewOffset;
@@ -150,9 +156,9 @@ void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
     for (const auto& descriptor : {BufferDescriptor(Input.data(), InputBytes), BufferDescriptor(view, ViewBytes), BufferDescriptor(Output.data(), ResultBytes)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(PairCode.data()), std::as_bytes(std::span(PairCode))}}};
-    const auto result = ShaderRecompiler::Recompile(Request(PairCode, userData, device.Target(), memory));
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(PairCode.data()));
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
+    const auto result = ShaderRecompiler::Recompile(Request(code, userData, device.Target(), memory));
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     const auto run = "buffer unaligned base glc dwordx2, view +" + std::to_string(viewOffset);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
@@ -162,7 +168,7 @@ void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
             Require(actual == expected, run + ": lane " + std::to_string(lane) + " dword " + std::to_string(half) + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
     }
-    Require(Output[Lanes * 2u] == Fill + Lanes && Output[Lanes * 2u + 1u] == Fill, run + ": the 64-bit atomic is " + Hex(Output[Lanes * 2u + 1u]) + Hex(Output[Lanes * 2u]));
+    if (int64Atomics) Require(Output[Lanes * 2u] == Fill + Lanes && Output[Lanes * 2u + 1u] == Fill, run + ": the 64-bit atomic is " + Hex(Output[Lanes * 2u + 1u]) + Hex(Output[Lanes * 2u]));
 }
 
 auto RecompileFormatted(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint8_t* view, std::uint32_t viewBytes) {

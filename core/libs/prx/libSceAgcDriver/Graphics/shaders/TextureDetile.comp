@@ -55,6 +55,7 @@ layout(push_constant) uniform Push {
     // whole mip).
     uint columnBegin;
     uint rowBegin;
+    uint pipeBankXor;
 } params;
 
 uint equationBit(uint mask, uvec2 p) {
@@ -117,7 +118,7 @@ uint standard64Extra(uint x, uint y) {
 
 uint blockOffset(uvec2 p) {
     if (TILE_FAMILY == 2u) {
-        return equationOffset(p);
+        return equationOffset(p) ^ params.pipeBankXor;
     }
     uint offset = standardOffset(p.x, p.y);
     if (BLOCK_BYTES > 4096u) {

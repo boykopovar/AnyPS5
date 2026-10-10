@@ -696,7 +696,7 @@ void setRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> co
 void requireTwoWords(std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t programCounter, const char* reason) {
     const std::size_t index = wordIndex;
     if (index >= code.size() || code.size() - index < 2u) {
-        throw std::runtime_error(reason);
+        throw std::out_of_range(reason);
     }
     if (programCounter % 4u != 0u || programCounter > std::numeric_limits<std::uint32_t>::max() - 7u) {
         throw std::runtime_error("invalid memory instruction program counter");
@@ -813,6 +813,9 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
         return cacheControlInstruction(RdnaInstructionFamily::MUBUF, cacheOp, opcode, programCounter, code, wordIndex);
     }
     const auto& info = lookupOpcode(mubufOpcodes, opcode, "MUBUF opcode is not supported");
+    if (((word0 >> 16u) & 1u) != 0u) {
+        throw std::runtime_error("unsupported MUBUF lds modifier");
+    }
 
     RdnaInstruction instruction{};
     instruction.programCounter = programCounter;
@@ -1036,7 +1039,7 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
 RdnaInstruction DecodeRdnaMemoryOp(std::span<const std::uint32_t> code, std::uint32_t wordIndex) {
     const auto programCounter = toProgramCounter(wordIndex);
     if (static_cast<std::size_t>(wordIndex) >= code.size()) {
-        throw std::runtime_error("truncated memory instruction");
+        throw std::out_of_range("truncated memory instruction");
     }
     switch (code[wordIndex] >> 26u) {
         case 0x36u: return DecodeRdnaDs(programCounter, code, wordIndex);

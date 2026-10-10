@@ -4,8 +4,6 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
-#include <bit>
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -32,29 +30,42 @@ alignas(256) constexpr std::array<std::uint32_t, 30> FmaLegacyCode{
 
 struct Row {
     std::uint32_t a, b, c;
+    std::array<std::uint32_t, 5> expected;
 };
 
-constexpr std::array<Row, 20> Rows{{
-    {0x00000000u, 0x7f800000u, 0x3f800000u},
-    {0x80000000u, 0x7f800000u, 0xc0200000u},
-    {0x7f800000u, 0x00000000u, 0x3f400000u},
-    {0xff800000u, 0x80000000u, 0x40400000u},
-    {0x00000000u, 0x7fc00000u, 0x3fc00000u},
-    {0x7fc00000u, 0x80000000u, 0xc0800000u},
-    {0x00000000u, 0x40000000u, 0x7f800000u},
-    {0x80000000u, 0xc0400000u, 0xff800000u},
-    {0x00000000u, 0x3f800000u, 0x7fc00000u},
-    {0x3fc00000u, 0x40100000u, 0xbf400000u},
-    {0xc0c00000u, 0x3f000000u, 0x41200000u},
-    {0x7f800000u, 0x40000000u, 0x3f800000u},
-    {0x7f800000u, 0xbf800000u, 0x7f800000u},
-    {0x7fc00000u, 0x3f800000u, 0x3f800000u},
-    {0x40400000u, 0x40800000u, 0xc1400000u},
-    {0x7f7fffffu, 0x40000000u, 0x3f800000u},
-    {0x3ec00000u, 0xc1480000u, 0x42c88000u},
-    {0xc4800000u, 0xbd800000u, 0xc2800000u},
-    {0x40e00000u, 0x41100000u, 0x3f000000u},
-    {0x80000000u, 0x80000000u, 0x40a00000u},
+constexpr std::array<Row, 32> Rows{{
+    {0x00000000u, 0x7f800000u, 0x3f800000u, {0x3f800000u, 0x3f800000u, 0xbf800000u, 0x3f800000u, 0x3f800000u}},
+    {0x80000000u, 0x7f800000u, 0xc0200000u, {0xc0200000u, 0xc0200000u, 0x40200000u, 0xc0200000u, 0xc0200000u}},
+    {0x7f800000u, 0x00000000u, 0x3f400000u, {0x3f400000u, 0x3f400000u, 0xbf400000u, 0x3f400000u, 0x3f400000u}},
+    {0xff800000u, 0x80000000u, 0x40400000u, {0x40400000u, 0x40400000u, 0xc0400000u, 0x40400000u, 0x40400000u}},
+    {0x00000000u, 0x7fc00000u, 0x3fc00000u, {0x3fc00000u, 0x3fc00000u, 0xbfc00000u, 0x3fc00000u, 0x3fc00000u}},
+    {0x7fc00000u, 0x80000000u, 0xc0800000u, {0xc0800000u, 0xc0800000u, 0x40800000u, 0xc0800000u, 0xc0800000u}},
+    {0x00000000u, 0x40000000u, 0x7f800000u, {0x7f800000u, 0x7f800000u, 0xff800000u, 0x7f800000u, 0x7f800000u}},
+    {0x80000000u, 0xc0400000u, 0xff800000u, {0xff800000u, 0xff800000u, 0x7f800000u, 0xff800000u, 0xff800000u}},
+    {0x00000000u, 0x3f800000u, 0x7fc00000u, {0x7fc00000u, 0x7fc00000u, 0xffc00000u, 0x7fc00000u, 0x7fc00000u}},
+    {0x3fc00000u, 0x40100000u, 0xbf400000u, {0x40280000u, 0xc0840000u, 0x40840000u, 0xbf400000u, 0x40280000u}},
+    {0xc0c00000u, 0x3f000000u, 0x41200000u, {0x40e00000u, 0x41500000u, 0xc0e00000u, 0x41200000u, 0x40e00000u}},
+    {0x7f800000u, 0x40000000u, 0x3f800000u, {0x7f800000u, 0xff800000u, 0x7f800000u, 0x3f800000u, 0x7f800000u}},
+    {0x7f800000u, 0xbf800000u, 0x7f800000u, {0xffc00000u, 0x7f800000u, 0xff800000u, 0x7f800000u, 0x7f800000u}},
+    {0x7fc00000u, 0x3f800000u, 0x3f800000u, {0x7fc00000u, 0xffc00000u, 0x7fc00000u, 0x3f800000u, 0xffc00000u}},
+    {0x40400000u, 0x40800000u, 0xc1400000u, {0x00000000u, 0xc1c00000u, 0x41c00000u, 0xc1400000u, 0x00000000u}},
+    {0x7f7fffffu, 0x40000000u, 0x3f800000u, {0x7f800000u, 0xff800000u, 0x7f800000u, 0x3f800000u, 0x7f800000u}},
+    {0x3ec00000u, 0xc1480000u, 0x42c88000u, {0x42bf2000u, 0x42d1e000u, 0xc2d1e000u, 0x42c88000u, 0x42d1e000u}},
+    {0xc4800000u, 0xbd800000u, 0xc2800000u, {0x00000000u, 0xc3000000u, 0x00000000u, 0xc2800000u, 0xc3000000u}},
+    {0x40e00000u, 0x41100000u, 0x3f000000u, {0x427e0000u, 0xc27a0000u, 0x427a0000u, 0x3f000000u, 0x427e0000u}},
+    {0x80000000u, 0x80000000u, 0x40a00000u, {0x40a00000u, 0x40a00000u, 0xc0a00000u, 0x40a00000u, 0x40a00000u}},
+    {0x3f800800u, 0x3f800800u, 0xbf800000u, {0x3a000000u, 0xc0000800u, 0x40000800u, 0xbf800000u, 0x3a000000u}},
+    {0x3f800001u, 0x3f7fffffu, 0xbf800000u, {0x00000000u, 0xc0000000u, 0x40000000u, 0xbf800000u, 0x00000000u}},
+    {0x3faaaaabu, 0x40400000u, 0xc0800000u, {0x00000000u, 0xc1000000u, 0x41000000u, 0xc0800000u, 0x00000000u}},
+    {0x7f7fffffu, 0x40000000u, 0xff7fffffu, {0x7f800000u, 0xff800000u, 0x7f800000u, 0xff7fffffu, 0x7f800000u}},
+    {0x00800000u, 0x3f000000u, 0x00000000u, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}},
+    {0x00000001u, 0x4b000000u, 0x00000000u, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}},
+    {0x00000001u, 0x3f800000u, 0x80000000u, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}},
+    {0x80000001u, 0x3f800000u, 0x00000000u, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}},
+    {0x00800000u, 0x3f800000u, 0x80400000u, {0x00800000u, 0x80800000u, 0x00800000u, 0x00000000u, 0x00800000u}},
+    {0x3f800000u, 0x00400000u, 0x00000000u, {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u}},
+    {0x7f812345u, 0x3f800000u, 0x3f800000u, {0x7f812345u, 0xff812345u, 0x7f812345u, 0x3f800000u, 0xff812345u}},
+    {0x3f800000u, 0x3f800000u, 0x7f812345u, {0x7f812345u, 0x7f812345u, 0xff812345u, 0x7f812345u, 0x7f812345u}},
 }};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
@@ -96,33 +107,15 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-bool IsNan(std::uint32_t bits) {
-    return (bits & 0x7fffffffu) > 0x7f800000u;
-}
-
-std::uint32_t FmaLegacy(float a, float b, float c) {
-    if (a == 0.0f || b == 0.0f) {
-        return std::bit_cast<std::uint32_t>(0.0f + c);
-    }
-    return std::bit_cast<std::uint32_t>(std::fma(a, b, c));
-}
-
 void Check() {
     constexpr std::array<const char*, 5> names{
-        "v_fma_legacy_f32", "v_fma_legacy_f32 -src0", "v_fma_legacy_f32 |src0| -src2", "v_fma_legacy_f32 src0=0", "v_fma_legacy_f32 -src0 -|src1|",
+        "v_mad_legacy_f32", "v_mad_legacy_f32 -src0", "v_mad_legacy_f32 |src0| -src2", "v_mad_legacy_f32 src0=0", "v_mad_legacy_f32 -src0 -|src1|",
     };
     for (std::uint32_t tid = 0; tid < Rows.size(); ++tid) {
         const auto& row = Rows[tid];
-        const float a = std::bit_cast<float>(row.a);
-        const float b = std::bit_cast<float>(row.b);
-        const float c = std::bit_cast<float>(row.c);
-        const std::array<std::uint32_t, 5> expected{
-            FmaLegacy(a, b, c), FmaLegacy(-a, b, c), FmaLegacy(std::fabs(a), b, -c), FmaLegacy(0.0f, b, c), FmaLegacy(-a, -std::fabs(b), c),
-        };
-        for (std::uint32_t j = 0; j < expected.size(); ++j) {
+        for (std::uint32_t j = 0; j < row.expected.size(); ++j) {
             const auto actual = Output[tid * Results + j];
-            const bool matches = actual == expected[j] || (IsNan(actual) && IsNan(expected[j]));
-            Require(matches, std::string("fma legacy: lane ") + std::to_string(tid) + " (" + Hex(row.a) + ", " + Hex(row.b) + ", " + Hex(row.c) + ") " + names[j] + " is " + Hex(actual) + ", expected " + Hex(expected[j]));
+            Require(actual == row.expected[j], std::string("mad legacy: lane ") + std::to_string(tid) + " (" + Hex(row.a) + ", " + Hex(row.b) + ", " + Hex(row.c) + ") " + names[j] + " is " + Hex(actual) + ", expected " + Hex(row.expected[j]));
         }
     }
 }
@@ -135,7 +128,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device);
         Check();
-        std::puts("fma legacy tests passed");
+        std::puts("mad legacy tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

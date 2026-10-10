@@ -67,6 +67,7 @@ int NativeError() {
         case WSAECONNREFUSED: return 61;
         case WSAEINTR: return 4;
         case WSAEINVAL: return 22;
+        case WSAESHUTDOWN: return 32;
         default: return 5;
     }
 #else
@@ -180,6 +181,15 @@ bool GuestSockets::IsOpen(int descriptor) {
     std::lock_guard lock(socketsMutex);
     return sockets.contains(descriptor);
 }
+int GuestSockets::Family(int descriptor) {
+    std::lock_guard lock(socketsMutex);
+    const auto found = sockets.find(descriptor);
+    return found == sockets.end() ? -1 : found->second->family;
+}
+
+extern "C" bool GuestSocketIsOpen_nid_no_patch(int descriptor) {
+    return GuestSockets::IsOpen(descriptor);
+}
 
 namespace {
 #ifdef _WIN32
@@ -207,6 +217,36 @@ std::shared_ptr<Socket> Find(int descriptor) {
     const auto found = sockets.find(descriptor);
     return found != sockets.end() ? found->second : nullptr;
 }
+}
+
+int GuestSockets::Duplicate(int descriptor) {
+    try {
+        std::lock_guard lock(socketsMutex);
+        const auto found = sockets.find(descriptor);
+        if (found == sockets.end()) return Fail(9);
+        if (nextDescriptor == INT_MAX) return Fail(24);
+        const int duplicate = nextDescriptor;
+        sockets.emplace(duplicate, found->second);
+        ++nextDescriptor;
+        return duplicate;
+    } catch (const std::bad_alloc&) {
+        return Fail(12);
+    }
+}
+
+int GuestSockets::DuplicateTo(int descriptor, int target) {
+    try {
+        std::lock_guard lock(socketsMutex);
+        const auto found = sockets.find(descriptor);
+        if (found == sockets.end()) return Fail(9);
+        if (target == descriptor) return target;
+        if (target == INT_MAX) return Fail(9);
+        sockets.insert_or_assign(target, found->second);
+        if (target >= nextDescriptor) nextDescriptor = target + 1;
+        return target;
+    } catch (const std::bad_alloc&) {
+        return Fail(12);
+    }
 }
 
 namespace {
@@ -730,4 +770,13 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
     }
     return ready;
 }
+}
+
+std::int64_t GuestSockets::Read(int descriptor, void* buffer, std::size_t length) {
+    if (length == 0) return IsOpen(descriptor) ? 0 : Fail(9);
+    return recv_nid_postfix(descriptor, buffer, std::min<std::size_t>(length, INT_MAX), 0);
+}
+
+std::int64_t GuestSockets::Write(int descriptor, const void* buffer, std::size_t length) {
+    return send_nid_postfix(descriptor, buffer, length, 0);
 }

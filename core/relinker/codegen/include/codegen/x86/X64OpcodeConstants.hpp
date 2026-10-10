@@ -220,6 +220,10 @@ inline constexpr std::size_t Vex2PrefixLength = 2;
 inline constexpr std::size_t Vex3PrefixLength = 3;
 inline constexpr std::uint8_t Vex3MapMask = 0x1F;
 inline constexpr std::uint8_t Vex3Map0F3A = 0x03;
+inline constexpr std::uint8_t XopPrefix = 0x8F;
+inline constexpr std::uint8_t XopMapMin = 0x08;
+inline constexpr std::uint8_t XopMap8 = 0x08;
+inline constexpr std::uint8_t XopMapA = 0x0A;
 
 }
 

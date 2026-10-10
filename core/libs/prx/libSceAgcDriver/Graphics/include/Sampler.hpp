@@ -19,15 +19,19 @@ public:
     Sampler(const Sampler&) = delete;
     Sampler& operator=(const Sampler&) = delete;
 
+    bool ForcesDegamma() const;
     VkSampler Handle() const;
     bool RequiresFilterMinmax() const;
+    bool ReadsOpaqueBlackBorder() const;
 
 private:
     void release() noexcept;
 
     Context context;
+    bool forcesDegamma = false;
     VkSampler sampler = VK_NULL_HANDLE;
     bool requiresFilterMinmax = false;
+    bool opaqueBlackBorder = false;
 };
 
 // One VkSampler per distinct S# (its 4 words plus the shader's depth-compare use and the
@@ -41,7 +45,7 @@ public:
     explicit SamplerCache(std::size_t capacity = 1024);
     SamplerCache(const SamplerCache&) = delete;
     SamplerCache& operator=(const SamplerCache&) = delete;
-    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven = false);
+    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven = false, bool forceDegammaPaired = false);
     // APS5_PROFILE_DRAW counters: lookups served by an existing sampler, and samplers created.
     std::uint64_t Hits() const { return hits; }
     std::uint64_t Misses() const { return misses; }
@@ -60,6 +64,8 @@ private:
 };
 
 void RequireFilterMinmax(const Context& context, VkFormat format, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireDegammaFormat(std::uint32_t guestFormat, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 
 }
 

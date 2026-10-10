@@ -1,0 +1,40 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer Words { uint words[]; };
+layout(push_constant) uniform Parameters {
+    Words counter;
+    Words dumps;
+    uint firstDump;
+    uint dumpCount;
+    uint firstSegment;
+    uint lastSegment;
+} parameters;
+
+void main() {
+    uint low = parameters.counter.words[0];
+    uint high = parameters.counter.words[1];
+    uint segment = parameters.firstSegment;
+    for (uint dump = parameters.firstDump; dump < parameters.firstDump + parameters.dumpCount; ++dump) {
+        uint end = parameters.dumps.words[dump * 4u + 2u];
+        for (; segment < end; ++segment) {
+            uint carry;
+            low = uaddCarry(low, parameters.counter.words[4u + 2u * segment], carry);
+            high = high + parameters.counter.words[5u + 2u * segment] + carry;
+        }
+        Words target = Words(uvec2(parameters.dumps.words[dump * 4u], parameters.dumps.words[dump * 4u + 1u]));
+        for (uint db = 0u; db < 16u; ++db) {
+            target.words[db * 4u] = db == 0u ? low : 0u;
+            target.words[db * 4u + 1u] = (db == 0u ? high : 0u) | 0x80000000u;
+        }
+    }
+    for (; segment < parameters.lastSegment; ++segment) {
+        uint carry;
+        low = uaddCarry(low, parameters.counter.words[4u + 2u * segment], carry);
+        high = high + parameters.counter.words[5u + 2u * segment] + carry;
+    }
+    parameters.counter.words[0] = low;
+    parameters.counter.words[1] = high;
+}

@@ -24,7 +24,8 @@ namespace {
 
 // Each block is preceded by a header holding the raw block address and its size in bytes.
 constexpr std::size_t HeaderBytes = 2 * sizeof(void*);
-constexpr std::size_t MinimumAlignment = 16;
+constexpr std::size_t RawAlignment = 16;
+constexpr std::size_t MinimumAlignment = 32;
 constexpr std::size_t PageBytes = 0x4000;
 constexpr std::size_t SpanBytes = 1u << 20;
 constexpr std::size_t MaximumSmallBytes = 64u * 1024u;
@@ -200,7 +201,7 @@ void rawFree(void* raw, std::size_t blockBytes) {
 void* allocate(GuestAllocations::Mutation& mutation, std::size_t alignment, std::size_t bytes) {
     if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest heap alignment");
     alignment = std::max(alignment, MinimumAlignment);
-    const std::size_t padding = alignment > MinimumAlignment ? alignment : 0;
+    const std::size_t padding = alignment > RawAlignment ? alignment : 0;
     if (bytes > std::numeric_limits<std::size_t>::max() - HeaderBytes - padding) throw std::length_error("guest heap allocation overflow");
     std::size_t blockBytes = 0;
     void* raw = rawAllocate(bytes + HeaderBytes + padding, blockBytes);

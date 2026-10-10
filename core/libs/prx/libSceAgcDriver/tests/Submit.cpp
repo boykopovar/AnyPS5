@@ -481,6 +481,25 @@ void testShaderHeaderAlignment() {
     refused(expectFailure([&] { AgcDriverRegisterShader_nid_postfix(at(4, truncated)); }), "smaller than its fixed fields");
 }
 
+void testHeaderWithoutProgramAddress() {
+    alignas(256) static const std::array<std::uint32_t, 64> code{0xbf810000};
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 3> registers{};
+    };
+    alignas(8) static Header header{};
+    header.shader.file_header = 0x34333231;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(Header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.type = 4;
+    header.registers = {{{0x08a, 0x60000002}, {0x08b, 0x00030008}, {0x0ca, 0x03000002}}};
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
 void testRegisteredFloatMode() {
     using AgcDriver::DriverDetail::RegisteredFloatMode;
     using AgcDriver::DriverDetail::ShaderSnapshot;
@@ -577,6 +596,13 @@ int main() {
             "raw compute cache eviction lost snapshot lifetime or exceeded its entry limit");
         check(!expectFailure([&] { AgcDriver::DriverDetail::ReadRawComputeShader(rawAddress + 4); }).empty(), "raw compute accepted a misaligned entry");
         check(!expectFailure([] { AgcDriver::DriverDetail::ReadRawComputeShader(0); }).empty(), "raw compute accepted an unmapped entry");
+        alignas(256) std::array<std::uint32_t, 128> straddling{};
+        straddling.fill(0xbf800000);
+        straddling[63] = 0xf4000000;
+        straddling[64] = 0xfa000000;
+        straddling[65] = 0xbf810000;
+        const auto straddled = AgcDriver::DriverDetail::ReadRawComputeShader(reinterpret_cast<std::uintptr_t>(straddling.data()));
+        check(straddled->code.size() == 66 && straddled->code[64] == 0xfa000000, "raw compute stopped at a memory instruction across its first read window");
 #ifdef _WIN32
         auto* mapping = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         check(mapping != nullptr, "cannot allocate raw compute boundary test");
@@ -616,6 +642,7 @@ int main() {
         testWaitFreeSubmissionTheCpuWaitsFor();
         testMultiSubmissions();
         testShaderHeaderAlignment();
+        testHeaderWithoutProgramAddress();
         testRegisteredFloatMode();
         testWorkerFailure();
         check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("required shader register") != std::string::npos, "shutdown lost worker failure");

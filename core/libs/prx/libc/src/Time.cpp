@@ -2,17 +2,105 @@
 #include <cstddef>
 #include <ctime>
 #include <cstring>
+#include <limits>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestTime.hpp"
+
+namespace {
+
+constexpr std::int64_t SECONDS_PER_DAY = 86400;
+constexpr std::int64_t DAYS_FROM_MARCH_TO_YEAR_END = 306;
+
+void copyCalendarFields(const std::tm& host, GuestTm& guest) {
+    guest.tm_sec = host.tm_sec;
+    guest.tm_min = host.tm_min;
+    guest.tm_hour = host.tm_hour;
+    guest.tm_mday = host.tm_mday;
+    guest.tm_mon = host.tm_mon;
+    guest.tm_year = host.tm_year;
+    guest.tm_wday = host.tm_wday;
+    guest.tm_yday = host.tm_yday;
+    guest.tm_isdst = host.tm_isdst;
+}
+
+std::tm toHostTm(const GuestTm& guest) {
+    std::tm host{};
+    host.tm_sec = guest.tm_sec;
+    host.tm_min = guest.tm_min;
+    host.tm_hour = guest.tm_hour;
+    host.tm_mday = guest.tm_mday;
+    host.tm_mon = guest.tm_mon;
+    host.tm_year = guest.tm_year;
+    host.tm_wday = guest.tm_wday;
+    host.tm_yday = guest.tm_yday;
+    host.tm_isdst = guest.tm_isdst;
+#ifndef _WIN32
+    host.tm_gmtoff = static_cast<long>(guest.tm_gmtoff);
+    host.tm_zone = guest.tm_zone;
+#endif
+    return host;
+}
+
+bool isLeapYear(std::int64_t year) {
+    return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+
+bool utcCalendarFields(std::int64_t time, GuestTm& result) {
+    std::int64_t days = time / SECONDS_PER_DAY;
+    std::int64_t secondOfDay = time % SECONDS_PER_DAY;
+    if (secondOfDay < 0) {
+        secondOfDay += SECONDS_PER_DAY;
+        --days;
+    }
+    const std::int64_t shifted = days + 719468;
+    const std::int64_t era = (shifted >= 0 ? shifted : shifted - 146096) / 146097;
+    const std::int64_t dayOfEra = shifted - era * 146097;
+    const std::int64_t yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365;
+    const std::int64_t dayOfMarchYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);
+    const std::int64_t marchMonth = (5 * dayOfMarchYear + 2) / 153;
+    const std::int64_t month = marchMonth < 10 ? marchMonth + 3 : marchMonth - 9;
+    const std::int64_t year = yearOfEra + era * 400 + (month <= 2 ? 1 : 0);
+    const std::int64_t tmYear = year - 1900;
+    if (tmYear < std::numeric_limits<int>::min() || tmYear > std::numeric_limits<int>::max()) return false;
+    result.tm_sec = static_cast<int>(secondOfDay % 60);
+    result.tm_min = static_cast<int>(secondOfDay / 60 % 60);
+    result.tm_hour = static_cast<int>(secondOfDay / 3600);
+    result.tm_mday = static_cast<int>(dayOfMarchYear - (153 * marchMonth + 2) / 5 + 1);
+    result.tm_mon = static_cast<int>(month - 1);
+    result.tm_year = static_cast<int>(tmYear);
+    result.tm_wday = static_cast<int>((days % 7 + 11) % 7);
+    result.tm_yday = static_cast<int>(month <= 2
+        ? dayOfMarchYear - DAYS_FROM_MARCH_TO_YEAR_END
+        : dayOfMarchYear + 59 + (isLeapYear(year) ? 1 : 0));
+    result.tm_isdst = 0;
+    return true;
+}
+
+}
+
+#ifdef __linux__
+#include <cstdlib>
+
+namespace {
+
+const bool timeZoneFixed = [] {
+    if (std::getenv("TZ") == nullptr) ::setenv("TZ", ":/etc/localtime", 0);
+    ::tzset();
+    return true;
+}();
+
+}  // namespace
+#endif
 
 extern "C" {
 
-std::tm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, std::tm* result);
-std::tm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, std::tm* result);
+GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result);
+GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result);
 
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {
     std::time_t t = std::time(nullptr);
@@ -45,64 +133,80 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
     return std::difftime(static_cast<std::time_t>(time1), static_cast<std::time_t>(time0));
 }
 
-std::tm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
-    static thread_local std::tm result;
+GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
+    static thread_local GuestTm result;
     return gmtime_s_nid_postfix(timer, &result);
 }
 
-std::tm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
-    static thread_local std::tm result;
+GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
+    static thread_local GuestTm result;
     return localtime_s_nid_postfix(timer, &result);
 }
 
-std::tm* APS5_VABI localtime_nid_postfix(const int64_t* timer) {
+GuestTm* APS5_VABI localtime_nid_postfix(const int64_t* timer) {
     return libc_localtime_nid_postfix(timer);
 }
 
-std::tm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, std::tm* result) {
+GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
     if (timer == nullptr || result == nullptr) return nullptr;
     const std::time_t t = static_cast<std::time_t>(*timer);
+    std::tm host{};
 #ifdef _WIN32
-    if (localtime_s(result, &t) != 0) return nullptr;
+    if (localtime_s(&host, &t) != 0) return nullptr;
+    copyCalendarFields(host, *result);
+    long standardBias = 0;
+    long daylightBias = 0;
+    _get_timezone(&standardBias);
+    _get_dstbias(&daylightBias);
+    const bool daylight = host.tm_isdst > 0;
+    result->tm_gmtoff = -static_cast<std::int64_t>(standardBias + (daylight ? daylightBias : 0));
+    result->tm_zone = _tzname[daylight ? 1 : 0];
 #else
-    if (localtime_r(&t, result) == nullptr) return nullptr;
+    if (localtime_r(&t, &host) == nullptr) return nullptr;
+    copyCalendarFields(host, *result);
+    result->tm_gmtoff = host.tm_gmtoff;
+    result->tm_zone = host.tm_zone;
 #endif
     return result;
 }
 
-std::tm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, std::tm* result) {
+GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
     if (timer == nullptr || result == nullptr) return nullptr;
-    const std::time_t t = static_cast<std::time_t>(*timer);
-#ifdef _WIN32
-    if (gmtime_s(result, &t) != 0) return nullptr;
-#else
-    if (gmtime_r(&t, result) == nullptr) return nullptr;
-#endif
+    if (!utcCalendarFields(*timer, *result)) return nullptr;
+    result->tm_gmtoff = 0;
+    result->tm_zone = "UTC";
     return result;
 }
 
-std::tm* APS5_VABI gmtime_nid_postfix(const int64_t* timer) {
+GuestTm* APS5_VABI gmtime_nid_postfix(const int64_t* timer) {
     return libc_gmtime_nid_postfix(timer);
 }
 
-int64_t APS5_VABI libc_mktime_nid_postfix(std::tm* timeptr) {
-    return static_cast<int64_t>(std::mktime(timeptr));
+int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
+    std::tm host = toHostTm(*timeptr);
+    const std::time_t t = std::mktime(&host);
+    if (t == static_cast<std::time_t>(-1)) return -1;
+    const int64_t time = static_cast<int64_t>(t);
+    localtime_s_nid_postfix(&time, timeptr);
+    return time;
 }
 
-int64_t APS5_VABI mktime_nid_postfix(std::tm* timeptr) {
-    return static_cast<int64_t>(std::mktime(timeptr));
+int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
+    return libc_mktime_nid_postfix(timeptr);
 }
 
-size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const std::tm* timeptr) {
-    return std::strftime(str, count, format, timeptr);
+size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
+    const std::tm host = toHostTm(*timeptr);
+    return std::strftime(str, count, format, &host);
 }
 
-char* APS5_VABI asctime_nid_postfix(const std::tm* timeptr) {
-    return std::asctime(timeptr);
+char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
+    const std::tm host = toHostTm(*timeptr);
+    return std::asctime(&host);
 }
 
-size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const std::tm* timeptr) {
-    return std::strftime(str, count, format, timeptr);
+size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
+    return libc_strftime_nid_postfix(str, count, format, timeptr);
 }
 
 // The guest's CLOCKS_PER_SEC is 1000000: clock() reports process CPU time in microseconds.

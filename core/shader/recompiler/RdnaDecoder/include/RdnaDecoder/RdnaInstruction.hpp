@@ -4,9 +4,15 @@
 #include "RdnaDecoder/RdnaOpcode.hpp"
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 #include <string_view>
 
 namespace ShaderRecompiler {
+
+class UnsupportedInstructionError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 enum class RdnaInstructionFamily {
     Unknown,

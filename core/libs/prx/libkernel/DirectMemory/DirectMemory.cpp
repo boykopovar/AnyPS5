@@ -221,10 +221,49 @@ void Trace(const char* format, ...) {
     va_end(args);
 }
 
+#if defined(__linux__)
+int PhysicalFile() {
+    static const int file = [] {
+        const int created = memfd_create("direct memory", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        if (created < 0) throw std::system_error(errno, std::generic_category(), "create direct memory backing");
+        if (ftruncate(created, static_cast<off_t>(DIRECT_MEMORY_SIZE)) != 0 || fcntl(created, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW) != 0) {
+            const int error = errno;
+            ::close(created);
+            throw std::system_error(error, std::generic_category(), "size direct memory backing");
+        }
+        return created;
+    }();
+    return file;
+}
+
+std::vector<bool> g_physicalUsed(DIRECT_MEMORY_SIZE / PS5_PAGE_SIZE);
+
+void ZeroReusedPhysical(std::uint64_t start, std::size_t bytes) {
+    const auto first = start / PS5_PAGE_SIZE;
+    const auto count = bytes / PS5_PAGE_SIZE;
+    for (std::size_t page = 0; page < count;) {
+        if (!g_physicalUsed[first + page]) {
+            g_physicalUsed[first + page] = true;
+            ++page;
+            continue;
+        }
+        std::size_t run = 0;
+        while (page + run < count && g_physicalUsed[first + page + run]) ++run;
+        const auto offset = (first + page) * PS5_PAGE_SIZE;
+        void* view = ::mmap(nullptr, run * PS5_PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, PhysicalFile(), static_cast<off_t>(offset));
+        if (view == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map reused direct memory");
+        std::memset(view, 0, run * PS5_PAGE_SIZE);
+        ::munmap(view, run * PS5_PAGE_SIZE);
+        page += run;
+    }
+}
+#endif
+
 class PhysicalBacking {
 public:
-    explicit PhysicalBacking(std::size_t bytes, int memoryType) : memoryType(memoryType) {
+    PhysicalBacking(std::size_t bytes, int memoryType, std::uint64_t start) : memoryType(memoryType), bytes(bytes) {
 #ifdef _WIN32
+        static_cast<void>(start);
         const auto size = static_cast<std::uint64_t>(bytes);
         section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, static_cast<DWORD>(size >> 32), static_cast<DWORD>(size), nullptr);
         if (!section) {
@@ -234,18 +273,9 @@ public:
             throw std::system_error(error, std::system_category(), message);
         }
 #else
-        file = memfd_create("direct memory", MFD_CLOEXEC | MFD_ALLOW_SEALING);
-        if (file < 0) throw std::system_error(errno, std::generic_category(), "create direct memory backing");
-        if (ftruncate(file, static_cast<off_t>(bytes)) != 0) {
-            const int error = errno;
-            ::close(file);
-            throw std::system_error(error, std::generic_category(), "size direct memory backing");
-        }
-        if (fcntl(file, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW) != 0) {
-            const int error = errno;
-            ::close(file);
-            throw std::system_error(error, std::generic_category(), "seal direct memory backing");
-        }
+        file = PhysicalFile();
+        fileOffset = start;
+        ZeroReusedPhysical(start, bytes);
 #endif
     }
 
@@ -253,13 +283,23 @@ public:
 
 #if defined(__linux__)
     int File() const { return file; }
+    void* HostWriteData(std::uint64_t offset, std::size_t length) {
+        if (offset > bytes || length > bytes - offset) return nullptr;
+        if (hostWriteView == nullptr) {
+            auto* mapped = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, file, static_cast<off_t>(fileOffset));
+            if (mapped == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "Direct memory write view mmap failed");
+            hostWriteView = mapped;
+        }
+        return static_cast<std::byte*>(hostWriteView) + offset;
+    }
+    std::uint64_t FileOffset() const { return fileOffset; }
 #endif
 
     ~PhysicalBacking() {
 #ifdef _WIN32
         CloseHandle(section);
 #else
-        ::close(file);
+        if (hostWriteView != nullptr) ::munmap(hostWriteView, bytes);
 #endif
     }
 
@@ -270,16 +310,19 @@ public:
 #ifdef _WIN32
         GuestArena::GuestArenaMap_nid_postfix(reinterpret_cast<void*>(address), bytes, section, offset, WinProtFromPosix(protection));
 #else
-        if (::mmap(reinterpret_cast<void*>(address), bytes, protection, MAP_SHARED | MAP_FIXED, file, static_cast<off_t>(offset)) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map direct memory backing");
+        if (::mmap(reinterpret_cast<void*>(address), bytes, protection, MAP_SHARED | MAP_FIXED, file, static_cast<off_t>(fileOffset + offset)) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map direct memory backing");
 #endif
     }
 
 private:
     int memoryType;
+    std::size_t bytes;
 #ifdef _WIN32
     HANDLE section = nullptr;
 #else
     int file = -1;
+    void* hostWriteView = nullptr;
+    std::uint64_t fileOffset = 0;
 #endif
 };
 
@@ -384,7 +427,39 @@ bool SharedBacking(std::uintptr_t address, std::size_t bytes, int* file, std::ui
     const int duplicate = fcntl(backing->File(), F_DUPFD_CLOEXEC, 0);
     if (duplicate < 0) throw std::system_error(errno, std::generic_category(), "duplicate direct memory backing");
     *file = duplicate;
-    *offset = page->second.offset + phys % PS5_PAGE_SIZE;
+    *offset = backing->FileOffset() + page->second.offset + phys % PS5_PAGE_SIZE;
+    return true;
+}
+
+bool WriteSharedBacking(std::uintptr_t address, const void* source, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    std::lock_guard lock(g_directLock);
+    const auto next = g_directMappings.upper_bound(address);
+    if (next == g_directMappings.begin()) return false;
+    struct WriteSpan {
+        void* destination;
+        std::size_t bytes;
+    };
+    std::vector<WriteSpan> spans;
+    const auto end = address + bytes;
+    auto it = std::prev(next);
+    for (auto cursor = address; cursor < end; ++it) {
+        if (it == g_directMappings.end() || it->first > cursor || cursor >= it->second.end) return false;
+        const auto physical = it->second.phys + (cursor - it->first);
+        const auto page = g_physPages.find(physical - physical % PS5_PAGE_SIZE);
+        if (page == g_physPages.end() || page->second.backing != it->second.backing) return false;
+        const auto offset = page->second.offset + physical % PS5_PAGE_SIZE;
+        const auto length = std::min(end, it->second.end) - cursor;
+        auto* destination = it->second.backing->HostWriteData(offset, length);
+        if (destination == nullptr) return false;
+        spans.push_back({destination, length});
+        cursor += length;
+    }
+    auto* input = static_cast<const std::byte*>(source);
+    for (const auto& span : spans) {
+        std::memcpy(span.destination, input, span.bytes);
+        input += span.bytes;
+    }
     return true;
 }
 #endif
@@ -803,9 +878,12 @@ void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType) {
     }
 #if defined(__linux__)
     static std::once_flag registered;
-    std::call_once(registered, [] { GuestArena::GuestArenaSetSharedBacking_nid_postfix(&SharedBacking); });
+    std::call_once(registered, [] {
+        GuestArena::GuestArenaSetSharedBacking_nid_postfix(&SharedBacking);
+        GuestArena::GuestArenaSetSharedBackingWriter_nid_no_patch(&WriteSharedBacking);
+    });
 #endif
-    const auto backing = std::make_shared<PhysicalBacking>(len, memoryType);
+    const auto backing = std::make_shared<PhysicalBacking>(len, memoryType, first);
     std::map<std::uint64_t, PhysicalPage> pages;
     for (std::size_t offset = 0; offset < len; offset += PS5_PAGE_SIZE) pages.emplace(first + offset, PhysicalPage{backing, offset});
     g_physPages.merge(pages);
@@ -853,4 +931,29 @@ bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uint
     *offset = it->second.phys;
     *memoryType = it->second.memoryType;
     return true;
+}
+
+std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len) {
+    const auto first = static_cast<std::uint64_t>(start);
+    const auto last = first + len;
+    std::vector<DirectMemoryView> views;
+    std::lock_guard lock(g_directLock);
+    for (const auto& [base, mapping] : g_directMappings) {
+        const auto mappingLast = mapping.phys + (mapping.end - base);
+        if (mapping.phys >= last || mappingLast <= first) continue;
+        const auto viewStart = base + (std::max(first, mapping.phys) - mapping.phys);
+        const auto viewEnd = base + (std::min(last, mappingLast) - mapping.phys);
+        if (!views.empty() && views.back().address + views.back().bytes == viewStart) views.back().bytes += viewEnd - viewStart;
+        else views.push_back({viewStart, viewEnd - viewStart});
+    }
+    return views;
+}
+
+void UnmapDirectMemoryViews(const std::vector<DirectMemoryView>& views) {
+    if (views.empty()) return;
+    GuestAllocations::Mutation mutation;
+    for (const auto& view : views) {
+        Trace("unmap released view %p+0x%zx", reinterpret_cast<void*>(view.address), view.bytes);
+        UnmapRegistered(mutation, reinterpret_cast<void*>(view.address), view.bytes);
+    }
 }

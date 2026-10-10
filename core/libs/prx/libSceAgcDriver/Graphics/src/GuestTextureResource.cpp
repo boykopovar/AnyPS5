@@ -53,7 +53,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
 
     const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
-    const auto baseAddress = base40 << 8u;
+    auto baseAddress = base40 << 8u;
     Require(baseAddress != 0, "guest texture descriptor has a null base address");
 
     const auto minLod = (words[1] >> 8u) & 0xfffu;
@@ -123,7 +123,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
             std::fprintf(stderr, "[gpu] texture DCC color transform is ignored (word6=0x%08x word7=0x%08x)\n", words[6], words[7]);
         }
     }
-    Require(bcSwizzle == 0, "guest texture descriptor uses a BC swizzle which is not implemented");
+    Require(bcSwizzle <= 5u, "guest texture descriptor uses a reserved BC swizzle");
 
     Require(baseLevel <= lastLevel, "guest texture descriptor has a base mip level past its last mip level");
 
@@ -140,8 +140,12 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     // Views may name levels past MAX_MIP (a 512x512 view through 1x1 over a 9-level surface); the
     // hardware never addresses them, so the view ends at the surface's last level.
     if (baseLevel <= maxMip) lastLevel = std::min(lastLevel, maxMip);
-    // XOR swizzles fold a pipe/bank XOR into the low address bits; only unmodified 64 KiB bases are modeled.
-    Require(XorSwizzleMode(tileMode) == 0 || (baseAddress & (tileMode == TextureTileMode::kS4KBX || tileMode == TextureTileMode::kD4KBX ? 0xfffu : 0xffffu)) == 0, "guest texture descriptor combines an XOR swizzle with a pipe/bank XOR base which is not implemented");
+    std::uint32_t pipeBankXor = 0;
+    if (XorSwizzleMode(tileMode) != 0) {
+        pipeBankXor = static_cast<std::uint32_t>(baseAddress & (tileMode == TextureTileMode::kS4KBX || tileMode == TextureTileMode::kD4KBX ? 0xfffu : 0xffffu));
+        baseAddress -= pipeBankXor;
+        Require(baseAddress != 0, "guest texture descriptor has a null base address");
+    }
 
     switch (dimension) {
         case TextureDimension::k1D:
@@ -175,6 +179,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
 
     GuestTextureResource result{};
     result.baseAddress = baseAddress;
+    result.pipeBankXor = pipeBankXor;
     result.width = width;
     result.height = height;
     result.depthOrLastArray = depth;
@@ -190,6 +195,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     result.dstSelY = static_cast<std::uint8_t>(dstSelY);
     result.dstSelZ = static_cast<std::uint8_t>(dstSelZ);
     result.dstSelW = static_cast<std::uint8_t>(dstSelW);
+    result.bcSwizzle = static_cast<std::uint8_t>(bcSwizzle);
     result.dccAddress = metaCompress ? metaAddr << 8u : 0u;
     result.dccAlphaOnMsb = dccAlphaPos;
     result.dccPipeAligned = metaPipeAligned;

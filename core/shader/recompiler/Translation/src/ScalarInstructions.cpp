@@ -56,6 +56,11 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         scalarSelect64(inst, inst.destination);
         return true;
     case RdnaOpcode::SSetregB32:
+        if ((inst.source1.value & 0x3fu) == 1u) {
+            throw std::runtime_error("s_setreg_b32 at pc " + std::to_string(inst.programCounter) + " writes MODE from an SGPR: runtime MODE changes are not implemented");
+        }
+        emitControlNop();
+        return true;
     case RdnaOpcode::SVersion:
         emitControlNop();
         return true;
@@ -64,8 +69,12 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         const std::uint32_t offset = (field >> 6u) & 0x1fu;
         const std::uint32_t size = ((field >> 11u) & 0x1fu) + 1u;
         const std::uint64_t written = static_cast<std::uint64_t>(inst.source0.value) & ((std::uint64_t{1} << size) - 1u);
-        if ((field & 0x3fu) != 1u || offset + size > 4u || written != 0u) {
-            throw std::runtime_error("s_setreg_imm32_b32 at pc " + std::to_string(inst.programCounter) + " writes a hardware register field other than round to nearest even in MODE");
+        if ((field & 0x3fu) != 1u || offset + size > 4u) {
+            throw std::runtime_error("s_setreg_imm32_b32 at pc " + std::to_string(inst.programCounter) + " writes a hardware register field other than the MODE rounding fields");
+        }
+        const std::uint32_t initial = floatMode.has_value() ? floatMode->floatMode : 0u;
+        if (written != ((initial >> offset) & ((1u << size) - 1u))) {
+            throw std::runtime_error("s_setreg_imm32_b32 at pc " + std::to_string(inst.programCounter) + " changes the initial MODE rounding fields: runtime MODE changes are not implemented");
         }
         emitControlNop();
         return true;
@@ -77,7 +86,8 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         if ((field & 0x3fu) != 1u || offset + size > 4u) {
             throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round mode fields are modeled");
         }
-        writeRawU32(inst.destination, IrU32(ir.Constant(0u)));
+        const std::uint32_t initial = floatMode.has_value() ? floatMode->floatMode : 0u;
+        writeRawU32(inst.destination, IrU32(ir.Constant((initial >> offset) & ((1u << size) - 1u))));
         return true;
     }
     case RdnaOpcode::SCmovkI32: {
@@ -413,12 +423,14 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SDecperflevel:
         emitControlNop();
         return true;
-    case RdnaOpcode::SRoundMode:
-        if (inst.source0.value != 0u) {
-            throw std::runtime_error("s_round_mode " + std::to_string(inst.source0.value) + " at pc " + std::to_string(inst.programCounter) + " selects a rounding mode other than round to nearest even");
+    case RdnaOpcode::SRoundMode: {
+        const std::uint32_t initial = floatMode.has_value() ? floatMode->floatMode : 0u;
+        if ((inst.source0.value & 0xfu) != (initial & 0xfu)) {
+            throw std::runtime_error("s_round_mode " + std::to_string(inst.source0.value) + " at pc " + std::to_string(inst.programCounter) + " changes the initial MODE rounding fields: runtime MODE changes are not implemented");
         }
         emitControlNop();
         return true;
+    }
     case RdnaOpcode::SDenormMode:
         throw std::runtime_error("s_denorm_mode " + std::to_string(inst.source0.value) + " at pc " + std::to_string(inst.programCounter) + ": the recompiler does not model denormal modes");
     case RdnaOpcode::SSethalt:

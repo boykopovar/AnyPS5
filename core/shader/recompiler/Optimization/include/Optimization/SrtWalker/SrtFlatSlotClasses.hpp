@@ -16,6 +16,7 @@ namespace ShaderRecompiler::Detail {
 // fill) has no pure slot. Reachability over-approximates what the evaluators consume, so an
 // unknown opcode only makes more slots impure.
 std::vector<std::uint8_t> ComputePureFlatSlots(const IrResourcePlan& plan);
+std::vector<std::uint32_t> ComputeGuardedFlatSlots(const IrResourcePlan& plan);
 
 }
 

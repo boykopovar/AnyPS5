@@ -17,8 +17,10 @@ def main():
         for index, name in enumerate(names):
             strings = b"\0lib.so\0" + name.encode("utf-8") + b"\0"
             image = fixture(str_size=len(strings), table_bytes=strings)
-            struct.pack_into("<H", image, 56, 5)
-            for slot in (3, 4):
+            struct.pack_into("<H", image, 56, 6)
+            struct.pack_into("<IIQQQQQQ", image, 64,
+                             1, 7, 0x200, 0x200, 0x200, len(image) - 0x200, len(image) - 0x200, 0x1000)
+            for slot in (3, 4, 5):
                 struct.pack_into("<IIQQQQQQ", image, 64 + slot * 56,
                                  0x6fffff01, 0, 0, 0, 0, 0, 0, 1)
             source = work / (str(index) + ".elf")

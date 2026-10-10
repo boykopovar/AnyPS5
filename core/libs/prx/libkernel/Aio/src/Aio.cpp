@@ -10,13 +10,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 
-#ifdef _WIN32
-#include <io.h>
-#include <limits>
-#include <windows.h>
-#else
+#ifndef _WIN32
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -54,35 +51,6 @@ void SetState(std::int32_t id, std::int32_t state) {
     g_states[id] = state;
 }
 
-#ifdef _WIN32
-std::int64_t NativePositioned(std::int32_t fd, void* buf, std::size_t nbyte, std::int64_t offset, bool write, const char* name) {
-    if (nbyte > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        throw std::runtime_error(std::string(name) + ": nbytes exceeds platform limit");
-    }
-    if (offset < 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(fd));
-    if (handle == INVALID_HANDLE_VALUE) {
-        errno = EBADF;
-        return -1;
-    }
-    OVERLAPPED overlapped{};
-    overlapped.Offset = static_cast<DWORD>(offset);
-    overlapped.OffsetHigh = static_cast<DWORD>(static_cast<std::uint64_t>(offset) >> 32u);
-    DWORD done = 0;
-    const BOOL ok = write ? ::WriteFile(handle, buf, static_cast<DWORD>(nbyte), &done, &overlapped)
-                          : ::ReadFile(handle, buf, static_cast<DWORD>(nbyte), &done, &overlapped);
-    if (!ok) {
-        if (!write && ::GetLastError() == ERROR_HANDLE_EOF) return 0;
-        errno = EIO;
-        return -1;
-    }
-    return done;
-}
-#endif
-
 std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int64_t offset) {
     const GuestArena::HostWrite destination(buf, nbyte);
     if (!destination.Open()) {
@@ -90,7 +58,11 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
         return -1;
     }
 #ifdef _WIN32
-    return NativePositioned(fd, buf, nbyte, offset, false, "sceKernelAioSubmitReadCommands");
+    if (offset < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return NativePositioned_nid_no_patch(fd, buf, nbyte, offset, false);
 #else
     return static_cast<std::int64_t>(::pread(fd, buf, nbyte, static_cast<off_t>(offset)));
 #endif
@@ -98,7 +70,11 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
 
 std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, std::int64_t offset) {
 #ifdef _WIN32
-    return NativePositioned(fd, const_cast<void*>(buf), nbyte, offset, true, "sceKernelAioSubmitWriteCommands");
+    if (offset < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return NativePositioned_nid_no_patch(fd, const_cast<void*>(buf), nbyte, offset, true);
 #else
     return static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset)));
 #endif
@@ -113,6 +89,7 @@ bool RunRequest(KernelAioRwRequest& req, bool write) {
         req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EIO);
         if (error == EBADF) req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EBADF);
         if (error == EFAULT) req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EFAULT);
+        if (error == EINVAL) req.result->return_value = static_cast<std::int64_t>(SCE_KERNEL_ERROR_EINVAL);
         req.result->state = AioAborted;
         return false;
     }
@@ -305,8 +282,11 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
     }
 }
 
-int APS5_VABI sceKernelAioPollRequests() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelAioPollRequests(int32_t* id, int32_t num, int32_t* state) {
+    const int error = ValidateIds(id, num, state, "sceKernelAioPollRequests");
+    if (error != 0) return error;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (int32_t i = 0; i < num; ++i) state[i] = g_states[id[i]];
     return 0;
 }
 

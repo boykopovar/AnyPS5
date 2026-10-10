@@ -8,6 +8,7 @@ extern "C" {
 void APS5_VABI sceImeParamInit(Param* param);
 int APS5_VABI sceImeGetPanelSize(const Param* param, uint32_t* width, uint32_t* height);
 int APS5_VABI sceImeClose_nid_postfix(void);
+int APS5_VABI sceImeGetPanelPositionAndForm(PositionAndForm* form);
 int APS5_VABI sceImeSetCaret(const Caret* caret);
 int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length);
 int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geometry);
@@ -119,6 +120,12 @@ static void CheckClosedPanel() {
     Require(sceImeSetText(text, 4) == notOpened, "text needs an open panel");
     Require(sceImeSetTextGeometry(TextAreaMode::Edit, &geometry) == notOpened, "geometry needs an open panel");
     Require(sceImeClose_nid_postfix() == notOpened, "closing needs an open panel");
+    PositionAndForm form;
+    std::memset(&form, 0xa5, sizeof(form));
+    Require(sceImeGetPanelPositionAndForm(&form) == notOpened, "panel position needs an open panel");
+    Require(sceImeGetPanelPositionAndForm(nullptr) == notOpened, "panel position checks the panel first");
+    const auto* formBytes = reinterpret_cast<const unsigned char*>(&form);
+    for (size_t i = 0; i < sizeof(form); ++i) Require(formBytes[i] == 0xa5, "panel position written without an open panel");
 }
 
 static void CheckKeyboardResourceIds() {

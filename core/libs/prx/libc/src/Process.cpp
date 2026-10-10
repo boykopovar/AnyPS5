@@ -113,6 +113,7 @@ extern "C" {
     exitRequested.store(true);
     if (exitStarted.exchange(true)) LibcAwaitExit_nid_postfix();
     LibcRunShutdown_nid_postfix();
+    CxaFinalize_nid_no_patch(nullptr);
     std::exit(code);
 }
 

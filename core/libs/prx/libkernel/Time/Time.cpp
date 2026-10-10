@@ -3,6 +3,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -28,6 +29,18 @@
 #endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
+
+static constexpr int GUEST_EINVAL = 22;
+static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
+
+static bool IsCpuClock(int clockId) {
+    const auto bits = static_cast<std::uint32_t>(clockId);
+    if ((bits & CPU_CLOCK_BIT) == 0)
+        return false;
+    if ((bits & CPU_CLOCK_PROCESS_BIT) != 0)
+        throw std::runtime_error("clock: unsupported process CPU clock_id " + std::to_string(clockId));
+    return true;
+}
 
 static std::uint64_t RawMonotonicNanos() {
 #ifdef _WIN32
@@ -147,11 +160,13 @@ static const bool g_timerSelfTest = [] {
 extern "C" {
 
 std::uint64_t APS5_VABI sceKernelGetProcessTime() {
-    return (GetMonotonicNanos() - GetStartNanos()) / 1000ULL;
+    const std::uint64_t start = GetStartNanos();
+    return (GetMonotonicNanos() - start) / 1000ULL;
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter() {
-    return GetMonotonicNanos() - GetStartNanos();
+    const std::uint64_t start = GetStartNanos();
+    return GetMonotonicNanos() - start;
 }
 
 std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency() {
@@ -329,6 +344,16 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     if (tp == nullptr) {
         APS5_INVALID_ARG_EX;
     }
+    if (IsCpuClock(clockId)) {
+        std::uint64_t nanos = 0;
+        if (!GuestThreadCpuNanos(static_cast<int>(static_cast<std::uint32_t>(clockId) & CPU_CLOCK_ID_MASK), &nanos)) {
+            *__error_nid_postfix() = GUEST_EINVAL;
+            return -1;
+        }
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
     if (clockId == 1 || clockId == 2) {
         const std::uint64_t nanos = ProcessCpuNanos(clockId == 2);
         tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
@@ -414,9 +439,8 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
 }
 
 int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
-    if (tv == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
+    KernelTimeval ignoredTime{};
+    if (tv == nullptr) tv = &ignoredTime;
 #ifdef _WIN32
     FILETIME ft{};
     GetSystemTimePreciseAsFileTime(&ft);
@@ -440,9 +464,10 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
 }
 
 int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
-    if (res == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
+    KernelTimespec ignoredResolution{};
+    if (res == nullptr) res = &ignoredResolution;
+    if (IsCpuClock(clockId))
+        return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
     if (clockId == 1 || clockId == 2) {
         const std::uint64_t nanos = ProcessCpuResolutionNanos();
         res->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
@@ -539,10 +564,10 @@ int APS5_VABI sceKernelClockGettime(KernelClockid clock_id, KernelTimespec* tp) 
     return clock_gettime_nid_postfix(static_cast<int>(clock_id), tp);
 }
 
-int APS5_VABI sceKernelConvertLocaltimeToUtc(int64_t local_time, int64_t reserved, int64_t* utc_time, KernelTimezone* timezone, int32_t* dst_seconds) {
+int APS5_VABI sceKernelConvertLocaltimeToUtc(int64_t local_time, int64_t reserved, int64_t* utc_time, KernelTimesec* timezone, int32_t* dst_seconds) {
     (void)reserved;
     if (utc_time != nullptr) *utc_time = local_time;
-    if (timezone != nullptr) *timezone = {0, 0};
+    if (timezone != nullptr) *timezone = {local_time, 0u, 0u};
     if (dst_seconds != nullptr) *dst_seconds = 0;
     return 0;
 }

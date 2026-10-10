@@ -10,6 +10,8 @@ public:
     void Structurize(ControlFlowGraph& graph) const;
 
 private:
+    void structurize(ControlFlowGraph& graph, bool privatizeReturns) const;
+    void privatizeSharedReturns(ControlFlowGraph& graph) const;
     void computeDominatorTree(ControlFlowGraph& graph) const;
     void detectNaturalLoops(ControlFlowGraph& graph) const;
     void computePostDominators(ControlFlowGraph& graph) const;

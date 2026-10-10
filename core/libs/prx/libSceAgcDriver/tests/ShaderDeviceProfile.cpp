@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "BdaAbi.hpp"
 #include "Optimization/BindingAllocator.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -135,17 +136,27 @@ void CheckHeaps() {
     image.numericClass = IrTextureNumericClass::Float;
     image.dimension = RdnaImageDimension::Dim2D;
     const auto single = allocate(image, 1u);
+    const auto sixteenSamplers = allocate(image, 1u, 16u);
+    Require(BindingAllocator{}.FindBinding(sixteenSamplers.layout, DescriptorBindingKind::Samplers).resources.size() == 32u, "sixteen logical samplers must fit with both descriptor variants");
     const auto full = allocate(image, RuntimeAbi::SampledHeapCapacity, RuntimeAbi::SamplerHeapCapacity / 2u);
     Require(single.layout.ShaderDataDwords() == full.layout.ShaderDataDwords() && single.layout.memoryOffsetDword == full.layout.memoryOffsetDword && !full.layout.UsesPushData(), "runtime layout depends on resource count");
     Require(full.layout.memoryOffsetDword == 0u && full.layout.DispatchThreadLimitDword() == 0u && full.layout.ShaderDataDwords() == 0u, "direct image resources allocated runtime metadata");
     Reject([&] { allocate(image, RuntimeAbi::SampledHeapCapacity + 1u); }, "heap capacity exceeded");
+    Require(BindingAllocator{}.FindBinding(allocate(image, 40u).layout, DescriptorBindingForImage(image)).resources.size() == 40u, "a sampled heap does not hold 40 images of one class");
+    Require(BindingAllocator{}.FindBinding(allocate(image, RuntimeAbi::SampledHeapCapacity).layout, DescriptorBindingForImage(image)).resources.size() == RuntimeAbi::SampledHeapCapacity, "a sampled heap does not hold a full class of images");
+    Require(ResourceMaterializer::BindlessSlots() == 16u, "bindless image tables changed size with the sampled heap");
     Reject([&] { allocate(image, 1u, RuntimeAbi::SamplerHeapCapacity + 1u); }, "metadata capacity");
     image.resourceClass = ImageResourceClass::Storage;
     image.mipMode = ImageMipMode::DynamicStorage;
-    image.mipCount = RuntimeAbi::StorageHeapCapacity;
+    image.mipCount = RuntimeAbi::StorageMipSlots;
     const auto storage = allocate(image, 1u);
     Require(BindingAllocator{}.FindBinding(storage.layout, DescriptorBindingForImage(image)).resources.size() == image.mipCount, "storage heap did not reserve each mip");
-    Reject([&] { allocate(image, 2u); }, "heap capacity exceeded");
+    const auto shared = allocate(image, 2u);
+    Require(BindingAllocator{}.FindBinding(shared.layout, DescriptorBindingForImage(image)).resources.size() == 2u * image.mipCount, "a storage heap did not hold two dynamic-mip images");
+    const auto capacity = RuntimeAbi::StorageHeapCapacity / image.mipCount;
+    const auto filled = allocate(image, capacity);
+    Require(BindingAllocator{}.FindBinding(filled.layout, DescriptorBindingForImage(image)).resources.size() == RuntimeAbi::StorageHeapCapacity, "a full storage heap was not allocated");
+    Reject([&] { allocate(image, capacity + 1u); }, "heap capacity exceeded");
     Reject([&] { allocate(image, 0u, RuntimeAbi::SamplerHeapCapacity / 2u + 1u); }, "sampler pairs");
     const std::array dimensions{RdnaImageDimension::Dim1D, RdnaImageDimension::Dim1DArray, RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray, RdnaImageDimension::Dim3D, RdnaImageDimension::Dim2DMsaa, RdnaImageDimension::Dim2DMsaaArray};
     std::set<std::uint32_t> classes;

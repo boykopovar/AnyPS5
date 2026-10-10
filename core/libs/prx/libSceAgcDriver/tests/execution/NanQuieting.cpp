@@ -21,6 +21,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 16;
+constexpr std::uint32_t Float64Capability = 10;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
@@ -32,6 +33,73 @@ alignas(256) constexpr std::array<std::uint32_t, 52> Code{
     0x041a0b04u, 0x7e24ab07u, 0x7e26a907u, 0x7e28bf07u, 0xd53b0015u, 0x02010307u, 0x7e2cb307u, 0xd75f0017u,
     0x041e3d07u, 0x7e304305u, 0x7e32bd1eu, 0xe0781000u, 0x80010a03u, 0xe0781010u, 0x80010e03u, 0xe0781020u,
     0x80011203u, 0xe0781030u, 0x80011603u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 39> CodeRounding{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
+    0x7e1a0280u, 0x7e1c0280u, 0x7e1e0280u, 0x7e200280u, 0x7e220280u, 0x7e240280u, 0x7e260280u, 0x7e280280u,
+    0x7e2a0280u, 0x7e2c0280u, 0x7e2e0280u, 0x7e300280u, 0x7e320280u, 0x7e147d04u, 0x7e183504u, 0x7e1c3104u,
+    0x7e202f04u, 0x7e243304u, 0x7e287b04u, 0xd5680016u, 0x02020d04u, 0x7e302107u, 0xe0781000u, 0x80010a03u,
+    0xe0781010u, 0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 40> CodeApproximate{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
+    0x7e1a0280u, 0x7e1c0280u, 0x7e1e0280u, 0x7e200280u, 0x7e220280u, 0x7e240280u, 0x7e260280u, 0x7e280280u,
+    0x7e2a0280u, 0x7e2c0280u, 0x7e2e0280u, 0x7e300280u, 0x7e320280u, 0x7e145f04u, 0x7e186304u, 0x7e1c6904u,
+    0xd5600010u, 0x03ca08f2u, 0xd5600012u, 0x0411e4f2u, 0xd5600014u, 0x841208f2u, 0x7e2c1f04u, 0xe0781000u,
+    0x80010a03u, 0xe0781010u, 0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u, 0xbf810000u,
+};
+
+constexpr std::uint32_t RowsF64[8][4] = {
+    {0x00000001u, 0x7ff00000u, 0x00000001u, 0x7f800001u},
+    {0x12345678u, 0xfff00000u, 0x00000001u, 0xff812345u},
+    {0x00000000u, 0x7ff40000u, 0x00000000u, 0x7fa00000u},
+    {0x00000000u, 0x7ff80000u, 0x00000001u, 0x7fc00000u},
+    {0x12345678u, 0xfff80000u, 0x00000001u, 0xffc12345u},
+    {0x00000000u, 0x7ff00000u, 0x00000001u, 0x7f800000u},
+    {0x00000000u, 0x3ff80000u, 0x00000001u, 0x3f800000u},
+    {0x00000000u, 0xc0040000u, 0x00000002u, 0xc0200000u}
+};
+constexpr std::uint32_t ExpectedRoundingIeee[8][16] = {
+    {0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x20000000u, 0x7ff80000u},
+    {0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0xa0000000u, 0xfff82468u},
+    {0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u},
+    {0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u},
+    {0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0xa0000000u, 0xfff82468u},
+    {0x00000000u, 0xfff80000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u},
+    {0x00000000u, 0x3fe00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0x40000000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0x40000000u, 0x00000000u, 0x3fe80000u, 0x00000000u, 0x40080000u, 0x00000000u, 0x3ff00000u},
+    {0x00000000u, 0x3fe00000u, 0x00000000u, 0xc0080000u, 0x00000000u, 0xc0000000u, 0x00000000u, 0xc0000000u, 0x00000000u, 0xc0000000u, 0x00000000u, 0xbfe40000u, 0x00000000u, 0xc0240000u, 0x00000000u, 0xc0040000u}
+};
+constexpr std::uint32_t ExpectedRoundingNoIeee[8][16] = {
+    {0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x20000000u, 0x7ff00000u},
+    {0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0xa0000000u, 0xfff02468u},
+    {0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u},
+    {0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u},
+    {0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0xa0000000u, 0xfff82468u},
+    {0x00000000u, 0xfff80000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x7ff00000u},
+    {0x00000000u, 0x3fe00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0x40000000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0x40000000u, 0x00000000u, 0x3fe80000u, 0x00000000u, 0x40080000u, 0x00000000u, 0x3ff00000u},
+    {0x00000000u, 0x3fe00000u, 0x00000000u, 0xc0080000u, 0x00000000u, 0xc0000000u, 0x00000000u, 0xc0000000u, 0x00000000u, 0xc0000000u, 0x00000000u, 0xbfe40000u, 0x00000000u, 0xc0240000u, 0x00000000u, 0xc0040000u}
+};
+constexpr std::uint32_t ExpectedApproximateIeee[8][16] = {
+    {0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0x7ff80000u, 0x00000001u, 0xfff80000u, 0x7fc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0x7ff80000u, 0xffc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0x7ffc0000u, 0x00000000u, 0xfffc0000u, 0x7fe00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0xfff80000u, 0x7fc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0x7ff80000u, 0xffc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0xfff80000u, 0x7f800000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x54000000u, 0x3fe55555u, 0x74000000u, 0x3fea20bdu, 0x14000000u, 0x3ff3988eu, 0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0xbff00000u, 0x3fc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x9c000000u, 0xbfd99999u, 0x00000000u, 0xfff80000u, 0x00000000u, 0xfff80000u, 0x00000000u, 0xbff00000u, 0x00000000u, 0xbff00000u, 0x00000000u, 0xbff00000u, 0xc0200000u, 0x00000000u, 0x00000000u, 0x00000000u}
+};
+constexpr std::uint32_t ExpectedApproximateNoIeee[8][16] = {
+    {0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0x7ff00000u, 0x00000001u, 0xfff00000u, 0x7fc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0xfff00000u, 0x12345678u, 0x7ff00000u, 0xffc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0x7ff40000u, 0x00000000u, 0xfff40000u, 0x7fe00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0x7ff80000u, 0x00000000u, 0xfff80000u, 0x7fc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0xfff80000u, 0x12345678u, 0x7ff80000u, 0xffc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x7ff00000u, 0x00000000u, 0xfff80000u, 0x7f800000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x54000000u, 0x3fe55555u, 0x74000000u, 0x3fea20bdu, 0x14000000u, 0x3ff3988eu, 0x00000000u, 0x3ff00000u, 0x00000000u, 0x3ff00000u, 0x00000000u, 0xbff00000u, 0x3fc00000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x9c000000u, 0xbfd99999u, 0x00000000u, 0xfff80000u, 0x00000000u, 0xfff80000u, 0x00000000u, 0xbff00000u, 0x00000000u, 0xbff00000u, 0x00000000u, 0xbff00000u, 0xc0200000u, 0x00000000u, 0x00000000u, 0x00000000u}
 };
 
 constexpr std::uint32_t Rows[32][4] = {
@@ -154,10 +222,27 @@ constexpr const char* Names[16] = {
     "v_trunc_f32",
     "v_rndne_f16"
 };
+constexpr const char* NamesRounding[8] = {
+    "v_fract_f64",
+    "v_floor_f64",
+    "v_ceil_f64",
+    "v_trunc_f64",
+    "v_rndne_f64",
+    "v_frexp_mant_f64",
+    "v_ldexp_f64",
+    "v_cvt_f64_f32"
+};
+constexpr const char* NamesApproximate[8] = {
+    "v_rcp_f64",
+    "v_rsq_f64",
+    "v_sqrt_f64",
+    "v_div_fixup_f64 denominator",
+    "v_div_fixup_f64 numerator",
+    "v_div_fixup_f64 both",
+    "v_cvt_f32_f64",
+    "unused"
+};
 
-void Fill(std::uint32_t tid, std::uint32_t* words) {
-    std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words);
-}
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -182,15 +267,20 @@ bool IsNan16(std::uint32_t value) {
     return (value & 0x7fffu) > 0x7c00u;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+bool IsNan64(std::uint32_t low, std::uint32_t high) {
+    return (high & 0x7fffffffu) > 0x7ff00000u || ((high & 0x7fffffffu) == 0x7ff00000u && low != 0u);
+}
+
+template <std::size_t Words, std::size_t Count>
+void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Words>& program, const std::uint32_t (&rows)[Count][4], const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(rows[tid % Count]), std::end(rows[tid % Count]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
+    const std::span<const std::uint32_t> code(program);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -221,18 +311,49 @@ void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
     }
 }
 
+void CheckF64(const std::uint32_t (&expected)[8][16], const char* const (&names)[8], std::uint32_t approximate, const char* mode) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t* out = &Output[tid * Results];
+        const std::uint32_t* want = expected[tid % 8u];
+        for (std::uint32_t i = 0; i < 16; ++i) {
+            const std::uint32_t pair = i / 2u;
+            if (pair < approximate && !IsNan64(want[pair * 2u], want[pair * 2u + 1u])) continue;
+            const std::string name = std::string(mode) + " " + names[pair] + (i % 2u ? " high" : " low");
+            Expect(tid, out[i], want[i], name.c_str());
+        }
+    }
+}
+
+void CheckF64Modes(AgcDriver::VulkanDevice& device) {
+    const std::optional<ShaderRecompiler::ShaderFloatMode> modes[3] = {std::nullopt, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false}};
+    const char* labels[3] = {"no float mode", "IEEE=0", "IEEE=1"};
+    for (std::uint32_t mode = 0; mode < 3; ++mode) {
+        const bool ieee = mode == 2u;
+        Run(device, CodeRounding, RowsF64, modes[mode]);
+        CheckF64(ieee ? ExpectedRoundingIeee : ExpectedRoundingNoIeee, NamesRounding, 0u, labels[mode]);
+        Run(device, CodeApproximate, RowsF64, modes[mode]);
+        CheckF64(ieee ? ExpectedApproximateIeee : ExpectedApproximateNoIeee, NamesApproximate, 3u, labels[mode]);
+    }
+}
+
 }
 
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
+        Run(*device, Code, Rows, std::nullopt);
         Check(ExpectedNoIeee, "no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+        Run(*device, Code, Rows, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
         Check(ExpectedNoIeee, "IEEE=0");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
+        Run(*device, Code, Rows, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
         Check(ExpectedIeee, "IEEE=1");
+        const auto capabilities = device->Target().supportedCapabilities;
+        if (std::find(capabilities.begin(), capabilities.end(), Float64Capability) == capabilities.end()) {
+            std::puts("f64 nan quieting skipped, the device has no shaderFloat64");
+        } else {
+            CheckF64Modes(*device);
+        }
         std::puts("nan quieting tests passed");
         return 0;
     } catch (const std::exception& error) {

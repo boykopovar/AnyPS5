@@ -44,8 +44,9 @@ void Driver::execute(const Submission& submission) {
             const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
-            if (const auto localDevice = device.Load()) {
-                recordDeferredLabels(localDevice.get(), submission.queue);
+            const auto localDevice = device.Load();
+            recordDeferredLabels(localDevice.get(), submission.queue);
+            if (localDevice != nullptr) {
                 if (suspendDrain) localDevice->WaitIdle();
                 else localDevice->SubmitRecorded(submission.queue == 0);
             }

@@ -12,6 +12,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: %s <patched libraries directory>\n", argv[0]);
         return 2;
     }
+#ifdef _WIN32
+    SetErrorMode(SEM_FAILCRITICALERRORS);
+#endif
     int loaded = 0;
     int failed = 0;
     for (const auto& entry : std::filesystem::directory_iterator(argv[1])) {

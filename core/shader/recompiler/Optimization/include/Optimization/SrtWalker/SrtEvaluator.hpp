@@ -66,12 +66,18 @@ private:
     std::size_t _count = 0;
 };
 
+struct InaccessibleRead {
+    const IrValue* read = nullptr;
+    std::uint64_t address = 0;
+};
+
 class Evaluator {
 public:
     Evaluator(const IrResourcePlan& program, const SrtRuntime& runtime, std::span<const std::uint8_t> cleanFlatSlots = {}, Evaluator* cleanEvaluator = nullptr, IrValue* activeMask = nullptr) : _program(program), _runtime(runtime), _cleanFlatSlots(cleanFlatSlots), _cleanEvaluator(cleanEvaluator), _activeMask(activeMask != nullptr ? activeMask->Resolve() : nullptr) {}
 
     bool Evaluate(IrValue* value, std::uint32_t& result);
     bool EvaluateWide(IrValue* raw, std::uint64_t& result);
+    void ReportInaccessibleReads(InaccessibleRead* sink) { _inaccessible = sink; }
 
 private:
     static float Float32(std::uint64_t bits);
@@ -88,6 +94,7 @@ private:
     std::span<const std::uint8_t> _cleanFlatSlots;
     Evaluator* _cleanEvaluator = nullptr;
     IrValue* _activeMask = nullptr;
+    InaccessibleRead* _inaccessible = nullptr;
     EvaluatedValues _cache;
     std::vector<IrValue*> _visiting;
 };

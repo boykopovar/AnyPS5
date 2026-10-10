@@ -87,8 +87,9 @@ std::vector<std::uint32_t> SpirvModule::Finalize() const {
     if (unpatchedPhiIncomings != 0) {
         throw std::runtime_error("SpirvModule::Finalize called with unpatched OpPhi incoming pairs");
     }
+    if (inHelperFunction) throw std::runtime_error("SpirvModule::Finalize called inside a helper function");
     std::vector<std::uint32_t> module;
-    module.reserve(5u + capabilities.size() + extensions.size() + extInstImports.size() + memoryModel.size() + entryPoints.size() + executionModes.size() + debug.size() + annotations.size() + typeDeclarations.size() + declarations.size() + globalVariables.size() + functionInstructions.size());
+    module.reserve(5u + capabilities.size() + extensions.size() + extInstImports.size() + memoryModel.size() + entryPoints.size() + executionModes.size() + debug.size() + annotations.size() + typeDeclarations.size() + declarations.size() + globalVariables.size() + functionInstructions.size() + helperFunctionInstructions.size());
     module.push_back(spv::MagicNumber);
     module.push_back(version);
     module.push_back(0u);
@@ -106,7 +107,20 @@ std::vector<std::uint32_t> SpirvModule::Finalize() const {
     module.insert(module.end(), declarations.begin(), declarations.end());
     module.insert(module.end(), globalVariables.begin(), globalVariables.end());
     module.insert(module.end(), functionInstructions.begin(), functionInstructions.end());
+    module.insert(module.end(), helperFunctionInstructions.begin(), helperFunctionInstructions.end());
     return module;
+}
+
+void SpirvModule::BeginHelperFunction() {
+    if (inHelperFunction) throw std::runtime_error("SpirvModule helper functions cannot nest");
+    std::swap(functionInstructions, helperFunctionInstructions);
+    inHelperFunction = true;
+}
+
+void SpirvModule::EndHelperFunction() {
+    if (!inHelperFunction) throw std::runtime_error("SpirvModule::EndHelperFunction without a helper function");
+    std::swap(functionInstructions, helperFunctionInstructions);
+    inHelperFunction = false;
 }
 
 void SpirvModule::RequireVersion(std::uint32_t version) {

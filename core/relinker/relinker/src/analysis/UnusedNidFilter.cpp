@@ -16,15 +16,15 @@ public:
     ) override {
         if (textSection.empty()) throw RelinkerException("Cannot filter NIDs: text section is empty");
 
+        auto relativeRelocations = UnusedNidFilter::BuildRelativeRelocationIndex(elfBytes);
         auto collector = UnusedNidFilter::MakeEntryPointCollector();
-        auto entries = collector->Collect(elfBytes, textVAddr, textSection.size());
+        auto entries = collector->Collect(elfBytes, textVAddr, textSection.size(), *relativeRelocations);
 
         if (entries.empty()) throw RelinkerException("Cannot filter NIDs: no entry points found");
 
         VirtualAddress primary = entries[0];
         std::vector<VirtualAddress> extra(entries.begin() + 1, entries.end());
 
-        auto relativeRelocations = UnusedNidFilter::BuildRelativeRelocationIndex(elfBytes);
         auto cfg = UnusedNidFilter::BuildControlFlowGraph(textSection, textVAddr, primary, extra, *relativeRelocations);
         auto index = UnusedNidFilter::BuildGotAccessIndex(*cfg, textSection, textVAddr);
 

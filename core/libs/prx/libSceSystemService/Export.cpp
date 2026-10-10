@@ -5,6 +5,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 
 extern "C" {
@@ -131,6 +132,12 @@ int APS5_VABI sceSystemServiceReenableMediaPlay() {
 int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
  if (param == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri, void* param) {
+ (void)uri;
+ (void)param;
+ return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {

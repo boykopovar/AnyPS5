@@ -1,10 +1,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
+#include <array>
 #include <bit>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
+#include <utility>
 
 namespace AgcDriver::Graphics {
 namespace {
@@ -41,11 +43,12 @@ std::uint32_t standard64Extra(std::uint32_t x, std::uint32_t y, std::uint32_t el
 
 ColorTileMode DecodeColorTileMode(std::uint32_t attrib3) {
     const auto resourceType = (attrib3 >> 24u) & 3u;
-    require((attrib3 & 0x80002000u) == 0 && ((resourceType == 1 && (attrib3 & 0x1fffu) == 0) || resourceType == 2) && ((attrib3 >> 27u) & 7u) == 1, "AGC graphics: unsupported color depth, dimension, resource level or metadata mode");
+    require((attrib3 & 0x80002000u) == 0 && ((resourceType <= 1 && (attrib3 & 0x1fffu) == 0) || resourceType == 2) && ((attrib3 >> 27u) & 7u) == 1, "AGC graphics: unsupported color depth, dimension, resource level or metadata mode");
     const auto mode = (attrib3 >> 14u) & 0x1fu;
     const auto fmaskMode = (attrib3 >> 19u) & 0x1fu;
     require(fmaskMode == 0 || fmaskMode == 0x18, "AGC graphics: unsupported color FMASK swizzle mode");
     require(mode == 0 || mode == 5 || mode == 9 || mode == 0x1b, "AGC graphics: unsupported color tile mode");
+    require(resourceType != 0 || mode == 0 || mode == 0x1b, "AGC graphics: 1D color targets with a standard swizzle mode are invalid");
     return static_cast<ColorTileMode>(mode);
 }
 
@@ -164,6 +167,25 @@ void ColorTargetLayout::Tile(std::span<const std::byte> source, std::span<std::b
         const auto* row = source.data() + static_cast<std::size_t>(y) * width * elementBytes;
         for (std::uint32_t x = 0; x < width; ++x) std::memcpy(destination.data() + offset(x, y), row + static_cast<std::size_t>(x) * elementBytes, elementBytes);
     }
+}
+
+CmaskLayout::CmaskLayout(std::uint32_t width, std::uint32_t height) : width(width), height(height), blocksPerRow((width + 1023u) / 1024u), bytes(0) {
+    require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "AGC graphics: invalid CMASK surface extent");
+    bytes = static_cast<std::size_t>(blocksPerRow) * ((height + 511u) / 512u) * Alignment;
+}
+
+std::size_t CmaskLayout::Nibble(std::uint32_t tileX, std::uint32_t tileY) const {
+    require(tileX < TilesX() && tileY < TilesY(), "AGC graphics: CMASK tile out of range");
+    static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 13> equation{{
+        {0x008u, 0x000u}, {0x000u, 0x010u}, {0x040u, 0x000u}, {0x000u, 0x040u}, {0x080u, 0x000u}, {0x000u, 0x080u}, {0x100u, 0x000u},
+        {0x000u, 0x100u}, {0x200u, 0x000u}, {0x008u, 0x008u}, {0x010u, 0x010u}, {0x040u, 0x020u}, {0x020u, 0x040u},
+    }};
+    const auto x = tileX * 8u;
+    const auto y = tileY * 8u;
+    std::size_t offset = 0;
+    for (std::size_t bit = 0; bit < equation.size(); ++bit) offset |= static_cast<std::size_t>(parity((x & equation[bit].first) ^ (y & equation[bit].second))) << bit;
+    const auto block = static_cast<std::size_t>(y / 512u) * blocksPerRow + x / 1024u;
+    return block * Alignment * 2u + offset;
 }
 
 }

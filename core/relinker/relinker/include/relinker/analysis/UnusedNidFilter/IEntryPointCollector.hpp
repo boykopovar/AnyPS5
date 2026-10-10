@@ -2,6 +2,7 @@
 #define RELINKER_ANALYSIS_UNUSED_NID_FILTER_IENTRYPOINTCOLLECTOR_HPP
 
 #include <relinker/domain/Types.hpp>
+#include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <memory>
 #include <vector>
 
@@ -13,7 +14,8 @@ public:
     virtual std::vector<VirtualAddress> Collect(
         const std::vector<std::uint8_t>& elfBytes,
         VirtualAddress textVaddr,
-        std::size_t textSize
+        std::size_t textSize,
+        const IRelativeRelocationIndex& relativeRelocations
     ) const = 0;
 };
 
