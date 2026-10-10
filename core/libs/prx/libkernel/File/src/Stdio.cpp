@@ -257,6 +257,19 @@ static int PathError(const char* path) {
     return *path == '\0' ? GUEST_ENOENT : 0;
 }
 
+static std::filesystem::path WithoutTrailingSeparator(const std::filesystem::path& native) {
+    return native.has_filename() ? native : native.parent_path();
+}
+
+static bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
+    std::error_code error;
+    for (auto prefix = WithoutTrailingSeparator(native).parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
+        const auto status = std::filesystem::status(prefix, error);
+        if (std::filesystem::exists(status)) return !std::filesystem::is_directory(status);
+    }
+    return false;
+}
+
 extern "C" {
 
 int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
@@ -341,7 +354,8 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
     if (const int error = PathError(path)) return PosixFailure(error);
     auto native = ResolvePath_nid_no_patch(path);
     if (NativeMkdir(native, mode) != 0) {
-        return PosixResult(SceErrorFromErrno(errno));
+        const int error = errno == ENOENT && HasNonDirectoryPrefix(native) ? GUEST_ENOTDIR : errno;
+        return PosixResult(SceErrorFromErrno(error));
     }
     RecordWrittenPath_nid_no_patch(native);
     return 0;
@@ -547,6 +561,7 @@ int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
     const auto native = ResolvePath_nid_no_patch(path);
     std::error_code error;
     if (std::filesystem::exists(native, error)) return SceErrorFromErrno(GUEST_EEXIST);
+    if (HasNonDirectoryPrefix(native)) return SceErrorFromErrno(GUEST_ENOTDIR);
     if (!std::filesystem::exists(native.parent_path(), error)) return SceErrorFromErrno(GUEST_ENOENT);
     if (!std::filesystem::create_directory(native, error)) return SceErrorFromErrno(error.value() ? error.value() : GUEST_EIO);
     RecordWrittenPath_nid_no_patch(native);
@@ -715,7 +730,7 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (path == nullptr) throw std::invalid_argument("sceKernelRmdir: path is null");
     const auto native = ResolvePath_nid_no_patch(path);
     std::error_code error;
-    if (!std::filesystem::is_directory(native, error)) return SceErrorFromErrno(std::filesystem::exists(native, error) ? GUEST_ENOTDIR : GUEST_ENOENT);
+    if (!std::filesystem::is_directory(native, error)) return SceErrorFromErrno(HasNonDirectoryPrefix(native) || std::filesystem::exists(WithoutTrailingSeparator(native), error) ? GUEST_ENOTDIR : GUEST_ENOENT);
     if (!std::filesystem::is_empty(native, error)) return SceErrorFromErrno(GUEST_ENOTEMPTY);
     if (!std::filesystem::remove(native, error)) return SceErrorFromErrno(GUEST_EIO);
     RecordWrittenPath_nid_no_patch(native);
