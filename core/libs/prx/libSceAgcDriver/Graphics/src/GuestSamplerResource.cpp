@@ -107,7 +107,6 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     static_cast<void>(truncCoord);
     static_cast<void>(anisoThreshold);
     static_cast<void>(anisoBias);
-    Require(!disableCubeWrap, "guest sampler descriptor disables seamless cube filtering which is not implemented");
     const auto reductionMode = toVkReductionMode(filterMode);
     Require(!disableDegamma, "guest sampler descriptor disables degamma which is not implemented");
     Require(lodBiasSec == 0, "guest sampler descriptor uses a secondary LOD bias which is not implemented");
@@ -162,6 +161,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     const std::array compareOps{VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL, VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS};
     result.compareOp = compareOps.at(depthCompareFunc);
     result.forceDegamma = forceSrgb;
+    result.nonSeamlessCube = disableCubeWrap;
     if (forceUnormCoords) {
         result.unnormalizedCoordinates = true;
         result.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
