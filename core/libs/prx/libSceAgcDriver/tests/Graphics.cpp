@@ -466,6 +466,41 @@ void ShaderStageTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
 }
 
+void NggVertexWorkgroupTests() {
+    auto queue = makeState();
+    queue.context[0x2d5] = 0x12010;
+    queue.userConfig[0x242] = 4;
+    queue.userConfig[0x25b] = 0x10080;
+    queue.context[0x1ff] = 0x80;
+    queue.context[0x2ce] = 0;
+    queue.context[0x29b] = 2;
+    queue.context[0x2ab] = 1;
+    queue.shader[0x8a] = 0x222c0009;
+    queue.shader[0x8b] = 0x43001e;
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    Require(AgcDriver::Graphics::DecodeState(queue).stages.path == AgcDriver::Graphics::ShaderPath::Vertex, "an NGG vertex program without a workgroup left the vertex path");
+    auto state = AgcDriver::Graphics::DecodeState(queue, true);
+    Require(state.stages.path == AgcDriver::Graphics::ShaderPath::Geometry && state.stages.mesh, "an NGG vertex program that needs a workgroup did not take the mesh path");
+    auto mesh = *state.stages.mesh;
+    Require(mesh.inputPrimitive == 4 && mesh.primitivesPerGroup == 42 && mesh.verticesPerGroup == 126 && mesh.maxVertices == 128 && mesh.maxPrimitives == 128 && mesh.threadsPerGroup == 128 && mesh.ldsSizeDwords == 1024 && mesh.esgsItemSize == 1, "the NGG vertex subgroup of a triangle list changed");
+    queue.userConfig[0x242] = 6;
+    mesh = *AgcDriver::Graphics::DecodeState(queue, true).stages.mesh;
+    Require(mesh.primitivesPerGroup == 126 && mesh.verticesPerGroup == 128 && mesh.maxPrimitives == 128, "the NGG vertex subgroup of a triangle strip is not bounded by its vertex budget");
+    queue.shader[0x8a] = 0x222c0005;
+    queue.shader[0x8b] = 0x400030;
+    Require(AgcDriver::Graphics::DecodeState(queue, true).stages.mesh.has_value(), "an NGG vertex program that loads only its vertex ID was rejected");
+    queue.shader[0x8a] = 0x222c0009;
+    queue.shader[0x8b] = 0x43001e;
+    queue.context[0x1ff] = 2;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "invalid geometry subgroup output");
+    queue.context[0x1ff] = 0x80;
+    for (const auto stages : {0x02012010u, 0x00012030u, 0x00010010u}) {
+        queue.context[0x2d5] = stages;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue, true); }, "requires PRIMGEN_EN without GS_EN, PRIMGEN_PASSTHRU_EN or tessellation");
+    }
+}
+
 constexpr std::array<std::uint8_t, 8> IdentityExports{0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u};
 
 std::vector<spv::BuiltIn> pixelBuiltinsRead(std::uint32_t ena, std::uint32_t addr, std::uint32_t source) {
@@ -609,6 +644,14 @@ void ColorPipeBankXorTests() {
         const auto color = AgcDriver::Graphics::DecodeState(queue).color;
         Require(color.tileMode == AgcDriver::Graphics::ColorTileMode::D4KBX && color.address == block + 0x3000u && color.pipeBankXor == pipeBankXor, "a SW_4KB_D_X color base did not split into its 4 KiB block base and pipe/bank XOR " + std::to_string(pipeBankXor));
     }
+}
+
+void HeaderlessVertexStageTests() {
+    const std::array<std::uint32_t, 4> userData{1, 2, 3, 4};
+    const auto info = AgcDriver::Graphics::DecodeVertexStageInfo({}, 0, userData);
+    Require(!info.fetchEmbedded && info.resourcesNum == 0, "a vertex program without an AGC header received an embedded fetch table");
+    const std::array<std::byte, 8> truncated{};
+    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeVertexStageInfo(truncated, 0x1000, userData)); }, "smaller than the fixed AGC header");
 }
 
 void PixelInputLayoutTests() {
@@ -3961,9 +4004,11 @@ int main() {
         uint16ExportTests();
         uint8x4TargetTests();
         ShaderStageTests();
+        NggVertexWorkgroupTests();
         TuningFieldTests();
         PixelInputLayoutTests();
         ColorPipeBankXorTests();
+        HeaderlessVertexStageTests();
         ComputeScratchTests();
         shaderUserDataTailPaddingTests();
         InitialContextTests();

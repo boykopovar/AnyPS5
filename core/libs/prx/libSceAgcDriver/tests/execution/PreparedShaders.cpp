@@ -496,6 +496,38 @@ void DeferredUndecodableRegistration() {
     ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "unsupported MIMG opcode");
 }
 
+void RegisteredVertexWorkgroup(const ShaderRecompiler::SpirvTarget& target) {
+    if (std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityMeshShadingEXT) == target.supportedCapabilities.end()) return;
+    alignas(256) static constexpr std::array<std::uint32_t, 8> code{
+        0xd8340000u, 0u, 0xd7600000u, 0x00017f00u, 0x7e020200u, 0xf80008cfu, 0x04030201u, 0xbf810000u
+    };
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 4> registers{};
+        std::array<ShaderRegister, 3> context{{{0x1ff, 64}, {0x2ab, 4}, {0x2ce, 0}}};
+        ShaderSpecialRegs specials{{0x25b, 0x8040}, {0x2d5, 0x2000}, 0, {}, {}, {0x29b, 2}, {0x260, 0}};
+        ShaderUserData userData{};
+    } header;
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.type = 2;
+    header.shader.user_data = &header.userData;
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    header.shader.cx_registers = header.context.data();
+    header.shader.num_cx_registers = header.context.size();
+    header.shader.specials = &header.specials;
+    header.registers = {{{0xc8, static_cast<std::uint32_t>(address >> 8u)}, {0xc9, static_cast<std::uint32_t>(address >> 40u)}, {0x8a, 0x622c0187}, {0x8b, 5u << 19u}}};
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, primitive);
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, primitive);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -520,6 +552,7 @@ int main(int argc, char** argv) {
         PendingRegistrationPreparation(*device);
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");
         PrepareMultisampledStorage(*device);
+        RegisteredVertexWorkgroup(device->Target());
         device.reset();
         RegistrationWithoutSpecials();
         Registration(argc == 2);

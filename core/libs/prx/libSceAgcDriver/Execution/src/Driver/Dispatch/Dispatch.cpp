@@ -16,13 +16,7 @@ namespace AgcDriver::DriverDetail {
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
     PerformanceTimer timing("Driver.Dispatch");
     const auto address = (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(queue.shader, 0x20d) & 0xffu) << 40u);
-    auto it = submission.shaders->upper_bound(address);
-    std::shared_ptr<const ShaderSnapshot> registeredShader;
-    if (it != submission.shaders->begin()) {
-        --it;
-        if (address - it->second->codeAddress < it->second->code.size() * sizeof(std::uint32_t)) registeredShader = it->second;
-    }
-    if (!registeredShader) registeredShader = ReadRawComputeShader(address);
+    const auto registeredShader = ProgramSnapshot(*submission.shaders, address);
     const auto& snapshot = *registeredShader;
     require(snapshot.type == 0, "compute program refers to a non-compute shader");
     const auto userCount = (readRegister(queue.shader, 0x213) >> 1u) & 0x1fu;

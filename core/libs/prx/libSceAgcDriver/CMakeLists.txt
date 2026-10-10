@@ -863,6 +863,8 @@ target_include_directories(agc_driver_prepared_publication_tests PRIVATE $<TARGE
 target_include_directories(agc_driver_prepared_graphics_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(agc_driver_interpolation_modes_tests PRIVATE shader_recompiler_agc_driver)
 
+target_include_directories(agc_driver_prepared_unregistered_graphics_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
 target_include_directories(agc_driver_prepared_shaders_tests PRIVATE
         $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
 )

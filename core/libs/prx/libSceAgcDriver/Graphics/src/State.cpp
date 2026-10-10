@@ -475,7 +475,7 @@ void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offse
 
 }
 
-ShaderStages DecodeShaderStages(const QueueState& queue) {
+ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     const auto value = read(queue.context, 0x2d5);
     const auto validate = [&](bool condition, const char* reason) {
         if (condition) return;
@@ -487,7 +487,8 @@ ShaderStages DecodeShaderStages(const QueueState& queue) {
     validate((value & 3u) != 3u && ((value >> 3u) & 3u) != 3u && ((value >> 6u) & 3u) != 3u, "reserved LS_EN, ES_EN or VS_EN encoding");
     const auto primitive = read(queue.userConfig, 0x242, RegisterBank::UserConfig);
     const bool tessellation = primitive == 9;
-    const bool geometry = (value & 0x20u) != 0;
+    validate(!vertexWorkgroup || ((value & 0x02002020u) == 0x2000u && !tessellation), "a vertex program that needs a workgroup requires PRIMGEN_EN without GS_EN, PRIMGEN_PASSTHRU_EN or tessellation");
+    const bool geometry = (value & 0x20u) != 0 || vertexWorkgroup;
     validate(tessellation == ((value & 4u) != 0), "Patch topology and HS_EN disagree");
     validate(!tessellation || !geometry, "combined tessellation and geometry is unsupported by the reference path");
     const auto path = tessellation ? ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
@@ -511,15 +512,16 @@ ShaderStages DecodeShaderStages(const QueueState& queue) {
         const auto vertices = (group >> 9u) & 0x1ffu;
         const auto primitives = group & 0x1ffu;
         const auto maxVertices = read(queue.context, 0x1ff);
-        const auto verticesPerPrimitive = read(queue.context, 0x2ce);
+        const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
         validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && read(queue.context, 0x29b) == 2 && verticesPerPrimitive >= 3, "unsupported geometry input or output assembly");
         const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
-        validate(vertices >= inputSize && maxVertices != 0 && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
+        validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
         const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
-        const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, maxVertices / verticesPerPrimitive});
+        const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
+        const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
         const auto resources = read(queue.shader, 0x8b, RegisterBank::Shader);
-        validate(((read(queue.shader, 0x8a, RegisterBank::Shader) >> 29u) & 3u) == 3 && ((resources >> 16u) & 3u) == 3, "unsupported geometry VGPR allocation");
+        validate(vertexWorkgroup || (((read(queue.shader, 0x8a, RegisterBank::Shader) >> 29u) & 3u) == 3 && ((resources >> 16u) & 3u) == 3), "unsupported geometry VGPR allocation");
         const auto esgsItemSize = read(queue.context, 0x2ab);
         validate(esgsItemSize != 0 && esgsItemSize * vertices <= 0xffffu, "invalid VGT_ESGS_RING_ITEMSIZE");
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, primitives * (verticesPerPrimitive - 2u)});
@@ -537,12 +539,12 @@ std::string DepthMaintenanceRejection(const QueueState& queue) {
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
 }
 
-State DecodeState(const QueueState& queue) {
+State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) throw std::runtime_error(reason);
     const auto& cx = queue.context;
     State result{};
     result.conservativeRasterization = decodeConservativeRasterization(queue);
-    result.stages = DecodeShaderStages(queue);
+    result.stages = DecodeShaderStages(queue, vertexWorkgroup);
     const auto primitive = read(queue.userConfig, 0x242, RegisterBank::UserConfig);
     APS5_LOG_OUT_DEBUG("DecodeState primitive=%u path=%u vertexWave=%u", primitive, static_cast<unsigned>(result.stages.path), result.stages.vertexWaveSize);
     switch (primitive) {
